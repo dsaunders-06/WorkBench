@@ -64,7 +64,7 @@ class DashboardScreen(QWidget):
         self.ai_note_label = QLabel("(no note yet)")
         self.ai_note_label.setWordWrap(True)
         layout.addWidget(self.ai_note_label)
-        self.review_button = QPushButton("Review & Apply")
+        self.review_button = QPushButton("Review && Apply")
         self.review_button.clicked.connect(self._on_review_clicked)
         layout.addWidget(self.review_button)
 
@@ -123,7 +123,7 @@ class DashboardScreen(QWidget):
             f"Current regime is '{event.label}' (top probabilities: {summary}). "
             "Review the Regime Monitor for full detail before adjusting exposure."
         )
-        self.review_button.setText("Review & Apply")
+        self.review_button.setText("Review && Apply")
 
     def _on_review_clicked(self) -> None:
         # Explicit human action; never triggers a trade - just acknowledges

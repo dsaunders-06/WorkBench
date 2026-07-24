@@ -23,5 +23,8 @@ data/parquet/
 .vscode/
 .idea/
 
+# Office lock/temp files
+~$*
+
 # Claude Code local settings (machine-specific permission state)
 .claude/settings.local.json
