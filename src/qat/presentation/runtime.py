@@ -87,6 +87,7 @@ class Runtime:
     risk_engine: RiskEngine
     oms: OMS
     strategy_engine: StrategyEngine
+    available_strategies: list[Strategy]
     regime_engine: RegimeEngine
     ai_service: AIAdvisoryService
     watchlist: tuple[str, ...]
@@ -125,14 +126,20 @@ class Runtime:
         macro_feed = MacroFeed(bus, macro, settings.fred_series, poll_interval_seconds=3600.0)
 
         fundamentals = fundamentals_source or MockFundamentalsSource(seed=1)
-        strategy_engine = StrategyEngine(bus, default_strategies(), fundamentals)
+        available_strategies = default_strategies()
+        # Live-deployed set starts empty (spec §K: nothing trades until a human
+        # vets it via the Workbench and clicks "Deploy to Paper") - Workbench
+        # appends to strategy_engine.strategies, it never starts pre-populated.
+        strategy_engine = StrategyEngine(bus, [], fundamentals)
 
         regime_engine = RegimeEngine(
             bus, benchmark_symbol=watchlist[0], breadth_symbols=watchlist[1:]
         )
 
         demo_engine = DemoLLMEngine()
-        router = LLMRouter(anthropic_engine or demo_engine, local_engine or demo_engine, settings=settings)
+        router = LLMRouter(
+            anthropic_engine or demo_engine, local_engine or demo_engine, settings=settings
+        )
         ai_service = AIAdvisoryService(router, risk_engine, settings=settings)
 
         for engine in (
@@ -156,6 +163,7 @@ class Runtime:
             risk_engine=risk_engine,
             oms=oms,
             strategy_engine=strategy_engine,
+            available_strategies=available_strategies,
             regime_engine=regime_engine,
             ai_service=ai_service,
             watchlist=watchlist,

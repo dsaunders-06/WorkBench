@@ -80,6 +80,10 @@ ignore_missing_imports = true
 module = "hmmlearn.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "pyqtgraph"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

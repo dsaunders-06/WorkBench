@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel, QMainWindow, QTabWidget, QVBoxLayout, QWidget
 
-from qat.config import Settings
 from qat.presentation.ai_advisor import AiAdvisorScreen
 from qat.presentation.blotter import BlotterScreen
 from qat.presentation.dashboard import DashboardScreen
 from qat.presentation.regime_monitor import RegimeMonitorScreen
 from qat.presentation.risk_console import RiskConsoleScreen
+from qat.presentation.runtime import Runtime
 from qat.presentation.screener import ScreenerScreen
 from qat.presentation.settings import SettingsScreen
 from qat.presentation.workbench import WorkbenchScreen
@@ -23,8 +23,10 @@ _LIVE_STYLE = "background-color: #b71c1c; color: white; padding: 6px; font-weigh
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, runtime: Runtime) -> None:
         super().__init__()
+        self.runtime = runtime
+        settings = runtime.settings
         self.setWindowTitle("Quant Advisory Terminal")
         self.resize(1200, 800)
 
@@ -36,12 +38,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(banner)
 
         tabs = QTabWidget()
-        tabs.addTab(DashboardScreen(), "Dashboard")
-        tabs.addTab(WorkbenchScreen(), "Strategy Workbench")
-        tabs.addTab(RegimeMonitorScreen(), "Regime Monitor")
-        tabs.addTab(RiskConsoleScreen(), "Risk Console")
-        tabs.addTab(AiAdvisorScreen(), "AI Advisor")
-        tabs.addTab(BlotterScreen(), "Order Blotter")
+        tabs.addTab(DashboardScreen(runtime), "Dashboard")
+        tabs.addTab(WorkbenchScreen(runtime), "Strategy Workbench")
+        tabs.addTab(RegimeMonitorScreen(runtime), "Regime Monitor")
+        tabs.addTab(RiskConsoleScreen(runtime), "Risk Console")
+        tabs.addTab(AiAdvisorScreen(runtime), "AI Advisor")
+        tabs.addTab(BlotterScreen(runtime), "Order Blotter")
         tabs.addTab(ScreenerScreen(), "Screener")
         tabs.addTab(SettingsScreen(), "Settings")
         layout.addWidget(tabs)

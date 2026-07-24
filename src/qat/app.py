@@ -1,7 +1,8 @@
 """Application entrypoint.
 
-Wires config -> logging -> EventBus/Orchestrator -> Qt window, running the
-asyncio loop under Qt via qasync so the UI never blocks on I/O (spec §K).
+Wires config -> logging -> Runtime (EventBus/Orchestrator/full engine graph)
+-> Qt window, running the asyncio loop under Qt via qasync so the UI never
+blocks on I/O (spec §K).
 """
 
 from __future__ import annotations
@@ -13,32 +14,27 @@ import sys
 import qasync
 from PySide6.QtWidgets import QApplication
 
-from qat.config import Settings
-from qat.domain.bus import EventBus
-from qat.domain.orchestrator import Orchestrator
 from qat.logging import configure_logging
 from qat.presentation.main_window import MainWindow
+from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
 
 def main() -> None:
-    settings = Settings()
-    configure_logging(settings.log_level)
-    logger.info("Starting Quant Advisory Terminal in %s mode", settings.trading_mode)
-
     app = QApplication(sys.argv)
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    bus = EventBus()
-    orchestrator = Orchestrator(bus)
+    runtime = Runtime.build_demo()
+    configure_logging(runtime.settings.log_level)
+    logger.info("Starting Quant Advisory Terminal in %s mode", runtime.settings.trading_mode)
 
-    window = MainWindow(settings)
+    window = MainWindow(runtime)
     window.show()
 
     with loop:
-        loop.run_until_complete(orchestrator.start_all())
+        loop.run_until_complete(runtime.orchestrator.start_all())
         loop.run_forever()
 
 

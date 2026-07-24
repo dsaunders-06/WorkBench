@@ -66,8 +66,7 @@ class MockFundamentalsSource:
         return cached
 
     def _generate(self, symbol: str) -> FundamentalSnapshot:
-        # nosec B311 - deterministic synthetic fundamentals, not crypto
-        rng = random.Random(f"{self._seed}:{symbol}")
+        rng = random.Random(f"{self._seed}:{symbol}")  # nosec B311 - deterministic, not crypto
         return FundamentalSnapshot(
             symbol=symbol,
             sector=rng.choice(_SECTORS),

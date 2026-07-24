@@ -15,14 +15,17 @@ human approves every live order.
 
 ## Status
 
-Milestones 1–8 are complete: architecture/config/logging/EventBus (M1), the
-real-time data pipeline (M2), all 15 strategies (M3), the backtester (M4),
-the regime engine (M5), the risk engine + OMS sign-off gate (M6), IBKR
-integration (M7), and the AI advisory service (M8 — `AnthropicEngine` +
-`LocalEngine`, the router, and the input/output guards). Final packaging
-(M9) is not built yet. The Workbench, Regime Monitor, and AI Advisor screens
-are still placeholders — wiring them to real output is pending, mechanical
-follow-up work.
+All nine milestones are complete: architecture/config/logging/EventBus (M1),
+the real-time data pipeline (M2), all 15 strategies (M3), the backtester
+(M4), the regime engine (M5), the risk engine + OMS sign-off gate (M6), IBKR
+integration (M7), the AI advisory service (M8 — `AnthropicEngine` +
+`LocalEngine`, the router, and the input/output guards), and final UI
+wiring + packaging (M9). All six primary screens (Dashboard, Strategy
+Workbench, Regime Monitor, Risk Console, AI Advisor, Order Blotter) are
+wired to a real, live engine graph (`src/qat/presentation/runtime.py`)
+running on synthetic/mock data by default — see "Building the Windows
+executable" below to produce a standalone `.exe`. Screener and Settings
+remain placeholders (out of M9's approved scope).
 
 ## Setup
 
@@ -65,6 +68,7 @@ invoke test      # pytest
 invoke lint      # ruff + black --check + mypy + bandit
 invoke format    # ruff --fix + black
 invoke run       # launch the desktop app
+invoke package   # build an unsigned Windows executable (see below)
 ```
 
 ## Verifying the IBKR connection yourself
@@ -121,6 +125,28 @@ has no Anthropic API key or running Ollama server. To check it yourself:
 
 Confirm you get back a schema-valid `AdvisoryRecommendation`, not an error.
 
+## Building the Windows executable
+
+```powershell
+invoke package
+```
+
+This runs PyInstaller (`--onedir --windowed`, with `--collect-all` for
+`hmmlearn` and `sklearn` — both ship data files/compiled submodules that
+PyInstaller's default import analysis misses) and produces
+`dist/QuantAdvisoryTerminal/QuantAdvisoryTerminal.exe`, launchable standalone
+without a Python install. It has been built and smoke-tested this way: the
+executable starts, all engines wire up, and the window stays open with no
+console attached (`--windowed`).
+
+**This build is unsigned.** No code-signing certificate is available in this
+environment, so Windows SmartScreen will warn on first run. To sign it
+yourself once you have an Authenticode certificate:
+
+```powershell
+signtool.exe sign /f <path-to-your.pfx> /p <password> /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 dist\QuantAdvisoryTerminal\QuantAdvisoryTerminal.exe
+```
+
 ## Architecture
 
 Three layers, communicating only through typed events on an in-process
@@ -140,13 +166,15 @@ implementation so the domain core is independently testable.
 
 - Default trading mode is **paper**; switching to live requires an explicit
   config flag *and* `IBAdapter`'s `live_trading_confirmed` flag, which only
-  an in-app confirmation dialog (not yet wired — presentation layer) should
-  ever set to `True`.
+  an explicit human action should ever set to `True`.
 - A kill-switch (`domain/risk_engine/kill_switch.py`) trips on daily-loss,
   drawdown-from-HWM, data staleness, broker-reconciliation mismatches, an
   exhausted IBKR reconnect budget, or a manual trigger, and halts new
-  orders. It's built and tested; wiring it into the Risk Console UI as an
-  always-visible control is pending.
+  orders. It's always visible and colour-coded on the Risk Console
+  (`presentation/risk_console.py`), and a single click can trip or reset it.
+- The Order Blotter (`presentation/blotter.py`) never calls `OMS.sign_off()`
+  except from inside a confirmed modal dialog - selecting a pending order
+  and clicking Sign Off always asks first.
 - The AI advisory layer never places, modifies or cancels an order —
   `AIAdvisoryService` has no reference to `OMS` or a broker at all — and
   its output is independently re-checked against `RiskEngine` before a

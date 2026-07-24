@@ -15,6 +15,8 @@ maintain historical return series for already-held positions.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 
 from qat.data.features import compute_atr
@@ -42,7 +44,7 @@ class SignalToOrderBridge:
         self.default_win_rate = default_win_rate
         self.default_win_loss_ratio = default_win_loss_ratio
         self.max_history = max_history
-        self._history: dict[str, list[dict[str, float]]] = {}
+        self._history: dict[str, list[dict[str, Any]]] = {}
 
     async def start(self) -> None:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
@@ -96,4 +98,6 @@ class SignalToOrderBridge:
         existing_weights = {pos.symbol: pos.quantity * pos.avg_price for pos in positions}
         existing_returns: dict[str, pd.Series] = {}
 
-        await self.oms.submit_order(candidate, account.net_liquidation, existing_weights, existing_returns)
+        await self.oms.submit_order(
+            candidate, account.net_liquidation, existing_weights, existing_returns
+        )

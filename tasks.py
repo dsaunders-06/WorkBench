@@ -37,6 +37,23 @@ def run(c):
     c.run("python -m qat.app")
 
 
+@task
+def package(c):
+    """Build an unsigned Windows executable (spec §M9) via PyInstaller.
+
+    --collect-all is needed for hmmlearn and scikit-learn: both ship data
+    files / compiled extension submodules that PyInstaller's default import
+    analysis misses, producing a build that launches but crashes on first
+    regime-engine fit. Unsigned - see README "Building the Windows
+    executable" for the signtool.exe follow-up once a certificate exists.
+    """
+    c.run(
+        "pyinstaller --name QuantAdvisoryTerminal --onedir --windowed "
+        "--collect-all hmmlearn --collect-all sklearn "
+        "src/qat/app.py"
+    )
+
+
 @task(pre=[lint, test])
 def build(c):
     pass
