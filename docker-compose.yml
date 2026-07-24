@@ -1,0 +1,16 @@
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: qat_timescaledb
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: qat
+      POSTGRES_PASSWORD: qat
+      POSTGRES_DB: qat
+    volumes:
+      - qat_timescale_data:/var/lib/postgresql/data
+
+volumes:
+  qat_timescale_data:

@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+*.egg-info/
+build/
+dist/
+
+# local data / secrets
+.env
+*.db
+*.sqlite
+*.sqlite3
+data/raw/
+data/parquet/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code local settings (machine-specific permission state)
+.claude/settings.local.json
