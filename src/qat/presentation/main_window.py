@@ -44,8 +44,8 @@ class MainWindow(QMainWindow):
         tabs.addTab(RiskConsoleScreen(runtime), "Risk Console")
         tabs.addTab(AiAdvisorScreen(runtime), "AI Advisor")
         tabs.addTab(BlotterScreen(runtime), "Order Blotter")
-        tabs.addTab(ScreenerScreen(), "Screener")
-        tabs.addTab(SettingsScreen(), "Settings")
+        tabs.addTab(ScreenerScreen(runtime), "Screener")
+        tabs.addTab(SettingsScreen(runtime), "Settings")
         layout.addWidget(tabs)
 
         self.setCentralWidget(central)

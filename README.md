@@ -15,17 +15,17 @@ human approves every live order.
 
 ## Status
 
-All nine milestones are complete: architecture/config/logging/EventBus (M1),
+Ten milestones are complete: architecture/config/logging/EventBus (M1),
 the real-time data pipeline (M2), all 15 strategies (M3), the backtester
 (M4), the regime engine (M5), the risk engine + OMS sign-off gate (M6), IBKR
 integration (M7), the AI advisory service (M8 — `AnthropicEngine` +
-`LocalEngine`, the router, and the input/output guards), and final UI
-wiring + packaging (M9). All six primary screens (Dashboard, Strategy
-Workbench, Regime Monitor, Risk Console, AI Advisor, Order Blotter) are
+`LocalEngine`, the router, and the input/output guards), UI wiring +
+packaging (M9), and AI-provider selection + market/watchlist configuration +
+the Screener (M10). All eight screens (Dashboard, Strategy Workbench, Regime
+Monitor, Risk Console, AI Advisor, Order Blotter, Screener, Settings) are
 wired to a real, live engine graph (`src/qat/presentation/runtime.py`)
 running on synthetic/mock data by default — see "Building the Windows
-executable" below to produce a standalone `.exe`. Screener and Settings
-remain placeholders (out of M9's approved scope).
+executable" below to produce a standalone `.exe`.
 
 ## Setup
 
@@ -48,10 +48,11 @@ remain placeholders (out of M9's approved scope).
    then set `QAT_STORAGE_BACKEND=timescale` and `QAT_DATABASE_URL` in `.env`
    (see `.env.example`).
 
-3. **Secrets** (IBKR credentials, Anthropic/LLM API keys) are read from the
-   OS keyring via `qat.security`, never from plaintext config or logs. Use
-   `keyring.set_password("qat", "<NAME>", "<value>")` to store one locally,
-   or set the equivalent environment variable for local dev only.
+3. **Secrets** (IBKR credentials, Anthropic API key) are read from the
+   OS keyring via `qat.security`, never from plaintext config or logs. The
+   Settings screen (see "Configuring the AI provider and market/watchlist"
+   below) is the normal way to set the Anthropic key; `keyring.set_password("qat", "<NAME>", "<value>")`
+   or the equivalent environment variable both work too, for local dev.
 
 4. **IB Gateway / TWS**: run IB Gateway or TWS locally in **paper mode**
    (default ports 4002 Gateway / 7497 TWS). The app connects only to
@@ -105,23 +106,65 @@ Gateway to connect to. To check it yourself:
 3. Confirm you see live (delayed, if you lack a market data subscription)
    paper-account quotes rather than a connection error.
 
+## Configuring the AI provider and market/watchlist
+
+The **Settings** screen is the normal way to configure both of these — every
+field on it is **restart-required**, not live-applied (the whole engine
+graph is built once at startup around these values), so save your changes
+and relaunch the app to pick them up.
+
+**AI provider.** Every AI request the app makes lands in one of two
+`LLMRouter` slots (`domain/ai_advisory/router.py`): *general* requests (e.g.
+the regime narrative) and *position-sensitive* requests (anything that
+touches your current positions — an absolute privacy override, regardless of
+settings). Settings lets you choose each slot's real backing provider
+independently — Anthropic, Local (LM Studio), or Demo — so you can, for
+example, use Anthropic for general requests while keeping the sensitive slot
+local-only. Choosing "Anthropic" for the sensitive slot shows an explicit
+on-screen warning, since it means position/portfolio data leaves the machine
+for Anthropic's cloud API. A misconfigured real provider (no key configured,
+or a local server that isn't reachable) degrades to the canned Demo response
+rather than crashing the app — check the "Test Connection" button on
+Settings, or the app's log output, if a provider you selected isn't
+producing real responses after a restart.
+
+Local LLM support targets **LM Studio** by default (`http://localhost:1234/v1`)
+but works with any OpenAI-compatible server, Ollama included — just point
+"LM Studio base URL" at Ollama's own URL (typically `http://localhost:11434/v1`)
+and set the model name to match what you've loaded.
+
+**Market & watchlist.** Choose US or ASX, a category (curated / index ETFs /
+mega-cap), the max number of symbols to track, and a minimum average daily
+volume liquidity filter. `qat.data.universe` resolves these into the actual
+watchlist the app streams and trades against (`Runtime.build_demo`); the
+curated/ETF/mega-cap ticker lists are static snapshots ported from the
+original ShareTrader reference app, so they'll drift from real market
+composition over time — edit `watchlist_curated_us`/`watchlist_curated_asx`
+in Settings (or `data/universe.py`'s tables directly) if you want them
+current.
+
 ## Verifying the AI advisory service yourself
 
 Same situation as IBKR: `AnthropicEngine` and `LocalEngine`
 (`src/qat/domain/ai_advisory/llm_engine.py`) are built against the real
-Anthropic SDK and Ollama's real OpenAI-compatible REST shape, and their
-request-building/response-parsing/retry logic is unit-tested against fakes —
-but nothing here proves a live call actually works, since this environment
-has no Anthropic API key or running Ollama server. To check it yourself:
+Anthropic SDK and LM Studio/Ollama's real OpenAI-compatible REST shape, and
+their request-building/response-parsing/retry logic is unit-tested against
+fakes — but nothing here proves a live call actually works, since this
+environment has no Anthropic API key or running local server. To check it
+yourself, either use the Settings screen (above) and restart, or drive the
+engines directly:
 
 - **Anthropic**: `keyring.set_password("qat", "ANTHROPIC_API_KEY", "<your key>")`,
   then construct `AnthropicEngine()` with no `client` argument (it builds a
   real `anthropic.Anthropic` client from that key) and call
   `await engine.complete(SYSTEM_PROMPT, "Summarise a hypothetical calm, low-vol regime.", AdvisoryRecommendation)`
   (`qat.domain.ai_advisory.prompts.SYSTEM_PROMPT`, `qat.domain.ai_advisory.schema.AdvisoryRecommendation`).
-- **Local/Ollama**: start Ollama locally (`ollama serve`, with a model pulled),
-  construct `LocalEngine(model="<your model>")` (defaults to
-  `http://localhost:11434/v1`), and call `complete(...)` the same way.
+- **Local (LM Studio or Ollama)**: start a local server exposing an
+  OpenAI-compatible endpoint (LM Studio's local server, or `ollama serve`)
+  with a model loaded, construct `LocalEngine(model="<your model>")`
+  (defaults to LM Studio's `http://localhost:1234/v1`; pass
+  `base_url="http://localhost:11434/v1"` for Ollama), and call `complete(...)`
+  the same way.
 
 Confirm you get back a schema-valid `AdvisoryRecommendation`, not an error.
 

@@ -13,7 +13,7 @@ import random
 from dataclasses import dataclass
 from typing import Protocol
 
-_SECTORS = (
+SECTORS = (
     "Technology",
     "Healthcare",
     "Financials",
@@ -69,7 +69,7 @@ class MockFundamentalsSource:
         rng = random.Random(f"{self._seed}:{symbol}")  # nosec B311 - deterministic, not crypto
         return FundamentalSnapshot(
             symbol=symbol,
-            sector=rng.choice(_SECTORS),
+            sector=rng.choice(SECTORS),
             eps_growth_yoy=round(rng.uniform(-0.10, 0.40), 4),
             eps_growth_accelerating=rng.random() > 0.5,
             peg_ratio=round(rng.uniform(0.3, 4.0), 2),

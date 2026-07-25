@@ -1,29 +1,35 @@
-"""Constructs the full engine graph for a live/demo run (spec §M9): wires
+"""Constructs the full engine graph for a live/demo run (spec §M9/M10): wires
 MarketDataFeed -> FeatureEngine -> StrategyEngine -> SignalToOrderBridge ->
 OMS, plus RegimeEngine and AIAdvisoryService, all sharing one EventBus -
 with the same synthetic/mock defaults used throughout testing
 (SyntheticMarketDataSource, MockBroker, MockFundamentalsSource,
-MockMacroSource, DemoLLMEngine). Consistent with every prior milestone's
-"no real credentials here" stance.
+MockMacroSource). Consistent with every prior milestone's "no real
+credentials here" stance.
 
-A real paper or live session swaps IBAdapter in for MockBroker and
-AnthropicEngine/LocalEngine in for DemoLLMEngine via build_demo()'s
-constructor arguments - the same swap-the-implementation pattern every
-milestone since M2 has used, not a rewrite.
+A real paper or live session swaps IBAdapter in for MockBroker via
+build_demo()'s broker argument - the same swap-the-implementation pattern
+every milestone since M2 has used, not a rewrite. The AI engines are
+resolved from Settings (see resolve_llm_engines) rather than being a
+constructor swap, since M10 made the provider a user-facing Settings choice.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+from typing import Literal
+
+import requests
 
 from qat.config import Settings
+from qat.data import universe
 from qat.data.broker.adapter import BrokerAdapter
 from qat.data.broker.mock_broker import MockBroker
 from qat.data.feature_engine import FeatureEngine
 from qat.data.fundamentals import FundamentalsSource, MockFundamentalsSource
 from qat.data.macro_fred import MacroDataSource, MacroFeed, MockMacroSource
 from qat.data.market_data import MarketDataFeed, MarketDataSource, SyntheticMarketDataSource
-from qat.domain.ai_advisory.llm_engine import DemoLLMEngine, LLMEngine
+from qat.domain.ai_advisory.llm_engine import AnthropicEngine, DemoLLMEngine, LLMEngine, LocalEngine
 from qat.domain.ai_advisory.router import LLMRouter
 from qat.domain.ai_advisory.service import AIAdvisoryService
 from qat.domain.bus import EventBus
@@ -50,8 +56,11 @@ from qat.domain.strategies.swing import SwingStrategy
 from qat.domain.strategies.trend_following import TrendFollowingStrategy
 from qat.domain.strategies.value import ValueStrategy
 from qat.domain.strategies.volatility import VolatilityStrategy
+from qat.security import get_secret
 
-_DEFAULT_WATCHLIST = ("SPY", "AAPL", "MSFT", "GOOGL")
+logger = logging.getLogger(__name__)
+
+_REACHABILITY_TIMEOUT_SECONDS = 2.0
 
 
 def default_strategies() -> list[Strategy]:
@@ -74,6 +83,48 @@ def default_strategies() -> list[Strategy]:
     ]
 
 
+def _local_llm_reachable(base_url: str) -> bool:
+    try:
+        response = requests.get(f"{base_url}/models", timeout=_REACHABILITY_TIMEOUT_SECONDS)
+        return response.ok
+    except requests.RequestException:
+        return False
+
+
+def _resolve_engine(choice: Literal["anthropic", "local", "demo"], settings: Settings) -> LLMEngine:
+    """Backs one LLMRouter slot per the user's Settings choice (spec M10) -
+    never guesses/auto-detects, since the provider is meant to be an explicit,
+    selectable choice, not silently inferred from what happens to be configured."""
+    if choice == "anthropic":
+        if get_secret("ANTHROPIC_API_KEY"):
+            return AnthropicEngine(settings=settings)
+        logger.warning(
+            "AI provider set to anthropic but no ANTHROPIC_API_KEY is configured - using demo"
+        )
+        return DemoLLMEngine()
+    if choice == "local":
+        if _local_llm_reachable(settings.local_llm_base_url):
+            return LocalEngine(settings=settings)
+        logger.warning("Local LLM at %s is not reachable - using demo", settings.local_llm_base_url)
+        return DemoLLMEngine()
+    return DemoLLMEngine()
+
+
+def resolve_llm_engines(settings: Settings) -> tuple[LLMEngine, LLMEngine]:
+    """Returns (anthropic_slot_engine, local_slot_engine) for LLMRouter.
+    LLMRouter.choose() (domain/ai_advisory/router.py) decides which slot
+    handles which request - position-sensitive requests always route to the
+    local slot as an absolute privacy override, general requests (e.g. the
+    regime narrative) route to the anthropic slot when available. Each slot's
+    real backing engine is an independent Settings choice (spec M10) rather
+    than a single app-wide provider toggle, so the sensitive slot can be kept
+    local-only even when the general slot uses Anthropic's cloud API."""
+    return (
+        _resolve_engine(settings.general_request_provider, settings),
+        _resolve_engine(settings.sensitive_request_provider, settings),
+    )
+
+
 @dataclass
 class Runtime:
     """Everything a screen needs: the bus, the engines, and the settings.
@@ -91,12 +142,13 @@ class Runtime:
     regime_engine: RegimeEngine
     ai_service: AIAdvisoryService
     watchlist: tuple[str, ...]
+    benchmark_symbol: str
 
     @classmethod
     def build_demo(
         cls,
         settings: Settings | None = None,
-        watchlist: tuple[str, ...] = _DEFAULT_WATCHLIST,
+        watchlist: tuple[str, ...] | None = None,
         market_data_source: MarketDataSource | None = None,
         broker: BrokerAdapter | None = None,
         fundamentals_source: FundamentalsSource | None = None,
@@ -105,6 +157,9 @@ class Runtime:
         local_engine: LLMEngine | None = None,
     ) -> Runtime:
         settings = settings or Settings()
+        watchlist = watchlist if watchlist is not None else universe.resolve_watchlist(settings)
+        benchmark_symbol = universe.MARKET_BENCHMARKS[settings.market]
+
         bus = EventBus()
         orchestrator = Orchestrator(bus)
 
@@ -116,9 +171,16 @@ class Runtime:
         oms = OMS(broker, risk_engine, kill_switch)
         signal_bridge = SignalToOrderBridge(bus, oms)
 
+        # The benchmark must always be streamed even if it isn't part of the
+        # configured watchlist (e.g. a mega-cap category that doesn't happen
+        # to include the market's benchmark ETF) - otherwise RegimeEngine
+        # would never receive a MarketDataEvent for it and regime detection
+        # would never fire. dict.fromkeys de-dupes while preserving order.
+        feed_symbols = tuple(dict.fromkeys((benchmark_symbol, *watchlist)))
+
         source = market_data_source or SyntheticMarketDataSource(seed=1, interval_seconds=1.0)
         market_data_feed = MarketDataFeed(
-            bus, source, watchlist, staleness_seconds=settings.data_staleness_seconds
+            bus, source, feed_symbols, staleness_seconds=settings.data_staleness_seconds
         )
         feature_engine = FeatureEngine(bus)
 
@@ -133,12 +195,12 @@ class Runtime:
         strategy_engine = StrategyEngine(bus, [], fundamentals)
 
         regime_engine = RegimeEngine(
-            bus, benchmark_symbol=watchlist[0], breadth_symbols=watchlist[1:]
+            bus, benchmark_symbol=benchmark_symbol, breadth_symbols=watchlist
         )
 
-        demo_engine = DemoLLMEngine()
+        anthropic_slot, local_slot = resolve_llm_engines(settings)
         router = LLMRouter(
-            anthropic_engine or demo_engine, local_engine or demo_engine, settings=settings
+            anthropic_engine or anthropic_slot, local_engine or local_slot, settings=settings
         )
         ai_service = AIAdvisoryService(router, risk_engine, settings=settings)
 
@@ -167,4 +229,5 @@ class Runtime:
             regime_engine=regime_engine,
             ai_service=ai_service,
             watchlist=watchlist,
+            benchmark_symbol=benchmark_symbol,
         )

@@ -74,7 +74,7 @@ class RegimeMonitorScreen(QWidget):
         self._refresh_driver_table()
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
-        if event.symbol != self.runtime.watchlist[0]:
+        if event.symbol != self.runtime.benchmark_symbol:
             return
         self._driver_values[f"{event.symbol} (benchmark) price"] = event.price
         self._refresh_driver_table()

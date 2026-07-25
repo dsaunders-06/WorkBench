@@ -17,7 +17,6 @@ reproducible run to run.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pyqtgraph as pg
@@ -31,7 +30,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from qat.data.market_data import SyntheticMarketDataSource
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.backtester.costs import CostModel
 from qat.domain.backtester.monte_carlo import run_monte_carlo
@@ -40,36 +38,11 @@ from qat.domain.backtester.signal_adapter import generate_signal_series
 from qat.domain.backtester.sizing import FixedFractionalSizer
 from qat.domain.backtester.vectorized_engine import VectorizedBacktester
 from qat.presentation.runtime import Runtime
+from qat.presentation.synthetic_bars import generate_daily_bars
 from qat.presentation.widgets import KpiTile
 
-_N_BACKTEST_BARS = 300
 _PERCENT_METRICS = {"cagr", "volatility", "max_drawdown", "win_rate", "var_95"}
 _METRICS_PER_ROW = 5
-
-
-def _seed_for_symbol(symbol: str) -> int:
-    return sum(ord(char) for char in symbol) + 1
-
-
-async def _generate_daily_bars(symbol: str, n_bars: int = _N_BACKTEST_BARS) -> pd.DataFrame:
-    source = SyntheticMarketDataSource(seed=_seed_for_symbol(symbol), interval_seconds=0.0)
-    start = datetime.now(UTC) - timedelta(days=n_bars)
-    rows: list[dict[str, object]] = []
-    async for tick in source.stream_ticks([symbol]):
-        ts = start + timedelta(days=len(rows))
-        rows.append(
-            {
-                "ts": ts,
-                "open": tick.price,
-                "high": tick.price,
-                "low": tick.price,
-                "close": tick.price,
-                "volume": tick.volume,
-            }
-        )
-        if len(rows) >= n_bars:
-            break
-    return pd.DataFrame(rows)
 
 
 class WorkbenchScreen(QWidget):
@@ -152,10 +125,10 @@ class WorkbenchScreen(QWidget):
             if strategy is None or not symbol:
                 return
 
-            bars = await _generate_daily_bars(symbol)
-            benchmark_symbol = self.runtime.watchlist[0]
+            bars = await generate_daily_bars(symbol)
+            benchmark_symbol = self.runtime.benchmark_symbol
             benchmark_bars = (
-                bars if symbol == benchmark_symbol else await _generate_daily_bars(benchmark_symbol)
+                bars if symbol == benchmark_symbol else await generate_daily_bars(benchmark_symbol)
             )
             benchmark_prices = benchmark_bars.set_index("ts")["close"]
 

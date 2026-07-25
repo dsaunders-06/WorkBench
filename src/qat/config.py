@@ -52,12 +52,47 @@ class Settings(BaseSettings):
 
     # --- AI advisory (M8) --------------------------------------------------
     anthropic_model: str = "claude-sonnet-5"
-    local_llm_base_url: str = "http://localhost:11434/v1"
+    # LM Studio's default port; still works with Ollama by pointing this at
+    # Ollama's own OpenAI-compatible URL instead - LocalEngine is generic.
+    local_llm_base_url: str = "http://localhost:1234/v1"
+    local_llm_model: str = "local-model"
     ai_context_max_chars: int = Field(default=8_000, gt=0)
     ai_cost_budget_calls_per_day: int = Field(default=200, gt=0)
 
+    # --- AI provider selection (M10) ----------------------------------------
+    # Every AI request lands in one of two LLMRouter slots - "general" (regime
+    # narrative, when not sensitive and within budget) or "sensitive" (any
+    # request touching positions, an absolute privacy override). Each slot's
+    # backing provider is independently selectable rather than a single
+    # app-wide toggle, so the sensitive slot can stay local-only even if the
+    # general slot uses Anthropic's cloud API.
+    general_request_provider: Literal["anthropic", "local", "demo"] = "demo"
+    sensitive_request_provider: Literal["local", "anthropic", "demo"] = "demo"
+
+    # --- Market & watchlist (M10) --------------------------------------------
+    market: Literal["US", "ASX"] = "US"
+    watchlist_category: Literal["curated", "etf", "megacap"] = "curated"
+    # Plain comma-separated strings, not tuple[str, ...] fields: pydantic-settings
+    # JSON-decodes any complex-typed env value before a field_validator ever runs,
+    # so a human-editable "SPY,AAPL,MSFT" env value would fail to parse as JSON.
+    # A plain str field sidesteps that entirely; watchlist_curated_us_tuple below
+    # does the actual comma-splitting. Matches the fixed 4-symbol watchlist every
+    # prior milestone shipped with, so existing behaviour is unchanged by default.
+    watchlist_curated_us: str = "SPY,AAPL,MSFT,GOOGL"
+    watchlist_curated_asx: str = "STW.AX,BHP.AX,CBA.AX,CSL.AX"
+    watchlist_max_symbols: int = Field(default=10, gt=0)
+    watchlist_min_avg_volume: int = Field(default=100_000, ge=0)
+
     # --- Logging -----------------------------------------------------------
     log_level: str = "INFO"
+
+    @property
+    def watchlist_curated_us_tuple(self) -> tuple[str, ...]:
+        return tuple(s.strip() for s in self.watchlist_curated_us.split(",") if s.strip())
+
+    @property
+    def watchlist_curated_asx_tuple(self) -> tuple[str, ...]:
+        return tuple(s.strip() for s in self.watchlist_curated_asx.split(",") if s.strip())
 
     @property
     def is_live(self) -> bool:

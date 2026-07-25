@@ -120,12 +120,12 @@ class LocalEngine:
         self,
         session: requests.Session | None = None,
         base_url: str | None = None,
-        model: str = "llama3",
+        model: str | None = None,
         settings: Settings | None = None,
     ) -> None:
         settings = settings or Settings()
         self.base_url = base_url or settings.local_llm_base_url
-        self.model = model
+        self.model = model or settings.local_llm_model
         self._session = session or requests.Session()
 
     async def complete(

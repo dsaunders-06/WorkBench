@@ -1,6 +1,7 @@
-"""Drives the main window and all six real screens with a demo Runtime
+"""Drives the main window and all eight real screens with a demo Runtime
 built on mocks/synthetic sources (spec §K smoke test) - the placeholder-era
-smoke test upgraded once M9 wired real data into every screen.
+smoke test upgraded once M9 wired six screens to real data and M10 finished
+the remaining two (Screener, Settings).
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ from qat.presentation.main_window import MainWindow
 from qat.presentation.regime_monitor import RegimeMonitorScreen
 from qat.presentation.risk_console import RiskConsoleScreen
 from qat.presentation.runtime import Runtime
+from qat.presentation.screener import ScreenerScreen
+from qat.presentation.settings import SettingsScreen
 from qat.presentation.workbench import WorkbenchScreen
 
 _EXPECTED_TABS = [
@@ -51,7 +54,7 @@ def test_main_window_shows_live_banner_when_live(qtbot):
     assert "LIVE" in banner.text()
 
 
-def test_all_six_real_screens_construct_without_error(qtbot):
+def test_all_eight_real_screens_construct_without_error(qtbot):
     runtime = _build_runtime()
 
     for screen_cls in (
@@ -61,6 +64,8 @@ def test_all_six_real_screens_construct_without_error(qtbot):
         RiskConsoleScreen,
         AiAdvisorScreen,
         BlotterScreen,
+        ScreenerScreen,
+        SettingsScreen,
     ):
         screen = screen_cls(runtime)
         qtbot.addWidget(screen)
