@@ -222,8 +222,19 @@ implementation so the domain core is independently testable.
   orders. It's always visible and colour-coded on the Risk Console
   (`presentation/risk_console.py`), and a single click can trip or reset it.
 - The Order Blotter (`presentation/blotter.py`) never calls `OMS.sign_off()`
-  except from inside a confirmed modal dialog - selecting a pending order
-  and clicking Sign Off always asks first.
+  except from inside a confirmed modal dialog - selecting pending orders
+  and clicking Sign Off always asks first. Bulk sign-off is supported, but
+  the dialog itemises every order it is about to transmit, so approving a
+  batch stays an informed decision; each order is still transmitted through
+  the same individual `sign_off()` call.
+- **Long-only by default.** Strategies emit a directional signal on every
+  tick for as long as their condition holds, so `SignalToOrderBridge`
+  treats a signal as a *state* rather than an instruction: a symbol that
+  already has an order awaiting sign-off, or already holds the position
+  being signalled, produces no further orders. A `sell` closes an existing
+  holding (sized to what is actually held, never re-sized by the entry
+  sizer) and is otherwise dropped rather than opening a short. Set
+  `QAT_ALLOW_SHORT_SELLING=true` to opt into shorting.
 - The AI advisory layer never places, modifies or cancels an order —
   `AIAdvisoryService` has no reference to `OMS` or a broker at all — and
   its output is independently re-checked against `RiskEngine` before a

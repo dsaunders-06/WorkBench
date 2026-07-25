@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     max_single_name_concentration_pct: float = Field(default=0.25, gt=0, le=1.0)
     max_sector_concentration_pct: float = Field(default=0.40, gt=0, le=1.0)
 
+    # --- Order policy (M11) --------------------------------------------------
+    # Long-only by default: a "sell" signal for a symbol with no holding is
+    # dropped rather than opening a short. Strategies emit directional signals
+    # continuously, so without this the blotter fills with sell orders for
+    # things the account never held.
+    allow_short_selling: bool = False
+
     # --- Data pipeline (M2) --------------------------------------------------
     data_dir: str = "./data"
     fred_series: tuple[str, ...] = _DEFAULT_FRED_SERIES
@@ -82,6 +89,11 @@ class Settings(BaseSettings):
     watchlist_curated_asx: str = "STW.AX,BHP.AX,CBA.AX,CSL.AX"
     watchlist_max_symbols: int = Field(default=10, gt=0)
     watchlist_min_avg_volume: int = Field(default=100_000, ge=0)
+
+    # --- Presentation (M11) ---------------------------------------------------
+    # Caps how many order rows the blotter renders at once; the underlying
+    # order history is never truncated, only the view.
+    blotter_max_rows: int = Field(default=500, gt=0)
 
     # --- Logging -----------------------------------------------------------
     log_level: str = "INFO"

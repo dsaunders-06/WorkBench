@@ -138,6 +138,42 @@ class RiskEngine:
         self.audit_log.record(decision)
         return decision
 
+    def evaluate_exit(self, symbol: str, quantity: float, price: float) -> RiskDecision:
+        """Approves closing an existing position at exactly `quantity` shares.
+
+        Deliberately skips the sizing and portfolio VaR/ES/concentration checks
+        that evaluate_order() applies: those gate *added* exposure, whereas an
+        exit reduces it - sizing a close with the Kelly/ATR sizer would sell an
+        arbitrary quantity unrelated to what is actually held, and a portfolio
+        limit breach must never be a reason to refuse to de-risk.
+
+        The kill-switch is still honoured (same semantics as every other order
+        path) and the decision is still written to the AuditLog, so "every
+        order carries an audited risk decision" remains true.
+        """
+        inputs: dict[str, Any] = {
+            "symbol": symbol,
+            "side": "sell",
+            "price": price,
+            "quantity": quantity,
+            "exit": True,
+        }
+
+        if self.kill_switch.tripped:
+            return self._reject(symbol, f"Kill-switch active: {self.kill_switch.reason}", inputs)
+        if quantity <= 0:
+            return self._reject(symbol, "Exit quantity must be positive", inputs)
+
+        decision = RiskDecision(
+            symbol=symbol,
+            approved=True,
+            final_shares=quantity,
+            reason="exit - closing existing position (entry sizing bypassed)",
+            inputs=inputs,
+        )
+        self.audit_log.record(decision)
+        return decision
+
     def _reject(self, symbol: str, reason: str, inputs: dict[str, Any]) -> RiskDecision:
         decision = RiskDecision(
             symbol=symbol, approved=False, final_shares=0.0, reason=reason, inputs=inputs

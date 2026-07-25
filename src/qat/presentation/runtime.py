@@ -179,7 +179,7 @@ class Runtime:
         risk_engine = RiskEngine(bus, kill_switch, settings=settings)
         broker = broker or MockBroker(seed=1)
         oms = OMS(broker, risk_engine, kill_switch)
-        signal_bridge = SignalToOrderBridge(bus, oms)
+        signal_bridge = SignalToOrderBridge(bus, oms, settings=settings)
 
         # The benchmark must always be streamed even if it isn't part of the
         # configured watchlist (e.g. a mega-cap category that doesn't happen

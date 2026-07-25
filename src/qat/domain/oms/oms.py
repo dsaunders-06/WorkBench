@@ -13,6 +13,7 @@ the broker. See tests/safety/test_no_order_without_signoff.py.
 from __future__ import annotations
 
 import logging
+from typing import Literal
 
 import pandas as pd
 
@@ -65,10 +66,45 @@ class OMS:
         if notional > self.max_order_notional:
             return self._new_rejected_order(candidate, decision.final_shares)
 
+        return self._new_pending_order(candidate.symbol, candidate.side, decision.final_shares)
+
+    async def submit_exit_order(self, symbol: str, quantity: float, price: float) -> Order:
+        """Closes an existing position at exactly `quantity` shares (spec §I).
+
+        Separate from submit_order() rather than a flag on it, because the two
+        size orders completely differently - an entry is sized by the risk
+        engine, an exit is sized by what is actually held. Like submit_order(),
+        this only ever creates a pending_signoff order and NEVER calls
+        broker.place_order(): sign_off() remains the sole path to the broker.
+        """
+        if self.symbol_allow_list is not None and symbol not in self.symbol_allow_list:
+            return self._new_rejected_order_for(symbol, "sell", 0.0)
+
+        decision = self.risk_engine.evaluate_exit(symbol, quantity, price)
+        if not decision.approved or decision.final_shares <= 0:
+            return self._new_rejected_order_for(symbol, "sell", 0.0)
+
+        notional = decision.final_shares * price
+        if notional > self.max_order_notional:
+            return self._new_rejected_order_for(symbol, "sell", decision.final_shares)
+
+        return self._new_pending_order(symbol, "sell", decision.final_shares)
+
+    def pending_signoff_symbols(self) -> set[str]:
+        """Symbols that already have an order awaiting the operator's decision -
+        used by SignalToOrderBridge to avoid queueing duplicates while a
+        strategy keeps re-emitting the same signal every tick."""
+        return {
+            order.symbol for order in self._orders.values() if order.status == "pending_signoff"
+        }
+
+    def _new_pending_order(
+        self, symbol: str, side: Literal["buy", "sell"], quantity: float
+    ) -> Order:
         order = Order(
-            symbol=candidate.symbol,
-            side=candidate.side,
-            quantity=decision.final_shares,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
             order_id=new_order_id(),
             status="pending_signoff",
         )
@@ -143,9 +179,14 @@ class OMS:
         return mismatch
 
     def _new_rejected_order(self, candidate: OrderCandidate, quantity: float) -> Order:
+        return self._new_rejected_order_for(candidate.symbol, candidate.side, quantity)
+
+    def _new_rejected_order_for(
+        self, symbol: str, side: Literal["buy", "sell"], quantity: float
+    ) -> Order:
         order = Order(
-            symbol=candidate.symbol,
-            side=candidate.side,
+            symbol=symbol,
+            side=side,
             quantity=quantity,
             order_id=new_order_id(),
             status="rejected",
