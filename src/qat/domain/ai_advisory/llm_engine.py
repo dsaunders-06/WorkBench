@@ -23,6 +23,8 @@ from qat.config import Settings
 from qat.security import get_secret
 
 _TOOL_NAME = "submit_recommendation"
+# Strongest structured-output guarantee first; see LocalEngine._post_negotiated.
+_RESPONSE_FORMAT_MODES = ("json_schema", "json_object", "text")
 
 SchemaT = TypeVar("SchemaT", bound=BaseModel)
 
@@ -115,6 +117,22 @@ class AnthropicEngine:
         )
 
 
+def normalize_openai_base_url(base_url: str) -> str:
+    """Strips trailing slashes and appends the "/v1" path segment when absent.
+
+    Every OpenAI-compatible server this app targets (LM Studio, Ollama, vLLM)
+    serves under /v1, but it is easy to configure just "http://localhost:8000"
+    - and LM Studio answers a POST to the resulting /chat/completions with
+    HTTP *200* carrying an {"error": ...} body rather than a 404, so the
+    mistake would otherwise sail past raise_for_status() and only surface as
+    a confusing KeyError deeper in the parser.
+    """
+    cleaned = base_url.rstrip("/")
+    if not cleaned:
+        return cleaned
+    return cleaned if cleaned.rsplit("/", 1)[-1] == "v1" else f"{cleaned}/v1"
+
+
 class LocalEngine:
     def __init__(
         self,
@@ -124,9 +142,10 @@ class LocalEngine:
         settings: Settings | None = None,
     ) -> None:
         settings = settings or Settings()
-        self.base_url = base_url or settings.local_llm_base_url
+        self.base_url = normalize_openai_base_url(base_url or settings.local_llm_base_url)
         self.model = model or settings.local_llm_model
         self._session = session or requests.Session()
+        self._response_format_mode: str | None = None
 
     async def complete(
         self, system_prompt: str, user_prompt: str, schema: type[SchemaT], max_retries: int = 1
@@ -135,19 +154,12 @@ class LocalEngine:
         current_user_prompt = user_prompt
 
         for _ in range(max_retries + 1):
-            payload = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": current_user_prompt},
-                ],
-                "response_format": {"type": "json_object"},
-                "stream": False,
-            }
-            response_data = await asyncio.to_thread(self._post, payload)
-            content = response_data["choices"][0]["message"]["content"]
+            response_data = await asyncio.to_thread(
+                self._post_negotiated, system_prompt, current_user_prompt, schema
+            )
+            content = _extract_choice_content(response_data, self.base_url)
             try:
-                parsed = json.loads(content)
+                parsed = json.loads(_strip_code_fences(content))
                 return schema.model_validate(parsed)
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = exc
@@ -162,11 +174,107 @@ class LocalEngine:
             f"{max_retries + 1} attempt(s): {last_error}"
         )
 
+    def _post_negotiated(
+        self, system_prompt: str, user_prompt: str, schema: type[SchemaT]
+    ) -> dict[str, Any]:
+        """Posts a completion, negotiating the structured-output mode.
+
+        Servers disagree on this: current LM Studio accepts only
+        "json_schema" or "text" and rejects "json_object" with HTTP 400,
+        while Ollama supports "json_object". Rather than force one, try the
+        strongest option first and step down on a 400, remembering whatever
+        worked so the negotiation costs at most one wasted call per process.
+        """
+        last_http_error: requests.HTTPError | None = None
+        for mode in self._modes_to_try():
+            payload: dict[str, Any] = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "stream": False,
+            }
+            response_format = _response_format_for(mode, schema)
+            if response_format is not None:
+                payload["response_format"] = response_format
+
+            try:
+                response_data = self._post(payload)
+            except requests.HTTPError as exc:
+                status = exc.response.status_code if exc.response is not None else None
+                if status == 400:  # likely an unsupported response_format - step down
+                    last_http_error = exc
+                    continue
+                raise
+            self._response_format_mode = mode
+            return response_data
+
+        raise LLMResponseError(
+            f"Local LLM at {self.base_url} rejected every structured-output mode "
+            f"({', '.join(_RESPONSE_FORMAT_MODES)}). Last error: {last_http_error}"
+        )
+
+    def _modes_to_try(self) -> tuple[str, ...]:
+        if self._response_format_mode is None:
+            return _RESPONSE_FORMAT_MODES
+        remaining = tuple(m for m in _RESPONSE_FORMAT_MODES if m != self._response_format_mode)
+        return (self._response_format_mode, *remaining)
+
     def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
         response = self._session.post(f"{self.base_url}/chat/completions", json=payload, timeout=60)
         response.raise_for_status()
         result: dict[str, Any] = response.json()
         return result
+
+
+def _response_format_for(mode: str, schema: type[BaseModel]) -> dict[str, Any] | None:
+    if mode == "json_schema":
+        return {
+            "type": "json_schema",
+            "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()},
+        }
+    if mode == "json_object":
+        return {"type": "json_object"}
+    return None  # "text" - rely on the prompt plus this engine's own parse/retry
+
+
+def _strip_code_fences(content: str) -> str:
+    """Unwraps ```json ... ``` fencing.
+
+    Without constrained decoding a chat model very often returns its JSON
+    inside a markdown code fence, which json.loads then rejects - so strip it
+    rather than burning a retry on a response that was substantively correct.
+    """
+    text = content.strip()
+    if not text.startswith("```"):
+        return text
+    without_open = text[3:]
+    if without_open[:4].lower().startswith("json"):
+        without_open = without_open[4:]
+    closing = without_open.rfind("```")
+    return (without_open[:closing] if closing != -1 else without_open).strip()
+
+
+def _extract_choice_content(response_data: dict[str, Any], base_url: str) -> str:
+    """Pulls choices[0].message.content out of an OpenAI-shaped response,
+    raising a diagnosable error rather than a bare KeyError/IndexError when
+    the server answered with something else (a wrong endpoint, an auth
+    failure, or a provider-specific error body returned with HTTP 200)."""
+    try:
+        content = response_data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        detail = response_data.get("error") if isinstance(response_data, dict) else None
+        raise LLMResponseError(
+            f"Local LLM at {base_url} did not return an OpenAI-shaped completion "
+            f"({exc!r}). Server said: {detail or response_data!r:.300}. Check that the "
+            f"base URL, model name, and server are correct."
+        ) from exc
+    if not isinstance(content, str):
+        raise LLMResponseError(
+            f"Local LLM at {base_url} returned a non-text completion content: {content!r:.200}"
+        )
+    return content
 
 
 class DemoLLMEngine:

@@ -131,7 +131,13 @@ producing real responses after a restart.
 Local LLM support targets **LM Studio** by default (`http://localhost:1234/v1`)
 but works with any OpenAI-compatible server, Ollama included — just point
 "LM Studio base URL" at Ollama's own URL (typically `http://localhost:11434/v1`)
-and set the model name to match what you've loaded.
+and set the model name to match what you've loaded. The `/v1` path segment is
+appended automatically if you leave it off, and the structured-output mode is
+negotiated per server (`json_schema`, falling back to `json_object`, then
+plain text), since servers disagree on which they accept. Use **Test
+Connection** to confirm a setup before restarting: it runs a real completion,
+not just a reachability ping, so a wrong URL or an unreachable server is
+caught there rather than showing up later as a request that does nothing.
 
 **Market & watchlist.** Choose US or ASX, a category (curated / index ETFs /
 mega-cap), the max number of symbols to track, and a minimum average daily

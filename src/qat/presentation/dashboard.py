@@ -6,6 +6,7 @@ proposes, the human disposes; nothing here auto-applies anything.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pandas as pd
 import pyqtgraph as pg
@@ -23,6 +24,8 @@ from PySide6.QtWidgets import (
 from qat.domain.events import RegimeEvent
 from qat.presentation.runtime import Runtime
 from qat.presentation.widgets import KpiTile
+
+logger = logging.getLogger(__name__)
 
 _REFRESH_INTERVAL_MS = 2000
 _MAX_EQUITY_POINTS = 500
@@ -75,7 +78,16 @@ class DashboardScreen(QWidget):
         self._timer.start(_REFRESH_INTERVAL_MS)
 
     def _schedule_refresh(self) -> None:
-        asyncio.ensure_future(self._refresh())
+        asyncio.ensure_future(self._refresh_guarded())
+
+    async def _refresh_guarded(self) -> None:
+        """Timer-driven, so an exception here would otherwise vanish into an
+        un-awaited Task and leave the tiles silently frozen at stale values."""
+        try:
+            await self._refresh()
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+            logger.exception("Dashboard refresh failed")
+            self.regime_header.setText(f"Dashboard refresh failed: {exc}")
 
     async def _refresh(self) -> None:
         account = await self.runtime.broker.account()

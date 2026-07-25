@@ -15,6 +15,7 @@ synthetic_bars.generate_daily_bars + the existing compute_trend feature
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -35,6 +36,8 @@ from qat.data.features import compute_trend
 from qat.data.fundamentals import SECTORS
 from qat.presentation.runtime import Runtime
 from qat.presentation.synthetic_bars import generate_daily_bars
+
+logger = logging.getLogger(__name__)
 
 _MARKETS = ("US", "ASX")
 _CATEGORIES = ("curated", "etf", "megacap")
@@ -196,6 +199,9 @@ class ScreenerScreen(QWidget):
 
             self._render_results(rows)
             self.status_label.setText(f"{len(rows)} of {len(symbols)} candidates matched.")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+            logger.exception("Screener run failed")
+            self.status_label.setText(f"Screen failed: {exc}")
         finally:
             self.run_button.setEnabled(True)
 

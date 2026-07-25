@@ -13,6 +13,7 @@ assert sign_off is/isn't reached, without driving real Qt dialog widgets.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -29,6 +30,8 @@ from PySide6.QtWidgets import (
 
 from qat.data.broker.adapter import Order
 from qat.presentation.runtime import Runtime
+
+logger = logging.getLogger(__name__)
 
 _REFRESH_INTERVAL_MS = 2000
 _PAPER_STYLE = "background-color: #1b5e20; color: white; padding: 6px; font-weight: bold;"
@@ -111,6 +114,11 @@ class BlotterScreen(QWidget):
         self.sign_off_button.setEnabled(pending)
         self.reject_button.setEnabled(pending)
 
+    def _show_error(self, message: str) -> None:
+        """Kept as its own method for the same reason as _confirm: tests can
+        monkeypatch it instead of driving a real modal dialog."""
+        QMessageBox.warning(self, "Order action failed", message)
+
     def _confirm(self, message: str) -> bool:
         result = QMessageBox.question(
             self,
@@ -133,7 +141,13 @@ class BlotterScreen(QWidget):
         asyncio.ensure_future(self._do_sign_off(order.order_id))
 
     async def _do_sign_off(self, order_id: str) -> None:
-        await self.runtime.oms.sign_off(order_id, _OPERATOR)
+        try:
+            await self.runtime.oms.sign_off(order_id, _OPERATOR)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the operator below
+            # A silently failed sign-off is dangerous: the operator would be
+            # left unsure whether the order reached the broker or not.
+            logger.exception("Sign-off failed for order %s", order_id)
+            self._show_error(f"Sign-off failed for order {order_id}:\n\n{exc}")
         self._timer_refresh()
 
     def _on_reject_clicked(self) -> None:
@@ -149,5 +163,9 @@ class BlotterScreen(QWidget):
         asyncio.ensure_future(self._do_reject(order.order_id))
 
     async def _do_reject(self, order_id: str) -> None:
-        await self.runtime.oms.reject_order(order_id, _OPERATOR, "rejected via blotter")
+        try:
+            await self.runtime.oms.reject_order(order_id, _OPERATOR, "rejected via blotter")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the operator below
+            logger.exception("Reject failed for order %s", order_id)
+            self._show_error(f"Reject failed for order {order_id}:\n\n{exc}")
         self._timer_refresh()

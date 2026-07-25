@@ -66,6 +66,34 @@ async def test_sign_off_never_called_without_dialog_confirmation(qtbot):
     assert runtime.oms.get_order(order.order_id).status == "pending_signoff"
 
 
+async def test_sign_off_failure_is_reported_not_swallowed(qtbot):
+    """A sign-off that fails at the broker must never look like nothing
+    happened - the operator would not know whether it reached the broker."""
+    runtime = Runtime.build_demo(settings=Settings(_env_file=None))
+    order = await _build_pending_order(runtime)
+
+    screen = BlotterScreen(runtime)
+    qtbot.addWidget(screen)
+    screen._timer_refresh()
+
+    async def failing_sign_off(order_id: str, operator: str) -> Order:
+        raise RuntimeError("broker connection lost")
+
+    runtime.oms.sign_off = failing_sign_off  # type: ignore[method-assign]
+    errors: list[str] = []
+    screen._show_error = errors.append  # type: ignore[method-assign]
+    screen._confirm = lambda message: True
+
+    screen.orders_table.selectRow(0)
+    screen._on_sign_off_clicked()
+    await asyncio.sleep(0.05)
+
+    assert len(errors) == 1
+    assert "broker connection lost" in errors[0]
+    # The order must stay actionable rather than silently appearing done.
+    assert runtime.oms.get_order(order.order_id).status == "pending_signoff"
+
+
 async def test_sign_off_called_after_dialog_confirms(qtbot):
     runtime = Runtime.build_demo(settings=Settings(_env_file=None))
     order = await _build_pending_order(runtime)

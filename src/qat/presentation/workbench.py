@@ -17,6 +17,7 @@ reproducible run to run.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pandas as pd
 import pyqtgraph as pg
@@ -40,6 +41,8 @@ from qat.domain.backtester.vectorized_engine import VectorizedBacktester
 from qat.presentation.runtime import Runtime
 from qat.presentation.synthetic_bars import generate_daily_bars
 from qat.presentation.widgets import KpiTile
+
+logger = logging.getLogger(__name__)
 
 _PERCENT_METRICS = {"cagr", "volatility", "max_drawdown", "win_rate", "var_95"}
 _METRICS_PER_ROW = 5
@@ -148,12 +151,22 @@ class WorkbenchScreen(QWidget):
             mc_result = run_monte_carlo(result.trades, starting_equity=backtester.starting_equity)
             self._render_monte_carlo(mc_result.paths)
 
-            await self._render_ai_note(symbol, strategy.name, result, signal_series)
+            # The AI note is commentary on a backtest that already succeeded -
+            # a failing/misconfigured LLM must not discard the results above,
+            # but it must be visible rather than silently doing nothing.
+            try:
+                await self._render_ai_note(symbol, strategy.name, result, signal_series)
+            except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+                logger.exception("AI robustness note failed")
+                self.ai_note_label.setText(f"AI note unavailable - {exc}")
 
             self.deploy_button.setText("Deploy to Paper")
             self.deploy_button.setEnabled(strategy not in self.runtime.strategy_engine.strategies)
             if strategy in self.runtime.strategy_engine.strategies:
                 self.deploy_button.setText(f"Deployed: {strategy_name} ✓")
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+            logger.exception("Backtest failed")
+            self.status_label.setText(f"Backtest failed: {exc}")
         finally:
             self.run_button.setEnabled(True)
 

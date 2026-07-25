@@ -29,7 +29,13 @@ from qat.data.feature_engine import FeatureEngine
 from qat.data.fundamentals import FundamentalsSource, MockFundamentalsSource
 from qat.data.macro_fred import MacroDataSource, MacroFeed, MockMacroSource
 from qat.data.market_data import MarketDataFeed, MarketDataSource, SyntheticMarketDataSource
-from qat.domain.ai_advisory.llm_engine import AnthropicEngine, DemoLLMEngine, LLMEngine, LocalEngine
+from qat.domain.ai_advisory.llm_engine import (
+    AnthropicEngine,
+    DemoLLMEngine,
+    LLMEngine,
+    LocalEngine,
+    normalize_openai_base_url,
+)
 from qat.domain.ai_advisory.router import LLMRouter
 from qat.domain.ai_advisory.service import AIAdvisoryService
 from qat.domain.bus import EventBus
@@ -60,7 +66,10 @@ from qat.security import get_secret
 
 logger = logging.getLogger(__name__)
 
-_REACHABILITY_TIMEOUT_SECONDS = 2.0
+# Generous: a local server that is loading/holding a large model can take a
+# couple of seconds just to answer /models, and timing out here silently
+# downgrades the user's chosen provider to the canned demo engine.
+_REACHABILITY_TIMEOUT_SECONDS = 10.0
 
 
 def default_strategies() -> list[Strategy]:
@@ -85,7 +94,8 @@ def default_strategies() -> list[Strategy]:
 
 def _local_llm_reachable(base_url: str) -> bool:
     try:
-        response = requests.get(f"{base_url}/models", timeout=_REACHABILITY_TIMEOUT_SECONDS)
+        normalized = normalize_openai_base_url(base_url)
+        response = requests.get(f"{normalized}/models", timeout=_REACHABILITY_TIMEOUT_SECONDS)
         return response.ok
     except requests.RequestException:
         return False

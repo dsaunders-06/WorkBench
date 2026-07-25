@@ -47,6 +47,7 @@ class StrategyEngine:
         self.max_history = max_history
         self._history: dict[str, list[dict[str, Any]]] = {}
         self._fundamentals_cache: dict[str, FundamentalSnapshot] = {}
+        self._context_cache: dict[str, SymbolContext] = {}
         self._current_regime: Regime = default_regime
 
     async def start(self) -> None:
@@ -78,25 +79,33 @@ class StrategyEngine:
         if len(history) > self.max_history:
             del history[: len(history) - self.max_history]
 
+        if not self.strategies:
+            # Nothing is deployed, so no snapshot is needed - skip the whole
+            # feature rebuild rather than doing it for every tick and throwing
+            # it away. History above is still recorded, so deploying a
+            # strategy later starts from a populated buffer.
+            return
+
         if event.symbol not in self._fundamentals_cache:
             self._fundamentals_cache[event.symbol] = (
                 await self.fundamentals_source.get_fundamentals(event.symbol)
             )
 
-        universe: dict[str, SymbolContext] = {}
-        for symbol, hist in self._history.items():
-            fundamentals = self._fundamentals_cache.get(symbol)
-            if fundamentals is None:
-                continue
-            bars = pd.DataFrame(hist)
-            technical = self.feature_builder.build(bars)
-            universe[symbol] = SymbolContext(
-                symbol=symbol, bars=bars, technical=technical, fundamentals=fundamentals
-            )
-
-        if event.symbol not in universe:
+        # Only the ticked symbol's bars changed, so only its context needs
+        # rebuilding; every peer's cached context is still current. Rebuilding
+        # the whole universe per tick made this O(n^2) work per second.
+        fundamentals = self._fundamentals_cache.get(event.symbol)
+        if fundamentals is None:
             return
+        bars = pd.DataFrame(self._history[event.symbol])
+        self._context_cache[event.symbol] = SymbolContext(
+            symbol=event.symbol,
+            bars=bars,
+            technical=self.feature_builder.build(bars),
+            fundamentals=fundamentals,
+        )
 
+        universe = self._context_cache
         snapshot = FeatureSnapshot(
             symbol=event.symbol,
             as_of=event.ts,

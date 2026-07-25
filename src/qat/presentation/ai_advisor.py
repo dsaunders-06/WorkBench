@@ -13,6 +13,7 @@ other external source, not treated as part of the instruction-bearing prompt.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -28,6 +29,8 @@ from PySide6.QtWidgets import (
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.events import RegimeEvent
 from qat.presentation.runtime import Runtime
+
+logger = logging.getLogger(__name__)
 
 
 class AiAdvisorScreen(QWidget):
@@ -103,6 +106,12 @@ class AiAdvisorScreen(QWidget):
                 f"<b>Advisor</b> [{recommendation.recommendation.upper()}, "
                 f"confidence={recommendation.confidence:.0%}, risk flags: {flags}]: "
                 f"{recommendation.rationale}"
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+            logger.exception("AI advisor request failed")
+            self.conversation.append(
+                f"<b style='color:#b71c1c'>Advisor unavailable:</b> {exc}<br>"
+                "Check the AI provider settings (Settings tab), then restart the application."
             )
         finally:
             self.ask_button.setEnabled(True)

@@ -35,8 +35,7 @@ class RiskConsoleScreen(QWidget):
     def __init__(self, runtime: Runtime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.runtime = runtime
-        self._price_history: dict[str, list[float]] = dict.fromkeys(runtime.watchlist, [])
-        self._price_history = {symbol: [] for symbol in runtime.watchlist}
+        self._price_history: dict[str, list[float]] = {symbol: [] for symbol in runtime.watchlist}
 
         layout = QVBoxLayout(self)
 
@@ -63,44 +62,65 @@ class RiskConsoleScreen(QWidget):
         self.runtime.bus.subscribe(MarketDataEvent, self._on_market_data)
 
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._refresh_from_audit_log)
+        self._timer.timeout.connect(self._on_timer_tick)
         self._timer.start(_REFRESH_INTERVAL_MS)
 
+    def _on_timer_tick(self) -> None:
+        self._refresh_from_audit_log()
+        self._refresh_correlation_table()
+
     async def _on_market_data(self, event: MarketDataEvent) -> None:
-        if event.symbol not in self._price_history:
+        """Only buffers the price - recomputing correlations here would run
+        an O(n^2) pandas pass on every tick of every symbol (i.e. O(n^3) work
+        per second), which saturated the event loop at larger watchlist sizes.
+        The 2s timer does the actual refresh instead."""
+        history = self._price_history.get(event.symbol)
+        if history is None:
             return
-        history = self._price_history[event.symbol]
         history.append(event.price)
         if len(history) > _CORRELATION_WINDOW:
             del history[: len(history) - _CORRELATION_WINDOW]
-        self._refresh_correlation_table()
 
     def _refresh_correlation_table(self) -> None:
-        symbols = list(self.runtime.watchlist)
-        series = {
-            symbol: pd.Series(self._price_history[symbol]).pct_change().dropna()
-            for symbol in symbols
+        symbols = [
+            symbol
+            for symbol in self.runtime.watchlist
             if len(self._price_history[symbol]) > _MIN_POINTS_FOR_CORRELATION
-        }
-        for row, row_symbol in enumerate(symbols):
-            for col, col_symbol in enumerate(symbols):
-                if row_symbol not in series or col_symbol not in series:
-                    continue
-                aligned = pd.concat([series[row_symbol], series[col_symbol]], axis=1).dropna()
-                if len(aligned) < _MIN_POINTS_FOR_CORRELATION:
-                    continue
-                corr = aligned.iloc[:, 0].corr(aligned.iloc[:, 1])
+        ]
+        if len(symbols) < 2:
+            return
+
+        # Truncate to the shortest history so rows line up positionally, then
+        # let pandas compute the whole matrix in one vectorised pass rather
+        # than doing an individual concat+corr per symbol pair.
+        length = min(len(self._price_history[symbol]) for symbol in symbols)
+        frame = pd.DataFrame({symbol: self._price_history[symbol][-length:] for symbol in symbols})
+        # .to_numpy() once, then index positionally: pandas' .at[] scalar
+        # lookup costs ~40us, which dominated everything else at n^2 cells.
+        matrix = frame.pct_change().corr().to_numpy()
+
+        index_by_symbol = {symbol: i for i, symbol in enumerate(self.runtime.watchlist)}
+        for matrix_row, row_symbol in enumerate(symbols):
+            row = index_by_symbol[row_symbol]
+            for matrix_col, col_symbol in enumerate(symbols):
+                corr = matrix[matrix_row, matrix_col]
                 if pd.isna(corr):
                     continue
-                item = QTableWidgetItem(f"{corr:.2f}")
+                # Reuse the existing cell widget: allocating a fresh
+                # QTableWidgetItem per cell on every refresh dominated the
+                # cost on large watchlists (n^2 allocations each tick).
+                col = index_by_symbol[col_symbol]
+                item = self.correlation_table.item(row, col)
+                if item is None:
+                    item = QTableWidgetItem()
+                    self.correlation_table.setItem(row, col, item)
+                item.setText(f"{corr:.2f}")
                 intensity = int(abs(corr) * 200)
-                color = (
+                item.setBackground(
                     QColor(255, 255 - intensity, 255 - intensity)
                     if corr >= 0
                     else QColor(255 - intensity, 255 - intensity, 255)
                 )
-                item.setBackground(color)
-                self.correlation_table.setItem(row, col, item)
 
     def _refresh_from_audit_log(self) -> None:
         entries = self.runtime.risk_engine.audit_log.entries()

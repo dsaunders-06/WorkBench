@@ -15,6 +15,7 @@ riskier change than a restart.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import requests
 from PySide6.QtWidgets import (
@@ -31,7 +32,10 @@ from PySide6.QtWidgets import (
 )
 
 from qat import env_file, security
+from qat.domain.ai_advisory.llm_engine import LocalEngine, normalize_openai_base_url
 from qat.presentation.runtime import Runtime
+
+logger = logging.getLogger(__name__)
 
 _PROVIDER_LABELS = {"anthropic": "Anthropic", "local": "Local (LM Studio)", "demo": "Demo"}
 _PROVIDER_VALUES = {label: value for value, label in _PROVIDER_LABELS.items()}
@@ -39,7 +43,6 @@ _GENERAL_ORDER = ("anthropic", "local", "demo")
 _SENSITIVE_ORDER = ("local", "anthropic", "demo")
 _MARKETS = ("US", "ASX")
 _CATEGORIES = ("curated", "etf", "megacap")
-_REACHABILITY_TIMEOUT_SECONDS = 2.0
 
 
 class SettingsScreen(QWidget):
@@ -152,25 +155,44 @@ class SettingsScreen(QWidget):
     async def _test_connection(self) -> None:
         self.test_connection_button.setEnabled(False)
         self.test_connection_result.setText("Checking...")
+        self.test_connection_result.setStyleSheet("")
         base_url = self.local_base_url_input.text().strip()
+        model = self.local_model_input.text().strip()
         try:
-            reachable = await asyncio.to_thread(self._check_reachable, base_url)
+            ok, message = await asyncio.to_thread(self._check_connection, base_url, model)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+            logger.exception("Local LLM connection test failed")
+            ok, message = False, str(exc)
         finally:
             self.test_connection_button.setEnabled(True)
-        if reachable:
-            self.test_connection_result.setText("✓ reachable")
-            self.test_connection_result.setStyleSheet("color: #1b5e20;")
-        else:
-            self.test_connection_result.setText("✗ not reachable")
-            self.test_connection_result.setStyleSheet("color: #b71c1c;")
+        self.test_connection_result.setText(("✓ " if ok else "✗ ") + message)
+        self.test_connection_result.setStyleSheet(f"color: {'#1b5e20' if ok else '#b71c1c'};")
 
     @staticmethod
-    def _check_reachable(base_url: str) -> bool:
+    def _check_connection(base_url: str, model: str) -> tuple[bool, str]:
+        """Runs a real (tiny) completion rather than only pinging /models.
+
+        /models answers happily even when the base URL is missing its /v1
+        segment or the model name is wrong, so a reachability-only check
+        reported success for configurations that then failed on every actual
+        request - exactly the failure this test is meant to catch.
+        """
+        normalized = normalize_openai_base_url(base_url)
+        engine = LocalEngine(base_url=normalized, model=model or None)
         try:
-            response = requests.get(f"{base_url}/models", timeout=_REACHABILITY_TIMEOUT_SECONDS)
-            return response.ok
-        except requests.RequestException:
-            return False
+            engine._post(
+                {
+                    "model": engine.model,
+                    "messages": [{"role": "user", "content": "ping"}],
+                    "max_tokens": 1,
+                    "stream": False,
+                }
+            )
+        except requests.RequestException as exc:
+            return False, f"cannot reach {normalized}: {exc}"
+        except Exception as exc:  # noqa: BLE001 - reported verbatim to the user
+            return False, f"{normalized} rejected the request: {exc}"
+        return True, f"completions OK at {normalized} (model {engine.model!r})"
 
     def _on_save_clicked(self) -> None:
         updates = {
