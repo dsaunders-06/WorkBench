@@ -120,6 +120,38 @@ def _resolve_engine(choice: Literal["anthropic", "local", "demo"], settings: Set
     return DemoLLMEngine()
 
 
+def resolve_broker(settings: Settings) -> BrokerAdapter:
+    """Builds the configured broker, falling back to MockBroker with a logged
+    warning rather than failing to start (spec M12).
+
+    A missing key or an absent SDK is a configuration problem, not a reason to
+    leave the operator with no application - but it is never silent, because
+    quietly paper-trading against a simulator while believing you are
+    connected to a real account would be worse than either.
+    """
+    if settings.broker == "alpaca":
+        if settings.market != "US":
+            logger.warning(
+                "broker=alpaca but market=%s - Alpaca trades US equities only, so this "
+                "watchlist cannot be traded through it",
+                settings.market,
+            )
+        try:
+            from qat.data.broker.alpaca_adapter import AlpacaAdapter
+
+            return AlpacaAdapter(settings=settings)
+        except Exception as exc:  # noqa: BLE001 - degrade to mock, but loudly
+            logger.warning("Could not build the Alpaca broker (%s) - using MockBroker", exc)
+            return MockBroker(seed=1)
+    if settings.broker == "ibkr":
+        logger.warning(
+            "broker=ibkr is configured but IBAdapter needs a running Gateway/TWS and is not "
+            "auto-wired here - using MockBroker"
+        )
+        return MockBroker(seed=1)
+    return MockBroker(seed=1)
+
+
 def resolve_llm_engines(settings: Settings) -> tuple[LLMEngine, LLMEngine]:
     """Returns (anthropic_slot_engine, local_slot_engine) for LLMRouter.
     LLMRouter.choose() (domain/ai_advisory/router.py) decides which slot
@@ -177,7 +209,7 @@ class Runtime:
         kill_switch_engine = KillSwitchEngine(bus, kill_switch)
 
         risk_engine = RiskEngine(bus, kill_switch, settings=settings)
-        broker = broker or MockBroker(seed=1)
+        broker = broker or resolve_broker(settings)
         oms = OMS(broker, risk_engine, kill_switch)
         signal_bridge = SignalToOrderBridge(bus, oms, settings=settings)
 

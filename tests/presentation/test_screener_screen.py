@@ -44,13 +44,15 @@ async def test_sector_filter_only_returns_matching_sector(qtbot):
     screen = _build_screen(qtbot)
     screen.category_combo.setCurrentText("megacap")
     screen.min_avg_volume_input.setValue(0)
-    screen.sector_combo.setCurrentText("Technology")
+    # Real GICS-style sector names since M12 replaced the invented ones.
+    screen.sector_combo.setCurrentText("Information Technology")
 
     await screen._run_screen()
 
     sector_column = 1
+    assert screen.results_table.rowCount() > 0
     for row in range(screen.results_table.rowCount()):
-        assert screen.results_table.item(row, sector_column).text() == "Technology"
+        assert screen.results_table.item(row, sector_column).text() == "Information Technology"
 
 
 def test_trend_label_thresholds():

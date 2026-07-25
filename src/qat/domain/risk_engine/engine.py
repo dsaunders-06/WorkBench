@@ -73,13 +73,23 @@ class RiskEngine:
         existing_weights: dict[str, float],
         existing_returns: dict[str, pd.Series],
         sector_by_symbol: dict[str, str] | None = None,
+        available_cash: float | None = None,
     ) -> RiskDecision:
+        """`available_cash` enforces the no-leverage rule (spec M12) and is
+        always supplied by OMS, which owns the broker reference and fetches it
+        itself so no order path can omit it.
+
+        It is optional only because ai_advisory/guards.py re-verifies an AI
+        recommendation without a broker to ask; that path is advisory and can
+        never place an order, so skipping the cash check there is safe.
+        """
         inputs: dict[str, Any] = {
             "symbol": candidate.symbol,
             "side": candidate.side,
             "price": candidate.price,
             "equity": equity,
             "regime_scalar": self.regime_scalar,
+            "available_cash": available_cash,
         }
 
         if self.kill_switch.tripped:
@@ -105,6 +115,27 @@ class RiskEngine:
             inputs["resized_for_stop_budget"] = True
 
         scaled_shares = raw_shares * self.regime_scalar
+
+        # No-leverage rule (spec M12): a buy can never cost more than the cash
+        # actually available, less a reserve that can never be zero. Applies to
+        # buys only - a sell raises cash rather than consuming it, and refusing
+        # to let the account de-risk because it is short of cash would be
+        # exactly backwards.
+        if candidate.side == "buy" and available_cash is not None:
+            spendable = available_cash - self.settings.min_cash_reserve
+            affordable_shares = spendable / candidate.price if candidate.price > 0 else 0.0
+            if affordable_shares < 1:
+                return self._reject(
+                    candidate.symbol,
+                    f"Insufficient cash: ${available_cash:,.2f} available less "
+                    f"${self.settings.min_cash_reserve:,.2f} reserve affords no shares "
+                    f"at ${candidate.price:,.2f}",
+                    inputs,
+                )
+            if scaled_shares > affordable_shares:
+                scaled_shares = affordable_shares
+                inputs["resized_for_cash"] = True
+
         signed_multiplier = 1 if candidate.side == "buy" else -1
         candidate_dollar_exposure = scaled_shares * candidate.price * signed_multiplier
 

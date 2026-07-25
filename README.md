@@ -106,6 +106,27 @@ Gateway to connect to. To check it yourself:
 3. Confirm you see live (delayed, if you lack a market data subscription)
    paper-account quotes rather than a connection error.
 
+## Connecting an Alpaca paper account
+
+Settings → Broker lets you trade against a real **Alpaca paper account**
+instead of the built-in simulator: Alpaca then supplies real positions, cash
+and fills, which is what makes the no-leverage rule operate on real balances.
+Enter your API key and secret in Settings (stored in the OS keyring, never in
+`.env`), press **Test Broker Connection** to confirm it reports your actual
+cash and equity, then restart.
+
+Two caveats worth knowing:
+
+- **Alpaca is US equities only.** Selecting it while Market is set to ASX is a
+  misconfiguration — Settings shows an inline warning and the app logs one.
+- Scope is **execution and account state only**; market data still comes from
+  the configured `MarketDataSource`, so `get_market_data()` on this adapter
+  raises rather than pretending to be a price feed.
+
+Reaching Alpaca's *live* endpoint needs the same two-key gate as IBKR:
+`trading_mode='live'` **and** an explicit `live_trading_confirmed`, so real
+money can never be one config edit away.
+
 ## Configuring the AI provider and market/watchlist
 
 The **Settings** screen is the normal way to configure both of these — every
@@ -227,6 +248,17 @@ implementation so the domain core is independently testable.
   the dialog itemises every order it is about to transmit, so approving a
   batch stays an informed decision; each order is still transmitted through
   the same individual `sign_off()` call.
+- **The account can never be leveraged.** A buy is capped so its cost can
+  never exceed available cash less a minimum reserve, and cash can never be
+  fully depleted — `min_cash_reserve` is validated `> 0`, so the rule is
+  adjustable but cannot be switched off. Enforced twice: once when the
+  Risk Engine sizes the order, and again at sign-off against the *current*
+  balance. The second check is load-bearing rather than redundant, because
+  bulk sign-off can approve several individually-affordable orders that
+  collectively overdraw the account; those are rejected rather than silently
+  resized, since quietly changing a quantity a human just approved would
+  defeat the approval. Sells are exempt — they raise cash, and refusing to
+  let the account de-risk because it is short of cash would be backwards.
 - **Long-only by default.** Strategies emit a directional signal on every
   tick for as long as their condition holds, so `SignalToOrderBridge`
   treats a signal as a *state* rather than an instruction: a symbol that

@@ -56,8 +56,17 @@ class OMS:
         if self.kill_switch.tripped:
             return self._new_rejected_order(candidate, 0.0)
 
+        # OMS owns the broker reference, so it fetches cash itself rather than
+        # trusting every caller to pass it - a no-leverage rule that a caller
+        # can bypass by omission is not a rule (spec M12).
+        account = await self.broker.account()
         decision = self.risk_engine.evaluate_order(
-            candidate, equity, existing_weights, existing_returns, sector_by_symbol
+            candidate,
+            equity,
+            existing_weights,
+            existing_returns,
+            sector_by_symbol,
+            available_cash=account.cash,
         )
         if not decision.approved or decision.final_shares <= 0:
             return self._new_rejected_order(candidate, 0.0)
@@ -123,6 +132,29 @@ class OMS:
             logger.info("Sign-off blocked by kill-switch: order=%s operator=%s", order_id, operator)
             return order
 
+        # Re-check cash against the CURRENT balance, not the balance at
+        # submission (spec M12). This is load-bearing rather than belt-and-
+        # braces: with bulk sign-off, ten orders each individually affordable
+        # when submitted can collectively overdraw the account when approved
+        # together. Reject rather than resize - silently changing a quantity a
+        # human just approved would defeat the point of the approval.
+        if order.side == "buy":
+            account = await self.broker.account()
+            price = order.limit_price or order.filled_price or await self._reference_price(order)
+            cost = order.quantity * price
+            spendable = account.cash - self.risk_engine.settings.min_cash_reserve
+            if cost > spendable:
+                order.status = "rejected"
+                logger.info(
+                    "Sign-off blocked - insufficient cash: order=%s operator=%s "
+                    "cost=%.2f spendable=%.2f",
+                    order_id,
+                    operator,
+                    cost,
+                    spendable,
+                )
+                return order
+
         order.status = "transmitted"
         filled = await self.broker.place_order(order)
         self._orders[order_id] = filled
@@ -138,6 +170,18 @@ class OMS:
             filled.quantity,
         )
         return filled
+
+    async def _reference_price(self, order: Order) -> float:
+        """Best available price for costing an order that carries none of its
+        own (a market order): asks the broker for the current quote, falling
+        back to 0.0 only if the broker cannot answer - which fails *open* on
+        the cash check, so a quote outage never silently blocks trading."""
+        try:
+            quote = await self.broker.get_market_data(order.symbol)
+        except Exception:  # noqa: BLE001 - a quote failure must not break sign-off
+            logger.warning("Could not fetch a reference price for %s", order.symbol)
+            return 0.0
+        return float(quote.get("ask") or quote.get("last") or 0.0)
 
     async def reject_order(self, order_id: str, operator: str, reason: str) -> Order:
         order = self._orders[order_id]

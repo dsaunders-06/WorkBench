@@ -20,6 +20,7 @@ import logging
 import requests
 from PySide6.QtWidgets import (
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -43,6 +44,13 @@ _GENERAL_ORDER = ("anthropic", "local", "demo")
 _SENSITIVE_ORDER = ("local", "anthropic", "demo")
 _MARKETS = ("US", "ASX")
 _CATEGORIES = ("curated", "etf", "megacap")
+_BROKER_LABELS = {
+    "mock": "Simulated (built-in)",
+    "alpaca": "Alpaca paper account",
+    "ibkr": "Interactive Brokers",
+}
+_BROKER_VALUES = {label: value for value, label in _BROKER_LABELS.items()}
+_BROKERS = ("mock", "alpaca", "ibkr")
 
 
 class SettingsScreen(QWidget):
@@ -109,6 +117,7 @@ class SettingsScreen(QWidget):
         for market in _MARKETS:
             self.market_combo.addItem(market)
         self.market_combo.setCurrentText(settings.market)
+        self.market_combo.currentTextChanged.connect(self._refresh_broker_warning)
         market_form.addRow("Market:", self.market_combo)
 
         self.category_combo = QComboBox()
@@ -136,6 +145,63 @@ class SettingsScreen(QWidget):
 
         layout.addWidget(market_group)
 
+        broker_group = QGroupBox("Broker && Cash")
+        broker_form = QFormLayout(broker_group)
+
+        self.broker_combo = QComboBox()
+        for value in _BROKERS:
+            self.broker_combo.addItem(_BROKER_LABELS[value])
+        self.broker_combo.setCurrentText(_BROKER_LABELS[settings.broker])
+        self.broker_combo.currentTextChanged.connect(self._refresh_broker_warning)
+        broker_form.addRow("Broker:", self.broker_combo)
+
+        self.broker_warning = QLabel(
+            "⚠ Alpaca trades US equities only - it cannot trade an ASX watchlist. "
+            "Switch Market to US to use it."
+        )
+        self.broker_warning.setStyleSheet("color: #b71c1c;")
+        self.broker_warning.setWordWrap(True)
+        broker_form.addRow(self.broker_warning)
+
+        self.alpaca_key_input = QLineEdit()
+        self.alpaca_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.alpaca_key_input.setPlaceholderText("(leave blank to keep the existing key)")
+        broker_form.addRow("Alpaca API key:", self.alpaca_key_input)
+
+        self.alpaca_secret_input = QLineEdit()
+        self.alpaca_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
+        self.alpaca_secret_input.setPlaceholderText("(leave blank to keep the existing secret)")
+        broker_form.addRow("Alpaca secret key:", self.alpaca_secret_input)
+
+        broker_test_row = QHBoxLayout()
+        self.broker_test_button = QPushButton("Test Broker Connection")
+        self.broker_test_button.clicked.connect(self._on_test_broker_clicked)
+        self.broker_test_result = QLabel("")
+        self.broker_test_result.setWordWrap(True)
+        broker_test_row.addWidget(self.broker_test_button)
+        broker_test_row.addWidget(self.broker_test_result)
+        broker_test_row.addStretch(1)
+        broker_form.addRow(broker_test_row)
+
+        self.min_cash_reserve_input = QDoubleSpinBox()
+        self.min_cash_reserve_input.setRange(0.01, 1_000_000.0)
+        self.min_cash_reserve_input.setDecimals(2)
+        self.min_cash_reserve_input.setPrefix("$")
+        self.min_cash_reserve_input.setValue(settings.min_cash_reserve)
+        broker_form.addRow("Minimum cash reserve:", self.min_cash_reserve_input)
+
+        cash_note = QLabel(
+            "A buy is capped so it can never spend below this reserve, and can never exceed "
+            "available cash - the account cannot be leveraged. The minimum is $0.01: this "
+            "rule cannot be switched off."
+        )
+        cash_note.setStyleSheet("color: gray;")
+        cash_note.setWordWrap(True)
+        broker_form.addRow(cash_note)
+
+        layout.addWidget(broker_group)
+        self._refresh_broker_warning()
+
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self._on_save_clicked)
         layout.addWidget(self.save_button)
@@ -148,6 +214,54 @@ class SettingsScreen(QWidget):
     def _refresh_sensitive_warning(self) -> None:
         is_anthropic = self.sensitive_provider.currentText() == _PROVIDER_LABELS["anthropic"]
         self.sensitive_warning.setVisible(is_anthropic)
+
+    def _refresh_broker_warning(self) -> None:
+        is_alpaca = self.broker_combo.currentText() == _BROKER_LABELS["alpaca"]
+        is_asx = self.market_combo.currentText() == "ASX"
+        self.broker_warning.setVisible(is_alpaca and is_asx)
+
+    def _on_test_broker_clicked(self) -> None:
+        asyncio.ensure_future(self._test_broker())
+
+    async def _test_broker(self) -> None:
+        self.broker_test_button.setEnabled(False)
+        self.broker_test_result.setText("Checking...")
+        self.broker_test_result.setStyleSheet("")
+        broker = _BROKER_VALUES[self.broker_combo.currentText()]
+        # Persist any freshly typed keys first, since the adapter reads them
+        # from the keyring rather than from these fields.
+        self._save_broker_secrets()
+        try:
+            ok, message = await asyncio.to_thread(self._check_broker, broker)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+            logger.exception("Broker connection test failed")
+            ok, message = False, str(exc)
+        finally:
+            self.broker_test_button.setEnabled(True)
+        self.broker_test_result.setText(("✓ " if ok else "✗ ") + message)
+        self.broker_test_result.setStyleSheet(f"color: {'#1b5e20' if ok else '#b71c1c'};")
+
+    def _check_broker(self, broker: str) -> tuple[bool, str]:
+        if broker != "alpaca":
+            return True, f"{_BROKER_LABELS[broker]} needs no connection test"
+        from qat.data.broker.alpaca_adapter import AlpacaAdapter
+
+        adapter = AlpacaAdapter(settings=self.runtime.settings)
+        account = asyncio.run(adapter.account())
+        return True, (
+            f"connected to Alpaca {'paper' if adapter.paper else 'LIVE'} - "
+            f"cash ${account.cash:,.2f}, equity ${account.net_liquidation:,.2f}"
+        )
+
+    def _save_broker_secrets(self) -> None:
+        api_key = self.alpaca_key_input.text().strip()
+        if api_key:
+            security.set_secret("ALPACA_API_KEY", api_key)
+            self.alpaca_key_input.clear()
+        secret_key = self.alpaca_secret_input.text().strip()
+        if secret_key:
+            security.set_secret("ALPACA_SECRET_KEY", secret_key)
+            self.alpaca_secret_input.clear()
 
     def _on_test_connection_clicked(self) -> None:
         asyncio.ensure_future(self._test_connection())
@@ -208,6 +322,8 @@ class SettingsScreen(QWidget):
             "QAT_WATCHLIST_CURATED_ASX": self.curated_asx_input.text().strip(),
             "QAT_WATCHLIST_MAX_SYMBOLS": str(self.max_symbols_input.value()),
             "QAT_WATCHLIST_MIN_AVG_VOLUME": str(self.min_volume_input.value()),
+            "QAT_BROKER": _BROKER_VALUES[self.broker_combo.currentText()],
+            "QAT_MIN_CASH_RESERVE": f"{self.min_cash_reserve_input.value():.2f}",
         }
         env_file.update_env_file(updates)
 
@@ -215,5 +331,6 @@ class SettingsScreen(QWidget):
         if api_key:
             security.set_secret("ANTHROPIC_API_KEY", api_key)
             self.anthropic_key_input.clear()
+        self._save_broker_secrets()
 
         self.status_label.setText("Saved. Restart the application for changes to take effect.")

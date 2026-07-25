@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     storage_backend: Literal["sqlite", "timescale"] = "sqlite"
     database_url: str = "sqlite:///./qat.db"
 
+    # --- Broker ------------------------------------------------------------
+    # mock = in-process simulator (default, no credentials needed)
+    # alpaca = Alpaca paper account (US equities only)
+    # ibkr = Interactive Brokers Gateway/TWS
+    broker: Literal["mock", "alpaca", "ibkr"] = "mock"
+
     # --- IBKR ------------------------------------------------------------
     ibkr_host: str = "127.0.0.1"
     ibkr_port: int = 4002  # paper Gateway default; 7497 for paper TWS
@@ -52,6 +58,13 @@ class Settings(BaseSettings):
     # continuously, so without this the blotter fills with sell orders for
     # things the account never held.
     allow_short_selling: bool = False
+
+    # Cash floor that a buy may never eat into (spec M12). Two guarantees sit
+    # on this: the account can never be leveraged (a buy's notional can never
+    # exceed available cash - not configurable), and cash can never be fully
+    # depleted. gt=0 is what makes the second one structural: the reserve is
+    # tunable but cannot be set to zero, so it cannot be quietly switched off.
+    min_cash_reserve: float = Field(default=1.0, gt=0)
 
     # --- Data pipeline (M2) --------------------------------------------------
     data_dir: str = "./data"

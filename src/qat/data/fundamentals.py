@@ -13,16 +13,12 @@ import random
 from dataclasses import dataclass
 from typing import Protocol
 
-SECTORS = (
-    "Technology",
-    "Healthcare",
-    "Financials",
-    "Energy",
-    "Consumer Discretionary",
-    "Industrials",
-    "Utilities",
-    "Materials",
-)
+from qat.data import sectors
+
+# Re-exported from data.sectors so callers (the Screener's sector filter) have
+# a single source of truth, and so the values match what sector_for() actually
+# returns rather than a parallel hand-written list that can drift from it.
+SECTORS = (*sectors.SECTORS, sectors.UNKNOWN_SECTOR)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +65,9 @@ class MockFundamentalsSource:
         rng = random.Random(f"{self._seed}:{symbol}")  # nosec B311 - deterministic, not crypto
         return FundamentalSnapshot(
             symbol=symbol,
-            sector=rng.choice(SECTORS),
+            # A real classification where one exists (spec M12) - the synthetic
+            # figures below are still made up, but the sector no longer is.
+            sector=sectors.sector_for(symbol),
             eps_growth_yoy=round(rng.uniform(-0.10, 0.40), 4),
             eps_growth_accelerating=rng.random() > 0.5,
             peg_ratio=round(rng.uniform(0.3, 4.0), 2),
