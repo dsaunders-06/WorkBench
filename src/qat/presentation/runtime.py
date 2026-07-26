@@ -144,6 +144,37 @@ def resolve_market_data_source(settings: Settings) -> MarketDataSource:
     believing you are trading against real prices while running on a random
     walk would be the worst of the available outcomes.
     """
+    if settings.market_data_source == "alpaca":
+        if settings.market != "US":
+            logger.warning(
+                "market_data_source=alpaca but market=%s - Alpaca serves US equities only",
+                settings.market,
+            )
+        try:
+            from qat.data.alpaca_source import AlpacaMarketDataSource
+
+            logger.info(
+                "Using real market data (Alpaca, feed=%s, poll=%.0fs).%s",
+                settings.alpaca_data_feed,
+                settings.alpaca_poll_seconds,
+                (
+                    " IEX is a single exchange carrying a small share of consolidated volume."
+                    if settings.alpaca_data_feed == "iex"
+                    else ""
+                ),
+            )
+            return AlpacaMarketDataSource(
+                feed=settings.alpaca_data_feed,
+                poll_seconds=settings.alpaca_poll_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - degrade, but loudly
+            logger.warning(
+                "Could not build the Alpaca market data source (%s) - falling back to "
+                "SYNTHETIC data. Prices shown are not real.",
+                exc,
+            )
+        return SyntheticMarketDataSource(seed=1, interval_seconds=1.0)
+
     if settings.market_data_source == "yfinance":
         try:
             from qat.data.yfinance_source import YFinanceMarketDataSource

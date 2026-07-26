@@ -63,8 +63,15 @@ _EXECUTION_MODE_VALUES = {label: value for value, label in _EXECUTION_MODE_LABEL
 _DATA_SOURCE_LABELS = {
     "synthetic": "Simulated (random walk)",
     "yfinance": "Real market data (Yahoo, free/delayed)",
+    "alpaca": "Real market data (Alpaca, US only)",
 }
 _DATA_SOURCE_VALUES = {label: value for value, label in _DATA_SOURCE_LABELS.items()}
+_ALPACA_FEED_LABELS = {
+    "iex": "IEX - real time, single exchange (any account)",
+    "sip": "SIP - full consolidated tape (paid subscription)",
+    "delayed_sip": "Delayed SIP - consolidated, 15 min behind (free)",
+}
+_ALPACA_FEED_VALUES = {label: value for value, label in _ALPACA_FEED_LABELS.items()}
 
 
 class SettingsScreen(QWidget):
@@ -258,13 +265,32 @@ class SettingsScreen(QWidget):
         form.addRow(self.data_warning)
 
         real_note = QLabel(
-            "Real data is free, unofficial and typically delayed ~15 minutes. It is rate-limited "
-            "and can return nothing without warning - the app degrades to simulated data with a "
-            "logged warning rather than stopping."
+            "Yahoo data is free, unofficial and typically delayed ~15 minutes. It is "
+            "rate-limited and can return nothing without warning - the app degrades to "
+            "simulated data with a logged warning rather than stopping."
         )
         real_note.setStyleSheet("color: gray;")
         real_note.setWordWrap(True)
         form.addRow(real_note)
+
+        self.alpaca_feed_combo = QComboBox()
+        for label in _ALPACA_FEED_LABELS.values():
+            self.alpaca_feed_combo.addItem(label)
+        self.alpaca_feed_combo.setCurrentText(_ALPACA_FEED_LABELS[settings.alpaca_data_feed])
+        self.alpaca_feed_combo.currentTextChanged.connect(self._refresh_data_warning)
+        form.addRow("Alpaca feed:", self.alpaca_feed_combo)
+
+        self.alpaca_feed_note = QLabel(
+            "Alpaca uses the same API keys as the broker (Settings -> Broker) and serves US "
+            "equities only. <b>IEX is a single exchange</b> carrying a small share of "
+            "consolidated volume, so quotes for less liquid names can be sparse or lag the "
+            "tape. SIP is the full consolidated tape but needs a paid Algo Trader Plus "
+            "subscription - without one, those requests fail and the app falls back to "
+            "simulated data with a logged warning."
+        )
+        self.alpaca_feed_note.setStyleSheet("color: gray;")
+        self.alpaca_feed_note.setWordWrap(True)
+        form.addRow(self.alpaca_feed_note)
 
         self._refresh_data_warning()
         return group
@@ -272,6 +298,11 @@ class SettingsScreen(QWidget):
     def _refresh_data_warning(self) -> None:
         selected = _DATA_SOURCE_VALUES[self.data_source_combo.currentText()]
         self.data_warning.setVisible(selected == "synthetic")
+        # The feed picker only means anything for Alpaca, and showing it
+        # otherwise implies it affects Yahoo or the random walk.
+        is_alpaca = selected == "alpaca"
+        self.alpaca_feed_combo.setVisible(is_alpaca)
+        self.alpaca_feed_note.setVisible(is_alpaca)
 
     def _build_execution_group(self, settings: Settings) -> QGroupBox:
         """Execution mode (spec M13).
@@ -486,6 +517,7 @@ class SettingsScreen(QWidget):
             "QAT_BROKER": _BROKER_VALUES[self.broker_combo.currentText()],
             "QAT_MIN_CASH_RESERVE": f"{self.min_cash_reserve_input.value():.2f}",
             "QAT_MARKET_DATA_SOURCE": _DATA_SOURCE_VALUES[self.data_source_combo.currentText()],
+            "QAT_ALPACA_DATA_FEED": _ALPACA_FEED_VALUES[self.alpaca_feed_combo.currentText()],
             "QAT_EXECUTION_MODE": self._selected_execution_mode(),
             "QAT_AUTONOMOUS_STRATEGIES": self.autonomous_strategies_input.text().strip(),
         }

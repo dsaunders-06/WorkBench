@@ -156,7 +156,18 @@ class Settings(BaseSettings):
     # Synthetic remains the default so the demo app and the test suite are
     # unchanged and offline by default. Nothing about a strategy's behaviour on
     # synthetic prices tells you anything about its behaviour on real ones.
-    market_data_source: Literal["synthetic", "yfinance"] = "synthetic"
+    market_data_source: Literal["synthetic", "yfinance", "alpaca"] = "synthetic"
+
+    # Which Alpaca data feed to request (M17). iex is real time on any account
+    # including free paper, but is a single exchange carrying a small share of
+    # US consolidated volume. sip is the full consolidated tape and needs a
+    # paid Algo Trader Plus subscription - requesting it without one fails
+    # rather than quietly degrading. delayed_sip is consolidated but 15 minutes
+    # behind, and is available on the free tier.
+    alpaca_data_feed: Literal["iex", "sip", "delayed_sip"] = "iex"
+
+    # How often Alpaca's latest-trade endpoint is polled.
+    alpaca_poll_seconds: float = Field(default=60.0, gt=0)
 
     # Interval ticks are aggregated into OHLC bars over (M14). 60s matches the
     # finest granularity the free feed actually serves.

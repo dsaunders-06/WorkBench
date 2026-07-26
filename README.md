@@ -304,14 +304,43 @@ Settings → Market Data chooses the price source:
   ran on. Kept as the default so the app and test suite work offline, with a
   standing on-screen warning: nothing observed in this mode tells you how a
   strategy behaves on real prices.
-- **Real market data** — live daily and intraday bars via yfinance.
+- **Real market data (Yahoo)** — live daily and intraday bars via yfinance.
+  Free, unofficial, typically delayed ~15 minutes, and rate-limited. Covers
+  both US and ASX.
+- **Real market data (Alpaca)** — the feed belonging to your own Alpaca
+  account, used for both live ticks and daily bars (M17). **US equities only**;
+  selecting it with Market = ASX warns on-screen and in the log. Requires the
+  same `ALPACA_API_KEY` / `ALPACA_SECRET_KEY` keyring entries as the broker, so
+  choosing Alpaca for both means one set of credentials.
 
-Real data is free, unofficial, typically delayed ~15 minutes, and rate-limited.
-It can return nothing without warning, so the app degrades to simulated data
-with a logged warning rather than stopping — never silently. A persistently
-dead feed ends the stream deliberately, which lets the staleness detector raise
-`DataStaleEvent` and trip the kill-switch, rather than leaving the app looking
-alive while trading on nothing.
+Choosing Alpaca is what makes the prices the app trades on and the account it
+trades into come from the same venue. With Yahoo, the two disagree slightly by
+construction, and a fill price never quite matches the tick that triggered it.
+
+Alpaca serves three feeds, selectable in Settings once Alpaca is the source:
+
+| Feed | Latency | Coverage | Account |
+|---|---|---|---|
+| `iex` (default) | real time | single exchange, a small share of US consolidated volume | any, including free paper |
+| `sip` | real time | full consolidated tape | paid Algo Trader Plus |
+| `delayed_sip` | 15 min | full consolidated tape | free tier |
+
+`iex` is the default because it is the only real-time option a free paper
+account can actually use. It is a genuine trade print, not a synthetic price —
+but it is one exchange, so thinly-traded names will show gaps that the
+consolidated tape would not. Requesting `sip` without the subscription fails
+outright rather than quietly degrading, which is the correct behaviour: you
+find out immediately instead of trading on data you did not get.
+
+Ticks come from the latest *trade* rather than a quote midpoint, so the price
+is one that actually executed and the volume is the real trade size rather than
+an invented figure.
+
+Any real feed can return nothing without warning, so the app degrades to
+simulated data with a logged warning rather than stopping — never silently. A
+persistently dead feed ends the stream deliberately, which lets the staleness
+detector raise `DataStaleEvent` and trip the kill-switch, rather than leaving
+the app looking alive while trading on nothing.
 
 **Ticks are aggregated into real OHLC bars** (`data/bars.py`). Up to M13 each
 tick was recorded as a single-point bar with `open == high == low == close`,
