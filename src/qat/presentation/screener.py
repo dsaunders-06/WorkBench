@@ -48,6 +48,7 @@ _CATEGORIES = ("curated", "etf", "megacap")
 _TREND_BARS = 40
 _TREND_WINDOW = 20
 _TREND_FLAT_THRESHOLD = 0.005
+NOT_AVAILABLE = "—"  # em dash: this figure does not exist, as against a measured zero
 _COLUMNS = (
     "Symbol",
     "Name",
@@ -73,10 +74,12 @@ class ScreenResult:
     sector: str
     price: float
     avg_volume: int
-    eps_growth_yoy: float
-    peg_ratio: float
-    dividend_yield: float
-    roe: float
+    # Optional since M18: a real vendor cannot answer every field for every
+    # symbol, and an index ETF has no earnings growth or return on equity.
+    eps_growth_yoy: float | None
+    peg_ratio: float | None
+    dividend_yield: float | None
+    roe: float | None
     trend: str
 
 
@@ -182,6 +185,12 @@ class ScreenerScreen(QWidget):
             max_peg = self.max_peg_input.value()
             min_div_yield = self.min_div_yield_input.value() / 100.0
             min_avg_volume = self.min_avg_volume_input.value()
+            # A threshold sitting on its own widest bound is "no filter", and
+            # is read off the widget rather than hard-coded so the two cannot
+            # drift apart.
+            eps_off = self.min_eps_growth_input.value() <= self.min_eps_growth_input.minimum()
+            peg_off = self.max_peg_input.value() >= self.max_peg_input.maximum()
+            yield_off = self.min_div_yield_input.value() <= self.min_div_yield_input.minimum()
 
             rows: list[ScreenResult] = []
             for symbol in symbols:
@@ -194,11 +203,17 @@ class ScreenerScreen(QWidget):
                 )
                 if sector_filter != "All" and fundamentals.sector != sector_filter:
                     continue
-                if fundamentals.eps_growth_yoy < min_eps_growth:
+                # A symbol that cannot answer a filter you have set does not
+                # match it - an ETF with no EPS growth is not a company growing
+                # at 15%. But a filter parked at its widest setting is not a
+                # filter, and dropping every ETF from the default view would
+                # look like a bug rather than a screen. So: unanswerable fails,
+                # unless the threshold is disengaged.
+                if _excluded(fundamentals.eps_growth_yoy, min_eps_growth, eps_off, above=True):
                     continue
-                if fundamentals.peg_ratio > max_peg:
+                if _excluded(fundamentals.peg_ratio, max_peg, peg_off, above=False):
                     continue
-                if fundamentals.dividend_yield < min_div_yield:
+                if _excluded(fundamentals.dividend_yield, min_div_yield, yield_off, above=True):
                     continue
 
                 bars = await self.runtime.history_source.get_daily_bars(symbol, n_bars=_TREND_BARS)
@@ -238,15 +253,40 @@ class ScreenerScreen(QWidget):
                 result.sector,
                 f"{result.price:.2f}",
                 f"{result.avg_volume:,}",
-                f"{result.eps_growth_yoy:.2%}",
-                f"{result.peg_ratio:.2f}",
-                f"{result.dividend_yield:.2%}",
-                f"{result.roe:.2%}",
+                _percent(result.eps_growth_yoy),
+                _number(result.peg_ratio),
+                _percent(result.dividend_yield),
+                _percent(result.roe),
                 result.trend,
             )
             for col_index, value in enumerate(values):
                 self.results_table.setItem(row_index, col_index, QTableWidgetItem(value))
         self.results_table.resizeColumnsToContents()
+
+
+def _excluded(value: float | None, threshold: float, disengaged: bool, *, above: bool) -> bool:
+    """Should this symbol be dropped for failing the threshold?
+
+    `above=True` means the value must be at least the threshold.
+    """
+    if disengaged:
+        return False
+    if value is None:
+        return True  # unanswerable is not a match
+    return value < threshold if above else value > threshold
+
+
+def _percent(value: float | None) -> str:
+    """Missing renders as an em dash, never 0.00%.
+
+    Zero is a measurement - a company that paid no dividend. Showing it for an
+    ETF that simply has no figure would make the two indistinguishable.
+    """
+    return NOT_AVAILABLE if value is None else f"{value:.2%}"
+
+
+def _number(value: float | None) -> str:
+    return NOT_AVAILABLE if value is None else f"{value:.2f}"
 
 
 def _trend_label(trend_pct: float) -> str:

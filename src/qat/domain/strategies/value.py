@@ -13,7 +13,12 @@ from typing import Any
 from qat.data.fundamentals import FundamentalSnapshot
 from qat.domain.events import SignalEvent
 from qat.domain.regime import Regime
-from qat.domain.strategies.base import FeatureSnapshot
+from qat.domain.strategies.base import FeatureSnapshot, unavailable
+
+# Every term of the cheapness composite plus the quality floor. EV/EBIT is not
+# required: _cheapness already treats a missing one as contributing nothing,
+# which is a defensible reading of "no enterprise value published".
+_REQUIRED = ("roic", "book_to_market", "earnings_yield", "fcf_yield")
 
 
 class ValueStrategy:
@@ -32,12 +37,25 @@ class ValueStrategy:
     @staticmethod
     def _cheapness(f: FundamentalSnapshot) -> float:
         inverse_ev_ebit = 1.0 / f.ev_to_ebit if f.ev_to_ebit else 0.0
-        return f.book_to_market + f.earnings_yield + f.fcf_yield + inverse_ev_ebit
+        # Non-None by construction: callers gate on _REQUIRED first.
+        return (
+            (f.book_to_market or 0.0)
+            + (f.earnings_yield or 0.0)
+            + (f.fcf_yield or 0.0)
+            + inverse_ev_ebit
+        )
 
     def on_features(self, snapshot: FeatureSnapshot) -> list[SignalEvent]:
         scores: dict[str, float] = {}
         for symbol, context in snapshot.universe.items():
-            if context.fundamentals.roic >= self.min_roic:
+            # A symbol we cannot value is excluded from the ranking entirely,
+            # rather than scored as if it were expensive. Ranking it at zero
+            # would let a genuinely cheap company be beaten by an ETF that has
+            # no book value to compare.
+            if unavailable(self.name, context, *_REQUIRED):
+                continue
+            roic = context.fundamentals.roic
+            if roic is not None and roic >= self.min_roic:
                 scores[symbol] = self._cheapness(context.fundamentals)
         if snapshot.symbol not in scores or len(scores) < 2:
             return []

@@ -10,7 +10,9 @@ from typing import Any
 
 from qat.domain.events import SignalEvent
 from qat.domain.regime import Regime
-from qat.domain.strategies.base import FeatureSnapshot
+from qat.domain.strategies.base import FeatureSnapshot, unavailable
+
+_REQUIRED = ("eps_growth_yoy", "roic", "peg_ratio")
 
 
 class GrowthStrategy:
@@ -34,22 +36,26 @@ class GrowthStrategy:
         }
 
     def on_features(self, snapshot: FeatureSnapshot) -> list[SignalEvent]:
+        if unavailable(self.name, snapshot.context, *_REQUIRED):
+            return []
         f = snapshot.context.fundamentals
+        eps_growth, roic, peg = f.eps_growth_yoy, f.roic, f.peg_ratio
+        if eps_growth is None or roic is None or peg is None:
+            return []  # unreachable after the guard; narrows the optionals
+
         passes = (
-            f.eps_growth_yoy >= self.min_eps_growth
-            and f.roic >= self.min_roic
-            and 0 < f.peg_ratio <= self.max_peg
+            eps_growth >= self.min_eps_growth and roic >= self.min_roic and 0 < peg <= self.max_peg
         )
         if not passes:
             return []
-        conviction = min(1.0, f.eps_growth_yoy / 0.40)
+        conviction = min(1.0, eps_growth / 0.40)
         return [
             SignalEvent(
                 symbol=snapshot.symbol,
                 side="buy",
                 conviction=conviction,
                 strategy=self.name,
-                meta={"eps_growth_yoy": f.eps_growth_yoy, "roic": f.roic},
+                meta={"eps_growth_yoy": eps_growth, "roic": roic},
                 ts=snapshot.as_of,
             )
         ]

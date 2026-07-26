@@ -13,7 +13,11 @@ from typing import Any
 
 from qat.domain.events import SignalEvent
 from qat.domain.regime import ALL_REGIMES, Regime
-from qat.domain.strategies.base import FeatureSnapshot
+from qat.domain.strategies.base import FeatureSnapshot, unavailable
+
+# The fundamental half of the composite. Momentum and low-vol come from price
+# and are always computable, so they are not gated here.
+_REQUIRED = ("book_to_market", "earnings_yield", "fcf_yield", "roe", "roic", "debt_to_equity")
 
 
 class MultiFactorStrategy:
@@ -45,10 +49,25 @@ class MultiFactorStrategy:
         quality_raw: dict[str, float] = {}
         low_vol_raw: dict[str, float] = {}
 
-        for symbol, context in snapshot.universe.items():
+        # Only symbols whose fundamental factors are all available can be
+        # ranked. Letting an unmeasurable symbol through would give it the
+        # z-score mean on two of the four factors - a placeholder competing on
+        # equal terms with a measurement, and invisible in the output.
+        eligible = {
+            symbol: context
+            for symbol, context in snapshot.universe.items()
+            if not unavailable(self.name, context, *_REQUIRED)
+        }
+        if snapshot.symbol not in eligible:
+            return []
+
+        for symbol, context in eligible.items():
             f = context.fundamentals
-            value_raw[symbol] = f.book_to_market + f.earnings_yield + f.fcf_yield
-            quality_raw[symbol] = f.roe + f.roic - f.debt_to_equity / (1.0 + f.debt_to_equity)
+            value_raw[symbol] = (
+                (f.book_to_market or 0.0) + (f.earnings_yield or 0.0) + (f.fcf_yield or 0.0)
+            )
+            leverage = f.debt_to_equity or 0.0
+            quality_raw[symbol] = (f.roe or 0.0) + (f.roic or 0.0) - leverage / (1.0 + leverage)
             momentum = context.technical.get("return_1d")
             vol = context.technical.get("realized_vol")
             if momentum is not None:
@@ -62,7 +81,7 @@ class MultiFactorStrategy:
         low_vol_z = self._zscore(low_vol_raw)
 
         composite: dict[str, float] = {}
-        for symbol in snapshot.universe:
+        for symbol in eligible:
             parts = [z.get(symbol, 0.0) for z in (value_z, momentum_z, quality_z, low_vol_z)]
             composite[symbol] = sum(parts) / len(parts)
 

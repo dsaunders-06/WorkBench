@@ -72,6 +72,11 @@ _ALPACA_FEED_LABELS = {
     "delayed_sip": "Delayed SIP - consolidated, 15 min behind (free)",
 }
 _ALPACA_FEED_VALUES = {label: value for value, label in _ALPACA_FEED_LABELS.items()}
+_FUNDAMENTALS_LABELS = {
+    "mock": "Simulated (every figure invented)",
+    "yfinance": "Real company fundamentals (Yahoo)",
+}
+_FUNDAMENTALS_VALUES = {label: value for value, label in _FUNDAMENTALS_LABELS.items()}
 
 
 class SettingsScreen(QWidget):
@@ -295,6 +300,35 @@ class SettingsScreen(QWidget):
         self.alpaca_feed_note.setWordWrap(True)
         form.addRow(self.alpaca_feed_note)
 
+        self.fundamentals_combo = QComboBox()
+        for label in _FUNDAMENTALS_LABELS.values():
+            self.fundamentals_combo.addItem(label)
+        self.fundamentals_combo.setCurrentText(_FUNDAMENTALS_LABELS[settings.fundamentals_source])
+        self.fundamentals_combo.currentTextChanged.connect(self._refresh_data_warning)
+        form.addRow("Company fundamentals:", self.fundamentals_combo)
+
+        self.fundamentals_warning = QLabel(
+            "<b>Simulated fundamentals.</b> Every EPS growth, PEG, ROE and dividend figure is "
+            "generated, not reported. Nine of the fifteen strategies select on these, so on "
+            "this setting their picks carry no information about the companies."
+        )
+        self.fundamentals_warning.setStyleSheet(
+            "color: #78350f; background: #fef3c7; border: 1px solid #b45309; padding: 6px;"
+        )
+        self.fundamentals_warning.setWordWrap(True)
+        form.addRow(self.fundamentals_warning)
+
+        self.fundamentals_note = QLabel(
+            "Real fundamentals are pulled from Yahoo and cached for "
+            f"{settings.fundamentals_cache_days:g} days. Figures a company does not publish - "
+            "and an index ETF has no earnings or return on equity at all - are left empty, and "
+            "a strategy that needs one abstains on that symbol rather than guessing. "
+            "<b>Expect noticeably fewer signals</b> than on simulated data."
+        )
+        self.fundamentals_note.setStyleSheet("color: gray;")
+        self.fundamentals_note.setWordWrap(True)
+        form.addRow(self.fundamentals_note)
+
         self._refresh_data_warning()
         return group
 
@@ -306,6 +340,10 @@ class SettingsScreen(QWidget):
         is_alpaca = selected == "alpaca"
         self._data_form.setRowVisible(self.alpaca_feed_combo, is_alpaca)
         self.alpaca_feed_note.setVisible(is_alpaca)
+
+        is_mock_fundamentals = _FUNDAMENTALS_VALUES[self.fundamentals_combo.currentText()] == "mock"
+        self.fundamentals_warning.setVisible(is_mock_fundamentals)
+        self.fundamentals_note.setVisible(not is_mock_fundamentals)
 
     def _build_execution_group(self, settings: Settings) -> QGroupBox:
         """Execution mode (spec M13).
@@ -521,6 +559,7 @@ class SettingsScreen(QWidget):
             "QAT_MIN_CASH_RESERVE": f"{self.min_cash_reserve_input.value():.2f}",
             "QAT_MARKET_DATA_SOURCE": _DATA_SOURCE_VALUES[self.data_source_combo.currentText()],
             "QAT_ALPACA_DATA_FEED": _ALPACA_FEED_VALUES[self.alpaca_feed_combo.currentText()],
+            "QAT_FUNDAMENTALS_SOURCE": _FUNDAMENTALS_VALUES[self.fundamentals_combo.currentText()],
             "QAT_EXECUTION_MODE": self._selected_execution_mode(),
             "QAT_AUTONOMOUS_STRATEGIES": self.autonomous_strategies_input.text().strip(),
         }

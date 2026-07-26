@@ -15,7 +15,14 @@ from typing import Any
 
 from qat.domain.events import SignalEvent
 from qat.domain.regime import Regime
-from qat.domain.strategies.base import FeatureSnapshot
+from qat.domain.strategies.base import FeatureSnapshot, unavailable
+
+_REQUIRED = (
+    "eps_growth_yoy",
+    "eps_growth_accelerating",
+    "relative_strength_rank",
+    "institutional_ownership_pct",
+)
 
 
 class CanSlimStrategy:
@@ -46,7 +53,16 @@ class CanSlimStrategy:
 
     def on_features(self, snapshot: FeatureSnapshot) -> list[SignalEvent]:
         context = snapshot.context
+        if unavailable(self.name, context, *_REQUIRED):
+            return []
         fundamentals = context.fundamentals
+        eps_growth = fundamentals.eps_growth_yoy
+        accelerating = fundamentals.eps_growth_accelerating
+        rs_rank = fundamentals.relative_strength_rank
+        ownership = fundamentals.institutional_ownership_pct
+        if eps_growth is None or accelerating is None or rs_rank is None or ownership is None:
+            return []  # unreachable after the guard; narrows the optionals
+
         close = context.bars["close"]
         if len(close) < 2:
             return []
@@ -61,17 +77,17 @@ class CanSlimStrategy:
         market_uptrend = context.technical.get("trend_pct_above_sma", 0.0) > 0.0
 
         passes = (
-            fundamentals.eps_growth_yoy >= self.min_eps_growth
-            and fundamentals.eps_growth_accelerating
-            and fundamentals.relative_strength_rank >= self.min_rs_rank
+            eps_growth >= self.min_eps_growth
+            and accelerating
+            and rs_rank >= self.min_rs_rank
             and pct_below_high <= self.max_pct_below_52w_high
-            and fundamentals.institutional_ownership_pct >= self.min_institutional_ownership
+            and ownership >= self.min_institutional_ownership
             and market_uptrend
         )
         if not passes:
             return []
 
-        conviction = min(1.0, fundamentals.relative_strength_rank / 100.0)
+        conviction = min(1.0, rs_rank / 100.0)
         return [
             SignalEvent(
                 symbol=snapshot.symbol,
@@ -79,8 +95,8 @@ class CanSlimStrategy:
                 conviction=conviction,
                 strategy=self.name,
                 meta={
-                    "eps_growth_yoy": fundamentals.eps_growth_yoy,
-                    "rs_rank": fundamentals.relative_strength_rank,
+                    "eps_growth_yoy": eps_growth,
+                    "rs_rank": rs_rank,
                     "pct_below_52w_high": pct_below_high,
                 },
                 ts=snapshot.as_of,

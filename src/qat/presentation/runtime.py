@@ -226,6 +226,44 @@ def resolve_broker(settings: Settings) -> BrokerAdapter:
     return MockBroker(seed=1)
 
 
+def resolve_fundamentals_source(
+    settings: Settings,
+    history_source: HistoricalBarSource,
+    universe: tuple[str, ...],
+) -> FundamentalsSource:
+    """Real fundamentals when configured, the seeded mock otherwise (spec M18).
+
+    The real source is wrapped in the TTL disk cache, and given a relative
+    strength ranker built over the same universe the strategies see - the rank
+    is a percentile, so it only means anything relative to the set it was
+    measured against.
+
+    A failure to construct it degrades to the mock, loudly. The mock answers
+    every field, so a silent fallback would turn "we could not reach the
+    vendor" into a screen of confident invented figures.
+    """
+    if settings.fundamentals_source != "yfinance":
+        return MockFundamentalsSource(seed=1)
+
+    try:
+        from qat.data.fundamentals_cache import CachingFundamentalsSource, FundamentalsCache
+        from qat.data.relative_strength import UniverseRelativeStrength
+        from qat.data.yfinance_fundamentals import YFinanceFundamentalsSource
+
+        real = YFinanceFundamentalsSource(
+            relative_strength=UniverseRelativeStrength(history_source, universe)
+        )
+        cache = FundamentalsCache(settings.data_dir, ttl_days=settings.fundamentals_cache_days)
+        return CachingFundamentalsSource(real, cache)
+    except Exception as exc:  # noqa: BLE001 - degrade, but loudly
+        logger.warning(
+            "Could not build the real fundamentals source (%s) - falling back to SYNTHETIC "
+            "fundamentals. Every fundamental figure shown or traded on will be INVENTED.",
+            exc,
+        )
+        return MockFundamentalsSource(seed=1)
+
+
 def resolve_llm_engines(settings: Settings) -> tuple[LLMEngine, LLMEngine]:
     """Returns (anthropic_slot_engine, local_slot_engine) for LLMRouter.
     LLMRouter.choose() (domain/ai_advisory/router.py) decides which slot
@@ -368,7 +406,9 @@ class Runtime:
         macro = macro_source or MockMacroSource(seed=1)
         macro_feed = MacroFeed(bus, macro, settings.fred_series, poll_interval_seconds=3600.0)
 
-        fundamentals = fundamentals_source or MockFundamentalsSource(seed=1)
+        fundamentals = fundamentals_source or resolve_fundamentals_source(
+            settings, history_source, watchlist
+        )
         available_strategies = default_strategies()
         # Live-deployed set starts empty (spec §K: nothing trades until a human
         # vets it via the Workbench and clicks "Deploy to Paper") - Workbench

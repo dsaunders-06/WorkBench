@@ -8,6 +8,7 @@ list[SignalEvent] directly rather than introducing a redundant Signal type.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,6 +19,8 @@ import pandas as pd
 from qat.data.fundamentals import FundamentalSnapshot
 from qat.domain.events import SignalEvent
 from qat.domain.regime import Regime
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +46,26 @@ class FeatureSnapshot:
 
     def held_quantity(self, symbol: str | None = None) -> float:
         return float(self.positions.get(symbol or self.symbol, 0.0))
+
+
+def unavailable(strategy: str, context: SymbolContext, *names: str) -> tuple[str, ...]:
+    """The fields `strategy` needs that this symbol cannot supply (M18).
+
+    Truthy means abstain. Every fundamentals-driven strategy calls this before
+    reading a figure, because a real vendor genuinely cannot answer for every
+    symbol - an index ETF has no ROE or EPS growth - and the alternative to
+    abstaining is scoring it on a substitute nobody can distinguish from a
+    measurement afterwards.
+
+    Logged at DEBUG: with a watchlist of ETFs this fires on every symbol on
+    every tick, and an abstention is the system working, not an error.
+    """
+    absent = context.fundamentals.missing(*names)
+    if absent:
+        logger.debug(
+            "%s abstains on %s: no %s", strategy, context.symbol, ", ".join(sorted(absent))
+        )
+    return absent
 
 
 class Strategy(Protocol):

@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.0  |  Milestone M17"
+VERSION_LINE = "Version 2.1  |  Milestone M18"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -195,7 +195,7 @@ def _introduction(doc: Any) -> None:
         "mode unmistakable at all times.",
         "Human sign-off by default - a signal can become a pending order, but only an "
         "explicit, confirmed action on the Order Blotter transmits it. The optional "
-        "auto-trade mode (Section 11.5) is the single deliberate exception, is confined to "
+        "auto-trade mode (Section 11.6) is the single deliberate exception, is confined to "
         "paper accounts, and is off unless you turn it on.",
         "An always-available kill-switch - the Risk Console exposes one control that halts "
         "all new order flow immediately, and five separate conditions can trip it "
@@ -246,13 +246,19 @@ def _introduction(doc: Any) -> None:
                 "selectable per request type (Section 11.1).",
             ),
             (
+                "Real company fundamentals",
+                "Reported EPS growth, PEG, ROE and dividend figures instead of generated "
+                "ones, with strategies abstaining where a figure does not exist "
+                "(Section 11.5).",
+            ),
+            (
                 "Cash and no-leverage rule",
                 "A hard limit no configuration can disable (Section 12.2).",
             ),
             (
                 "Optional auto-trade",
                 "Per-strategy unattended execution on paper accounts, off by default and "
-                "gated by an explicit confirmation (Sections 11.5 and 12.3).",
+                "gated by an explicit confirmation (Sections 11.6 and 12.3).",
             ),
             (
                 "Order Blotter rework",
@@ -859,12 +865,12 @@ def _screener(doc: Any, figures: FigureSet) -> None:
     _callout(
         doc,
         "Which figures here are real",
-        "The price and trend columns come from the configured market data source, so they "
-        "are real when the application is configured for real data and simulated otherwise. "
-        "The fundamental columns - EPS growth, PEG, dividend yield and ROE - are generated "
-        "by a mock source in all configurations: no fundamentals vendor is wired up. Sectors "
-        "are real, from a curated map. Screen on the fundamentals to exercise the workflow, "
-        "not to pick stocks.",
+        "Every column follows its configured source. Price and trend come from the market "
+        "data source (Section 11.4); EPS growth, PEG, dividend yield and ROE come from the "
+        "fundamentals source (Section 11.6); sectors are always real, from a curated map. On "
+        "the simulated settings those figures are invented, and screening on them exercises "
+        "the workflow rather than picking stocks. A dash means the figure does not exist - "
+        "an index ETF has no return on equity - which is not the same as a measured zero.",
     )
 
 
@@ -1144,7 +1150,41 @@ def _settings(doc: Any, figures: FigureSet) -> None:
         "while trading on a price that stopped updating an hour ago.",
     )
 
-    doc.add_heading("11.5 Execution Mode", level=2)
+    doc.add_heading("11.5 Company Fundamentals", level=2)
+    doc.add_paragraph(
+        "Nine of the fifteen strategies select on company fundamentals, so this setting "
+        "decides whether their picks carry any information about the companies at all."
+    )
+    _table(
+        doc,
+        ("Source", "Description"),
+        (
+            (
+                "Simulated (default)",
+                "Every EPS growth, PEG, ROE and dividend figure is generated. A standing "
+                "amber warning is displayed while it is selected.",
+            ),
+            (
+                "Real company fundamentals (Yahoo)",
+                "Reported figures, cached for seven days by default. Free and unofficial, "
+                "with the same caveats as the Yahoo price feed.",
+            ),
+        ),
+    )
+    _callout(
+        doc,
+        "Expect fewer signals on real fundamentals",
+        "A real source cannot answer every field for every symbol, and that is usually "
+        "correct rather than a failure - an index ETF has no return on equity, and some "
+        "listings publish no PEG. A strategy that needs a figure which does not exist "
+        "abstains on that symbol instead of scoring it against a substitute. Measured on the "
+        "shipped watchlist, SPY produced fundamentals-driven buy recommendations under eight "
+        "of twelve simulated configurations; on real data it produces none, at any threshold, "
+        "because the figures genuinely are not there. A quieter Order Blotter is the setting "
+        "working, not failing.",
+    )
+
+    doc.add_heading("11.6 Execution Mode", level=2)
     _table(
         doc,
         ("Field", "Description"),
@@ -1207,6 +1247,12 @@ def _safety(doc: Any) -> None:
                 "checked against per-trade risk, portfolio Expected Shortfall, "
                 "single-name and sector concentration, aggregate risk-at-stop and a "
                 "maximum open-position count.",
+            ),
+            (
+                "Real company fundamentals",
+                "Reported EPS growth, PEG, ROE and dividend figures instead of generated "
+                "ones, with strategies abstaining where a figure does not exist "
+                "(Section 11.5).",
             ),
             (
                 "Cash and no-leverage rule",
@@ -1422,7 +1468,7 @@ def _config_reference(doc: Any) -> None:
         ("Setting", "Default", "Meaning"),
         (
             ("QAT_TRADING_MODE", "paper", "paper or live."),
-            ("QAT_EXECUTION_MODE", "recommend", "recommend or auto (Section 11.5)."),
+            ("QAT_EXECUTION_MODE", "recommend", "recommend or auto (Section 11.6)."),
             ("QAT_AUTONOMOUS_STRATEGIES", "(empty)", "Strategies cleared to auto-trade."),
             (
                 "QAT_ALLOW_AUTONOMOUS_LIVE_TRADING",
@@ -1433,6 +1479,12 @@ def _config_reference(doc: Any) -> None:
             ("QAT_BROKER", "mock", "mock, alpaca or ibkr."),
             ("QAT_MIN_CASH_RESERVE", "1.00", "The cash floor a buy may never spend below."),
             ("QAT_MARKET_DATA_SOURCE", "synthetic", "synthetic, yfinance or alpaca."),
+            ("QAT_FUNDAMENTALS_SOURCE", "mock", "mock or yfinance (Section 11.5)."),
+            (
+                "QAT_FUNDAMENTALS_CACHE_DAYS",
+                "7",
+                "How long a fetched fundamentals figure stays current.",
+            ),
             ("QAT_ALPACA_DATA_FEED", "iex", "iex, sip or delayed_sip."),
             ("QAT_MARKET", "US", "US or ASX."),
             ("QAT_WATCHLIST_CATEGORY", "curated", "curated, etf or megacap."),

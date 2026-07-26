@@ -11,7 +11,9 @@ from typing import Any
 
 from qat.domain.events import SignalEvent
 from qat.domain.regime import Regime
-from qat.domain.strategies.base import FeatureSnapshot
+from qat.domain.strategies.base import FeatureSnapshot, unavailable
+
+_REQUIRED = ("peg_ratio", "eps_growth_yoy", "roe", "debt_to_equity")
 
 
 class GarpStrategy:
@@ -44,23 +46,29 @@ class GarpStrategy:
         }
 
     def on_features(self, snapshot: FeatureSnapshot) -> list[SignalEvent]:
+        if unavailable(self.name, snapshot.context, *_REQUIRED):
+            return []
         f = snapshot.context.fundamentals
+        peg, eps_growth, roe, leverage = f.peg_ratio, f.eps_growth_yoy, f.roe, f.debt_to_equity
+        if peg is None or eps_growth is None or roe is None or leverage is None:
+            return []  # unreachable after the guard; narrows the optionals
+
         passes = (
-            0 < f.peg_ratio <= self.max_peg
-            and self.min_eps_growth <= f.eps_growth_yoy <= self.max_eps_growth
-            and f.roe >= self.min_roe
-            and f.debt_to_equity <= self.max_debt_to_equity
+            0 < peg <= self.max_peg
+            and self.min_eps_growth <= eps_growth <= self.max_eps_growth
+            and roe >= self.min_roe
+            and leverage <= self.max_debt_to_equity
         )
         if not passes:
             return []
-        conviction = min(1.0, (self.max_peg - f.peg_ratio) / self.max_peg)
+        conviction = min(1.0, (self.max_peg - peg) / self.max_peg)
         return [
             SignalEvent(
                 symbol=snapshot.symbol,
                 side="buy",
                 conviction=conviction,
                 strategy=self.name,
-                meta={"peg_ratio": f.peg_ratio, "eps_growth_yoy": f.eps_growth_yoy},
+                meta={"peg_ratio": peg, "eps_growth_yoy": eps_growth},
                 ts=snapshot.as_of,
             )
         ]

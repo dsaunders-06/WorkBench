@@ -12,7 +12,9 @@ from typing import Any
 
 from qat.domain.events import SignalEvent
 from qat.domain.regime import Regime
-from qat.domain.strategies.base import FeatureSnapshot
+from qat.domain.strategies.base import FeatureSnapshot, unavailable
+
+_REQUIRED = ("dividend_growth_streak_years", "payout_ratio", "fcf_yield")
 
 
 class DividendGrowthStrategy:
@@ -32,25 +34,30 @@ class DividendGrowthStrategy:
         }
 
     def on_features(self, snapshot: FeatureSnapshot) -> list[SignalEvent]:
+        if unavailable(self.name, snapshot.context, *_REQUIRED):
+            return []
         f = snapshot.context.fundamentals
+        streak, payout, fcf_yield = (
+            f.dividend_growth_streak_years,
+            f.payout_ratio,
+            f.fcf_yield,
+        )
+        if streak is None or payout is None or fcf_yield is None:
+            return []  # unreachable after the guard; narrows the optionals
+
         passes = (
-            f.dividend_growth_streak_years >= self.min_streak_years
-            and f.payout_ratio <= self.max_payout_ratio
-            and f.fcf_yield > 0
+            streak >= self.min_streak_years and payout <= self.max_payout_ratio and fcf_yield > 0
         )
         if not passes:
             return []
-        conviction = min(1.0, f.dividend_growth_streak_years / 25.0)
+        conviction = min(1.0, streak / 25.0)
         return [
             SignalEvent(
                 symbol=snapshot.symbol,
                 side="buy",
                 conviction=conviction,
                 strategy=self.name,
-                meta={
-                    "streak_years": f.dividend_growth_streak_years,
-                    "payout_ratio": f.payout_ratio,
-                },
+                meta={"streak_years": streak, "payout_ratio": payout},
                 ts=snapshot.as_of,
             )
         ]

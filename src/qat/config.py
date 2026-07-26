@@ -169,6 +169,18 @@ class Settings(BaseSettings):
     # How often Alpaca's latest-trade endpoint is polled.
     alpaca_poll_seconds: float = Field(default=60.0, gt=0)
 
+    # Where company fundamentals come from (M18). "mock" is the seeded
+    # generator every milestone up to M17 ran on; it answers every field for
+    # every symbol, which is exactly why it must not be the thing a real
+    # decision rests on. "yfinance" returns real figures and leaves genuinely
+    # unavailable ones empty, so the fundamentals strategies abstain instead of
+    # scoring an ETF on an invented return on equity.
+    fundamentals_source: Literal["mock", "yfinance"] = "mock"
+
+    # Fundamentals move quarterly, so a week-old figure is current. The cache
+    # bounds how often an unofficial, rate-limited vendor is asked.
+    fundamentals_cache_days: float = Field(default=7.0, gt=0)
+
     # Interval ticks are aggregated into OHLC bars over (M14). 60s matches the
     # finest granularity the free feed actually serves.
     bar_interval_seconds: float = Field(default=60.0, gt=0)

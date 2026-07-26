@@ -374,6 +374,70 @@ already returns one row per *trading* day, so reindexing onto a calendar
 timeline turned a 251-day year of SPY into 365 rows, and the invented
 zero-return days dragged realized volatility about 17% below its true value.
 
+## Company fundamentals
+
+Settings → Market Data → Company fundamentals chooses between the seeded
+generator and real reported figures from Yahoo. Simulated is still the
+default, so the app stays offline out of the box.
+
+This matters more than it sounds. **Nine of the fifteen strategies select on
+fundamentals** — value, quality, GARP, growth, CAN SLIM, dividend growth,
+multi-factor, and sector rotation via its sector map. On the simulated source
+every one of the sixteen figures is invented for every symbol, so those
+strategies were picking stocks on numbers with no connection to the companies.
+
+### Missing is a value
+
+A real vendor cannot answer every field for every symbol, and that is usually
+correct rather than a failure: an index ETF has no return on equity, and some
+listings publish no PEG. Every numeric field on `FundamentalSnapshot` is
+therefore `float | None`, and **a strategy that needs a missing field abstains
+on that symbol** rather than scoring it (`strategies/base.py::unavailable`).
+
+The alternative — substituting zero or a universe median — was rejected
+deliberately. A real company silently out-ranked by a placeholder is
+indistinguishable afterwards from one out-ranked on merit.
+
+Measured on the shipped watchlist: SPY produced fundamentals-driven buy signals
+under **8 of 12** mock seeds. On real data it produces none, at any threshold,
+because the fields do not exist. Live coverage for comparison — AAPL 14/15
+fields, MSFT 14/15, BHP.AX 13/15 (no PEG), SPY 4/15.
+
+**Expect noticeably fewer signals on real fundamentals.** That is the feature.
+
+### Units are converted at the boundary
+
+Two of Yahoo's fields are percent-scaled where this codebase uses fractions,
+and both were verified against the live API rather than assumed:
+
+| Field | Vendor returns | Means | Unconverted consequence |
+|---|---|---|---|
+| `dividendYield` | `0.95` | 0.95% | Screener renders "95.00%" |
+| `debtToEquity` | `30.271` | 0.30 | GARP's 1.5 leverage cap rejects every real company |
+
+Both have named regression tests. A unit error here throws nothing and changes
+no types — every figure stays numeric and every comparison still runs — so it
+is only catchable by asserting a converted value against a known input.
+
+Four fields have no vendor equivalent and are derived: ROIC as NOPAT over debt
+plus equity less cash, EV/EBIT from the statements, EPS acceleration from three
+years of EPS, and the dividend streak from the dividend history (excluding the
+in-progress year, which would otherwise break every streak each January).
+
+`relative_strength_rank` is not a company property at all but a percentile
+against the universe, so it is computed from price history
+(`data/relative_strength.py`). Below ten comparable symbols it returns nothing
+rather than a confident "100" that means "best of three".
+
+Results are cached to `data/fundamentals_cache.json` for
+`QAT_FUNDAMENTALS_CACHE_DAYS` (default 7 — fundamentals move quarterly). The
+cache is an optimisation and never a source of truth: a missing, unreadable,
+corrupt or stale-schema entry degrades to a refetch. Synthetic snapshots are
+never written to it.
+
+Fundamentals are fetched once per symbol per session and cached across
+restarts, so real data costs a handful of requests, not one per tick.
+
 ## Position protection
 
 Every position now has a way out. Before M14 `SwingStrategy` emitted buy-only
