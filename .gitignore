@@ -21,7 +21,12 @@ dist/
 # generated reports. All of it is machine-specific runtime output, and the
 # journals and equity curve carry real account balances, so none of it belongs
 # in the repository.
-data/
+#
+# Anchored with a leading slash so it matches ONLY the data_dir at the repo
+# root. Unanchored, git applies it at every level, which silently excluded
+# src/qat/data/ and tests/data/ - the entire market-data layer was missing from
+# the repository while the working tree looked clean.
+/data/
 
 # IDE
 .vscode/
