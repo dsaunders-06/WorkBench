@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -22,8 +23,30 @@ class RedactSecretsFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.msg = self._redact(str(record.msg))
         if record.args:
-            record.args = tuple(self._redact(str(a)) for a in record.args)
+            record.args = self._redact_args(record.args)
         return True
+
+    def _redact_args(
+        self, args: tuple[object, ...] | Mapping[str, object]
+    ) -> tuple[object, ...] | Mapping[str, object]:
+        """Redacts string arguments and leaves every other type untouched.
+
+        Coercing all arguments to str looks harmless but silently destroys
+        numeric format specifiers: "%.2f" % "100000.0" raises TypeError, the
+        record then fails to format, and the line is *dropped* in favour of a
+        stderr traceback. Only a str can contain a secret anyway, so there is
+        nothing to gain by stringifying the rest.
+
+        Mapping args (the %(name)s style) are preserved as a mapping - the
+        previous tuple() comprehension iterated a dict's keys and threw the
+        values away.
+        """
+        if isinstance(args, Mapping):
+            return {
+                key: self._redact(value) if isinstance(value, str) else value
+                for key, value in args.items()
+            }
+        return tuple(self._redact(a) if isinstance(a, str) else a for a in args)
 
     def _redact(self, text: str) -> str:
         for secret in known_secret_names():

@@ -100,10 +100,7 @@ def sign(c, thumbprint=None, timestamp="http://timestamp.digicert.com"):
     # /tr (RFC3161) rather than /t: a timestamped signature stays valid after
     # the certificate expires, which for a 1-2 year cert is the difference
     # between a build that keeps verifying and one that stops.
-    c.run(
-        f'"{signtool}" sign /sha1 {thumbprint} /fd SHA256 '
-        f'/tr {timestamp} /td SHA256 "{exe}"'
-    )
+    c.run(f'"{signtool}" sign /sha1 {thumbprint} /fd SHA256 ' f'/tr {timestamp} /td SHA256 "{exe}"')
     c.run(f'"{signtool}" verify /pa /v "{exe}"', warn=True)
 
 
