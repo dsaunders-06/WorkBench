@@ -279,7 +279,8 @@ def _extract_choice_content(response_data: dict[str, Any], base_url: str) -> str
 
 _DEMO_NOTICE = (
     "[Demo mode - no real LLM configured] This is a canned response. "
-    "Configure an Anthropic API key or a local Ollama server for real analysis."
+    "Choose a provider in Settings > AI Provider - an Anthropic API key, or a local "
+    "LM Studio server - for real analysis."
 )
 
 # One canned payload per schema. Each is the most inert value that schema can

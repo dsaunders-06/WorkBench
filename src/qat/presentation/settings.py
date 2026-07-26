@@ -278,6 +278,9 @@ class SettingsScreen(QWidget):
             self.alpaca_feed_combo.addItem(label)
         self.alpaca_feed_combo.setCurrentText(_ALPACA_FEED_LABELS[settings.alpaca_data_feed])
         self.alpaca_feed_combo.currentTextChanged.connect(self._refresh_data_warning)
+        # Kept so the row - label included - can be hidden as a unit. Hiding only
+        # the combo leaves a stranded "Alpaca feed:" label next to empty space.
+        self._data_form = form
         form.addRow("Alpaca feed:", self.alpaca_feed_combo)
 
         self.alpaca_feed_note = QLabel(
@@ -301,7 +304,7 @@ class SettingsScreen(QWidget):
         # The feed picker only means anything for Alpaca, and showing it
         # otherwise implies it affects Yahoo or the random walk.
         is_alpaca = selected == "alpaca"
-        self.alpaca_feed_combo.setVisible(is_alpaca)
+        self._data_form.setRowVisible(self.alpaca_feed_combo, is_alpaca)
         self.alpaca_feed_note.setVisible(is_alpaca)
 
     def _build_execution_group(self, settings: Settings) -> QGroupBox:

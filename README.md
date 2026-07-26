@@ -71,7 +71,25 @@ invoke lint      # ruff + black --check + mypy + bandit
 invoke format    # ruff --fix + black
 invoke run       # launch the desktop app
 invoke package   # build an unsigned Windows executable (see below)
+invoke manual    # regenerate the Word user manual
 ```
+
+## User manual
+
+`docs/Quant_Advisory_Terminal_User_Manual.docx` documents every screen and tab
+for an end user. It is a **build artefact, not a hand-maintained document** —
+`invoke manual` regenerates both the prose (`scripts/manual_body.py`) and the
+figures, which are captured from the real widgets driven by
+`Runtime.build_demo()`. That is deliberate: the first edition was produced by a
+throwaway script and drifted six milestones behind the app, still describing
+Screener and Settings as empty placeholders long after they shipped. Capturing
+figures from the running widgets means a screen that changes shape shows up in
+the manual instead of quietly diverging from it.
+
+Regeneration needs no network, no broker and no keys, and every figure shows
+demo data — nothing from a real account can leak into the document. Rerun it
+after any change to a screen, and update the matching section in
+`scripts/manual_body.py` in the same commit.
 
 ## Verifying the IBKR connection yourself
 

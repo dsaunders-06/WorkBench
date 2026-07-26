@@ -41,6 +41,17 @@ def run(c):
 
 
 @task
+def manual(c):
+    """Regenerate the Word user manual, figures included.
+
+    Uses sys.executable for the same reason `package` does: the script imports
+    qat and python-docx, so running it under whatever `python` happens to be on
+    PATH silently builds against the wrong interpreter.
+    """
+    c.run(f'"{sys.executable}" scripts/build_manual.py')
+
+
+@task
 def package(c):
     """Build an unsigned Windows executable (spec §M9) via PyInstaller.
 

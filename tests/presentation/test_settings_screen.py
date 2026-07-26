@@ -39,6 +39,27 @@ def test_sensitive_warning_only_shows_for_anthropic(qtbot):
     assert not screen.sensitive_warning.isVisible()
 
 
+def test_alpaca_feed_row_hides_label_and_field_together(qtbot):
+    """Hiding only the combo left a stranded 'Alpaca feed:' label beside empty
+    space, implying a setting that had gone missing rather than one that does
+    not apply to the selected source."""
+    screen = _build_screen(qtbot)
+    screen.show()
+    qtbot.waitExposed(screen)
+    label = screen._data_form.labelForField(screen.alpaca_feed_combo)
+
+    assert not screen.alpaca_feed_combo.isVisible()
+    assert not label.isVisible()
+
+    screen.data_source_combo.setCurrentText("Real market data (Alpaca, US only)")
+    assert screen.alpaca_feed_combo.isVisible()
+    assert label.isVisible()
+
+    screen.data_source_combo.setCurrentText("Real market data (Yahoo, free/delayed)")
+    assert not screen.alpaca_feed_combo.isVisible()
+    assert not label.isVisible()
+
+
 def test_save_writes_expected_non_secret_env_updates(qtbot, monkeypatch):
     screen = _build_screen(qtbot)
     captured: dict[str, str] = {}
