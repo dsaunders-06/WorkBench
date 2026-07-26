@@ -9,9 +9,10 @@ human approves every live order.
 > **Educational / paper-trading software.** This project is for research and
 > paper trading. Live trading is at your own risk; nothing here is investment
 > advice. The default and only shipped configuration is paper trading — going
-> live requires a deliberate configuration change and an in-app confirmation,
-> and no component of this system places, modifies or cancels an order
-> without an explicit human sign-off.
+> live requires a deliberate configuration change and an in-app confirmation.
+> Order execution defaults to **recommend** mode, where every order awaits an
+> explicit human sign-off. Unattended execution is opt-in, confined to paper
+> accounts, and granted per strategy — see "Execution mode" below.
 
 ## Status
 
@@ -274,7 +275,266 @@ implementation so the domain core is independently testable.
   confidence or risk flags. Prompt-injection attempts embedded in "fetched"
   context data (e.g. a news blurb) are rendered as clearly-labelled inert
   data, never as instructions.
-- No order reaches a broker without explicit human sign-off — `OMS.submit_order()`
-  only ever creates a `pending_signoff` order; only `OMS.sign_off(...)`, an
-  explicit operator-attributed call, can transmit it. There is no auto-trade
-  toggle, now or planned.
+- No order reaches a broker except through `OMS.sign_off(...)` — `submit_order()`
+  only ever creates a `pending_signoff` order. In the default **recommend**
+  mode the caller of `sign_off` is always a human in the Order Blotter. See
+  "Execution mode" below for the opt-in autonomous path, which goes through
+  that same gate rather than around it.
+- **The kill-switch's economic rails are live.** `EquityMonitor`
+  (`domain/autonomy/equity_monitor.py`) polls account equity, persists
+  day-start equity and a running high-water mark across restarts, and feeds
+  `check_daily_loss`/`check_drawdown`. Before M13 both methods existed and were
+  unit-tested but were called from nowhere in `src/` — the rails were real code
+  and no part of the running system.
+- **The sign-off cash check fails closed.** If no price can be determined for a
+  buy — no limit price, no broker quote, no recorded submission price — the
+  order is rejected rather than costed at zero. This previously failed *open*,
+  which mattered because `AlpacaAdapter` raises on `get_market_data` by design,
+  so on a real Alpaca account the no-leverage check passed unconditionally on
+  every market buy.
+- Sign-off is serialised by a lock, so several individually-affordable orders
+  approved together cannot each pass a cash check against the same pre-spend
+  balance.
+
+## Market data
+
+Settings → Market Data chooses the price source:
+
+- **Simulated** (default) — the seeded random walk every milestone up to M13
+  ran on. Kept as the default so the app and test suite work offline, with a
+  standing on-screen warning: nothing observed in this mode tells you how a
+  strategy behaves on real prices.
+- **Real market data** — live daily and intraday bars via yfinance.
+
+Real data is free, unofficial, typically delayed ~15 minutes, and rate-limited.
+It can return nothing without warning, so the app degrades to simulated data
+with a logged warning rather than stopping — never silently. A persistently
+dead feed ends the stream deliberately, which lets the staleness detector raise
+`DataStaleEvent` and trip the kill-switch, rather than leaving the app looking
+alive while trading on nothing.
+
+**Ticks are aggregated into real OHLC bars** (`data/bars.py`). Up to M13 each
+tick was recorded as a single-point bar with `open == high == low == close`,
+which made ATR collapse to `|close - prev_close|` — a tick-to-tick delta with
+no traded range in it. Since ATR sets the stop distance and the stop distance
+sets the position size, that was a correctness problem at the base of the
+stack, not a refinement. Quiet intervals are gap-filled with price carried
+forward and **zero** volume; long gaps are treated as session breaks rather
+than filled, so an overnight close does not invent a night's worth of bars.
+
+Daily bars are deliberately never gap-filled. A live pull caught why: Yahoo
+already returns one row per *trading* day, so reindexing onto a calendar
+timeline turned a 251-day year of SPY into 365 rows, and the invented
+zero-return days dragged realized volatility about 17% below its true value.
+
+## Position protection
+
+Every position now has a way out. Before M14 `SwingStrategy` emitted buy-only
+and no protective stop was ever placed at a broker, so a position it opened had
+no exit path short of a human noticing.
+
+- **A bracket rests at the broker.** A strategy's proposed stop and target are
+  submitted with the entry as one bracket order, so the protection outlives
+  this process. A stop held only in memory disappears the moment the app does,
+  which is exactly the wrong property for something meant to run unattended.
+- **Sizing and the bracket use the same stop.** When a strategy supplies a
+  stop, `RiskEngine` sizes from that distance instead of its own ATR multiple.
+  Sizing against one stop while resting a different one would make the
+  per-trade risk limit describe a trade nobody placed.
+- **Strategies can see positions** (`FeatureSnapshot.positions`) and emit
+  exits. `SwingStrategy` sells on the EMA20/EMA50 crossover breaking, checked
+  on the bare crossover with no minimum-gap buffer — the buffer that filters
+  weak *entries* would only delay a needed exit, and being quick to protect is
+  the safer error.
+
+## Portfolio limits
+
+`PortfolioRiskChecker` covers ES, single-name and sector concentration.
+`PortfolioGovernor` (`domain/risk_engine/governor.py`) adds the three the
+reference implementation only added after they bit:
+
+- **Aggregate risk-at-stop** (`max_aggregate_risk_at_stop_pct`, default 5%) —
+  the total loss if every open position hit its stop at once. A per-trade limit
+  bounds one trade and says nothing about ten trades each within budget. With
+  the 1% per-trade default this allows five full-size positions.
+- **Max concurrent positions** (default 10) — a plain count.
+- **Pending orders count as committed exposure.** The subtle one: a governor
+  that only looks at *filled* positions approves a tenth candidate while nine
+  sit in the blotter. That is precisely how eight setups passed a six-position
+  cap in the original.
+
+A candidate over the cap is **trimmed to the remaining headroom** rather than
+rejected outright, and only rejected when there is not a whole share of room
+left. OMS supplies the portfolio state itself, so no caller can bypass a cap by
+omitting an argument — the same reasoning as the cash check.
+
+**Every buy now carries a broker-side stop.** If the strategy proposes one it
+is used; otherwise the ATR stop the sizer already computed is attached as the
+bracket. Previously an order from a strategy with no stop reached the broker
+naked, and to the governor counted its *entire value* as at risk — correctly,
+since nothing was protecting it. Attaching the sizing stop makes the position
+protected and the risk arithmetic honest at once. A position with genuinely
+unknown protection (an adopted one) still counts full value: unknown protection
+is treated as no protection.
+
+**De-levering** (`domain/risk_engine/delever.py`) is the active half — the
+governor only blocks *new* risk, which unwinds a breach passively as stops hit.
+It trims every position by the same proportion, targeting slightly under the
+cap so ordinary price movement does not immediately re-trigger it. **Off by
+default** (`delever_sweep_enabled`): it sells, and a rail that sells uninvited
+is a larger delegation than one that declines to buy. Disabled, a breach is
+still measured, logged and blocking. Its trims go through `submit_exit_order`
+like any other order, so the sweep decides *what* to trim, never whether it
+transmits.
+
+## Broker reconciliation
+
+`OMS.check_reconciliation` existed since M6 and, like the equity rails before
+M13, was called from nowhere in `src/`. `ReconciliationMonitor` runs it.
+
+At startup it **adopts** whatever the account already holds as the baseline.
+Without that, an OMS that has filled nothing compared against an Alpaca paper
+account carrying positions from a previous session reports a mismatch on the
+first poll and trips the kill-switch on every launch — training an operator to
+ignore the one signal meaning "my view of this account cannot be trusted".
+Adoption is explicit and logged, because silently absorbing an unexpected
+position is exactly the event reconciliation exists to catch.
+
+Adopted positions carry **no stop** in this app's records: it did not open them
+and does not know what protects them.
+
+## Performance and promotion
+
+The **Performance** tab is the only screen that answers whether any of this
+worked. Everything else shows what the system is doing or intends to do.
+
+`TradeLedger` (`domain/performance/trades.py`) matches fills FIFO per symbol
+into closed round-trips. FIFO rather than average-cost because average-cost
+collapses five entries and five exits into one blended number, destroying the
+per-trade distribution the promotion gate needs. Each trade carries its
+**R-multiple** — profit over the risk originally taken to the stop — because a
+$500 win risking $100 and a $500 win risking $2,000 are not the same result.
+
+Results are attributed to the strategy that **opened** the position. A stop
+sweep or a delever trim closes a position it did not open, and crediting the
+closer would attribute the outcome to the wrong strategy.
+
+Metrics return **None rather than a placeholder** when the sample is too thin:
+a Sharpe from three trades is not a rough Sharpe, it is noise wearing a
+number's clothes, and a gate that accepts it will promote noise. Profit factor
+is None rather than infinite without a loss; a strategy with no losses yet has
+simply not had one.
+
+### The promotion gate
+
+`autonomous_strategies` was previously a free-text list — a statement of intent
+with no evidence behind it. `StrategyScorecard` makes "fine tuned" falsifiable.
+A strategy is eligible only when it clears every criterion on **realised**
+trades:
+
+| Criterion | Default |
+|---|---|
+| Sample size | 30 closed trades |
+| Profitable | net P&L > 0 |
+| Average R | ≥ +0.20R |
+| Win rate | ≥ 40% |
+| Worst trade | loss ≤ 3× the average win |
+
+The last one exists because a good average hides a single catastrophic trade.
+
+Four states are reported, because *promoted* and *eligible* are independent and
+the disagreements are the interesting cases: `promoted`, `eligible`,
+`not-eligible`, and — the row that matters most — **`promoted-below-bar`**, a
+strategy trading unattended on a record that no longer supports it.
+
+The gate **advises by default**. You can promote a strategy it has not cleared;
+the scorecard shows you doing it. Setting `QAT_ENFORCE_PROMOTION_EVIDENCE=true`
+makes it binding, so a strategy that degrades stops trading unattended without
+anyone having to notice and edit a setting. It ships off only because a fresh
+install has no history and would otherwise block everything for a reason that
+looks like a bug.
+
+Evidence is necessary but never sufficient: a strategy the operator never
+promoted does not start trading because its numbers look good.
+
+### Reports
+
+`PerformanceReporter` writes a daily report after each market close and a
+weekly one after the week's **last trading day** — asked of the calendar, not
+assumed to be Friday, so a Friday holiday moves it to Thursday rather than
+skipping the week. State is on disk, so a restart mid-evening does not produce
+a second copy.
+
+Reports count **blocked** autonomy decisions alongside trades. A day with no
+trades because nothing qualified and a day with no trades because a rail
+stopped eleven candidates are different states of the world.
+
+Figures are computed in code and handed to the model as established fact for
+narration only. A narrative failure costs the commentary, never the report.
+
+## Execution mode
+
+Settings → Execution Mode chooses how orders are approved:
+
+- **Recommend** (default) — every order waits in the Order Blotter for your
+  sign-off, carrying the reasoning behind it. This is the only behaviour the
+  app had before M13.
+- **Auto-trade** — `AutonomousExecutor` may sign off qualifying orders with no
+  per-order confirmation.
+
+Switching to auto-trade requires a separate confirmation dialog, not just
+changing the dropdown, and the current state is shown in an always-visible
+banner with three distinct readings: recommend, auto-trade active, and
+halted-with-a-reason.
+
+An order is auto-signed only if **all** of these hold, and a buy faces every one:
+
+| Gate | Buy | Sell |
+|---|---|---|
+| Execution mode is `auto` | yes | yes |
+| Paper account (live needs a second flag with no UI) | yes | yes |
+| Kill-switch not tripped | yes | yes |
+| Market open (holidays and early closes included) | yes | yes |
+| Session phase eligible (not the opening or midday windows) | yes | **no** |
+| Strategy on the promoted list | yes | **no** |
+| Day P&L above the pause threshold | yes | **no** |
+| Price drift within tolerance | yes | **no** |
+| No-leverage cash re-check at sign-off | yes | n/a |
+
+Sells are deliberately exempt from the appetite gates: a rail whose effect is
+"the account may not de-risk" is a broken rail. Only the full-halt conditions
+(kill-switch, closed market) stop a protective exit.
+
+Autonomy is granted **per strategy** via `QAT_AUTONOMOUS_STRATEGIES`, which
+ships empty. A strategy that is not listed still produces recommendations for
+sign-off, so promoting one is a deliberate act per strategy rather than a
+single switch that clears all fifteen at once.
+
+Every decision — taken *and* blocked — is appended to
+`data/autonomy_journal.csv` with the reason, the market and session phase,
+the account state at the time, and the strategy responsible. The blocked rows
+are the point: a journal of only what fired cannot distinguish a day with no
+setups from a day when the rails stopped everything.
+
+No LLM sits anywhere in this path. The gate is arithmetic and clock checks.
+This is deliberate — in the reference implementation a model asked to confirm
+sell signals declined 100% of 494 of them in a single day, which turns
+"be cautious" into a portfolio that can only ever grow.
+
+## Macro market analysis
+
+The Regime Monitor's macro panel is two independent halves:
+
+- **The deterministic read** (`domain/macro_analysis/signal.py`) — realized
+  volatility, position against the 50-bar trend, and drawdown from a recent
+  high, computed from the benchmark's own bars. Pure arithmetic, always
+  available, identical for identical input.
+- **The AI synthesis on top of it** — the numbers are handed to the model as
+  established facts it is told not to recompute, and its job is what a formula
+  cannot do. It may reach a different conclusion than the deterministic read;
+  that disagreement is shown rather than reconciled away.
+
+Any exposure scalar the model returns is a **proposal**. Nothing applies it —
+the panel displays it and you decide. `RiskEngine.regime_scalar` stays owned by
+the HMM regime engine, so the applied exposure always has one attributable
+source.

@@ -16,8 +16,12 @@ dist/
 *.db
 *.sqlite
 *.sqlite3
-data/raw/
-data/parquet/
+# The default data_dir. Everything the running app writes lands here -
+# the autonomy journal, closed trades, the equity curve, report state and the
+# generated reports. All of it is machine-specific runtime output, and the
+# journals and equity curve carry real account balances, so none of it belongs
+# in the repository.
+data/
 
 # IDE
 .vscode/

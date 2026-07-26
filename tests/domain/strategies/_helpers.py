@@ -71,8 +71,17 @@ def make_context(
 
 
 def make_snapshot(
-    symbol: str, universe: dict[str, SymbolContext], as_of: datetime | None = None
+    symbol: str,
+    universe: dict[str, SymbolContext],
+    as_of: datetime | None = None,
+    positions: dict[str, float] | None = None,
 ) -> FeatureSnapshot:
     context = universe[symbol]
     as_of = as_of or context.bars["ts"].iloc[-1]
-    return FeatureSnapshot(symbol=symbol, as_of=as_of, context=context, universe=universe)
+    return FeatureSnapshot(
+        symbol=symbol,
+        as_of=as_of,
+        context=context,
+        universe=universe,
+        positions=positions or {},
+    )

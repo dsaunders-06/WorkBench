@@ -18,7 +18,28 @@ class Order:
     status: OrderStatus = "new"
     limit_price: float | None = None
     filled_price: float | None = None
+    # The price this order was sized against at submission. Kept so the
+    # sign-off cash check has a known cost even when the broker cannot supply a
+    # live quote - without it, an adapter that does not serve market data
+    # leaves the check with no price at all.
+    reference_price: float | None = None
+    # Which strategy produced this order, when one did. Carried so the
+    # autonomy gate can be granted per-strategy rather than all-or-nothing, and
+    # so the decision journal can attribute an outcome to the strategy that
+    # caused it. None for manual and exit orders, which belong to no strategy.
+    strategy: str | None = None
+    # Protective exits attached to the entry, submitted to the broker as one
+    # bracket (M14). These live AT THE BROKER, which is the entire point: a
+    # stop held only in this process disappears the moment the process does,
+    # leaving the position naked. An unattended system that can die overnight
+    # needs its protection to outlive it.
+    stop_price: float | None = None
+    take_profit_price: float | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    @property
+    def is_bracket(self) -> bool:
+        return self.stop_price is not None or self.take_profit_price is not None
 
 
 @dataclass(slots=True)

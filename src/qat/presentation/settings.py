@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat import env_file, security
+from qat.config import Settings
 from qat.domain.ai_advisory.llm_engine import LocalEngine, normalize_openai_base_url
 from qat.presentation.runtime import Runtime
 
@@ -51,6 +53,18 @@ _BROKER_LABELS = {
 }
 _BROKER_VALUES = {label: value for value, label in _BROKER_LABELS.items()}
 _BROKERS = ("mock", "alpaca", "ibkr")
+# Recommend is listed first so it is the top item as well as the default value -
+# the safe option should also be the one a careless click lands on.
+_EXECUTION_MODE_LABELS = {
+    "recommend": "Recommend (human signs off every order)",
+    "auto": "Auto-trade (no per-order confirmation)",
+}
+_EXECUTION_MODE_VALUES = {label: value for value, label in _EXECUTION_MODE_LABELS.items()}
+_DATA_SOURCE_LABELS = {
+    "synthetic": "Simulated (random walk)",
+    "yfinance": "Real market data (Yahoo, free/delayed)",
+}
+_DATA_SOURCE_VALUES = {label: value for value, label in _DATA_SOURCE_LABELS.items()}
 
 
 class SettingsScreen(QWidget):
@@ -202,6 +216,9 @@ class SettingsScreen(QWidget):
         layout.addWidget(broker_group)
         self._refresh_broker_warning()
 
+        layout.addWidget(self._build_data_group(settings))
+        layout.addWidget(self._build_execution_group(settings))
+
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self._on_save_clicked)
         layout.addWidget(self.save_button)
@@ -210,6 +227,150 @@ class SettingsScreen(QWidget):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
         layout.addStretch(1)
+
+    def _build_data_group(self, settings: Settings) -> QGroupBox:
+        """Market data source (spec M14).
+
+        Placed directly above Execution Mode on purpose: these two settings are
+        only meaningful together. Auto-trading against simulated prices is a
+        loop that trades noise, and the pairing makes that visible rather than
+        leaving it two screens apart.
+        """
+        group = QGroupBox("Market Data")
+        form = QFormLayout(group)
+
+        self.data_source_combo = QComboBox()
+        for label in _DATA_SOURCE_LABELS.values():
+            self.data_source_combo.addItem(label)
+        self.data_source_combo.setCurrentText(_DATA_SOURCE_LABELS[settings.market_data_source])
+        self.data_source_combo.currentTextChanged.connect(self._refresh_data_warning)
+        form.addRow("Price source:", self.data_source_combo)
+
+        self.data_warning = QLabel(
+            "<b>Simulated prices.</b> Every price, indicator, signal and backtest is computed "
+            "from a seeded random walk, not from any market. Nothing observed in this mode "
+            "tells you how a strategy would behave on real data."
+        )
+        self.data_warning.setStyleSheet(
+            "color: #78350f; background: #fef3c7; border: 1px solid #b45309; padding: 6px;"
+        )
+        self.data_warning.setWordWrap(True)
+        form.addRow(self.data_warning)
+
+        real_note = QLabel(
+            "Real data is free, unofficial and typically delayed ~15 minutes. It is rate-limited "
+            "and can return nothing without warning - the app degrades to simulated data with a "
+            "logged warning rather than stopping."
+        )
+        real_note.setStyleSheet("color: gray;")
+        real_note.setWordWrap(True)
+        form.addRow(real_note)
+
+        self._refresh_data_warning()
+        return group
+
+    def _refresh_data_warning(self) -> None:
+        selected = _DATA_SOURCE_VALUES[self.data_source_combo.currentText()]
+        self.data_warning.setVisible(selected == "synthetic")
+
+    def _build_execution_group(self, settings: Settings) -> QGroupBox:
+        """Execution mode (spec M13).
+
+        Deliberately its own visually distinct group at the bottom of the
+        screen rather than one more checkbox among the others: an unattended
+        execution switch that reads like a preference gets flipped like one.
+        Turning it on additionally requires the confirmation dialog in
+        _confirm_autonomy, which spells out what the rails do and do not do.
+        """
+        group = QGroupBox("Execution Mode")
+        form = QFormLayout(group)
+
+        self.execution_mode_combo = QComboBox()
+        for label in _EXECUTION_MODE_LABELS.values():
+            self.execution_mode_combo.addItem(label)
+        self.execution_mode_combo.setCurrentText(_EXECUTION_MODE_LABELS[settings.execution_mode])
+        self.execution_mode_combo.currentTextChanged.connect(self._on_execution_mode_changed)
+        form.addRow("Mode:", self.execution_mode_combo)
+
+        mode_note = QLabel(
+            "<b>Recommend</b> (default): every order waits in the Order Blotter for your "
+            "sign-off, with the reasoning behind it.<br>"
+            "<b>Auto-trade</b>: qualifying orders are signed off without confirmation. "
+            "Paper accounts only."
+        )
+        mode_note.setStyleSheet("color: gray;")
+        mode_note.setWordWrap(True)
+        form.addRow(mode_note)
+
+        self.autonomous_strategies_input = QLineEdit(settings.autonomous_strategies)
+        self.autonomous_strategies_input.setPlaceholderText(
+            "e.g. swing - comma-separated, empty means none"
+        )
+        form.addRow("Strategies cleared to auto-trade:", self.autonomous_strategies_input)
+
+        strategies_note = QLabel(
+            "Autonomy is granted per strategy, never to all of them at once. A strategy not "
+            "listed here still produces recommendations for your sign-off."
+        )
+        strategies_note.setStyleSheet("color: gray;")
+        strategies_note.setWordWrap(True)
+        form.addRow(strategies_note)
+
+        self.autonomy_warning = QLabel(
+            "<b>AUTO-TRADE PLACES REAL PAPER ORDERS WITH NO PER-ORDER CONFIRMATION.</b><br>"
+            "Orders are still checked by the risk engine, the no-leverage cash rule and the "
+            "kill-switch, and are only placed while the market is open in an eligible session "
+            "phase. Those rails limit the damage; they do not make the strategy correct. "
+            "Review the autonomy journal regularly."
+        )
+        self.autonomy_warning.setStyleSheet(
+            "color: #7f1d1d; background: #fee2e2; border: 1px solid #b91c1c; padding: 6px;"
+        )
+        self.autonomy_warning.setWordWrap(True)
+        form.addRow(self.autonomy_warning)
+
+        self._refresh_autonomy_warning()
+        return group
+
+    def _refresh_autonomy_warning(self) -> None:
+        self.autonomy_warning.setVisible(self._selected_execution_mode() == "auto")
+
+    def _selected_execution_mode(self) -> str:
+        return _EXECUTION_MODE_VALUES[self.execution_mode_combo.currentText()]
+
+    def _on_execution_mode_changed(self) -> None:
+        if self._selected_execution_mode() == "auto" and not self._confirm_autonomy():
+            self.execution_mode_combo.setCurrentText(_EXECUTION_MODE_LABELS["recommend"])
+        self._refresh_autonomy_warning()
+
+    def _confirm_autonomy(self) -> bool:
+        """A separate, explicit confirmation - not just the combo box changing.
+
+        Returns True only on an affirmative answer; the default button is No,
+        so an accidental Enter keypress declines.
+        """
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Enable autonomous trading?")
+        box.setText("Enable auto-trade?")
+        box.setInformativeText(
+            "The application will place orders on your paper account without asking you "
+            "first, whenever an order from a promoted strategy passes every rail.\n\n"
+            "What still applies:\n"
+            "  - the risk engine sizes and can reject every order\n"
+            "  - a buy can never exceed available cash less your reserve\n"
+            "  - the kill-switch halts everything when it trips\n"
+            "  - orders are only placed while the market is open, outside the opening "
+            "and midday windows\n"
+            "  - only strategies you list are eligible\n\n"
+            "What does not:\n"
+            "  - nobody reviews the individual trade before it is placed\n"
+            "  - these rails bound the loss; they do not make the strategy profitable\n\n"
+            "Every decision, taken or blocked, is written to the autonomy journal."
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        return box.exec() == QMessageBox.StandardButton.Yes
 
     def _refresh_sensitive_warning(self) -> None:
         is_anthropic = self.sensitive_provider.currentText() == _PROVIDER_LABELS["anthropic"]
@@ -324,6 +485,9 @@ class SettingsScreen(QWidget):
             "QAT_WATCHLIST_MIN_AVG_VOLUME": str(self.min_volume_input.value()),
             "QAT_BROKER": _BROKER_VALUES[self.broker_combo.currentText()],
             "QAT_MIN_CASH_RESERVE": f"{self.min_cash_reserve_input.value():.2f}",
+            "QAT_MARKET_DATA_SOURCE": _DATA_SOURCE_VALUES[self.data_source_combo.currentText()],
+            "QAT_EXECUTION_MODE": self._selected_execution_mode(),
+            "QAT_AUTONOMOUS_STRATEGIES": self.autonomous_strategies_input.text().strip(),
         }
         env_file.update_env_file(updates)
 

@@ -17,9 +17,11 @@ from typing import Any, Literal
 import pandas as pd
 
 from qat.config import Settings
+from qat.data.broker.adapter import Order, Position
 from qat.domain.bus import EventBus
 from qat.domain.events import RegimeEvent
 from qat.domain.risk_engine.audit import AuditLog, RiskDecision
+from qat.domain.risk_engine.governor import PortfolioGovernor
 from qat.domain.risk_engine.kill_switch import KillSwitch
 from qat.domain.risk_engine.portfolio_risk import PortfolioRiskChecker
 from qat.domain.risk_engine.sizing import KellyVolTargetSizer
@@ -35,6 +37,15 @@ class OrderCandidate:
     win_loss_ratio: float
     candidate_returns: pd.Series
     sector: str | None = None
+    strategy: str | None = None
+    # The strategy's own proposed protective levels, when it has them (M14).
+    # When a stop is supplied the sizer uses THAT distance rather than its own
+    # ATR multiple, so the risk budgeted at sizing time and the risk actually
+    # taken at the bracket stop are the same number. Sizing against one stop
+    # and then resting a different one at the broker would make the per-trade
+    # risk limit describe a trade nobody placed.
+    stop_price: float | None = None
+    take_profit_price: float | None = None
 
 
 class RiskEngine:
@@ -48,12 +59,14 @@ class RiskEngine:
         sizer: KellyVolTargetSizer | None = None,
         portfolio_checker: PortfolioRiskChecker | None = None,
         audit_log: AuditLog | None = None,
+        governor: PortfolioGovernor | None = None,
     ) -> None:
         self.bus = bus
         self.settings = settings or Settings()
         self.kill_switch = kill_switch
         self.sizer = sizer or KellyVolTargetSizer(settings=self.settings)
         self.portfolio_checker = portfolio_checker or PortfolioRiskChecker(settings=self.settings)
+        self.governor = governor or PortfolioGovernor(settings=self.settings)
         self.audit_log = audit_log or AuditLog()
         self.regime_scalar = 1.0
 
@@ -74,6 +87,9 @@ class RiskEngine:
         existing_returns: dict[str, pd.Series],
         sector_by_symbol: dict[str, str] | None = None,
         available_cash: float | None = None,
+        positions: list[Position] | None = None,
+        position_stops: dict[str, float] | None = None,
+        pending_orders: list[Order] | None = None,
     ) -> RiskDecision:
         """`available_cash` enforces the no-leverage rule (spec M12) and is
         always supplied by OMS, which owns the broker reference and fetches it
@@ -108,7 +124,22 @@ class RiskEngine:
         # Stop/max-loss confirmation (paper §18.1): the implied dollar loss at
         # the ATR stop must not exceed the per-trade risk budget - an explicit,
         # audited gate rather than an assumption baked silently into the sizer.
-        stop_distance = self.settings.atr_stop_multiple * candidate.atr
+        if candidate.stop_price is not None and candidate.stop_price < candidate.price:
+            stop_distance = candidate.price - candidate.stop_price
+            inputs["stop_source"] = "strategy"
+        else:
+            stop_distance = self.settings.atr_stop_multiple * candidate.atr
+            inputs["stop_source"] = "atr_multiple"
+        inputs["stop_distance"] = stop_distance
+        # Every buy gets a real protective level, whichever source it came
+        # from. Previously an order whose strategy proposed no stop reached the
+        # broker naked and, to the governor, counted its entire value as at
+        # risk - correctly, since nothing was protecting it. Attaching the
+        # sizing stop as an actual bracket makes the position protected and the
+        # risk arithmetic honest at the same time.
+        effective_stop: float | None = None
+        if candidate.side == "buy" and stop_distance > 0:
+            effective_stop = max(0.0, candidate.price - stop_distance) or None
         risk_budget = self.settings.per_trade_risk_pct * equity
         if stop_distance > 0 and raw_shares * stop_distance > risk_budget:
             raw_shares = risk_budget / stop_distance
@@ -135,6 +166,29 @@ class RiskEngine:
             if scaled_shares > affordable_shares:
                 scaled_shares = affordable_shares
                 inputs["resized_for_cash"] = True
+
+        # Portfolio-level caps (spec M15): aggregate risk-at-stop and the
+        # concurrent-position count, both counting pending orders as committed
+        # exposure. Applies to buys only - these gate *added* risk, and a cap
+        # that blocked an exit would stop the portfolio de-levering exactly
+        # when it most needs to.
+        if candidate.side == "buy" and positions is not None:
+            governor_decision = self.governor.evaluate(
+                symbol=candidate.symbol,
+                price=candidate.price,
+                proposed_shares=scaled_shares,
+                stop_price=effective_stop,
+                positions=positions,
+                stops=position_stops or {},
+                equity=equity,
+                pending_orders=pending_orders,
+            )
+            inputs["governor"] = governor_decision.inputs
+            if not governor_decision.allowed:
+                return self._reject(candidate.symbol, governor_decision.reason, inputs)
+            if governor_decision.max_shares < scaled_shares:
+                scaled_shares = governor_decision.max_shares
+                inputs["resized_by_governor"] = True
 
         signed_multiplier = 1 if candidate.side == "buy" else -1
         candidate_dollar_exposure = scaled_shares * candidate.price * signed_multiplier
@@ -165,6 +219,7 @@ class RiskEngine:
             final_shares=scaled_shares,
             reason="approved",
             inputs=inputs,
+            stop_price=effective_stop,
         )
         self.audit_log.record(decision)
         return decision

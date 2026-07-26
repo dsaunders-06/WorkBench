@@ -52,7 +52,37 @@ class SwingStrategy:
         close = bars["close"]
         ema_fast = close.ewm(span=self.fast_window, adjust=False).mean()
         ema_slow = close.ewm(span=self.slow_window, adjust=False).mean()
-        if ema_fast.iloc[-1] <= ema_slow.iloc[-1]:
+        in_uptrend = ema_fast.iloc[-1] > ema_slow.iloc[-1]
+
+        # --- Exit first (M14) ------------------------------------------------
+        # A held position is asked a different question than an empty one: not
+        # "is this a good entry" but "does the reason I am holding still hold".
+        # Checked before the entry logic and on the *bare* crossover with no
+        # minimum-gap buffer, because the costly error differs by direction -
+        # a marginally-false exit gives up some upside, a marginally-late exit
+        # keeps a broken position. Being quick to protect is the safer error.
+        held = snapshot.held_quantity()
+        if held > 0:
+            if not in_uptrend:
+                return [
+                    SignalEvent(
+                        symbol=snapshot.symbol,
+                        side="sell",
+                        conviction=1.0,
+                        strategy=self.name,
+                        meta={
+                            "exit_reason": "trend_broken",
+                            "ema_fast": float(ema_fast.iloc[-1]),
+                            "ema_slow": float(ema_slow.iloc[-1]),
+                        },
+                        ts=snapshot.as_of,
+                    )
+                ]
+            # Still trending: hold. The resting broker stop and the take-profit
+            # attached at entry handle the other two ways out of this position.
+            return []
+
+        if not in_uptrend:
             return []  # not in an uptrend
 
         prior_close, prior_fast = close.iloc[-2], ema_fast.iloc[-2]

@@ -12,6 +12,7 @@ the broker. See tests/safety/test_no_order_without_signoff.py.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Literal
 
@@ -19,6 +20,8 @@ import pandas as pd
 
 from qat.data.broker.adapter import BrokerAdapter, Order
 from qat.data.broker.mock_broker import new_order_id
+from qat.domain.bus import EventBus
+from qat.domain.events import OrderFilledEvent, OrderPendingSignoffEvent
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -33,14 +36,28 @@ class OMS:
         kill_switch: KillSwitch,
         max_order_notional: float = 50_000.0,
         symbol_allow_list: set[str] | None = None,
+        bus: EventBus | None = None,
     ) -> None:
         self.broker = broker
         self.risk_engine = risk_engine
         self.kill_switch = kill_switch
         self.max_order_notional = max_order_notional
         self.symbol_allow_list = symbol_allow_list
+        self.bus = bus
         self._orders: dict[str, Order] = {}
         self._filled_quantities: dict[str, float] = {}
+        self._adopted_baseline: dict[str, float] = {}
+        # Stops this session attached to its own entries, kept so the portfolio
+        # governor can measure aggregate risk-at-stop without re-querying open
+        # orders from the broker on every candidate.
+        self._position_stops: dict[str, float] = {}
+        # Serialises sign-off so the "re-check cash against the CURRENT
+        # balance" step below is actually a check. Concurrently signed orders
+        # each fetch the balance before either has spent it, so both see the
+        # same cash and both pass - the documented failure mode where several
+        # individually-affordable orders collectively overdraw the account.
+        # Bulk human sign-off and unattended execution both hit this path.
+        self._signoff_lock = asyncio.Lock()
 
     async def submit_order(
         self,
@@ -60,6 +77,10 @@ class OMS:
         # trusting every caller to pass it - a no-leverage rule that a caller
         # can bypass by omission is not a rule (spec M12).
         account = await self.broker.account()
+        # Portfolio state is fetched here, by the component that owns the broker
+        # reference, for the same reason cash is (spec M12/M15): a cap a caller
+        # can bypass by not passing an argument is not a cap. Pending orders are
+        # included because an order awaiting sign-off is committed exposure.
         decision = self.risk_engine.evaluate_order(
             candidate,
             equity,
@@ -67,6 +88,9 @@ class OMS:
             existing_returns,
             sector_by_symbol,
             available_cash=account.cash,
+            positions=await self.broker.positions(),
+            position_stops=self.position_stops(),
+            pending_orders=self.pending_orders(),
         )
         if not decision.approved or decision.final_shares <= 0:
             return self._new_rejected_order(candidate, 0.0)
@@ -75,7 +99,20 @@ class OMS:
         if notional > self.max_order_notional:
             return self._new_rejected_order(candidate, decision.final_shares)
 
-        return self._new_pending_order(candidate.symbol, candidate.side, decision.final_shares)
+        order = self._new_pending_order(
+            candidate.symbol,
+            candidate.side,
+            decision.final_shares,
+            candidate.price,
+            candidate.strategy,
+            # The strategy's stop when it proposed one, otherwise the ATR stop
+            # the sizer used. Either way the position reaches the broker with a
+            # bracket rather than naked.
+            stop_price=candidate.stop_price or decision.stop_price,
+            take_profit_price=candidate.take_profit_price,
+        )
+        await self._announce_pending(order)
+        return order
 
     async def submit_exit_order(self, symbol: str, quantity: float, price: float) -> Order:
         """Closes an existing position at exactly `quantity` shares (spec §I).
@@ -97,7 +134,28 @@ class OMS:
         if notional > self.max_order_notional:
             return self._new_rejected_order_for(symbol, "sell", decision.final_shares)
 
-        return self._new_pending_order(symbol, "sell", decision.final_shares)
+        order = self._new_pending_order(symbol, "sell", decision.final_shares, price)
+        await self._announce_pending(order)
+        return order
+
+    async def _announce_pending(self, order: Order) -> None:
+        """Publishes OrderPendingSignoffEvent when a bus is wired. Optional so
+        an OMS built without one (every test predating M13) still works."""
+        if self.bus is None or order.status != "pending_signoff":
+            return
+        await self.bus.publish(
+            OrderPendingSignoffEvent(
+                order_id=order.order_id,
+                symbol=order.symbol,
+                side=order.side,
+                quantity=order.quantity,
+                strategy=order.strategy,
+            )
+        )
+
+    def pending_orders(self) -> list[Order]:
+        """Orders awaiting a decision - committed exposure that has not filled."""
+        return [order for order in self._orders.values() if order.status == "pending_signoff"]
 
     def pending_signoff_symbols(self) -> set[str]:
         """Symbols that already have an order awaiting the operator's decision -
@@ -108,7 +166,14 @@ class OMS:
         }
 
     def _new_pending_order(
-        self, symbol: str, side: Literal["buy", "sell"], quantity: float
+        self,
+        symbol: str,
+        side: Literal["buy", "sell"],
+        quantity: float,
+        reference_price: float | None = None,
+        strategy: str | None = None,
+        stop_price: float | None = None,
+        take_profit_price: float | None = None,
     ) -> Order:
         order = Order(
             symbol=symbol,
@@ -116,13 +181,26 @@ class OMS:
             quantity=quantity,
             order_id=new_order_id(),
             status="pending_signoff",
+            reference_price=reference_price,
+            strategy=strategy,
+            stop_price=stop_price,
+            take_profit_price=take_profit_price,
         )
         self._orders[order.order_id] = order
         return order
 
     async def sign_off(self, order_id: str, operator: str) -> Order:
         """The only path that can move an order past pending sign-off - an
-        explicit, operator-attributed human action (spec §I)."""
+        explicit, operator-attributed action (spec §I).
+
+        `operator` is a human in "recommend" mode and the autonomous executor's
+        own identifier in "auto" mode. The distinction is recorded, never
+        elided: the audit trail must show which orders a person approved.
+        """
+        async with self._signoff_lock:
+            return await self._sign_off_locked(order_id, operator)
+
+    async def _sign_off_locked(self, order_id: str, operator: str) -> Order:
         order = self._orders[order_id]
         if order.status != "pending_signoff":
             raise ValueError(f"Order {order_id} is not pending sign-off (status={order.status})")
@@ -140,7 +218,23 @@ class OMS:
         # human just approved would defeat the point of the approval.
         if order.side == "buy":
             account = await self.broker.account()
-            price = order.limit_price or order.filled_price or await self._reference_price(order)
+            price = await self._costing_price(order)
+            if price is None:
+                # Fails CLOSED. An unknown price used to fall back to 0.0, which
+                # made cost 0 and let this check pass unconditionally - and
+                # AlpacaAdapter raises on get_market_data by design, so with a
+                # real Alpaca account that was every buy, not a rare outage.
+                # A no-leverage guarantee that evaporates when a quote is
+                # missing is not a guarantee.
+                order.status = "rejected"
+                logger.warning(
+                    "Sign-off blocked - no price available to cost the order: "
+                    "order=%s operator=%s symbol=%s",
+                    order_id,
+                    operator,
+                    order.symbol,
+                )
+                return order
             cost = order.quantity * price
             spendable = account.cash - self.risk_engine.settings.min_cash_reserve
             if cost > spendable:
@@ -162,6 +256,13 @@ class OMS:
         self._filled_quantities[filled.symbol] = (
             self._filled_quantities.get(filled.symbol, 0.0) + signed_qty
         )
+
+        if filled.side == "buy" and filled.stop_price:
+            self._position_stops[filled.symbol] = float(filled.stop_price)
+        elif filled.side == "sell" and abs(self._filled_quantities[filled.symbol]) < 1e-6:
+            # Position closed - its stop went with it at the broker, so keeping
+            # it here would overstate protection on a symbol no longer held.
+            self._position_stops.pop(filled.symbol, None)
         logger.info(
             "Order signed off and transmitted: order=%s operator=%s symbol=%s qty=%s",
             order_id,
@@ -169,19 +270,57 @@ class OMS:
             filled.symbol,
             filled.quantity,
         )
+        await self._announce_fill(filled, operator)
         return filled
 
-    async def _reference_price(self, order: Order) -> float:
-        """Best available price for costing an order that carries none of its
-        own (a market order): asks the broker for the current quote, falling
-        back to 0.0 only if the broker cannot answer - which fails *open* on
-        the cash check, so a quote outage never silently blocks trading."""
+    async def _announce_fill(self, order: Order, operator: str) -> None:
+        """Publishes OrderFilledEvent so performance measurement has a source
+        of realised outcomes. Optional bus, same as _announce_pending."""
+        if self.bus is None or order.status not in ("filled", "transmitted"):
+            return
+        price = order.filled_price or order.reference_price
+        if not price:
+            return
+        await self.bus.publish(
+            OrderFilledEvent(
+                order_id=order.order_id,
+                symbol=order.symbol,
+                side=order.side,
+                quantity=order.quantity,
+                price=float(price),
+                strategy=order.strategy,
+                stop_price=order.stop_price,
+                operator=operator,
+            )
+        )
+
+    async def _costing_price(self, order: Order) -> float | None:
+        """Best available price for costing an order, or None if there is none.
+
+        Preference order, most to least current: the order's own price, a live
+        broker quote, then the price the order was sized against at submission.
+        The last of these is what makes this workable for an execution-only
+        adapter (Alpaca) that never serves quotes - it is slightly stale, but a
+        slightly stale price is a real constraint, whereas no price at all is
+        not a constraint of any kind.
+        """
+        if order.limit_price:
+            return float(order.limit_price)
+        if order.filled_price:
+            return float(order.filled_price)
+
         try:
             quote = await self.broker.get_market_data(order.symbol)
-        except Exception:  # noqa: BLE001 - a quote failure must not break sign-off
-            logger.warning("Could not fetch a reference price for %s", order.symbol)
-            return 0.0
-        return float(quote.get("ask") or quote.get("last") or 0.0)
+        except Exception:  # noqa: BLE001 - an adapter without quotes is expected
+            logger.debug("Broker cannot quote %s; using the submission price", order.symbol)
+        else:
+            live = float(quote.get("ask") or quote.get("last") or 0.0)
+            if live > 0:
+                return live
+
+        if order.reference_price and order.reference_price > 0:
+            return float(order.reference_price)
+        return None
 
     async def reject_order(self, order_id: str, operator: str, reason: str) -> Order:
         order = self._orders[order_id]
@@ -208,19 +347,76 @@ class OMS:
     def orders(self) -> list[Order]:
         return list(self._orders.values())
 
+    async def adopt_broker_positions(self) -> dict[str, float]:
+        """Seeds the position baseline from whatever the account already holds.
+
+        Without this, reconciliation compares an OMS that has filled nothing
+        against an account that already holds positions - from an earlier
+        session, another application, or a manual trade - and reads a perfectly
+        healthy account as a discrepancy. That would trip the kill-switch on
+        startup every time, which trains an operator to ignore the one signal
+        that means "my view of the account cannot be trusted".
+
+        Adoption is deliberately explicit and logged rather than implicit in
+        the first reconciliation call: silently absorbing an unexpected
+        position is exactly the event reconciliation exists to catch, so it
+        must happen once, at a known point, on the record.
+        """
+        adopted = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
+        self._filled_quantities = dict(adopted)
+        self._adopted_baseline = dict(adopted)
+        if adopted:
+            logger.info(
+                "Adopted %d pre-existing broker position(s) as the reconciliation baseline: %s",
+                len(adopted),
+                ", ".join(f"{sym} {qty:g}" for sym, qty in sorted(adopted.items())),
+            )
+        else:
+            logger.info("No pre-existing broker positions to adopt")
+        return adopted
+
+    @property
+    def adopted_baseline(self) -> dict[str, float]:
+        """Positions that were already held when this session started. Not
+        opened by this application, so nothing here carries a stop it placed."""
+        return dict(self._adopted_baseline)
+
+    def position_stops(self) -> dict[str, float]:
+        """Protective stops this session attached to its own entries.
+
+        Adopted positions are absent by construction: this app did not open
+        them and has no idea what, if anything, protects them. PortfolioGovernor
+        treats a missing stop as full-value-at-risk rather than assuming a
+        stop exists, which is the conservative reading.
+        """
+        return dict(self._position_stops)
+
     async def check_reconciliation(self) -> bool:
         """Compares OMS-tracked filled quantities against broker-reported
         positions; a mismatch trips the kill-switch (spec §I). Returns True
-        if a mismatch was found."""
+        if a mismatch was found.
+
+        Call adopt_broker_positions() once at startup first, or an account with
+        any pre-existing holding reads as a mismatch immediately.
+        """
         broker_positions = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
         symbols = set(self._filled_quantities) | set(broker_positions)
-        mismatch = any(
-            abs(self._filled_quantities.get(symbol, 0.0) - broker_positions.get(symbol, 0.0)) > 1e-6
+        divergent = {
+            symbol: (self._filled_quantities.get(symbol, 0.0), broker_positions.get(symbol, 0.0))
             for symbol in symbols
-        )
-        if mismatch:
+            if abs(self._filled_quantities.get(symbol, 0.0) - broker_positions.get(symbol, 0.0))
+            > 1e-6
+        }
+        if divergent:
+            logger.error(
+                "Broker reconciliation mismatch: %s",
+                ", ".join(
+                    f"{sym} tracked={tracked:g} broker={actual:g}"
+                    for sym, (tracked, actual) in sorted(divergent.items())
+                ),
+            )
             self.kill_switch.check_reconciliation()
-        return mismatch
+        return bool(divergent)
 
     def _new_rejected_order(self, candidate: OrderCandidate, quantity: float) -> Order:
         return self._new_rejected_order_for(candidate.symbol, candidate.side, quantity)

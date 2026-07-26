@@ -109,15 +109,35 @@ class AlpacaAdapter:
     # --- orders -------------------------------------------------------------
 
     async def place_order(self, order: Order) -> Order:
-        from alpaca.trading.enums import OrderSide, TimeInForce
-        from alpaca.trading.requests import MarketOrderRequest
-
-        request = MarketOrderRequest(
-            symbol=order.symbol,
-            qty=order.quantity,
-            side=OrderSide.BUY if order.side == "buy" else OrderSide.SELL,
-            time_in_force=TimeInForce.DAY,
+        from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
+        from alpaca.trading.requests import (
+            MarketOrderRequest,
+            StopLossRequest,
+            TakeProfitRequest,
         )
+
+        side = OrderSide.BUY if order.side == "buy" else OrderSide.SELL
+        kwargs: dict[str, object] = {
+            "symbol": order.symbol,
+            "qty": order.quantity,
+            "side": side,
+            "time_in_force": TimeInForce.DAY,
+        }
+
+        # A bracket attaches the protective legs at the broker in the same
+        # submission, so there is no window in which the position exists
+        # without its stop. Alpaca rejects a bracket on a sell-to-close, so
+        # this only applies to entries.
+        if order.is_bracket and order.side == "buy":
+            kwargs["order_class"] = OrderClass.BRACKET
+            if order.stop_price is not None:
+                kwargs["stop_loss"] = StopLossRequest(stop_price=round(order.stop_price, 2))
+            if order.take_profit_price is not None:
+                kwargs["take_profit"] = TakeProfitRequest(
+                    limit_price=round(order.take_profit_price, 2)
+                )
+
+        request = MarketOrderRequest(**kwargs)
         placed = await asyncio.to_thread(self._client.submit_order, request)
 
         order.order_id = str(getattr(placed, "id", order.order_id))

@@ -39,7 +39,6 @@ from qat.domain.backtester.signal_adapter import generate_signal_series
 from qat.domain.backtester.sizing import FixedFractionalSizer
 from qat.domain.backtester.vectorized_engine import VectorizedBacktester
 from qat.presentation.runtime import Runtime
-from qat.presentation.synthetic_bars import generate_daily_bars
 from qat.presentation.widgets import KpiTile
 
 logger = logging.getLogger(__name__)
@@ -128,10 +127,12 @@ class WorkbenchScreen(QWidget):
             if strategy is None or not symbol:
                 return
 
-            bars = await generate_daily_bars(symbol)
+            bars = await self.runtime.history_source.get_daily_bars(symbol)
             benchmark_symbol = self.runtime.benchmark_symbol
             benchmark_bars = (
-                bars if symbol == benchmark_symbol else await generate_daily_bars(benchmark_symbol)
+                bars
+                if symbol == benchmark_symbol
+                else await self.runtime.history_source.get_daily_bars(benchmark_symbol)
             )
             benchmark_prices = benchmark_bars.set_index("ts")["close"]
 

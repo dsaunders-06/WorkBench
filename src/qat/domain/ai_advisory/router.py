@@ -15,7 +15,16 @@ from qat.config import Settings
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.ai_advisory.llm_engine import LLMEngine
 
-RequestKind = Literal["trade_rationale", "regime_narrative"]
+RequestKind = Literal[
+    "trade_rationale", "regime_narrative", "macro_analysis", "performance_narrative"
+]
+
+# Market-wide requests: nothing symbol- or position-specific, so these are the
+# kinds eligible for the general (cloud) slot. The sensitivity check below
+# still overrides this if a caller does put positions in the context.
+_GENERAL_KINDS: frozenset[str] = frozenset(
+    {"regime_narrative", "macro_analysis", "performance_narrative"}
+)
 
 
 @dataclass
@@ -34,7 +43,7 @@ class LLMRouter:
             return self.local_engine
         if self._calls_today >= self.settings.ai_cost_budget_calls_per_day:
             return self.local_engine
-        if kind == "regime_narrative":
+        if kind in _GENERAL_KINDS:
             self._calls_today += 1
             return self.anthropic_engine
         return self.local_engine

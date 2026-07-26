@@ -1,17 +1,15 @@
 """Wires FeatureBuilder to the EventBus: turns MarketDataEvent ticks into
 FeatureEvent publications per symbol (spec §D distribution stage).
 
-Ticks are treated as single-point bars (open=high=low=close=price) - a
-deliberate simplification for M2. A dedicated OHLC bar aggregator over ticks
-is a natural addition once a strategy needs real intrabar structure.
+Ticks are aggregated into real OHLC bars by BarAggregator (M14). Before that
+each tick was recorded as a single-point bar with open==high==low==close,
+which left every range-based indicator - ATR above all - measuring a
+tick-to-tick delta rather than anything traded.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
-import pandas as pd
-
+from qat.data.bars import MultiSymbolAggregator
 from qat.data.features import FeatureBuilder
 from qat.domain.bus import EventBus
 from qat.domain.events import FeatureEvent, MarketDataEvent
@@ -23,12 +21,18 @@ class FeatureEngine:
     name = "feature-engine"
 
     def __init__(
-        self, bus: EventBus, builder: FeatureBuilder | None = None, max_history: int = 500
+        self,
+        bus: EventBus,
+        builder: FeatureBuilder | None = None,
+        max_history: int = 500,
+        bar_interval_seconds: float = 60.0,
     ) -> None:
         self.bus = bus
         self.builder = builder or FeatureBuilder()
         self.max_history = max_history
-        self._history: dict[str, list[dict[str, Any]]] = {}
+        self.bars = MultiSymbolAggregator(
+            interval_seconds=bar_interval_seconds, max_bars=max_history
+        )
 
     async def start(self) -> None:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
@@ -37,20 +41,7 @@ class FeatureEngine:
         self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
-        history = self._history.setdefault(event.symbol, [])
-        history.append(
-            {
-                "ts": event.ts,
-                "open": event.price,
-                "high": event.price,
-                "low": event.price,
-                "close": event.price,
-                "volume": event.volume,
-            }
-        )
-        if len(history) > self.max_history:
-            del history[: len(history) - self.max_history]
-
-        bars = pd.DataFrame(history)
+        self.bars.add_tick(event.symbol, event.ts, event.price, event.volume)
+        bars = self.bars.frame(event.symbol)
         features = self.builder.build(bars)
         await self.bus.publish(FeatureEvent(symbol=event.symbol, features=features, as_of=event.ts))

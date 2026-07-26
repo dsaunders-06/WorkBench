@@ -4,18 +4,23 @@ itself (that stays a restart-required Settings change, per M10's
 design). Promoting a screened symbol into the watchlist is a manual step of
 adding it to Settings' curated list.
 
-Runs against the same synthetic universe used throughout the app: candidate
-tickers from qat.data.universe, fundamentals from the runtime's own
-MockFundamentalsSource (already used by the live StrategyEngine - no new
-fundamentals plumbing needed), and a technical trend read via
-synthetic_bars.generate_daily_bars + the existing compute_trend feature
-(qat.data.features) rather than reinventing an SMA comparison.
+Candidate tickers come from qat.data.universe, fundamentals from the runtime's
+own MockFundamentalsSource (already used by the live StrategyEngine - no new
+fundamentals plumbing needed), and the technical trend read from
+runtime.history_source + the existing compute_trend feature (qat.data.features)
+rather than reinventing an SMA comparison.
+
+Since M14 the bars behind that trend column are real when the app is
+configured for real market data, and synthetic otherwise - the screen does not
+choose, it uses whatever the runtime resolved. Fundamentals remain mock in
+both cases; no fundamentals vendor is wired up.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -31,11 +36,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from qat.data import universe
+from qat.data import instruments, universe
 from qat.data.features import compute_trend
 from qat.data.fundamentals import SECTORS
 from qat.presentation.runtime import Runtime
-from qat.presentation.synthetic_bars import generate_daily_bars
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,7 @@ _TREND_WINDOW = 20
 _TREND_FLAT_THRESHOLD = 0.005
 _COLUMNS = (
     "Symbol",
+    "Name",
     "Sector",
     "Price",
     "Avg Volume",
@@ -55,6 +60,24 @@ _COLUMNS = (
     "ROE",
     "Trend",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenResult:
+    """One screened row. A dataclass rather than a positional tuple because the
+    row carries ten fields and the render step unpacks them in order - a
+    mismatch between build and render would be a silent column shift."""
+
+    symbol: str
+    name: str
+    sector: str
+    price: float
+    avg_volume: int
+    eps_growth_yoy: float
+    peg_ratio: float
+    dividend_yield: float
+    roe: float
+    trend: str
 
 
 class ScreenerScreen(QWidget):
@@ -160,7 +183,7 @@ class ScreenerScreen(QWidget):
             min_div_yield = self.min_div_yield_input.value() / 100.0
             min_avg_volume = self.min_avg_volume_input.value()
 
-            rows: list[tuple[str, str, float, int, float, float, float, float, str]] = []
+            rows: list[ScreenResult] = []
             for symbol in symbols:
                 avg_volume = universe.average_daily_volume(symbol)
                 if avg_volume < min_avg_volume:
@@ -178,22 +201,23 @@ class ScreenerScreen(QWidget):
                 if fundamentals.dividend_yield < min_div_yield:
                     continue
 
-                bars = await generate_daily_bars(symbol, n_bars=_TREND_BARS)
+                bars = await self.runtime.history_source.get_daily_bars(symbol, n_bars=_TREND_BARS)
                 price = float(bars["close"].iloc[-1])
                 trend_pct = compute_trend(bars["close"], window=_TREND_WINDOW).iloc[-1]
                 trend = _trend_label(trend_pct)
 
                 rows.append(
-                    (
-                        symbol,
-                        fundamentals.sector,
-                        price,
-                        avg_volume,
-                        fundamentals.eps_growth_yoy,
-                        fundamentals.peg_ratio,
-                        fundamentals.dividend_yield,
-                        fundamentals.roe,
-                        trend,
+                    ScreenResult(
+                        symbol=symbol,
+                        name=instruments.name_for(symbol),
+                        sector=fundamentals.sector,
+                        price=price,
+                        avg_volume=avg_volume,
+                        eps_growth_yoy=fundamentals.eps_growth_yoy,
+                        peg_ratio=fundamentals.peg_ratio,
+                        dividend_yield=fundamentals.dividend_yield,
+                        roe=fundamentals.roe,
+                        trend=trend,
                     )
                 )
 
@@ -205,26 +229,24 @@ class ScreenerScreen(QWidget):
         finally:
             self.run_button.setEnabled(True)
 
-    def _render_results(
-        self, rows: list[tuple[str, str, float, int, float, float, float, float, str]]
-    ) -> None:
+    def _render_results(self, rows: list[ScreenResult]) -> None:
         self.results_table.setRowCount(len(rows))
-        for row_index, (symbol, sector, price, avg_volume, eps, peg, div, roe, trend) in enumerate(
-            rows
-        ):
+        for row_index, result in enumerate(rows):
             values = (
-                symbol,
-                sector,
-                f"{price:.2f}",
-                f"{avg_volume:,}",
-                f"{eps:.2%}",
-                f"{peg:.2f}",
-                f"{div:.2%}",
-                f"{roe:.2%}",
-                trend,
+                result.symbol,
+                result.name,
+                result.sector,
+                f"{result.price:.2f}",
+                f"{result.avg_volume:,}",
+                f"{result.eps_growth_yoy:.2%}",
+                f"{result.peg_ratio:.2f}",
+                f"{result.dividend_yield:.2%}",
+                f"{result.roe:.2%}",
+                result.trend,
             )
             for col_index, value in enumerate(values):
                 self.results_table.setItem(row_index, col_index, QTableWidgetItem(value))
+        self.results_table.resizeColumnsToContents()
 
 
 def _trend_label(trend_pct: float) -> str:

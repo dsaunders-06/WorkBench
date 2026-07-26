@@ -8,6 +8,8 @@ never consulted positions, so "sell" fired for symbols with no holding.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from qat.config import Settings
@@ -34,9 +36,22 @@ def _build(**settings_kwargs: object) -> tuple[SignalToOrderBridge, OMS, MockBro
 
 
 async def _feed_bars(bridge: SignalToOrderBridge, symbol: str = _SYMBOL, n: int = 30) -> None:
+    """Feeds n *bars*, not n ticks.
+
+    Ticks are aggregated into fixed-interval OHLC bars (M14), so timestamps
+    have to advance past a bar boundary for each one to become its own bar -
+    otherwise thirty ticks in the same minute are a single bar and the bridge
+    correctly declines to size a stop from it.
+    """
+    start = datetime(2026, 7, 23, 14, 0, tzinfo=UTC)
     for step in range(n):
         await bridge._on_market_data(
-            MarketDataEvent(symbol=symbol, price=100.0 + step * 0.5, volume=1000)
+            MarketDataEvent(
+                symbol=symbol,
+                price=100.0 + step * 0.5,
+                volume=1000,
+                ts=start + timedelta(seconds=step * 60),
+            )
         )
 
 

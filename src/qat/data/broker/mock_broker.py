@@ -20,6 +20,8 @@ class MockBroker:
         self._rng = random.Random(seed)  # nosec B311 - deterministic synthetic fills, not crypto
         self._orders: dict[str, Order] = {}
         self._positions: dict[str, Position] = {}
+        self._resting_stops: dict[str, float | None] = {}
+        self._resting_targets: dict[str, float | None] = {}
         self._cash = _STARTING_CASH
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
@@ -36,7 +38,28 @@ class MockBroker:
         order.filled_price = fill_price
         self._orders[order.order_id] = order
         self._apply_fill(order, fill_price)
+
+        # A bracket entry leaves resting protective legs at the broker. The
+        # simulator records them so "did my stop actually get placed?" is
+        # answerable here and not only against a live account - the whole
+        # reason for the bracket is that these outlive the app process.
+        if order.is_bracket and order.side == "buy":
+            self._resting_stops[order.symbol] = order.stop_price
+            self._resting_targets[order.symbol] = order.take_profit_price
+        elif order.side == "sell":
+            # Closing the position cancels its protective legs, exactly as a
+            # real broker does - otherwise a stale stop would linger against a
+            # position that no longer exists.
+            self._resting_stops.pop(order.symbol, None)
+            self._resting_targets.pop(order.symbol, None)
         return order
+
+    def resting_stop(self, symbol: str) -> float | None:
+        """The protective stop currently resting at the broker, if any."""
+        return self._resting_stops.get(symbol)
+
+    def resting_target(self, symbol: str) -> float | None:
+        return self._resting_targets.get(symbol)
 
     async def modify_order(self, order_id: str, **changes: object) -> Order:
         order = self._orders[order_id]

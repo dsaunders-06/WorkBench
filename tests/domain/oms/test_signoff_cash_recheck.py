@@ -43,7 +43,14 @@ def _candidate(symbol: str) -> OrderCandidate:
 
 
 def _build() -> tuple[OMS, PlaceOrderSpy, Settings]:
-    settings = Settings(_env_file=None)
+    # Portfolio caps are set generously here on purpose: these tests
+    # exercise the SIGN-OFF gate, and the governor blocking first would
+    # mean they stopped testing what they claim to.
+    settings = Settings(
+        _env_file=None,
+        max_aggregate_risk_at_stop_pct=1.0,
+        max_concurrent_positions=100,
+    )
     engine = RiskEngine(EventBus(), KillSwitch(), settings=settings)
     broker = PlaceOrderSpy(seed=1)
     oms = OMS(broker, engine, engine.kill_switch, max_order_notional=1_000_000.0)

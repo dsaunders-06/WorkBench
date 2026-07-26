@@ -78,7 +78,22 @@ class DashboardScreen(QWidget):
         self._timer.start(_REFRESH_INTERVAL_MS)
 
     def _schedule_refresh(self) -> None:
-        asyncio.ensure_future(self._refresh_guarded())
+        """Qt's timer can fire whenever the widget is alive, including before
+        the qasync loop is running or after it has stopped. asyncio.ensure_future
+        raises in that window, and because this is a Qt slot the exception
+        escapes into Qt's handler rather than anywhere useful - so the loop is
+        checked for rather than assumed.
+
+        Skipping a tick is the right response: the timer will come round again
+        once the loop exists, and the tiles are refreshed from scratch each
+        time, so nothing is lost by missing one.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.debug("Dashboard refresh skipped - no running event loop")
+            return
+        loop.create_task(self._refresh_guarded())
 
     async def _refresh_guarded(self) -> None:
         """Timer-driven, so an exception here would otherwise vanish into an

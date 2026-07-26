@@ -277,31 +277,55 @@ def _extract_choice_content(response_data: dict[str, Any], base_url: str) -> str
     return content
 
 
+_DEMO_NOTICE = (
+    "[Demo mode - no real LLM configured] This is a canned response. "
+    "Configure an Anthropic API key or a local Ollama server for real analysis."
+)
+
+# One canned payload per schema. Each is the most inert value that schema can
+# express - "hold" for a recommendation, "neutral" with no proposed exposure
+# change for a macro read - so the demo engine can never nudge a decision in
+# any direction, whichever call site reaches it.
+_DEMO_PAYLOADS: dict[str, dict[str, object]] = {
+    "AdvisoryRecommendation": {
+        "recommendation": "hold",
+        "rationale": _DEMO_NOTICE,
+        "confidence": 0.0,
+        "risk_flags": ["demo_mode_no_real_llm"],
+    },
+    "MacroAssessment": {
+        "regime": "neutral",
+        "reasoning": _DEMO_NOTICE,
+        "confidence": 0.0,
+        "key_insights": [],
+        "risk_flags": ["demo_mode_no_real_llm"],
+        "suggested_exposure_scalar": None,
+    },
+}
+
+
 class DemoLLMEngine:
     """A canned, offline fallback (spec §M9) used only when the runtime isn't
     given a real engine - no Anthropic key configured, no local Ollama
     server running - so the demo app runs out of the box without either.
-    Always returns "hold" with confidence 0.0 and a risk_flag naming itself:
-    the safest possible default, since it can never accidentally propose a
-    real trade. AnthropicEngine/LocalEngine are the right choice for any
-    real paper or live session.
+    Every canned payload is the most inert value its schema allows (confidence
+    0.0, a risk_flag naming itself, nothing proposed), so this engine can never
+    accidentally nudge a real decision. AnthropicEngine/LocalEngine are the
+    right choice for any real paper or live session.
 
-    Assumes the schema is AdvisoryRecommendation-shaped (the only schema
-    this codebase uses) - it is not a general-purpose LLM stand-in.
+    An unregistered schema raises rather than guessing: a new schema silently
+    receiving a wrong-shaped canned answer would be a worse failure than a
+    loud one at the call site.
     """
 
     async def complete(
         self, system_prompt: str, user_prompt: str, schema: type[SchemaT], max_retries: int = 1
     ) -> SchemaT:
         await asyncio.sleep(0)  # a real (trivial) await, not a blocking call
-        return schema.model_validate(
-            {
-                "recommendation": "hold",
-                "rationale": (
-                    "[Demo mode - no real LLM configured] This is a canned response. "
-                    "Configure an Anthropic API key or a local Ollama server for real analysis."
-                ),
-                "confidence": 0.0,
-                "risk_flags": ["demo_mode_no_real_llm"],
-            }
-        )
+        payload = _DEMO_PAYLOADS.get(schema.__name__)
+        if payload is None:
+            raise ValueError(
+                f"DemoLLMEngine has no canned payload for schema {schema.__name__!r} - "
+                f"add one to _DEMO_PAYLOADS in {__name__}"
+            )
+        return schema.model_validate(payload)

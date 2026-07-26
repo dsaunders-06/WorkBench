@@ -26,6 +26,7 @@ _EXPECTED_TABS = [
     "AI Advisor",
     "Order Blotter",
     "Screener",
+    "Performance",
     "Settings",
 ]
 

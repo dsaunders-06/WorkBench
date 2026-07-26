@@ -28,11 +28,12 @@ maintain historical return series for already-held positions.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 import pandas as pd
 
 from qat.config import Settings
+from qat.data.bars import MultiSymbolAggregator
 from qat.data.broker.adapter import Position
 from qat.data.features import compute_atr
 from qat.domain.bus import EventBus
@@ -41,6 +42,16 @@ from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import OrderCandidate
 
 _MIN_HISTORY_FOR_SIZING = 2
+
+
+def _meta_price(meta: dict[str, object], key: str) -> float | None:
+    """Reads a price out of SignalEvent.meta, which is an untyped dict any
+    strategy can put anything into - so a missing or non-numeric value is
+    treated as absent rather than allowed to raise inside the order path."""
+    value = meta.get(key)
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return None
 
 
 class SignalToOrderBridge:
@@ -54,6 +65,7 @@ class SignalToOrderBridge:
         default_win_loss_ratio: float = 1.5,
         max_history: int = 250,
         settings: Settings | None = None,
+        bar_interval_seconds: float = 60.0,
     ) -> None:
         self.bus = bus
         self.oms = oms
@@ -61,7 +73,13 @@ class SignalToOrderBridge:
         self.default_win_rate = default_win_rate
         self.default_win_loss_ratio = default_win_loss_ratio
         self.max_history = max_history
-        self._history: dict[str, list[dict[str, Any]]] = {}
+        # Real OHLC bars, not one-point-per-tick (M14). This is the most
+        # load-bearing of the three aggregators in the app: the ATR computed
+        # from these bars sets the stop distance, and the stop distance sets
+        # the position size.
+        self.bars = MultiSymbolAggregator(
+            interval_seconds=bar_interval_seconds, max_bars=max_history
+        )
 
     async def start(self) -> None:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
@@ -72,19 +90,7 @@ class SignalToOrderBridge:
         self.bus.unsubscribe(SignalEvent, self._on_signal)
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
-        history = self._history.setdefault(event.symbol, [])
-        history.append(
-            {
-                "ts": event.ts,
-                "open": event.price,
-                "high": event.price,
-                "low": event.price,
-                "close": event.price,
-                "volume": event.volume,
-            }
-        )
-        if len(history) > self.max_history:
-            del history[: len(history) - self.max_history]
+        self.bars.add_tick(event.symbol, event.ts, event.price, event.volume)
 
     async def _on_signal(self, event: SignalEvent) -> None:
         # A strategy re-emits its signal on EVERY tick for as long as its
@@ -98,11 +104,10 @@ class SignalToOrderBridge:
         if event.symbol in self.oms.pending_signoff_symbols():
             return
 
-        history = self._history.get(event.symbol)
-        if not history or len(history) < _MIN_HISTORY_FOR_SIZING:
+        bars = self.bars.frame(event.symbol)
+        if len(bars) < _MIN_HISTORY_FOR_SIZING:
             return  # not enough history to size a stop yet
 
-        bars = pd.DataFrame(history)
         price = float(bars["close"].iloc[-1])
 
         positions = await self.oms.broker.positions()
@@ -129,20 +134,38 @@ class SignalToOrderBridge:
         if not self.settings.allow_short_selling:
             return  # long-only: nothing to sell, and opening a short is not wanted
         # Shorting is explicitly enabled, so treat this as a new position.
-        history = self._history.get(symbol)
-        if history:
+        bars = self.bars.frame(symbol)
+        if not bars.empty:
             positions = await self.oms.broker.positions()
-            await self._submit_short(symbol, pd.DataFrame(history), price, positions)
+            await self._submit_short(symbol, bars, price, positions)
 
     async def _submit_entry(
         self, event: SignalEvent, bars: pd.DataFrame, price: float, positions: list[Position]
     ) -> None:
-        await self._submit_sized(event.symbol, event.side, bars, price, positions)
+        # A strategy that has done the work of proposing a stop and target
+        # (Swing, Breakout) gets those honoured, both for sizing and for the
+        # bracket attached at the broker. A strategy that has not falls back to
+        # the risk engine's own ATR stop.
+        await self._submit_sized(
+            event.symbol,
+            event.side,
+            bars,
+            price,
+            positions,
+            strategy=event.strategy,
+            stop_price=_meta_price(event.meta, "stop_price"),
+            take_profit_price=_meta_price(event.meta, "target_price"),
+        )
 
     async def _submit_short(
-        self, symbol: str, bars: pd.DataFrame, price: float, positions: list[Position]
+        self,
+        symbol: str,
+        bars: pd.DataFrame,
+        price: float,
+        positions: list[Position],
+        strategy: str | None = None,
     ) -> None:
-        await self._submit_sized(symbol, "sell", bars, price, positions)
+        await self._submit_sized(symbol, "sell", bars, price, positions, strategy=strategy)
 
     async def _submit_sized(
         self,
@@ -151,6 +174,9 @@ class SignalToOrderBridge:
         bars: pd.DataFrame,
         price: float,
         positions: list[Position],
+        strategy: str | None = None,
+        stop_price: float | None = None,
+        take_profit_price: float | None = None,
     ) -> None:
         atr_series = compute_atr(bars["high"], bars["low"], bars["close"])
         last_atr = atr_series.iloc[-1]
@@ -166,6 +192,9 @@ class SignalToOrderBridge:
             win_rate=self.default_win_rate,
             win_loss_ratio=self.default_win_loss_ratio,
             candidate_returns=bars["close"].pct_change().dropna(),
+            strategy=strategy,
+            stop_price=stop_price,
+            take_profit_price=take_profit_price,
         )
 
         account = await self.oms.broker.account()

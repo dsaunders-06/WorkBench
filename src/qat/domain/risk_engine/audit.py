@@ -16,6 +16,11 @@ class RiskDecision:
     final_shares: float
     reason: str
     inputs: dict[str, Any]
+    # The stop this order was actually sized against - the strategy's own when
+    # it supplied one, otherwise the ATR stop the sizer used. Carried out of
+    # the decision so OMS can attach it to the order as a real broker bracket:
+    # a stop that exists only as a sizing assumption protects nothing.
+    stop_price: float | None = None
     ts: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 

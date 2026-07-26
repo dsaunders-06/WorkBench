@@ -27,6 +27,7 @@ from qat.data.broker.adapter import BrokerAdapter
 from qat.data.broker.mock_broker import MockBroker
 from qat.data.feature_engine import FeatureEngine
 from qat.data.fundamentals import FundamentalsSource, MockFundamentalsSource
+from qat.data.history import HistoricalBarSource, resolve_history_source
 from qat.data.macro_fred import MacroDataSource, MacroFeed, MockMacroSource
 from qat.data.market_data import MarketDataFeed, MarketDataSource, SyntheticMarketDataSource
 from qat.domain.ai_advisory.llm_engine import (
@@ -38,11 +39,26 @@ from qat.domain.ai_advisory.llm_engine import (
 )
 from qat.domain.ai_advisory.router import LLMRouter
 from qat.domain.ai_advisory.service import AIAdvisoryService
+from qat.domain.autonomy import (
+    AutonomousExecutor,
+    AutonomyGate,
+    AutonomyJournal,
+    EquityMonitor,
+)
 from qat.domain.bus import EventBus
 from qat.domain.oms.oms import OMS
+from qat.domain.oms.reconciliation import ReconciliationMonitor
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
 from qat.domain.orchestrator import Orchestrator
+from qat.domain.performance import (
+    EquityCurve,
+    PerformanceReport,
+    PerformanceReporter,
+    TradeLedger,
+)
+from qat.domain.performance.scorecard import StrategyScorecard, build_scorecard
 from qat.domain.regime_engine.engine import RegimeEngine
+from qat.domain.risk_engine.delever import DeleverSweep
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch, KillSwitchEngine
 from qat.domain.strategies.base import Strategy
@@ -120,6 +136,33 @@ def _resolve_engine(choice: Literal["anthropic", "local", "demo"], settings: Set
     return DemoLLMEngine()
 
 
+def resolve_market_data_source(settings: Settings) -> MarketDataSource:
+    """Real or synthetic ticks (spec M14).
+
+    A failure to construct the real source degrades to synthetic with a loud
+    warning rather than refusing to start - but it is never silent, because
+    believing you are trading against real prices while running on a random
+    walk would be the worst of the available outcomes.
+    """
+    if settings.market_data_source == "yfinance":
+        try:
+            from qat.data.yfinance_source import YFinanceMarketDataSource
+
+            logger.info(
+                "Using real market data (yfinance, poll=%.0fs). This feed is free, "
+                "delayed and rate-limited.",
+                settings.yfinance_poll_seconds,
+            )
+            return YFinanceMarketDataSource(poll_seconds=settings.yfinance_poll_seconds)
+        except Exception as exc:  # noqa: BLE001 - degrade, but loudly
+            logger.warning(
+                "Could not build the yfinance market data source (%s) - falling back to "
+                "SYNTHETIC data. Prices shown are not real.",
+                exc,
+            )
+    return SyntheticMarketDataSource(seed=1, interval_seconds=1.0)
+
+
 def resolve_broker(settings: Settings) -> BrokerAdapter:
     """Builds the configured broker, falling back to MockBroker with a logged
     warning rather than failing to start (spec M12).
@@ -179,12 +222,21 @@ class Runtime:
     kill_switch: KillSwitch
     risk_engine: RiskEngine
     oms: OMS
+    equity_monitor: EquityMonitor
+    reconciliation_monitor: ReconciliationMonitor
+    delever_sweep: DeleverSweep
+    trade_ledger: TradeLedger
+    equity_curve: EquityCurve
+    performance_reporter: PerformanceReporter
+    autonomy_gate: AutonomyGate
+    autonomy_journal: AutonomyJournal
     strategy_engine: StrategyEngine
     available_strategies: list[Strategy]
     regime_engine: RegimeEngine
     ai_service: AIAdvisoryService
     watchlist: tuple[str, ...]
     benchmark_symbol: str
+    history_source: HistoricalBarSource
 
     @classmethod
     def build_demo(
@@ -210,8 +262,63 @@ class Runtime:
 
         risk_engine = RiskEngine(bus, kill_switch, settings=settings)
         broker = broker or resolve_broker(settings)
-        oms = OMS(broker, risk_engine, kill_switch)
-        signal_bridge = SignalToOrderBridge(bus, oms, settings=settings)
+        oms = OMS(broker, risk_engine, kill_switch, bus=bus)
+        signal_bridge = SignalToOrderBridge(
+            bus, oms, settings=settings, bar_interval_seconds=settings.bar_interval_seconds
+        )
+
+        # Autonomy (spec M13). All four pieces are constructed regardless of
+        # execution_mode so the UI can always show the journal and the rails,
+        # but AutonomousExecutor short-circuits unless Settings.autonomy_enabled
+        # - the engine graph does not change shape when the mode does.
+        equity_monitor = EquityMonitor(broker, kill_switch, settings=settings, bus=bus)
+        # Adopts whatever the account already holds as the reconciliation
+        # baseline, then polls (spec M15). Without adoption, an account with any
+        # pre-existing position reads as a mismatch and trips the kill-switch on
+        # every startup.
+        reconciliation_monitor = ReconciliationMonitor(oms, settings=settings, bus=bus)
+        delever_sweep = DeleverSweep(oms, risk_engine.governor, settings=settings, bus=bus)
+
+        # Evidence layer (spec M16): realised trades, the equity curve, and the
+        # reports built from both. The ledger is the only source of truth about
+        # whether anything worked; the journal records only what was decided.
+        autonomy_journal = AutonomyJournal(settings.data_dir)
+        trade_ledger = TradeLedger(bus, settings.data_dir)
+        equity_curve = EquityCurve(settings.data_dir)
+        # The equity monitor already polls the account on a timer, so it doubles
+        # as the curve's sampler rather than adding a second poller for the
+        # same number.
+        equity_monitor.equity_curve = equity_curve
+        performance_reporter = PerformanceReporter(
+            trade_ledger,
+            equity_curve,
+            settings=settings,
+            journal=autonomy_journal,
+        )
+
+        def _scorecard_for(strategy: str) -> StrategyScorecard | None:
+            """Evidence lookup for the autonomy gate (M16). Computed on demand
+            from the ledger rather than cached, so a strategy that degrades
+            stops qualifying on its very next order rather than at some later
+            refresh."""
+            trades = trade_ledger.closed_trades(strategy)
+            return build_scorecard(strategy, trades, settings)
+
+        autonomy_gate = AutonomyGate(settings, kill_switch, scorecard_source=_scorecard_for)
+        autonomous_executor = AutonomousExecutor(
+            bus,
+            oms,
+            autonomy_gate,
+            autonomy_journal,
+            equity_monitor=equity_monitor,
+            settings=settings,
+        )
+        if settings.autonomy_enabled:
+            logger.warning(
+                "AUTONOMOUS EXECUTION IS ENABLED - qualifying orders will be signed off "
+                "without confirmation. Promoted strategies: %s",
+                ", ".join(settings.autonomous_strategies_tuple) or "none",
+            )
 
         # The benchmark must always be streamed even if it isn't part of the
         # configured watchlist (e.g. a mega-cap category that doesn't happen
@@ -220,11 +327,12 @@ class Runtime:
         # would never fire. dict.fromkeys de-dupes while preserving order.
         feed_symbols = tuple(dict.fromkeys((benchmark_symbol, *watchlist)))
 
-        source = market_data_source or SyntheticMarketDataSource(seed=1, interval_seconds=1.0)
+        source = market_data_source or resolve_market_data_source(settings)
         market_data_feed = MarketDataFeed(
             bus, source, feed_symbols, staleness_seconds=settings.data_staleness_seconds
         )
-        feature_engine = FeatureEngine(bus)
+        feature_engine = FeatureEngine(bus, bar_interval_seconds=settings.bar_interval_seconds)
+        history_source = resolve_history_source(settings)
 
         macro = macro_source or MockMacroSource(seed=1)
         macro_feed = MacroFeed(bus, macro, settings.fred_series, poll_interval_seconds=3600.0)
@@ -234,7 +342,16 @@ class Runtime:
         # Live-deployed set starts empty (spec §K: nothing trades until a human
         # vets it via the Workbench and clicks "Deploy to Paper") - Workbench
         # appends to strategy_engine.strategies, it never starts pre-populated.
-        strategy_engine = StrategyEngine(bus, [], fundamentals)
+        strategy_engine = StrategyEngine(
+            bus,
+            [],
+            fundamentals,
+            bar_interval_seconds=settings.bar_interval_seconds,
+            # Read-only position access, so strategies can emit exits (M14).
+            # Narrowed to the PositionSource protocol - a strategy engine is
+            # never handed something that can place an order.
+            position_source=broker,
+        )
 
         regime_engine = RegimeEngine(
             bus, benchmark_symbol=benchmark_symbol, breadth_symbols=watchlist
@@ -246,13 +363,31 @@ class Runtime:
         )
         ai_service = AIAdvisoryService(router, risk_engine, settings=settings)
 
+        async def _narrate_report(report: PerformanceReport) -> str:
+            """AI commentary on a report whose figures are already final. The
+            reporter treats a failure here as cosmetic, so a model outage costs
+            the commentary and never the report itself."""
+            return await ai_service.get_performance_narrative(report.to_markdown())
+
+        # Attached after the AI service exists rather than passed at
+        # construction, so the dependency order reads in the order it happens.
+        performance_reporter.narrator = _narrate_report
+
         for engine in (
             kill_switch_engine,
             risk_engine,
+            equity_monitor,
+            reconciliation_monitor,
+            delever_sweep,
+            trade_ledger,
+            performance_reporter,
             market_data_feed,
             feature_engine,
             macro_feed,
             strategy_engine,
+            # The executor subscribes before the bridge can publish, so no
+            # pending order can slip past it during startup.
+            autonomous_executor,
             signal_bridge,
             regime_engine,
         ):
@@ -266,10 +401,19 @@ class Runtime:
             kill_switch=kill_switch,
             risk_engine=risk_engine,
             oms=oms,
+            equity_monitor=equity_monitor,
+            reconciliation_monitor=reconciliation_monitor,
+            delever_sweep=delever_sweep,
+            trade_ledger=trade_ledger,
+            equity_curve=equity_curve,
+            performance_reporter=performance_reporter,
+            autonomy_gate=autonomy_gate,
+            autonomy_journal=autonomy_journal,
             strategy_engine=strategy_engine,
             available_strategies=available_strategies,
             regime_engine=regime_engine,
             ai_service=ai_service,
             watchlist=watchlist,
             benchmark_symbol=benchmark_symbol,
+            history_source=history_source,
         )

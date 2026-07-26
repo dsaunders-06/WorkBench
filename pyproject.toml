@@ -22,6 +22,10 @@ dependencies = [
     "alpaca-py>=0.43",
     "anthropic>=0.119",
     "pyqtgraph>=0.13",
+    # Real market data (M14). Free and unofficial: rate-limited, sparse on
+    # quiet intervals, and not a contractual feed - see data/yfinance_source.py
+    # for how each of those is handled rather than assumed away.
+    "yfinance>=0.2.40",
 ]
 
 [project.optional-dependencies]
