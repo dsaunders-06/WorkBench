@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.6  |  Milestone M23"
+VERSION_LINE = "Version 2.7  |  Milestone M24"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -265,6 +265,12 @@ def _introduction(doc: Any) -> None:
                 "Optional auto-trade",
                 "Per-strategy unattended execution on paper accounts, off by default and "
                 "gated by an explicit confirmation (Sections 11.6 and 12.3).",
+            ),
+            (
+                "A halt you cannot miss",
+                "Every kill-switch trip and reset now changes the execution banner on "
+                "every screen and writes a line to the log, whichever path tripped it "
+                "(Section 6).",
             ),
             (
                 "Metrics tab",
@@ -823,7 +829,9 @@ def _risk_console(doc: Any, figures: FigureSet) -> None:
                 "Kill-switch button",
                 "Always visible at the top. Green when inactive, red when tripped. "
                 "Tripping it halts all new order flow at once; it does not liquidate "
-                "existing positions.",
+                "existing positions. Clicking it also changes the execution banner at "
+                "the top of every screen, so a halt made here is visible from wherever "
+                "you happen to be looking.",
             ),
             (
                 "Portfolio VaR (95%) and (99%) tiles",
@@ -871,6 +879,16 @@ def _risk_console(doc: Any, figures: FigureSet) -> None:
     doc.add_paragraph(
         "A tripped kill-switch stays tripped until it is reset deliberately. It blocks new "
         "orders; it never sells anything on your behalf."
+    )
+    _callout(
+        doc,
+        "You will always be told",
+        "However the switch trips, three things happen together: the Risk Console button "
+        "turns red, the execution banner across the top of every screen changes to "
+        "EXECUTION HALTED and names the cause, and a line is written to the log. If two "
+        "causes arrive at once the banner keeps the first, because that is the one that "
+        "stopped you - a later staleness warning must not overwrite 'daily loss limit "
+        "reached'. Resetting the switch clears all three.",
     )
 
 

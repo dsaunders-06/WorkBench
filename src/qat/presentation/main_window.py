@@ -50,6 +50,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.execution_banner)
         self._refresh_execution_banner()
         runtime.bus.subscribe(KillSwitchEvent, self._on_kill_switch)
+        # Catches the paths that publish nothing - a staleness trip, and this
+        # window's own Risk Console halting or resetting the switch.
+        runtime.kill_switch.add_listener(self._refresh_execution_banner)
 
         tabs = QTabWidget()
         tabs.addTab(DashboardScreen(runtime), "Dashboard")

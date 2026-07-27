@@ -261,6 +261,16 @@ implementation so the domain core is independently testable.
   exhausted IBKR reconnect budget, or a manual trigger, and halts new
   orders. It's always visible and colour-coded on the Risk Console
   (`presentation/risk_console.py`), and a single click can trip or reset it.
+  Every trip and reset is logged and pushed to registered listeners
+  (`KillSwitch.add_listener`), which is how the main window's execution
+  banner stays truthful. Until M24 it did not: `trip()` wrote no log line at
+  all, and three paths - the staleness detector, the Risk Console button, and
+  every direct `trip()` call - changed the state without announcing it, so a
+  halted session went on displaying **AUTO-TRADE ACTIVE** and a reset session
+  went on displaying **EXECUTION HALTED**. Notification travels by callback
+  rather than by bus event for two reasons: it fires on every path
+  structurally, so the next trip site added cannot be silent by omission, and
+  it needs no running event loop, where an async publish from a Qt slot does.
 - The Order Blotter (`presentation/blotter.py`) never calls `OMS.sign_off()`
   except from inside a confirmed modal dialog - selecting pending orders
   and clicking Sign Off always asks first. Bulk sign-off is supported, but

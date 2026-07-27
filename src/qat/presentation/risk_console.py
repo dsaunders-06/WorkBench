@@ -150,8 +150,18 @@ class RiskConsoleScreen(QWidget):
             self.kill_switch_button.setStyleSheet(_ACTIVE_STYLE)
 
     def _on_kill_switch_clicked(self) -> None:
+        """Toggle the switch AND announce it.
+
+        This screen used to mutate the shared KillSwitch and repaint only its
+        own button, so halting from here left the main window's banner reading
+        AUTO-TRADE ACTIVE and resetting left it reading HALTED. The state was
+        right and every other view of it was wrong.
+        """
+        operator = "operator (risk console)"
         if self.runtime.kill_switch.tripped:
-            self.runtime.kill_switch.reset("operator (risk console)")
+            self.runtime.kill_switch.reset(operator)
         else:
-            self.runtime.kill_switch.trigger_manual("operator (risk console)")
+            self.runtime.kill_switch.trigger_manual(operator)
+        # Every other view of the switch now updates through its listeners, so
+        # this screen no longer has to remember to announce what it did.
         self._refresh_kill_switch_button()
