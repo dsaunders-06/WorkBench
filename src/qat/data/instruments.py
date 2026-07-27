@@ -27,7 +27,7 @@ _US_NAMES: dict[str, str] = {
     "META": "Meta Platforms, Inc.",
     "AVGO": "Broadcom Inc.",
     "TSLA": "Tesla, Inc.",
-    "BRK-B": "Berkshire Hathaway Inc. (Class B)",
+    "BRK.B": "Berkshire Hathaway Inc. (Class B)",
     "LLY": "Eli Lilly and Company",
     "JPM": "JPMorgan Chase & Co.",
     "V": "Visa Inc.",

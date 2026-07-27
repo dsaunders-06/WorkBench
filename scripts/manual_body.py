@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.8  |  Milestone M25"
+VERSION_LINE = "Version 2.9  |  Milestone M26"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -266,6 +266,12 @@ def _introduction(doc: Any) -> None:
                 "Optional auto-trade",
                 "Per-strategy unattended execution on paper accounts, off by default and "
                 "gated by an explicit confirmation (Sections 11.6 and 12.3).",
+            ),
+            (
+                "You are told when prices stop",
+                "A market-data outage now appears on the banner instead of being "
+                "silent, one unknown ticker can no longer block the whole feed, and "
+                "a dropped feed reconnects by itself.",
             ),
             (
                 "Positions you did not open",

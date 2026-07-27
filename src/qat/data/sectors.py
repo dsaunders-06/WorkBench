@@ -23,7 +23,7 @@ SECTOR_BY_SYMBOL: dict[str, str] = {
     "META": "Communication Services",
     "AVGO": "Information Technology",
     "TSLA": "Consumer Discretionary",
-    "BRK-B": "Financials",
+    "BRK.B": "Financials",
     "LLY": "Health Care",
     "JPM": "Financials",
     "V": "Financials",

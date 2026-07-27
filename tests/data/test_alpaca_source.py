@@ -7,7 +7,10 @@ without credentials or network access.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
 
@@ -90,16 +93,72 @@ async def test_zero_or_missing_prices_are_skipped():
     assert await source._poll_once(["AAPL"]) == []
 
 
-async def test_the_stream_ends_after_repeated_failures():
-    """Ending the iterator lets MarketDataFeed raise DataStaleEvent; looping
-    forever would leave the app looking alive while trading on nothing."""
+async def test_the_stream_keeps_retrying_instead_of_ending():
+    """This reverses the M17 design, and the first live session is why.
+
+    Ending the iterator was meant to let MarketDataFeed's staleness detector
+    raise DataStaleEvent and trip the kill-switch. It never could: staleness is
+    per-symbol and skips symbols that have not ticked even once, so a feed that
+    failed from the first poll produced no ticks, no staleness, no halt - and
+    the stream was over for the session. Six hours of an open market passed
+    with the banner reading AUTO-TRADE ACTIVE.
+
+    Visibility now comes from MarketDataFeed's feed-level health check, which
+    frees this loop to keep trying.
+    """
     source = AlpacaMarketDataSource(
         client=FakeDataClient(raises=True), poll_seconds=0.0, max_consecutive_failures=2
     )
 
-    ticks = [tick async for tick in source.stream_ticks(["AAPL"])]
+    stream = source.stream_ticks(["AAPL"])
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(anext(stream), timeout=0.25)
+    await stream.aclose()
 
-    assert ticks == []
+
+async def test_backoff_grows_while_down_and_is_capped():
+    """A feed that recovers must be picked up in a poll or two, not an hour."""
+    source = AlpacaMarketDataSource(
+        client=FakeDataClient(),
+        poll_seconds=10.0,
+        max_consecutive_failures=3,
+        max_backoff_seconds=120.0,
+    )
+
+    assert source._delay_after(0) == 10.0  # healthy: normal cadence
+    assert source._delay_after(2) == 10.0  # still inside the strike count
+    first = source._delay_after(3)
+    second = source._delay_after(4)
+    assert first > 10.0 and second > first
+    assert source._delay_after(50) == 120.0  # capped, never unbounded
+
+
+async def test_a_recovered_feed_yields_again_and_says_so(caplog):
+    class _FlakyClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get_stock_latest_trade(self, request_params):
+            self.calls += 1
+            # The startup probe consumes the first two calls; the rest are the
+            # poll loop failing enough times to be declared down.
+            if self.calls <= 5:
+                raise RuntimeError("transient")
+            return {"AAPL": SimpleNamespace(price=101.0, size=5, timestamp=datetime.now(UTC))}
+
+        def get_stock_bars(self, request_params):  # pragma: no cover - unused here
+            return {}
+
+    source = AlpacaMarketDataSource(
+        client=_FlakyClient(), poll_seconds=0.0, max_consecutive_failures=2
+    )
+    stream = source.stream_ticks(["AAPL"])
+    with caplog.at_level(logging.WARNING, logger="qat.data.alpaca_source"):
+        tick = await asyncio.wait_for(anext(stream), timeout=2.0)
+    await stream.aclose()
+
+    assert tick.price == 101.0
+    assert any("recovered" in r.getMessage() for r in caplog.records)
 
 
 async def test_daily_bars_are_translated_without_gap_filling():

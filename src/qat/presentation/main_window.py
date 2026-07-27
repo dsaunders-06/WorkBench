@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel, QMainWindow, QTabWidget, QVBoxLayout, QWidget
 
-from qat.domain.events import KillSwitchEvent
+from qat.domain.events import KillSwitchEvent, MarketDataFeedEvent
 from qat.presentation.ai_advisor import AiAdvisorScreen
 from qat.presentation.blotter import BlotterScreen
 from qat.presentation.dashboard import DashboardScreen
@@ -29,6 +29,9 @@ _LIVE_STYLE = "background-color: #b71c1c; color: white; padding: 6px; font-weigh
 _RECOMMEND_STYLE = "background-color: #1e3a5f; color: white; padding: 6px; font-weight: bold;"
 _AUTO_STYLE = "background-color: #b45309; color: white; padding: 6px; font-weight: bold;"
 _HALTED_STYLE = "background-color: #7f1d1d; color: white; padding: 6px; font-weight: bold;"
+# Amber, not the halt red: an outage is a condition to notice, a halt is a
+# decision that was taken. Painting them identically would blur the two.
+_FEED_DOWN_STYLE = "background-color: #b45309; color: white; padding: 6px; font-weight: bold;"
 
 
 class MainWindow(QMainWindow):
@@ -46,6 +49,7 @@ class MainWindow(QMainWindow):
         banner.setStyleSheet(_LIVE_STYLE if settings.is_live else _PAPER_STYLE)
         layout.addWidget(banner)
 
+        self._feed_down_reason: str | None = None
         self.execution_banner = QLabel()
         layout.addWidget(self.execution_banner)
         self._refresh_execution_banner()
@@ -53,6 +57,7 @@ class MainWindow(QMainWindow):
         # Catches the paths that publish nothing - a staleness trip, and this
         # window's own Risk Console halting or resetting the switch.
         runtime.kill_switch.add_listener(self._refresh_execution_banner)
+        runtime.bus.subscribe(MarketDataFeedEvent, self._on_feed_health)
 
         tabs = QTabWidget()
         tabs.addTab(DashboardScreen(runtime), "Dashboard")
@@ -75,6 +80,17 @@ class MainWindow(QMainWindow):
         # race on whether the engine had tripped the switch yet.
         self._refresh_execution_banner(halt_reason=event.reason)
 
+    async def _on_feed_health(self, event: MarketDataFeedEvent) -> None:
+        """A dead feed has to be as visible as a halt.
+
+        The first unattended session ran six hours with no market data while
+        this banner read AUTO-TRADE ACTIVE. Nothing was trading - no ticks
+        means no signals - but the screen asserted the opposite of the truth,
+        which is the failure the banner exists to prevent.
+        """
+        self._feed_down_reason = None if event.healthy else event.reason
+        self._refresh_execution_banner()
+
     def _refresh_execution_banner(self, halt_reason: str | None = None) -> None:
         """Three states, never two: off, active, and halted-with-a-reason.
 
@@ -88,6 +104,11 @@ class MainWindow(QMainWindow):
             reason = halt_reason or self.runtime.kill_switch.reason or "unknown reason"
             self.execution_banner.setText(f"EXECUTION HALTED - KILL-SWITCH: {reason}")
             self.execution_banner.setStyleSheet(_HALTED_STYLE)
+            return
+
+        if self._feed_down_reason:
+            self.execution_banner.setText(f"MARKET DATA DOWN - {self._feed_down_reason}")
+            self.execution_banner.setStyleSheet(_FEED_DOWN_STYLE)
             return
 
         if settings.autonomy_enabled:

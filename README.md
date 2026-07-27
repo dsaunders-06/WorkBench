@@ -738,6 +738,67 @@ still measured, logged and blocking. Its trims go through `submit_exit_order`
 like any other order, so the sweep decides *what* to trim, never whether it
 transmits.
 
+## Market data resilience
+
+The first unattended session produced no trades, and none of the reasons were
+the ones being tested. `BRK-B` sat in the watchlist - Yahoo Finance's spelling
+of `BRK.B`. Alpaca fails a multi-symbol request **whole**, so one unknown
+ticker among a hundred returned HTTP 400 and no prices for any of them, every
+minute. Five empty polls later the feed shut itself down, permanently, and the
+session ran **6h17m of an open market with no market data at all** while the
+execution banner read AUTO-TRADE ACTIVE.
+
+Nothing downstream was broken. The strategies, risk engine and execution path
+were healthy and were never handed a price. Four separate things had to be
+wrong at once for that to be invisible, and all four are now fixed:
+
+- **One canonical symbol, translated per vendor** (`data/symbols.py`). Canonical
+  is the *broker's* form, because positions, fills and reconciliation all speak
+  it - a symbol that round-trips wrongly against the broker is a reconciliation
+  mismatch and a halted session, which beats a missing fundamentals lookup.
+  yfinance gets `to_yfinance()` at its own boundary. The watchlist, sector map
+  and instrument-name map are asserted to agree; renaming the watchlist alone
+  missed the third one and only a test caught it.
+- **One bad ticker can no longer mute the feed.** `_prune_unknown()` probes the
+  batch once at stream start and, if it fails, bisects to isolate the offenders,
+  drops them and names them at ERROR. The healthy path costs exactly one extra
+  request. If *every* symbol fails that is an outage or a bad key, not a hundred
+  simultaneous delistings, so the watchlist is kept intact rather than emptied.
+- **A dead feed retries instead of ending.** Terminating the stream was the M17
+  design, on the reasoning that a dead feed must not look alive. It made a
+  transient outage permanent for the session, and the staleness rail it delegated
+  to could never fire (below). It now backs off exponentially to a five-minute
+  ceiling and announces its own recovery.
+- **Feed health is reported at the feed, not per symbol.** `DataStaleEvent` reads
+  `_last_seen`, which a symbol only enters *after* its first tick - so a source
+  that failed from the very first poll left the map empty, every symbol was
+  skipped, and no staleness and no halt ever followed. `MarketDataFeedEvent`
+  is about the feed itself and so can be raised on exactly that case. The main
+  window shows **MARKET DATA DOWN** in amber; a kill-switch halt still outranks
+  it, because a halt is a decision needing a human and an outage is a condition
+  that may clear.
+
+Feed death deliberately does **not** trip the kill-switch. No ticks means no
+feature snapshots, so no signals and no orders - the danger is not that it
+trades wrongly but that nobody notices it stopped. The answer to that is to say
+so, not to demand a manual reset for an outage that may fix itself.
+
+Known asymmetry: `YFinanceMarketDataSource` still ends its stream after
+repeated failures. It is not the configured source here, and the feed-level
+health check now makes that visible wherever it happens, but the retry
+behaviour has not been brought across.
+
+## Performance history survives a restart
+
+`EquityCurve` wrote every sample to CSV and never read one back, so `points()`
+held only the current process's history. The first session was restarted
+mid-morning, after the account had gone flat, and the daily report announced
+the day as `100,660.56 -> 100,660.56, +0.00%, average exposure 0.0%`. The real
+day ran `100,462.97 -> 100,660.56` at 17.26% average and 30.67% peak exposure.
+Nothing miscalculated - the report could not see the morning. The curve now
+loads its persisted points on construction, and `build_report` already filters
+by date, so a restart no longer rewrites the day.
+
 ## Broker reconciliation
 
 `OMS.check_reconciliation` existed since M6 and, like the equity rails before

@@ -108,3 +108,19 @@ class DataStaleEvent(Event):
 class KillSwitchEvent(Event):
     reason: str
     triggered_by: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MarketDataFeedEvent(Event):
+    """The feed as a whole is up or down (spec M26).
+
+    DataStaleEvent is per-symbol and only fires for a symbol that has ticked
+    at least once, so a feed that never delivered anything raised nothing at
+    all: the app ran a full session on no data while the banner read
+    AUTO-TRADE ACTIVE. This event is about the feed rather than a symbol, and
+    so it can be raised on exactly that case.
+    """
+
+    healthy: bool
+    reason: str
+    seconds_since_last_tick: float | None = None

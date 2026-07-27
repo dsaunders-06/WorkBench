@@ -31,6 +31,7 @@ from typing import Any, Protocol
 from qat.data import sectors
 from qat.data.fundamentals import FundamentalSnapshot
 from qat.data.relative_strength import RelativeStrengthSource
+from qat.data.symbols import to_yfinance
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,9 @@ class TickerFactory(Protocol):
 def _default_ticker_factory(symbol: str) -> TickerLike:
     import yfinance as yf  # type: ignore[import-untyped]
 
-    ticker: TickerLike = yf.Ticker(symbol)
+    # Yahoo writes class shares with a hyphen; the rest of the app uses the
+    # broker's dot form. Translating here rather than storing two spellings.
+    ticker: TickerLike = yf.Ticker(to_yfinance(symbol))
     return ticker
 
 

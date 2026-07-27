@@ -38,6 +38,7 @@ from typing import Any, Protocol, cast
 import pandas as pd
 
 from qat.data.market_data import RawTick
+from qat.data.symbols import to_yfinance
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +179,7 @@ class YFinanceHistorySource:
         try:
             raw = await asyncio.to_thread(
                 self.client.download,
-                symbol,
+                to_yfinance(symbol),
                 period=period,
                 interval=interval,
                 progress=False,
@@ -188,7 +189,7 @@ class YFinanceHistorySource:
             logger.warning("yfinance history fetch failed for %s", symbol, exc_info=True)
             return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
 
-        frame = normalise_frame(raw, symbol)
+        frame = normalise_frame(raw, to_yfinance(symbol))
         return fill_missing_intervals(frame, interval)
 
 
@@ -251,10 +252,14 @@ class YFinanceMarketDataSource:
             await asyncio.sleep(self.poll_seconds)
 
     async def _poll_once(self, symbols: list[str]) -> list[RawTick]:
+        # Requested in Yahoo's spelling, emitted in the app's. A tick labelled
+        # BRK-B would never match a broker position called BRK.B, so the
+        # translation has to close again on the way back out.
+        vendor = {to_yfinance(symbol): symbol for symbol in symbols}
         try:
             raw = await asyncio.to_thread(
                 self.client.download,
-                symbols,
+                list(vendor),
                 period="1d",
                 interval="1m",
                 progress=False,
@@ -266,8 +271,8 @@ class YFinanceMarketDataSource:
 
         now = datetime.now(UTC)
         ticks: list[RawTick] = []
-        for symbol in symbols:
-            frame = normalise_frame(raw, symbol)
+        for vendor_symbol, symbol in vendor.items():
+            frame = normalise_frame(raw, vendor_symbol)
             if frame.empty:
                 continue
             last = frame.iloc[-1]

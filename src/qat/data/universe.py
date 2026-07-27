@@ -42,7 +42,7 @@ _WATCHLISTS_US: dict[WatchlistCategory, tuple[str, ...]] = {
         "META",
         "AVGO",
         "TSLA",
-        "BRK-B",
+        "BRK.B",
         "LLY",
         "JPM",
         "V",

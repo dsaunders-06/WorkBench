@@ -40,6 +40,10 @@ from qat.security import get_secret
 logger = logging.getLogger(__name__)
 
 DEFAULT_POLL_SECONDS = 60.0
+# Ceiling on the retry wait while the feed is down. Five minutes, so a feed
+# that comes back is picked up inside a couple of polls rather than after an
+# ever-doubling wait that outlives the session.
+MAX_BACKOFF_SECONDS = 300.0
 # Calendar days of padding when asking for N trading days: ~252 trading days
 # a year, so 1.5x plus a week comfortably covers weekends and holidays.
 _CALENDAR_PADDING_DAYS = 7
@@ -107,11 +111,13 @@ class AlpacaMarketDataSource:
         feed: str = "iex",
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         max_consecutive_failures: int = 5,
+        max_backoff_seconds: float = MAX_BACKOFF_SECONDS,
     ) -> None:
         self._client = client
         self.feed = feed
         self.poll_seconds = poll_seconds
         self.max_consecutive_failures = max_consecutive_failures
+        self.max_backoff_seconds = max_backoff_seconds
 
     @property
     def client(self) -> AlpacaDataClientProtocol:
@@ -124,33 +130,118 @@ class AlpacaMarketDataSource:
         if not symbol_list:
             return
 
+        symbol_list = await self._prune_unknown(symbol_list)
+        if not symbol_list:
+            logger.error("No usable symbols left to poll - the feed cannot start")
+            return
+
         consecutive_failures = 0
         while True:
             ticks = await self._poll_once(symbol_list)
 
             if ticks:
+                if consecutive_failures >= self.max_consecutive_failures:
+                    logger.warning("Alpaca market data has recovered")
                 consecutive_failures = 0
                 for tick in ticks:
                     yield tick
             else:
                 consecutive_failures += 1
-                if consecutive_failures >= self.max_consecutive_failures:
-                    # Ending the stream lets MarketDataFeed's staleness
-                    # detector raise DataStaleEvent and trip the kill-switch.
-                    # Looping forever on a dead feed would leave the app
-                    # looking alive while trading on nothing.
+                if consecutive_failures == self.max_consecutive_failures:
+                    # Logged once at ERROR, then the loop keeps trying. Ending
+                    # the stream here used to be the design - the reasoning was
+                    # that a dead feed must not look alive - but it made a
+                    # transient outage permanent for the session, and the
+                    # staleness detector it relied on never fires for symbols
+                    # that have not ticked even once, so the halt it was
+                    # supposed to trigger never came. Visibility is now
+                    # MarketDataFeed's job (it publishes MarketDataFeedEvent),
+                    # which leaves this loop free to keep reconnecting.
                     logger.error(
-                        "Alpaca returned no trades %d times consecutively - ending the stream",
+                        "Alpaca has returned no trades %d times consecutively - "
+                        "market data is down. Retrying with backoff.",
                         consecutive_failures,
                     )
-                    return
-                logger.warning(
-                    "Alpaca quote poll produced no ticks (%d/%d)",
-                    consecutive_failures,
-                    self.max_consecutive_failures,
-                )
+                elif consecutive_failures < self.max_consecutive_failures:
+                    logger.warning(
+                        "Alpaca quote poll produced no ticks (%d/%d)",
+                        consecutive_failures,
+                        self.max_consecutive_failures,
+                    )
 
-            await asyncio.sleep(self.poll_seconds)
+            await asyncio.sleep(self._delay_after(consecutive_failures))
+
+    def _delay_after(self, consecutive_failures: int) -> float:
+        """Normal cadence while healthy, backing off while down.
+
+        Capped, because a feed that recovers after an hour should be picked up
+        within a poll or two rather than after an ever-doubling wait.
+        """
+        if consecutive_failures < self.max_consecutive_failures:
+            return self.poll_seconds
+        over = consecutive_failures - self.max_consecutive_failures
+        return float(min(self.poll_seconds * (2 ** min(over + 1, 5)), self.max_backoff_seconds))
+
+    async def _prune_unknown(self, symbols: list[str]) -> list[str]:
+        """Drop symbols Alpaca rejects, so one bad ticker cannot mute the feed.
+
+        Alpaca fails a multi-symbol request whole: ask for a hundred symbols
+        with one unknown among them and the response is HTTP 400 and no data
+        for any of them. A watchlist carrying BRK-B (Yahoo's spelling of
+        BRK.B) therefore produced no prices at all, and the app spent a full
+        session with a healthy strategy stack and nothing to feed it.
+
+        Probing once at start costs a handful of requests only when something
+        is actually wrong, and turns a silent session-long outage into a named
+        warning about one ticker.
+        """
+        if await self._probe(symbols):
+            return symbols
+
+        good, bad = await self._bisect(symbols)
+        if bad and good:
+            logger.error(
+                "Alpaca rejects %d watchlist symbol(s), dropping them for this session: %s. "
+                "Fix them in the watchlist - a rejected symbol returns no data at all.",
+                len(bad),
+                ", ".join(sorted(bad)),
+            )
+        elif not good:
+            # Everything failed, which is an outage or bad credentials, not a
+            # hundred simultaneously delisted tickers. Pruning on that evidence
+            # would empty the watchlist over a network blip.
+            logger.error(
+                "Alpaca rejected every symbol - treating this as an outage rather than "
+                "an invalid watchlist, and keeping the list intact"
+            )
+            return symbols
+        return good
+
+    async def _probe(self, symbols: list[str]) -> bool:
+        from alpaca.data.requests import StockLatestTradeRequest
+
+        request = StockLatestTradeRequest(symbol_or_symbols=symbols, feed=_feed_enum(self.feed))
+        try:
+            await asyncio.to_thread(self.client.get_stock_latest_trade, request)
+        except Exception:  # noqa: BLE001 - any rejection means "not usable as a batch"
+            return False
+        return True
+
+    async def _bisect(self, symbols: list[str]) -> tuple[list[str], list[str]]:
+        """Split a failing batch until the offenders are isolated."""
+        if len(symbols) == 1:
+            return ([], symbols) if not await self._probe(symbols) else (symbols, [])
+        middle = len(symbols) // 2
+        left_good, left_bad = await self._halve(symbols[:middle])
+        right_good, right_bad = await self._halve(symbols[middle:])
+        return left_good + right_good, left_bad + right_bad
+
+    async def _halve(self, symbols: list[str]) -> tuple[list[str], list[str]]:
+        if not symbols:
+            return [], []
+        if await self._probe(symbols):
+            return symbols, []
+        return await self._bisect(symbols)
 
     async def _poll_once(self, symbols: list[str]) -> list[RawTick]:
         from alpaca.data.requests import StockLatestTradeRequest

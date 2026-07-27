@@ -268,8 +268,43 @@ class EquityCurve:
 
     def __init__(self, data_dir: str | Path, filename: str | None = None) -> None:
         self.path = Path(data_dir) / (filename or self.FILENAME)
-        self._points: list[EquityPoint] = []
+        self._points: list[EquityPoint] = self._load()
         self._lock = threading.Lock()
+
+    def _load(self) -> list[EquityPoint]:
+        """Read back what earlier runs recorded.
+
+        The curve was written to disk and never read, so points() only ever
+        held the current process's samples. A restart mid-session therefore
+        silently rewrote the day: the first live session restarted after the
+        account went flat and the daily report announced "equity 100,660.56 ->
+        100,660.56, +0.00%, average exposure 0.0%" for a day that actually ran
+        100,462.97 -> 100,660.56 at 17% average exposure. Not a arithmetic
+        error - the report simply could not see the morning.
+
+        A missing or damaged file is not fatal. Losing history is bad; failing
+        to start because history is unreadable is worse.
+        """
+        if not self.path.exists():
+            return []
+        points: list[EquityPoint] = []
+        try:
+            with self.path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    try:
+                        points.append(
+                            EquityPoint(
+                                ts=datetime.fromisoformat(row["ts"]),
+                                equity=float(row["equity"]),
+                                cash=float(row["cash"]),
+                            )
+                        )
+                    except (KeyError, TypeError, ValueError):
+                        continue  # one unreadable row must not discard the rest
+        except OSError:
+            logger.exception("Could not read the equity history at %s", self.path)
+            return []
+        return points
 
     def record(self, equity: float, cash: float, ts: datetime | None = None) -> EquityPoint:
         point = EquityPoint(ts=ts or datetime.now(UTC), equity=equity, cash=cash)
