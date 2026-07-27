@@ -10,9 +10,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from qat.paths import env_path
 
-def update_env_file(updates: dict[str, str], path: str | Path = ".env") -> None:
-    path = Path(path)
+
+def update_env_file(updates: dict[str, str], path: str | Path | None = None) -> None:
+    # Defaults to the app directory rather than a working-directory-relative
+    # ".env" (M22): the previous default wrote wherever the process happened to
+    # be started, which the next launch might never read.
+    path = Path(path) if path is not None else env_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
 
     remaining = dict(updates)

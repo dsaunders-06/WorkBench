@@ -6,10 +6,13 @@ Default trading_mode is always "paper" - this is a hard safety default
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from qat.paths import data_dir as default_data_dir
+from qat.paths import env_path
 
 _DEFAULT_FRED_SERIES = ("DGS3MO", "DGS10", "T10Y3M", "VIXCLS", "BAA10Y")
 
@@ -17,10 +20,26 @@ _DEFAULT_FRED_SERIES = ("DGS3MO", "DGS10", "T10Y3M", "VIXCLS", "BAA10Y")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="QAT_",
-        env_file=".env",
+        # A placeholder only. model_config is evaluated once, at import, so a
+        # path baked in here could never follow QAT_HOME; __init__ below
+        # resolves the real one per construction.
+        env_file=None,
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    def __init__(self, **values: Any) -> None:
+        """Resolve the .env at construction, not at import (M22).
+
+        model_config is evaluated once when the class is created, so an
+        absolute path written there is fixed for the life of the process and
+        cannot follow a later QAT_HOME - which made the behaviour impossible to
+        test and surprising to anyone relocating the app directory. Callers
+        passing _env_file explicitly, including the tests that pass None, are
+        left alone.
+        """
+        values.setdefault("_env_file", env_path())
+        super().__init__(**values)
 
     # --- Trading mode --------------------------------------------------
     trading_mode: Literal["paper", "live"] = "paper"
@@ -147,7 +166,10 @@ class Settings(BaseSettings):
     min_cash_reserve: float = Field(default=1.0, gt=0)
 
     # --- Data pipeline (M2/M14) ----------------------------------------------
-    data_dir: str = "./data"
+    # Absolute for the same reason as env_file above: the trade ledger and the
+    # journals must not depend on the working directory of whoever launched the
+    # application.
+    data_dir: str = Field(default_factory=lambda: str(default_data_dir()))
     fred_series: tuple[str, ...] = _DEFAULT_FRED_SERIES
 
     # "synthetic" = the seeded random walk every milestone up to M13 ran on.

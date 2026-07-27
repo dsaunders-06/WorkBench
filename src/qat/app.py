@@ -16,6 +16,8 @@ from PySide6.QtWidgets import QApplication
 
 from qat.config import Settings
 from qat.logging import configure_logging
+from qat.migration import migrate_legacy_layout
+from qat.paths import ensure_app_dir
 from qat.presentation.main_window import MainWindow
 from qat.presentation.runtime import Runtime
 
@@ -31,8 +33,14 @@ def main() -> None:
     # broker, the market data source and the fundamentals source, and warns
     # loudly when any of them degrades - logging afterwards discarded exactly
     # the messages most worth having.
+    # Before Settings is constructed: migration may supply the very .env that
+    # Settings is about to read.
+    ensure_app_dir()
+    migration = migrate_legacy_layout()
+
     settings = Settings()
     configure_logging(settings.log_level, settings.data_dir)
+    logger.info("%s", migration.summary_line())
     logger.info(
         "Starting Quant Advisory Terminal in %s mode (%s market, %s broker)",
         settings.trading_mode,

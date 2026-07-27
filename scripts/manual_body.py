@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.4  |  Milestone M21"
+VERSION_LINE = "Version 2.5  |  Milestone M22"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -165,6 +165,7 @@ def write_body(doc: Any, figures: FigureSet) -> None:
     _performance(doc, figures)
     _session_record(doc)
     _settings(doc, figures)
+    _storage_location(doc)
     _safety(doc)
     _glossary(doc)
     _config_reference(doc)
@@ -265,6 +266,12 @@ def _introduction(doc: Any) -> None:
                 "gated by an explicit confirmation (Sections 11.6 and 12.3).",
             ),
             (
+                "Stable storage location",
+                "Settings and records live in one per-user directory instead of beside "
+                "whatever folder the application was launched from, and are migrated "
+                "there on first run (Section 11.7).",
+            ),
+            (
                 "Balances panel",
                 "The Dashboard leads with the broker's own balance sheet, and account "
                 "reads are shared and throttled to respect the broker's rate limit "
@@ -331,9 +338,10 @@ def _introduction(doc: Any) -> None:
             ),
             (
                 "Where configuration lives",
-                "Non-secret settings in a .env file written by the Settings screen; API "
-                "keys and secrets only ever in the Windows Credential Manager, never in "
-                ".env and never in logs.",
+                "One per-user directory - %LOCALAPPDATA%\\QuantAdvisoryTerminal - holding a "
+                ".env of non-secret settings and a data folder of records. API keys are never "
+                "in either: they live only in the Windows Credential Manager. The Settings "
+                "screen names the directory. See Section 11.7.",
             ),
         ),
     )
@@ -1451,6 +1459,49 @@ def _settings(doc: Any, figures: FigureSet) -> None:
     )
 
 
+def _storage_location(doc: Any) -> None:
+    doc.add_heading("11.7 Where Settings and Records Are Stored", level=2)
+    doc.add_paragraph(
+        "Everything the application owns lives in one per-user directory, named at the "
+        "bottom of the Settings screen so it is never a guess:"
+    )
+    _table(
+        doc,
+        ("Location", "Contents"),
+        (
+            (
+                "%LOCALAPPDATA%\\QuantAdvisoryTerminal\\.env",
+                "Every non-secret setting the Settings screen writes.",
+            ),
+            (
+                "%LOCALAPPDATA%\\QuantAdvisoryTerminal\\data",
+                "Trade ledger, equity curve, decision journal, risk decisions, reports, "
+                "logs and session exports.",
+            ),
+            (
+                "Windows Credential Manager",
+                "API keys and secrets. These are never written to .env and never to a log.",
+            ),
+        ),
+    )
+    doc.add_paragraph(
+        "The location does not move when the application does, so upgrading to a new build "
+        "keeps every setting and every record. Setting the QAT_HOME environment variable "
+        "relocates all of it, which is what a portable installation would do."
+    )
+    _callout(
+        doc,
+        "Upgrading from an earlier build",
+        "Earlier versions kept settings and records beside whichever folder the application "
+        "was started from, so the same installation could read different settings depending "
+        "on how it was launched. On first run, a .env and a data folder found in the working "
+        "directory are copied into the new location. They are copied and never moved, an "
+        "existing file at the destination is never overwritten, and what happened is written "
+        "to the log. Once you are satisfied the new location has everything, the old folders "
+        "can be deleted by hand - the application no longer reads them.",
+    )
+
+
 def _safety(doc: Any) -> None:
     doc.add_page_break()
     doc.add_heading("12. Safety Architecture Reference", level=1)
@@ -1757,6 +1808,11 @@ def _config_reference(doc: Any) -> None:
                 "Default in-sample window on the Workbench (Section 4.2).",
             ),
             ("QAT_WALK_FORWARD_OUT_SAMPLE_BARS", "60", "Default out-of-sample window."),
+            (
+                "QAT_HOME",
+                "(per-user)",
+                "Relocates settings and records wholesale (Section 11.7).",
+            ),
             (
                 "QAT_ACCOUNT_POLL_SECONDS",
                 "5",

@@ -102,7 +102,10 @@ def test_saving_writes_the_data_source(qtbot, monkeypatch):
     screen.data_source_combo.setCurrentText(_DATA_SOURCE_LABELS["yfinance"])
 
     written: dict[str, str] = {}
-    monkeypatch.setattr("qat.presentation.settings.env_file.update_env_file", written.update)
+    monkeypatch.setattr(
+        "qat.presentation.settings.env_file.update_env_file",
+        lambda updates, path=None: written.update(updates),
+    )
     screen._on_save_clicked()
 
     assert written["QAT_MARKET_DATA_SOURCE"] == "yfinance"
@@ -121,7 +124,10 @@ def test_saving_writes_the_mode_and_the_promoted_strategies(qtbot, monkeypatch):
             item.setCheckState(Qt.CheckState.Checked)
 
     written: dict[str, str] = {}
-    monkeypatch.setattr("qat.presentation.settings.env_file.update_env_file", written.update)
+    monkeypatch.setattr(
+        "qat.presentation.settings.env_file.update_env_file",
+        lambda updates, path=None: written.update(updates),
+    )
     screen._on_save_clicked()
 
     assert written["QAT_EXECUTION_MODE"] == "auto"

@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from qat import env_file, security
 from qat.config import Settings
 from qat.domain.ai_advisory.llm_engine import LocalEngine, normalize_openai_base_url
+from qat.paths import app_dir, env_path
 from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -233,6 +234,15 @@ class SettingsScreen(QWidget):
         layout.addWidget(self._build_data_group(settings))
         layout.addWidget(self._build_execution_group(settings))
 
+        # Where these settings actually live (M22). It used to depend on the
+        # working directory, which meant an operator editing one .env could be
+        # looking at a different one from the app - and had no way to tell.
+        self.config_location = QLabel(f"Settings and records are stored in {app_dir()}")
+        self.config_location.setStyleSheet("color: gray;")
+        self.config_location.setWordWrap(True)
+        self.config_location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.config_location)
+
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self._on_save_clicked)
         layout.addWidget(self.save_button)
@@ -383,6 +393,19 @@ class SettingsScreen(QWidget):
         # "trend_following" parsed cleanly, matched no strategy, and left the
         # operator believing a strategy was cleared when it was not.
         self.autonomous_strategies_combo = QComboBox()
+        # Editable with a read-only line edit, which is the only way a combo can
+        # display text that is not one of its items. A closed non-editable combo
+        # always shows its CURRENT item, so it read "trend_following" - the
+        # first entry - while swing was the one actually ticked. Nothing was
+        # wrong with the saved state, but the control asserted the opposite of
+        # it, which on an autonomy setting is the worst place to be vague.
+        # The line edit is constructed here rather than read back off the combo:
+        # QComboBox.lineEdit() is Optional, and this one is never absent.
+        self._strategy_display = QLineEdit()
+        self._strategy_display.setReadOnly(True)
+        self._strategy_display.setPlaceholderText("none selected")
+        self.autonomous_strategies_combo.setEditable(True)
+        self.autonomous_strategies_combo.setLineEdit(self._strategy_display)
         # Held as a typed attribute rather than read back off the combo:
         # QComboBox.model() returns the abstract base, which has no item().
         self._strategy_model = QStandardItemModel(self)
@@ -445,9 +468,10 @@ class SettingsScreen(QWidget):
         else:
             self.selected_strategies_label.setText("Cleared: none - every order waits for you.")
             self.selected_strategies_label.setStyleSheet("color: gray;")
-        self.autonomous_strategies_combo.setCurrentText(
-            f"{len(chosen)} selected" if chosen else "none selected"
-        )
+        # Written straight to the line edit. setCurrentText() on a combo only
+        # takes effect when the text matches an existing item, so the summary
+        # was silently discarded and the stale current item stayed on show.
+        self._strategy_display.setText(", ".join(chosen) if chosen else "")
 
     def _refresh_autonomy_warning(self) -> None:
         self.autonomy_warning.setVisible(self._selected_execution_mode() == "auto")
@@ -608,7 +632,10 @@ class SettingsScreen(QWidget):
             "QAT_EXECUTION_MODE": self._selected_execution_mode(),
             "QAT_AUTONOMOUS_STRATEGIES": ",".join(self.selected_strategies()),
         }
-        env_file.update_env_file(updates)
+        # The same absolute path Settings reads from (M22). Left relative, Save
+        # wrote a .env beside whatever directory the app was launched from,
+        # which the next launch might never look at.
+        env_file.update_env_file(updates, path=env_path())
 
         api_key = self.anthropic_key_input.text().strip()
         if api_key:

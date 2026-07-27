@@ -24,12 +24,19 @@ def isolate_data_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]
     # An environment variable rather than a monkeypatched default, because
     # pydantic-settings reads the environment even when _env_file is None -
     # which is how most tests here build their Settings.
-    previous = os.environ.get("QAT_DATA_DIR")
-    os.environ["QAT_DATA_DIR"] = str(tmp_path_factory.mktemp("qat-data"))
+    #
+    # QAT_HOME as well since M22: config and data now resolve to a per-user
+    # directory, and without this the suite would read and write the operator's
+    # real settings and records rather than the repository's.
+    home = tmp_path_factory.mktemp("qat-home")
+    overrides = {"QAT_HOME": str(home), "QAT_DATA_DIR": str(tmp_path_factory.mktemp("qat-data"))}
+    previous = {key: os.environ.get(key) for key in overrides}
+    os.environ.update(overrides)
     try:
         yield
     finally:
-        if previous is None:
-            os.environ.pop("QAT_DATA_DIR", None)
-        else:
-            os.environ["QAT_DATA_DIR"] = previous
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value

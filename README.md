@@ -374,6 +374,47 @@ already returns one row per *trading* day, so reindexing onto a calendar
 timeline turned a 251-day year of SPY into 365 rows, and the invented
 zero-return days dragged realized volatility about 17% below its true value.
 
+## Where settings and records live
+
+Everything the application owns sits in one per-user directory:
+
+```
+%LOCALAPPDATA%\QuantAdvisoryTerminal\
+  .env          settings written by the Settings screen
+  data\         trade ledger, equity curve, journals, reports, logs, exports
+```
+
+Settings names the location on screen, so it is never a guess. `QAT_HOME`
+relocates the lot — that is what the test suite uses, and what a portable
+install would set.
+
+Before M22 both paths were resolved **relative to the process working
+directory**: `env_file=".env"` and `data_dir="./data"`. Run from a checkout
+that meant the repository; run from the packaged build it meant wherever the
+zip was unpacked. Three consequences, each found the hard way:
+
+- the same installation read a different configuration depending on how it was
+  started, and neither copy was discoverable from the other;
+- every new build shipped as a fresh folder started with no settings, and the
+  previous ones were stranded where they lay;
+- an edit to the checkout's `.env` had no effect on the packaged app actually
+  running — and looked, from outside, like it had worked.
+
+On first launch a legacy `.env` and `data/` in the working directory are
+brought across. Three rules govern it:
+
+**Copy, never move.** This runs automatically without asking, and the source
+may be your repository. Removing a file the operator did not know was about to
+be touched is data loss with a helpful name. The originals stay put.
+
+**Never overwrite.** If the destination already has the file, that is the live
+copy and the legacy one is a stray. Migration must not be able to make a first
+run worse than no migration.
+
+**Say what happened.** A silent migration and a silent no-op look identical
+from outside, which is the exact failure this replaces. The result is logged
+and the count appears in the log at startup.
+
 ## Account balances on the Dashboard
 
 The Dashboard leads with a Balances panel laid out like the broker's own page:

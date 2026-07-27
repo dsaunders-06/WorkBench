@@ -64,7 +64,9 @@ def test_save_writes_expected_non_secret_env_updates(qtbot, monkeypatch):
     screen = _build_screen(qtbot)
     captured: dict[str, str] = {}
     monkeypatch.setattr(
-        settings_module.env_file, "update_env_file", lambda updates: captured.update(updates)
+        settings_module.env_file,
+        "update_env_file",
+        lambda updates, path=None: captured.update(updates),
     )
     monkeypatch.setattr(settings_module.security, "set_secret", lambda name, value: None)
 
@@ -81,7 +83,9 @@ def test_save_never_puts_the_anthropic_key_in_the_env_updates(qtbot, monkeypatch
     screen = _build_screen(qtbot)
     captured: dict[str, str] = {}
     monkeypatch.setattr(
-        settings_module.env_file, "update_env_file", lambda updates: captured.update(updates)
+        settings_module.env_file,
+        "update_env_file",
+        lambda updates, path=None: captured.update(updates),
     )
     secret_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -100,7 +104,9 @@ def test_save_never_puts_the_anthropic_key_in_the_env_updates(qtbot, monkeypatch
 
 def test_save_without_a_key_never_calls_set_secret(qtbot, monkeypatch):
     screen = _build_screen(qtbot)
-    monkeypatch.setattr(settings_module.env_file, "update_env_file", lambda updates: None)
+    monkeypatch.setattr(
+        settings_module.env_file, "update_env_file", lambda updates, path=None: None
+    )
     secret_calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
         settings_module.security,

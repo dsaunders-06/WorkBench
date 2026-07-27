@@ -60,7 +60,7 @@ def test_save_writes_the_checked_strategies_as_a_comma_list(qtbot, monkeypatch):
     captured: dict[str, str] = {}
     monkeypatch.setattr(
         "qat.presentation.settings.env_file.update_env_file",
-        lambda updates: captured.update(updates),
+        lambda updates, path=None: captured.update(updates),
     )
     screen = _screen(qtbot, autonomous_strategies="swing")
     screen._strategy_model.item(0).setCheckState(Qt.CheckState.Checked)
@@ -77,7 +77,7 @@ def test_unchecking_everything_writes_an_empty_value(qtbot, monkeypatch):
     captured: dict[str, str] = {}
     monkeypatch.setattr(
         "qat.presentation.settings.env_file.update_env_file",
-        lambda updates: captured.update(updates),
+        lambda updates, path=None: captured.update(updates),
     )
     screen = _screen(qtbot, autonomous_strategies="swing,value")
     for row in range(screen._strategy_model.rowCount()):
@@ -86,6 +86,44 @@ def test_unchecking_everything_writes_an_empty_value(qtbot, monkeypatch):
     screen._on_save_clicked()
 
     assert captured["QAT_AUTONOMOUS_STRATEGIES"] == ""
+
+
+def test_the_closed_dropdown_shows_what_is_actually_selected(qtbot):
+    """The bug this pins: a closed non-editable combo always displays its
+    CURRENT item, so it read "trend_following" - the first entry - while swing
+    was the one ticked. The saved state was right and the control asserted the
+    opposite, which on an autonomy setting is the worst place to be vague."""
+    screen = _screen(qtbot, autonomous_strategies="swing")
+
+    shown = screen._strategy_display.text()
+
+    assert shown == "swing"
+    assert screen.selected_strategies() == ["swing"]
+
+
+def test_the_closed_dropdown_lists_every_selection(qtbot):
+    screen = _screen(qtbot, autonomous_strategies="swing,value")
+
+    shown = screen._strategy_display.text()
+
+    assert set(shown.split(", ")) == {"swing", "value"}
+
+
+def test_the_closed_dropdown_updates_when_a_box_is_ticked(qtbot):
+    screen = _screen(qtbot)
+    assert screen._strategy_display.text() == ""
+
+    screen._strategy_model.item(0).setCheckState(Qt.CheckState.Checked)
+
+    name = screen._strategy_model.item(0).text()
+    assert screen._strategy_display.text() == name
+
+
+def test_the_dropdown_text_cannot_be_typed_over(qtbot):
+    """Editable only so it can display a summary - it is not an input."""
+    screen = _screen(qtbot)
+
+    assert screen._strategy_display.isReadOnly()
 
 
 def test_a_name_that_matches_no_strategy_can_no_longer_be_entered(qtbot):
