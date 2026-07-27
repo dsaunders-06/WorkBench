@@ -26,6 +26,7 @@ from qat.domain.performance.metrics import (
     sharpe_ratio,
 )
 from qat.domain.performance.scorecard import StrategyScorecard
+from qat.domain.performance.summary import PerformanceSummary, build_summary
 from qat.domain.performance.trades import ClosedTrade, EquityPoint
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,9 @@ class PerformanceReport:
     max_drawdown_pct: float
     sharpe: float | None
     by_strategy: dict[str, PerformanceStats]
+    # The trade-shape and exposure figures (M23), carried so the post-close
+    # review reads the same numbers as the screen rather than a subset.
+    summary: PerformanceSummary | None
     scorecards: list[StrategyScorecard]
     blocked_counts: dict[str, int]
     narrative: str | None = None
@@ -87,6 +91,15 @@ class PerformanceReport:
         else:
             lines.append("**Sharpe** not enough samples to measure.")
         lines.extend(["", f"**Trades** {self.stats.summary_line()}", ""])
+
+        if self.summary is not None:
+            lines.extend(["### Metrics", ""])
+            # Skipping the two already stated above rather than repeating them.
+            for label, value, _why in self.summary.rows():
+                if label in ("Trades", "Net P&L"):
+                    continue
+                lines.append(f"- **{label}** {value}")
+            lines.append("")
 
         if self.by_strategy:
             lines.extend(["### By strategy", ""])
@@ -146,6 +159,7 @@ def build_report(
         period_label=period_label,
         generated_at=datetime.now(UTC),
         stats=compute_stats(period_trades),
+        summary=build_summary(period_trades, period_equity),
         opening_equity=period_equity[0].equity if period_equity else None,
         closing_equity=period_equity[-1].equity if period_equity else None,
         max_drawdown_pct=max_drawdown(period_equity),

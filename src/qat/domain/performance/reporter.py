@@ -222,6 +222,7 @@ def _with_narrative(report: PerformanceReport, narrative: str) -> PerformanceRep
         period_label=report.period_label,
         generated_at=report.generated_at,
         stats=report.stats,
+        summary=report.summary,
         opening_equity=report.opening_equity,
         closing_equity=report.closing_equity,
         max_drawdown_pct=report.max_drawdown_pct,

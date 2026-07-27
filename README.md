@@ -473,6 +473,49 @@ timestamp and the error beside it. Blanking the panel would be its own lie —
 the money did not disappear — but a stale number presented as current is the
 thing that must not happen, so the age is always shown.
 
+## Judging a strategy: the metrics panel
+
+The Performance screen's **Metrics** tab reports what a strategy *is*, where the
+trade list only reports what it did. Each row carries a one-line explanation of
+what it tells you, because the panel exists to support a promotion decision
+rather than to display numbers.
+
+**Expectancy leads.** `PerformanceStats` had carried expectancy, average win,
+average loss and best/worst since M16, and `summary_line()` dropped every one —
+so the single most decision-relevant figure a trading system has, expected
+dollars per trade, was computed on every refresh and discarded. Win rate alone
+is not merely incomplete but misleading: 80% winners at a negative expectancy is
+a losing system that feels like a winning one.
+
+Added at M23, all derived from data already on disk:
+
+| Metric | Why it earns its place |
+|---|---|
+| **Holding period** | The rails are session-phase aware and the daily-loss rail resets each morning. A strategy holding hours meets them constantly; one holding weeks barely notices. Nothing else tells you which is running. |
+| **Exposure** (avg and peak) | The missing denominator under every return figure: 2% on 10% deployed is not 2% on 95%. Also the direct read on whether the no-leverage cash rule is throttling the strategy. |
+| **Recovery factor** | Net profit against the drawdown that produced it. Preferred to Calmar on short samples because it does not annualise — a fortnight annualised is a number with no meaning. |
+| **Trades / week** | Turnover over the period actually traded. During testing it is the read on whether the system is doing anything, which the M18 abstention rules made a real question. |
+| **Avg win / avg loss** | The promotion gate already judges on this ratio; until M23 you could not see what it was judging. |
+
+Two rules hold throughout. Every metric returns `None` below
+`MIN_TRADES_FOR_STATS` and renders as a dash — a figure from three trades is
+noise with a decimal point. And **a dash is never a zero**: "not enough trades
+to say" and "measured, and it is zero" are different claims.
+
+Rates carry a second floor. `MIN_SPAN_DAYS_FOR_RATE` requires a day of elapsed
+history before a weekly rate is reported, because eight trades closed seconds
+apart divide out to hundreds of millions per week — which is exactly what the
+first implementation printed before the floor was added.
+
+The same figures appear in the daily and weekly reports, so the post-close
+review reads what the screen reads.
+
+**Deliberately not built yet:** skewness and kurtosis need hundreds of
+observations before the estimate stops moving, and at paper-test trade counts
+they would be noise carrying four significant figures. Ulcer index is a better
+drawdown measure than max drawdown, but recovery factor covers most of the same
+ground for less. Neither belongs in a first tranche.
+
 ## What a session leaves behind
 
 Everything needed to reconstruct a session afterwards is written to `data/`,

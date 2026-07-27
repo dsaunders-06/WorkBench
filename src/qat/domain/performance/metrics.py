@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from datetime import timedelta
 from statistics import fmean, pstdev
 
 from qat.domain.performance.trades import ClosedTrade, EquityPoint
 
 # Below this, per-trade statistics are not reported at all.
 MIN_TRADES_FOR_STATS = 5
+# A rate needs elapsed time as well as a count. Below a day of trading history
+# a weekly figure is an extrapolation from noise.
+MIN_SPAN_DAYS_FOR_RATE = 1.0
 _TRADING_DAYS_PER_YEAR = 252
 
 
@@ -142,3 +146,98 @@ def sharpe_ratio(
     if deviation <= 0:
         return None
     return (fmean(returns) / deviation) * math.sqrt(periods_per_year)
+
+
+# --- trade shape (spec M23) ---------------------------------------------------
+#
+# Everything below derives from data already on disk. The point of the group is
+# that a return figure alone does not describe a strategy: two systems with the
+# same net P&L, one holding for hours at 90% invested and the other for weeks at
+# 5%, are not the same system and should not be compared as though they were.
+
+
+def average_holding_period(trades: list[ClosedTrade]) -> timedelta | None:
+    """Mean time from entry to exit across closed round-trips.
+
+    Load-bearing here rather than merely interesting: the autonomy rails are
+    session-phase aware and the daily-loss rail resets each morning. A strategy
+    holding for hours meets those rails constantly; one holding for weeks
+    barely notices them. Without this figure there is no way to tell which of
+    those two systems is running.
+    """
+    if len(trades) < MIN_TRADES_FOR_STATS:
+        return None
+    spans = [
+        (trade.closed_at - trade.opened_at).total_seconds()
+        for trade in trades
+        if trade.closed_at >= trade.opened_at
+    ]
+    if not spans:
+        return None
+    return timedelta(seconds=fmean(spans))
+
+
+def trades_per_week(trades: list[ClosedTrade]) -> float | None:
+    """Closed trades per calendar week over the period actually traded.
+
+    Measured against elapsed time rather than a count, so a burst of activity
+    in one afternoon does not read the same as steady daily turnover. Mostly a
+    diagnostic during testing: it is the number that answers "is the system
+    doing anything at all", which the abstention rules made a real question.
+    """
+    if len(trades) < MIN_TRADES_FOR_STATS:
+        return None
+    closes = sorted(trade.closed_at for trade in trades)
+    span_days = (closes[-1] - closes[0]).total_seconds() / 86_400.0
+    # A weekly rate extrapolated from minutes is arithmetic, not measurement:
+    # eight trades closed seconds apart divides out to hundreds of millions per
+    # week. Guarding only against a zero span let that through.
+    if span_days < MIN_SPAN_DAYS_FOR_RATE:
+        return None
+    return len(trades) / (span_days / 7.0)
+
+
+def recovery_factor(trades: list[ClosedTrade], points: list[EquityPoint]) -> float | None:
+    """Net profit divided by the worst drawdown that produced it.
+
+    Preferred to Calmar on short samples because it does not annualise: a
+    fortnight of paper trading annualised is a number with no meaning, whereas
+    "made three times what it risked losing at the worst point" survives a
+    small sample intact.
+    """
+    if len(trades) < MIN_TRADES_FOR_STATS:
+        return None
+    drawdown = max_drawdown(points)
+    if drawdown <= 0:
+        return None
+    peak_equity = max((point.equity for point in points), default=0.0)
+    if peak_equity <= 0:
+        return None
+    net = sum(trade.pnl for trade in trades)
+    return net / (drawdown * peak_equity)
+
+
+def average_exposure(points: list[EquityPoint]) -> float | None:
+    """Mean share of equity held in positions rather than cash.
+
+    The missing denominator under every return figure the app shows: two
+    percent on ten percent deployed and two percent on ninety-five percent
+    deployed are different results. Also the direct read on whether the
+    no-leverage cash rule is throttling the strategy - a system that wants more
+    exposure than the rule permits will sit pinned near its ceiling.
+    """
+    ratios = _exposure_ratios(points)
+    return fmean(ratios) if ratios else None
+
+
+def peak_exposure(points: list[EquityPoint]) -> float | None:
+    ratios = _exposure_ratios(points)
+    return max(ratios) if ratios else None
+
+
+def _exposure_ratios(points: list[EquityPoint]) -> list[float]:
+    # Clamped at zero: a cash balance above equity is arithmetically possible
+    # mid-settlement and means "nothing invested", not negative exposure.
+    return [
+        max(0.0, (point.equity - point.cash) / point.equity) for point in points if point.equity > 0
+    ]

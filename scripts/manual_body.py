@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.5  |  Milestone M22"
+VERSION_LINE = "Version 2.6  |  Milestone M23"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -164,6 +164,7 @@ def write_body(doc: Any, figures: FigureSet) -> None:
     _screener(doc, figures)
     _performance(doc, figures)
     _session_record(doc)
+    _metrics_panel(doc)
     _settings(doc, figures)
     _storage_location(doc)
     _safety(doc)
@@ -264,6 +265,12 @@ def _introduction(doc: Any) -> None:
                 "Optional auto-trade",
                 "Per-strategy unattended execution on paper accounts, off by default and "
                 "gated by an explicit confirmation (Sections 11.6 and 12.3).",
+            ),
+            (
+                "Metrics tab",
+                "Expectancy, average win against average loss, holding period, exposure, "
+                "trade frequency and recovery factor on the Performance screen and in "
+                "the reports (Section 10.5).",
             ),
             (
                 "Stable storage location",
@@ -1214,6 +1221,75 @@ def _session_record(doc: Any) -> None:
         "the trade ledger and are completely different states of the world. If nothing "
         "traded, the journal is where you find out whether that was because nothing "
         "qualified or because something kept refusing.",
+    )
+
+
+def _metrics_panel(doc: Any) -> None:
+    doc.add_heading("10.5 The Metrics Tab", level=2)
+    doc.add_paragraph(
+        "The trade list says what the system did. This tab says what the system is, which "
+        "is the question a promotion decision actually turns on. Every row carries a "
+        "one-line note on what it tells you."
+    )
+    _table(
+        doc,
+        ("Metric", "What it tells you"),
+        (
+            (
+                "Expectancy",
+                "Expected profit per trade. The most decision-relevant figure here: a high "
+                "win rate with a negative expectancy is a losing system that feels good.",
+            ),
+            (
+                "Win rate",
+                "Share of closed trades that made money. Read it beside expectancy or not "
+                "at all.",
+            ),
+            (
+                "Avg win / avg loss",
+                "What a winner makes against what a loser costs. The promotion gate already "
+                "judges on this ratio.",
+            ),
+            (
+                "Average R",
+                "Outcome per unit of risk, over the trades that had a measurable stop. The "
+                "row states how many that was, because it is usually fewer than the total.",
+            ),
+            (
+                "Holding period",
+                "Mean time from entry to exit. Decides whether the session-phase and "
+                "daily-loss rails bind constantly or barely at all.",
+            ),
+            (
+                "Trades per week",
+                "Turnover over the period actually traded - the read on whether the system "
+                "is doing anything.",
+            ),
+            (
+                "Average and peak exposure",
+                "Share of equity held in positions rather than cash. Two percent on ten "
+                "percent deployed is not two percent on ninety-five.",
+            ),
+            (
+                "Recovery factor",
+                "Net profit against the worst drawdown that produced it. Preferred to Calmar "
+                "on short samples because it does not annualise.",
+            ),
+            (
+                "Max drawdown, Sharpe, profit factor",
+                "The conventional risk-adjusted figures, unchanged.",
+            ),
+        ),
+    )
+    _callout(
+        doc,
+        "A dash is not a zero",
+        "Every metric here reports a dash until there are enough closed trades to support "
+        "it, and rates additionally need a day of elapsed history. This is deliberate: a "
+        "figure computed from three trades is noise with a decimal point, and a dash saying "
+        "'not enough to tell you yet' is more use than a confident number that means "
+        "nothing. 'Measured, and it is zero' and 'not enough trades to say' are different "
+        "claims, and the panel never confuses them.",
     )
 
 

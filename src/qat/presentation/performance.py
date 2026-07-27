@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
 )
 
 from qat.data import instruments
-from qat.domain.performance import compute_stats, max_drawdown, sharpe_ratio
 from qat.domain.performance.reports import (
     DAILY_REPORT_FILENAME,
     WEEKLY_REPORT_FILENAME,
@@ -37,6 +36,7 @@ from qat.domain.performance.reports import (
 )
 from qat.domain.performance.scorecard import build_all_scorecards
 from qat.domain.performance.session_export import export_session
+from qat.domain.performance.summary import PerformanceSummary, build_summary
 from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ _STATUS_COLOURS = {
 }
 _PROMOTION_COLUMNS = ("Strategy", "Status", "Trades", "Net P&L", "Win rate", "Avg R", "Blocking")
 _TRADE_COLUMNS = ("Closed", "Symbol", "Name", "Strategy", "Qty", "Entry", "Exit", "P&L", "R")
+_METRIC_COLUMNS = ("Metric", "Value", "What it tells you")
 
 
 class PerformanceScreen(QWidget):
@@ -97,6 +98,14 @@ class PerformanceScreen(QWidget):
         layout.addWidget(promotion_box)
 
         tabs = QTabWidget()
+
+        # Leads the tab strip: these are the figures that say what the system
+        # is, where the trade list only says what it did.
+        self.metrics_table = QTableWidget(0, len(_METRIC_COLUMNS))
+        self.metrics_table.setHorizontalHeaderLabels(list(_METRIC_COLUMNS))
+        self.metrics_table.verticalHeader().setVisible(False)
+        tabs.addTab(self.metrics_table, "Metrics")
+
         self.trades_table = QTableWidget(0, len(_TRADE_COLUMNS))
         self.trades_table.setHorizontalHeaderLabels(list(_TRADE_COLUMNS))
         tabs.addTab(self.trades_table, "Closed trades")
@@ -145,18 +154,38 @@ class PerformanceScreen(QWidget):
             self.headline.setText(f"Performance unavailable: {exc}")
 
     def _render_headline(self) -> None:
-        trades = self.runtime.trade_ledger.closed_trades()
-        points = self.runtime.equity_curve.points()
-        stats = compute_stats(trades)
+        summary = build_summary(
+            self.runtime.trade_ledger.closed_trades(), self.runtime.equity_curve.points()
+        )
+        self._render_metrics(summary)
 
+        stats = summary.stats
         parts = [stats.summary_line()]
-        if points:
-            parts.append(f"Max drawdown {max_drawdown(points):.2%}")
-            sharpe = sharpe_ratio(points)
-            parts.append(
-                f"Sharpe {sharpe:.2f}" if sharpe is not None else "Sharpe not yet measurable"
-            )
+        if stats.expectancy is not None:
+            # Promoted into the headline: it is the one figure that says whether
+            # the system makes money per decision, and it was being computed and
+            # discarded.
+            parts.append(f"expectancy ${stats.expectancy:,.2f}/trade")
+        parts.append(f"Max drawdown {summary.max_drawdown_pct:.2%}")
+        parts.append(
+            f"Sharpe {summary.sharpe:.2f}"
+            if summary.sharpe is not None
+            else "Sharpe not yet measurable"
+        )
         self.headline.setText("  |  ".join(parts))
+
+    def _render_metrics(self, summary: PerformanceSummary) -> None:
+        rows = summary.rows()
+        self.metrics_table.setRowCount(len(rows))
+        for row, (label, value, why) in enumerate(rows):
+            label_item = QTableWidgetItem(label)
+            value_item = QTableWidgetItem(value)
+            value_item.setForeground(QColor("#5b6572") if value == "-" else QColor("#1b5e20"))
+            why_item = QTableWidgetItem(why)
+            why_item.setForeground(QColor("#5b6572"))
+            for column, item in enumerate((label_item, value_item, why_item)):
+                self.metrics_table.setItem(row, column, item)
+        self.metrics_table.resizeColumnsToContents()
 
     def _render_promotion(self) -> None:
         ledger = self.runtime.trade_ledger

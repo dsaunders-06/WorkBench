@@ -123,10 +123,15 @@ def test_the_override_button_is_hidden_when_session_control_is_off(qtbot):
     """On simulated prices the session never stands down, so an override would
     offer to fix something that is not broken."""
     screen = _dashboard(qtbot, market_data_source="synthetic")
-    screen.show()
-    qtbot.waitExposed(screen)
 
-    assert screen.session_panel.start_button.isVisible() is False
+    # isVisibleTo rather than show() + isVisible, matching the pattern in
+    # test_execution_mode_ui. Realising this screen paints its pyqtgraph equity
+    # plot, and a paint dispatched from pytest-qt's event pumping against a
+    # widget being torn down is an access violation that kills the whole run -
+    # a race so finely balanced that merely adding a module to the import chain
+    # took it from never firing to seven runs in ten. The assertion does not
+    # need a realised widget, so it should not ask for one.
+    assert screen.session_panel.start_button.isVisibleTo(screen) is False
 
 
 def test_the_panel_reports_the_controller_state_rather_than_re_deriving_it(qtbot):
