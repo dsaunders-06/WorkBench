@@ -754,6 +754,29 @@ position is exactly the event reconciliation exists to catch.
 Adopted positions carry **no stop** in this app's records: it did not open them
 and does not know what protects them.
 
+That correct decision had a consequence nobody was told about. `PortfolioGovernor`
+counts an unknown stop as no protection, so an adopted position contributes its
+whole value to aggregate risk-at-stop. Measured against the real paper account,
+seven adopted holdings put that figure at **30.01% against a 5% cap** — every new
+entry refused, for the whole session, with the reason visible only to whoever
+went looking in the audit log. Each part worked as designed; together they
+produced a system that had quietly stopped trading.
+
+`domain/oms/adopted.py` names the condition. `assess_adopted_positions()` returns
+`None` when nothing was adopted (the normal case, and no news), and otherwise a
+report carrying the count, which holdings are unprotected, and what share of the
+risk budget they consume. It **reuses `PortfolioGovernor.snapshot()`** rather
+than recomputing the arithmetic, so the number shown is the number that does the
+blocking and the two cannot drift. The Dashboard renders it directly under the
+market-session panel — amber while it is merely consuming budget, red once the
+cap is breached and entries are actually being refused — and hides it entirely
+when there is nothing to say. Adoption also logs at WARNING rather than INFO now,
+and states the consequence rather than only the fact.
+
+The report follows live positions, not the frozen baseline, so closing or
+stopping the holdings makes the warning disappear: it can never outlive the
+condition it describes.
+
 ## Performance and promotion
 
 The **Performance** tab is the only screen that answers whether any of this

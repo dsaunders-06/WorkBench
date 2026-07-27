@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
 )
 
 from qat.domain.events import RegimeEvent
+from qat.domain.oms.adopted import assess_adopted_positions
+from qat.presentation.adopted_panel import AdoptedPositionsPanel
 from qat.presentation.balances_panel import BalancesPanel
 from qat.presentation.runtime import Runtime
 from qat.presentation.session_panel import SessionPanel
@@ -48,6 +50,11 @@ class DashboardScreen(QWidget):
             runtime.session_controller, market=runtime.settings.market
         )
         layout.addWidget(self.session_panel)
+
+        # Directly under the session panel, because when this fires it is the
+        # answer to "the market is open and nothing is happening".
+        self.adopted_panel = AdoptedPositionsPanel()
+        layout.addWidget(self.adopted_panel)
 
         self.regime_header = QLabel("Regime: (waiting for data...)")
         self.regime_header.setStyleSheet("font-size: 14px; font-weight: bold;")
@@ -157,6 +164,16 @@ class DashboardScreen(QWidget):
             portfolio_check = latest_decisions[-1].inputs.get("portfolio_check")
             if portfolio_check and "var_95" in portfolio_check:
                 self.var_tile.set_value(f"{portfolio_check['var_95']:.2%}")
+
+        self.adopted_panel.update_from(
+            assess_adopted_positions(
+                adopted_baseline=self.runtime.oms.adopted_baseline,
+                positions=positions,
+                stops=self.runtime.oms.position_stops(),
+                equity=equity,
+                settings=self.runtime.settings,
+            )
+        )
 
         self.positions_table.setRowCount(len(positions))
         for row, position in enumerate(positions):

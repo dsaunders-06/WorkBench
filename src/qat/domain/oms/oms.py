@@ -388,8 +388,14 @@ class OMS:
         self._filled_quantities = dict(adopted)
         self._adopted_baseline = dict(adopted)
         if adopted:
-            logger.info(
-                "Adopted %d pre-existing broker position(s) as the reconciliation baseline: %s",
+            # WARNING, not INFO, and the consequence is stated. Adoption is
+            # routine; adoption silently consuming the entire risk-at-stop
+            # budget is not, and the INFO line said only that it had happened.
+            logger.warning(
+                "Adopted %d pre-existing broker position(s) as the reconciliation baseline: %s. "
+                "None carries a stop this application placed, so each counts at full value "
+                "against the aggregate risk-at-stop cap and new entries may be refused until "
+                "they are stopped or closed.",
                 len(adopted),
                 ", ".join(f"{sym} {qty:g}" for sym, qty in sorted(adopted.items())),
             )

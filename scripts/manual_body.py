@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.7  |  Milestone M24"
+VERSION_LINE = "Version 2.8  |  Milestone M25"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -155,6 +155,7 @@ def write_body(doc: Any, figures: FigureSet) -> None:
     _dashboard(doc, figures)
     _market_session(doc)
     _balances(doc)
+    _adopted_positions(doc)
     _workbench(doc, figures)
     _walk_forward(doc)
     _regime_monitor(doc, figures)
@@ -265,6 +266,11 @@ def _introduction(doc: Any) -> None:
                 "Optional auto-trade",
                 "Per-strategy unattended execution on paper accounts, off by default and "
                 "gated by an explicit confirmation (Sections 11.6 and 12.3).",
+            ),
+            (
+                "Positions you did not open",
+                "The Dashboard now says when holdings that were already in the account "
+                "are consuming the risk budget, and what to do about it (Section 3.4).",
             ),
             (
                 "A halt you cannot miss",
@@ -639,6 +645,42 @@ def _balances(doc: Any) -> None:
         "beneath the panel gives the age of the reading; if the broker stops answering, the "
         "last good figures stay on screen with their real timestamp and the error beside "
         "them, rather than silently ageing as though current.",
+    )
+
+
+def _adopted_positions(doc: Any) -> None:
+    doc.add_heading("3.4 Positions You Did Not Open", level=2)
+    doc.add_paragraph(
+        "When the application starts it takes note of whatever the account already holds - "
+        "positions from a previous session, from another program, or bought by hand. It has "
+        "to: comparing an application that has traded nothing against an account that "
+        "already holds shares would read a perfectly healthy account as a discrepancy and "
+        "halt trading on every launch."
+    )
+    doc.add_paragraph(
+        "Those holdings have a cost that is easy to miss. The application did not open them, "
+        "so it has no record of a protective stop on them, and it treats an unknown stop as "
+        "no stop at all. The whole value of such a position counts against the risk budget. "
+        "Seven inherited holdings in a hundred-thousand-dollar account were enough to put "
+        "risk-at-stop at thirty percent against a five percent limit - which is to say every "
+        "new trade was refused, all day, and nothing on screen said so."
+    )
+    doc.add_paragraph(
+        "A panel now appears beneath the market session banner whenever this is happening. "
+        "It names the holdings, largest first, and states how much of the budget they are "
+        "using. Amber means they are consuming it; red means it is exhausted and nothing new "
+        "is being opened. When there is nothing to report the panel is not there at all."
+    )
+    _callout(
+        doc,
+        "Two ways to clear it",
+        "Attach a stop to each inherited position, which reduces its counted risk from the "
+        "whole value to the distance down to the stop; or close them and let the strategies "
+        "open positions the application has a full record of. Either way the panel "
+        "disappears on the next refresh - it follows what you actually hold, so it can never "
+        "outlive the situation it is describing. If you are starting a test and want clean "
+        "figures, closing them is the better option: every performance measure keys off an "
+        "entry the application recorded, and an inherited position has none.",
     )
 
 
