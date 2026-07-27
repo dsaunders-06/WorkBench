@@ -72,14 +72,17 @@ def test_all_eight_real_screens_construct_without_error(qtbot):
         qtbot.addWidget(screen)
 
 
-async def test_dashboard_refresh_populates_nav_tile(qtbot):
+async def test_dashboard_refresh_populates_the_balances_panel(qtbot):
+    """The NAV tile became the balances panel at M21 - two numbers for the same
+    money on one screen invites the question of why they differ."""
     runtime = _build_runtime()
     dashboard = DashboardScreen(runtime)
     qtbot.addWidget(dashboard)
 
     await dashboard._refresh()
 
-    assert dashboard.nav_tile._value.text() != "-"
+    assert dashboard.balances_panel.portfolio_value._value.text().startswith("$")
+    assert dashboard.balances_panel.freshness.text()
 
 
 async def test_regime_monitor_updates_on_regime_event(qtbot):

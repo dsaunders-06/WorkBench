@@ -191,6 +191,13 @@ class Settings(BaseSettings):
     session_follows_market_hours: bool = True
     session_poll_seconds: float = Field(default=20.0, gt=0)
 
+    # How often the shared account poller re-reads the broker (M21). Alpaca
+    # documents 200 requests a minute per account, read straight off the
+    # X-Ratelimit-Limit response header; the Dashboard's own two-second timer
+    # was spending sixty of them on repainting one tile. Five seconds costs
+    # twelve a minute for account, balances and positions together.
+    account_poll_seconds: float = Field(default=5.0, gt=0)
+
     # --- Walk-forward defaults (M19) -----------------------------------------
     # Window sizes for the Workbench's walk-forward panel, in daily bars.
     # Roughly six months in-sample against three months out-of-sample.

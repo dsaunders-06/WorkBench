@@ -374,6 +374,64 @@ already returns one row per *trading* day, so reindexing onto a calendar
 timeline turned a 251-day year of SPY into 365 rows, and the invented
 zero-return days dragged realized volatility about 17% below its true value.
 
+## Account balances on the Dashboard
+
+The Dashboard leads with a Balances panel laid out like the broker's own page:
+portfolio value, today's P/L, cash, buying power, long and short market value,
+initial and maintenance margin, day-trade count and account status.
+
+Two rules govern it.
+
+**Nothing is recomputed that the broker already reports.** Today's P/L is
+Alpaca's `equity` against its own `last_equity`, not a figure derived here.
+When two screens disagree about money you have to work out which is lying, and
+that is worse than one number with a caveat.
+
+**A figure the broker did not report renders as a dash, never zero.** An Alpaca
+paper account returns nothing for `daytrade_count`, `pattern_day_trader` or
+`daytrading_buying_power`; "0 day trades" would be a quiet claim about PDT
+status. Note that `account()` still coerces to a concrete float — a buy must
+never proceed on an unknown balance, so `0.0` is right there and `None` is not.
+
+### Spendable here vs buying power
+
+The one figure on the panel that is *not* the broker's is **Spendable here** —
+`cash − min_cash_reserve`, what the no-leverage rule will actually allow a buy
+to spend. On a live paper account that reads:
+
+| | |
+|---|---|
+| Broker buying power | $365,206.54 (4x) |
+| **Spendable here** | **$69,844.06** |
+
+Alpaca offers four times cash on margin; this application uses none of it.
+Seeing six figures of buying power beside an order refused for insufficient
+cash is the most confusing thing about running the two side by side, so both
+appear together.
+
+### Rate limits
+
+Alpaca documents a per-account limit, read straight off the response header:
+
+```
+X-Ratelimit-Limit: 200
+```
+
+The Dashboard's two-second timer was calling `account()` **and** `positions()`
+on every tick — **60 requests a minute, permanently, to repaint one tile**,
+before the market data feed, equity monitor and reconciliation asked for
+anything.
+
+`AccountPoller` replaces that: one throttled fetch shared by every screen,
+`QAT_ACCOUNT_POLL_SECONDS` (default 5s). Account, balances and positions
+together now cost about **12 requests a minute** — cheaper than what it
+replaced, despite showing far more.
+
+On a broker failure the last good reading keeps displaying with its **real**
+timestamp and the error beside it. Blanking the panel would be its own lie —
+the money did not disappear — but a stale number presented as current is the
+thing that must not happen, so the age is always shown.
+
 ## What a session leaves behind
 
 Everything needed to reconstruct a session afterwards is written to `data/`,

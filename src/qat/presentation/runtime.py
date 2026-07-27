@@ -23,6 +23,7 @@ import requests
 
 from qat.config import Settings
 from qat.data import universe
+from qat.data.broker.account_poller import AccountPoller
 from qat.data.broker.adapter import BrokerAdapter
 from qat.data.broker.mock_broker import MockBroker
 from qat.data.feature_engine import FeatureEngine
@@ -299,6 +300,7 @@ class Runtime:
     equity_curve: EquityCurve
     performance_reporter: PerformanceReporter
     session_controller: SessionController
+    account_poller: AccountPoller
     autonomy_gate: AutonomyGate
     decision_journal: DecisionJournal
     strategy_engine: StrategyEngine
@@ -338,6 +340,9 @@ class Runtime:
         # unattended ones.
         decision_journal = DecisionJournal(settings.data_dir)
         oms = OMS(broker, risk_engine, kill_switch, bus=bus, journal=decision_journal)
+        # Shared by every screen so the account is read once per interval
+        # regardless of how many are watching (M21).
+        account_poller = AccountPoller(broker, interval_seconds=settings.account_poll_seconds)
         signal_bridge = SignalToOrderBridge(
             bus, oms, settings=settings, bar_interval_seconds=settings.bar_interval_seconds
         )
@@ -502,6 +507,7 @@ class Runtime:
             equity_curve=equity_curve,
             performance_reporter=performance_reporter,
             session_controller=session_controller,
+            account_poller=account_poller,
             autonomy_gate=autonomy_gate,
             decision_journal=decision_journal,
             strategy_engine=strategy_engine,

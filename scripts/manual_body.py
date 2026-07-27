@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.3  |  Milestone M20"
+VERSION_LINE = "Version 2.4  |  Milestone M21"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -154,6 +154,7 @@ def write_body(doc: Any, figures: FigureSet) -> None:
     _getting_started(doc, figures)
     _dashboard(doc, figures)
     _market_session(doc)
+    _balances(doc)
     _workbench(doc, figures)
     _walk_forward(doc)
     _regime_monitor(doc, figures)
@@ -262,6 +263,12 @@ def _introduction(doc: Any) -> None:
                 "Optional auto-trade",
                 "Per-strategy unattended execution on paper accounts, off by default and "
                 "gated by an explicit confirmation (Sections 11.6 and 12.3).",
+            ),
+            (
+                "Balances panel",
+                "The Dashboard leads with the broker's own balance sheet, and account "
+                "reads are shared and throttled to respect the broker's rate limit "
+                "(Section 3.3).",
             ),
             (
                 "Market session panel",
@@ -455,9 +462,10 @@ def _dashboard(doc: Any, figures: FigureSet) -> None:
                 "position-sizing multiplier the regime implies.",
             ),
             (
-                "NAV tile",
-                "Net Asset Value: cash plus the market value of open positions, as "
-                "reported by the connected broker.",
+                "Balances panel",
+                "The broker's own balance sheet: portfolio value, today's P/L, cash, "
+                "buying power, market values, margin, day-trade count and account "
+                "status. See Section 3.3.",
             ),
             (
                 "Portfolio VaR (95%) tile",
@@ -548,6 +556,68 @@ def _market_session(doc: Any) -> None:
         "and stops emitting signals, because a signal computed at 3am from the previous "
         "day's closing price is not analysis - and because a closed market would otherwise "
         "trip the data-staleness rail within a minute of every close.",
+    )
+
+
+def _balances(doc: Any) -> None:
+    doc.add_heading("3.3 The Balances Panel", level=2)
+    doc.add_paragraph(
+        "The panel is laid out like the broker's own balances page, and for the most part "
+        "it simply repeats what the broker says. Today's profit is the broker's equity "
+        "against its own previous close, not a figure computed here - when two screens "
+        "disagree about money, you have to work out which one is lying, and that is a worse "
+        "position than one number with a caveat."
+    )
+    _table(
+        doc,
+        ("Figure", "Meaning"),
+        (
+            ("Portfolio value", "Equity: cash plus the market value of open positions."),
+            (
+                "Today's P/L",
+                "Equity against the previous close, in cash and percent, coloured by sign.",
+            ),
+            ("Cash", "Settled cash held at the broker."),
+            (
+                "Spendable here",
+                "Cash less your minimum reserve - what this application will actually let a "
+                "buy spend. See the note below.",
+            ),
+            (
+                "Broker buying power",
+                "What the broker would allow, including margin, with the multiplier in "
+                "brackets.",
+            ),
+            ("Long / short market value", "Market value of long and short positions."),
+            (
+                "Initial / maintenance margin",
+                "Margin required to open and to keep the current positions.",
+            ),
+            (
+                "Day trades (5d)",
+                "Day-trade count, with a PDT marker when the pattern-day-trader flag is set.",
+            ),
+            ("Account", "Broker account status, or BLOCKED if trading is restricted."),
+        ),
+    )
+    _callout(
+        doc,
+        "Spendable here will be far below buying power, and that is correct",
+        "A margin account is typically offered four times its cash as buying power. This "
+        "application uses none of it: the no-leverage rule caps a buy at cash less your "
+        "reserve. On a funded paper account that can read as $365,206 of buying power beside "
+        "$69,844 spendable - the two sit next to each other precisely so an order refused "
+        "for insufficient cash does not come as a surprise.",
+    )
+    _callout(
+        doc,
+        "A dash means the broker did not report it",
+        "Not that the value is zero. An Alpaca paper account returns nothing for the "
+        "day-trade count or the pattern-day-trader flag, and showing 0 would be a quiet "
+        "claim about your day-trading status rather than an absence of one. The line "
+        "beneath the panel gives the age of the reading; if the broker stops answering, the "
+        "last good figures stay on screen with their real timestamp and the error beside "
+        "them, rather than silently ageing as though current.",
     )
 
 
@@ -1687,6 +1757,11 @@ def _config_reference(doc: Any) -> None:
                 "Default in-sample window on the Workbench (Section 4.2).",
             ),
             ("QAT_WALK_FORWARD_OUT_SAMPLE_BARS", "60", "Default out-of-sample window."),
+            (
+                "QAT_ACCOUNT_POLL_SECONDS",
+                "5",
+                "How often the shared account poller re-reads the broker (Section 3.3).",
+            ),
             ("QAT_LOG_LEVEL", "INFO", "Logging verbosity. Written to data/logs/qat.log."),
         ),
     )

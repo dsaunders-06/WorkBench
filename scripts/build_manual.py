@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import random
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -201,7 +202,14 @@ async def _seed_trade_history(runtime: Runtime) -> None:
 
 async def capture_figures() -> FigureSet:
     figures = FigureSet()
-    runtime = Runtime.build_demo(settings=Settings(_env_file=None))
+    # A throwaway data directory. The demo runtime below submits orders and
+    # publishes fills to populate the figures, and every one of those writes to
+    # the trade ledger, the decision journal and the risk audit trail. Pointed
+    # at the default "./data" it would append documentation exercises to the
+    # operator's own record of real sessions.
+    data_dir = tempfile.mkdtemp(prefix="qat-manual-")
+    runtime = Runtime.build_demo(settings=Settings(_env_file=None, data_dir=data_dir))
+    settings_poll = runtime.account_poller.interval_seconds
 
     window = MainWindow(runtime)
     figures.add(
@@ -228,8 +236,14 @@ async def capture_figures() -> FigureSet:
     await _seed_positions(runtime)
 
     dashboard = DashboardScreen(runtime)
+    # The account poller caches for five seconds, so twenty-five refreshes in a
+    # tight loop would all read the same snapshot and draw a flat line. Zeroing
+    # the interval makes each one a real read, which is what a session looks
+    # like over time.
+    runtime.account_poller.interval_seconds = 0.0
     for _ in range(25):
         await dashboard._refresh()
+    runtime.account_poller.interval_seconds = settings_poll
     await dashboard._on_regime(
         RegimeEvent(
             label="high_vol",
@@ -248,7 +262,7 @@ async def capture_figures() -> FigureSet:
         dashboard,
         "Figure 3.1 - The Dashboard with the market open: the session banner and countdown, "
         "NAV and risk tiles, the live equity curve, open positions, and an AI regime note.",
-        size=(1280, 950),
+        size=(1280, 1060),
     )
 
     workbench = WorkbenchScreen(runtime)

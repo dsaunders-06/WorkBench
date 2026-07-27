@@ -30,7 +30,7 @@ import logging
 from typing import Any, cast
 
 from qat.config import Settings
-from qat.data.broker.adapter import AccountSummary, Order, Position
+from qat.data.broker.adapter import AccountBalances, AccountSummary, Order, Position
 from qat.data.broker.alpaca_client_protocol import AlpacaClientProtocol
 from qat.security import get_secret
 
@@ -93,6 +93,42 @@ class AlpacaAdapter:
             net_liquidation=_as_float(getattr(account, "equity", None)),
             cash=_as_float(getattr(account, "cash", None)),
             buying_power=_as_float(getattr(account, "buying_power", None)),
+        )
+
+    async def balances(self) -> AccountBalances:
+        """Alpaca's own balance sheet, passed through rather than recomputed.
+
+        Deriving figures like the day's P&L locally would eventually disagree
+        with the broker's own page, and when two screens disagree about money
+        the operator has to work out which one is lying.
+        """
+        account = await asyncio.to_thread(self._client.get_account)
+        return AccountBalances(
+            equity=_optional_float(getattr(account, "equity", None)),
+            last_equity=_optional_float(getattr(account, "last_equity", None)),
+            cash=_optional_float(getattr(account, "cash", None)),
+            long_market_value=_optional_float(getattr(account, "long_market_value", None)),
+            short_market_value=_optional_float(getattr(account, "short_market_value", None)),
+            buying_power=_optional_float(getattr(account, "buying_power", None)),
+            regt_buying_power=_optional_float(getattr(account, "regt_buying_power", None)),
+            daytrading_buying_power=_optional_float(
+                getattr(account, "daytrading_buying_power", None)
+            ),
+            non_marginable_buying_power=_optional_float(
+                getattr(account, "non_marginable_buying_power", None)
+            ),
+            multiplier=_optional_float(getattr(account, "multiplier", None)),
+            initial_margin=_optional_float(getattr(account, "initial_margin", None)),
+            maintenance_margin=_optional_float(getattr(account, "maintenance_margin", None)),
+            sma=_optional_float(getattr(account, "sma", None)),
+            accrued_fees=_optional_float(getattr(account, "accrued_fees", None)),
+            status=_optional_str(getattr(account, "status", None)),
+            currency=_optional_str(getattr(account, "currency", None)),
+            daytrade_count=_optional_int(getattr(account, "daytrade_count", None)),
+            pattern_day_trader=_optional_bool(getattr(account, "pattern_day_trader", None)),
+            trading_blocked=_optional_bool(getattr(account, "trading_blocked", None)),
+            account_blocked=_optional_bool(getattr(account, "account_blocked", None)),
+            shorting_enabled=_optional_bool(getattr(account, "shorting_enabled", None)),
         )
 
     async def positions(self) -> list[Position]:
@@ -183,6 +219,38 @@ def _as_float(value: object) -> float:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_float(value: object) -> float | None:
+    """None-preserving sibling of _as_float (M21).
+
+    _as_float coerces a missing field to 0.0, which is right for the cash rule
+    - a buy must not proceed on an unknown balance - and wrong for display: a
+    day-trade count Alpaca did not report is not a count of zero.
+    """
+    if value is None:
+        return None
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return result if result == result else None
+
+
+def _optional_int(value: object) -> int | None:
+    parsed = _optional_float(value)
+    return None if parsed is None else int(parsed)
+
+
+def _optional_bool(value: object) -> bool | None:
+    return None if value is None else bool(value)
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    # Alpaca returns enums for status; their str() carries the class name.
+    return str(getattr(value, "value", value))
 
 
 _STATUS_MAP = {

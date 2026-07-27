@@ -9,7 +9,12 @@ from __future__ import annotations
 import random
 import uuid
 
-from qat.data.broker.adapter import AccountSummary, Order, Position
+from qat.data.broker.adapter import (
+    AccountBalances,
+    AccountSummary,
+    Order,
+    Position,
+)
 
 _STARTING_CASH = 100_000.0
 _SYNTHETIC_BASE_PRICE = 100.0
@@ -81,6 +86,28 @@ class MockBroker:
         )
         net_liq = self._cash + market_value
         return AccountSummary(net_liquidation=net_liq, cash=self._cash, buying_power=self._cash)
+
+    async def balances(self) -> AccountBalances:
+        """The three figures the simulator actually knows, plus the long market
+        value it can compute. Everything else stays None and renders as a dash -
+        the simulator has no margin, no SMA and no day-trade count, and
+        inventing them would make the panel look identical whether or not a
+        real broker was connected."""
+        summary = await self.account()
+        long_value = sum(
+            pos.quantity * self._synthetic_price(pos.symbol)
+            for pos in self._positions.values()
+            if pos.quantity > 0
+        )
+        return AccountBalances(
+            equity=summary.net_liquidation,
+            cash=summary.cash,
+            buying_power=summary.buying_power,
+            long_market_value=long_value,
+            short_market_value=0.0,
+            currency="USD",
+            status="SIMULATED",
+        )
 
     def _synthetic_price(self, symbol: str) -> float:
         offset = self._rng.uniform(-1.0, 1.0)

@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat.domain.events import RegimeEvent
+from qat.presentation.balances_panel import BalancesPanel
 from qat.presentation.runtime import Runtime
 from qat.presentation.session_panel import SessionPanel
 from qat.presentation.widgets import KpiTile
@@ -52,14 +53,21 @@ class DashboardScreen(QWidget):
         self.regime_header.setStyleSheet("font-size: 14px; font-weight: bold;")
         layout.addWidget(self.regime_header)
 
-        kpi_row = QHBoxLayout()
-        self.nav_tile = KpiTile("NAV")
+        # The balances panel replaces the old NAV tile (M21). Showing both
+        # would put two numbers for the same money on one screen and invite the
+        # question of why they differ - they do not.
+        self.balances_panel = BalancesPanel(runtime.settings.min_cash_reserve)
+        layout.addWidget(self.balances_panel)
+
+        # The three risk figures survive as a compact line rather than tiles:
+        # they matter, but they are not what this screen is now led by.
+        risk_row = QHBoxLayout()
         self.var_tile = KpiTile("Portfolio VaR (95%)")
         self.sharpe_tile = KpiTile("Realised Sharpe (naive)")
         self.drawdown_tile = KpiTile("Drawdown vs limit")
-        for tile in (self.nav_tile, self.var_tile, self.sharpe_tile, self.drawdown_tile):
-            kpi_row.addWidget(tile)
-        layout.addLayout(kpi_row)
+        for tile in (self.var_tile, self.sharpe_tile, self.drawdown_tile):
+            risk_row.addWidget(tile)
+        layout.addLayout(risk_row)
 
         self.equity_plot = pg.PlotWidget(title="Equity Curve")
         self.equity_plot.setLabel("left", "NAV")
@@ -113,11 +121,17 @@ class DashboardScreen(QWidget):
             self.regime_header.setText(f"Dashboard refresh failed: {exc}")
 
     async def _refresh(self) -> None:
-        account = await self.runtime.broker.account()
-        positions = await self.runtime.broker.positions()
+        # One shared, throttled read rather than two broker calls per tick.
+        # This screen's two-second timer was spending sixty requests a minute
+        # of a two-hundred-per-minute budget on repainting.
+        snapshot = await self.runtime.account_poller.snapshot()
+        self.balances_panel.update_from(snapshot)
 
-        self.nav_tile.set_value(f"${account.net_liquidation:,.2f}")
-        self._equity_history.append(account.net_liquidation)
+        positions = list(snapshot.positions)
+        equity = snapshot.balances.equity
+        if equity is None:
+            return
+        self._equity_history.append(equity)
         if len(self._equity_history) > _MAX_EQUITY_POINTS:
             del self._equity_history[: len(self._equity_history) - _MAX_EQUITY_POINTS]
         self.equity_curve.setData(self._equity_history)

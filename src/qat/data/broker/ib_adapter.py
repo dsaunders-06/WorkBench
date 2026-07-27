@@ -23,7 +23,13 @@ import asyncio
 import logging
 
 from qat.config import Settings
-from qat.data.broker.adapter import AccountSummary, Order, Position
+from qat.data.broker.adapter import (
+    AccountBalances,
+    AccountSummary,
+    Order,
+    Position,
+    balances_from_summary,
+)
 from qat.data.broker.ib_client_protocol import IBClientProtocol
 from qat.data.broker.ib_translate import (
     from_ib_account_values,
@@ -203,6 +209,12 @@ class IBAdapter:
             self.ib_client.cancelOrder(ib_order)  # type: ignore[arg-type]
         order.status = "cancelled"
         return order
+
+    async def balances(self) -> AccountBalances:
+        """Derived from the account summary: the IB translation layer does not
+        map margin or day-trade fields, so those stay None rather than being
+        guessed at from the three figures that are mapped."""
+        return balances_from_summary(await self.account())
 
     async def positions(self) -> list[Position]:
         return [from_ib_position(pos) for pos in self.ib_client.positions()]
