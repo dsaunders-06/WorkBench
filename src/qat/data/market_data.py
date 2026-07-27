@@ -86,6 +86,10 @@ class MarketDataFeed:
         self._tasks: list[asyncio.Task[None]] = []
 
     async def start(self) -> None:
+        # Cleared so a feed restarted after a break (M19: the overnight stand
+        # down) does not immediately report every symbol as stale against a
+        # last-seen timestamp from before it slept.
+        self._last_seen.clear()
         self._tasks = [
             asyncio.create_task(self._ingest_loop()),
             asyncio.create_task(self._process_loop()),

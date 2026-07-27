@@ -374,6 +374,54 @@ already returns one row per *trading* day, so reindexing onto a calendar
 timeline turned a 251-day year of SPY into 365 rows, and the invented
 zero-return days dragged realized volatility about 17% below its true value.
 
+## Trading session and market hours
+
+The Dashboard's top panel shows which market is in play, a `HH:MM:SS` countdown
+to the next open or to the close, and whether the trading session is actually
+running. The countdown turns amber inside **30 minutes** of an open or a close.
+Holidays and early closes come from the same calendar the report scheduler and
+the autonomy gate use, so a Friday closure reads "US closed - public holiday"
+rather than an unexplained "closed".
+
+`SessionController` stands the market data feed and strategy-signal emission
+down at the close and brings them back at the open. Up to M18 both ran around
+the clock, which was harmless on synthetic prices and two real faults once the
+data became real:
+
+- the feed polled a rate-limited vendor all night, and the strategy engine kept
+  emitting signals computed from the previous day's closing price;
+- **the staleness rail tripped the kill-switch every single night** — a closed
+  market means every symbol stops updating, and the default staleness window is
+  sixty seconds. You would arrive to a tripped rail with nothing wrong.
+
+Tick history keeps accumulating while suspended, so the first signal after an
+open is computed against a warm buffer rather than an empty one.
+
+**It controls when the app is awake, never who approves an order.** Execution
+mode, the risk engine, the cash rule and the sign-off gate are untouched.
+Standing a session up does not place a trade.
+
+Two escape hatches: **Start session now** on the Dashboard runs the session
+against a closed market until the next close (deliberately not permanent — the
+app never acquires a standing exemption from its own schedule), and the gate is
+inert on simulated prices, which have no trading hours. Backtesting, the
+Screener and the Blotter work regardless.
+
+## Walk-forward analysis
+
+The Workbench's Walk-Forward panel replays a strategy across rolling,
+non-overlapping out-of-sample windows and reports a per-window table plus a
+headline. `walk_forward.py` had existed since M4 and was reachable from nowhere
+until M19, which left a single in-sample backtest and a bootstrap as the whole
+evidence base for deploying a strategy — and both are computed from one pass
+over one period.
+
+The headline leads with **how many windows were profitable**, not the mean
+Sharpe, because a strategy can post a strong average off one exceptional window
+and lose money in every other, and the average is exactly what hides that. It
+also flags when the spread between windows exceeds the average, and says so
+plainly below three windows rather than scoring noise.
+
 ## Company fundamentals
 
 Settings → Market Data → Company fundamentals chooses between the seeded

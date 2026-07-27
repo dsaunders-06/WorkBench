@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.1  |  Milestone M18"
+VERSION_LINE = "Version 2.2  |  Milestone M19"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -153,7 +153,9 @@ def write_body(doc: Any, figures: FigureSet) -> None:
     _introduction(doc)
     _getting_started(doc, figures)
     _dashboard(doc, figures)
+    _market_session(doc)
     _workbench(doc, figures)
+    _walk_forward(doc)
     _regime_monitor(doc, figures)
     _risk_console(doc, figures)
     _ai_advisor(doc, figures)
@@ -259,6 +261,16 @@ def _introduction(doc: Any) -> None:
                 "Optional auto-trade",
                 "Per-strategy unattended execution on paper accounts, off by default and "
                 "gated by an explicit confirmation (Sections 11.6 and 12.3).",
+            ),
+            (
+                "Market session panel",
+                "The Dashboard shows which market is in play with countdowns to the open "
+                "and close, and the application now follows market hours (Section 3.2).",
+            ),
+            (
+                "Walk-forward analysis",
+                "Out-of-sample evaluation across rolling windows on the Workbench "
+                "(Section 4.2).",
             ),
             (
                 "Order Blotter rework",
@@ -424,6 +436,13 @@ def _dashboard(doc: Any, figures: FigureSet) -> None:
         ("Element", "Description"),
         (
             (
+                "Market session panel",
+                "Which market is in play, a countdown to the next open or to the close, and "
+                "whether the trading session is running. The countdown turns amber inside 30 "
+                "minutes of an open or a close. Holidays and early closes are named. See "
+                "Section 3.2.",
+            ),
+            (
                 "Regime header",
                 "The current regime label and its exposure scalar - the portfolio-wide "
                 "position-sizing multiplier the regime implies.",
@@ -470,6 +489,56 @@ def _dashboard(doc: Any, figures: FigureSet) -> None:
                 "only: it changes no position, no order and no setting.",
             ),
         ),
+    )
+
+
+def _market_session(doc: Any) -> None:
+    doc.add_heading("3.2 The Market Session Panel", level=2)
+    doc.add_paragraph(
+        "The panel at the top of the Dashboard answers three questions at a glance: which "
+        "market is in play, how long until it opens or closes, and whether the application "
+        "is actually trading."
+    )
+    _table(
+        doc,
+        ("Element", "Description"),
+        (
+            (
+                "Market headline",
+                "The configured market and its state. A closure with a reason - a public "
+                "holiday, a weekend - is named rather than left as a bare 'closed'.",
+            ),
+            (
+                "Countdown",
+                "Time to the close while open, or to the next open while shut, as HH:MM:SS. "
+                "It turns amber inside 30 minutes of either, and an early close is labelled.",
+            ),
+            (
+                "Second market line",
+                "Appears only when the other market is trading - both can be open at once, "
+                "and a permanent 'ASX closed' row would be noise.",
+            ),
+            (
+                "Session status",
+                "Whether the feed and strategies are live, standing by, or always on.",
+            ),
+            (
+                "Start session now",
+                "Runs the session against a closed market until the next close. Shown only "
+                "when it would do something.",
+            ),
+        ),
+    )
+    _callout(
+        doc,
+        "What starting a session does and does not do",
+        "Starting a session starts the market data feed and lets deployed strategies emit "
+        "signals. It does not place an order, and it does not change who approves one: "
+        "execution mode, the risk engine, the cash rule and the sign-off gate all behave "
+        "exactly as configured. Outside market hours the application stands the feed down "
+        "and stops emitting signals, because a signal computed at 3am from the previous "
+        "day's closing price is not analysis - and because a closed market would otherwise "
+        "trip the data-staleness rail within a minute of every close.",
     )
 
 
@@ -548,6 +617,52 @@ def _workbench(doc: Any, figures: FigureSet) -> None:
         "as pending sign-off. Deploying does not enable auto-trade; that is a separate "
         "setting requiring its own confirmation, and it applies only to strategies you list "
         "explicitly.",
+    )
+
+
+def _walk_forward(doc: Any) -> None:
+    doc.add_heading("4.2 Walk-Forward Analysis", level=2)
+    doc.add_paragraph(
+        "The backtest above and its Monte Carlo cone share a weakness: both are computed "
+        "from one pass over one period. A strategy that worked in a single favourable "
+        "stretch and nowhere else looks the same as one that worked throughout. "
+        "Walk-forward replays the strategy across rolling, non-overlapping out-of-sample "
+        "windows and reports each separately."
+    )
+    _table(
+        doc,
+        ("Element", "Description"),
+        (
+            (
+                "In-sample / out-of-sample bars",
+                "Window sizes in daily bars, defaulting to 120 and 60 - roughly six months "
+                "tested against the following three.",
+            ),
+            (
+                "Run Walk-Forward",
+                "Replays the selected strategy and symbol across every complete window.",
+            ),
+            (
+                "Results table",
+                "One row per out-of-sample window: dates, CAGR, Sharpe, maximum drawdown "
+                "and trade count. Sharpe is colour-coded by sign.",
+            ),
+            (
+                "Headline",
+                "How many windows were profitable, the mean Sharpe and its spread, and a "
+                "plain-language verdict.",
+            ),
+        ),
+    )
+    _callout(
+        doc,
+        "Why the headline leads with the window count",
+        "It reports how many windows were profitable before it reports the average, because "
+        "a strategy can post a strong average off one exceptional window while losing money "
+        "in every other - and the average is precisely what conceals that. The panel also "
+        "flags when the spread between windows exceeds the average, and refuses to draw a "
+        "conclusion from fewer than three windows rather than scoring noise. A strategy "
+        "that fails here should not be deployed on the strength of the backtest above.",
     )
 
 
@@ -1505,6 +1620,18 @@ def _config_reference(doc: Any) -> None:
                 "false",
                 "Makes the promotion bar binding for auto-trade (Section 10.1).",
             ),
+            (
+                "QAT_SESSION_FOLLOWS_MARKET_HOURS",
+                "true",
+                "Feed and strategies follow market hours (Section 3.2). Ignored on "
+                "simulated prices.",
+            ),
+            (
+                "QAT_WALK_FORWARD_IN_SAMPLE_BARS",
+                "120",
+                "Default in-sample window on the Workbench (Section 4.2).",
+            ),
+            ("QAT_WALK_FORWARD_OUT_SAMPLE_BARS", "60", "Default out-of-sample window."),
             ("QAT_LOG_LEVEL", "INFO", "Logging verbosity."),
         ),
     )

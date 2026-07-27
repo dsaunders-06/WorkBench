@@ -71,6 +71,11 @@ class StrategyEngine:
         self._fundamentals_cache: dict[str, FundamentalSnapshot] = {}
         self._context_cache: dict[str, SymbolContext] = {}
         self._current_regime: Regime = default_regime
+        # Whether signals actually leave this engine (M19). SessionController
+        # clears it outside market hours; ticks are still recorded so the
+        # buffer is warm at the next open. True by default, so an engine built
+        # without a controller behaves exactly as it always did.
+        self.emitting = True
 
     async def start(self) -> None:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
@@ -122,7 +127,13 @@ class StrategyEngine:
             pass  # unrecognised label: keep the previous regime rather than guess
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
+        # History is recorded even while suspended (M19): the first signal
+        # after an open must be computed against a populated buffer, not an
+        # empty one.
         self.bars.add_tick(event.symbol, event.ts, event.price, event.volume)
+
+        if not self.emitting:
+            return
 
         if not self.strategies:
             # Nothing is deployed, so no snapshot is needed - skip the whole

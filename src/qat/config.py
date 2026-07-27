@@ -181,6 +181,22 @@ class Settings(BaseSettings):
     # bounds how often an unofficial, rate-limited vendor is asked.
     fundamentals_cache_days: float = Field(default=7.0, gt=0)
 
+    # Whether the feed and strategy engine follow market hours (M19). On real
+    # data leaving them running around the clock means polling a rate-limited
+    # vendor all night, emitting signals from the previous close, and tripping
+    # the staleness rail within a minute of every close.
+    #
+    # Ignored on simulated prices, which have no trading hours: a demo app that
+    # looks dead all weekend reads as a bug rather than a feature.
+    session_follows_market_hours: bool = True
+    session_poll_seconds: float = Field(default=20.0, gt=0)
+
+    # --- Walk-forward defaults (M19) -----------------------------------------
+    # Window sizes for the Workbench's walk-forward panel, in daily bars.
+    # Roughly six months in-sample against three months out-of-sample.
+    walk_forward_in_sample_bars: int = Field(default=120, gt=0)
+    walk_forward_out_sample_bars: int = Field(default=60, gt=0)
+
     # Interval ticks are aggregated into OHLC bars over (M14). 60s matches the
     # finest granularity the free feed actually serves.
     bar_interval_seconds: float = Field(default=60.0, gt=0)

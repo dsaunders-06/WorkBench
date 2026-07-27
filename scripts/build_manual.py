@@ -74,10 +74,14 @@ class FigureSet:
     def __init__(self) -> None:
         self._figures: dict[str, Figure] = {}
 
-    def add(self, key: str, widget: QWidget, caption: str) -> None:
+    def add(
+        self, key: str, widget: QWidget, caption: str, size: tuple[int, int] | None = None
+    ) -> None:
         FIGURE_DIR.mkdir(parents=True, exist_ok=True)
         path = FIGURE_DIR / f"{key}.png"
-        widget.resize(*SCREEN_SIZE)
+        # Some screens stack more than fits the default height; grabbing them
+        # short squashes the charts into unreadable slivers.
+        widget.resize(*(size or SCREEN_SIZE))
         widget.show()
         _pump()
         widget.grab().save(str(path))
@@ -241,11 +245,13 @@ async def capture_figures() -> FigureSet:
 
     workbench = WorkbenchScreen(runtime)
     await workbench._run_backtest()
+    await workbench._run_walk_forward()
     figures.add(
         "workbench",
         workbench,
-        "Figure 4.1 - A completed backtest: equity versus benchmark, the ten-metric panel, "
-        "the Monte Carlo cone, and the AI robustness note.",
+        "Figure 4.1 - A completed backtest and walk-forward: equity versus benchmark, the "
+        "ten-metric panel, the Monte Carlo cone, and the per-window out-of-sample table.",
+        size=(1280, 1150),
     )
 
     regime = RegimeMonitorScreen(runtime)

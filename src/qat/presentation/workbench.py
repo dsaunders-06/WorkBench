@@ -21,12 +21,17 @@ import logging
 
 import pandas as pd
 import pyqtgraph as pg
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QGridLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -34,16 +39,21 @@ from PySide6.QtWidgets import (
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.backtester.costs import CostModel
 from qat.domain.backtester.monte_carlo import run_monte_carlo
-from qat.domain.backtester.results import BacktestResult
+from qat.domain.backtester.results import BacktestResult, WalkForwardResult
 from qat.domain.backtester.signal_adapter import generate_signal_series
 from qat.domain.backtester.sizing import FixedFractionalSizer
 from qat.domain.backtester.vectorized_engine import VectorizedBacktester
+from qat.domain.backtester.walk_forward import run_walk_forward
 from qat.presentation.runtime import Runtime
 from qat.presentation.widgets import KpiTile
 
 logger = logging.getLogger(__name__)
 
 _PERCENT_METRICS = {"cagr", "volatility", "max_drawdown", "win_rate", "var_95"}
+_WF_COLUMNS = ("From", "To", "CAGR", "Sharpe", "Max DD", "Trades")
+# Below this many windows the spread of a metric across them is arithmetic
+# rather than evidence, and saying so beats printing a confident number.
+_MIN_INFORMATIVE_WINDOWS = 3
 _METRICS_PER_ROW = 5
 
 
@@ -95,10 +105,131 @@ class WorkbenchScreen(QWidget):
         self.mc_p95_item = self.mc_plot.plot(pen="g", name="p95")
         layout.addWidget(self.mc_plot)
 
+        layout.addWidget(self._build_walk_forward_group())
+
         layout.addWidget(QLabel("AI Robustness Note"))
         self.ai_note_label = QLabel("(run a backtest to get an AI note)")
         self.ai_note_label.setWordWrap(True)
         layout.addWidget(self.ai_note_label)
+
+    def _build_walk_forward_group(self) -> QGroupBox:
+        """Out-of-sample evaluation across rolling windows (spec M19).
+
+        Written and tested since M4 but reachable from nowhere until now, which
+        left the single in-sample backtest above plus a bootstrap as the whole
+        evidence base for deploying a strategy. Those two share a weakness:
+        both are computed from one pass over one period, so a strategy that
+        worked in one regime and nowhere else looks the same as one that
+        worked throughout.
+        """
+        group = QGroupBox("Walk-Forward (out-of-sample)")
+        outer = QVBoxLayout(group)
+
+        controls = QHBoxLayout()
+        self.wf_in_sample_input = QSpinBox()
+        self.wf_in_sample_input.setRange(10, 2000)
+        self.wf_in_sample_input.setSingleStep(10)
+        self.wf_in_sample_input.setValue(self.runtime.settings.walk_forward_in_sample_bars)
+        self.wf_out_sample_input = QSpinBox()
+        self.wf_out_sample_input.setRange(5, 2000)
+        self.wf_out_sample_input.setSingleStep(5)
+        self.wf_out_sample_input.setValue(self.runtime.settings.walk_forward_out_sample_bars)
+        self.wf_run_button = QPushButton("Run Walk-Forward")
+        self.wf_run_button.clicked.connect(self._on_walk_forward_clicked)
+        controls.addWidget(QLabel("In-sample bars:"))
+        controls.addWidget(self.wf_in_sample_input)
+        controls.addWidget(QLabel("Out-of-sample bars:"))
+        controls.addWidget(self.wf_out_sample_input)
+        controls.addWidget(self.wf_run_button)
+        controls.addStretch(1)
+        outer.addLayout(controls)
+
+        self.wf_headline = QLabel(
+            "Run a walk-forward to see whether the result above survives out of sample."
+        )
+        self.wf_headline.setWordWrap(True)
+        self.wf_headline.setStyleSheet("font-weight: bold;")
+        outer.addWidget(self.wf_headline)
+
+        self.wf_table = QTableWidget(0, len(_WF_COLUMNS))
+        self.wf_table.setHorizontalHeaderLabels(list(_WF_COLUMNS))
+        self.wf_table.setMaximumHeight(200)
+        outer.addWidget(self.wf_table)
+
+        return group
+
+    def _on_walk_forward_clicked(self) -> None:
+        asyncio.ensure_future(self._run_walk_forward())
+
+    async def _run_walk_forward(self) -> None:
+        self.wf_run_button.setEnabled(False)
+        self.wf_headline.setText("Running...")
+        try:
+            strategy_name = self.strategy_picker.currentText()
+            strategy = next(
+                (s for s in self.runtime.available_strategies if s.name == strategy_name), None
+            )
+            symbol = self.symbol_picker.currentText()
+            if strategy is None or not symbol:
+                return
+
+            in_bars = self.wf_in_sample_input.value()
+            out_bars = self.wf_out_sample_input.value()
+
+            bars = await self.runtime.history_source.get_daily_bars(symbol)
+            if len(bars) < in_bars + out_bars:
+                self.wf_headline.setText(
+                    f"Not enough history: {len(bars)} bars available, "
+                    f"{in_bars + out_bars} needed for even one window. "
+                    "Shorten the windows or use a longer history."
+                )
+                self.wf_table.setRowCount(0)
+                return
+
+            fundamentals = await self.runtime.strategy_engine.fundamentals_source.get_fundamentals(
+                symbol
+            )
+            signal_series = generate_signal_series(strategy, symbol, bars, fundamentals)
+            backtester = VectorizedBacktester(
+                CostModel(), FixedFractionalSizer(settings=self.runtime.settings)
+            )
+            result = run_walk_forward(
+                backtester,
+                symbol,
+                bars,
+                signal_series,
+                in_sample_bars=in_bars,
+                out_sample_bars=out_bars,
+            )
+            self._render_walk_forward(result)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the user below
+            logger.exception("Walk-forward failed")
+            self.wf_headline.setText(f"Walk-forward failed: {exc}")
+        finally:
+            self.wf_run_button.setEnabled(True)
+
+    def _render_walk_forward(self, result: WalkForwardResult) -> None:
+        windows = result.windows
+        self.wf_table.setRowCount(len(windows))
+        for row, window in enumerate(windows):
+            metrics = window.out_sample_result.metrics
+            values = (
+                f"{window.out_sample_start:%Y-%m-%d}",
+                f"{window.out_sample_end:%Y-%m-%d}",
+                f"{metrics.get('cagr', 0.0):.2%}",
+                f"{metrics.get('sharpe', 0.0):.2f}",
+                f"{metrics.get('max_drawdown', 0.0):.2%}",
+                str(len(window.out_sample_result.trades)),
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if column == 3:  # Sharpe: the column the headline is about
+                    item.setForeground(
+                        QColor("#1b5e20") if metrics.get("sharpe", 0.0) > 0 else QColor("#b71c1c")
+                    )
+                self.wf_table.setItem(row, column, item)
+        self.wf_table.resizeColumnsToContents()
+        self.wf_headline.setText(_walk_forward_headline(result))
 
     def _on_run_clicked(self) -> None:
         asyncio.ensure_future(self._run_backtest())
@@ -217,3 +348,50 @@ class WorkbenchScreen(QWidget):
             f"[{recommendation.recommendation.upper()}, confidence={confidence_pct}] "
             f"{recommendation.rationale} (risk flags: {flags})"
         )
+
+
+def _walk_forward_headline(result: WalkForwardResult) -> str:
+    """The sentence that decides whether the backtest above meant anything.
+
+    Deliberately leads with how many windows were profitable rather than the
+    mean Sharpe. A strategy can post a strong average from one exceptional
+    window and lose money in every other, and the average is the number that
+    hides it.
+    """
+    windows = result.windows
+    if not windows:
+        return (
+            "No complete windows: the history is shorter than one in-sample plus one "
+            "out-of-sample period. Shorten the windows or use a longer history."
+        )
+    count = len(windows)
+    sharpes = [w.out_sample_result.metrics.get("sharpe", 0.0) for w in windows]
+    profitable = sum(1 for s in sharpes if s > 0)
+    mean = result.metric_stability.get("sharpe_mean", 0.0)
+    spread = result.metric_stability.get("sharpe_std", 0.0)
+
+    parts = [
+        f"{profitable} of {count} out-of-sample windows profitable.",
+        f"Sharpe mean {mean:.2f}, spread {spread:.2f} (min {min(sharpes):.2f}, "
+        f"max {max(sharpes):.2f}).",
+    ]
+
+    if count < _MIN_INFORMATIVE_WINDOWS:
+        parts.append(
+            f"Only {count} window(s) - too few to say anything about stability. "
+            "Shorten the windows or use a longer history."
+        )
+    elif profitable <= count / 2:
+        parts.append(
+            "It failed out of sample as often as it worked: treat the backtest above "
+            "as unproven."
+        )
+    elif spread > abs(mean):
+        parts.append(
+            "The spread between windows exceeds the average, so the result depends "
+            "heavily on which period you look at."
+        )
+    else:
+        parts.append("Reasonably consistent across periods.")
+
+    return " ".join(parts)

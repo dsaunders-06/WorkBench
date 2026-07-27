@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from qat.domain.events import RegimeEvent
 from qat.presentation.runtime import Runtime
+from qat.presentation.session_panel import SessionPanel
 from qat.presentation.widgets import KpiTile
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,13 @@ class DashboardScreen(QWidget):
         self._equity_history: list[float] = []
 
         layout = QVBoxLayout(self)
+
+        # Above the regime header on purpose: whether the market is even open
+        # is the first thing that makes the rest of this screen meaningful.
+        self.session_panel = SessionPanel(
+            runtime.session_controller, market=runtime.settings.market
+        )
+        layout.addWidget(self.session_panel)
 
         self.regime_header = QLabel("Regime: (waiting for data...)")
         self.regime_header.setStyleSheet("font-size: 14px; font-weight: bold;")

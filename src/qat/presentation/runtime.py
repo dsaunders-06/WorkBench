@@ -61,6 +61,7 @@ from qat.domain.regime_engine.engine import RegimeEngine
 from qat.domain.risk_engine.delever import DeleverSweep
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch, KillSwitchEngine
+from qat.domain.session_controller import SessionController
 from qat.domain.strategies.base import Strategy
 from qat.domain.strategies.breakout import BreakoutStrategy
 from qat.domain.strategies.can_slim import CanSlimStrategy
@@ -297,6 +298,7 @@ class Runtime:
     trade_ledger: TradeLedger
     equity_curve: EquityCurve
     performance_reporter: PerformanceReporter
+    session_controller: SessionController
     autonomy_gate: AutonomyGate
     autonomy_journal: AutonomyJournal
     strategy_engine: StrategyEngine
@@ -444,6 +446,20 @@ class Runtime:
         # construction, so the dependency order reads in the order it happens.
         performance_reporter.narrator = _narrate_report
 
+        # Simulated prices have no trading hours, so gating on them would make
+        # the demo app look dead all weekend. Real data is the case the gate
+        # exists for.
+        session_gating = (
+            settings.session_follows_market_hours and settings.market_data_source != "synthetic"
+        )
+        session_controller = SessionController(
+            market_data_feed,
+            strategy_engine,
+            market=settings.market,
+            enabled=session_gating,
+            poll_seconds=settings.session_poll_seconds,
+        )
+
         for engine in (
             kill_switch_engine,
             risk_engine,
@@ -461,6 +477,10 @@ class Runtime:
             autonomous_executor,
             signal_bridge,
             regime_engine,
+            # Last: the orchestrator has started the feed by now, so this
+            # engine's first check stands the session down if the market is
+            # shut rather than racing a feed that has not started yet.
+            session_controller,
         ):
             orchestrator.register(engine)
 
@@ -478,6 +498,7 @@ class Runtime:
             trade_ledger=trade_ledger,
             equity_curve=equity_curve,
             performance_reporter=performance_reporter,
+            session_controller=session_controller,
             autonomy_gate=autonomy_gate,
             autonomy_journal=autonomy_journal,
             strategy_engine=strategy_engine,
