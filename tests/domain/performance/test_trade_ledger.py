@@ -1,6 +1,6 @@
 """Realised trade matching (spec M16).
 
-The autonomy journal records decisions; this records outcomes. Everything the
+The decision journal records decisions; this records outcomes. Everything the
 promotion gate concludes rests on these numbers being right.
 """
 

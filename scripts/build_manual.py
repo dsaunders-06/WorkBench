@@ -26,6 +26,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -236,11 +237,18 @@ async def capture_figures() -> FigureSet:
             exposure_scalar=0.6,
         )
     )
+    # Rendered against a mid-session clock so the figure shows the open-market
+    # banner. Capturing whenever the manual happens to be built would document
+    # a weekend as often as not.
+    dashboard.session_panel.refresh(
+        datetime(2026, 7, 29, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+    )
     figures.add(
         "dashboard",
         dashboard,
-        "Figure 3.1 - The Dashboard: NAV and risk tiles, the live equity curve, open "
-        "positions, and an AI regime note awaiting acknowledgement.",
+        "Figure 3.1 - The Dashboard with the market open: the session banner and countdown, "
+        "NAV and risk tiles, the live equity curve, open positions, and an AI regime note.",
+        size=(1280, 950),
     )
 
     workbench = WorkbenchScreen(runtime)

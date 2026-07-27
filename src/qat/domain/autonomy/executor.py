@@ -29,8 +29,8 @@ from qat.data import instruments
 from qat.data.broker.adapter import Order
 from qat.domain.autonomy.equity_monitor import EquityMonitor
 from qat.domain.autonomy.gate import AccountState, AutonomyGate, GateDecision
-from qat.domain.autonomy.journal import AutonomyJournal, JournalEntry
 from qat.domain.bus import EventBus
+from qat.domain.decision_journal import DecisionJournal, JournalEntry
 from qat.domain.events import OrderPendingSignoffEvent
 from qat.domain.oms.oms import OMS
 
@@ -51,7 +51,7 @@ class AutonomousExecutor:
         bus: EventBus,
         oms: OMS,
         gate: AutonomyGate,
-        journal: AutonomyJournal,
+        journal: DecisionJournal,
         equity_monitor: EquityMonitor | None = None,
         settings: Settings | None = None,
     ) -> None:

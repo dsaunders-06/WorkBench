@@ -140,3 +140,29 @@ def test_the_panel_reports_the_controller_state_rather_than_re_deriving_it(qtbot
     screen.session_panel.refresh()
 
     assert "standing by" in screen.session_panel.session_status.text()
+
+
+# --- open-market prominence (M20) -------------------------------------------
+
+
+def test_an_open_market_is_a_filled_banner_not_just_coloured_text():
+    """Whether the market is open is the most consequential fact on the
+    Dashboard, and coloured text alone was too easy to miss."""
+    assert "background-color" in countdown_for("US", MID_SESSION).banner_style
+
+
+def test_an_imminent_open_is_also_filled():
+    assert "background-color" in countdown_for("US", JUST_INSIDE_OPEN_ALERT).banner_style
+
+
+def test_a_quiet_closure_stays_flat():
+    """Making every state shout is the same as making none of them."""
+    assert "background-color" not in countdown_for("US", SATURDAY).banner_style
+
+
+def test_the_open_banner_and_the_alert_banner_differ():
+    calm = countdown_for("US", MID_SESSION).banner_style
+    closing_soon = countdown_for("US", JUST_INSIDE_CLOSE_ALERT).banner_style
+
+    assert calm != closing_soon
+    assert "background-color" in calm and "background-color" in closing_soon

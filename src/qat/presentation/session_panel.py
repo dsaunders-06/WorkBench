@@ -41,6 +41,15 @@ _OPEN_COLOUR = "#1b5e20"
 _CLOSED_COLOUR = "#5b6572"
 _ALERT_COLOUR = "#b45309"
 
+# An open market is the single most consequential fact on the Dashboard, so it
+# is a filled banner rather than coloured text (M20). Closed stays deliberately
+# flat: making every state shout is the same as making none of them.
+_BANNER_STYLE = (
+    "background-color: {fill}; color: white; padding: 8px; "
+    "border-radius: 4px; font-size: 17px; font-weight: bold;"
+)
+_QUIET_STYLE = "color: {fill}; padding: 8px; font-size: 15px; font-weight: bold;"
+
 
 @dataclass(frozen=True, slots=True)
 class Countdown:
@@ -58,6 +67,14 @@ class Countdown:
         if self.alerting:
             return _ALERT_COLOUR
         return _OPEN_COLOUR if self.is_open else _CLOSED_COLOUR
+
+    @property
+    def banner_style(self) -> str:
+        """Filled while the market is open or an open/close is imminent;
+        plain text otherwise."""
+        if self.is_open or self.alerting:
+            return _BANNER_STYLE.format(fill=self.colour)
+        return _QUIET_STYLE.format(fill=self.colour)
 
 
 def format_duration(seconds: float) -> str:
@@ -154,7 +171,9 @@ class SessionPanel(QFrame):
         # The other market only earns a line when it is actually trading -
         # a permanent "ASX closed" row is noise to a US-configured operator.
         self.other_market = QLabel("")
-        self.other_market.setStyleSheet(f"color: {_CLOSED_COLOUR}; font-size: 12px;")
+        self.other_market.setStyleSheet(
+            f"color: {_OPEN_COLOUR}; font-size: 12px; font-weight: bold;"
+        )
         grid.addWidget(self.other_market, 1, 0, 1, 2)
         layout.addLayout(grid)
 
@@ -192,11 +211,13 @@ class SessionPanel(QFrame):
     def refresh(self, now: datetime | None = None) -> None:
         countdown = countdown_for(self.market, now)
         self.headline.setText(countdown.headline)
-        self.headline.setStyleSheet(
-            f"font-size: 15px; font-weight: bold; color: {countdown.colour};"
-        )
+        self.headline.setStyleSheet(countdown.banner_style)
         self.detail.setText(countdown.detail)
-        self.detail.setStyleSheet(f"font-size: 13px; color: {countdown.colour};")
+        self.detail.setStyleSheet(
+            f"font-size: 14px; font-weight: bold; color: {countdown.colour};"
+            if countdown.is_open or countdown.alerting
+            else f"font-size: 13px; color: {countdown.colour};"
+        )
 
         other: mc.Market = "ASX" if self.market == "US" else "US"
         other_countdown = countdown_for(other, now)

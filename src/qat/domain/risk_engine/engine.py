@@ -67,7 +67,9 @@ class RiskEngine:
         self.sizer = sizer or KellyVolTargetSizer(settings=self.settings)
         self.portfolio_checker = portfolio_checker or PortfolioRiskChecker(settings=self.settings)
         self.governor = governor or PortfolioGovernor(settings=self.settings)
-        self.audit_log = audit_log or AuditLog()
+        # Given the data_dir so the trail outlives the session (M20). Callers
+        # that inject their own AuditLog keep whatever behaviour they chose.
+        self.audit_log = audit_log or AuditLog(self.settings.data_dir)
         self.regime_scalar = 1.0
 
     async def start(self) -> None:

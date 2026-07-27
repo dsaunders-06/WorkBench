@@ -21,6 +21,7 @@ import pandas as pd
 from qat.data.broker.adapter import BrokerAdapter, Order
 from qat.data.broker.mock_broker import new_order_id
 from qat.domain.bus import EventBus
+from qat.domain.decision_journal import DecisionJournal, JournalEntry
 from qat.domain.events import OrderFilledEvent, OrderPendingSignoffEvent
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -37,8 +38,15 @@ class OMS:
         max_order_notional: float = 50_000.0,
         symbol_allow_list: set[str] | None = None,
         bus: EventBus | None = None,
+        journal: DecisionJournal | None = None,
     ) -> None:
         self.broker = broker
+        # Every order decision is journalled, in every execution mode (M20).
+        # Until then only the autonomous executor wrote here, so a
+        # recommend-mode session - the default - left no record of why an
+        # order was proposed or refused. Optional so an OMS built without one
+        # (every existing test) behaves exactly as before.
+        self.journal = journal
         self.risk_engine = risk_engine
         self.kill_switch = kill_switch
         self.max_order_notional = max_order_notional
@@ -68,10 +76,10 @@ class OMS:
         sector_by_symbol: dict[str, str] | None = None,
     ) -> Order:
         if self.symbol_allow_list is not None and candidate.symbol not in self.symbol_allow_list:
-            return self._new_rejected_order(candidate, 0.0)
+            return self._new_rejected_order(candidate, 0.0, "symbol not on the allow list")
 
         if self.kill_switch.tripped:
-            return self._new_rejected_order(candidate, 0.0)
+            return self._new_rejected_order(candidate, 0.0, "kill-switch tripped")
 
         # OMS owns the broker reference, so it fetches cash itself rather than
         # trusting every caller to pass it - a no-leverage rule that a caller
@@ -93,11 +101,15 @@ class OMS:
             pending_orders=self.pending_orders(),
         )
         if not decision.approved or decision.final_shares <= 0:
-            return self._new_rejected_order(candidate, 0.0)
+            return self._new_rejected_order(
+                candidate, 0.0, decision.reason or "risk engine rejected"
+            )
 
         notional = decision.final_shares * candidate.price
         if notional > self.max_order_notional:
-            return self._new_rejected_order(candidate, decision.final_shares)
+            return self._new_rejected_order(
+                candidate, decision.final_shares, "notional above the per-order cap"
+            )
 
         order = self._new_pending_order(
             candidate.symbol,
@@ -187,6 +199,7 @@ class OMS:
             take_profit_price=take_profit_price,
         )
         self._orders[order.order_id] = order
+        self._record(order, "proposed", "awaiting sign-off")
         return order
 
     async def sign_off(self, order_id: str, operator: str) -> Order:
@@ -234,6 +247,7 @@ class OMS:
                     operator,
                     order.symbol,
                 )
+                self._record(order, "rejected", "no price available to cost the order", operator)
                 return order
             cost = order.quantity * price
             spendable = account.cash - self.risk_engine.settings.min_cash_reserve
@@ -246,6 +260,12 @@ class OMS:
                     operator,
                     cost,
                     spendable,
+                )
+                self._record(
+                    order,
+                    "rejected",
+                    f"insufficient cash: cost {cost:.2f} > spendable {spendable:.2f}",
+                    operator,
                 )
                 return order
 
@@ -263,6 +283,7 @@ class OMS:
             # Position closed - its stop went with it at the broker, so keeping
             # it here would overstate protection on a symbol no longer held.
             self._position_stops.pop(filled.symbol, None)
+        self._record(filled, "signed_off", "transmitted to the broker", operator)
         logger.info(
             "Order signed off and transmitted: order=%s operator=%s symbol=%s qty=%s",
             order_id,
@@ -328,6 +349,7 @@ class OMS:
             raise ValueError(f"Order {order_id} cannot be rejected from status={order.status}")
         order.status = "rejected"
         logger.info("Order rejected: order=%s operator=%s reason=%s", order_id, operator, reason)
+        self._record(order, "rejected_by_operator", reason, operator)
         return order
 
     async def cancel_order(self, order_id: str) -> Order:
@@ -418,11 +440,20 @@ class OMS:
             self.kill_switch.check_reconciliation()
         return bool(divergent)
 
-    def _new_rejected_order(self, candidate: OrderCandidate, quantity: float) -> Order:
-        return self._new_rejected_order_for(candidate.symbol, candidate.side, quantity)
+    def _new_rejected_order(
+        self, candidate: OrderCandidate, quantity: float, reason: str = "rejected"
+    ) -> Order:
+        return self._new_rejected_order_for(
+            candidate.symbol, candidate.side, quantity, reason, strategy=candidate.strategy
+        )
 
     def _new_rejected_order_for(
-        self, symbol: str, side: Literal["buy", "sell"], quantity: float
+        self,
+        symbol: str,
+        side: Literal["buy", "sell"],
+        quantity: float,
+        reason: str = "rejected",
+        strategy: str | None = None,
     ) -> Order:
         order = Order(
             symbol=symbol,
@@ -430,6 +461,31 @@ class OMS:
             quantity=quantity,
             order_id=new_order_id(),
             status="rejected",
+            strategy=strategy,
         )
         self._orders[order.order_id] = order
+        self._record(order, "rejected", reason)
         return order
+
+    def _record(self, order: Order, outcome: str, reason: str, operator: str | None = None) -> None:
+        """One line in the decision journal. Never raises: a journal write
+        failure must not abort an order path that has already decided."""
+        if self.journal is None:
+            return
+        try:
+            self.journal.record(
+                JournalEntry(
+                    order_id=order.order_id,
+                    symbol=order.symbol,
+                    side=order.side,
+                    outcome=outcome,
+                    reason=reason,
+                    quantity=order.quantity,
+                    price=order.reference_price or order.filled_price,
+                    strategy=order.strategy,
+                    entity_name=operator or "",
+                    execution_mode=self.risk_engine.settings.execution_mode,
+                )
+            )
+        except Exception:  # noqa: BLE001 - journalling is never load-bearing
+            logger.warning("Could not journal the %s decision for %s", outcome, order.order_id)

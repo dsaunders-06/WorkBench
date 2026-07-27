@@ -1,10 +1,17 @@
-"""Append-only journal of every autonomy decision (spec M13).
+"""Append-only journal of every ORDER decision (spec M13, widened at M20).
 
 Both halves matter, and the skipped half matters more. A journal of only the
 orders that fired tells you what happened but not what the system decided -
 you cannot tell a day with no qualifying setups from a day where the cash
 floor blocked eleven of them, and those are completely different states of the
 world. Every decision is written: executed, blocked, and why.
+
+Written by the OMS in every execution mode, not only by the autonomous
+executor. Until M20 this recorded autonomy decisions alone, which meant a
+recommend-mode session - the default, and the one an operator actually runs
+first - produced an empty file and no record of why anything was proposed or
+refused. Moved out of domain/autonomy for the same reason: it stopped being
+an autonomy concern.
 
 CSV rather than the SQLite store, deliberately: this file is meant to be
 opened in pandas or Excel during a post-mortem without the app running, and an
@@ -24,7 +31,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-JOURNAL_FILENAME = "autonomy_journal.csv"
+JOURNAL_FILENAME = "decision_journal.csv"
 
 _FIELDS = (
     "timestamp",
@@ -66,7 +73,7 @@ class JournalEntry:
     timestamp: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
 
 
-class AutonomyJournal:
+class DecisionJournal:
     """Thread-safe append-only writer.
 
     A write failure is logged and swallowed rather than raised: losing a
@@ -91,7 +98,7 @@ class AutonomyJournal:
                         writer.writeheader()
                     writer.writerow(row)
         except OSError:
-            logger.exception("Could not write the autonomy journal entry for %s", entry.order_id)
+            logger.exception("Could not write the decision journal entry for %s", entry.order_id)
 
     def entries(self, limit: int | None = None) -> list[dict[str, str]]:
         """Reads the journal back, newest last. Returns an empty list when the
@@ -102,6 +109,6 @@ class AutonomyJournal:
             with self.path.open("r", newline="", encoding="utf-8") as handle:
                 rows = list(csv.DictReader(handle))
         except OSError:
-            logger.exception("Could not read the autonomy journal at %s", self.path)
+            logger.exception("Could not read the decision journal at %s", self.path)
             return []
         return rows[-limit:] if limit else rows

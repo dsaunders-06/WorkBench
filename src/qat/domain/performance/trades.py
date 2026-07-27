@@ -1,6 +1,6 @@
 """Realised trade outcomes (spec M16).
 
-The autonomy journal records what the system *decided*. This records what
+The decision journal records what the system *decided*. This records what
 actually happened. They are different things and only the second can answer
 "is this strategy any good" - a journal full of confident entries tells you
 nothing about whether they made money.

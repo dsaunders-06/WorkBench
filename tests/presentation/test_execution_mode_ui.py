@@ -8,6 +8,8 @@ get UI tests.
 
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+
 from qat.config import Settings
 from qat.domain.events import KillSwitchEvent
 from qat.presentation.main_window import MainWindow
@@ -111,14 +113,19 @@ def test_saving_writes_the_mode_and_the_promoted_strategies(qtbot, monkeypatch):
     qtbot.addWidget(screen)
     monkeypatch.setattr(SettingsScreen, "_confirm_autonomy", lambda self: True)
     screen.execution_mode_combo.setCurrentText(_EXECUTION_MODE_LABELS["auto"])
-    screen.autonomous_strategies_input.setText("swing, breakout")
+    # Checked in the picker that replaced the free-text field at M20, so a
+    # name that matches no strategy can no longer be saved.
+    for row in range(screen._strategy_model.rowCount()):
+        item = screen._strategy_model.item(row)
+        if item.text() in ("swing", "breakout"):
+            item.setCheckState(Qt.CheckState.Checked)
 
     written: dict[str, str] = {}
     monkeypatch.setattr("qat.presentation.settings.env_file.update_env_file", written.update)
     screen._on_save_clicked()
 
     assert written["QAT_EXECUTION_MODE"] == "auto"
-    assert written["QAT_AUTONOMOUS_STRATEGIES"] == "swing, breakout"
+    assert set(written["QAT_AUTONOMOUS_STRATEGIES"].split(",")) == {"swing", "breakout"}
 
 
 # --- Always-on banner ---------------------------------------------------------

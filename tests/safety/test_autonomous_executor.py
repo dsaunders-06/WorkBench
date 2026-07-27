@@ -16,8 +16,8 @@ from qat.config import Settings
 from qat.data.broker.adapter import AccountSummary, Order, Position
 from qat.domain.autonomy.executor import AUTONOMOUS_OPERATOR, AutonomousExecutor
 from qat.domain.autonomy.gate import AutonomyGate
-from qat.domain.autonomy.journal import AutonomyJournal
 from qat.domain.bus import EventBus
+from qat.domain.decision_journal import DecisionJournal
 from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -94,7 +94,7 @@ def _build(tmp_path, settings: Settings, broker: _Broker | None = None, now=OPEN
     risk_engine = RiskEngine(bus, switch, settings=settings)
     oms = OMS(broker, risk_engine, switch, max_order_notional=1_000_000.0, bus=bus)
     gate = AutonomyGate(settings, switch, clock=lambda: now)
-    journal = AutonomyJournal(tmp_path)
+    journal = DecisionJournal(tmp_path)
     executor = AutonomousExecutor(bus, oms, gate, journal, settings=settings)
     return broker, bus, oms, switch, journal, executor
 
@@ -210,7 +210,7 @@ async def test_cash_exhausted_partway_through_stops_the_later_orders(tmp_path):
     Note where the second order dies: the RiskEngine's own cash check rejects
     it at submission, so it never becomes pending and the autonomy gate never
     sees it. That is the correct layering - but it does mean this rejection
-    lands in the RiskEngine AuditLog rather than the autonomy journal, so a
+    lands in the RiskEngine AuditLog rather than the decision journal, so a
     "why did nothing trade today" review needs both.
     """
     broker = _Broker(cash=100_000.0)
@@ -326,4 +326,4 @@ async def test_blocked_and_executed_decisions_share_one_journal(tmp_path):
 
 
 def test_the_journal_survives_a_missing_file(tmp_path):
-    assert AutonomyJournal(tmp_path / "does-not-exist").entries() == []
+    assert DecisionJournal(tmp_path / "does-not-exist").entries() == []

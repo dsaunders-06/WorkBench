@@ -22,14 +22,14 @@ from qat.domain.autonomy.gate import (
     GateDecision,
     market_for_symbol,
 )
-from qat.domain.autonomy.journal import AutonomyJournal, JournalEntry
+from qat.domain.decision_journal import DecisionJournal, JournalEntry
 
 __all__ = [
     "AUTONOMOUS_OPERATOR",
     "AccountState",
     "AutonomousExecutor",
     "AutonomyGate",
-    "AutonomyJournal",
+    "DecisionJournal",
     "EquityMonitor",
     "EquityState",
     "GateDecision",

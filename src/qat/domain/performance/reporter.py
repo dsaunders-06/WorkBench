@@ -36,7 +36,7 @@ from qat.domain.performance.trades import EquityCurve, TradeLedger
 
 
 class JournalLike(Protocol):
-    """The slice of AutonomyJournal used here - just the blocked-decision
+    """The slice of DecisionJournal used here - just the blocked-decision
     rows a report counts."""
 
     def entries(self, limit: int | None = ...) -> list[dict[str, str]]: ...

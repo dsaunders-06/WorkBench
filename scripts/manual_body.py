@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.2  |  Milestone M19"
+VERSION_LINE = "Version 2.3  |  Milestone M20"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -162,6 +162,7 @@ def write_body(doc: Any, figures: FigureSet) -> None:
     _blotter(doc, figures)
     _screener(doc, figures)
     _performance(doc, figures)
+    _session_record(doc)
     _settings(doc, figures)
     _safety(doc)
     _glossary(doc)
@@ -271,6 +272,12 @@ def _introduction(doc: Any) -> None:
                 "Walk-forward analysis",
                 "Out-of-sample evaluation across rolling windows on the Workbench "
                 "(Section 4.2).",
+            ),
+            (
+                "Session record",
+                "An application log file, a decision journal covering every execution mode, "
+                "a persisted risk audit trail, and a one-click session export "
+                "(Section 10.4).",
             ),
             (
                 "Order Blotter rework",
@@ -505,7 +512,9 @@ def _market_session(doc: Any) -> None:
         (
             (
                 "Market headline",
-                "The configured market and its state. A closure with a reason - a public "
+                "The configured market and its state, shown as a filled green banner while "
+                "the market is open and amber when an open or close is imminent, so the "
+                "state reads at a glance. A closure with a reason - a public "
                 "holiday, a weekend - is named rather than left as a bare 'closed'.",
             ),
             (
@@ -1085,6 +1094,51 @@ def _performance(doc: Any, figures: FigureSet) -> None:
     )
 
 
+def _session_record(doc: Any) -> None:
+    doc.add_heading("10.4 What a Session Leaves Behind", level=2)
+    doc.add_paragraph(
+        "Everything needed to reconstruct a session afterwards is written to the data "
+        "directory rather than held in memory, so a post-mortem can be done the next "
+        "morning without the application running."
+    )
+    _table(
+        doc,
+        ("File", "Answers"),
+        (
+            ("closed_trades.csv", "What was traded, and what it made."),
+            ("equity_curve.csv", "How the account value moved through the session."),
+            (
+                "decision_journal.csv",
+                "Every order decision and its reason - proposed, signed off, rejected - "
+                "in every execution mode, with the operator who acted.",
+            ),
+            (
+                "risk_decisions.csv",
+                "How the risk engine sized or refused each order, including the inputs " "it used.",
+            ),
+            (
+                "daily_reports.md / weekly_reports.md",
+                "The close-triggered reports, including the AI analyst notes.",
+            ),
+            ("logs/qat.log", "The application log. Rotating, ten files of five megabytes."),
+        ),
+    )
+    doc.add_paragraph(
+        "Export Session, at the top of this screen, gathers all of the above plus a "
+        "manifest into a single zip under data/exports. It copies rather than moves, so "
+        "the running session keeps writing to the originals."
+    )
+    _callout(
+        doc,
+        "Why a quiet day is still worth reading",
+        "The journal records what was decided, not only what was done. A day with no "
+        "orders and a day where the cash floor blocked eleven of them look identical in "
+        "the trade ledger and are completely different states of the world. If nothing "
+        "traded, the journal is where you find out whether that was because nothing "
+        "qualified or because something kept refusing.",
+    )
+
+
 def _settings(doc: Any, figures: FigureSet) -> None:
     doc.add_page_break()
     doc.add_heading("11. Settings", level=1)
@@ -1312,7 +1366,8 @@ def _settings(doc: Any, figures: FigureSet) -> None:
             ),
             (
                 "Strategies cleared to auto-trade",
-                "A comma-separated list. Empty means none. Autonomy is granted per "
+                "A dropdown listing every built-in strategy, each with a checkbox, and a "
+                "summary of what is currently cleared. Empty means none. Autonomy is granted per "
                 "strategy and never inherited by all of them because one proved out; a "
                 "strategy not listed still produces recommendations for your sign-off.",
             ),
@@ -1632,6 +1687,6 @@ def _config_reference(doc: Any) -> None:
                 "Default in-sample window on the Workbench (Section 4.2).",
             ),
             ("QAT_WALK_FORWARD_OUT_SAMPLE_BARS", "60", "Default out-of-sample window."),
-            ("QAT_LOG_LEVEL", "INFO", "Logging verbosity."),
+            ("QAT_LOG_LEVEL", "INFO", "Logging verbosity. Written to data/logs/qat.log."),
         ),
     )

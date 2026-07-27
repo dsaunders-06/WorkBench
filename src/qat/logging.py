@@ -12,11 +12,20 @@ import logging
 import sys
 from collections.abc import Mapping
 from datetime import UTC, datetime
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 from qat.security import known_secret_names
 
 _REDACTED = "***REDACTED***"
+
+LOG_DIRNAME = "logs"
+LOG_FILENAME = "qat.log"
+# Ten files of five megabytes: enough to cover several sessions of debate about
+# what happened, without letting a chatty loop fill the disk.
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 10
 
 
 class RedactSecretsFilter(logging.Filter):
@@ -75,7 +84,20 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(payload, default=str)
 
 
-def configure_logging(level: str = "INFO") -> None:
+def configure_logging(level: str = "INFO", data_dir: str | Path | None = None) -> None:
+    """Log to stdout and, when a data_dir is given, to a rotating file.
+
+    The file handler is not optional in practice (spec M20). The packaged
+    build is --windowed, which means it has no console, so a stdout-only
+    configuration discarded every line the moment the application was run the
+    way it is actually shipped: session transitions, degraded-feed warnings,
+    staleness, kill-switch trips and sign-off rejections all went nowhere. The
+    logging was never the problem; nothing was reading it.
+
+    Both handlers carry the redaction filter. A secret must not reach the
+    console, and it must certainly not be written to a file that outlives the
+    process.
+    """
     root = logging.getLogger()
     root.setLevel(level)
     root.handlers.clear()
@@ -84,3 +106,25 @@ def configure_logging(level: str = "INFO") -> None:
     handler.setFormatter(JsonFormatter())
     handler.addFilter(RedactSecretsFilter())
     root.addHandler(handler)
+
+    if data_dir is None:
+        return
+
+    try:
+        log_dir = Path(data_dir) / LOG_DIRNAME
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            log_dir / LOG_FILENAME,
+            maxBytes=LOG_MAX_BYTES,
+            backupCount=LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(JsonFormatter())
+        file_handler.addFilter(RedactSecretsFilter())
+        root.addHandler(file_handler)
+    except OSError:
+        # An unwritable log directory must not stop the application starting.
+        # stdout still has a handler, so this degrades rather than fails.
+        root.warning("Could not open the log file in %s; logging to stdout only", data_dir)
+    else:
+        root.info("Logging to %s", log_dir / LOG_FILENAME)

@@ -18,6 +18,8 @@ import asyncio
 import logging
 
 import requests
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -374,11 +376,33 @@ class SettingsScreen(QWidget):
         mode_note.setWordWrap(True)
         form.addRow(mode_note)
 
-        self.autonomous_strategies_input = QLineEdit(settings.autonomous_strategies)
-        self.autonomous_strategies_input.setPlaceholderText(
-            "e.g. swing - comma-separated, empty means none"
-        )
-        form.addRow("Strategies cleared to auto-trade:", self.autonomous_strategies_input)
+        # A checkable dropdown rather than the free-text field this replaced
+        # (M20). Autonomy is per strategy and can cover several, so a plain
+        # single-select dropdown would not express it - but a typed list could
+        # silently grant nothing at all: "trend-following" instead of
+        # "trend_following" parsed cleanly, matched no strategy, and left the
+        # operator believing a strategy was cleared when it was not.
+        self.autonomous_strategies_combo = QComboBox()
+        # Held as a typed attribute rather than read back off the combo:
+        # QComboBox.model() returns the abstract base, which has no item().
+        self._strategy_model = QStandardItemModel(self)
+        self.autonomous_strategies_combo.setModel(self._strategy_model)
+        cleared = set(settings.autonomous_strategies_tuple)
+        for strategy in self.runtime.available_strategies:
+            item = QStandardItem(strategy.name)
+            item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            item.setData(
+                Qt.CheckState.Checked if strategy.name in cleared else Qt.CheckState.Unchecked,
+                Qt.ItemDataRole.CheckStateRole,
+            )
+            self._strategy_model.appendRow(item)
+        self._strategy_model.itemChanged.connect(self._refresh_selected_strategies)
+        form.addRow("Strategies cleared to auto-trade:", self.autonomous_strategies_combo)
+
+        self.selected_strategies_label = QLabel("")
+        self.selected_strategies_label.setWordWrap(True)
+        form.addRow(self.selected_strategies_label)
+        self._refresh_selected_strategies()
 
         strategies_note = QLabel(
             "Autonomy is granted per strategy, never to all of them at once. A strategy not "
@@ -393,7 +417,7 @@ class SettingsScreen(QWidget):
             "Orders are still checked by the risk engine, the no-leverage cash rule and the "
             "kill-switch, and are only placed while the market is open in an eligible session "
             "phase. Those rails limit the damage; they do not make the strategy correct. "
-            "Review the autonomy journal regularly."
+            "Review the decision journal regularly."
         )
         self.autonomy_warning.setStyleSheet(
             "color: #7f1d1d; background: #fee2e2; border: 1px solid #b91c1c; padding: 6px;"
@@ -403,6 +427,27 @@ class SettingsScreen(QWidget):
 
         self._refresh_autonomy_warning()
         return group
+
+    def selected_strategies(self) -> list[str]:
+        return [
+            self._strategy_model.item(row).text()
+            for row in range(self._strategy_model.rowCount())
+            if self._strategy_model.item(row).checkState() == Qt.CheckState.Checked
+        ]
+
+    def _refresh_selected_strategies(self) -> None:
+        """Keeps the summary honest, and keeps the combo from showing whichever
+        item happens to be current as though it were the whole answer."""
+        chosen = self.selected_strategies()
+        if chosen:
+            self.selected_strategies_label.setText(f"Cleared: {', '.join(chosen)}")
+            self.selected_strategies_label.setStyleSheet("color: #7f1d1d; font-weight: bold;")
+        else:
+            self.selected_strategies_label.setText("Cleared: none - every order waits for you.")
+            self.selected_strategies_label.setStyleSheet("color: gray;")
+        self.autonomous_strategies_combo.setCurrentText(
+            f"{len(chosen)} selected" if chosen else "none selected"
+        )
 
     def _refresh_autonomy_warning(self) -> None:
         self.autonomy_warning.setVisible(self._selected_execution_mode() == "auto")
@@ -438,7 +483,7 @@ class SettingsScreen(QWidget):
             "What does not:\n"
             "  - nobody reviews the individual trade before it is placed\n"
             "  - these rails bound the loss; they do not make the strategy profitable\n\n"
-            "Every decision, taken or blocked, is written to the autonomy journal."
+            "Every decision, taken or blocked, is written to the decision journal."
         )
         box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         box.setDefaultButton(QMessageBox.StandardButton.No)
@@ -561,7 +606,7 @@ class SettingsScreen(QWidget):
             "QAT_ALPACA_DATA_FEED": _ALPACA_FEED_VALUES[self.alpaca_feed_combo.currentText()],
             "QAT_FUNDAMENTALS_SOURCE": _FUNDAMENTALS_VALUES[self.fundamentals_combo.currentText()],
             "QAT_EXECUTION_MODE": self._selected_execution_mode(),
-            "QAT_AUTONOMOUS_STRATEGIES": self.autonomous_strategies_input.text().strip(),
+            "QAT_AUTONOMOUS_STRATEGIES": ",".join(self.selected_strategies()),
         }
         env_file.update_env_file(updates)
 

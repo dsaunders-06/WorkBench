@@ -14,6 +14,7 @@ import sys
 import qasync
 from PySide6.QtWidgets import QApplication
 
+from qat.config import Settings
 from qat.logging import configure_logging
 from qat.presentation.main_window import MainWindow
 from qat.presentation.runtime import Runtime
@@ -26,9 +27,20 @@ def main() -> None:
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
-    runtime = Runtime.build_demo()
-    configure_logging(runtime.settings.log_level)
-    logger.info("Starting Quant Advisory Terminal in %s mode", runtime.settings.trading_mode)
+    # Settings first, then logging, then the runtime. build_demo resolves the
+    # broker, the market data source and the fundamentals source, and warns
+    # loudly when any of them degrades - logging afterwards discarded exactly
+    # the messages most worth having.
+    settings = Settings()
+    configure_logging(settings.log_level, settings.data_dir)
+    logger.info(
+        "Starting Quant Advisory Terminal in %s mode (%s market, %s broker)",
+        settings.trading_mode,
+        settings.market,
+        settings.broker,
+    )
+
+    runtime = Runtime.build_demo(settings=settings)
 
     window = MainWindow(runtime)
     window.show()

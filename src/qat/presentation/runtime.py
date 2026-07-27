@@ -42,7 +42,7 @@ from qat.domain.ai_advisory.service import AIAdvisoryService
 from qat.domain.autonomy import (
     AutonomousExecutor,
     AutonomyGate,
-    AutonomyJournal,
+    DecisionJournal,
     EquityMonitor,
 )
 from qat.domain.bus import EventBus
@@ -300,7 +300,7 @@ class Runtime:
     performance_reporter: PerformanceReporter
     session_controller: SessionController
     autonomy_gate: AutonomyGate
-    autonomy_journal: AutonomyJournal
+    decision_journal: DecisionJournal
     strategy_engine: StrategyEngine
     available_strategies: list[Strategy]
     regime_engine: RegimeEngine
@@ -333,7 +333,11 @@ class Runtime:
 
         risk_engine = RiskEngine(bus, kill_switch, settings=settings)
         broker = broker or resolve_broker(settings)
-        oms = OMS(broker, risk_engine, kill_switch, bus=bus)
+        # Built before the OMS because the OMS writes to it: every order
+        # decision is journalled in every execution mode (M20), not only the
+        # unattended ones.
+        decision_journal = DecisionJournal(settings.data_dir)
+        oms = OMS(broker, risk_engine, kill_switch, bus=bus, journal=decision_journal)
         signal_bridge = SignalToOrderBridge(
             bus, oms, settings=settings, bar_interval_seconds=settings.bar_interval_seconds
         )
@@ -353,7 +357,6 @@ class Runtime:
         # Evidence layer (spec M16): realised trades, the equity curve, and the
         # reports built from both. The ledger is the only source of truth about
         # whether anything worked; the journal records only what was decided.
-        autonomy_journal = AutonomyJournal(settings.data_dir)
         trade_ledger = TradeLedger(bus, settings.data_dir)
         equity_curve = EquityCurve(settings.data_dir)
         # The equity monitor already polls the account on a timer, so it doubles
@@ -364,7 +367,7 @@ class Runtime:
             trade_ledger,
             equity_curve,
             settings=settings,
-            journal=autonomy_journal,
+            journal=decision_journal,
         )
 
         def _scorecard_for(strategy: str) -> StrategyScorecard | None:
@@ -380,7 +383,7 @@ class Runtime:
             bus,
             oms,
             autonomy_gate,
-            autonomy_journal,
+            decision_journal,
             equity_monitor=equity_monitor,
             settings=settings,
         )
@@ -500,7 +503,7 @@ class Runtime:
             performance_reporter=performance_reporter,
             session_controller=session_controller,
             autonomy_gate=autonomy_gate,
-            autonomy_journal=autonomy_journal,
+            decision_journal=decision_journal,
             strategy_engine=strategy_engine,
             available_strategies=available_strategies,
             regime_engine=regime_engine,

@@ -374,6 +374,46 @@ already returns one row per *trading* day, so reindexing onto a calendar
 timeline turned a 251-day year of SPY into 365 rows, and the invented
 zero-return days dragged realized volatility about 17% below its true value.
 
+## What a session leaves behind
+
+Everything needed to reconstruct a session afterwards is written to `data/`,
+not held in memory. Before M20 a `recommend`-mode session left fills, an equity
+curve and a report — enough to answer *"what did I make"*, nothing to answer
+*"why did it do that"*.
+
+| File | Answers |
+|---|---|
+| `closed_trades.csv` | what was traded and what it made |
+| `equity_curve.csv` | how account value moved |
+| `decision_journal.csv` | **every order decision and its reason**, in every mode |
+| `risk_decisions.csv` | how the risk engine sized or refused each order |
+| `daily_reports.md` / `weekly_reports.md` | the close-triggered reports, with AI analyst notes |
+| `logs/qat.log` | the application log, rotating, 5 MB × 10 |
+
+Three of those are new at M20, and each closed a real hole:
+
+- **The log file.** `configure_logging` installed only a `StreamHandler` on
+  stdout, and the packaged build is `--windowed` — no console. Every line was
+  discarded in the build actually shipped: session transitions, degraded-feed
+  warnings, staleness, kill-switch trips, sign-off rejections. The logging was
+  never the problem; nothing was reading it. Logging is now also configured
+  *before* the runtime is built, so the broker and data-source resolution
+  warnings — the ones most worth having — are no longer emitted into the void.
+- **The decision journal**, formerly the autonomy journal, was written only by
+  the autonomous executor. `recommend` is the default and the mode anyone runs
+  first, so the file stayed empty exactly when it mattered. The OMS now records
+  every proposal, sign-off and rejection with its reason and the operator.
+- **The risk audit trail** lived in a list and died with the process, so "why
+  was that order sized at 12 shares, and why was the next refused" lasted only
+  as long as the session that raised the question.
+
+**Export Session** on the Performance screen zips the lot, plus a manifest, into
+`data/exports/`. It copies rather than moves — the running session keeps
+writing.
+
+Secrets are redacted on both handlers. A key must not reach the console, and
+certainly not a file that outlives the process.
+
 ## Trading session and market hours
 
 The Dashboard's top panel shows which market is in play, a `HH:MM:SS` countdown

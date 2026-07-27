@@ -36,6 +36,7 @@ from qat.domain.performance.reports import (
     ReportWriter,
 )
 from qat.domain.performance.scorecard import build_all_scorecards
+from qat.domain.performance.session_export import export_session
 from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -63,9 +64,22 @@ class PerformanceScreen(QWidget):
         self.headline.setStyleSheet("font-size: 15px; font-weight: bold;")
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self._on_refresh_clicked)
+        self.export_button = QPushButton("Export Session")
+        self.export_button.setToolTip(
+            "Copy this session's trades, equity curve, decision journal, risk decisions, "
+            "reports and logs into a single zip for a post-mortem.\n"
+            "Nothing is moved or deleted - the running session keeps writing."
+        )
+        self.export_button.clicked.connect(self._on_export_clicked)
         header.addWidget(self.headline, stretch=1)
+        header.addWidget(self.export_button)
         header.addWidget(self.refresh_button)
         layout.addLayout(header)
+
+        self.export_status = QLabel("")
+        self.export_status.setWordWrap(True)
+        self.export_status.setStyleSheet("color: gray;")
+        layout.addWidget(self.export_status)
 
         promotion_box = QGroupBox("Promotion status")
         promotion_layout = QVBoxLayout(promotion_box)
@@ -97,6 +111,22 @@ class PerformanceScreen(QWidget):
         layout.addWidget(tabs, stretch=1)
 
         self.refresh()
+
+    def _on_export_clicked(self) -> None:
+        """Runs on the UI thread: zipping a handful of small text files is far
+        faster than the round trip a background task would cost, and the button
+        is disabled for the duration either way."""
+        self.export_button.setEnabled(False)
+        self.export_status.setText("Exporting...")
+        try:
+            result = export_session(self.runtime.settings.data_dir)
+        except Exception as exc:  # noqa: BLE001 - surfaced rather than swallowed
+            logger.exception("Session export failed")
+            self.export_status.setText(f"Export failed: {exc}")
+        else:
+            self.export_status.setText(f"{result.summary_line()}  ({result.path})")
+        finally:
+            self.export_button.setEnabled(True)
 
     def _on_refresh_clicked(self) -> None:
         asyncio.ensure_future(self._refresh_async())
