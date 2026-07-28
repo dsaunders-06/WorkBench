@@ -25,6 +25,12 @@ _SYMBOL = "AAA"
 
 
 def _build(**settings_kwargs: object) -> tuple[SignalToOrderBridge, OMS, MockBroker]:
+    # Unit-scale fixtures: a hundred shares of a $100 stock puts tens of
+    # dollars at risk, so the M27 cost rail correctly refuses them as too
+    # small to carry a $6-a-side commission. These tests are about sizing,
+    # brackets and bridge policy, so they opt out of the rail rather than
+    # inflate every number to an economically realistic one.
+    settings_kwargs.setdefault("apply_costs_in_paper", False)
     settings = Settings(_env_file=None, **settings_kwargs)  # type: ignore[arg-type]
     bus = EventBus()
     switch = KillSwitch()

@@ -36,6 +36,10 @@ def _candidate(symbol: str = "AAA", side: str = "buy", price: float = 100.0) -> 
 
 
 def _engine(**settings_kwargs: object) -> tuple[RiskEngine, Settings]:
+    # These fixtures deal in hundreds of dollars, where a $6-a-side commission
+    # is a large fraction of the risk and the M27 cost rail rightly refuses the
+    # trade. The cash rule is what is under test here, so the rail is off.
+    settings_kwargs.setdefault("apply_costs_in_paper", False)
     settings = Settings(_env_file=None, **settings_kwargs)  # type: ignore[arg-type]
     return RiskEngine(EventBus(), KillSwitch(), settings=settings), settings
 
@@ -69,7 +73,7 @@ def test_buy_is_rejected_when_cash_affords_less_than_one_share():
 def test_the_reserve_can_never_be_set_to_zero():
     """What makes 'never fully deplete cash' structural rather than a default."""
     with pytest.raises(ValueError):
-        Settings(_env_file=None, min_cash_reserve=0.0)
+        Settings(_env_file=None, min_cash_reserve=0.0, apply_costs_in_paper=False)
 
 
 def test_sell_is_never_blocked_by_the_cash_rule():

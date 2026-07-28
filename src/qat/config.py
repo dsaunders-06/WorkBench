@@ -106,6 +106,33 @@ class Settings(BaseSettings):
     max_single_name_concentration_pct: float = Field(default=0.25, gt=0, le=1.0)
     max_sector_concentration_pct: float = Field(default=0.40, gt=0, le=1.0)
 
+    # --- Trading costs (M27) -------------------------------------------------
+    # IBKR charges a MINIMUM per transaction, which a bps-only model cannot
+    # express: at 5bps a $2,000 trade models as $1 against a real $6. The fixed
+    # fee hurts small trades hardest, so understating it is exactly backwards.
+    broker_min_commission: float = Field(default=6.0, ge=0)
+    commission_bps: float = Field(default=5.0, ge=0)
+    slippage_bps: float = Field(default=5.0, ge=0)
+
+    # Costs are modelled during paper trading even though Alpaca charges
+    # nothing. The point of a paper test is to learn whether a strategy
+    # survives the costs it will actually pay; measuring it commission-free
+    # would promote strategies on figures that do not exist at the broker.
+    apply_costs_in_paper: bool = True
+
+    # The cost rail, expressed against RISK rather than notional. Every order
+    # has a stop, so 1R is always known, whereas a profit target is optional
+    # strategy metadata. It also scales correctly: $12 round-trip is 1.2% of a
+    # $1,000 risk but 4% of a $300 one, and it is the small trade that needs
+    # refusing.
+    max_cost_to_risk_pct: float = Field(default=0.10, gt=0, le=1.0)
+
+    # Churn control. Ten concurrent positions turned over weekly costs $6,240 a
+    # year at $12 a round trip - 6.2% of a $100k account before a single losing
+    # trade. At ten trading days it is 3.1%.
+    enforce_min_holding_period: bool = True
+    min_holding_trading_days: int = Field(default=10, ge=0)
+
     # --- Portfolio governor (M15) --------------------------------------------
     # Total loss if every open position hit its stop at once. Per-trade limits
     # bound one trade and say nothing about ten trades each within budget; the

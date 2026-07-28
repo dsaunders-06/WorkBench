@@ -18,6 +18,7 @@ import pandas as pd
 
 from qat.config import Settings
 from qat.data.broker.adapter import Order, Position
+from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import RegimeEvent
 from qat.domain.risk_engine.audit import AuditLog, RiskDecision
@@ -60,6 +61,7 @@ class RiskEngine:
         portfolio_checker: PortfolioRiskChecker | None = None,
         audit_log: AuditLog | None = None,
         governor: PortfolioGovernor | None = None,
+        cost_model: CostModel | None = None,
     ) -> None:
         self.bus = bus
         self.settings = settings or Settings()
@@ -67,6 +69,7 @@ class RiskEngine:
         self.sizer = sizer or KellyVolTargetSizer(settings=self.settings)
         self.portfolio_checker = portfolio_checker or PortfolioRiskChecker(settings=self.settings)
         self.governor = governor or PortfolioGovernor(settings=self.settings)
+        self.cost_model = cost_model or CostModel.from_settings(self.settings)
         # Given the data_dir so the trail outlives the session (M20). Callers
         # that inject their own AuditLog keep whatever behaviour they chose.
         self.audit_log = audit_log or AuditLog(self.settings.data_dir)
@@ -215,6 +218,34 @@ class RiskEngine:
         if not portfolio_result.approved:
             return self._reject(candidate.symbol, portfolio_result.reason, inputs)
 
+        # Cost rail (M27). Last, because it needs the FINAL share count - the
+        # cash cap and the governor both shrink orders, and a trade that was
+        # worth its fees at full size may not be after being trimmed to a
+        # third of it.
+        #
+        # Measured against risk rather than notional. Every order has a stop so
+        # 1R is always known, where a profit target is optional strategy
+        # metadata; and the ratio scales the right way - a $12 round trip is
+        # 1.2% of a $1,000 risk and 4% of a $300 one, and it is the small trade
+        # that needs refusing. Entries only: refusing to exit because it costs
+        # money is the same error as refusing to de-risk.
+        if candidate.side == "buy" and self._costs_apply():
+            risk_dollars = scaled_shares * stop_distance
+            round_trip = self.cost_model.round_trip(scaled_shares * candidate.price)
+            inputs["round_trip_cost"] = round_trip
+            inputs["cost_to_risk_pct"] = (
+                round_trip / risk_dollars if risk_dollars > 0 else float("inf")
+            )
+            limit = self.settings.max_cost_to_risk_pct
+            if risk_dollars <= 0 or round_trip > limit * risk_dollars:
+                return self._reject(
+                    candidate.symbol,
+                    f"Round-trip cost ${round_trip:,.2f} is "
+                    f"{inputs['cost_to_risk_pct']:.1%} of the ${risk_dollars:,.2f} at risk, "
+                    f"above the {limit:.1%} limit - the trade is too small to carry its fees",
+                    inputs,
+                )
+
         decision = RiskDecision(
             symbol=candidate.symbol,
             approved=True,
@@ -225,6 +256,16 @@ class RiskEngine:
         )
         self.audit_log.record(decision)
         return decision
+
+    def _costs_apply(self) -> bool:
+        """Costs are modelled in paper too, unless explicitly switched off.
+
+        Alpaca paper charges nothing, so it would be easy to measure a
+        commission-free strategy and promote it - onto a broker with a $6
+        minimum, where the same trades lose money. A paper test is only
+        informative if it prices the costs the strategy will actually pay.
+        """
+        return self.settings.apply_costs_in_paper or self.settings.is_live
 
     def evaluate_exit(self, symbol: str, quantity: float, price: float) -> RiskDecision:
         """Approves closing an existing position at exactly `quantity` shares.

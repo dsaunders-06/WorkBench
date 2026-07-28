@@ -738,6 +738,67 @@ still measured, logged and blocking. Its trims go through `submit_exit_order`
 like any other order, so the sweep decides *what* to trim, never whether it
 transmits.
 
+## Trading costs (M27)
+
+IBKR charges a **minimum of $6 per transaction**, so a round trip costs at least
+$12 before the market moves. Three things were wrong before M27, and the third
+was the worst.
+
+`CostModel` was purely proportional, so it could not express a floor at all: at
+5bps a $20,000 trade modelled as $10 and a $2,000 trade as $1, against a real
+$6. The error was largest exactly where it matters, because a fixed fee is
+trivial on a large position and ruinous on a small one.
+
+Costs existed **only in the backtester**. The risk engine, sizer, OMS and
+autonomous executor had no cost awareness at all, so nothing would have stopped
+the system taking a trade whose entire expected profit was fees.
+
+And `ClosedTrade.pnl` is still `(exit - entry) x quantity` with no fee term, so
+every performance metric - expectancy, average R, profit factor - and the
+promotion gate that consumes them are computed **gross**. That is recorded here
+as a known gap, not as fixed: see below.
+
+**The rail** lives in `RiskEngine.evaluate_order`, so it is audited like every
+other decision, and it runs *last* - the cash cap and the governor both shrink
+orders, and a trade worth its fees at full size may not be after being trimmed.
+
+It measures cost against **risk, not notional**. Every order has a stop so 1R is
+always known, where a profit target is optional strategy metadata; and the ratio
+scales the right way. Measured with the shipped defaults:
+
+| Stop width | Notional per $1,000 risk | Round trip | Cost as % of risk |
+|---|---|---|---|
+| 1% | $100,000 | $200 | **20.0%** |
+| 2% | $50,000 | $100 | 10.0% |
+| 5% | $20,000 | $40 | 4.0% |
+| 8% | $12,500 | $25 | 2.5% |
+
+The default limit is **10%**, chosen from that table rather than from taste. A
+5%-wide swing stop - the profile these settings target - spends about 4% of its
+risk on costs and clears comfortably. A 1%-wide stop spends 20% and is refused:
+against a 0.2R promotion floor, costs at that level consume the entire edge. The
+first draft used 2% and rejected 74 existing tests, which was the calibration
+telling me the number was wrong, not the tests.
+
+Costs apply **in paper too** (`apply_costs_in_paper`, default on). Alpaca charges
+nothing, so a commission-free measurement would promote a strategy onto a broker
+where the same trades lose money. Exits are never gated by cost: refusing to
+close a position because it is expensive is the same error as refusing to
+de-risk.
+
+**Why frequency matters**, with ten concurrent positions at $12 a round trip:
+
+| Average hold | Round trips/yr | Annual cost | % of a $100k account |
+|---|---|---|---|
+| 1 week | 520 | $6,240 | 6.2% |
+| 2 weeks | 260 | $3,120 | 3.1% |
+| 4 weeks | 130 | $1,560 | 1.6% |
+
+**Not yet built**, and deliberately listed rather than quietly dropped: fees on
+`ClosedTrade` so the metrics and promotion gate become net; the minimum holding
+period for signal-driven exits (agreed at 10 trading days, configurable, never
+delaying a protective exit); and a turnover budget on `trades_per_week`.
+
 ## Market data resilience
 
 The first unattended session produced no trades, and none of the reasons were

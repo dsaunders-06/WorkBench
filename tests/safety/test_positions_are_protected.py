@@ -37,7 +37,12 @@ _SYMBOL = "AAA"
 
 
 def _build() -> tuple[SignalToOrderBridge, OMS, MockBroker]:
-    settings = Settings(_env_file=None)
+    # Unit-scale fixtures: a hundred shares of a $100 stock puts tens of
+    # dollars at risk, so the M27 cost rail correctly refuses them as too
+    # small to carry a $6-a-side commission. These tests are about sizing,
+    # brackets and bridge policy, so they opt out of the rail rather than
+    # inflate every number to an economically realistic one.
+    settings = Settings(_env_file=None, apply_costs_in_paper=False)
     bus = EventBus()
     switch = KillSwitch()
     risk_engine = RiskEngine(bus, switch, settings=settings)
@@ -209,7 +214,7 @@ def _candidate(stop_price: float | None) -> OrderCandidate:
 def test_sizing_uses_the_strategy_stop_when_one_is_supplied():
     """Sizing against one stop while resting a different one at the broker
     would make the per-trade risk limit describe a trade nobody placed."""
-    settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None, apply_costs_in_paper=False)
     engine = RiskEngine(EventBus(), KillSwitch(), settings=settings)
 
     wide = engine.evaluate_order(
@@ -228,7 +233,7 @@ def test_sizing_uses_the_strategy_stop_when_one_is_supplied():
 
 
 def test_sizing_falls_back_to_the_atr_stop_without_one():
-    settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None, apply_costs_in_paper=False)
     engine = RiskEngine(EventBus(), KillSwitch(), settings=settings)
 
     decision = engine.evaluate_order(
@@ -242,7 +247,7 @@ def test_sizing_falls_back_to_the_atr_stop_without_one():
 def test_a_stop_above_the_entry_is_rejected_as_a_stop_source():
     """A 'stop' that is not below the entry is not a stop; falling back is
     safer than sizing off a negative risk-per-share."""
-    settings = Settings(_env_file=None)
+    settings = Settings(_env_file=None, apply_costs_in_paper=False)
     engine = RiskEngine(EventBus(), KillSwitch(), settings=settings)
 
     decision = engine.evaluate_order(
