@@ -46,6 +46,50 @@ sizes P&L is noise.
 Ordered on one principle: **make the measurement honest before making the
 strategy better.** Everything downstream inherits a measurement error.
 
+### M28a - The staleness rail (promoted ahead of the cost work)
+
+Not a tuning problem. **The rail has never once fired correctly** - every trip it
+has produced has been a false positive, and it was only ever masked by the feed
+being broken in other ways:
+
+| Trip | Symbol | Reported age | Reality |
+|---|---|---|---|
+| 27 Jul | (feed dead) | - | never fired; per-symbol staleness skips symbols that have not ticked |
+| 28 Jul 13:30 | BRK.B | 63,017s | thin on IEX, last print was the previous close |
+| 28 Jul 13:35 | HON | 97s | liquid; the poll interval itself |
+
+The defect is one line:
+
+```python
+self._last_seen[tick.symbol] = tick.ts        # the TRADE's timestamp
+self._last_tick_at = datetime.now(UTC)        # the RECEIVE time (M26, correct)
+```
+
+The rail reads `_last_seen`, so it measures **how old the last trade was**, not
+**whether the feed is delivering**. With `market data poll = 60s` and
+`data_staleness_seconds = 60`, a trade that occurred 40s before a poll arrives
+already 40s old and the next poll is 60s later, so the measured age routinely
+lands between 60 and 120 seconds through entirely normal operation. On any
+symbol. A trip was not a risk, it was arithmetic.
+
+**Currently suppressed** by `QAT_DATA_STALENESS_SECONDS=250000` in the operator
+`.env` - ~69 hours, sized to clear a weekend gap (Monday's open is 65 hours
+after Friday's close). This effectively disables the rail. Acceptable on paper
+because M26's feed-health check covers genuine feed death using receive time;
+**not acceptable before live money**, because it leaves a partial outage
+undetected - the feed continuing to deliver some symbols while silently
+stopping on others.
+
+The redesign separates two ideas the current code conflates:
+
+* **feed liveness** - measured on receive time - *may* halt trading
+* **quote freshness** - measured on the trade timestamp - excludes that ONE
+  symbol from signal generation, and never halts the account
+
+A stale quote on one thin ticker should stop trading that ticker. Halting the
+whole account because Berkshire had not printed on IEX by 09:30:15 is a rail
+doing considerably more damage than the hazard it guards against.
+
 ### M28 - Cost-truthful measurement
 
 Fees on `ClosedTrade`, gross and net both retained; cost drag in the Metrics tab
