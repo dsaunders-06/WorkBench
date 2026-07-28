@@ -37,3 +37,6 @@ dist/
 
 # Claude Code local settings (machine-specific permission state)
 .claude/settings.local.json
+
+# graphify analysis output - regenerable, ~16MB
+graphify-out/
