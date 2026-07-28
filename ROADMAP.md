@@ -6,7 +6,11 @@
 whether the machinery runs end to end and produces a reviewable record. A change
 that alters which trades are taken contaminates the only measurement being made.
 
-The install stays on **M26** for the duration. M27 is committed but not deployed:
+**Amended 29 July:** M27a is an authorised exception - the operator has decided
+the live path moves to daily bars, which necessarily changes trading decisions.
+Nothing else changes until it lands.
+
+The install stays on **M26** until M27a is ready. M27 is committed but not deployed:
 it adds a rail that refuses trades, which works against a phase whose purpose is
 accumulating them - and it would refuse them on cost assumptions that cannot yet
 be audited, because the metrics are still gross.
@@ -45,6 +49,68 @@ sizes P&L is noise.
 
 Ordered on one principle: **make the measurement honest before making the
 strategy better.** Everything downstream inherits a measurement error.
+
+### M27a - Run the live path on daily bars  **[DECIDED]**
+
+The largest finding so far, and it outranks the cost work: **no strategy in this
+system has yet been evaluated on the data it was designed for.** Every session to
+date has tested plumbing, not strategy.
+
+**Evidence, 28 July.** The infrastructure ran perfectly - 13:37:59 to 20:03:09,
+one process, no restarts, no kill-switch trips, no feed failures - and produced
+zero signals. The regime engine crashed twice while trying to fit:
+
+```
+ValueError: startprob_ must sum to 1 (got nan)
+ValueError: transmat_ rows must sum to 1 (got row sums of [1. 1. 1. 0.])
+```
+
+with 84 warnings that states were never visited. No `RegimeEvent` was ever
+published all session.
+
+**Mechanical cause.** `RegimeFeatureBuilder` has six columns: log returns,
+realised vol, VIX, yield-curve slope, credit spread. The last three come from
+FRED and update *daily*. Fitting on 60 one-minute bars leaves them **constant
+across every row**, which makes the covariance matrix singular - hence the NaN.
+
+**Real cause, and the fourth instance of one pattern.** `min_fit_bars = 60` is a
+sensible window in *daily* bars (~3 months, over which VIX and credit spreads
+genuinely move). It is being fed 60 one-minute bars - **one hour of market**. A
+correct mechanism wired to the wrong input, exactly as with `BRK-B`, the
+staleness rail, and the trade-timestamp clock.
+
+The same mismatch applies to the strategies themselves. `bar_interval_seconds =
+60`, so swing's EMA20/EMA50 are **20 and 50 minutes**, not days. A strategy
+intended to hold for two weeks is deciding on a one-hour lookback. Its silence
+may be the correct response to a timeframe it was never designed for.
+
+**Decision: the live path runs on daily bars.** This matches how the strategies
+and the regime model were specified and how the intended two-week hold works. The
+intraday feed keeps its role for execution pricing, staleness and account state -
+it stops being the source of signal history.
+
+**What that actually requires, and why it is a build rather than a flag.** There
+is **no warm-start anywhere**: `StrategyEngine.bars` and `RegimeFeatureBuilder`
+are populated purely from live ticks, from zero, at every process start. Setting
+`bar_interval_seconds = 86400` alone would leave the system inert for ~10 weeks
+(EMA50) to ~3 months (the regime HMM). So:
+
+* seed `StrategyEngine.bars` from `HistoricalBarSource.get_daily_bars()` at
+  startup - the source already exists and is already used by the Screener and
+  Workbench;
+* seed `RegimeFeatureBuilder` the same way, pairing each daily bar with the FRED
+  values current on that date so the macro columns vary across rows;
+* append one bar per day thereafter, and persist so a restart does not reset;
+* accept that decisions become roughly one evaluation per symbol per day. That
+  is correct for a two-week hold, and it changes what "collecting data" means -
+  the signal is one decision point a day, not a continuous stream.
+
+**A fail-open worth fixing alongside.** `StrategyEngine` takes
+`default_regime = Regime.SIDEWAYS`, so when the regime engine died the system
+carried on trading as though the market were sideways, and nothing on screen said
+otherwise. Defensible for availability, but it means the regime gate was not
+gating, and a crashed classifier should be visible rather than silently
+permissive.
 
 ### M28a - The staleness rail (promoted ahead of the cost work)
 
