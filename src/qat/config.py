@@ -110,7 +110,13 @@ class Settings(BaseSettings):
     # IBKR charges a MINIMUM per transaction, which a bps-only model cannot
     # express: at 5bps a $2,000 trade models as $1 against a real $6. The fixed
     # fee hurts small trades hardest, so understating it is exactly backwards.
-    broker_min_commission: float = Field(default=6.0, ge=0)
+    # Which IBKR schedule to price against. At ASX Tier I both models charge
+    # 0.088%, but Tiered adds exchange and clearing fees on top, so Fixed is
+    # the cheaper of the two above the floor crossover.
+    ibkr_pricing_model: Literal["fixed", "tiered"] = "fixed"
+
+    # Overridden per market by MARKET_COST_PROFILES unless set explicitly.
+    broker_min_commission: float = Field(default=6.60, ge=0)
     commission_bps: float = Field(default=5.0, ge=0)
     slippage_bps: float = Field(default=5.0, ge=0)
 

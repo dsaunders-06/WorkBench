@@ -794,37 +794,58 @@ de-risk.
 | 2 weeks | 260 | $3,120 | 3.1% |
 | 4 weeks | 130 | $1,560 | 1.6% |
 
-### ASX pricing, pending confirmation
+### ASX pricing (IBKR Australia, inclusive of GST)
+
+Live trading starts on **ASX**, so `CostModel.from_settings` is market-aware:
+`MARKET_COST_PROFILES` is keyed on `(market, ibkr_pricing_model)` and an
+explicitly-set `commission_bps` or `broker_min_commission` always wins, so a
+deliberate override is never silently replaced by a published schedule.
+
+| | Fixed | Tiered, Tier I |
+|---|---|---|
+| Rate | 0.088% of trade value | 0.088% |
+| Minimum per order | AUD 6.60 | AUD 5.50 |
+| Exchange + clearing | **None** | passed through (~0.454bps) |
+
+Verified against IBKR's own worked example: 400 shares at AUD 50 is a trade
+value of AUD 20,000, and the model returns **AUD 17.60** inclusive, **AUD
+16.00** exclusive - both as published. Reproducing both confirms the basis, not
+just the multiplication.
+
+**Fixed is the right choice at Tier I.** The rates are identical, so below
+about AUD 7,130 a trade Tiered is cheaper on its lower floor - by at most about
+AUD 1.10 - and above it both pay 0.088% while only Tiered adds pass-through
+fees, so Fixed wins by a margin that *grows* with trade size. Trade values are
+expected to grow.
+
+**The floor binds below AUD 7,500** (6.60 / 0.088%). This corrects something I
+said earlier: cost-to-risk improves as position size grows only *up to* that
+point. Above it the charge is proportional and the ratio goes flat, so scaling
+up is a cost lever with a ceiling rather than an open-ended one.
+
+Third-party fees are modelled at the **ASX venue** rate (exchange 0.00001815 +
+clearing 0.000027225 = 0.454bps). Cboe Australia is slightly cheaper at
+0.417bps and SmartRouting picks the venue, not us, so the more expensive of the
+two is the conservative default. Auction trades carry a higher exchange fee
+(~0.61bps all-in) and are not separately modelled, so an auction-heavy strategy
+is understated by roughly 0.16bps a side.
+
+`third_party_bps` is deliberately separate from the commission rate, because
+the per-order minimum applies to the **commission only**. Folding pass-through
+fees into the rate would let the floor swallow them on small orders -
+understating exactly the trades where every dollar is a large share of the risk.
+
+**No US profile exists yet**, so US trading falls back to the configured
+defaults rather than quietly charging Australian rates.
+
+### Still open
+
+
 
 Live trading starts on **ASX**, with US as a later option, and IBKR prices the
 two differently - so the flat `broker_min_commission` shipped in M27 is a
 placeholder that conflates them. The replacement is a `CostProfile` per market,
 selected by the existing `market: Literal["US", "ASX"]` setting.
-
-Settled so far:
-
-* The ASX Fixed-model minimum is **AUD $6.00 ex-GST, $6.60 inclusive**.
-* Tier 1 of the Tiered model is where trading is expected to stay.
-
-Still needed before this can be built, and deliberately NOT guessed - IBKR's
-pricing page returns HTTP 403 to automated fetches, and a fee rate that is only
-half-known would silently change which trades the cost rail refuses:
-
-* the Fixed-model percentage rate;
-* the Tier 1 rate, per-order minimum and per-order **maximum** (some IBKR
-  markets cap commission at a percentage of trade value; `CostModel` cannot
-  express a cap at all yet);
-* whether ASX exchange/clearing fees are passed through separately.
-
-Two modelling points that follow regardless of the rate:
-
-* **GST applies to the whole commission, not just the floor.** The rate and the
-  minimum must be stated on the same GST basis. Grossing up the floor alone
-  would be correct for small trades and understate every large one.
-* **The floor binds below a trade value of `min / rate`.** Under that crossover
-  the cost is flat, so cost-to-risk *improves* as position size grows - the
-  opposite of a percentage-dominant regime, and it makes scaling up a genuine
-  cost-reduction lever rather than a neutral one.
 
 **No currency handling exists.** `Position` and `AccountSummary` carry a
 currency and `to_ib_contract` defaults to USD, but nothing reconciles them:
