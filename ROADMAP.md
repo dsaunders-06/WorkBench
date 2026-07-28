@@ -84,6 +84,45 @@ The same mismatch applies to the strategies themselves. `bar_interval_seconds =
 intended to hold for two weeks is deciding on a one-hour lookback. Its silence
 may be the correct response to a timeframe it was never designed for.
 
+**The macro source has never been real, and this is the more dangerous half.**
+`runtime.py:416` reads `macro = macro_source or MockMacroSource(seed=1)`, and
+`FredMacroSource` is not even imported there - built in M2, never once wired into
+the live app. So three of the six regime features (VIX, yield-curve slope, credit
+spread) have been `round(self._rng.uniform(-1, 5), 3)`, polled hourly. Not stale,
+not degraded: fabricated.
+
+This is the fifth instance of the pattern and the worst form of it - not a
+mechanism wired to the wrong input, but a **placeholder wired in place of the
+real thing with no warning anywhere**. `resolve_broker` and the Alpaca data
+source both log loudly when they fall back; the macro path had no resolver at
+all, which is why it survived twenty-five milestones unnoticed.
+
+It also means daily bars **alone would not have fixed the regime engine**. With
+300 seeded bars the HMM would very likely have fitted without crashing, published
+a regime, gated every strategy on it, and given no reason to look again. A regime
+engine that classifies confidently on random numbers is far more dangerous than
+one that crashes - the crash is the only reason this was found.
+
+**FRED key now in the keyring** (`FRED_API_KEY` via `qat.security`, never `.env`).
+Verified live, and the variation is what M27a needs:
+
+| series | observations | first | distinct values, last 250 obs |
+|---|---|---|---|
+| VIXCLS | 9,238 | 1990-01-02 | **218** |
+| T10Y3M | 11,144 | 1982-01-04 | 85 |
+| DGS10 | 16,126 | 1962-01-02 | 69 |
+| DGS3MO | 11,224 | 1981-09-01 | 60 |
+| BAA10Y | 10,141 | 1986-01-02 | 36 |
+
+On daily bars those columns genuinely move, which is exactly what makes the
+covariance matrix non-singular. History is decades deep against the 300 bars the
+seeding needs.
+
+**Add `resolve_macro_source()`** alongside the existing broker and data-source
+resolvers: real FRED when a key is present, mock otherwise **with a loud
+warning**. The absence of that resolver is the root cause of this class of bug,
+not the mock itself.
+
 **Decision: the live path runs on daily bars.** This matches how the strategies
 and the regime model were specified and how the intended two-week hold works. The
 intraday feed keeps its role for execution pricing, staleness and account state -
