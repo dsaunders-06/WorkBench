@@ -794,6 +794,46 @@ de-risk.
 | 2 weeks | 260 | $3,120 | 3.1% |
 | 4 weeks | 130 | $1,560 | 1.6% |
 
+### ASX pricing, pending confirmation
+
+Live trading starts on **ASX**, with US as a later option, and IBKR prices the
+two differently - so the flat `broker_min_commission` shipped in M27 is a
+placeholder that conflates them. The replacement is a `CostProfile` per market,
+selected by the existing `market: Literal["US", "ASX"]` setting.
+
+Settled so far:
+
+* The ASX Fixed-model minimum is **AUD $6.00 ex-GST, $6.60 inclusive**.
+* Tier 1 of the Tiered model is where trading is expected to stay.
+
+Still needed before this can be built, and deliberately NOT guessed - IBKR's
+pricing page returns HTTP 403 to automated fetches, and a fee rate that is only
+half-known would silently change which trades the cost rail refuses:
+
+* the Fixed-model percentage rate;
+* the Tier 1 rate, per-order minimum and per-order **maximum** (some IBKR
+  markets cap commission at a percentage of trade value; `CostModel` cannot
+  express a cap at all yet);
+* whether ASX exchange/clearing fees are passed through separately.
+
+Two modelling points that follow regardless of the rate:
+
+* **GST applies to the whole commission, not just the floor.** The rate and the
+  minimum must be stated on the same GST basis. Grossing up the floor alone
+  would be correct for small trades and understate every large one.
+* **The floor binds below a trade value of `min / rate`.** Under that crossover
+  the cost is flat, so cost-to-risk *improves* as position size grows - the
+  opposite of a percentage-dominant regime, and it makes scaling up a genuine
+  cost-reduction lever rather than a neutral one.
+
+**No currency handling exists.** `Position` and `AccountSummary` carry a
+currency and `to_ib_contract` defaults to USD, but nothing reconciles them:
+`min_cash_reserve`, `per_trade_risk_pct` and every dollar figure in the risk
+engine are unit-less. Single-market trading hides this; extending from an
+AUD-denominated ASX account into US positions would mix currencies inside the
+risk arithmetic without complaint. Cheaper to introduce alongside the market
+profiles than afterwards.
+
 **Not yet built**, and deliberately listed rather than quietly dropped: fees on
 `ClosedTrade` so the metrics and promotion gate become net; the minimum holding
 period for signal-driven exits (agreed at 10 trading days, configurable, never
