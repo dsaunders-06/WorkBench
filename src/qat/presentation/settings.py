@@ -40,6 +40,7 @@ from qat.config import Settings
 from qat.domain.ai_advisory.llm_engine import LocalEngine, normalize_openai_base_url
 from qat.paths import app_dir, env_path
 from qat.presentation.runtime import Runtime
+from qat.version import build_info
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,14 @@ _FUNDAMENTALS_LABELS = {
 _FUNDAMENTALS_VALUES = {label: value for value, label in _FUNDAMENTALS_LABELS.items()}
 
 
+def _readonly_label(text: str) -> QLabel:
+    """Selectable so it can be copied into a bug report, but not editable -
+    nothing here is a setting."""
+    label = QLabel(text)
+    label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    return label
+
+
 class SettingsScreen(QWidget):
     def __init__(self, runtime: Runtime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -89,6 +98,7 @@ class SettingsScreen(QWidget):
         settings = runtime.settings
 
         layout = QVBoxLayout(self)
+        layout.addWidget(self._build_group())
 
         ai_group = QGroupBox("AI Provider")
         ai_form = QFormLayout(ai_group)
@@ -251,6 +261,39 @@ class SettingsScreen(QWidget):
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
         layout.addStretch(1)
+
+    def _build_group(self) -> QGroupBox:
+        """Which build is this, so "am I running the latest?" is answerable.
+
+        Read-only, and first on the screen: it is the question you ask before
+        trusting anything else here. The install sat on M26 while the
+        repository was four milestones ahead, and nothing in the running
+        application could have told you so.
+
+        The commit and build time are shown next to the milestone rather than
+        instead of it. The milestone is the name a human uses and the only part
+        maintained by hand, so it is also the only part that can be wrong - and
+        it is wrong visibly, because the other two disagree with it.
+        """
+        info = build_info()
+        group = QGroupBox("This Build")
+        form = QFormLayout(group)
+
+        form.addRow("Version:", _readonly_label(info.milestone))
+        form.addRow("Commit:", _readonly_label(info.commit))
+        form.addRow("Built:", _readonly_label(info.built_at))
+        form.addRow("Running from:", _readonly_label(info.source))
+
+        if info.commit.endswith("-dirty"):
+            warning = QLabel(
+                "Built from a working tree with uncommitted changes - this build cannot be "
+                "reproduced from the commit above."
+            )
+            warning.setWordWrap(True)
+            warning.setStyleSheet("color: #b45309; font-weight: bold;")
+            form.addRow(warning)
+
+        return group
 
     def _build_data_group(self, settings: Settings) -> QGroupBox:
         """Market data source (spec M14).

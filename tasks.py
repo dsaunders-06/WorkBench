@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from datetime import UTC, datetime
 
 from invoke import Exit, task
 
@@ -69,14 +70,49 @@ def package(c):
     dependency installed only in the venv - it still produces a dist/ folder,
     so the failure looks like a successful build until the exe is run.
 
+    Stamps the build first. A frozen application has no git and no repository,
+    so provenance has to be captured here or it cannot be recovered later -
+    which is how an install sat on M26 while the repository was four milestones
+    ahead, with nothing in the running app able to say so.
+
     Unsigned. Run `invoke sign` afterwards to Authenticode-sign it.
     """
-    c.run(
-        f'"{sys.executable}" -m PyInstaller '
-        "--noconfirm --name QuantAdvisoryTerminal --onedir --windowed "
-        "--collect-all hmmlearn --collect-all sklearn --collect-all yfinance "
-        "src/qat/app.py"
-    )
+    stamp = _write_build_stamp(c)
+    try:
+        c.run(
+            f'"{sys.executable}" -m PyInstaller '
+            "--noconfirm --name QuantAdvisoryTerminal --onedir --windowed "
+            "--collect-all hmmlearn --collect-all sklearn --collect-all yfinance "
+            "src/qat/app.py"
+        )
+    finally:
+        # The stamp's life is this build. Left behind, the next run from source
+        # would report itself as a packaged build of whatever commit was last
+        # frozen - precisely the confusion the stamp exists to prevent.
+        stamp.unlink(missing_ok=True)
+
+
+def _write_build_stamp(c) -> pathlib.Path:
+    """Freeze the current commit and date into src/qat/_build_stamp.py.
+
+    The `--dirty` marker is the point of doing this at package time rather than
+    reading a version constant: a build made from uncommitted changes is not
+    reproducible from the commit it claims, and the operator should be able to
+    see that on the Settings screen instead of trusting a label.
+    """
+    sys.path.insert(0, str(pathlib.Path(__file__).parent / "src"))
+    from qat.version import MILESTONE, stamp_module_source
+
+    described = c.run("git describe --tags --always --dirty", hide=True, warn=True)
+    commit = (described.stdout or "").strip() or "unknown"
+    built_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+    stamp = pathlib.Path("src/qat/_build_stamp.py")
+    stamp.write_text(stamp_module_source(MILESTONE, commit, built_at), encoding="utf-8")
+    print(f"Build stamp: {MILESTONE} ({commit}, built {built_at})")
+    if commit.endswith("-dirty"):
+        print("  WARNING: built from a working tree with uncommitted changes")
+    return stamp
 
 
 @task

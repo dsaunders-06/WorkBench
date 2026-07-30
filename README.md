@@ -214,6 +214,42 @@ engines directly:
 
 Confirm you get back a schema-valid `AdvisoryRecommendation`, not an error.
 
+## Which build am I running?
+
+The Settings tab opens with a read-only **This Build** panel, and the same
+line is written to the session log at startup:
+
+```
+Build: M27a (db4a8e3, built 2026-07-30 22:17 UTC, packaged)
+```
+
+Four facts, deliberately shown together rather than one version string. The
+install ran M26 while the repository was four milestones ahead, and nothing in
+the running application could have told you so. `pyproject`'s `0.1.0` would not
+have helped either — it has never been bumped, so it reads identically on every
+build ever made.
+
+- **Version** — `qat.version.MILESTONE`, bumped by hand when a milestone ships.
+  The only part that can go stale, and it goes stale *visibly*, because the
+  commit and build date beside it disagree with it.
+- **Commit** — `git describe --tags --always --dirty`. There are no release
+  tags today so this is the short SHA; starting to tag upgrades the display
+  without a code change. A `-dirty` suffix means the build came from a working
+  tree with uncommitted changes and cannot be reproduced from the commit it
+  names — the panel says so in amber.
+- **Built** — when it was packaged, which catches an old executable carrying a
+  correct label.
+- **Running from** — `packaged` or `source checkout`, so the two can never be
+  mistaken for each other.
+
+A frozen application has no git and no repository, so `invoke package` captures
+this into a generated `src/qat/_build_stamp.py` before freezing and deletes it
+afterwards. It is a Python module rather than a data file so PyInstaller's
+import analysis collects it without an `--add-data` entry that could silently
+drift out of step. Its life is that one build: left behind, the next run from
+source would report itself as a packaged build of whatever commit was last
+frozen.
+
 ## Building the Windows executable
 
 ```powershell

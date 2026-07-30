@@ -5,6 +5,8 @@ tests only check what gets written, not any live reconfiguration."""
 
 from __future__ import annotations
 
+from PySide6.QtWidgets import QLabel
+
 from qat.config import Settings
 from qat.presentation import settings as settings_module
 from qat.presentation.runtime import Runtime
@@ -117,3 +119,44 @@ def test_save_without_a_key_never_calls_set_secret(qtbot, monkeypatch):
     screen._on_save_clicked()  # anthropic_key_input left blank
 
     assert secret_calls == []
+
+
+# --- Build provenance (M27b tooling) --------------------------------------
+
+
+def test_the_screen_shows_which_build_is_running(qtbot):
+    """ "Am I running the latest?" is the question asked before trusting
+    anything else on this screen. The install sat on M26 while the repository
+    was four milestones ahead, and nothing in the app could have said so."""
+    from qat.version import build_info
+
+    screen = _build_screen(qtbot)
+    group = screen._build_group()
+    labels = [child.text() for child in group.findChildren(QLabel)]
+    info = build_info()
+
+    assert info.milestone in labels
+    assert info.commit in labels
+    assert info.source in labels
+
+
+def test_a_dirty_build_is_called_out(qtbot, monkeypatch):
+    """A build made from uncommitted changes cannot be reproduced from the
+    commit it names, and the operator should see that rather than trust it."""
+    from qat.version import BuildInfo
+
+    monkeypatch.setattr(
+        settings_module,
+        "build_info",
+        lambda: BuildInfo(
+            milestone="M27a", commit="db4a8e3-dirty", built_at="2026-07-30", source="packaged"
+        ),
+    )
+    screen = _build_screen(qtbot)
+
+    # Held in a local: an unparented QGroupBox is collected the moment the
+    # expression ends, taking its children's C++ objects with it.
+    group = screen._build_group()
+    text = " ".join(child.text() for child in group.findChildren(QLabel))
+
+    assert "uncommitted changes" in text
