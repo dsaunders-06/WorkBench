@@ -66,6 +66,24 @@ class Settings(BaseSettings):
     # inherited by every strategy at once because one of them proved out.
     autonomous_strategies: str = ""
 
+    # Strategies live at startup, comma-separated. Distinct from
+    # autonomous_strategies: this decides whether a strategy is *evaluated at
+    # all*, that one decides whether its orders may self-sign.
+    #
+    # Added M27b, and the sequencing matters. Until now the live set existed
+    # only in memory: it started empty at every launch (spec §K - nothing
+    # trades until a human vets it in the Workbench) and was filled by a button
+    # click. That is a defensible rule for an attended session and an
+    # impossible one for an unattended test, which is the phase this
+    # application is actually in - a run left going overnight inherited nothing
+    # and could not trade whatever the market did.
+    #
+    # Declared here rather than persisted from the button, so the live set is
+    # something the operator states and can read back, not something the app
+    # remembers having been told once. Workbench deployments remain
+    # session-only additions on top.
+    deployed_strategies: str = ""
+
     # Halt new autonomous BUYs when the day's P&L is this far under water.
     # Protective sells are never gated by it - they reduce risk.
     autonomous_pause_buys_below_day_pnl_pct: float = Field(default=-0.04, lt=0)
@@ -334,6 +352,10 @@ class Settings(BaseSettings):
     @property
     def autonomous_strategies_tuple(self) -> tuple[str, ...]:
         return tuple(s.strip() for s in self.autonomous_strategies.split(",") if s.strip())
+
+    @property
+    def deployed_strategies_tuple(self) -> tuple[str, ...]:
+        return tuple(s.strip() for s in self.deployed_strategies.split(",") if s.strip())
 
     @property
     def autonomy_enabled(self) -> bool:

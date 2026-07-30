@@ -459,9 +459,37 @@ class Runtime:
             settings, history_source, watchlist
         )
         available_strategies = default_strategies()
+
+        def _deploy_configured(engine: StrategyEngine) -> None:
+            """Puts the configured strategies live before the feed starts.
+
+            The live set was in-memory only and filled by a Workbench click,
+            which cannot work for an unattended session: the run of 30 July
+            went nine hours with an empty set under a banner reading AUTO-TRADE
+            ACTIVE. A name that matches nothing is reported rather than
+            ignored - a typo here costs an entire session, and the failure is
+            otherwise indistinguishable from a market with no setups.
+            """
+            by_name = {s.name: s for s in available_strategies}
+            unknown = [n for n in settings.deployed_strategies_tuple if n not in by_name]
+            if unknown:
+                logger.error(
+                    "QAT_DEPLOYED_STRATEGIES names %s, which do not exist and will NOT trade. "
+                    "Known strategies: %s",
+                    ", ".join(unknown),
+                    ", ".join(sorted(by_name)),
+                )
+            for name in settings.deployed_strategies_tuple:
+                if name in by_name:
+                    engine.deploy(by_name[name])
+
         # Live-deployed set starts empty (spec §K: nothing trades until a human
-        # vets it via the Workbench and clicks "Deploy to Paper") - Workbench
-        # appends to strategy_engine.strategies, it never starts pre-populated.
+        # Live set starts empty and is filled from QAT_DEPLOYED_STRATEGIES
+        # below (M27b). Spec §K's rule - nothing trades until a human vets it -
+        # is preserved in substance: the human act is now declaring the
+        # strategy in configuration rather than clicking a button that no
+        # unattended session can reach. Workbench deployments still work and
+        # remain session-only.
         strategy_engine = StrategyEngine(
             bus,
             [],
@@ -472,6 +500,7 @@ class Runtime:
             # never handed something that can place an order.
             position_source=broker,
         )
+        _deploy_configured(strategy_engine)
 
         regime_engine = RegimeEngine(
             bus,
