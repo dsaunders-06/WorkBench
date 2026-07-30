@@ -84,6 +84,44 @@ The same mismatch applies to the strategies themselves. `bar_interval_seconds =
 intended to hold for two weeks is deciding on a one-hour lookback. Its silence
 may be the correct response to a timeframe it was never designed for.
 
+**Two sessions, two different causes, same outcome - corrected 30 July.** My
+first reading of 29 July was wrong and is worth recording so the next session
+does not inherit it. The regime engine did **not** fail silently that night; it
+fitted cleanly and published `low_vol`.
+
+| | 28 July | 29 July |
+|---|---|---|
+| Regime engine | crashed (NaN), published nothing | fitted, published `low_vol (scalar=1.00)` |
+| StrategyEngine regime | fell back to the `SIDEWAYS` default | took `LOW_VOL` |
+| Swing | **eligible**, found no setup | **gated off entirely** |
+
+`SwingStrategy.suitable_regimes()` returns `{Regime.SIDEWAYS}`, and
+`strategies/engine.py:174` skips any strategy whose set excludes the current
+regime. So on the 29th swing could not have produced a signal whatever prices
+did. The zero-trade result was the gate, not the timeframe.
+
+**Which makes the macro finding the urgent half, not the secondary one.** The
+regime gate works, and works with real teeth - which is good design and exactly
+why feeding it noise matters. On 29 July a random number generator switched the
+only promoted strategy off for a full session, and the system reported that as
+normal operation. `scalar=1.00`, so it did not even reduce exposure; it just
+made swing quietly ineligible. This is the scenario recorded below as the
+dangerous one, now observed. The 28th's crash was the lucky version.
+
+**Revised order of work inside M27a.** Daily bars govern how well swing sees the
+market; real macro data governs whether swing is allowed to look at all. Items 1
+and 2 are small and can land before the rest - swing may start trading without
+the whole milestone:
+
+1. `resolve_macro_source()` - real FRED when the key is present, mock otherwise
+   **with a loud warning**, matching `resolve_broker`.
+2. **Give `regime_engine/engine.py` a logger.** It currently has none - not one
+   line - so its only visibility has ever been `hmmlearn`'s own warnings and the
+   bus catching a crash. Log every classification and every transition, so a
+   strategy being gated off is never again inferred from a blank UI field.
+3. Daily-bar warm-start seeding (below).
+4. Persistence, daily cadence, dead-classifier visibility.
+
 **The macro source has never been real, and this is the more dangerous half.**
 `runtime.py:416` reads `macro = macro_source or MockMacroSource(seed=1)`, and
 `FredMacroSource` is not even imported there - built in M2, never once wired into
