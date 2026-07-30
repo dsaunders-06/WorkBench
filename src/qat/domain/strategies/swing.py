@@ -1,7 +1,9 @@
 """Swing Trading: pullback-to-EMA20-then-reclaim in an EMA20>EMA50 uptrend,
 ATR-based stop/target proposed in signal metadata (paper §4.10).
 
-Suitable regimes: Sideways - paper-explicit.
+Suitable regimes: Sideways, Bull, Low-Vol, Recovery. The paper names Sideways
+alone, and this deliberately departs from it - see suitable_regimes below for
+the measurement that prompted it and the operator decision that authorised it.
 """
 
 from __future__ import annotations
@@ -34,7 +36,33 @@ class SwingStrategy:
         self.reward_risk = reward_risk
 
     def suitable_regimes(self) -> set[Regime]:
-        return {Regime.SIDEWAYS}
+        """Widened from the paper's Sideways-only, 30 July 2026, by operator
+        decision - the one change here that alters which trades happen.
+
+        Measured over the 300 real sessions ending 29 July 2026, the regime
+        engine classified Sideways on 6.2% of them: bull 32.0%, bear 26.6%,
+        high-vol 24.9%, low-vol 10.4%, sideways 6.2%. So the only promoted
+        strategy in the system was eligible about one session in sixteen, and
+        the zero-signal sessions of 28 and 29 July were the ordinary case
+        rather than an anomaly.
+
+        A pullback to EMA20 inside an EMA20>EMA50 uptrend is a trend-continuation
+        setup, and its own entry condition already requires the uptrend. Bull and
+        Low-Vol - "calm, often trending" in paper §9.1 - are where that setup
+        most naturally lives, so excluding them gated the strategy out of the
+        regimes it was designed for. Recovery joins them for coherence with
+        Momentum's risk-on set; it did not occur once in the measured window,
+        so it changes nothing empirically.
+
+        Bear, High-Vol and Recession stay excluded: buying a pullback long-only
+        into those is knife-catching, and it is the half of the gate worth
+        keeping.
+
+        Note that the exposure scalar travels with the label - Bull and Low-Vol
+        are 1.0 against Sideways' 0.7 - so this widens position size as well as
+        eligibility.
+        """
+        return {Regime.SIDEWAYS, Regime.BULL, Regime.LOW_VOL, Regime.RECOVERY}
 
     def params(self) -> dict[str, Any]:
         return {

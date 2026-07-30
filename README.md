@@ -1153,6 +1153,96 @@ simulated session on today's real readings (VIX 18.21, T10Y3M 0.84, BAA10Y
 but the columns carry no information until the bars are daily, which is what
 the warm-start seeding is for.
 
+## The live path runs on daily bars (M27a)
+
+`bar_interval_seconds` was 60, so swing's EMA20/EMA50 were 20 and 50 *minutes*
+and the regime HMM's 60-bar fit window was one hour of market. Both were
+specified in daily bars. No strategy in this system had ever been evaluated on
+the data it was designed for.
+
+The interval alone would have left the system inert — ten weeks to fill an
+EMA50, about three months for the HMM — because every buffer was built from
+live ticks starting at zero at every process start. So the cadence and the
+warm start are one change.
+
+`WarmStart` is registered first with the orchestrator, which starts engines in
+order, so every buffer is seeded before the feed delivers a tick.
+`BarAggregator.seed` refuses to run once any bar exists — seeded history
+appended after live bars would put an older bar after a newer one and corrupt
+every rolling window read from the buffer — and it drops the vendor's bar for
+today, which is a partial session the live feed is still forming.
+
+**All three aggregators are seeded.** `SignalToOrderBridge` keeps its own, and
+its ATR sets the stop distance which sets the position size. Moving the
+strategies to daily bars while sizing them from an empty buffer would have
+been a sizing bug shipped inside a milestone about honest measurement.
+
+**Bulk fetching, and no synthetic fallback.** Measured on this account a single
+symbol takes 1.3s, so 101 of them would block startup for over two minutes;
+one multi-symbol request returns all of them in 3.2s. `get_daily_bars_many`
+therefore has no synthetic fallback, unlike `get_daily_bars`: degrading a
+*screen* to a clearly-labelled random walk is reasonable, seeding a buffer that
+positions are sized from with one is not. Symbols the vendor did not return
+stay unseeded and are named at WARNING.
+
+**One feature row per bar, not per tick.** The regime engine appended a row on
+every benchmark tick. Left alone, 390 intraday rows a day would have swamped
+300 seeded daily ones inside a single session, restoring the exact mismatch
+this milestone removes. The row for the bar in progress is now rewritten as its
+price moves and rolls over at the boundary.
+
+**Gap filling now depends on the interval.** On a daily interval every gap is a
+weekend or a holiday, and Friday→Monday is a two-bar gap — well inside the
+ten-bar intraday allowance, so it would have invented flat bars for days the
+market never opened.
+
+Macro readings are joined as-of each bar's own date and carried forward, never
+interpolated. Pairing every seeded bar with one constant value would leave the
+macro columns flat across the matrix, which is the singular covariance matrix
+that crashed the fit on 28 July.
+
+Verified against the live account: 101 symbols and 300 daily bars seeded in
+17s, every feature column moving (VIX 13.47–31.05, curve −0.17–1.00, credit
+1.50–1.88, breadth 0.12–0.74), and the HMM classifying on the first live bar.
+
+### Swing's regime gate, widened by decision
+
+The paper names Sideways alone for Swing. Measured over the 300 real sessions
+to 29 July 2026, the regime engine classified:
+
+| regime | share |
+|---|---|
+| bull | 32.0% |
+| bear | 26.6% |
+| high_vol | 24.9% |
+| low_vol | 10.4% |
+| **sideways** | **6.2%** |
+
+So the only promoted strategy in the system was eligible about one session in
+sixteen, and the zero-signal sessions of 28 and 29 July were the ordinary case
+rather than an anomaly. `suitable_regimes()` now returns Sideways, Bull,
+Low-Vol and Recovery — a pullback to EMA20 inside an EMA20>EMA50 uptrend is a
+trend-continuation setup whose own entry condition already requires the
+uptrend, so excluding Bull gated it out of the regime it was designed for.
+Bear, High-Vol and Recession stay excluded. The exposure scalar travels with
+the label, so this widens position size as well as eligibility.
+
+This is a decision-changing change, made deliberately and with sign-off, and
+recorded here because it departs from the reference paper.
+
+### The label is not yet a stable function of the input
+
+Three replays over the same 300 days produced three different current labels —
+`recovery`, `high_vol`, `low_vol` — differing only in when the last HMM refit
+landed and what path the hysteresis took. The full live replay is the
+trustworthy one; the `high_vol` run had breadth pinned at a constant 0.5, which
+is the degenerate-column case the new zero-variance warning exists to catch,
+and it was caught on a test harness rather than in the app.
+
+No single day's label should be read as authoritative until this is understood.
+A wider regime set is less sensitive to it, which was an argument for the
+change above rather than against it.
+
 ## Macro market analysis
 
 The Regime Monitor's macro panel is two independent halves:

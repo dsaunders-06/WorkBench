@@ -10,7 +10,24 @@ _SYMBOL = "AAA"
 
 
 def test_suitable_regimes():
-    assert SwingStrategy().suitable_regimes() == {Regime.SIDEWAYS}
+    """Widened from the paper's Sideways-only by operator decision, 30 July
+    2026: the regime engine classified Sideways on 6.2% of the 300 real
+    sessions to 29 July, so the only promoted strategy in the system was
+    eligible about one session in sixteen."""
+    assert SwingStrategy().suitable_regimes() == {
+        Regime.SIDEWAYS,
+        Regime.BULL,
+        Regime.LOW_VOL,
+        Regime.RECOVERY,
+    }
+
+
+def test_stress_regimes_stay_excluded():
+    """The half of the gate worth keeping: buying a pullback long-only into a
+    bear or high-vol tape is knife-catching."""
+    excluded = {Regime.BEAR, Regime.HIGH_VOL, Regime.RECESSION}
+
+    assert not SwingStrategy().suitable_regimes() & excluded
 
 
 def test_pullback_and_reclaim_in_uptrend_emits_buy_with_stop_and_target():

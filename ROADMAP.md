@@ -123,12 +123,37 @@ the whole milestone:
 2. ~~**Give `regime_engine/engine.py` a logger.**~~ **Done, 30 July.**
    Classifications, transitions, warm-up progress, refits, and fit failures
    with the per-feature numbers that explain them.
-3. Daily-bar warm-start seeding (below). **Still required after 1 and 2:** FRED
-   updates daily, so on one-minute bars the three macro columns are constant
-   across the whole fitted window and carry no information. The mock's hourly
-   random re-draw was, incidentally, giving them variation that real data does
-   not.
-4. Persistence, daily cadence, dead-classifier visibility.
+3. ~~Daily-bar warm-start seeding (below).~~ **Done, 30 July**, together with
+   the daily cadence, which could not be split from it: seeded daily bars with
+   a 60s interval would be replaced by minute bars through the session, warm at
+   the open and wrong by lunch. Three things the plan below did not anticipate:
+   per-symbol fetching would have blocked startup for over two minutes (one
+   bulk request does it in 3.2s); the regime engine appended a feature row per
+   *tick*, which would have swamped 300 seeded rows within one session; and
+   gap filling would have invented flat bars for weekends.
+4. Persistence and dead-classifier visibility. Persistence is now much cheaper
+   to skip - a 17s re-fetch at startup is most of what it would have bought.
+
+**Swing's regime gate, widened 30 July by operator decision.** Measured over
+the 300 real sessions to 29 July: bull 32.0%, bear 26.6%, high-vol 24.9%,
+low-vol 10.4%, **sideways 6.2%**. The paper names Sideways alone for Swing, so
+the only promoted strategy was eligible about one session in sixteen and the
+zero-signal sessions were the ordinary case, not an anomaly. Now Sideways,
+Bull, Low-Vol and Recovery; Bear, High-Vol and Recession stay excluded.
+
+### M27b - The regime label is not a stable function of the input  **[NEW]**
+
+Three replays over the same 300 days of real data produced three different
+current labels - `recovery`, `high_vol`, `low_vol` - differing only in when the
+last HMM refit landed and what path the hysteresis took. One of the three had
+breadth pinned at a constant 0.5, which the new zero-variance warning catches;
+the other two differed on nothing but refit timing.
+
+The label gates every strategy, so a classifier whose output depends on when it
+was last refitted is gating on an artefact. Worth understanding before the
+label is trusted to size or permit anything. Candidates: fix the HMM's random
+state across refits, refit on a schedule tied to the calendar rather than a bar
+count, or hold the fitted model and only re-estimate the posterior.
 
 **The macro source has never been real, and this is the more dangerous half.**
 `runtime.py:416` reads `macro = macro_source or MockMacroSource(seed=1)`, and
