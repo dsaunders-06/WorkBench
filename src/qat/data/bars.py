@@ -122,9 +122,11 @@ class BarAggregator:
           newer one and silently corrupt every rolling window computed from
           the buffer.
         * It keeps only bars whose interval has already closed. A vendor's
-          daily bar for *today* is a partial session, and admitting it would
-          leave the same day represented twice - once as a frozen completed
-          bar and again as the bar the live feed is still forming.
+          daily bar for *today* is a partial session, so it is loaded as the
+          *forming* bar rather than a completed one. Discarding it would lose
+          the session's true open, high and low on any restart after the open -
+          a process restarted at noon would believe the day began at noon -
+          and admitting it as completed would leave today represented twice.
         """
         if self._completed or self._forming is not None:
             raise RuntimeError(
@@ -142,9 +144,7 @@ class BarAggregator:
         columns = (frame[name] for name in BAR_COLUMNS)
         for raw_ts, open_, high, low, close, volume in zip(*columns, strict=True):
             boundary = floor_to_interval(as_utc(raw_ts), self.interval_seconds)
-            if boundary >= current_boundary:
-                continue
-            by_boundary[boundary] = Bar(
+            bar = Bar(
                 ts=boundary,
                 open=float(open_),
                 high=float(high),
@@ -152,6 +152,12 @@ class BarAggregator:
                 close=float(close),
                 volume=float(volume),
             )
+            if boundary > current_boundary:
+                continue  # the future: a vendor timestamp that cannot be right
+            if boundary == current_boundary:
+                self._forming = bar
+                continue
+            by_boundary[boundary] = bar
 
         self._completed = [by_boundary[key] for key in sorted(by_boundary)]
         self._trim()

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QLabel, QMainWindow, QTabWidget, QVBoxLayout, QWidget
 
-from qat.domain.events import KillSwitchEvent, MarketDataFeedEvent
+from qat.domain.events import KillSwitchEvent, MarketDataFeedEvent, RegimeHealthEvent
 from qat.presentation.ai_advisor import AiAdvisorScreen
 from qat.presentation.blotter import BlotterScreen
 from qat.presentation.dashboard import DashboardScreen
@@ -50,6 +50,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(banner)
 
         self._feed_down_reason: str | None = None
+        # Driven by events only, never asserted at startup. The engine reports
+        # itself the moment it processes a bar, so lighting this before the
+        # first tick would warn on every launch - and a banner that always
+        # warns is a banner nobody reads. A run that never receives a tick at
+        # all is already covered by MARKET DATA DOWN, which outranks this.
+        self._regime_down_reason: str | None = None
         self.execution_banner = QLabel()
         layout.addWidget(self.execution_banner)
         self._refresh_execution_banner()
@@ -58,6 +64,7 @@ class MainWindow(QMainWindow):
         # window's own Risk Console halting or resetting the switch.
         runtime.kill_switch.add_listener(self._refresh_execution_banner)
         runtime.bus.subscribe(MarketDataFeedEvent, self._on_feed_health)
+        runtime.bus.subscribe(RegimeHealthEvent, self._on_regime_health)
 
         tabs = QTabWidget()
         tabs.addTab(DashboardScreen(runtime), "Dashboard")
@@ -91,6 +98,16 @@ class MainWindow(QMainWindow):
         self._feed_down_reason = None if event.healthy else event.reason
         self._refresh_execution_banner()
 
+    async def _on_regime_health(self, event: RegimeHealthEvent) -> None:
+        """A classifier that has stopped must not look like one that agrees.
+
+        StrategyEngine falls open to its default regime, so a dead engine keeps
+        the application trading with the regime gate silently disabled. On
+        28 July the HMM crashed on every fit and nothing on screen changed.
+        """
+        self._regime_down_reason = None if event.healthy else event.reason
+        self._refresh_execution_banner()
+
     def _refresh_execution_banner(self, halt_reason: str | None = None) -> None:
         """Three states, never two: off, active, and halted-with-a-reason.
 
@@ -108,6 +125,18 @@ class MainWindow(QMainWindow):
 
         if self._feed_down_reason:
             self.execution_banner.setText(f"MARKET DATA DOWN - {self._feed_down_reason}")
+            self.execution_banner.setStyleSheet(_FEED_DOWN_STYLE)
+            return
+
+        # Ranked below both: a halt needs a human and an outage may clear,
+        # where a dead classifier means the app is still trading normally and
+        # the regime gate simply is not gating. Least urgent of the three, and
+        # the easiest to never notice - which is why it is on the banner.
+        if self._regime_down_reason:
+            self.execution_banner.setText(
+                f"REGIME ENGINE DOWN - {self._regime_down_reason}; strategies gated on the "
+                f"{self.runtime.strategy_engine.default_regime.value} default"
+            )
             self.execution_banner.setStyleSheet(_FEED_DOWN_STYLE)
             return
 

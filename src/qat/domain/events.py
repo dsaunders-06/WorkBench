@@ -124,3 +124,23 @@ class MarketDataFeedEvent(Event):
     healthy: bool
     reason: str
     seconds_since_last_tick: float | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RegimeHealthEvent(Event):
+    """The regime classifier is producing labels, or it is not (M27a).
+
+    StrategyEngine falls open to its default regime when no RegimeEvent has
+    arrived, which keeps the application trading through a dead classifier -
+    defensible for availability, and invisible until now. On 28 July the HMM
+    crashed on every fit and the only trace was hmmlearn's traceback in the
+    bus; the screen said nothing at all.
+
+    Unhealthy covers both "it has failed" and "it has never yet succeeded",
+    because the consequence is identical: the regime gate is not gating, and
+    every strategy is being permitted or refused on a default rather than on a
+    reading of the market.
+    """
+
+    healthy: bool
+    reason: str

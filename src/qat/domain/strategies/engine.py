@@ -71,6 +71,14 @@ class StrategyEngine:
         self._fundamentals_cache: dict[str, FundamentalSnapshot] = {}
         self._context_cache: dict[str, SymbolContext] = {}
         self._current_regime: Regime = default_regime
+        self.default_regime = default_regime
+        # Whether a real RegimeEvent has ever arrived. Until one has, every
+        # gating decision below is made on the default rather than on a reading
+        # of the market, and that has to be said out loud exactly once (M27a) -
+        # on 29 July a strategy being gated off had to be reconstructed
+        # afterwards from a blank field on screen.
+        self._regime_is_real = False
+        self._warned_about_default = False
         # Whether signals actually leave this engine (M19). SessionController
         # clears it outside market hours; ticks are still recorded so the
         # buffer is warm at the next open. True by default, so an engine built
@@ -124,7 +132,14 @@ class StrategyEngine:
         try:
             self._current_regime = Regime(event.label)
         except ValueError:
-            pass  # unrecognised label: keep the previous regime rather than guess
+            return  # unrecognised label: keep the previous regime rather than guess
+        if not self._regime_is_real:
+            logger.info(
+                "Strategy gating now uses the classified regime (%s), not the %s default",
+                self._current_regime.value,
+                self.default_regime.value,
+            )
+        self._regime_is_real = True
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
         # History is recorded even while suspended (M19): the first signal
@@ -169,6 +184,21 @@ class StrategyEngine:
             universe=universe,
             positions=await self._current_positions(),
         )
+
+        if not self._regime_is_real and not self._warned_about_default:
+            self._warned_about_default = True
+            logger.warning(
+                "Gating %d strategies on the %s DEFAULT - the regime engine has published "
+                "nothing. Strategies are being permitted or refused without any reading of "
+                "the market: %s",
+                len(self.strategies),
+                self.default_regime.value,
+                ", ".join(
+                    f"{s.name}="
+                    f"{'eligible' if self._current_regime in s.suitable_regimes() else 'skipped'}"
+                    for s in self.strategies
+                ),
+            )
 
         for strategy in self.strategies:
             if self._current_regime not in strategy.suitable_regimes():

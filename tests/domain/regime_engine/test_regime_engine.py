@@ -14,7 +14,12 @@ import pytest
 
 from qat.data.macro_fred import MacroHistory, MacroObservation
 from qat.domain.bus import EventBus
-from qat.domain.events import MacroEvent, MarketDataEvent, RegimeEvent
+from qat.domain.events import (
+    MacroEvent,
+    MarketDataEvent,
+    RegimeEvent,
+    RegimeHealthEvent,
+)
 from qat.domain.regime import Regime
 from qat.domain.regime_engine.engine import RegimeEngine
 from qat.domain.regime_engine.feature_matrix import FEATURE_NAMES
@@ -174,7 +179,9 @@ async def test_every_transition_is_logged_with_both_labels(caplog):
         events = await _run_archetype(closes, vix, curve)
 
     transitions = [
-        record.getMessage() for record in caplog.records if record.getMessage().startswith("REGIME")
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("REGIME ") and " -> " in record.getMessage()
     ]
     labels = [event.label for event in events]
     expected = 1 + sum(1 for i in range(1, len(labels)) if labels[i] != labels[i - 1])
@@ -450,3 +457,63 @@ async def test_seeding_refuses_after_a_bar_has_been_recorded():
 
     with pytest.raises(RuntimeError, match="before any bar"):
         engine.seed(_daily_bars(10), _macro_history(20))
+
+
+# --- Health reporting (M27a item 4) ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fit_reports_the_engine_as_down():
+    """StrategyEngine falls open to its default regime, so a crashed
+    classifier keeps the app trading with the gate silently disabled."""
+    bus = EventBus()
+    health: list[RegimeHealthEvent] = []
+
+    async def handler(event: RegimeHealthEvent) -> None:
+        health.append(event)
+
+    bus.subscribe(RegimeHealthEvent, handler)
+    engine = RegimeEngine(bus, benchmark_symbol="SPY")
+    engine.seed(_daily_bars(120), _macro_history(200))
+    engine._hmm.fit = _explode  # type: ignore[method-assign]
+    await engine.start()
+
+    await bus.publish(MarketDataEvent(symbol="SPY", price=500.0, volume=1e6, ts=datetime.now(UTC)))
+    await engine.stop()
+
+    assert health, "a dead classifier published nothing about being dead"
+    assert health[-1].healthy is False
+    assert "fit failed" in health[-1].reason
+
+
+def _explode(matrix):
+    raise ValueError("startprob_ must sum to 1 (got nan)")
+
+
+@pytest.mark.asyncio
+async def test_health_is_published_on_change_not_on_every_bar():
+    """A classifier that is down stays down for every bar of the session, and
+    a banner repainted identically four hundred times is one nobody reads."""
+    bus = EventBus()
+    health: list[RegimeHealthEvent] = []
+
+    async def handler(event: RegimeHealthEvent) -> None:
+        health.append(event)
+
+    bus.subscribe(RegimeHealthEvent, handler)
+    engine = RegimeEngine(bus, benchmark_symbol="SPY")
+    bars = _daily_bars(300)
+    engine.seed(bars, _macro_history(400))
+    await engine.start()
+
+    last = pd.Timestamp(bars["ts"].iloc[-1]).to_pydatetime()
+    for day in range(1, 6):
+        await bus.publish(
+            MarketDataEvent(
+                symbol="SPY", price=500.0 + day, volume=1e6, ts=last + timedelta(days=day)
+            )
+        )
+    await engine.stop()
+
+    assert len(health) == 1
+    assert health[0].healthy is True

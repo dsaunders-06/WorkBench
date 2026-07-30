@@ -1230,6 +1230,52 @@ the label, so this widens position size as well as eligibility.
 This is a decision-changing change, made deliberately and with sign-off, and
 recorded here because it departs from the reference paper.
 
+### A dead classifier is now visible
+
+`StrategyEngine` falls open to its default regime, so a crashed classifier
+keeps the application trading with the regime gate silently disabled. On
+28 July the HMM crashed on every fit for a whole session and nothing on screen
+changed. The engine now publishes `RegimeHealthEvent`, and the main window
+carries a third banner state — **REGIME ENGINE DOWN**, naming the reason and
+the default the strategies are being gated on instead.
+
+It is ranked below the kill-switch halt and MARKET DATA DOWN: a halt needs a
+human, an outage may clear, and a dead classifier means the app is still
+trading normally with the gate not gating. Least urgent of the three and the
+easiest to never notice, which is why it is on the banner at all.
+
+The banner is driven by events only and never asserted at startup. Lighting it
+before the first bar would warn on every launch, and a banner that always warns
+is one nobody reads; a run that never receives a tick is already covered by
+MARKET DATA DOWN. Health is published on change, but *always* on the first
+report — an engine whose very first fit fails has never been healthy, and
+treating that as an unchanged state would have published nothing at all for
+precisely the session this exists to make visible.
+
+`StrategyEngine` also says so directly, naming every strategy and whether it is
+eligible, the first time it gates on the default rather than on a classified
+regime.
+
+**Widening swing's regimes made this sharper.** `SIDEWAYS` is now inside
+swing's suitable set, so a dead classifier means swing trades as though the
+market were sideways, rather than being gated off by accident. The 28 July
+silence partly protected against that; it no longer would.
+
+### Persistence, deliberately not built
+
+M27a's plan called for persisting the buffers so a restart does not reset them.
+The warm start already re-seeds all 101 symbols from the vendor in a few
+seconds, from the authoritative source rather than a local file that can go
+stale or disagree with it. A second, worse copy of that is maintenance cost for
+no benefit.
+
+The one thing it would genuinely have covered is a **mid-session restart**,
+which loses the day's forming bar — restarted at noon, the aggregator would
+believe the day opened at noon, and the day's range is what ATR, the stop and
+the position size are computed from. The fix is not a local file either: the
+vendor's partial bar for today is loaded as the *forming* bar rather than
+discarded. Same source, no new storage, and it closes the actual hole.
+
 ### The label is not yet a stable function of the input
 
 Three replays over the same 300 days produced three different current labels —

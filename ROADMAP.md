@@ -131,8 +131,20 @@ the whole milestone:
    bulk request does it in 3.2s); the regime engine appended a feature row per
    *tick*, which would have swamped 300 seeded rows within one session; and
    gap filling would have invented flat bars for weekends.
-4. Persistence and dead-classifier visibility. Persistence is now much cheaper
-   to skip - a 17s re-fetch at startup is most of what it would have bought.
+4. ~~Persistence and dead-classifier visibility.~~ **Done, 30 July.**
+   `RegimeHealthEvent` and a REGIME ENGINE DOWN banner, ranked below the halt
+   and the feed outage; `StrategyEngine` names every strategy and its
+   eligibility the first time it gates on the default instead of a classified
+   regime. **Persistence was deliberately not built** - the warm start already
+   re-seeds every symbol from the authoritative source in seconds, and a local
+   copy that can disagree with the vendor is maintenance cost for no benefit.
+   The one real gap it would have closed, a mid-session restart losing the
+   day's open/high/low, is fixed by loading the vendor's partial bar for today
+   as the *forming* bar rather than discarding it.
+
+**M27a is complete.** Verified against the live account: 101 symbols and 300
+daily bars seeded in 7-17s, every macro column varying across the matrix, the
+HMM classifying on the first live bar, and swing eligible.
 
 **Swing's regime gate, widened 30 July by operator decision.** Measured over
 the 300 real sessions to 29 July: bull 32.0%, bear 26.6%, high-vol 24.9%,

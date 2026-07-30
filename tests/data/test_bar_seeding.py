@@ -50,15 +50,38 @@ def test_seeded_bars_keep_their_real_ohlc():
     assert frame["low"].iloc[-1] < frame["open"].iloc[-1]
 
 
-def test_todays_partial_bar_is_not_seeded():
-    """A vendor's bar for today covers a session still in progress. Admitting
-    it would represent today twice - once frozen, once forming."""
+def test_todays_partial_bar_becomes_the_forming_bar():
+    """A vendor's bar for today covers a session still in progress, so it is
+    the forming bar, never a completed one. Completing it would represent today
+    twice; discarding it would lose the session's open, high and low on any
+    restart after the open."""
     aggregator = BarAggregator(interval_seconds=_DAY)
     aggregator.seed(_daily_frame(5), now=_NOW)
 
     boundaries = [bar.ts for bar in aggregator.completed_bars()]
-
     assert max(boundaries) == datetime(2026, 7, 29, tzinfo=UTC)
+
+    forming = aggregator.forming
+    assert forming is not None
+    assert forming.ts == datetime(2026, 7, 30, tzinfo=UTC)
+
+
+def test_a_midday_restart_keeps_the_days_open_high_and_low():
+    """The one thing a warm start could genuinely lose. Restarted at noon
+    without this, the aggregator believes the day opened at noon - and the
+    day's range is what ATR, and therefore the stop and the position size, are
+    computed from."""
+    aggregator = BarAggregator(interval_seconds=_DAY)
+    aggregator.seed(_daily_frame(5), now=_NOW)
+
+    # The session continues after the restart.
+    aggregator.add_tick(_NOW + timedelta(hours=1), 103.0, 5.0)
+
+    forming = aggregator.forming
+    assert forming is not None
+    assert forming.open == 104.0  # the real open, not the restart price
+    assert forming.high == 106.0  # the morning's high survived
+    assert forming.close == 103.0  # and the latest tick still moves it
 
 
 def test_seeding_refuses_once_a_tick_has_been_recorded():
@@ -72,11 +95,13 @@ def test_seeding_refuses_once_a_tick_has_been_recorded():
 
 
 def test_live_ticks_extend_the_seeded_history_without_a_gap():
+    """A day of intraday ticks folds into one forming daily bar with true
+    OHLC, on top of history that ends the day before."""
     aggregator = BarAggregator(interval_seconds=_DAY)
-    aggregator.seed(_daily_frame(10), now=_NOW)
+    # Ends yesterday, so nothing is seeded into the forming slot.
+    aggregator.seed(_daily_frame(10, last_day=_NOW - timedelta(days=1)), now=_NOW)
     seeded = len(aggregator.completed_bars())
 
-    # A day of intraday ticks folds into one forming daily bar with true OHLC.
     aggregator.add_tick(_NOW, 120.0, 10.0)
     aggregator.add_tick(_NOW + timedelta(hours=1), 125.0, 10.0)
     aggregator.add_tick(_NOW + timedelta(hours=2), 118.0, 10.0)
@@ -114,9 +139,11 @@ def test_an_intraday_interval_still_fills_quiet_minutes():
 def test_multi_symbol_seeding_is_per_symbol():
     aggregator = MultiSymbolAggregator(interval_seconds=_DAY)
 
+    # The return is completed bars; the frame adds today's forming bar.
     assert aggregator.seed("SPY", _daily_frame(10), now=_NOW) == 9
     assert aggregator.seed("AAPL", _daily_frame(4), now=_NOW) == 3
-    assert len(aggregator.frame("SPY")) == 9
+    assert len(aggregator.frame("SPY")) == 10
+    assert len(aggregator.frame("AAPL")) == 4
     assert aggregator.frame("MSFT").empty
 
 

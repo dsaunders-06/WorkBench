@@ -28,7 +28,7 @@ import pandas as pd
 from qat.data.bars import as_utc, floor_to_interval
 from qat.data.macro_fred import MacroHistory
 from qat.domain.bus import EventBus
-from qat.domain.events import MacroEvent, MarketDataEvent, RegimeEvent
+from qat.domain.events import MacroEvent, MarketDataEvent, RegimeEvent, RegimeHealthEvent
 from qat.domain.regime import Regime
 from qat.domain.regime_engine.feature_matrix import FEATURE_NAMES, RegimeFeatureBuilder
 from qat.domain.regime_engine.fusion import HysteresisGate, RegimeFusion, exposure_scalar_for
@@ -78,6 +78,11 @@ class RegimeEngine:
         self._prev_sma_200 = 0.0
         self._last_label: str | None = None
         self._current_boundary: datetime | None = None
+        # None, not False: nothing has been reported yet. See _report_health -
+        # an engine whose first fit fails has never been healthy, and treating
+        # that as "unchanged" would publish nothing for the one session this
+        # exists to make visible.
+        self._healthy: bool | None = None
 
     async def start(self) -> None:
         logger.info(
@@ -221,10 +226,12 @@ class RegimeEngine:
                     len(matrix),
                     self.min_fit_bars,
                 )
+            await self._report_health(False, f"warming up - {len(matrix)}/{self.min_fit_bars} bars")
             return
 
         if not self._hmm.is_fitted or self._bars_since_fit >= self.refit_interval_bars:
             if not self._fit(matrix):
+                await self._report_health(False, f"HMM fit failed on {len(matrix)} bars")
                 return
             self._bars_since_fit = 0
 
@@ -235,6 +242,7 @@ class RegimeEngine:
                 "Regime posterior failed on a %dx%d matrix - no regime published this bar",
                 *matrix.shape,
             )
+            await self._report_health(False, "posterior failed")
             return
 
         latest_row = matrix[-1]
@@ -269,6 +277,31 @@ class RegimeEngine:
                 ts=event.ts,
             )
         )
+        await self._report_health(True, f"classifying - {label.value}")
+
+    async def _report_health(self, healthy: bool, reason: str) -> None:
+        """Publishes on a change of state, and always on the first report.
+
+        A classifier that is down stays down for every bar of the session, and
+        a banner repainted identically four hundred times is the same as a
+        banner nobody reads - so the transition is the news. But "nothing has
+        been reported yet" is not the same as "last reported healthy": an
+        engine whose very first fit fails has never been healthy, and
+        suppressing that as an unchanged state would publish nothing at all
+        for the one session this exists to make visible.
+        """
+        if healthy == self._healthy:
+            return
+        self._healthy = healthy
+        if healthy:
+            logger.info("Regime engine is classifying again (%s)", reason)
+        else:
+            logger.warning(
+                "REGIME ENGINE NOT CLASSIFYING (%s) - every strategy is now gated on "
+                "StrategyEngine's default regime rather than on a reading of the market",
+                reason,
+            )
+        await self.bus.publish(RegimeHealthEvent(healthy=healthy, reason=reason))
 
     def _fit(self, matrix: np.ndarray) -> bool:
         """Refit, reporting a failure with the numbers that explain it.
