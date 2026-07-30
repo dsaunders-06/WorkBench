@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import random
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ import requests
 from qat.domain.bus import EventBus
 from qat.domain.events import MacroEvent
 from qat.security import get_secret
+
+logger = logging.getLogger(__name__)
 
 _FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 _FRED_MISSING_VALUE = "."
@@ -33,7 +36,15 @@ class MacroObservation:
 
 
 class MacroDataSource(Protocol):
-    async def fetch_series(self, series_id: str) -> list[MacroObservation]: ...
+    async def fetch_series(self, series_id: str) -> list[MacroObservation]:
+        """The series' full available history, oldest observation first.
+
+        Full history rather than the latest reading because the daily-bar
+        warm-start needs an as-of join against dates already in the past.
+        MacroFeed, which only ever wants the current reading, takes the last
+        element - see its poll_once.
+        """
+        ...
 
 
 class FredMacroSource:
@@ -87,7 +98,16 @@ class MockMacroSource:
 
 class MacroFeed:
     """Engine (per domain.orchestrator.Engine protocol): polls each configured
-    series on a daily (default) cadence and publishes MacroEvent per observation."""
+    series on a daily (default) cadence and publishes the current reading of
+    each as a MacroEvent.
+
+    One event per series per poll, not one per observation. A source returns
+    the series' whole history (VIXCLS alone is over nine thousand daily
+    observations back to 1990), and replaying all of it onto the bus every
+    poll would publish tens of thousands of events - to the regime engine and
+    the Regime Monitor alike - to communicate five current numbers. History is
+    the warm-start's business; the feed's business is what the value is now.
+    """
 
     name = "macro-feed"
 
@@ -116,14 +136,44 @@ class MacroFeed:
 
     async def poll_once(self) -> None:
         for series_id in self.series_ids:
-            for observation in await self.source.fetch_series(series_id):
-                await self.bus.publish(
-                    MacroEvent(
-                        series=observation.series, value=observation.value, ts=observation.ts
-                    )
+            try:
+                observations = await self.source.fetch_series(series_id)
+            except Exception:  # noqa: BLE001 - one bad series must not mute the rest
+                logger.exception(
+                    "Macro series %s could not be fetched - the regime engine keeps its "
+                    "previous value for this series",
+                    series_id,
                 )
+                continue
+
+            if not observations:
+                logger.warning("Macro series %s returned no observations", series_id)
+                continue
+
+            latest = observations[-1]
+            logger.info(
+                "Macro %s = %s (as of %s, %d observations available)",
+                latest.series,
+                latest.value,
+                latest.ts.date().isoformat(),
+                len(observations),
+            )
+            await self.bus.publish(
+                MacroEvent(series=latest.series, value=latest.value, ts=latest.ts)
+            )
 
     async def _poll_loop(self) -> None:
+        # A poll that raises must never end the loop. The mock source could not
+        # fail; a real one is a network call, and an unhandled exception here
+        # would kill the task silently and freeze every macro feature at its
+        # last value for the rest of the session.
         while True:
-            await self.poll_once()
+            try:
+                await self.poll_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - degrade to a stale reading, but loudly
+                logger.exception(
+                    "Macro poll failed - retrying in %.0fs", self.poll_interval_seconds
+                )
             await asyncio.sleep(self.poll_interval_seconds)

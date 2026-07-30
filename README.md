@@ -1078,6 +1078,81 @@ This is deliberate — in the reference implementation a model asked to confirm
 sell signals declined 100% of 494 of them in a single day, which turns
 "be cautious" into a portfolio that can only ever grow.
 
+## The regime gate and the data under it (M27a)
+
+The regime label is not a display. `strategies/engine.py` skips any strategy
+whose `suitable_regimes()` excludes the current label, so the classification
+decides which strategies are allowed to trade at all. Three of the six
+features it is computed from — VIX, the yield-curve slope, the credit spread —
+came from `MockMacroSource`, which returns `round(random.uniform(-1, 5), 3)`.
+Built in M2, wired in at `runtime.py` directly, and never once replaced.
+
+On 29 July that fabricated data classified the market as low-vol. Swing's
+suitable regimes are `{SIDEWAYS}`, so swing was ineligible for the entire
+session, `scalar=1.00` meant nothing else looked unusual, and the system
+recorded a normal day. A random number generator switched the only promoted
+strategy off and nothing anywhere said so.
+
+**`resolve_macro_source()`** now sits beside `resolve_broker`,
+`resolve_market_data_source` and `resolve_fundamentals_source`: real FRED when
+`FRED_API_KEY` is in the keyring, `MockMacroSource` otherwise with a warning
+that names the consequence rather than the mechanism — that the regime is then
+invented, and the regime decides who trades. The missing resolver was the root
+cause here, not the mock. Every other synthetic default in this application is
+reached through a function that announces itself; this one was reached by
+being hard-coded, which is how it survived twenty-five milestones.
+
+**`MacroFeed` publishes the current reading, not the history.** `fetch_series`
+returns a series' full history because the daily-bar warm-start needs an as-of
+join against past dates — VIXCLS is 9,239 observations back to 1990, and the
+five configured series total **57,878**. The feed had been publishing one
+`MacroEvent` per observation, which the mock's single-observation response
+concealed completely; against real FRED it would have put all 57,878 on the
+bus, to the regime engine and the Regime Monitor alike, every hour, to say
+what five numbers currently are.
+
+**The poll loop survives a failed poll.** `while True: await self.poll_once()`
+was safe against a mock that could not fail. A network source that raises once
+would have killed the task with the exception never retrieved, freezing every
+macro feature at its last value for the rest of the session — the same class
+of silent-degradation bug this milestone exists to remove.
+
+### The regime engine says what it is doing
+
+It had no logger. Not one line, through twenty-seven milestones. Its only
+visible traces were `hmmlearn`'s own warnings and whatever the bus caught when
+it crashed, which is why 29 July had to be reconstructed afterwards from a
+blank field on screen.
+
+It now logs every classification (transitions at INFO naming both labels, the
+exposure scalar and the fact that strategies are now being skipped; unchanged
+classifications at DEBUG), its warm-up progress against `min_fit_bars` so a
+blank regime field is never ambiguous, every refit, and any fit or posterior
+failure at ERROR with the per-feature numbers instead of a bare traceback.
+
+A failed fit publishes nothing, exactly as before — the difference is that the
+`StrategyEngine` fail-open to `SIDEWAYS` is now visible in the log rather than
+inferred. Making it visible *on screen* is the remaining half, and is M27a's
+fourth item.
+
+**Zero movement is measured as max − min, not as standard deviation.** A
+constant column is what makes the covariance matrix singular, and 28 July's
+`startprob_ must sum to 1 (got nan)` is what that looks like from outside.
+Sixty copies of `14.0` have a standard deviation of exactly `0.0`; sixty
+copies of a real VIX print of `18.21` have `3.5e-15`. The first draft used
+standard deviation and passed its test on round numbers while reporting
+nothing at all against live FRED data.
+
+**Real FRED does not by itself fix the fit, and slightly sharpens the
+problem.** FRED series update daily, so on one-minute bars all three macro
+columns are constant for the whole session. The mock re-drew a fresh random
+number every hourly poll, which gave those columns spurious variation across
+rows — the wrong data was also, incidentally, the better-conditioned data. A
+simulated session on today's real readings (VIX 18.21, T10Y3M 0.84, BAA10Y
+1.62) fits without crashing and publishes `sideways`, so this is not fatal;
+but the columns carry no information until the bars are daily, which is what
+the warm-start seeding is for.
+
 ## Macro market analysis
 
 The Regime Monitor's macro panel is two independent halves:

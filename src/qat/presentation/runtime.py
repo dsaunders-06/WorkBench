@@ -2,9 +2,13 @@
 MarketDataFeed -> FeatureEngine -> StrategyEngine -> SignalToOrderBridge ->
 OMS, plus RegimeEngine and AIAdvisoryService, all sharing one EventBus -
 with the same synthetic/mock defaults used throughout testing
-(SyntheticMarketDataSource, MockBroker, MockFundamentalsSource,
-MockMacroSource). Consistent with every prior milestone's "no real
-credentials here" stance.
+(SyntheticMarketDataSource, MockBroker, MockFundamentalsSource).
+Consistent with every prior milestone's "no real credentials here" stance.
+
+Every one of those defaults is reached through a resolve_* function that
+says so in the log when it falls back. Wiring a mock in directly, as the
+macro source was until M27a, is what let synthetic data pass for real data
+for twenty-five milestones.
 
 A real paper or live session swaps IBAdapter in for MockBroker via
 build_demo()'s broker argument - the same swap-the-implementation pattern
@@ -29,7 +33,7 @@ from qat.data.broker.mock_broker import MockBroker
 from qat.data.feature_engine import FeatureEngine
 from qat.data.fundamentals import FundamentalsSource, MockFundamentalsSource
 from qat.data.history import HistoricalBarSource, resolve_history_source
-from qat.data.macro_fred import MacroDataSource, MacroFeed, MockMacroSource
+from qat.data.macro_fred import FredMacroSource, MacroDataSource, MacroFeed, MockMacroSource
 from qat.data.market_data import MarketDataFeed, MarketDataSource, SyntheticMarketDataSource
 from qat.domain.ai_advisory.llm_engine import (
     AnthropicEngine,
@@ -228,6 +232,40 @@ def resolve_broker(settings: Settings) -> BrokerAdapter:
     return MockBroker(seed=1)
 
 
+def resolve_macro_source(settings: Settings) -> MacroDataSource:
+    """Real FRED when a key is configured, the seeded mock otherwise (M27a).
+
+    This resolver is the point of the change. MockMacroSource was wired in
+    directly here from M2 to M27 with no resolver and no warning, so three of
+    the regime engine's six features - VIX, yield-curve slope, credit spread -
+    were `random.uniform(-1, 5)` for twenty-five milestones and nothing said
+    so. On 29 July that fabricated data classified the market as low-vol,
+    which gated the only promoted strategy off for a full session, and the
+    system reported it as normal operation.
+
+    So the fallback is loud about the consequence rather than the mechanism: a
+    regime classified from invented macro data is itself invented, and it
+    decides which strategies are allowed to trade.
+    """
+    if get_secret("FRED_API_KEY"):
+        try:
+            source = FredMacroSource()
+            logger.info(
+                "Using real macro data (FRED): %s", ", ".join(settings.fred_series) or "no series"
+            )
+            return source
+        except Exception as exc:  # noqa: BLE001 - degrade, but loudly
+            logger.warning("Could not build the FRED macro source (%s)", exc)
+
+    logger.warning(
+        "No FRED_API_KEY is configured - falling back to SYNTHETIC macro data. VIX, the "
+        "yield-curve slope and the credit spread will be RANDOM NUMBERS, so every regime "
+        "classified from them is fabricated, and the regime gate decides which strategies "
+        "are allowed to trade. Set it with qat.security.set_secret('FRED_API_KEY', ...)."
+    )
+    return MockMacroSource(seed=1)
+
+
 def resolve_fundamentals_source(
     settings: Settings,
     history_source: HistoricalBarSource,
@@ -413,7 +451,7 @@ class Runtime:
         feature_engine = FeatureEngine(bus, bar_interval_seconds=settings.bar_interval_seconds)
         history_source = resolve_history_source(settings)
 
-        macro = macro_source or MockMacroSource(seed=1)
+        macro = macro_source or resolve_macro_source(settings)
         macro_feed = MacroFeed(bus, macro, settings.fred_series, poll_interval_seconds=3600.0)
 
         fundamentals = fundamentals_source or resolve_fundamentals_source(

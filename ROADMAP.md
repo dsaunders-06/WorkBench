@@ -113,13 +113,21 @@ market; real macro data governs whether swing is allowed to look at all. Items 1
 and 2 are small and can land before the rest - swing may start trading without
 the whole milestone:
 
-1. `resolve_macro_source()` - real FRED when the key is present, mock otherwise
-   **with a loud warning**, matching `resolve_broker`.
-2. **Give `regime_engine/engine.py` a logger.** It currently has none - not one
-   line - so its only visibility has ever been `hmmlearn`'s own warnings and the
-   bus catching a crash. Log every classification and every transition, so a
-   strategy being gated off is never again inferred from a blank UI field.
-3. Daily-bar warm-start seeding (below).
+1. ~~`resolve_macro_source()` - real FRED when the key is present, mock otherwise
+   **with a loud warning**, matching `resolve_broker`.~~ **Done, 30 July.**
+   Two things had to come with it: `MacroFeed` published one `MacroEvent` per
+   *observation*, which the mock's single-observation response hid and which
+   against real FRED would have put 57,878 events on the bus every hour; and
+   its poll loop had no error handling, so one network failure would have
+   killed the task silently and frozen every macro feature for the session.
+2. ~~**Give `regime_engine/engine.py` a logger.**~~ **Done, 30 July.**
+   Classifications, transitions, warm-up progress, refits, and fit failures
+   with the per-feature numbers that explain them.
+3. Daily-bar warm-start seeding (below). **Still required after 1 and 2:** FRED
+   updates daily, so on one-minute bars the three macro columns are constant
+   across the whole fitted window and carry no information. The mock's hourly
+   random re-draw was, incidentally, giving them variation that real data does
+   not.
 4. Persistence, daily cadence, dead-classifier visibility.
 
 **The macro source has never been real, and this is the more dangerous half.**
