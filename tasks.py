@@ -132,13 +132,33 @@ def _find_signtool() -> pathlib.Path | None:
 
 
 def _first_code_signing_thumbprint(c) -> str:
-    result = c.run(
-        "powershell -NoProfile -Command "
-        '"(Get-ChildItem Cert:\\CurrentUser\\My -CodeSigningCert | '
-        'Select-Object -First 1).Thumbprint"',
-        hide=True,
-        warn=True,
+    """The newest usable code-signing certificate in the user's personal store.
+
+    Reads the store through .NET rather than the `Cert:` PSDrive. Two separate
+    reasons, both found the first time this was actually needed (M27a), having
+    silently reported "no certificate" until then:
+
+    * `-CodeSigningCert` is a provider *dynamic* parameter, and Windows
+      PowerShell will not bind it when the path is supplied this way - it fails
+      with "a parameter cannot be found", not with an empty result.
+    * The `Cert:` drive is not present in every Windows PowerShell host. On the
+      build machine it is missing entirely, so even the provider syntax without
+      that parameter fails.
+
+    The filter also excludes expired certificates and any without a private
+    key, both of which the old query would have happily returned - and signing
+    with either produces a build that looks signed and does not verify.
+    """
+    ps = (
+        "$s=New-Object Security.Cryptography.X509Certificates.X509Store('My','CurrentUser'); "
+        "$s.Open(0); "
+        "$s.Certificates | Where-Object { "
+        "$_.HasPrivateKey -and $_.NotAfter -gt (Get-Date) -and "
+        "(($_.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.37' })"
+        ".EnhancedKeyUsages.Value -contains '1.3.6.1.5.5.7.3.3') } | "
+        "Sort-Object NotAfter -Descending | Select-Object -First 1 -ExpandProperty Thumbprint"
     )
+    result = c.run(f'powershell -NoProfile -Command "{ps}"', hide=True, warn=True)
     return (result.stdout or "").strip()
 
 
