@@ -259,9 +259,19 @@ class Settings(BaseSettings):
     walk_forward_in_sample_bars: int = Field(default=120, gt=0)
     walk_forward_out_sample_bars: int = Field(default=60, gt=0)
 
-    # Interval ticks are aggregated into OHLC bars over (M14). 60s matches the
-    # finest granularity the free feed actually serves.
-    bar_interval_seconds: float = Field(default=60.0, gt=0)
+    # Interval ticks are aggregated into OHLC bars over (M14), daily since
+    # M27a.
+    #
+    # It was 60s, which meant swing's EMA20/EMA50 were 20 and 50 *minutes* and
+    # the regime HMM's 60-bar fit window was one hour of market. Both were
+    # specified in daily bars, and no strategy in this system had ever been
+    # evaluated on the data it was designed for. The intraday feed keeps its
+    # role for execution pricing, staleness and account state; it is no longer
+    # the source of signal history.
+    #
+    # Viable only alongside the warm start (domain/warm_start.py): at this
+    # interval an unseeded buffer needs ten weeks to fill an EMA50.
+    bar_interval_seconds: float = Field(default=86_400.0, gt=0)
 
     # How often the real feed is polled. Yahoo is delayed by roughly 15 minutes
     # for most exchanges, so polling faster than this spends rate-limit budget

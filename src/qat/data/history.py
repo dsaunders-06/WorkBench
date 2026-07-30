@@ -13,6 +13,8 @@ Settings and hands it to every screen, so the three agree by construction.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -28,6 +30,65 @@ DEFAULT_BARS = 300
 
 class HistoricalBarSource(Protocol):
     async def get_daily_bars(self, symbol: str, n_bars: int = DEFAULT_BARS) -> pd.DataFrame: ...
+
+
+class BulkHistorySource(Protocol):
+    """A source that can answer for many symbols in one request."""
+
+    async def get_daily_bars_many(
+        self, symbols: Sequence[str], n_bars: int = DEFAULT_BARS
+    ) -> dict[str, pd.DataFrame]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class DailyPanel:
+    """Daily bars for a set of symbols, with the failures kept separate.
+
+    `unavailable` is not a detail to log and move past. The warm start seeds
+    live trading buffers, so a symbol whose real bars could not be fetched has
+    to stay empty rather than be filled with anything - and the caller can only
+    do that if it is told which symbols those were.
+    """
+
+    frames: dict[str, pd.DataFrame]
+    unavailable: tuple[str, ...]
+
+
+async def fetch_daily_panel(
+    source: HistoricalBarSource, symbols: Sequence[str], n_bars: int = DEFAULT_BARS
+) -> DailyPanel:
+    """Daily bars for many symbols, preferring one bulk request.
+
+    The per-symbol fallback checks `last_was_synthetic` after every call and
+    discards anything that degraded, because both real sources answer a failed
+    fetch with a seeded random walk. That is the right behaviour for a screen,
+    which should show clearly-labelled synthetic data rather than nothing, and
+    the wrong behaviour for a buffer that strategies size real orders from.
+    Reading the flag is only sound because these calls are sequential.
+    """
+    symbols = list(dict.fromkeys(symbols))
+    bulk = getattr(source, "get_daily_bars_many", None)
+    if callable(bulk):
+        frames = await bulk(symbols, n_bars)
+    else:
+        frames = {}
+        for symbol in symbols:
+            frame = await source.get_daily_bars(symbol, n_bars)
+            if getattr(source, "last_was_synthetic", False):
+                continue
+            if frame is not None and not frame.empty:
+                frames[symbol] = frame
+
+    unavailable = tuple(symbol for symbol in symbols if symbol not in frames)
+    if unavailable:
+        logger.warning(
+            "No real daily bars for %d of %d symbols - they are left unseeded rather than "
+            "filled: %s",
+            len(unavailable),
+            len(symbols),
+            ", ".join(unavailable),
+        )
+    return DailyPanel(frames=frames, unavailable=unavailable)
 
 
 class YFinanceHistoryLike(Protocol):

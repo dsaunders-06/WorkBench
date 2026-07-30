@@ -23,10 +23,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pandas as pd
 
 BAR_COLUMNS = ("ts", "open", "high", "low", "close", "volume")
+
+_DAILY_SECONDS = 86_400
+_INTRADAY_GAP_FILL_BARS = 10
 
 
 @dataclass(slots=True)
@@ -49,6 +53,18 @@ class Bar:
         }
 
 
+def as_utc(ts: Any) -> datetime:
+    """A vendor timestamp as a timezone-aware UTC datetime.
+
+    Sources disagree about both type and zone - pandas Timestamps, naive
+    datetimes, local zones - and a naive value silently compared against an
+    aware one is a crash or, worse, a bar filed under the wrong day.
+    """
+    stamp = pd.Timestamp(ts)
+    stamp = stamp.tz_localize(UTC) if stamp.tzinfo is None else stamp.tz_convert(UTC)
+    return stamp.to_pydatetime()
+
+
 def floor_to_interval(ts: datetime, interval_seconds: float) -> datetime:
     """The opening boundary of the bar this timestamp belongs to.
 
@@ -69,7 +85,7 @@ class BarAggregator:
         self,
         interval_seconds: float = 60.0,
         max_bars: int = 500,
-        max_gap_fill_bars: int = 10,
+        max_gap_fill_bars: int | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
@@ -80,9 +96,66 @@ class BarAggregator:
         # filling one would invent thousands of flat bars that never traded -
         # both wrong and ruinously expensive. Short gaps are quiet minutes and
         # get filled; long ones are treated as a new session and do not.
+        #
+        # On a daily interval there is no such thing as a quiet minute: every
+        # gap is a weekend or a holiday, so filling any of them invents days
+        # the market did not open. Friday to Monday is a two-bar gap, well
+        # inside the intraday allowance, so the default has to depend on the
+        # interval rather than being one number for both.
+        if max_gap_fill_bars is None:
+            max_gap_fill_bars = 0 if interval_seconds >= _DAILY_SECONDS else _INTRADAY_GAP_FILL_BARS
         self.max_gap_fill_bars = max_gap_fill_bars
         self._completed: list[Bar] = []
         self._forming: Bar | None = None
+
+    def seed(self, frame: pd.DataFrame, now: datetime | None = None) -> int:
+        """Loads already-closed historical bars, returning how many were kept.
+
+        The warm start (M27a) exists because every buffer in this application
+        was built from live ticks starting at zero, which left a daily-bar
+        system inert for ten weeks to three months at every process start.
+
+        Two rules make seeding safe to mix with the live path:
+
+        * It refuses once any bar exists. Seeded history must sit strictly
+          before live ticks; interleaving them would put an older bar after a
+          newer one and silently corrupt every rolling window computed from
+          the buffer.
+        * It keeps only bars whose interval has already closed. A vendor's
+          daily bar for *today* is a partial session, and admitting it would
+          leave the same day represented twice - once as a frozen completed
+          bar and again as the bar the live feed is still forming.
+        """
+        if self._completed or self._forming is not None:
+            raise RuntimeError(
+                "seed() must run before any tick: seeded history cannot be interleaved "
+                "with live bars"
+            )
+        if frame.empty:
+            return 0
+
+        current_boundary = floor_to_interval(now or datetime.now(UTC), self.interval_seconds)
+
+        # Keyed by boundary so a vendor emitting two rows inside one interval
+        # collapses to one bar rather than producing duplicate timestamps.
+        by_boundary: dict[datetime, Bar] = {}
+        columns = (frame[name] for name in BAR_COLUMNS)
+        for raw_ts, open_, high, low, close, volume in zip(*columns, strict=True):
+            boundary = floor_to_interval(as_utc(raw_ts), self.interval_seconds)
+            if boundary >= current_boundary:
+                continue
+            by_boundary[boundary] = Bar(
+                ts=boundary,
+                open=float(open_),
+                high=float(high),
+                low=float(low),
+                close=float(close),
+                volume=float(volume),
+            )
+
+        self._completed = [by_boundary[key] for key in sorted(by_boundary)]
+        self._trim()
+        return len(self._completed)
 
     def add_tick(self, ts: datetime, price: float, volume: float = 0.0) -> Bar | None:
         """Feeds one tick. Returns the bar that just *closed*, if any.
@@ -172,7 +245,7 @@ class MultiSymbolAggregator:
         self,
         interval_seconds: float = 60.0,
         max_bars: int = 500,
-        max_gap_fill_bars: int = 10,
+        max_gap_fill_bars: int | None = None,
     ) -> None:
         self.interval_seconds = interval_seconds
         self.max_bars = max_bars
@@ -181,6 +254,9 @@ class MultiSymbolAggregator:
 
     def add_tick(self, symbol: str, ts: datetime, price: float, volume: float = 0.0) -> Bar | None:
         return self.for_symbol(symbol).add_tick(ts, price, volume)
+
+    def seed(self, symbol: str, frame: pd.DataFrame, now: datetime | None = None) -> int:
+        return self.for_symbol(symbol).seed(frame, now=now)
 
     def for_symbol(self, symbol: str) -> BarAggregator:
         aggregator = self._by_symbol.get(symbol)

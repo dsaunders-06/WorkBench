@@ -7,7 +7,14 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from qat.config import Settings
-from qat.data.macro_fred import FredMacroSource, MacroFeed, MacroObservation, MockMacroSource
+from qat.data.macro_fred import (
+    FredMacroSource,
+    MacroFeed,
+    MacroHistory,
+    MacroObservation,
+    MockMacroSource,
+    load_macro_history,
+)
 from qat.domain.bus import EventBus
 from qat.domain.events import MacroEvent
 from qat.presentation import runtime
@@ -147,6 +154,52 @@ async def test_poll_loop_survives_a_failing_poll():
 
     assert received, "the poll loop died on the first failure instead of retrying"
     assert received[0].value == pytest.approx(17.5)
+
+
+def _observations(series: str, points: list[tuple[str, float]]) -> list[MacroObservation]:
+    return [
+        MacroObservation(
+            series=series,
+            ts=datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC),
+            value=value,
+        )
+        for day, value in points
+    ]
+
+
+def test_macro_history_carries_the_last_reading_forward():
+    """A series published on Friday is genuinely the market's best information
+    all weekend. Interpolating would invent a number nobody could have seen."""
+    history = MacroHistory(
+        {"VIXCLS": _observations("VIXCLS", [("2026-07-24", 14.0), ("2026-07-27", 18.21)])}
+    )
+
+    assert history.as_of("VIXCLS", datetime(2026, 7, 24, tzinfo=UTC)) == pytest.approx(14.0)
+    assert history.as_of("VIXCLS", datetime(2026, 7, 26, tzinfo=UTC)) == pytest.approx(14.0)
+    assert history.as_of("VIXCLS", datetime(2026, 7, 27, tzinfo=UTC)) == pytest.approx(18.21)
+    assert history.as_of("VIXCLS", datetime(2026, 12, 1, tzinfo=UTC)) == pytest.approx(18.21)
+
+
+def test_macro_history_never_looks_ahead():
+    """Pairing a bar from three months ago with today's VIX would be lookahead
+    of the plainest kind, and the seeded matrix is what the HMM fits on."""
+    history = MacroHistory({"VIXCLS": _observations("VIXCLS", [("2026-07-24", 14.0)])})
+
+    assert history.as_of("VIXCLS", datetime(2026, 7, 23, tzinfo=UTC)) is None
+    assert history.as_of("UNKNOWN", datetime(2026, 7, 24, tzinfo=UTC)) is None
+
+
+@pytest.mark.asyncio
+async def test_load_macro_history_seeds_with_what_it_can_fetch():
+    class _PartlyBroken:
+        async def fetch_series(self, series_id: str) -> list[MacroObservation]:
+            if series_id == "BAA10Y":
+                raise RuntimeError("FRED timed out")
+            return _observations(series_id, [("2026-07-24", 1.0)])
+
+    history = await load_macro_history(_PartlyBroken(), ["VIXCLS", "BAA10Y", "T10Y3M"])
+
+    assert set(history.series) == {"VIXCLS", "T10Y3M"}
 
 
 def test_resolve_macro_source_uses_fred_when_a_key_is_configured(monkeypatch, caplog):

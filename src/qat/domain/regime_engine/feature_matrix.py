@@ -89,6 +89,30 @@ class RegimeFeatureBuilder:
 
         self._rows.append(row)
 
+    def replace_latest_bar(
+        self, close: float, breadth_prices: dict[str, float] | None = None
+    ) -> None:
+        """Rewrites the most recent row in place.
+
+        A feature row is one bar, but ticks arrive many times inside a bar.
+        Appending per tick would put four hundred intraday rows a day into a
+        matrix seeded with daily ones, which is the timeframe mismatch M27a
+        exists to remove; freezing the row at the day's first tick would make
+        the regime blind to the session it is classifying. So the current bar's
+        row is rebuilt as its price moves, and only rolls over at the boundary.
+        """
+        if not self._rows:
+            self.add_benchmark_bar(close, breadth_prices)
+            return
+
+        length = len(self._closes)
+        self._closes.pop()
+        self._rows.pop()
+        for prices in self._breadth_panel.values():
+            if len(prices) == length:
+                prices.pop()
+        self.add_benchmark_bar(close, breadth_prices)
+
     def _current_breadth(self) -> float:
         # only symbols that have reported on every bar so far are aligned/usable
         aligned = {

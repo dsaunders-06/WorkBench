@@ -317,7 +317,50 @@ class AlpacaHistorySource:
         trimmed: pd.DataFrame = frame.tail(n_bars).reset_index(drop=True)
         return trimmed
 
+    async def get_daily_bars_many(
+        self, symbols: Sequence[str], n_bars: int = 300
+    ) -> dict[str, pd.DataFrame]:
+        """Daily bars for many symbols in one request, real data only.
+
+        The warm start needs the whole watchlist at once, and one symbol at a
+        time is not a viable way to get it: measured against this account, a
+        single symbol takes about 1.3s, so 101 of them would block startup for
+        over two minutes, where one multi-symbol request returns all of them in
+        about 3s.
+
+        This deliberately has no synthetic fallback, unlike get_daily_bars. A
+        blank screen is a reasonable degradation for a screen; seeding a live
+        trading buffer with a seeded random walk is not, and the caller can
+        only tell the difference if the missing symbols are simply absent.
+        """
+        symbols = list(dict.fromkeys(symbols))
+        if not symbols:
+            return {}
+
+        response = await self._request(symbols, n_bars)
+        if response is None:
+            return {}
+
+        by_symbol = _trades_from(response)
+        frames: dict[str, pd.DataFrame] = {}
+        for symbol in symbols:
+            bars = by_symbol.get(symbol) or []
+            if bars:
+                frames[symbol] = _bars_to_frame(bars).tail(n_bars).reset_index(drop=True)
+        return frames
+
     async def _fetch(self, symbol: str, n_bars: int) -> pd.DataFrame | None:
+        response = await self._request([symbol], n_bars)
+        if response is None:
+            return None
+
+        bars = _trades_from(response).get(symbol) or []
+        if not bars:
+            return None
+
+        return _bars_to_frame(bars)
+
+    async def _request(self, symbols: Sequence[str], n_bars: int) -> Any | None:
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
 
@@ -326,35 +369,35 @@ class AlpacaHistorySource:
         # sessions rather than n complete trading days.
         start = datetime.now(UTC) - timedelta(days=int(n_bars * 1.5) + _CALENDAR_PADDING_DAYS)
         request = StockBarsRequest(
-            symbol_or_symbols=[symbol],
+            symbol_or_symbols=list(symbols),
             timeframe=TimeFrame.Day,
             start=start,
             feed=_feed_enum(self.feed),
         )
         try:
-            response = await asyncio.to_thread(self.client.get_stock_bars, request)
+            return await asyncio.to_thread(self.client.get_stock_bars, request)
         except Exception:  # noqa: BLE001 - network, auth and entitlement all land here
-            logger.warning("Alpaca daily-bar request failed for %s", symbol, exc_info=True)
+            logger.warning(
+                "Alpaca daily-bar request failed for %d symbol(s)", len(symbols), exc_info=True
+            )
             return None
 
-        bars = _trades_from(response).get(symbol) or []
-        if not bars:
-            return None
 
-        # No gap filling. Alpaca already returns one row per trading day, so
-        # reindexing onto a calendar timeline would invent rows for weekends
-        # and holidays and drag realized volatility below true (the same bug
-        # M14 found and fixed for yfinance daily bars).
-        return pd.DataFrame(
-            [
-                {
-                    "ts": bar.timestamp,
-                    "open": float(bar.open),
-                    "high": float(bar.high),
-                    "low": float(bar.low),
-                    "close": float(bar.close),
-                    "volume": float(bar.volume),
-                }
-                for bar in bars
-            ]
-        )
+def _bars_to_frame(bars: Sequence[Any]) -> pd.DataFrame:
+    # No gap filling. Alpaca already returns one row per trading day, so
+    # reindexing onto a calendar timeline would invent rows for weekends
+    # and holidays and drag realized volatility below true (the same bug
+    # M14 found and fixed for yfinance daily bars).
+    return pd.DataFrame(
+        [
+            {
+                "ts": bar.timestamp,
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+                "volume": float(bar.volume),
+            }
+            for bar in bars
+        ]
+    )

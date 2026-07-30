@@ -84,6 +84,7 @@ from qat.domain.strategies.swing import SwingStrategy
 from qat.domain.strategies.trend_following import TrendFollowingStrategy
 from qat.domain.strategies.value import ValueStrategy
 from qat.domain.strategies.volatility import VolatilityStrategy
+from qat.domain.warm_start import WarmStart
 from qat.security import get_secret
 
 logger = logging.getLogger(__name__)
@@ -473,7 +474,26 @@ class Runtime:
         )
 
         regime_engine = RegimeEngine(
-            bus, benchmark_symbol=benchmark_symbol, breadth_symbols=watchlist
+            bus,
+            benchmark_symbol=benchmark_symbol,
+            breadth_symbols=watchlist,
+            bar_interval_seconds=settings.bar_interval_seconds,
+        )
+
+        # Seeds every rolling buffer from daily history before the feed starts
+        # (M27a). Registered first below, because BarAggregator.seed refuses to
+        # run once a live tick has been recorded. All three aggregators are
+        # seeded, not just the strategy engine's: the bridge's ATR sets the
+        # stop distance and the stop distance sets the position size, so a
+        # daily strategy sized off an unseeded buffer is a sizing bug.
+        warm_start = WarmStart(
+            history_source,
+            macro,
+            feed_symbols,
+            benchmark_symbol,
+            aggregators=(strategy_engine.bars, signal_bridge.bars, feature_engine.bars),
+            regime_engine=regime_engine,
+            macro_series=settings.fred_series,
         )
 
         anthropic_slot, local_slot = resolve_llm_engines(settings)
@@ -507,6 +527,9 @@ class Runtime:
         )
 
         for engine in (
+            # First: the orchestrator starts engines in order, and every buffer
+            # must be seeded before the feed delivers a tick into it.
+            warm_start,
             kill_switch_engine,
             risk_engine,
             equity_monitor,

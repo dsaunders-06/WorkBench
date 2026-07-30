@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import logging
 import random
+from bisect import bisect_right
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -94,6 +95,62 @@ class MockMacroSource:
                 series=series_id, ts=datetime.now(UTC), value=round(self._rng.uniform(-1, 5), 3)
             )
         ]
+
+
+class MacroHistory:
+    """Point-in-time macro lookups for the warm start (M27a).
+
+    Seeding a daily bar from three months ago with today's VIX would be
+    lookahead of the plainest kind, so each historical bar is paired with the
+    reading that was current on its own date. Values are carried forward, not
+    interpolated: a series that publishes on Friday is genuinely the market's
+    best information all weekend, where an interpolated value is a number
+    nobody could have seen.
+
+    Returns None before a series' first observation rather than guessing, so
+    the caller can leave that feature at its default instead of inventing
+    history for a period the data does not cover.
+    """
+
+    def __init__(self, observations: dict[str, Sequence[MacroObservation]]) -> None:
+        self._by_series: dict[str, tuple[list[datetime], list[float]]] = {}
+        for series, series_observations in observations.items():
+            ordered = sorted(series_observations, key=lambda obs: obs.ts)
+            self._by_series[series] = (
+                [obs.ts for obs in ordered],
+                [obs.value for obs in ordered],
+            )
+
+    @property
+    def series(self) -> tuple[str, ...]:
+        return tuple(self._by_series)
+
+    def coverage(self, series: str) -> tuple[datetime, datetime] | None:
+        timestamps, _ = self._by_series.get(series, ([], []))
+        return (timestamps[0], timestamps[-1]) if timestamps else None
+
+    def as_of(self, series: str, ts: datetime) -> float | None:
+        timestamps, values = self._by_series.get(series, ([], []))
+        if not timestamps:
+            return None
+        index = bisect_right(timestamps, ts)
+        return values[index - 1] if index else None
+
+
+async def load_macro_history(source: MacroDataSource, series_ids: Sequence[str]) -> MacroHistory:
+    """Every configured series' full history, for the warm start's as-of join.
+
+    A series that cannot be fetched is omitted rather than failing the load:
+    seeding with two of the three macro features is worse than three and much
+    better than none, and the gap is logged where the operator will see it.
+    """
+    observations: dict[str, Sequence[MacroObservation]] = {}
+    for series_id in series_ids:
+        try:
+            observations[series_id] = await source.fetch_series(series_id)
+        except Exception:  # noqa: BLE001 - seed with what is available, say what is not
+            logger.exception("Could not load macro history for %s - seeding without it", series_id)
+    return MacroHistory(observations)
 
 
 class MacroFeed:

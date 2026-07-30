@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from datetime import datetime
 
 import numpy as np
 import pandas as pd
 
+from qat.data.bars import as_utc, floor_to_interval
+from qat.data.macro_fred import MacroHistory
 from qat.domain.bus import EventBus
 from qat.domain.events import MacroEvent, MarketDataEvent, RegimeEvent
 from qat.domain.regime import Regime
@@ -54,12 +57,14 @@ class RegimeEngine:
         n_states: int = 4,
         refit_interval_bars: int = 20,
         min_fit_bars: int = 60,
+        bar_interval_seconds: float = 86_400.0,
     ) -> None:
         self.bus = bus
         self.benchmark_symbol = benchmark_symbol
         self.breadth_symbols = set(breadth_symbols)
         self.refit_interval_bars = refit_interval_bars
         self.min_fit_bars = min_fit_bars
+        self.bar_interval_seconds = bar_interval_seconds
 
         self._feature_builder = RegimeFeatureBuilder()
         self._hmm = HMMRegimeModel(n_states=n_states)
@@ -72,6 +77,7 @@ class RegimeEngine:
         self._prev_yield_curve_slope = 0.0
         self._prev_sma_200 = 0.0
         self._last_label: str | None = None
+        self._current_boundary: datetime | None = None
 
     async def start(self) -> None:
         logger.info(
@@ -90,6 +96,97 @@ class RegimeEngine:
         self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
         self.bus.unsubscribe(MacroEvent, self._on_macro)
 
+    def seed(
+        self,
+        benchmark_bars: pd.DataFrame,
+        macro: MacroHistory,
+        breadth_bars: dict[str, pd.DataFrame] | None = None,
+    ) -> int:
+        """Replays historical daily bars into the feature matrix (M27a).
+
+        Built from live ticks alone, this engine needed min_fit_bars before it
+        could classify anything - three months of daily bars, during which the
+        regime gate would be whatever StrategyEngine defaults to. Seeding is
+        what makes a daily cadence viable at all.
+
+        It replays through the same update_macro/add_benchmark_bar path the
+        live feed uses rather than constructing rows directly, so there is no
+        second implementation of a feature row that can drift from the first.
+        Each bar is paired with the macro readings that were current on its own
+        date, which is both correct and the point: paired with one constant
+        value the macro columns would not vary across rows, and a covariance
+        matrix with a constant column is the singular one that crashed the fit
+        on 28 July.
+        """
+        if self._feature_builder.feature_matrix().size:
+            raise RuntimeError("seed() must run before any bar has been recorded")
+        if benchmark_bars.empty:
+            return 0
+
+        dates = [as_utc(ts) for ts in benchmark_bars["ts"]]
+        breadth_panel = self._aligned_breadth(dates, breadth_bars or {})
+        if breadth_bars and not breadth_panel:
+            logger.warning(
+                "No breadth symbols cover every benchmark bar - the breadth feature will be "
+                "flat across the seeded history"
+            )
+
+        seeded_series: set[str] = set()
+        for index, (ts, close) in enumerate(zip(dates, benchmark_bars["close"], strict=True)):
+            for series in macro.series:
+                value = macro.as_of(series, ts)
+                if value is not None:
+                    self._feature_builder.update_macro(series, value)
+                    seeded_series.add(series)
+            prices = {symbol: closes[index] for symbol, closes in breadth_panel.items()}
+            self._benchmark_closes.append(float(close))
+            self._feature_builder.add_benchmark_bar(float(close), prices or None)
+
+        # The last seeded bar owns its boundary, so a live tick arriving inside
+        # that same day rewrites that row instead of adding a second one for a
+        # day the matrix already has.
+        self._current_boundary = floor_to_interval(dates[-1], self.bar_interval_seconds)
+
+        rows = len(self._feature_builder.feature_matrix())
+        logger.info(
+            "Regime engine seeded with %d daily bars (%s to %s), %d breadth symbols, "
+            "macro series %s. min_fit_bars=%d, so the first live bar classifies.",
+            rows,
+            dates[0].date().isoformat(),
+            dates[-1].date().isoformat(),
+            len(breadth_panel),
+            ", ".join(sorted(seeded_series)) or "none",
+            self.min_fit_bars,
+        )
+        return rows
+
+    @staticmethod
+    def _aligned_breadth(
+        dates: list[datetime], breadth_bars: dict[str, pd.DataFrame]
+    ) -> dict[str, list[float]]:
+        """Symbols with a close on every benchmark date, and only those.
+
+        RegimeFeatureBuilder only counts a breadth symbol whose price history
+        is exactly as long as the benchmark's, so a symbol with a single
+        missing day would be silently dropped from breadth for the whole run.
+        Requiring full coverage up front makes that explicit instead.
+        """
+        # Matched on the calendar date, not the raw timestamp: vendors stamp a
+        # daily bar at their own hour (Alpaca uses 04:00 UTC) and a warm start
+        # must not depend on two sources having chosen the same one.
+        wanted = [ts.date() for ts in dates]
+        aligned: dict[str, list[float]] = {}
+        for symbol, frame in breadth_bars.items():
+            if frame.empty:
+                continue
+            closes = {
+                as_utc(ts).date(): float(close)
+                for ts, close in zip(frame["ts"], frame["close"], strict=True)
+            }
+            if set(wanted) <= closes.keys():
+                aligned[symbol] = [closes[day] for day in wanted]
+        return aligned
+
     async def _on_macro(self, event: MacroEvent) -> None:
         self._feature_builder.update_macro(event.series, event.value)
 
@@ -99,10 +196,22 @@ class RegimeEngine:
         if event.symbol != self.benchmark_symbol:
             return
 
-        self._benchmark_closes.append(event.price)
+        # One row per bar, not per tick. The row for the bar in progress is
+        # rewritten as its price moves and only rolls over at the boundary, so
+        # a daily matrix gains one row a day rather than one per poll.
+        boundary = floor_to_interval(event.ts, self.bar_interval_seconds)
+        if self._current_boundary is not None and boundary < self._current_boundary:
+            return  # out of order: it belongs to a bar already classified
+
         breadth_snapshot = dict(self._breadth_latest) if self._breadth_latest else None
-        self._feature_builder.add_benchmark_bar(event.price, breadth_snapshot)
-        self._bars_since_fit += 1
+        if boundary == self._current_boundary:
+            self._benchmark_closes[-1] = event.price
+            self._feature_builder.replace_latest_bar(event.price, breadth_snapshot)
+        else:
+            self._benchmark_closes.append(event.price)
+            self._feature_builder.add_benchmark_bar(event.price, breadth_snapshot)
+            self._bars_since_fit += 1
+            self._current_boundary = boundary
 
         matrix = self._feature_builder.feature_matrix()
         if len(matrix) < self.min_fit_bars:

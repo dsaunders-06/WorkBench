@@ -9,12 +9,15 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
+import pandas as pd
 import pytest
 
+from qat.data.macro_fred import MacroHistory, MacroObservation
 from qat.domain.bus import EventBus
 from qat.domain.events import MacroEvent, MarketDataEvent, RegimeEvent
 from qat.domain.regime import Regime
 from qat.domain.regime_engine.engine import RegimeEngine
+from qat.domain.regime_engine.feature_matrix import FEATURE_NAMES
 
 _ENGINE_LOGGER = "qat.domain.regime_engine.engine"
 
@@ -267,3 +270,183 @@ async def test_a_failed_fit_is_reported_and_publishes_nothing(caplog):
     assert "fit FAILED" in errors[0].getMessage()
     # The spread per feature is what identifies which column caused it.
     assert "log_return=" in errors[0].getMessage()
+
+
+# --- Warm-start seeding (M27a) --------------------------------------------
+
+
+def _daily_bars(days: int, seed: int = 11, start_price: float = 500.0) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    first = datetime(2026, 1, 2, 4, 0, tzinfo=UTC)  # Alpaca stamps daily bars at 04:00 UTC
+    rows = []
+    price = start_price
+    for i in range(days):
+        price *= 1 + rng.normal(0.0005, 0.01)
+        rows.append(
+            {
+                "ts": first + timedelta(days=i),
+                "open": price * 0.995,
+                "high": price * 1.01,
+                "low": price * 0.99,
+                "close": price,
+                "volume": 1_000_000.0,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _macro_history(days: int) -> MacroHistory:
+    """Real FRED shape: a daily reading per series that actually moves."""
+    rng = np.random.default_rng(3)
+    first = datetime(2026, 1, 1, tzinfo=UTC)
+    observations = {}
+    for series, level, scale in (
+        ("VIXCLS", 18.0, 1.5),
+        ("T10Y3M", 0.84, 0.05),
+        ("BAA10Y", 1.62, 0.03),
+    ):
+        observations[series] = [
+            MacroObservation(
+                series=series,
+                ts=first + timedelta(days=i),
+                value=float(level + rng.normal(0, scale)),
+            )
+            for i in range(days)
+        ]
+    return MacroHistory(observations)
+
+
+def test_seeding_makes_the_macro_columns_vary_across_rows():
+    """The point of the as-of join. Paired with one constant value the three
+    macro columns do not move, and a constant column is the singular covariance
+    matrix that crashed the fit on 28 July."""
+    engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
+
+    rows = engine.seed(_daily_bars(300), _macro_history(400))
+
+    assert rows == 300
+    matrix = engine._feature_builder.feature_matrix()
+    for column in ("vix_level", "yield_curve_slope", "credit_spread"):
+        index = FEATURE_NAMES.index(column)
+        assert matrix[:, index].max() > matrix[:, index].min(), f"{column} never moved"
+
+
+def test_seeding_pairs_each_bar_with_the_reading_current_on_its_own_date():
+    engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
+    bars = _daily_bars(3)
+    history = MacroHistory(
+        {
+            "VIXCLS": [
+                MacroObservation(series="VIXCLS", ts=datetime(2026, 1, 2, tzinfo=UTC), value=14.0),
+                MacroObservation(series="VIXCLS", ts=datetime(2026, 1, 4, tzinfo=UTC), value=25.0),
+            ]
+        }
+    )
+
+    engine.seed(bars, history)
+
+    vix = engine._feature_builder.feature_matrix()[:, FEATURE_NAMES.index("vix_level")]
+    # Bars are 2, 3 and 4 January: the 3rd carries the 2nd's reading forward,
+    # and no bar sees a value published after it.
+    assert list(vix) == [14.0, 14.0, 25.0]
+
+
+@pytest.mark.asyncio
+async def test_a_seeded_engine_classifies_on_the_first_live_bar():
+    """Unseeded, a daily-bar regime engine needs min_fit_bars of *sessions* -
+    about three months - before it can publish anything at all."""
+    bus = EventBus()
+    received: list[RegimeEvent] = []
+
+    async def handler(event: RegimeEvent) -> None:
+        received.append(event)
+
+    bus.subscribe(RegimeEvent, handler)
+    engine = RegimeEngine(bus, benchmark_symbol="SPY")
+    bars = _daily_bars(300)
+    engine.seed(bars, _macro_history(400))
+
+    next_day = pd.Timestamp(bars["ts"].iloc[-1]).to_pydatetime() + timedelta(days=1)
+    await engine.start()
+    await bus.publish(MarketDataEvent(symbol="SPY", price=505.0, volume=1e6, ts=next_day))
+    await engine.stop()
+
+    assert len(received) == 1
+    assert received[0].label in {regime.value for regime in Regime}
+
+
+def test_breadth_is_seeded_only_from_symbols_covering_every_benchmark_date():
+    """RegimeFeatureBuilder silently ignores a breadth symbol whose history is
+    not exactly as long as the benchmark's, so a symbol short one day would
+    vanish from breadth for the whole run."""
+    engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
+    bars = _daily_bars(80)
+
+    engine.seed(
+        bars,
+        _macro_history(200),
+        {
+            "AAPL": _daily_bars(80, seed=2),
+            "MSFT": _daily_bars(80, seed=4),
+            "SHORT": _daily_bars(40),
+        },
+    )
+
+    breadth = engine._feature_builder.feature_matrix()[:, FEATURE_NAMES.index("breadth")]
+    assert breadth.max() > breadth.min(), "breadth never moved despite two aligned symbols"
+
+
+@pytest.mark.asyncio
+async def test_a_session_of_ticks_adds_one_row_not_one_per_tick():
+    """Otherwise the seeding is pointless: 390 intraday rows a day would swamp
+    300 seeded daily ones inside a single session, restoring the very
+    timeframe mismatch M27a exists to remove."""
+    engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
+    bars = _daily_bars(120)
+    engine.seed(bars, _macro_history(200))
+    before = len(engine._feature_builder.feature_matrix())
+
+    day = pd.Timestamp(bars["ts"].iloc[-1]).to_pydatetime() + timedelta(days=1, hours=9)
+    for minute in range(390):
+        await engine._on_market_data(
+            MarketDataEvent(
+                symbol="SPY",
+                price=500.0 + minute * 0.01,
+                volume=1e6,
+                ts=day + timedelta(minutes=minute),
+            )
+        )
+
+    matrix = engine._feature_builder.feature_matrix()
+    assert len(matrix) == before + 1
+    # The row tracks the session rather than freezing at its first tick.
+    assert engine._benchmark_closes[-1] == pytest.approx(500.0 + 389 * 0.01)
+
+
+@pytest.mark.asyncio
+async def test_a_tick_inside_the_last_seeded_day_does_not_add_a_row():
+    engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
+    bars = _daily_bars(120)
+    engine.seed(bars, _macro_history(200))
+    before = len(engine._feature_builder.feature_matrix())
+
+    last_day = pd.Timestamp(bars["ts"].iloc[-1]).to_pydatetime()
+    await engine._on_market_data(
+        MarketDataEvent(symbol="SPY", price=999.0, volume=1e6, ts=last_day + timedelta(hours=10))
+    )
+
+    assert len(engine._feature_builder.feature_matrix()) == before
+    assert engine._benchmark_closes[-1] == pytest.approx(999.0)
+
+
+@pytest.mark.asyncio
+async def test_seeding_refuses_after_a_bar_has_been_recorded():
+    """Seeded rows appended after live ones would place months-old history
+    after today, and the HMM fits the sequence in order."""
+    engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
+    await engine._on_market_data(
+        MarketDataEvent(symbol="SPY", price=500.0, volume=1.0, ts=datetime.now(UTC))
+    )
+
+    with pytest.raises(RuntimeError, match="before any bar"):
+        engine.seed(_daily_bars(10), _macro_history(20))
