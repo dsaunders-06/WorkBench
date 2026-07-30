@@ -12,6 +12,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 
 from qat.config import Settings
+from qat.domain.strategies.swing import SwingStrategy
 from qat.presentation.main_window import MainWindow
 from qat.presentation.risk_console import RiskConsoleScreen
 from qat.presentation.runtime import Runtime
@@ -21,6 +22,10 @@ def _window(qtbot) -> MainWindow:
     runtime = Runtime.build_demo(
         settings=Settings(_env_file=None, execution_mode="auto", autonomous_strategies="swing")
     )
+    # A strategy is deployed because these tests are about what the banner says
+    # when something happens to an app that CAN trade. With an empty deployed
+    # set the banner correctly reports that nothing can (M27b).
+    runtime.strategy_engine.deploy(SwingStrategy())
     window = MainWindow(runtime)
     qtbot.addWidget(window)
     return window

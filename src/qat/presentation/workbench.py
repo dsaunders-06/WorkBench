@@ -241,8 +241,7 @@ class WorkbenchScreen(QWidget):
         )
         if strategy is None:
             return
-        if strategy not in self.runtime.strategy_engine.strategies:
-            self.runtime.strategy_engine.strategies.append(strategy)
+        self.runtime.strategy_engine.deploy(strategy)
         self.deploy_button.setText(f"Deployed: {strategy_name} ✓")
         self.deploy_button.setEnabled(False)
 

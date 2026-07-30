@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Protocol
 
 from qat.data.bars import MultiSymbolAggregator
@@ -79,13 +79,73 @@ class StrategyEngine:
         # afterwards from a blank field on screen.
         self._regime_is_real = False
         self._warned_about_default = False
+        self._deployment_listeners: list[Callable[[], None]] = []
         # Whether signals actually leave this engine (M19). SessionController
         # clears it outside market hours; ticks are still recorded so the
         # buffer is warm at the next open. True by default, so an engine built
         # without a controller behaves exactly as it always did.
         self.emitting = True
 
+    def add_deployment_listener(self, listener: Callable[[], None]) -> None:
+        """Called synchronously whenever the deployed set changes.
+
+        A plain callback rather than a bus event, matching KillSwitch: views of
+        this set were previously reading a plain list and could not be told
+        when it changed.
+        """
+        self._deployment_listeners.append(listener)
+
+    def deploy(self, strategy: Strategy) -> None:
+        """Adds a strategy to the live set, saying so.
+
+        Deployment is the switch that decides whether *anything* can trade, and
+        until M27b it was a bare `.append()` onto a public list: nothing logged
+        it, nothing persisted it, and nothing displayed it. A session left
+        running overnight with an empty set produced no signals for a reason
+        that could not be established afterwards from any record - it was
+        indistinguishable from a session where every strategy ran and found no
+        setup.
+        """
+        if strategy in self.strategies:
+            return
+        self.strategies.append(strategy)
+        logger.info(
+            "DEPLOYED %s - now live: %s", strategy.name, ", ".join(s.name for s in self.strategies)
+        )
+        self._notify_deployment()
+
+    def undeploy(self, strategy: Strategy) -> None:
+        if strategy not in self.strategies:
+            return
+        self.strategies.remove(strategy)
+        logger.info(
+            "UNDEPLOYED %s - now live: %s",
+            strategy.name,
+            ", ".join(s.name for s in self.strategies) or "nothing",
+        )
+        self._notify_deployment()
+
+    def _notify_deployment(self) -> None:
+        for listener in self._deployment_listeners:
+            try:
+                listener()
+            except Exception:  # noqa: BLE001 - a bad listener must not break deployment
+                logger.exception("A deployment listener failed")
+
     async def start(self) -> None:
+        if self.strategies:
+            logger.info("Deployed strategies: %s", ", ".join(s.name for s in self.strategies))
+        else:
+            # Correct by design (spec §K: nothing trades until a human vets it
+            # via the Workbench), and still worth a warning: it means no signal
+            # can be produced by any code path, and the deployed set does not
+            # survive a restart, so an unattended session inherits nothing from
+            # the last one.
+            logger.warning(
+                "NO STRATEGY IS DEPLOYED - no signal can be generated and nothing can trade "
+                "until one is deployed from the Workbench. The deployed set is not persisted, "
+                "so it is empty at every startup"
+            )
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(RegimeEvent, self._on_regime)
 

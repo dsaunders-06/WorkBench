@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt
 
 from qat.config import Settings
 from qat.domain.events import KillSwitchEvent
+from qat.domain.strategies.swing import SwingStrategy
 from qat.presentation.main_window import MainWindow
 from qat.presentation.runtime import Runtime
 from qat.presentation.settings import (
@@ -24,7 +25,12 @@ from qat.presentation.settings import (
 def _runtime(**overrides) -> Runtime:
     base = {"_env_file": None}
     base.update(overrides)
-    return Runtime.build_demo(settings=Settings(**base))  # type: ignore[arg-type]
+    runtime = Runtime.build_demo(settings=Settings(**base))  # type: ignore[arg-type]
+    # These tests are about what the banner says when something happens to an
+    # app that CAN trade. With an empty deployed set the banner correctly
+    # reports that nothing can (M27b).
+    runtime.strategy_engine.deploy(SwingStrategy())
+    return runtime
 
 
 # --- Settings screen ----------------------------------------------------------

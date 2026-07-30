@@ -65,6 +65,9 @@ class MainWindow(QMainWindow):
         runtime.kill_switch.add_listener(self._refresh_execution_banner)
         runtime.bus.subscribe(MarketDataFeedEvent, self._on_feed_health)
         runtime.bus.subscribe(RegimeHealthEvent, self._on_regime_health)
+        # Deploying from the Workbench must clear the banner immediately, not
+        # at whatever the next unrelated repaint happens to be.
+        runtime.strategy_engine.add_deployment_listener(self._refresh_execution_banner)
 
         tabs = QTabWidget()
         tabs.addTab(DashboardScreen(runtime), "Dashboard")
@@ -136,6 +139,22 @@ class MainWindow(QMainWindow):
             self.execution_banner.setText(
                 f"REGIME ENGINE DOWN - {self._regime_down_reason}; strategies gated on the "
                 f"{self.runtime.strategy_engine.default_regime.value} default"
+            )
+            self.execution_banner.setStyleSheet(_FEED_DOWN_STYLE)
+            return
+
+        # Nothing deployed means no signal can be produced by any path, so a
+        # banner promising that orders will self-sign is promising something
+        # that cannot happen. The overnight session of 30 July ran to a flat
+        # account under AUTO-TRADE ACTIVE, and the record could not afterwards
+        # distinguish "gated off by the regime" from "nothing was ever
+        # deployed". Stated here rather than as a separate banner rank,
+        # because an empty set is the designed startup state (spec §K) and
+        # only becomes a contradiction when the banner over-claims.
+        if not self.runtime.strategy_engine.strategies:
+            self.execution_banner.setText(
+                "NO STRATEGY DEPLOYED - nothing can trade until one is deployed from the "
+                "Strategy Workbench"
             )
             self.execution_banner.setStyleSheet(_FEED_DOWN_STYLE)
             return

@@ -153,7 +153,49 @@ the only promoted strategy was eligible about one session in sixteen and the
 zero-signal sessions were the ordinary case, not an anomaly. Now Sideways,
 Bull, Low-Vol and Recovery; Bear, High-Vol and Recession stay excluded.
 
+### Session of 30 July - M27a ran perfectly and still did not trade
+
+The machinery did everything it was built to do. 101 symbols and 300 daily
+bars seeded in **3 seconds**; the regime classified at **23:30:04**, four
+seconds after the open, against three months cold; session control opened and
+closed on the minute; **zero errors** all night; REGIME ENGINE DOWN never
+fired. The M27b flapping fear did not materialise - one classification, stable
+all session. Note that with daily bars `refit_interval_bars = 20` now means
+every 20 *days*, so the model refits roughly monthly.
+
+And the account did not trade, for the third session running and a third
+distinct reason. Two candidates, which **the record could not distinguish** -
+which is itself the defect:
+
+1. The regime came out `high_vol`, one of the three deliberately excluded from
+   Swing. At the measured frequencies that is ~25% of days; with bear, Swing is
+   gated off about half the time even after the widening.
+2. **The deployed strategy set is not persisted and was never logged.** It
+   starts empty at every launch (spec §K) and only a manual Workbench click
+   fills it. If nothing was deployed, no strategy was evaluated at all and the
+   regime is irrelevant.
+
+**Fixed 31 July:** the engine names its deployed set at startup and warns when
+it is empty, deployment and undeployment are logged through `deploy()` /
+`undeploy()` rather than a bare `.append()`, and the banner reads **NO STRATEGY
+DEPLOYED** instead of AUTO-TRADE ACTIVE - which is what it claimed all night
+while nothing could trade.
+
+**Still open: should the deployed set survive a restart?** It changes
+behaviour, so it is a decision rather than a fix. Today an unattended session
+inherits nothing from the last one.
+
 ### M27b - The regime label is not a stable function of the input  **[NEW]**
+
+**Sharpened by the 30 July session.** The classification that gated Swing off
+all night was `high_vol=0.31, bull=0.29, recovery=0.20`. Swing is eligible
+under both `bull` and `recovery`, so **0.49 of the probability mass sat in
+regimes where it could trade against 0.31 where it could not** - and a 0.02
+difference between the top two decided the day. The gate takes the argmax of a
+nearly flat distribution and treats it as certainty.
+
+Gating on probability mass across a strategy's suitable regimes, rather than on
+the argmax label, now looks more important than the refit instability below.
 
 Three replays over the same 300 days of real data produced three different
 current labels - `recovery`, `high_vol`, `low_vol` - differing only in when the
