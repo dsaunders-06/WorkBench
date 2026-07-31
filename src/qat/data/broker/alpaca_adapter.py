@@ -142,6 +142,29 @@ class AlpacaAdapter:
             for pos in raw
         ]
 
+    async def resting_stops(self) -> dict[str, float]:
+        """Stop orders actually working at the broker, by symbol (M31b).
+
+        The app keeps its own record of the stops it attached, and on 31 July
+        that record was wrong for six positions: the brackets were submitted
+        DAY, their take-profit legs expired at the close, and Alpaca cancelled
+        the paired stops with them. Nothing noticed, because reconciliation
+        compares filled quantities and an expired protective leg changes none.
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        request = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
+        orders = await asyncio.to_thread(self._client.get_orders, filter=request)
+        resting: dict[str, float] = {}
+        for order in orders:
+            order_type = str(getattr(order, "order_type", "")).lower()
+            side = str(getattr(order, "side", "")).lower()
+            stop = getattr(order, "stop_price", None)
+            if "stop" in order_type and "sell" in side and stop is not None:
+                resting[str(order.symbol)] = float(stop)
+        return resting
+
     # --- orders -------------------------------------------------------------
 
     async def place_order(self, order: Order) -> Order:

@@ -10,7 +10,9 @@ settings since M27 and were read by nothing at all.
 
 from __future__ import annotations
 
+import tempfile
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -41,7 +43,10 @@ class _Broker(MockBroker):
 
 
 def _bridge(broker: _Broker, **overrides) -> SignalToOrderBridge:
-    base = {"_env_file": None}
+    # Its own data dir: the bridge persists entry dates (M31b), and the
+    # session-scoped isolate_data_dir fixture is shared by every test, so
+    # without this one test's open positions would be another's.
+    base = {"_env_file": None, "data_dir": tempfile.mkdtemp()}
     base.update(overrides)
     settings = Settings(**base)  # type: ignore[arg-type]
     bus = EventBus()
@@ -175,3 +180,58 @@ async def test_the_turnover_budget_blocks_a_further_entry():
     )
 
     assert not broker._orders, "the budget must stop the order before it is built"
+
+
+# --- Entry dates survive a restart (M31b/4) --------------------------------
+
+
+@pytest.mark.asyncio
+async def test_entry_dates_survive_a_restart():
+    """Rebuilt only from live fills, the record was empty after every restart -
+    and both churn rails treat an unknown entry as "never applies", so a
+    restart silently disarmed them on everything already held."""
+    data_dir = tempfile.mkdtemp()
+    broker = _Broker()
+    first = _bridge(broker, data_dir=data_dir, min_holding_trading_days=10)
+    await _opened(first, days_ago=2)
+
+    # A new process, same data directory.
+    second = _bridge(_Broker(), data_dir=data_dir, min_holding_trading_days=10)
+
+    assert "AAA" in second._entries
+    assert second._blocked_by_minimum_hold("AAA", price=100.0) is True
+
+
+@pytest.mark.asyncio
+async def test_a_closed_position_is_forgotten_across_a_restart():
+    data_dir = tempfile.mkdtemp()
+    broker = _Broker()
+    first = _bridge(broker, data_dir=data_dir)
+    await _opened(first, days_ago=2)
+    await first._on_fill(
+        OrderFilledEvent(
+            order_id="o2",
+            symbol="AAA",
+            side="sell",
+            quantity=100.0,
+            price=101.0,
+            strategy="swing",
+            stop_price=None,
+            ts=_NOW,
+        )
+    )
+
+    second = _bridge(_Broker(), data_dir=data_dir)
+
+    assert "AAA" not in second._entries
+
+
+def test_an_unreadable_entries_file_is_not_fatal():
+    """A first run, or a corrupted file, must read as "no known entries" - the
+    pre-M31b behaviour - not as a startup failure."""
+    data_dir = tempfile.mkdtemp()
+    (Path(data_dir) / "open_position_entries.json").write_text("{not json", encoding="utf-8")
+
+    bridge = _bridge(_Broker(), data_dir=data_dir)
+
+    assert bridge._entries == {}

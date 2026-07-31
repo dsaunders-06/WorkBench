@@ -59,6 +59,9 @@ class MockBroker:
             self._resting_targets.pop(order.symbol, None)
         return order
 
+    async def resting_stops(self) -> dict[str, float]:
+        return {s: v for s, v in self._resting_stops.items() if v is not None}
+
     def resting_stop(self, symbol: str) -> float | None:
         """The protective stop currently resting at the broker, if any."""
         return self._resting_stops.get(symbol)

@@ -462,6 +462,53 @@ class OMS:
         """
         return dict(self._position_stops)
 
+    async def verify_position_stops(self) -> list[str]:
+        """Checks that the stops this app believes in are actually resting (M31b).
+
+        `_position_stops` is a belief, and the portfolio governor sizes new
+        positions against it: a position with a known stop risks only the
+        distance to that stop, one without risks its entire value. So a stop
+        that has quietly stopped existing makes the whole book look safer than
+        it is.
+
+        On 31 July that happened to six positions at once. The brackets were
+        submitted DAY, their take-profit legs expired at the close, and Alpaca
+        cancelled the paired stops with them. Reconciliation saw nothing,
+        because it compares FILLED QUANTITIES and an expired protective leg
+        changes none of them.
+
+        Unprotected positions are dropped from the record rather than kept,
+        so the governor falls back to treating them as fully at risk - the
+        existing "unknown protection is no protection" rule, now reached by
+        evidence instead of assumption. Returns the symbols that lost a stop.
+
+        A broker that cannot answer returns nothing, and nothing is changed:
+        an adapter without the capability must not be read as "no stops rest
+        anywhere", which would drop every stop the app holds.
+        """
+        resting_source = getattr(self.broker, "resting_stops", None)
+        if resting_source is None:
+            return []
+        resting = await resting_source()
+        if not resting and not self._position_stops:
+            return []
+
+        held = {pos.symbol for pos in await self.broker.positions() if abs(pos.quantity) > 0}
+        lost = [
+            symbol
+            for symbol in list(self._position_stops)
+            if symbol in held and symbol not in resting
+        ]
+        for symbol in lost:
+            self._position_stops.pop(symbol, None)
+        if lost:
+            logger.error(
+                "POSITION UNPROTECTED: %s held with no stop resting at the broker. The stop "
+                "this app recorded is gone, so these now count their full value as at risk",
+                ", ".join(sorted(lost)),
+            )
+        return lost
+
     async def check_reconciliation(self) -> bool:
         """Compares OMS-tracked filled quantities against broker-reported
         positions; a mismatch trips the kill-switch (spec §I). Returns True
@@ -470,6 +517,9 @@ class OMS:
         Call adopt_broker_positions() once at startup first, or an account with
         any pre-existing holding reads as a mismatch immediately.
         """
+        # Protection is checked alongside quantity, because they fail in
+        # different ways and only one of them was ever being watched.
+        await self.verify_position_stops()
         broker_positions = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
         symbols = set(self._filled_quantities) | set(broker_positions)
         divergent = {

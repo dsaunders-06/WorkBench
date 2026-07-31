@@ -8,6 +8,7 @@ never consulted positions, so "sell" fired for symbols with no holding.
 
 from __future__ import annotations
 
+import tempfile
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -31,7 +32,7 @@ def _build(**settings_kwargs: object) -> tuple[SignalToOrderBridge, OMS, MockBro
     # brackets and bridge policy, so they opt out of the rail rather than
     # inflate every number to an economically realistic one.
     settings_kwargs.setdefault("apply_costs_in_paper", False)
-    settings = Settings(_env_file=None, **settings_kwargs)  # type: ignore[arg-type]
+    settings = Settings(_env_file=None, data_dir=tempfile.mkdtemp(), **settings_kwargs)  # type: ignore[arg-type]
     bus = EventBus()
     switch = KillSwitch()
     risk_engine = RiskEngine(bus, switch, settings=settings)

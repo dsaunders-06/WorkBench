@@ -45,7 +45,7 @@ The test: *would this change which trades happen?* If yes, it waits.
 Looking for *does the pipeline move*, not *did it make money*. At these sample
 sizes P&L is noise.
 
-## M31b - What the first trading session found  **[4 of 6 done]**
+## M31b - What the first trading session found  **[COMPLETE]**
 
 The session of 31 July filled **six positions** - CSCO 44, UNP 17, WFC 58,
 CRWD 16, JNJ 19, CVS 47 - all whole shares, no broker refusals, through every
@@ -60,7 +60,7 @@ all. A stop whose purpose is to outlive the application must outlive the
 session: bracketed entries are now GTC. Plain orders stay DAY, so an unfilled
 market order does not linger into the next session at a price nobody chose.
 
-**2. Nothing reconciles stops against the broker.** `OMS._position_stops` still
+**2. Nothing reconciles stops against the broker. [DONE]** `OMS._position_stops` still
 holds stops the app believes are resting at Alpaca, and the governor computes
 risk-at-stop from them - so after the expiry above it thinks the book is safer
 than it is. Reconciliation compares FILLED QUANTITIES only, which is why it
@@ -75,7 +75,7 @@ symbol stays suppressed because the bridge skips anything in
 `pending_signoff_symbols()`. It cost three manual reject cycles on 30 July and
 one position (PANW, 10 shares, blocked 15:39 in the Midday Lull) on the 31st.
 
-**4. Entry times are not persisted.** `SignalToOrderBridge._entries` is built
+**4. Entry times are not persisted. [DONE]** `SignalToOrderBridge._entries` is built
 only from live fill events, so a restart leaves open positions with no known
 entry date - and the minimum hold and time stop both treat an unknown entry as
 "never applies". A restart silently disarms the churn rails on everything
@@ -94,11 +94,15 @@ event. Suppressed per symbol: an identical outcome-and-reason pair is written on
 and any change either way is always written, so the journal still shows when a
 refusal started and when it stopped.
 
-**Remaining: 2 (stop reconciliation) and 4 (persist entry times).** Both are
-about app-side belief diverging from broker reality, which is the same root as
-the phantom `transmitted` status and the expired brackets. 2 is the more
-urgent - the governor sizes new positions against protection it only believes
-is resting.
+**All six landed 1 August.** `OMS.verify_position_stops` now asks the broker
+which stops are actually working and drops any it cannot find, so an
+unprotected position falls back to counting its full value at risk rather than
+looking safe. Entry dates are written to `open_position_entries.json` on every
+fill, so a restart no longer disarms the churn rails.
+
+A broker that cannot answer `resting_stops` changes nothing: an adapter without
+the capability must not be read as "no stops rest anywhere", which would drop
+every stop the app holds.
 
 ## The stack
 

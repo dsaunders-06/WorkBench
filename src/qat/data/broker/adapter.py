@@ -164,3 +164,9 @@ class BrokerAdapter(Protocol):
     # answer more than the three core figures need not implement it - callers
     # fall back to balances_from_summary().
     async def balances(self) -> AccountBalances: ...
+
+    # Optional (M31b): protective orders actually resting at the broker, so the
+    # app can verify its own belief rather than assume it. Adapters that cannot
+    # answer return an empty tuple, which reads as "unknown" rather than
+    # "none" - see OMS.verify_position_stops.
+    async def resting_stops(self) -> dict[str, float]: ...

@@ -27,3 +27,7 @@ class AlpacaClientProtocol(Protocol):
     def cancel_order_by_id(self, order_id: str) -> None: ...
 
     def get_order_by_id(self, order_id: str) -> Any: ...
+
+    # Used to verify that protective stops are actually resting (M31b), rather
+    # than trusting the app's own record of what it attached.
+    def get_orders(self, filter: Any = None) -> Any: ...  # noqa: A002 - alpaca-py's name

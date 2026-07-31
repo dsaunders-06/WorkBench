@@ -28,9 +28,11 @@ maintain historical return series for already-held positions.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 
 import pandas as pd
@@ -45,6 +47,8 @@ from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import OrderCandidate
 
 logger = logging.getLogger(__name__)
+
+_ENTRIES_FILENAME = "open_position_entries.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,8 +113,12 @@ class SignalToOrderBridge:
         self.bars = MultiSymbolAggregator(
             interval_seconds=bar_interval_seconds, max_bars=max_history
         )
-        # Churn control state (M31).
-        self._entries: dict[str, _Entry] = {}
+        # Churn control state (M31), persisted since M31b. Rebuilt only from
+        # live fill events, it was empty after every restart - and the minimum
+        # hold and time stop both treat an unknown entry as "never applies", so
+        # a restart silently disarmed both rails on everything already held.
+        self._entries_path = Path(self.settings.data_dir) / _ENTRIES_FILENAME
+        self._entries: dict[str, _Entry] = self._load_entries()
         self._entry_times: list[datetime] = []
         self._time_stopped: set[str] = set()
         self._hold_blocked: set[str] = set()
@@ -142,6 +150,56 @@ class SignalToOrderBridge:
         else:
             self._entries.pop(event.symbol, None)
             self._time_stopped.discard(event.symbol)
+        self._save_entries()
+
+    def _load_entries(self) -> dict[str, _Entry]:
+        """Entry dates for positions this app already holds.
+
+        A missing or unreadable file is not an error - it is a first run, or a
+        machine where the previous session never opened anything. It reads as
+        "no known entries", which is exactly the pre-M31b behaviour.
+        """
+        try:
+            raw = json.loads(self._entries_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        entries: dict[str, _Entry] = {}
+        for symbol, row in raw.items():
+            try:
+                entries[symbol] = _Entry(
+                    opened_at=datetime.fromisoformat(row["opened_at"]),
+                    price=float(row["price"]),
+                    stop_price=(
+                        float(row["stop_price"]) if row.get("stop_price") is not None else None
+                    ),
+                )
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Ignoring an unreadable entry record for %s", symbol)
+        if entries:
+            logger.info(
+                "Restored entry dates for %d held position(s): %s",
+                len(entries),
+                ", ".join(sorted(entries)),
+            )
+        return entries
+
+    def _save_entries(self) -> None:
+        """Written on every change rather than at shutdown: a process that is
+        killed never gets to run a shutdown hook, and this file exists
+        precisely for the restart that was not planned."""
+        payload = {
+            symbol: {
+                "opened_at": entry.opened_at.isoformat(),
+                "price": entry.price,
+                "stop_price": entry.stop_price,
+            }
+            for symbol, entry in self._entries.items()
+        }
+        try:
+            self._entries_path.parent.mkdir(parents=True, exist_ok=True)
+            self._entries_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            logger.exception("Could not persist position entry dates")
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
         self.bars.add_tick(event.symbol, event.ts, event.price, event.volume)

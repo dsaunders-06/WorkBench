@@ -17,6 +17,8 @@ fails here rather than in a live session.
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 import pytest
 
@@ -130,3 +132,52 @@ async def test_a_broker_refusal_never_leaves_an_order_looking_live():
     assert signed.status == "rejected", "a refused order must not read as transmitted"
     stored = next(o for o in oms.orders() if o.order_id == order.order_id)
     assert stored.status == "rejected"
+
+
+# --- Stops are verified, not assumed (M31b/2) ------------------------------
+
+
+class _BrokerWithStops(_AlpacaLikeBroker):
+    def __init__(self, held: dict[str, float], resting: dict[str, float]) -> None:
+        super().__init__()
+        self._held = held
+        self._resting = resting
+
+    async def positions(self) -> list[Position]:
+        return [Position(symbol=s, quantity=q, avg_price=100.0) for s, q in self._held.items()]
+
+    async def resting_stops(self) -> dict[str, float]:
+        return dict(self._resting)
+
+
+@pytest.mark.asyncio
+async def test_a_stop_that_is_no_longer_resting_is_dropped_from_the_record(caplog):
+    """On 31 July six positions lost their stops when the bracket legs expired
+    at the close, and nothing noticed: reconciliation compares FILLED
+    QUANTITIES, which an expired protective leg does not change. The governor
+    kept sizing new positions as though the book were protected."""
+    broker = _BrokerWithStops(held={"CSCO": 44.0, "UNP": 17.0}, resting={"CSCO": 110.0})
+    oms = _oms(broker)
+    oms._position_stops = {"CSCO": 110.0, "UNP": 280.0}
+
+    with caplog.at_level(logging.ERROR, logger="qat.domain.oms.oms"):
+        lost = await oms.verify_position_stops()
+
+    assert lost == ["UNP"]
+    assert "UNP" not in oms.position_stops(), "an unprotected position must not look protected"
+    assert oms.position_stops()["CSCO"] == 110.0
+    assert "POSITION UNPROTECTED" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_a_broker_that_cannot_answer_changes_nothing():
+    """An adapter without the capability must not read as "no stops rest
+    anywhere", which would drop every stop the app holds."""
+    broker = _AlpacaLikeBroker()  # no resting_stops attribute
+    oms = _oms(broker)
+    oms._position_stops = {"CSCO": 110.0}
+
+    lost = await oms.verify_position_stops()
+
+    assert lost == []
+    assert oms.position_stops() == {"CSCO": 110.0}
