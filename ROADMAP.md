@@ -132,6 +132,28 @@ the close took the paired stop with it - the exact failure M31b diagnosed,
 now caught in the act. The GTC fix shipped in M31a protects new entries and
 cannot resurrect these.
 
+**Re-arming. [DONE]** Every stop this system ever placed rode in as a bracket
+leg on an entry, so a position whose legs died had no way to get another one.
+`OMS.submit_protective_stop` places a standalone GTC stop on a position
+already held, and `SignalToOrderBridge.rearm_protective_stops` proposes one at
+startup for each held position the broker is not protecting.
+
+The level comes from the recorded entry stop, not from an ATR recomputed now:
+the risk budget was spent on the distance the position was SIZED against, so
+protecting it at any other distance protects an amount nobody approved. A
+position with no recorded entry stop gets nothing and is logged - an invented
+level would look identical to a real one on every screen in the app.
+
+Two ways this order could have made things worse than the exposure it repairs,
+both guarded: submitted as a market sell it liquidates the position, and
+counted as a fill it halves the tracked quantity against a broker still
+holding all of it - which reconciliation reads as a discrepancy and answers by
+tripping the kill-switch, on the very order sent to make the book safer.
+
+They are proposed, not transmitted. Reducing risk is an argument for letting
+an order through unattended and not an argument for bypassing the gate: a stop
+still sells shares when it is reached.
+
 ## M31c - The Performance tab showed the launch, not the present
 
 Three observations on 1 August - the Closed Trades table empty, no daily report

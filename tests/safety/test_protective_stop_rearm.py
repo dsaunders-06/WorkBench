@@ -1,0 +1,225 @@
+"""Re-arming a position whose protective stop is gone (M31d).
+
+Every stop this system placed before M31d rode in as a bracket leg on an
+entry, so there was no way to put one back on a position already held. On
+1 August all six holdings were in exactly that state: the entries filled with
+brackets attached, the take-profit legs expired at Friday's close, and Alpaca
+cancelled the paired stops with them as OCO does.
+
+The two failures guarded here are both ways a "protective" order could make
+things worse than the exposure it was sent to fix:
+
+* Submitted as a market sell, it liquidates the position it was meant to
+  protect.
+* Counted as a fill, it halves the tracked quantity against a broker that
+  still holds the whole position - and reconciliation reads that as a
+  discrepancy and trips the kill-switch.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from qat.config import Settings
+from qat.data.broker.adapter import Order, Position
+from qat.data.broker.mock_broker import MockBroker
+from qat.domain.bus import EventBus
+from qat.domain.oms.oms import OMS
+from qat.domain.risk_engine.engine import RiskEngine
+from qat.domain.risk_engine.kill_switch import KillSwitch
+
+
+class _Broker(MockBroker):
+    """A broker holding positions with nothing resting against them."""
+
+    def __init__(self, held: dict[str, float], resting: dict[str, float] | None = None) -> None:
+        super().__init__(seed=1)
+        self._held = dict(held)
+        self._resting_stops = dict(resting or {})
+        self.submitted: list[Order] = []
+
+    async def positions(self) -> list[Position]:
+        return [
+            Position(symbol=sym, quantity=qty, avg_price=100.0) for sym, qty in self._held.items()
+        ]
+
+    async def place_order(self, order: Order) -> Order:
+        self.submitted.append(order)
+        return await super().place_order(order)
+
+
+def _oms(held: dict[str, float], resting: dict[str, float] | None = None):
+    settings = Settings(_env_file=None)
+    switch = KillSwitch()
+    broker = _Broker(held, resting)
+    return broker, OMS(broker, RiskEngine(EventBus(), switch, settings=settings), switch)
+
+
+@pytest.mark.asyncio
+async def test_naked_positions_are_found_from_the_account_not_from_memory():
+    _, oms = _oms({"AAPL": 50.0, "MSFT": 20.0}, {"MSFT": 380.0})
+
+    assert await oms.naked_positions() == [("AAPL", 50.0)]
+
+
+@pytest.mark.asyncio
+async def test_a_protective_stop_is_proposed_not_transmitted():
+    """The gate holds even for an order that only reduces risk."""
+    broker, oms = _oms({"AAPL": 50.0})
+
+    order = await oms.submit_protective_stop("AAPL", 50.0, 95.0)
+
+    assert order.status == "pending_signoff"
+    assert broker.submitted == []
+
+
+@pytest.mark.asyncio
+async def test_a_signed_off_stop_rests_rather_than_selling():
+    broker, oms = _oms({"AAPL": 50.0})
+    order = await oms.submit_protective_stop("AAPL", 50.0, 95.0)
+
+    signed = await oms.sign_off(order.order_id, "operator")
+
+    assert signed.status == "transmitted"
+    assert signed.filled_price is None
+    assert await broker.resting_stops() == {"AAPL": 95.0}
+
+
+@pytest.mark.asyncio
+async def test_a_resting_stop_does_not_move_the_tracked_quantity():
+    """Counted as a sell, this halves the tracked position against a broker
+    that still holds all of it - and reconciliation trips the kill-switch on
+    the very order sent to make the book safer."""
+    _, oms = _oms({"AAPL": 50.0})
+    await oms.adopt_broker_positions()
+    order = await oms.submit_protective_stop("AAPL", 50.0, 95.0)
+
+    await oms.sign_off(order.order_id, "operator")
+
+    assert await oms.check_reconciliation() is False
+    assert oms.kill_switch.tripped is False
+
+
+@pytest.mark.asyncio
+async def test_signing_off_records_the_protection():
+    _, oms = _oms({"AAPL": 50.0})
+    order = await oms.submit_protective_stop("AAPL", 50.0, 95.0)
+
+    await oms.sign_off(order.order_id, "operator")
+
+    assert oms.position_stops() == {"AAPL": 95.0}
+
+
+@pytest.mark.asyncio
+async def test_a_stop_order_is_never_treated_as_a_bracket():
+    """is_bracket drives the bracket branch at the broker, and Alpaca rejects
+    a bracket that has no entry to attach to."""
+    order = Order(
+        symbol="AAPL",
+        side="sell",
+        quantity=50.0,
+        order_id="x",
+        stop_price=95.0,
+        order_type="stop",
+    )
+
+    assert order.is_bracket is False
+    assert order.is_protective_stop is True
+
+
+@pytest.mark.asyncio
+async def test_a_nonsense_stop_is_refused():
+    _, oms = _oms({"AAPL": 50.0})
+
+    assert (await oms.submit_protective_stop("AAPL", 0.0, 95.0)).status == "rejected"
+    assert (await oms.submit_protective_stop("AAPL", 50.0, 0.0)).status == "rejected"
+
+
+# --- The startup trigger ------------------------------------------------------
+
+
+import json  # noqa: E402
+import tempfile  # noqa: E402
+from datetime import UTC, datetime, timedelta  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from qat.domain.oms.signal_bridge import SignalToOrderBridge  # noqa: E402
+
+
+def _bridge_holding(held: dict[str, float], entries: dict[str, dict]):
+    """A bridge whose entry file already knows the stops, as it does after a
+    restart - which is the only situation this runs in."""
+    data_dir = tempfile.mkdtemp()
+    (Path(data_dir) / "open_position_entries.json").write_text(
+        json.dumps(entries), encoding="utf-8"
+    )
+    settings = Settings(_env_file=None, data_dir=data_dir)
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = _Broker(held)
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
+    return broker, oms, SignalToOrderBridge(bus, oms, settings=settings)
+
+
+def _entry(stop: float, price: float = 100.0) -> dict:
+    return {
+        "opened_at": (datetime.now(UTC) - timedelta(days=1)).isoformat(),
+        "price": price,
+        "stop_price": stop,
+    }
+
+
+@pytest.mark.asyncio
+async def test_startup_proposes_a_stop_for_every_unprotected_position():
+    """The 1 August state: six held, none protected, every entry stop known."""
+    _, oms, bridge = _bridge_holding(
+        {"CRWD": 16.0, "CSCO": 44.0}, {"CRWD": _entry(163.32), "CSCO": _entry(105.56)}
+    )
+
+    proposed = await bridge.rearm_protective_stops()
+
+    assert sorted(proposed) == ["CRWD", "CSCO"]
+    pending = {o.symbol: o for o in oms.pending_orders()}
+    assert pending["CRWD"].stop_price == pytest.approx(163.32)
+    assert pending["CSCO"].stop_price == pytest.approx(105.56)
+    assert all(o.order_type == "stop" for o in pending.values())
+
+
+@pytest.mark.asyncio
+async def test_a_position_already_protected_is_left_alone():
+    broker, _, bridge = _bridge_holding({"CRWD": 16.0}, {"CRWD": _entry(163.32)})
+    broker._resting_stops = {"CRWD": 163.32}
+
+    assert await bridge.rearm_protective_stops() == []
+
+
+@pytest.mark.asyncio
+async def test_re_arming_uses_the_stop_the_position_was_sized_against():
+    """Not a level recomputed now. The risk budget was spent on the entry stop,
+    so protecting at any other distance protects an amount nobody approved."""
+    _, oms, bridge = _bridge_holding({"CRWD": 16.0}, {"CRWD": _entry(163.32, price=187.28)})
+
+    await bridge.rearm_protective_stops()
+
+    assert oms.pending_orders()[0].stop_price == pytest.approx(163.32)
+
+
+@pytest.mark.asyncio
+async def test_no_stop_is_invented_when_the_entry_is_unknown():
+    """An invented level would look identical to a real one on every screen."""
+    _, oms, bridge = _bridge_holding({"CRWD": 16.0}, {})
+
+    assert await bridge.rearm_protective_stops() == []
+    assert oms.pending_orders() == []
+
+
+@pytest.mark.asyncio
+async def test_a_broker_that_cannot_be_reached_does_not_stop_the_session():
+    _, oms, bridge = _bridge_holding({"CRWD": 16.0}, {"CRWD": _entry(163.32)})
+
+    async def _fail() -> list[tuple[str, float]]:
+        raise ConnectionError("broker unreachable")
+
+    oms.naked_positions = _fail  # type: ignore[method-assign]
+
+    assert await bridge.rearm_protective_stops() == []

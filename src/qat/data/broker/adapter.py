@@ -35,11 +35,25 @@ class Order:
     # needs its protection to outlive it.
     stop_price: float | None = None
     take_profit_price: float | None = None
+    # "stop" means the order IS a resting protective stop, not a market order
+    # carrying one (M31d). Without the distinction a sell with a stop_price is
+    # indistinguishable from a market sell, and submitting it as one would
+    # liquidate the position it was meant to protect.
+    order_type: Literal["market", "stop"] = "market"
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def is_bracket(self) -> bool:
+        """Protective legs attached to an entry. A standalone stop is not one:
+        it has no entry to attach to, and asking the broker to bracket it is
+        how you get an order rejected."""
+        if self.order_type == "stop":
+            return False
         return self.stop_price is not None or self.take_profit_price is not None
+
+    @property
+    def is_protective_stop(self) -> bool:
+        return self.order_type == "stop" and self.side == "sell"
 
 
 @dataclass(slots=True)

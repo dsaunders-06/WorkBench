@@ -38,6 +38,15 @@ class MockBroker:
         return [{"close": price} for _ in range(bars)]
 
     async def place_order(self, order: Order) -> Order:
+        # A protective stop rests; it does not fill and it does not change the
+        # position (M31d). Simulating it as a sell would have the simulator
+        # liquidate every position the app tried to protect.
+        if order.is_protective_stop:
+            order.status = "transmitted"
+            self._orders[order.order_id] = order
+            self._resting_stops[order.symbol] = order.stop_price
+            return order
+
         fill_price = self._synthetic_price(order.symbol)
         order.status = "filled"
         order.filled_price = fill_price

@@ -172,10 +172,33 @@ class AlpacaAdapter:
         from alpaca.trading.requests import (
             MarketOrderRequest,
             StopLossRequest,
+            StopOrderRequest,
             TakeProfitRequest,
         )
 
         side = OrderSide.BUY if order.side == "buy" else OrderSide.SELL
+
+        # A standalone protective stop (M31d). Every stop before this rode in
+        # as a bracket leg on an entry, so when those legs died there was no
+        # way to put one back on a position already held - which is the state
+        # all six positions were in on 1 August.
+        #
+        # GTC unconditionally. A protective stop submitted DAY is the exact
+        # bug this exists to repair.
+        if order.order_type == "stop":
+            if order.stop_price is None:
+                raise ValueError(f"stop order for {order.symbol} has no stop price")
+            stop_request = StopOrderRequest(
+                symbol=order.symbol,
+                qty=order.quantity,
+                side=side,
+                stop_price=round(order.stop_price, 2),
+                time_in_force=TimeInForce.GTC,
+            )
+            placed = await asyncio.to_thread(self._client.submit_order, stop_request)
+            order.order_id = str(getattr(placed, "id", order.order_id))
+            order.status = _map_status(str(getattr(placed, "status", "")))
+            return order
         # GTC on anything carrying protective legs (M31b).
         #
         # DAY killed every stop this system ever placed. On 31 July six

@@ -127,6 +127,57 @@ class SignalToOrderBridge:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        await self.rearm_protective_stops()
+
+    async def rearm_protective_stops(self) -> list[str]:
+        """Proposes a stop for every held position that has none (M31d).
+
+        Runs here because this is the only component that holds both halves:
+        the OMS knows what the broker is protecting, and `_entries` knows the
+        stop each position was SIZED against - which is the level the risk
+        budget was spent on, so re-arming anywhere else would protect the
+        position at a distance nobody approved.
+
+        A position with no recorded entry stop is left alone and logged. The
+        honest options there are a level invented now from an ATR that has
+        moved since entry, or nothing; nothing is visible, and an invented
+        stop would look identical to a real one on every screen in the app.
+
+        Orders are pending sign-off, not transmitted. The gate holds even for
+        an order that only reduces risk.
+        """
+        try:
+            naked = await self.oms.naked_positions()
+        except Exception:
+            logger.exception("Could not determine which positions are unprotected")
+            return []
+        if not naked:
+            return []
+
+        proposed: list[str] = []
+        unknown: list[str] = []
+        for symbol, quantity in naked:
+            entry = self._entries.get(symbol)
+            if entry is None or entry.stop_price is None:
+                unknown.append(symbol)
+                continue
+            await self.oms.submit_protective_stop(symbol, abs(quantity), entry.stop_price)
+            proposed.append(symbol)
+
+        if proposed:
+            logger.warning(
+                "Proposed protective stops for %d unprotected position(s): %s. "
+                "They are pending sign-off and rest at the broker once approved.",
+                len(proposed),
+                ", ".join(sorted(proposed)),
+            )
+        if unknown:
+            logger.error(
+                "POSITION UNPROTECTED with no recorded entry stop: %s. No stop can be proposed "
+                "for these without inventing a level - close them or stop them manually.",
+                ", ".join(sorted(unknown)),
+            )
+        return proposed
 
     async def stop(self) -> None:
         self.bus.unsubscribe(MarketDataEvent, self._on_market_data)

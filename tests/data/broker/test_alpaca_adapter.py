@@ -200,3 +200,43 @@ def test_a_plain_entry_stays_day():
     asyncio.run(adapter.place_order(order))
 
     assert str(client.submitted[-1].time_in_force).endswith("DAY")
+
+
+@pytest.mark.asyncio
+async def test_a_protective_stop_is_submitted_as_a_stop_order_gtc():
+    """The order that repairs an unprotected position (M31d). Submitted as a
+    market sell it would liquidate the position instead of protecting it, and
+    submitted DAY it would expire at the close - which is the bug it exists to
+    repair, reintroduced by the repair."""
+    from alpaca.trading.enums import TimeInForce
+    from alpaca.trading.requests import StopOrderRequest
+
+    adapter, client = _adapter()
+
+    await adapter.place_order(
+        Order(
+            symbol="AAPL",
+            side="sell",
+            quantity=50.0,
+            order_id="local-1",
+            stop_price=95.004,
+            order_type="stop",
+        )
+    )
+
+    request = client.submitted[0]
+    assert isinstance(request, StopOrderRequest)
+    assert request.time_in_force == TimeInForce.GTC
+    assert request.stop_price == pytest.approx(95.0)  # rounded to the cent
+
+
+@pytest.mark.asyncio
+async def test_a_stop_order_without_a_stop_price_is_refused_before_submission():
+    adapter, client = _adapter()
+
+    with pytest.raises(ValueError):
+        await adapter.place_order(
+            Order(symbol="AAPL", side="sell", quantity=50.0, order_id="x", order_type="stop")
+        )
+
+    assert client.submitted == []

@@ -315,6 +315,26 @@ class OMS:
         # it ourselves would overwrite the one authoritative answer with a
         # guess - which is what the pre-call assignment was.
         self._orders[order_id] = filled
+
+        # A protective stop is RESTING, not filled (M31d). Counting it as a
+        # sell would halve the tracked quantity against a broker that still
+        # holds the whole position, and reconciliation would read that as a
+        # discrepancy and trip the kill-switch on the very order sent to make
+        # the book safer. It records protection, and nothing else.
+        if filled.is_protective_stop:
+            if filled.stop_price:
+                self._position_stops[filled.symbol] = float(filled.stop_price)
+            self._record(filled, "signed_off", "protective stop resting at the broker", operator)
+            logger.info(
+                "Protective stop resting: order=%s operator=%s symbol=%s qty=%s stop=%.2f",
+                order_id,
+                operator,
+                filled.symbol,
+                filled.quantity,
+                filled.stop_price or 0.0,
+            )
+            return filled
+
         signed_qty = filled.quantity if filled.side == "buy" else -filled.quantity
         self._filled_quantities[filled.symbol] = (
             self._filled_quantities.get(filled.symbol, 0.0) + signed_qty
@@ -562,6 +582,62 @@ class OMS:
                 ", ".join(sorted(lost)),
             )
         return lost
+
+    async def naked_positions(self) -> list[tuple[str, float]]:
+        """Held positions with no stop resting at the broker (M31d).
+
+        Asked of the account rather than of `_position_stops`, so the answer
+        does not depend on what this process happens to remember - which after
+        a restart is nothing.
+        """
+        resting = await self._resting_stops()
+        return [
+            (pos.symbol, pos.quantity)
+            for pos in await self.broker.positions()
+            if abs(pos.quantity) > 0 and pos.symbol not in resting
+        ]
+
+    async def submit_protective_stop(
+        self, symbol: str, quantity: float, stop_price: float
+    ) -> Order:
+        """Proposes a resting protective stop on a position already held (M31d).
+
+        Every stop before this rode in as a bracket leg on an entry, so a
+        position whose legs died had no way to get another one - the state all
+        six holdings were in on 1 August, after the take-profit legs expired at
+        Friday's close and Alpaca cancelled the paired stops with them.
+
+        Pending sign-off like everything else. This creates protection rather
+        than exposure, which is an argument for letting it through unattended
+        and not an argument for bypassing the gate: it still sells shares if
+        the price reaches it, and the one rule with no exceptions is that
+        nothing reaches the broker without sign-off.
+        """
+        if quantity <= 0:
+            return self._new_rejected_order_for(symbol, "sell", 0.0)
+        if stop_price <= 0:
+            return self._new_rejected_order_for(symbol, "sell", 0.0)
+
+        order = Order(
+            symbol=symbol,
+            side="sell",
+            quantity=quantity,
+            order_id=new_order_id(),
+            status="pending_signoff",
+            stop_price=stop_price,
+            order_type="stop",
+        )
+        self._orders[order.order_id] = order
+        logger.warning(
+            "Protective stop proposed for unprotected position %s x%g at %.2f - "
+            "awaiting sign-off",
+            symbol,
+            quantity,
+            stop_price,
+        )
+        self._record(order, "pending_signoff", "protective stop for an unprotected position", None)
+        await self._announce_pending(order)
+        return order
 
     async def check_reconciliation(self) -> bool:
         """Compares OMS-tracked filled quantities against broker-reported
