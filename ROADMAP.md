@@ -126,10 +126,12 @@ And the weekly report *did* run: `last_weekly` records the week's MONDAY, so
 of 27 Jul 2026 to 31 Jul 2026". Reading that field as a week-end date is what
 made a working scheduler look broken.
 
-**Worth doing but not yet done:** a daily report on a day with six entries and
-no exits reads identically to a day when nothing happened, because every metric
-is built from closed trades. Open-position activity - entries taken, capital
-committed - should be visible rather than implied by absence.
+**Open-position activity in reports. [DONE]** A daily report on a day with six
+entries and no exits read identically to a day when nothing happened, because
+every metric is built from closed trades. Reports now carry `opened` and `held`
+from the ledger's open lots, so Friday reads "Opened 6 position(s), $27,783.86
+committed" with each entry listed, and "Still held 6 position(s)". A genuinely
+quiet day still reads as quiet.
 
 ## The stack
 

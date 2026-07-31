@@ -27,12 +27,27 @@ from qat.domain.performance.metrics import (
 )
 from qat.domain.performance.scorecard import StrategyScorecard
 from qat.domain.performance.summary import PerformanceSummary, build_summary
-from qat.domain.performance.trades import ClosedTrade, EquityPoint
+from qat.domain.performance.trades import ClosedTrade, EquityPoint, OpenLot
 
 logger = logging.getLogger(__name__)
 
 DAILY_REPORT_FILENAME = "daily_reports.md"
 WEEKLY_REPORT_FILENAME = "weekly_reports.md"
+
+
+@dataclass(frozen=True, slots=True)
+class OpenPosition:
+    """A position the period opened, or one still held at the end of it."""
+
+    symbol: str
+    strategy: str | None
+    quantity: float
+    entry_price: float
+    opened_at: datetime
+
+    @property
+    def notional(self) -> float:
+        return self.quantity * self.entry_price
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +66,22 @@ class PerformanceReport:
     summary: PerformanceSummary | None
     scorecards: list[StrategyScorecard]
     blocked_counts: dict[str, int]
+    # Positions opened in the period, and what is held at the end of it (M31c).
+    # Every figure above is built from CLOSED trades, so a day with six entries
+    # and no exits read exactly like a day when nothing happened at all - which
+    # is precisely what 31 July looked like in the report for the first session
+    # this system ever traded in.
+    opened: tuple[OpenPosition, ...] = ()
+    held: tuple[OpenPosition, ...] = ()
     narrative: str | None = None
+
+    @property
+    def committed_today(self) -> float:
+        return sum(p.notional for p in self.opened)
+
+    @property
+    def committed_total(self) -> float:
+        return sum(p.notional for p in self.held)
 
     @property
     def equity_change(self) -> float | None:
@@ -65,6 +95,36 @@ class PerformanceReport:
         if change is None or not self.opening_equity:
             return None
         return change / self.opening_equity
+
+    def _position_lines(self) -> list[str]:
+        """Positions opened this period, and what is held at the end of it."""
+        if not self.opened and not self.held:
+            return ["**Positions** none opened, none held.", ""]
+
+        lines: list[str] = []
+        if self.opened:
+            lines.append(
+                f"**Opened** {len(self.opened)} position(s), "
+                f"${self.committed_today:,.2f} committed"
+            )
+            for pos in sorted(self.opened, key=lambda p: p.opened_at):
+                lines.append(
+                    f"- {pos.symbol} x{pos.quantity:g} @ ${pos.entry_price:,.2f} "
+                    f"= ${pos.notional:,.2f} ({pos.strategy or 'unattributed'})"
+                )
+        else:
+            lines.append("**Opened** none this period.")
+
+        if self.held:
+            oldest = min(pos.opened_at for pos in self.held)
+            lines.append("")
+            lines.append(
+                f"**Still held** {len(self.held)} position(s), "
+                f"${self.committed_total:,.2f} at cost, oldest opened "
+                f"{oldest:%d %b %Y}"
+            )
+        lines.append("")
+        return lines
 
     def to_markdown(self) -> str:
         lines = [
@@ -90,7 +150,13 @@ class PerformanceReport:
             lines.append(f"**Sharpe (annualised)** {self.sharpe:.2f}")
         else:
             lines.append("**Sharpe** not enough samples to measure.")
-        lines.extend(["", f"**Trades** {self.stats.summary_line()}", ""])
+        lines.extend(["", f"**Closed trades** {self.stats.summary_line()}", ""])
+
+        # Stated before the closed-trade metrics, because on any day that
+        # opened positions this is the activity - and everything below is
+        # built from closed trades, so without it a day with six entries and
+        # no exits reads exactly like a day when nothing happened.
+        lines.extend(self._position_lines())
 
         if self.summary is not None:
             lines.extend(["### Metrics", ""])
@@ -143,8 +209,22 @@ def build_report(
     end: date,
     scorecards: list[StrategyScorecard] | None = None,
     blocked_counts: dict[str, int] | None = None,
+    open_lots: list[OpenLot] | None = None,
     narrative: str | None = None,
 ) -> PerformanceReport:
+    lots = open_lots or []
+    held = tuple(
+        OpenPosition(
+            symbol=lot.symbol,
+            strategy=lot.strategy,
+            quantity=lot.quantity,
+            entry_price=lot.price,
+            opened_at=lot.opened_at,
+        )
+        for lot in lots
+    )
+    opened = tuple(pos for pos in held if start <= pos.opened_at.date() <= end)
+
     period_trades = [trade for trade in trades if _within(trade, start, end)]
     period_equity = [point for point in equity_points if start <= point.ts.date() <= end]
 
@@ -167,6 +247,8 @@ def build_report(
         by_strategy=by_strategy,
         scorecards=scorecards or [],
         blocked_counts=blocked_counts or {},
+        opened=opened,
+        held=held,
         narrative=narrative,
     )
 

@@ -182,6 +182,7 @@ class PerformanceReporter:
             end=end,
             scorecards=scorecards,
             blocked_counts=blocked,
+            open_lots=self.ledger.open_lots(),
         )
 
         # The narrative is optional and its failure is not the report's
