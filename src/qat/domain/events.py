@@ -100,8 +100,25 @@ class OrderFilledEvent(Event):
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DataStaleEvent(Event):
+    """ONE symbol's quote is too old to size a trade against (M28a).
+
+    Measured on the trade's own timestamp, so it answers "how old is the last
+    print" - a thin ticker that has not traded for an hour, or a halted one.
+    That is a reason to stop trading *that symbol*, and never a reason to halt
+    the account: until M28a this tripped the kill-switch, and every trip it
+    ever produced was a false positive. With a 60s poll against a 60s
+    threshold, a trade arriving 40s old is already past the line before the
+    next poll - the rail was measuring arithmetic, not risk.
+
+    Whether the feed itself is alive is a different question, measured on
+    receive time and reported by MarketDataFeedEvent.
+    """
+
     symbol: str
     seconds_since_update: float
+    # False when a symbol that was stale has printed again, so a consumer can
+    # let it trade rather than excluding it for the rest of the session.
+    stale: bool = True
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

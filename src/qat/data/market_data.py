@@ -88,6 +88,8 @@ class MarketDataFeed:
         self.feed_down_seconds = feed_down_seconds
         self._queue: asyncio.Queue[RawTick] = asyncio.Queue(maxsize=queue_maxsize)
         self._last_seen: dict[str, datetime] = {}
+        # Which symbols are currently excluded, so only the edges are published.
+        self._stale_symbols: dict[str, bool] = {}
         self._tasks: list[asyncio.Task[None]] = []
         # Feed-level health, tracked separately from per-symbol staleness.
         # Measured from when the feed started rather than from the first tick,
@@ -103,6 +105,7 @@ class MarketDataFeed:
         # down) does not immediately report every symbol as stale against a
         # last-seen timestamp from before it slept.
         self._last_seen.clear()
+        self._stale_symbols.clear()
         self._started_at = datetime.now(UTC)
         self._last_tick_at = None
         self._feed_healthy = True
@@ -172,6 +175,13 @@ class MarketDataFeed:
             )
 
     async def _staleness_loop(self) -> None:
+        """Per-symbol quote freshness, reported on transitions only (M28a).
+
+        Publishing on every check would republish the same stale symbol every
+        interval for as long as it stayed thin, which is how a rail becomes
+        noise. The edges are the news: this symbol just went stale, this one
+        just came back.
+        """
         while True:
             await asyncio.sleep(self.staleness_check_interval)
             now = datetime.now(UTC)
@@ -180,7 +190,19 @@ class MarketDataFeed:
                 if last is None:
                     continue
                 elapsed = (now - last).total_seconds()
-                if elapsed > self.staleness_seconds:
-                    await self.bus.publish(
-                        DataStaleEvent(symbol=symbol, seconds_since_update=elapsed)
+                stale = elapsed > self.staleness_seconds
+                if stale == self._stale_symbols.get(symbol, False):
+                    continue
+                self._stale_symbols[symbol] = stale
+                if stale:
+                    logger.warning(
+                        "%s last printed %.0fs ago - excluded from signals until it trades "
+                        "again. The account is NOT halted",
+                        symbol,
+                        elapsed,
                     )
+                else:
+                    logger.info("%s is printing again after %.0fs", symbol, elapsed)
+                await self.bus.publish(
+                    DataStaleEvent(symbol=symbol, seconds_since_update=elapsed, stale=stale)
+                )

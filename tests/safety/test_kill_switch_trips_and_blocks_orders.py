@@ -64,16 +64,29 @@ async def test_drawdown_trigger_trips_and_blocks():
 
 
 @pytest.mark.asyncio
-async def test_data_staleness_trigger_trips_and_blocks():
+async def test_a_stale_quote_does_not_halt_and_does_not_block_other_symbols():
+    """Inverted deliberately in M28a, and kept here because it is a safety
+    property either way - just the opposite one.
+
+    Staleness was a named kill-switch trigger, and every trip it ever produced
+    was a false positive: with a 60s poll against a 60s threshold, a trade
+    arriving 40s old was already past the line before the next poll. The
+    operator had to suppress the rail with a 69-hour threshold to keep sessions
+    running, which left genuine partial outages undetected.
+
+    A stale print on one thin ticker now stops trading THAT ticker and nothing
+    else. Halting an entire account because Berkshire had not printed on IEX by
+    09:30:15 was a rail doing more damage than the hazard it guarded against.
+    """
     oms, switch, bus = _build()
     engine = KillSwitchEngine(bus, switch)
     await engine.start()
 
-    await bus.publish(DataStaleEvent(symbol="AAA", seconds_since_update=999.0))
+    await bus.publish(DataStaleEvent(symbol="BRK.B", seconds_since_update=63_017.0))
     order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
 
-    assert switch.tripped
-    assert order.status == "rejected"
+    assert not switch.tripped, "a stale quote must never halt the account"
+    assert order.status != "rejected", "an unrelated symbol must keep trading"
     await engine.stop()
 
 

@@ -39,11 +39,11 @@ def test_drawdown_does_not_trip_below_limit():
     assert switch.tripped is False
 
 
-def test_staleness_trips():
-    switch = KillSwitch()
-    switch.check_staleness()
-    assert switch.tripped is True
-    assert "staleness" in switch.reason.lower()
+def test_a_stale_quote_is_no_longer_a_halt_condition():
+    """M28a. Every trip this rail produced was a false positive - with a 60s
+    poll against a 60s threshold, a trade arriving 40s old was already past
+    the line. The switch has no staleness path left to call."""
+    assert not hasattr(KillSwitch(), "check_staleness")
 
 
 def test_reconciliation_mismatch_trips():
@@ -70,21 +70,24 @@ def test_reset_clears_tripped_state():
 
 def test_once_tripped_stays_tripped_until_reset():
     switch = KillSwitch()
-    switch.check_staleness()
+    switch.trigger_manual("alice")
     switch.check_daily_loss(day_start_equity=100_000.0, current_equity=99_900.0, limit_pct=0.03)
     assert switch.tripped is True
 
 
 @pytest.mark.asyncio
-async def test_engine_trips_on_data_stale_event():
+async def test_a_stale_quote_does_not_halt_the_account():
+    """The M28a inversion. Halting the whole account because Berkshire had not
+    printed on IEX by 09:30:15 is a rail doing more damage than the hazard it
+    guards against. The symbol is excluded from signals instead."""
     bus = EventBus()
     switch = KillSwitch()
     engine = KillSwitchEngine(bus, switch)
     await engine.start()
 
-    await bus.publish(DataStaleEvent(symbol="AAPL", seconds_since_update=120.0))
+    await bus.publish(DataStaleEvent(symbol="BRK.B", seconds_since_update=63_017.0))
 
-    assert switch.tripped is True
+    assert switch.tripped is False
     await engine.stop()
 
 

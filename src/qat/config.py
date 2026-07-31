@@ -120,7 +120,6 @@ class Settings(BaseSettings):
     portfolio_es_limit_pct: float = Field(default=0.03, gt=0)
     daily_loss_limit_pct: float = Field(default=0.03, gt=0)
     max_drawdown_limit_pct: float = Field(default=0.20, gt=0)
-    data_staleness_seconds: int = Field(default=60, gt=0)
     max_single_name_concentration_pct: float = Field(default=0.25, gt=0, le=1.0)
     max_sector_concentration_pct: float = Field(default=0.40, gt=0, le=1.0)
 
@@ -181,6 +180,21 @@ class Settings(BaseSettings):
     delever_sweep_enabled: bool = False
 
     reconciliation_poll_seconds: float = Field(default=300.0, gt=0)
+
+    # How old a symbol's last PRINT may be before that symbol is excluded from
+    # signal generation (M28a). Never halts the account.
+    #
+    # It was 60s and it tripped the kill-switch, which is why the operator had
+    # to suppress it with a 69-hour value to keep sessions running. Every trip
+    # it ever produced was a false positive: with a 60s poll against a 60s
+    # threshold, a trade arriving 40s old is already past the line before the
+    # next poll arrives. It was measuring arithmetic, not risk.
+    #
+    # 15 minutes suits what it now means. A megacap prints continuously; a
+    # thin ticker or a halted one legitimately does not, and sizing a trade
+    # against an hour-old print is the hazard worth naming. Feed death is a
+    # separate question, measured on receive time.
+    data_staleness_seconds: float = Field(default=900.0, gt=0)
 
     # --- Promotion gate (M16) ------------------------------------------------
     # What a strategy must demonstrate on REALISED trades before it is eligible

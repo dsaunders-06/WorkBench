@@ -15,7 +15,7 @@ import logging
 from collections.abc import Callable
 
 from qat.domain.bus import EventBus
-from qat.domain.events import DataStaleEvent, KillSwitchEvent
+from qat.domain.events import KillSwitchEvent
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +92,6 @@ class KillSwitch:
         if drawdown_pct >= limit_pct:
             self.trip(f"Drawdown {drawdown_pct:.2%} >= limit {limit_pct:.2%}")
 
-    def check_staleness(self) -> None:
-        self.trip("Data staleness detected")
-
     def check_reconciliation(self) -> None:
         self.trip("Broker reconciliation mismatch")
 
@@ -122,34 +119,17 @@ class KillSwitchEngine:
         self.kill_switch = kill_switch
 
     async def start(self) -> None:
-        self.bus.subscribe(DataStaleEvent, self._on_stale)
+        # DataStaleEvent is deliberately NOT subscribed (M28a). A stale quote
+        # on one thin ticker is a reason to stop trading that ticker, not to
+        # halt the account: every trip this rail ever produced was a false
+        # positive, and the operator had to suppress it with a 69-hour
+        # threshold to keep sessions running. Feed death is a different
+        # question, measured on receive time and reported by
+        # MarketDataFeedEvent.
         self.bus.subscribe(KillSwitchEvent, self._on_kill_switch_event)
 
     async def stop(self) -> None:
-        self.bus.unsubscribe(DataStaleEvent, self._on_stale)
         self.bus.unsubscribe(KillSwitchEvent, self._on_kill_switch_event)
-
-    async def _on_stale(self, event: DataStaleEvent) -> None:
-        """Trip, then announce it.
-
-        check_staleness() only mutates state. Nothing was published, so the
-        main window's banner - which listens for KillSwitchEvent - kept
-        reading AUTO-TRADE ACTIVE while trading was in fact halted. A halt
-        nobody can see is worse than no halt at all, because the operator
-        believes the system is working.
-        """
-        was_tripped = self.kill_switch.tripped
-        self.kill_switch.check_staleness()
-        if not was_tripped:
-            await self.bus.publish(
-                KillSwitchEvent(
-                    reason=(
-                        f"data staleness on {event.symbol} "
-                        f"({event.seconds_since_update:.0f}s without an update)"
-                    ),
-                    triggered_by="staleness detector",
-                )
-            )
 
     async def _on_kill_switch_event(self, event: KillSwitchEvent) -> None:
         self.kill_switch.trip(f"{event.reason} (triggered by {event.triggered_by})")

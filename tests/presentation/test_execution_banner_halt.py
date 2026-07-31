@@ -36,10 +36,10 @@ def test_banner_shows_the_halt_when_the_switch_trips_directly(qtbot):
     window = _window(qtbot)
     assert "AUTO-TRADE ACTIVE" in window.execution_banner.text()
 
-    window.runtime.kill_switch.check_staleness()
+    window.runtime.kill_switch.check_reconciliation()
 
     assert "EXECUTION HALTED" in window.execution_banner.text()
-    assert "Data staleness detected" in window.execution_banner.text()
+    assert "Broker reconciliation mismatch" in window.execution_banner.text()
 
 
 def test_banner_clears_when_the_switch_is_reset(qtbot):

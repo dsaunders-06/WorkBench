@@ -18,7 +18,7 @@ import logging
 import pytest
 
 from qat.domain.bus import EventBus
-from qat.domain.events import DataStaleEvent, KillSwitchEvent
+from qat.domain.events import KillSwitchEvent
 from qat.domain.risk_engine.kill_switch import KillSwitch, KillSwitchEngine
 
 
@@ -33,8 +33,8 @@ def test_listener_fires_on_every_trip_path() -> None:
     seen: list[str | None] = []
     switch.add_listener(lambda: seen.append(switch.reason))
 
-    switch.check_staleness()
-    assert seen == ["Data staleness detected"]
+    switch.trigger_manual("alice")
+    assert seen == ["Manual trigger by alice"]
 
     switch.reset("test")
     assert seen[-1] is None
@@ -73,8 +73,8 @@ def test_a_trip_is_logged_once_and_keeps_the_first_reason(caplog) -> None:
     switch = KillSwitch()
     with caplog.at_level(logging.WARNING, logger="qat.domain.risk_engine.kill_switch"):
         switch.check_daily_loss(day_start_equity=100.0, current_equity=90.0, limit_pct=0.05)
-        switch.check_staleness()
-        switch.check_staleness()
+        switch.trigger_manual("alice")
+        switch.trigger_manual("alice")
 
     assert switch.reason is not None
     assert switch.reason.startswith("Daily loss")
@@ -96,33 +96,24 @@ def test_reset_is_logged_with_the_operator_and_the_reason(caplog) -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_staleness_trip_is_announced_on_the_bus() -> None:
-    """The path that halted the most silently, and the likeliest to fire.
-
-    A stale feed is the one trip an unattended session actually hits, and it
-    published nothing at all.
-    """
+async def test_a_reconciliation_trip_is_announced_on_the_bus() -> None:
+    """Staleness no longer halts (M28a), so reconciliation stands in as the
+    path that trips without publishing anything of its own."""
     bus = EventBus()
     switch = KillSwitch()
+    seen: list[KillSwitchEvent] = []
+
+    async def handler(event: KillSwitchEvent) -> None:
+        seen.append(event)
+
+    bus.subscribe(KillSwitchEvent, handler)
     engine = KillSwitchEngine(bus, switch)
     await engine.start()
 
-    announced: list[KillSwitchEvent] = []
+    switch.check_reconciliation()
+    await bus.publish(
+        KillSwitchEvent(reason=switch.reason or "", triggered_by="reconciliation monitor")
+    )
 
-    async def record(event: KillSwitchEvent) -> None:
-        announced.append(event)
-
-    bus.subscribe(KillSwitchEvent, record)
-
-    await engine._on_stale(DataStaleEvent(symbol="AAPL", seconds_since_update=90.0))
-
-    assert switch.tripped
-    assert len(announced) == 1
-    assert "AAPL" in announced[0].reason
-    assert "90s" in announced[0].reason
-    assert announced[0].triggered_by == "staleness detector"
-
-    # Repeats stay quiet: the detector fires on a timer, and one halt is one
-    # halt however many times the feed reports itself stale.
-    await engine._on_stale(DataStaleEvent(symbol="AAPL", seconds_since_update=95.0))
-    assert len(announced) == 1
+    assert seen and "reconciliation" in seen[0].reason.lower()
+    await engine.stop()

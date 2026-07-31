@@ -27,7 +27,7 @@ from qat.data.broker.adapter import Position
 from qat.data.features import FeatureBuilder
 from qat.data.fundamentals import FundamentalSnapshot, FundamentalsSource
 from qat.domain.bus import EventBus
-from qat.domain.events import MarketDataEvent, RegimeEvent
+from qat.domain.events import DataStaleEvent, MarketDataEvent, RegimeEvent
 from qat.domain.regime import Regime
 from qat.domain.strategies.base import FeatureSnapshot, Strategy, SymbolContext
 
@@ -85,6 +85,10 @@ class StrategyEngine:
         # The full distribution, not just the label it collapses to (M27b).
         self._current_probs: dict[str, float] = {}
         self._eligibility: dict[str, bool] = {}
+        # Symbols whose last print is too old to size a trade against (M28a).
+        # Excluded from signal generation only - the account keeps trading
+        # everything else, which is the whole point of the redesign.
+        self._stale_symbols: set[str] = set()
         # Whether signals actually leave this engine (M19). SessionController
         # clears it outside market hours; ticks are still recorded so the
         # buffer is warm at the next open. True by default, so an engine built
@@ -153,10 +157,19 @@ class StrategyEngine:
             )
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(RegimeEvent, self._on_regime)
+        self.bus.subscribe(DataStaleEvent, self._on_stale_quote)
 
     async def stop(self) -> None:
         self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
         self.bus.unsubscribe(RegimeEvent, self._on_regime)
+        self.bus.unsubscribe(DataStaleEvent, self._on_stale_quote)
+
+    async def _on_stale_quote(self, event: DataStaleEvent) -> None:
+        """One symbol in or out, never the whole account (M28a)."""
+        if event.stale:
+            self._stale_symbols.add(event.symbol)
+        else:
+            self._stale_symbols.discard(event.symbol)
 
     async def _current_positions(self) -> dict[str, float]:
         """Holdings for the exit path (M14).
@@ -267,6 +280,11 @@ class StrategyEngine:
         self.bars.add_tick(event.symbol, event.ts, event.price, event.volume)
 
         if not self.emitting:
+            return
+
+        if event.symbol in self._stale_symbols:
+            # History still recorded above: when the symbol prints again its
+            # buffer must be continuous, not missing the quiet stretch.
             return
 
         if not self.strategies:
