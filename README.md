@@ -947,6 +947,51 @@ strategy onto a broker where the same trades lose money. Real per-fill
 commissions from a live broker are not read back yet — that is a separate
 wiring job, and until it exists the figures are as good as the model.
 
+## The regime gate reads the distribution (M27b)
+
+A strategy trades when at least `regime_eligibility_mass` (default 50%) of the
+regime probability distribution lies inside its suitable regimes — not when the
+single winning label happens to be one of them.
+
+On 30 July the engine published `high_vol=0.31, bull=0.29, recovery=0.20`.
+Swing trades bull and recovery and not high_vol, so **0.49 of the mass sat
+where it could trade against 0.31 where it could not**, and a 0.02 gap between
+the top two labels kept it out of the market for the whole session. The model
+had already computed its confidence; collapsing to the argmax and then testing
+set membership threw it away.
+
+**In aggregate this changes very little, which is the honest result.** Over the
+same 300 sessions swing goes from 57.3% eligible to 58.1%, and trend-following
+from 42.7% to 41.9% — it moves in both directions. The top-two margin is under
+5 points on only 6.2% of sessions, because the hysteresis gate already smooths
+the label. This is a correctness fix for the coin-flip case, not a way to trade
+more. 30 July was one of the 6%.
+
+One property worth stating: with seven regimes and a flat distribution, a
+four-regime strategy sits at 0.57 and trades while a one-regime strategy sits
+at 0.14 and does not. When the classifier knows nothing, breadth of mandate
+decides rather than an arbitrary argmax.
+
+Eligibility changes are logged with the numbers behind them — a strategy
+silently ineligible for a session used to look exactly like one that found no
+setup, and that ambiguity cost four sessions.
+
+## Autonomy must be earned on live money (M29)
+
+`enforce_promotion_evidence` shipped `False`, so the policy said "earn
+autonomy" and the code granted it anyway. Turning it on during the paper phase
+would have been circular: the bar is 30 closed trades, paper is where those
+trades come from, and enforcing it there means nothing trades, so no evidence
+is produced, so the bar is never met.
+
+Enforcement is now bound to what is at stake rather than to a flag anyone has
+to remember. `Settings.promotion_evidence_enforced` is true on **any live
+account**, whatever the flag says. Paper collects the evidence; live requires
+it. An operator can opt in early on paper; nobody can opt out on live.
+
+This had to follow M28 — before it, the gate would have enforced a bar computed
+on gross figures already known to be optimistic.
+
 ## Market data resilience
 
 The first unattended session produced no trades, and none of the reasons were

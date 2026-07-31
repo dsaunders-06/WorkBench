@@ -55,6 +55,7 @@ class StrategyEngine:
         bar_interval_seconds: float = 60.0,
         position_source: PositionSource | None = None,
         position_cache_seconds: float = 5.0,
+        regime_eligibility_mass: float = 0.5,
     ) -> None:
         self.position_source = position_source
         self.position_cache_seconds = position_cache_seconds
@@ -80,6 +81,10 @@ class StrategyEngine:
         self._regime_is_real = False
         self._warned_about_default = False
         self._deployment_listeners: list[Callable[[], None]] = []
+        self.regime_eligibility_mass = regime_eligibility_mass
+        # The full distribution, not just the label it collapses to (M27b).
+        self._current_probs: dict[str, float] = {}
+        self._eligibility: dict[str, bool] = {}
         # Whether signals actually leave this engine (M19). SessionController
         # clears it outside market hours; ticks are still recorded so the
         # buffer is warm at the next open. True by default, so an engine built
@@ -200,6 +205,60 @@ class StrategyEngine:
                 self.default_regime.value,
             )
         self._regime_is_real = True
+        self._current_probs = dict(event.probs)
+        self._log_eligibility_changes()
+
+    def _eligible_mass(self, strategy: Strategy) -> float | None:
+        """How much of the distribution sits in this strategy's regimes.
+
+        None before any RegimeEvent has arrived - there is no distribution to
+        read, so the caller falls back to membership of the default label.
+        """
+        if not self._current_probs:
+            return None
+        return sum(
+            self._current_probs.get(regime.value, 0.0) for regime in strategy.suitable_regimes()
+        )
+
+    def is_eligible(self, strategy: Strategy) -> bool:
+        """Whether the regime permits this strategy to trade (M27b).
+
+        Probability mass rather than the argmax label. The label is one draw
+        from a distribution the model already computed; collapsing to it and
+        then testing set membership discards the confidence and turns a
+        near-tie into a certainty. A strategy trades when the market is *more
+        likely than not* in a regime it was built for.
+        """
+        mass = self._eligible_mass(strategy)
+        if mass is None:
+            return self._current_regime in strategy.suitable_regimes()
+        return mass >= self.regime_eligibility_mass
+
+    def _log_eligibility_changes(self) -> None:
+        """Says which strategies just became able or unable to trade.
+
+        The transition is the news, and it is the thing that was previously
+        impossible to see: a strategy silently ineligible for a whole session
+        looks exactly like a strategy that found no setup.
+        """
+        current = {s.name: self.is_eligible(s) for s in self.strategies}
+        if current == self._eligibility:
+            return
+        for name, eligible in current.items():
+            was = self._eligibility.get(name)
+            if was is not None and was != eligible:
+                strategy = next(s for s in self.strategies if s.name == name)
+                mass = self._eligible_mass(strategy)
+                logger.info(
+                    "%s is now %s - %.0f%% of the regime distribution is in its suitable "
+                    "regimes (%s), against a %.0f%% bar",
+                    name,
+                    "ELIGIBLE" if eligible else "SKIPPED",
+                    (mass or 0.0) * 100,
+                    ", ".join(sorted(r.value for r in strategy.suitable_regimes())),
+                    self.regime_eligibility_mass * 100,
+                )
+        self._eligibility = current
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
         # History is recorded even while suspended (M19): the first signal
@@ -254,14 +313,13 @@ class StrategyEngine:
                 len(self.strategies),
                 self.default_regime.value,
                 ", ".join(
-                    f"{s.name}="
-                    f"{'eligible' if self._current_regime in s.suitable_regimes() else 'skipped'}"
+                    f"{s.name}={'eligible' if self.is_eligible(s) else 'skipped'}"
                     for s in self.strategies
                 ),
             )
 
         for strategy in self.strategies:
-            if self._current_regime not in strategy.suitable_regimes():
+            if not self.is_eligible(strategy):
                 continue
             for signal in strategy.on_features(snapshot):
                 await self.bus.publish(signal)

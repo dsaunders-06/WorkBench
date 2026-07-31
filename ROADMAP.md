@@ -185,140 +185,44 @@ while nothing could trade.
 behaviour, so it is a decision rather than a fix. Today an unattended session
 inherits nothing from the last one.
 
-### M27b - The regime label is not a stable function of the input  **[NEW]**
+### M27b - Gate on probability mass, not the argmax label  **[DONE, 31 July]**
 
-**Sharpened by the 30 July session.** The classification that gated Swing off
-all night was `high_vol=0.31, bull=0.29, recovery=0.20`. Swing is eligible
-under both `bull` and `recovery`, so **0.49 of the probability mass sat in
-regimes where it could trade against 0.31 where it could not** - and a 0.02
-difference between the top two decided the day. The gate takes the argmax of a
-nearly flat distribution and treats it as certainty.
+The gate read the single winning label. On 30 July that label was `high_vol` at
+0.31 against `bull` at 0.29, so a **0.02 difference decided whether the only
+promoted strategy traded at all**, while 0.49 of the distribution sat in
+regimes where it was eligible. Collapsing a distribution to its argmax and then
+testing set membership throws away the confidence the model already computed.
 
-Gating on probability mass across a strategy's suitable regimes, rather than on
-the argmax label, now looks more important than the refit instability below.
+A strategy now trades when at least `regime_eligibility_mass` (default 0.5) of
+the distribution lies inside its suitable regimes.
 
-Three replays over the same 300 days of real data produced three different
-current labels - `recovery`, `high_vol`, `low_vol` - differing only in when the
-last HMM refit landed and what path the hysteresis took. One of the three had
-breadth pinned at a constant 0.5, which the new zero-variance warning catches;
-the other two differed on nothing but refit timing.
+**Measured over the same 300 sessions, this changes very little in aggregate,
+and that is the honest headline:**
 
-The label gates every strategy, so a classifier whose output depends on when it
-was last refitted is gating on an artefact. Worth understanding before the
-label is trusted to size or permit anything. Candidates: fix the HMM's random
-state across refits, refit on a schedule tied to the calendar rather than a bar
-count, or hold the fitted model and only re-estimate the posterior.
-
-**The macro source has never been real, and this is the more dangerous half.**
-`runtime.py:416` reads `macro = macro_source or MockMacroSource(seed=1)`, and
-`FredMacroSource` is not even imported there - built in M2, never once wired into
-the live app. So three of the six regime features (VIX, yield-curve slope, credit
-spread) have been `round(self._rng.uniform(-1, 5), 3)`, polled hourly. Not stale,
-not degraded: fabricated.
-
-This is the fifth instance of the pattern and the worst form of it - not a
-mechanism wired to the wrong input, but a **placeholder wired in place of the
-real thing with no warning anywhere**. `resolve_broker` and the Alpaca data
-source both log loudly when they fall back; the macro path had no resolver at
-all, which is why it survived twenty-five milestones unnoticed.
-
-It also means daily bars **alone would not have fixed the regime engine**. With
-300 seeded bars the HMM would very likely have fitted without crashing, published
-a regime, gated every strategy on it, and given no reason to look again. A regime
-engine that classifies confidently on random numbers is far more dangerous than
-one that crashes - the crash is the only reason this was found.
-
-**FRED key now in the keyring** (`FRED_API_KEY` via `qat.security`, never `.env`).
-Verified live, and the variation is what M27a needs:
-
-| series | observations | first | distinct values, last 250 obs |
+| | argmax | mass >= 50% | net |
 |---|---|---|---|
-| VIXCLS | 9,238 | 1990-01-02 | **218** |
-| T10Y3M | 11,144 | 1982-01-04 | 85 |
-| DGS10 | 16,126 | 1962-01-02 | 69 |
-| DGS3MO | 11,224 | 1981-09-01 | 60 |
-| BAA10Y | 10,141 | 1986-01-02 | 36 |
+| swing | 57.3% | 58.1% | +2 days |
+| trend-following | 42.7% | 41.9% | -2 days |
 
-On daily bars those columns genuinely move, which is exactly what makes the
-covariance matrix non-singular. History is decades deep against the 300 bars the
-seeding needs.
+The top-two margin is under 5 points on only **6.2%** of sessions - the
+hysteresis-smoothed label is usually a confident call. So this is a correctness
+fix for the coin-flip case, not a way to trade more, and it moves in both
+directions: swing gains days, trend-following loses them. 30 July happened to
+land in that 6%.
 
-**Add `resolve_macro_source()`** alongside the existing broker and data-source
-resolvers: real FRED when a key is present, mock otherwise **with a loud
-warning**. The absence of that resolver is the root cause of this class of bug,
-not the mock itself.
+A property worth naming: with seven regimes and a *flat* distribution, a
+four-regime strategy sits at 0.57 and trades while a one-regime strategy sits
+at 0.14 and does not. When the model knows nothing, breadth of mandate decides
+rather than an arbitrary argmax. That is the intended direction.
 
-**Decision: the live path runs on daily bars.** This matches how the strategies
-and the regime model were specified and how the intended two-week hold works. The
-intraday feed keeps its role for execution pricing, staleness and account state -
-it stops being the source of signal history.
-
-**What that actually requires, and why it is a build rather than a flag.** There
-is **no warm-start anywhere**: `StrategyEngine.bars` and `RegimeFeatureBuilder`
-are populated purely from live ticks, from zero, at every process start. Setting
-`bar_interval_seconds = 86400` alone would leave the system inert for ~10 weeks
-(EMA50) to ~3 months (the regime HMM). So:
-
-* seed `StrategyEngine.bars` from `HistoricalBarSource.get_daily_bars()` at
-  startup - the source already exists and is already used by the Screener and
-  Workbench;
-* seed `RegimeFeatureBuilder` the same way, pairing each daily bar with the FRED
-  values current on that date so the macro columns vary across rows;
-* append one bar per day thereafter, and persist so a restart does not reset;
-* accept that decisions become roughly one evaluation per symbol per day. That
-  is correct for a two-week hold, and it changes what "collecting data" means -
-  the signal is one decision point a day, not a continuous stream.
-
-**A fail-open worth fixing alongside.** `StrategyEngine` takes
-`default_regime = Regime.SIDEWAYS`, so when the regime engine died the system
-carried on trading as though the market were sideways, and nothing on screen said
-otherwise. Defensible for availability, but it means the regime gate was not
-gating, and a crashed classifier should be visible rather than silently
-permissive.
-
-### M28a - The staleness rail (promoted ahead of the cost work)
-
-Not a tuning problem. **The rail has never once fired correctly** - every trip it
-has produced has been a false positive, and it was only ever masked by the feed
-being broken in other ways:
-
-| Trip | Symbol | Reported age | Reality |
-|---|---|---|---|
-| 27 Jul | (feed dead) | - | never fired; per-symbol staleness skips symbols that have not ticked |
-| 28 Jul 13:30 | BRK.B | 63,017s | thin on IEX, last print was the previous close |
-| 28 Jul 13:35 | HON | 97s | liquid; the poll interval itself |
-
-The defect is one line:
-
-```python
-self._last_seen[tick.symbol] = tick.ts        # the TRADE's timestamp
-self._last_tick_at = datetime.now(UTC)        # the RECEIVE time (M26, correct)
-```
-
-The rail reads `_last_seen`, so it measures **how old the last trade was**, not
-**whether the feed is delivering**. With `market data poll = 60s` and
-`data_staleness_seconds = 60`, a trade that occurred 40s before a poll arrives
-already 40s old and the next poll is 60s later, so the measured age routinely
-lands between 60 and 120 seconds through entirely normal operation. On any
-symbol. A trip was not a risk, it was arithmetic.
-
-**Currently suppressed** by `QAT_DATA_STALENESS_SECONDS=250000` in the operator
-`.env` - ~69 hours, sized to clear a weekend gap (Monday's open is 65 hours
-after Friday's close). This effectively disables the rail. Acceptable on paper
-because M26's feed-health check covers genuine feed death using receive time;
-**not acceptable before live money**, because it leaves a partial outage
-undetected - the feed continuing to deliver some symbols while silently
-stopping on others.
-
-The redesign separates two ideas the current code conflates:
-
-* **feed liveness** - measured on receive time - *may* halt trading
-* **quote freshness** - measured on the trade timestamp - excludes that ONE
-  symbol from signal generation, and never halts the account
-
-A stale quote on one thin ticker should stop trading that ticker. Halting the
-whole account because Berkshire had not printed on IEX by 09:30:15 is a rail
-doing considerably more damage than the hazard it guards against.
+**Still open from the original M27b:** the label remains unstable across
+refits - three replays of the same 300 days produced three different current
+labels, differing only in refit timing. Mass gating reduces the blast radius
+(a near-tie no longer flips a gate) but does not address the cause. Candidates
+remain: fix the HMM's random state across refits, refit on a calendar schedule
+rather than a bar count, or hold the fitted model and re-estimate only the
+posterior. With daily bars a refit now happens roughly monthly, so this is a
+slow-burning problem rather than an intraday one.
 
 ### M28 - Cost-truthful measurement  **[DONE, 31 July]**
 
@@ -344,10 +248,21 @@ floor that gap decides whether a strategy qualifies.
 
 **This unblocks M29**, which reads exactly these numbers.
 
-### M29 - Governance consistency
+### M29 - Governance consistency  **[DONE, 31 July]**
 
-Turn on `enforce_promotion_evidence`. Today the policy says "earn autonomy" and
-the code grants it anyway.
+The policy said "earn autonomy" and the code granted it anyway. Resolved by
+binding enforcement to what is actually at stake instead of to a flag someone
+has to remember: `promotion_evidence_enforced` is true on **any live account**,
+whatever `enforce_promotion_evidence` says.
+
+The external review recommended turning the flag on immediately. That would
+have been circular: the bar is 30 closed trades, paper is where those trades
+come from, and enforcing it there means nothing trades, so no evidence is
+produced, so the bar is never met. Paper collects the evidence; live requires
+it. An operator can opt in early on paper; nobody can opt out on live.
+
+This depended on M28 - before it the gate would have enforced a bar computed on
+gross figures already known to be optimistic.
 
 **Sequencing note.** An external review recommended enabling this immediately.
 Doing so during the paper phase would halt data collection - swing has zero

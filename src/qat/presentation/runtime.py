@@ -495,6 +495,7 @@ class Runtime:
             [],
             fundamentals,
             bar_interval_seconds=settings.bar_interval_seconds,
+            regime_eligibility_mass=settings.regime_eligibility_mass,
             # Read-only position access, so strategies can emit exits (M14).
             # Narrowed to the PositionSource protocol - a strategy engine is
             # never handed something that can place an order.

@@ -143,12 +143,19 @@ class AutonomyGate:
                 f"({', '.join(promoted) if promoted else 'none promoted'})"
             )
 
-        # Evidence gate (M16). Being on the operator's list is necessary but not
-        # sufficient when enforcement is on: the strategy must also still meet
-        # the promotion bar on its own realised trades. A strategy that
-        # qualified last month and has since degraded stops trading unattended
-        # without anyone having to notice and edit a setting.
-        if self.settings.enforce_promotion_evidence and self.scorecard_source is not None:
+        # Evidence gate (M16, made unskippable on live in M29). Being on the
+        # operator's list is necessary but not sufficient: the strategy must
+        # also still meet the promotion bar on its own realised trades. A
+        # strategy that qualified last month and has since degraded stops
+        # trading unattended without anyone having to notice and edit a
+        # setting.
+        #
+        # `promotion_evidence_enforced` is true on any live account regardless
+        # of the flag - paper is where the evidence is produced, live is where
+        # it is required, and that is not a thing anyone should be able to
+        # forget. The bar reads net figures as of M28; before that it would
+        # have gated on numbers already known to be optimistic.
+        if self.settings.promotion_evidence_enforced and self.scorecard_source is not None:
             card = self.scorecard_source(order.strategy)
             if card is not None and not card.eligible:
                 failures = "; ".join(c.detail for c in card.failing)

@@ -202,6 +202,23 @@ class Settings(BaseSettings):
     # ledger has data.
     enforce_promotion_evidence: bool = False
 
+    # Enforcement is NOT optional on a live account (M29).
+    #
+    # The policy said "earn autonomy" and the code granted it anyway, which is
+    # exactly the inconsistency governance exists to prevent. But turning the
+    # flag on during the paper phase is self-defeating in a way worth naming:
+    # the bar is 30 closed trades, paper is where those trades are supposed to
+    # come from, and enforcing it there means nothing ever trades, so no
+    # evidence is ever produced, so the bar is never met. Circular.
+    #
+    # Resolved by binding it to what is actually at stake rather than to a flag
+    # someone has to remember. Paper collects the evidence; live requires it,
+    # always, whatever the setting says. An operator can opt in early on paper;
+    # nobody can opt out on live.
+    @property
+    def promotion_evidence_enforced(self) -> bool:
+        return self.enforce_promotion_evidence or self.is_live
+
     # --- Order policy (M11) --------------------------------------------------
     # Long-only by default: a "sell" signal for a symbol with no holding is
     # dropped rather than opening a short. Strategies emit directional signals
@@ -276,6 +293,23 @@ class Settings(BaseSettings):
     # Roughly six months in-sample against three months out-of-sample.
     walk_forward_in_sample_bars: int = Field(default=120, gt=0)
     walk_forward_out_sample_bars: int = Field(default=60, gt=0)
+
+    # How much of the regime probability distribution must sit inside a
+    # strategy's suitable regimes before it may trade (M27b).
+    #
+    # The gate used to read the single argmax label. On 30 July that label was
+    # `high_vol` at 0.31 against `bull` at 0.29 - so a 0.02 difference between
+    # the top two decided whether the only promoted strategy traded at all,
+    # while 0.49 of the mass sat in regimes where it was eligible. Taking the
+    # argmax of a nearly flat distribution and treating it as certainty threw
+    # away the confidence the model had already computed.
+    #
+    # 0.5 means "more likely in than out". Note the consequence for an
+    # uninformative classifier: with seven regimes and a flat distribution a
+    # four-regime strategy sits at 0.57 and trades, a one-regime strategy at
+    # 0.14 and does not. That is the intended direction - when the model knows
+    # nothing, breadth of mandate decides, not an arbitrary argmax.
+    regime_eligibility_mass: float = Field(default=0.5, gt=0.0, le=1.0)
 
     # Interval ticks are aggregated into OHLC bars over (M14), daily since
     # M27a.
