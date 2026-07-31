@@ -153,18 +153,34 @@ class AlpacaAdapter:
         )
 
         side = OrderSide.BUY if order.side == "buy" else OrderSide.SELL
+        # GTC on anything carrying protective legs (M31b).
+        #
+        # DAY killed every stop this system ever placed. On 31 July six
+        # positions filled with brackets attached; at the close the
+        # take-profit legs EXPIRED, Alpaca cancelled the paired stops with
+        # them as OCO does, and six positions worth about $36,000 sat through
+        # a three-day weekend with no protection at the broker at all.
+        #
+        # A protective stop whose whole purpose is to outlive the application
+        # must also outlive the session. The README calls broker-side stops
+        # the thing that survives a crash, a dead connection and a Windows
+        # update - DAY meant they did not survive 4pm.
+        #
+        # A plain entry with no bracket keeps DAY: an unfilled market order
+        # should not linger into the next session at a price nobody chose.
+        carries_protection = order.is_bracket and order.side == "buy"
         kwargs: dict[str, object] = {
             "symbol": order.symbol,
             "qty": order.quantity,
             "side": side,
-            "time_in_force": TimeInForce.DAY,
+            "time_in_force": TimeInForce.GTC if carries_protection else TimeInForce.DAY,
         }
 
         # A bracket attaches the protective legs at the broker in the same
         # submission, so there is no window in which the position exists
         # without its stop. Alpaca rejects a bracket on a sell-to-close, so
         # this only applies to entries.
-        if order.is_bracket and order.side == "buy":
+        if carries_protection:
             kwargs["order_class"] = OrderClass.BRACKET
             if order.stop_price is not None:
                 kwargs["stop_loss"] = StopLossRequest(stop_price=round(order.stop_price, 2))

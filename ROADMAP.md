@@ -45,6 +45,54 @@ The test: *would this change which trades happen?* If yes, it waits.
 Looking for *does the pipeline move*, not *did it make money*. At these sample
 sizes P&L is noise.
 
+## M31b - What the first trading session found  **[1 of 6 done]**
+
+The session of 31 July filled **six positions** - CSCO 44, UNP 17, WFC 58,
+CRWD 16, JNJ 19, CVS 47 - all whole shares, no broker refusals, through every
+rail. The first real trades this system has ever made. It also exposed six
+defects, listed here in the order they must be fixed.
+
+**1. Bracket legs expired at the close. [DONE]** Orders were submitted
+`TimeInForce.DAY`, so at 20:00 the take-profit legs EXPIRED and Alpaca
+cancelled the paired stops with them, as OCO does. Six positions worth about
+$36,000 sat through a three-day weekend with no protection at the broker at
+all. A stop whose purpose is to outlive the application must outlive the
+session: bracketed entries are now GTC. Plain orders stay DAY, so an unfilled
+market order does not linger into the next session at a price nobody chose.
+
+**2. Nothing reconciles stops against the broker.** `OMS._position_stops` still
+holds stops the app believes are resting at Alpaca, and the governor computes
+risk-at-stop from them - so after the expiry above it thinks the book is safer
+than it is. Reconciliation compares FILLED QUANTITIES only, which is why it
+caught nothing. This is the same failure as the phantom `transmitted` status on
+30 July: app-side belief and broker reality diverged with nothing watching.
+
+**3. A transiently-blocked order is never re-examined.** The autonomous
+executor evaluates each order once, on `OrderPendingSignoffEvent`. An order
+refused for `Opening Volatility` or `Midday Lull` - reasons that expire in
+minutes - is treated exactly like one refused for a permanent reason, and the
+symbol stays suppressed because the bridge skips anything in
+`pending_signoff_symbols()`. It cost three manual reject cycles on 30 July and
+one position (PANW, 10 shares, blocked 15:39 in the Midday Lull) on the 31st.
+
+**4. Entry times are not persisted.** `SignalToOrderBridge._entries` is built
+only from live fill events, so a restart leaves open positions with no known
+entry date - and the minimum hold and time stop both treat an unknown entry as
+"never applies". A restart silently disarms the churn rails on everything
+already held.
+
+**5. The blotter shows no prices.** Columns are Order ID, Symbol, Side,
+Quantity, Status, Created At. No reference price, stop, target or strategy - on
+the screen whose entire purpose is informed human sign-off. Deciding whether to
+approve a stale order on 30 July required reconstructing all of it from the
+decision journal plus a live quote.
+
+**6. Repeated identical refusals flood the journal.** SPY was refused by the
+cost rail 249 times in one session, once a minute, every minute - 249 of 262
+journal rows. The refusal is correct; logging it 249 times buries every real
+event. Suppress the repeat the way the regime engine logs transitions rather
+than every classification.
+
 ## The stack
 
 Ordered on one principle: **make the measurement honest before making the

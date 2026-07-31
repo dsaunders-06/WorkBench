@@ -8,6 +8,8 @@ real Alpaca round-trip works - see the README for how to check that yourself.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from qat.config import Settings
@@ -150,3 +152,51 @@ async def test_market_data_is_explicitly_unsupported():
 
     with pytest.raises(NotImplementedError):
         await adapter.get_market_data("AAPL")
+
+
+def test_a_bracketed_entry_is_gtc_so_its_stop_outlives_the_session():
+    """DAY killed every stop this system ever placed.
+
+    On 31 July six positions filled with brackets attached. At the close the
+    take-profit legs EXPIRED, Alpaca cancelled the paired stops with them as
+    OCO does, and six positions sat through a three-day weekend with no
+    protection at the broker. A stop whose purpose is to outlive the
+    application must also outlive the session.
+    """
+    client = FakeClient()
+    adapter = AlpacaAdapter(client=client, settings=Settings(_env_file=None))
+    order = Order(
+        order_id="o1",
+        symbol="AAPL",
+        side="buy",
+        quantity=10.0,
+        status="pending_signoff",
+        reference_price=100.0,
+        stop_price=95.0,
+        take_profit_price=110.0,
+    )
+
+    asyncio.run(adapter.place_order(order))
+
+    request = client.submitted[-1]
+    assert str(request.time_in_force).endswith("GTC")
+    assert request.stop_loss is not None, "the protective leg must be attached"
+
+
+def test_a_plain_entry_stays_day():
+    """An unfilled market order carrying no protection should not linger into
+    the next session at a price nobody chose."""
+    client = FakeClient()
+    adapter = AlpacaAdapter(client=client, settings=Settings(_env_file=None))
+    order = Order(
+        order_id="o2",
+        symbol="AAPL",
+        side="sell",
+        quantity=10.0,
+        status="pending_signoff",
+        reference_price=100.0,
+    )
+
+    asyncio.run(adapter.place_order(order))
+
+    assert str(client.submitted[-1].time_in_force).endswith("DAY")
