@@ -224,6 +224,48 @@ rather than a bar count, or hold the fitted model and re-estimate only the
 posterior. With daily bars a refit now happens roughly monthly, so this is a
 slow-burning problem rather than an intraday one.
 
+### M28a - The staleness rail  **[DONE, 31 July]**
+
+Not a tuning problem. The rail had never once fired correctly - every trip it
+produced was a false positive, and it was only ever masked by the feed being
+broken in other ways:
+
+| Trip | Symbol | Reported age | Reality |
+|---|---|---|---|
+| 27 Jul | (feed dead) | - | never fired; per-symbol staleness skips symbols that have not ticked |
+| 28 Jul 13:30 | BRK.B | 63,017s | thin on IEX, last print was the previous close |
+| 28 Jul 13:35 | HON | 97s | liquid; the poll interval itself |
+
+It read `_last_seen`, the TRADE's timestamp, so it measured how old the last
+print was rather than whether the feed was delivering. With a 60s poll against
+a 60s threshold the measured age lands between 60 and 120 seconds through
+entirely normal operation, on any symbol. A trip was arithmetic, not risk.
+
+The two ideas it conflated are now separate:
+
+* **Feed liveness** - measured on *receive* time, reported by
+  `MarketDataFeedEvent`, shown as MARKET DATA DOWN. Still deliberately not a
+  kill-switch trip: no ticks means no signals, so the danger is that nobody
+  notices, not that it trades wrongly.
+* **Quote freshness** - measured on the *trade's own* timestamp, reported by
+  `DataStaleEvent`, and it now excludes that ONE symbol from signal generation.
+  It cannot halt the account. `KillSwitch.check_staleness` is gone and
+  `KillSwitchEngine` no longer subscribes to the event.
+
+`DataStaleEvent` gained a `stale` flag so a symbol that prints again is let back
+in rather than lost for the session, and it publishes on the *transitions* only.
+A stale symbol still has its bars recorded, so its buffer is continuous when it
+returns.
+
+Default 60s -> **900s**, which is what the measurement now means: a megacap
+prints continuously, a thin or halted one legitimately does not, and sizing
+against an hour-old print is the hazard worth naming.
+
+**Operator action:** `QAT_DATA_STALENESS_SECONDS=250000` can come out of the
+`.env`. It suppressed a rail that halted sessions; the rail no longer halts
+anything, and leaving the override disables the per-symbol exclusion that
+replaced it.
+
 ### M28 - Cost-truthful measurement  **[DONE, 31 July]**
 
 Fees on `ClosedTrade`, gross and net both retained; cost drag in the Metrics tab

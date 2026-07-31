@@ -992,6 +992,46 @@ it. An operator can opt in early on paper; nobody can opt out on live.
 This had to follow M28 — before it, the gate would have enforced a bar computed
 on gross figures already known to be optimistic.
 
+## Feed liveness and quote freshness are different questions (M28a)
+
+The staleness rail had never once fired correctly. Every trip was a false
+positive:
+
+| Trip | Symbol | Reported age | Reality |
+|---|---|---|---|
+| 27 Jul | (feed dead) | — | never fired; per-symbol staleness skips symbols that never ticked |
+| 28 Jul | BRK.B | 63,017s | thin on IEX, last print was the previous close |
+| 28 Jul | HON | 97s | liquid; the poll interval itself |
+
+It read `_last_seen`, which holds the **trade's** timestamp, so it measured how
+old the last print was rather than whether the feed was delivering. With a
+60-second poll against a 60-second threshold, a trade arriving 40s old is
+already past the line before the next poll — the measured age routinely lands
+between 60 and 120 seconds through entirely normal operation, on any symbol. A
+trip was not a risk, it was arithmetic. The operator suppressed it with a
+69-hour threshold, which kept sessions running and left genuine partial outages
+undetected.
+
+The two ideas are now separate:
+
+- **Feed liveness**, measured on **receive** time, reported as MARKET DATA
+  DOWN. Still not a kill-switch trip — no ticks means no signals, so the danger
+  is that nobody notices, not that it trades wrongly.
+- **Quote freshness**, measured on the **trade's own** timestamp, which
+  excludes that one symbol from signal generation and **can never halt the
+  account**. `KillSwitch.check_staleness` no longer exists.
+
+A stale symbol still has its bars recorded, so its buffer is continuous when it
+prints again, and `DataStaleEvent` carries a `stale` flag so recovery lets it
+back in rather than losing it for the session. Only the transitions are
+published — a rail that republishes the same thin ticker every five seconds is
+noise.
+
+The threshold default moved 60s → **900s**, which is what it now measures. If
+`QAT_DATA_STALENESS_SECONDS=250000` is still in your `.env` it should come out:
+it was suppressing a rail that halted sessions, and it now disables the
+per-symbol exclusion that replaced it.
+
 ## Market data resilience
 
 The first unattended session produced no trades, and none of the reasons were
