@@ -14,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QColor, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
@@ -42,6 +43,8 @@ from qat.presentation.runtime import Runtime
 logger = logging.getLogger(__name__)
 
 _MAX_TRADE_ROWS = 200
+# Matches the market-data poll: nothing here changes faster than the prices.
+_REFRESH_MS = 60_000
 _STATUS_COLOURS = {
     "promoted": QColor("#1b5e20"),
     "promoted-below-bar": QColor("#b71c1c"),
@@ -143,6 +146,12 @@ class PerformanceScreen(QWidget):
         tabs.addTab(self.weekly_view, "Weekly reports")
         layout.addWidget(tabs, stretch=1)
 
+        # Keeps the tab current while it is the one on screen. Stopped in
+        # hideEvent, so a session spends nothing on a tab nobody is watching.
+        self._live_timer = QTimer(self)
+        self._live_timer.setInterval(_REFRESH_MS)
+        self._live_timer.timeout.connect(self.refresh)
+
         self.refresh()
 
     def _on_export_clicked(self) -> None:
@@ -160,6 +169,26 @@ class PerformanceScreen(QWidget):
             self.export_status.setText(f"{result.summary_line()}  ({result.path})")
         finally:
             self.export_button.setEnabled(True)
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt's name
+        """Re-read on every switch to this tab (M31b).
+
+        refresh() ran at construction and on the button, and nowhere else - so
+        the tab showed whatever was true when the window opened and never
+        changed. A session started at 00:18 still displayed 00:18's figures at
+        06:04, with Friday's daily report written to disk and absent from the
+        screen. Every panel here is a file read, and a review screen that shows
+        a twelve-hour-old snapshot without saying so is worse than one that is
+        obviously empty.
+        """
+        super().showEvent(event)
+        self.refresh()
+        self._live_timer.start()
+
+    def hideEvent(self, event: QHideEvent) -> None:  # noqa: N802 - Qt's name
+        """Stop polling the moment the tab is not being looked at."""
+        super().hideEvent(event)
+        self._live_timer.stop()
 
     def _on_refresh_clicked(self) -> None:
         asyncio.ensure_future(self._refresh_async())

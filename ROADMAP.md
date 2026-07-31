@@ -104,6 +104,33 @@ A broker that cannot answer `resting_stops` changes nothing: an adapter without
 the capability must not be read as "no stops rest anywhere", which would drop
 every stop the app holds.
 
+## M31c - The Performance tab showed the launch, not the present
+
+Three observations on 1 August - the Closed Trades table empty, no daily report
+for Friday, the weekly report apparently never run - turned out to be one
+display bug and two correct behaviours.
+
+`PerformanceScreen.refresh()` was called at construction and by the Refresh
+button, and nowhere else. A session started at 00:18 still displayed 00:18's
+figures at 06:04: Friday's daily report was on disk and absent from the screen,
+and the promotion table, metrics and closed-trades list were all equally stale.
+During a live session that means watching a promotion table frozen at launch.
+
+It now re-reads on `showEvent` and polls once a minute while it is the visible
+tab, stopping in `hideEvent`.
+
+**The other two were not bugs.** Closed Trades is empty because nothing has
+closed - six positions opened 31 July against a ten-trading-day minimum hold.
+And the weekly report *did* run: `last_weekly` records the week's MONDAY, so
+`2026-07-27` is Friday 31 July's week, and `weekly_reports.md` contains "Week
+of 27 Jul 2026 to 31 Jul 2026". Reading that field as a week-end date is what
+made a working scheduler look broken.
+
+**Worth doing but not yet done:** a daily report on a day with six entries and
+no exits reads identically to a day when nothing happened, because every metric
+is built from closed trades. Open-position activity - entries taken, capital
+committed - should be visible rather than implied by absence.
+
 ## The stack
 
 Ordered on one principle: **make the measurement honest before making the
