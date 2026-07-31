@@ -434,10 +434,24 @@ worked that way.
   may not de-risk" is a broken rail, and this one had been able to do that
   since it was written.
 
-**Sector stays at 40%**, deliberately. The roadmap wants 30%, but sector is
-enforced in `PortfolioRiskChecker`, which holds the sector map and has no way
-to trim. Lowering the number before it can trim would reintroduce exactly the
-refuse-everything failure single-name just had.
+**Sector 40% -> 30%. [DONE]** Held back at first, deliberately: sector was
+enforced only in `PortfolioRiskChecker`, which holds the sector map and has no
+way to trim, so lowering the number before it could trim would have
+reintroduced exactly the refuse-everything failure single-name just had.
+
+`PortfolioGovernor.evaluate` now takes `candidate_sector` and
+`sector_by_symbol` and trims against the sector the same way it trims a single
+name, counting held positions **and** pending buys - an unfilled order is
+committed exposure, and a cap that only sees fills approves a third name while
+the second sits in the blotter. It runs before the checker, so the checker
+sees the already-trimmed exposure and remains a backstop with no cause to
+fire. A candidate with no sector in the instrument map is not gated.
+
+Only then does 30% mean anything: at a 15% single-name cap, 40% never bound
+until the third position in a sector was already on. 30% bites at
+two-and-a-bit, which is the point - sector is the correlation that survives
+having picked different tickers, and it is the one that shows up precisely
+when the names stop looking different.
 
 ### M31 - Churn control  **[DONE, 31 July]**
 

@@ -434,3 +434,119 @@ def test_a_full_book_refuses_a_new_position_on_gap_risk_alone():
 
     assert decision.allowed is False
     assert "overnight gap" in decision.reason
+
+
+# --- Sector concentration (M31c) -------------------------------------------
+
+
+def test_a_sector_that_is_already_full_trims_the_candidate():
+    """Sector got the same treatment single-name got in M30, and for the same
+    reason: PortfolioRiskChecker tests it as a pass/fail, so lowering the cap
+    to 30% under reject semantics would refuse the third position in a sector
+    outright rather than sizing it down."""
+    governor = PortfolioGovernor(settings=_settings(max_sector_concentration_pct=0.30))
+
+    decision = governor.evaluate(
+        symbol="CCC",
+        price=100.0,
+        proposed_shares=150.0,  # $15,000 wanted
+        stop_price=95.0,
+        positions=[
+            Position(symbol="AAA", quantity=100.0, avg_price=100.0),
+            Position(symbol="BBB", quantity=100.0, avg_price=100.0),
+        ],
+        stops={"AAA": 95.0, "BBB": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0, "BBB": 100.0},
+        candidate_sector="Financials",
+        sector_by_symbol={"AAA": "Financials", "BBB": "Financials", "CCC": "Financials"},
+    )
+
+    # $20,000 of Financials held against a $30,000 cap leaves $10,000.
+    assert decision.allowed is True
+    assert decision.max_shares == pytest.approx(100.0)
+    assert "Financials sector" in decision.reason
+
+
+def test_holdings_in_other_sectors_do_not_count_against_this_one():
+    governor = PortfolioGovernor(settings=_settings(max_sector_concentration_pct=0.30))
+
+    decision = governor.evaluate(
+        symbol="CCC",
+        price=100.0,
+        proposed_shares=150.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=250.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+        candidate_sector="Financials",
+        sector_by_symbol={"AAA": "Energy", "CCC": "Financials"},
+    )
+
+    assert decision.max_shares == pytest.approx(150.0)
+    assert decision.reason == "within portfolio limits"
+
+
+def test_a_pending_buy_in_the_sector_counts_before_it_fills():
+    """The same trap the position cap had: an unfilled order is committed
+    exposure, and a sector cap that only sees fills will approve a third name
+    while the second sits in the blotter."""
+    governor = PortfolioGovernor(settings=_settings(max_sector_concentration_pct=0.30))
+
+    decision = governor.evaluate(
+        symbol="CCC",
+        price=100.0,
+        proposed_shares=150.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+        pending_orders=[_pending("BBB", quantity=100.0, price=100.0)],
+        candidate_sector="Financials",
+        sector_by_symbol={"AAA": "Financials", "BBB": "Financials", "CCC": "Financials"},
+    )
+
+    assert decision.max_shares == pytest.approx(100.0)
+
+
+def test_a_sector_at_its_cap_rejects_rather_than_sizing_to_nothing():
+    governor = PortfolioGovernor(settings=_settings(max_sector_concentration_pct=0.30))
+
+    decision = governor.evaluate(
+        symbol="CCC",
+        price=100.0,
+        proposed_shares=100.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=300.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+        candidate_sector="Financials",
+        sector_by_symbol={"AAA": "Financials", "CCC": "Financials"},
+    )
+
+    assert decision.allowed is False
+    assert "sector cap" in decision.reason
+
+
+def test_an_unclassified_candidate_is_not_gated_by_sector():
+    """Sector is only known for symbols in the instrument map. A candidate
+    without one must not be trimmed against a sector nobody assigned it to."""
+    governor = PortfolioGovernor(settings=_settings(max_sector_concentration_pct=0.30))
+
+    decision = governor.evaluate(
+        symbol="CCC",
+        price=100.0,
+        proposed_shares=150.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=300.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+        candidate_sector=None,
+        sector_by_symbol={"AAA": "Financials"},
+    )
+
+    assert decision.max_shares == pytest.approx(150.0)

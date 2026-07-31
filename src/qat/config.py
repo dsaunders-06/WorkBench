@@ -131,12 +131,12 @@ class Settings(BaseSettings):
     # to about 0.75%, and cuts what the worst gap observed on this universe
     # (-22.1%) costs from 5.5% of equity to 3.3%.
     max_single_name_concentration_pct: float = Field(default=0.15, gt=0, le=1.0)
-    # Still 40% and still reject-only. The roadmap wants 30%, but sector is
-    # enforced in PortfolioRiskChecker, which has the sector map and no way to
-    # trim; lowering the number before it can trim would reintroduce exactly
-    # the refuse-everything failure that single-name just had. Deferred
-    # deliberately rather than moved on its own.
-    max_sector_concentration_pct: float = Field(default=0.40, gt=0, le=1.0)
+    # 40% -> 30%, and only now that the governor can trim to it (M31c). At 15%
+    # single-name, 40% never bound before the third position in a sector was
+    # already on; 30% bites at two-and-a-bit, which is the point - sector is
+    # the correlation that survives having picked different tickers, and it is
+    # the one that shows up precisely when the names stop looking different.
+    max_sector_concentration_pct: float = Field(default=0.30, gt=0, le=1.0)
 
     # --- Gap risk, budgeted separately from stop risk (M30) ------------------
     # Every other risk figure here means "if the stop fills". A gap opens

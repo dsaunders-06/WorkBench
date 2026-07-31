@@ -205,6 +205,8 @@ class RiskEngine:
                 stops=position_stops or {},
                 equity=equity,
                 pending_orders=pending_orders,
+                candidate_sector=candidate.sector,
+                sector_by_symbol=sector_by_symbol,
             )
             inputs["governor"] = governor_decision.inputs
             if not governor_decision.allowed:

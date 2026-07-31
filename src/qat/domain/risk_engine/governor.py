@@ -136,6 +136,8 @@ class PortfolioGovernor:
         equity: float,
         pending_orders: list[Order] | None = None,
         prices: dict[str, float] | None = None,
+        candidate_sector: str | None = None,
+        sector_by_symbol: dict[str, str] | None = None,
     ) -> GovernorDecision:
         """Approves, trims, or rejects a candidate against portfolio-level caps."""
         snap = self.snapshot(positions, stops, equity, pending_orders, prices)
@@ -207,6 +209,38 @@ class PortfolioGovernor:
                 f"{self.settings.max_single_name_concentration_pct:.0%} single-name cap"
             )
 
+        # --- sector concentration, TRIMMED not refused (M31c) ----------------
+        #
+        # The same change single-name got in M30, and for the same reason:
+        # PortfolioRiskChecker tests this as a pass/fail, so lowering the cap
+        # under reject semantics refuses a candidate outright rather than
+        # sizing it down. With 15% names, a 30% sector cap is reached by the
+        # third position in a sector, and refusing there would silently stop a
+        # strategy trading a sector it is already in rather than letting it
+        # take a smaller position.
+        #
+        # Sectors that look diversified in calm markets converge in a crisis,
+        # which is exactly when the cap is supposed to be doing something.
+        sector_affordable_shares = float("inf")
+        held_in_sector = 0.0
+        if candidate_sector and sector_by_symbol:
+            sector_cap_dollars = self.settings.max_sector_concentration_pct * equity
+            held_in_sector = sum(
+                abs(pos.quantity) * (prices or {}).get(pos.symbol, pos.avg_price)
+                for pos in positions
+                if sector_by_symbol.get(pos.symbol) == candidate_sector
+            ) + sum(
+                order.quantity * (order.reference_price or price)
+                for order in (pending_orders or [])
+                if order.side == "buy" and sector_by_symbol.get(order.symbol) == candidate_sector
+            )
+            sector_affordable_shares = max(0.0, sector_cap_dollars - held_in_sector) / price
+            if sector_affordable_shares < 1:
+                return reject(
+                    f"{candidate_sector} already holds ${held_in_sector:,.0f}, at or above the "
+                    f"{self.settings.max_sector_concentration_pct:.0%} sector cap"
+                )
+
         # --- gap risk, budgeted separately from stop risk (M30) --------------
         #
         # Every figure above means "if the stop fills". A gap opens through it:
@@ -239,6 +273,10 @@ class PortfolioGovernor:
             ),
             f"{self.settings.gap_shock_pct:.0%} overnight-gap": gap_affordable_shares,
         }
+        if candidate_sector and sector_by_symbol:
+            limits[
+                f"{self.settings.max_sector_concentration_pct:.0%} {candidate_sector} sector"
+            ] = sector_affordable_shares
         final_shares = min(proposed_shares, *limits.values())
         trimmed = final_shares < proposed_shares
 
@@ -261,6 +299,7 @@ class PortfolioGovernor:
                 "headroom_dollars": headroom,
                 "per_share_risk": per_share_risk,
                 "held_in_name_dollars": held_in_name,
+                "held_in_sector_dollars": held_in_sector,
                 "gross_exposure_pct": snap.gross_exposure_pct,
                 "gap_loss_at_shock_dollars": snap.gross_exposure_dollars
                 * self.settings.gap_shock_pct,

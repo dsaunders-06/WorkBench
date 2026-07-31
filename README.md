@@ -736,8 +736,9 @@ no exit path short of a human noticing.
 
 ## Portfolio limits
 
-`PortfolioRiskChecker` covers ES, single-name and sector concentration.
-`PortfolioGovernor` (`domain/risk_engine/governor.py`) adds the three the
+`PortfolioRiskChecker` covers ES, single-name and sector concentration, but as
+pass/fail. `PortfolioGovernor` (`domain/risk_engine/governor.py`) runs first,
+re-tests concentration with the power to **trim**, and adds the three limits the
 reference implementation only added after they bit:
 
 - **Aggregate risk-at-stop** (`max_aggregate_risk_at_stop_pct`, default 5%) —
@@ -752,7 +753,11 @@ reference implementation only added after they bit:
 
 A candidate over the cap is **trimmed to the remaining headroom** rather than
 rejected outright, and only rejected when there is not a whole share of room
-left. OMS supplies the portfolio state itself, so no caller can bypass a cap by
+left. That applies to single-name (15%) and sector (30%) concentration too:
+both were pass/fail in the checker, and at these levels a cap that refuses
+rather than resizes simply stops the strategy trading. Because the governor
+trims first, the checker downstream sees the already-trimmed exposure and has
+no cause to fire. OMS supplies the portfolio state itself, so no caller can bypass a cap by
 omitting an argument — the same reasoning as the cash check.
 
 **Every buy now carries a broker-side stop.** If the strategy proposes one it
