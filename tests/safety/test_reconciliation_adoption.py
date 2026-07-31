@@ -204,3 +204,113 @@ async def test_adoption_is_recorded_in_the_log(caplog):
 
     assert "Adopted 1 pre-existing broker position" in caplog.text
     assert "AAPL" in caplog.text
+
+
+# --- Stops are learned from the broker at adoption (M31d) ---------------------
+
+
+class _StopBroker(_Broker):
+    """A broker that can answer what is actually resting."""
+
+    def __init__(
+        self,
+        positions: dict[str, float] | None = None,
+        resting: dict[str, float] | None = None,
+    ) -> None:
+        super().__init__(positions)
+        self._resting = dict(resting or {})
+        self.fail_resting = False
+        self.resting_calls = 0
+
+    async def resting_stops(self) -> dict[str, float]:
+        self.resting_calls += 1
+        if self.fail_resting:
+            raise ConnectionError("broker unreachable")
+        return dict(self._resting)
+
+
+def _build_with_stops(positions: dict[str, float], resting: dict[str, float]):
+    settings = Settings(_env_file=None)
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = _StopBroker(positions, resting)
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch)
+    return broker, oms
+
+
+@pytest.mark.asyncio
+async def test_adoption_learns_the_stops_actually_resting_at_the_broker():
+    """The restart trap. _position_stops is in-memory, so before this every
+    launch re-adopted its own positions as unprotected and the governor counted
+    each at full value - which rejects every new buy before sizing runs."""
+    _, oms = _build_with_stops({"AAPL": 50.0, "MSFT": 20.0}, {"AAPL": 95.0, "MSFT": 380.0})
+
+    await oms.adopt_broker_positions()
+
+    assert oms.position_stops() == {"AAPL": 95.0, "MSFT": 380.0}
+
+
+@pytest.mark.asyncio
+async def test_a_position_with_no_resting_stop_stays_off_the_record():
+    """The conservative rule is unchanged - unknown protection is treated as no
+    protection. What changed is that it is now reached by evidence."""
+    _, oms = _build_with_stops({"AAPL": 50.0, "MSFT": 20.0}, {"AAPL": 95.0})
+
+    await oms.adopt_broker_positions()
+
+    assert oms.position_stops() == {"AAPL": 95.0}
+
+
+@pytest.mark.asyncio
+async def test_a_stop_resting_for_something_not_held_is_ignored():
+    _, oms = _build_with_stops({"AAPL": 50.0}, {"AAPL": 95.0, "TSLA": 200.0})
+
+    await oms.adopt_broker_positions()
+
+    assert oms.position_stops() == {"AAPL": 95.0}
+
+
+@pytest.mark.asyncio
+async def test_a_broker_that_cannot_answer_is_not_read_as_an_unprotected_book():
+    """_Broker has no resting_stops at all. Absence of the capability must not
+    be acted on as if it were a naked account."""
+    _, oms, _, _, _ = _build({"AAPL": 50.0})
+
+    await oms.adopt_broker_positions()
+
+    assert oms.position_stops() == {}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_stop_query_does_not_stop_the_session_starting():
+    broker, oms = _build_with_stops({"AAPL": 50.0}, {"AAPL": 95.0})
+    broker.fail_resting = True
+
+    adopted = await oms.adopt_broker_positions()
+
+    assert adopted == {"AAPL": 50.0}
+    assert oms.position_stops() == {}
+
+
+@pytest.mark.asyncio
+async def test_an_empty_account_never_asks_about_stops():
+    broker, oms = _build_with_stops({}, {})
+
+    await oms.adopt_broker_positions()
+
+    assert broker.resting_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_adopted_stops_make_the_verify_rail_able_to_see_a_lost_one():
+    """verify_position_stops iterates _position_stops, so an empty record after
+    a restart left it with nothing to check - exactly when an overnight bracket
+    expiry is most likely to have happened."""
+    broker, oms = _build_with_stops({"AAPL": 50.0}, {"AAPL": 95.0})
+    await oms.adopt_broker_positions()
+
+    broker._resting = {}
+    lost = await oms.verify_position_stops()
+
+    assert lost == ["AAPL"]
+    assert oms.position_stops() == {}

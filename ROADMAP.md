@@ -104,6 +104,34 @@ A broker that cannot answer `resting_stops` changes nothing: an adapter without
 the capability must not be read as "no stops rest anywhere", which would drop
 every stop the app holds.
 
+## M31d - A restart forgot what was protecting the book
+
+`OMS._position_stops` is in-memory and starts empty, so every launch
+re-adopted its own positions as unprotected. The governor counts a position
+with no known stop at its full value, which is the conservative rule and the
+right one - but applied to six holdings worth $27.9k on $100.8k equity it
+reads as 27.7% risk-at-stop against a 5% cap, and rejects every new buy before
+sizing runs.
+
+It also blinded `verify_position_stops`, the M31b rail that catches a stop
+that has quietly stopped existing: it iterates `_position_stops`, so after a
+restart it had nothing to check - precisely when an overnight bracket expiry
+is most likely to have happened.
+
+Adoption now asks the broker. `resting_stops()` already existed and was used
+only to verify; it is the account, and the account is the only thing that
+actually knows. A position with no resting stop is still absent from the
+record, so the conservative rule is unchanged - it is now reached by evidence
+rather than by assumption, and the naked ones get named at ERROR instead of
+being averaged into one warning about all of them.
+
+**What it found on 1 August.** All six. Every entry from 31 July shows the
+same three rows at Alpaca: market buy filled, limit sell expired, stop sell
+canceled. The brackets were submitted DAY, and the take-profit leg expiring at
+the close took the paired stop with it - the exact failure M31b diagnosed,
+now caught in the act. The GTC fix shipped in M31a protects new entries and
+cannot resurrect these.
+
 ## M31c - The Performance tab showed the launch, not the present
 
 Three observations on 1 August - the Closed Trades table empty, no daily report

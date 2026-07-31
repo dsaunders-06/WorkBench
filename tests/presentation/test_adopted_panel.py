@@ -38,7 +38,9 @@ def test_panel_names_the_blocked_state(qtbot):
     assert "refused" in panel.headline.text()
     assert "10.00%" in panel.headline.text()  # $10,000 of a $100,000 account
     assert "5.00% cap" in panel.headline.text()
-    assert "no record of a protective stop" in panel.body.text()
+    # Names the position that is actually naked, rather than describing every
+    # adopted holding that way as it did before stops were read at adoption.
+    assert "No stop is resting for A " in panel.body.text()
 
 
 def test_panel_stays_quieter_when_the_cap_is_not_breached(qtbot):

@@ -97,13 +97,21 @@ class AdoptedPositionReport:
         unprotected = self.unprotected
         lines = [
             "These were already in the account when the session started, so this "
-            "application did not choose them and has no record of a protective stop "
-            "on them. An unknown stop is treated as no stop, which means the whole "
-            "position value counts against the risk budget.",
+            "application did not choose them. Whatever is resting at the broker is "
+            "what their risk is measured to.",
         ]
-        if unprotected:
-            names = ", ".join(f"{p.symbol} ({p.value:,.0f})" for p in sorted_by_value(unprotected))
-            lines.append(f"Counted at full value: {names}.")
+        if not unprotected:
+            lines.append("Every one of them has a stop resting, so none is counted at full value.")
+            return " ".join(lines)
+        # Only the naked ones consume the budget, and only they are worth
+        # naming. Before M31d this paragraph described every adopted position
+        # that way, because the app asked nothing and assumed the worst of all
+        # of them.
+        names = ", ".join(f"{p.symbol} ({p.value:,.0f})" for p in sorted_by_value(unprotected))
+        lines.append(
+            f"No stop is resting for {names}. Unknown protection is treated as none, so the "
+            f"whole position value counts against the risk budget."
+        )
         lines.append(
             "Two ways out: attach a stop to each, which reduces the counted risk to "
             "the distance down to it, or close them and let the strategies open "

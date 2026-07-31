@@ -426,25 +426,79 @@ class OMS:
         the first reconciliation call: silently absorbing an unexpected
         position is exactly the event reconciliation exists to catch, so it
         must happen once, at a known point, on the record.
+
+        **Stops are learned from the broker here, not assumed away (M31d).**
+        `_position_stops` is in-memory and starts empty, so before this every
+        restart re-adopted its own positions as unprotected and the governor
+        counted each at full value: six holdings worth $27.8k read as ~28%
+        risk-at-stop against a 5% cap, which rejects every new buy before
+        sizing runs. The account is the only thing that actually knows what is
+        resting, and it was already being asked - `resting_stops` existed and
+        was used solely to verify.
+
+        It also un-blinds `verify_position_stops`, which iterates
+        `_position_stops` and therefore had nothing to check after a restart -
+        precisely when a bracket expired overnight is most likely to have gone
+        missing.
+
+        A position with no resting stop is still absent from the record, so
+        the conservative rule is unchanged. The difference is that it is now
+        reached by evidence rather than by assumption.
         """
         adopted = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
         self._filled_quantities = dict(adopted)
         self._adopted_baseline = dict(adopted)
-        if adopted:
-            # WARNING, not INFO, and the consequence is stated. Adoption is
-            # routine; adoption silently consuming the entire risk-at-stop
-            # budget is not, and the INFO line said only that it had happened.
-            logger.warning(
-                "Adopted %d pre-existing broker position(s) as the reconciliation baseline: %s. "
-                "None carries a stop this application placed, so each counts at full value "
-                "against the aggregate risk-at-stop cap and new entries may be refused until "
-                "they are stopped or closed.",
-                len(adopted),
-                ", ".join(f"{sym} {qty:g}" for sym, qty in sorted(adopted.items())),
-            )
-        else:
+        if not adopted:
             logger.info("No pre-existing broker positions to adopt")
+            return adopted
+
+        resting = await self._resting_stops()
+        self._position_stops = {
+            symbol: stop for symbol, stop in resting.items() if symbol in adopted
+        }
+        naked = sorted(set(adopted) - set(self._position_stops))
+
+        # WARNING, not INFO, and the consequence is stated. Adoption is
+        # routine; adoption silently consuming the entire risk-at-stop budget
+        # is not, and the INFO line said only that it had happened.
+        logger.warning(
+            "Adopted %d pre-existing broker position(s) as the reconciliation baseline: %s. "
+            "%d carries a stop resting at the broker, which is what its risk is measured to.",
+            len(adopted),
+            ", ".join(f"{sym} {qty:g}" for sym, qty in sorted(adopted.items())),
+            len(self._position_stops),
+        )
+        if naked:
+            # Its own line, at ERROR, and worded as the position being exposed
+            # rather than as bookkeeping. This is the state that both loses
+            # real money on a gap and silently exhausts the risk budget.
+            logger.error(
+                "POSITION UNPROTECTED: %s held with no stop resting at the broker. Each counts "
+                "its full value against the aggregate risk-at-stop cap, so new entries may be "
+                "refused until they are stopped or closed.",
+                ", ".join(naked),
+            )
         return adopted
+
+    async def _resting_stops(self) -> dict[str, float]:
+        """What the broker says is actually working, or nothing it can vouch for.
+
+        An adapter without the capability must not be read as "no stops rest
+        anywhere" - that is indistinguishable from a genuinely naked book and
+        would be acted on as if it were one.
+        """
+        source = getattr(self.broker, "resting_stops", None)
+        if source is None:
+            return {}
+        try:
+            resting: dict[str, float] = await source()
+        except Exception:
+            # A failed query is not evidence of an unprotected book. Startup
+            # continues; the positions keep the conservative full-value
+            # treatment they would have had anyway.
+            logger.exception("Could not read resting stops from the broker during adoption")
+            return {}
+        return resting
 
     @property
     def adopted_baseline(self) -> dict[str, float]:
