@@ -24,8 +24,21 @@ from qat.domain.events import RegimeEvent
 from qat.domain.risk_engine.audit import AuditLog, RiskDecision
 from qat.domain.risk_engine.governor import PortfolioGovernor
 from qat.domain.risk_engine.kill_switch import KillSwitch
-from qat.domain.risk_engine.portfolio_risk import PortfolioRiskChecker
+from qat.domain.risk_engine.portfolio_risk import PortfolioCheckResult, PortfolioRiskChecker
 from qat.domain.risk_engine.sizing import KellyVolTargetSizer
+
+# A sell is risk-reducing, so the portfolio caps do not apply to it. Stated as
+# a value rather than by skipping the block, so the audit trail still carries a
+# portfolio_check entry for every decision.
+_APPROVED_SELL = PortfolioCheckResult(
+    approved=True,
+    reason="sell - portfolio caps gate added risk only",
+    historical_var_95=0.0,
+    historical_var_99=0.0,
+    expected_shortfall_975=0.0,
+    single_name_pct=0.0,
+    sector_pct=None,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,13 +190,18 @@ class RiskEngine:
         # exposure. Applies to buys only - these gate *added* risk, and a cap
         # that blocked an exit would stop the portfolio de-levering exactly
         # when it most needs to.
-        if candidate.side == "buy" and positions is not None:
+        # Runs for every buy, not only when a caller happened to supply
+        # positions (M30). Single-name concentration is trimmed here, and an
+        # empty book still has a cap - skipping the governor left that cap to
+        # PortfolioRiskChecker, which refuses rather than trims, so the first
+        # trade of the day was rejected outright instead of being sized down.
+        if candidate.side == "buy":
             governor_decision = self.governor.evaluate(
                 symbol=candidate.symbol,
                 price=candidate.price,
                 proposed_shares=scaled_shares,
                 stop_price=effective_stop,
-                positions=positions,
+                positions=positions or [],
                 stops=position_stops or {},
                 equity=equity,
                 pending_orders=pending_orders,
@@ -198,15 +216,25 @@ class RiskEngine:
         signed_multiplier = 1 if candidate.side == "buy" else -1
         candidate_dollar_exposure = scaled_shares * candidate.price * signed_multiplier
 
-        portfolio_result = self.portfolio_checker.check(
-            existing_weights=existing_weights,
-            existing_returns=existing_returns,
-            candidate_symbol=candidate.symbol,
-            candidate_dollar_exposure=candidate_dollar_exposure,
-            candidate_returns=candidate.candidate_returns,
-            total_equity=equity,
-            candidate_sector=candidate.sector,
-            sector_by_symbol=sector_by_symbol,
+        # Buys only, for the same reason the governor above is buys only: these
+        # gate *added* risk. Exposed by M30 lowering the single-name cap to 15%
+        # - a 20% position could no longer be sold, because the check ran on
+        # the resulting concentration and refused it. A rail whose effect is
+        # "the account may not de-risk" is a broken rail, and this one had been
+        # able to do that since it was written.
+        portfolio_result = (
+            self.portfolio_checker.check(
+                existing_weights=existing_weights,
+                existing_returns=existing_returns,
+                candidate_symbol=candidate.symbol,
+                candidate_dollar_exposure=candidate_dollar_exposure,
+                candidate_returns=candidate.candidate_returns,
+                total_equity=equity,
+                candidate_sector=candidate.sector,
+                sector_by_symbol=sector_by_symbol,
+            )
+            if candidate.side == "buy"
+            else _APPROVED_SELL
         )
         inputs["portfolio_check"] = {
             "var_95": portfolio_result.historical_var_95,

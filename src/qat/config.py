@@ -120,8 +120,39 @@ class Settings(BaseSettings):
     portfolio_es_limit_pct: float = Field(default=0.03, gt=0)
     daily_loss_limit_pct: float = Field(default=0.03, gt=0)
     max_drawdown_limit_pct: float = Field(default=0.20, gt=0)
-    max_single_name_concentration_pct: float = Field(default=0.25, gt=0, le=1.0)
+    # Lowered from 25% in M30, and only viable because the governor now TRIMS
+    # to this cap rather than refusing (see governor.evaluate). At 25% it
+    # almost never bound: 1% risk over a ~5% stop already sizes swing to about
+    # 20% of equity, so the limit sat just above where the sizer landed. Under
+    # the old reject semantics 15% would have refused every swing trade
+    # outright rather than making it smaller.
+    #
+    # 15% trims a $20,000 position to $15,000, taking realised per-trade risk
+    # to about 0.75%, and cuts what the worst gap observed on this universe
+    # (-22.1%) costs from 5.5% of equity to 3.3%.
+    max_single_name_concentration_pct: float = Field(default=0.15, gt=0, le=1.0)
+    # Still 40% and still reject-only. The roadmap wants 30%, but sector is
+    # enforced in PortfolioRiskChecker, which has the sector map and no way to
+    # trim; lowering the number before it can trim would reintroduce exactly
+    # the refuse-everything failure that single-name just had. Deferred
+    # deliberately rather than moved on its own.
     max_sector_concentration_pct: float = Field(default=0.40, gt=0, le=1.0)
+
+    # --- Gap risk, budgeted separately from stop risk (M30) ------------------
+    # Every other risk figure here means "if the stop fills". A gap opens
+    # through it, and the stop is irrelevant to a price that never traded
+    # there - so the shock applies to NOTIONAL and gets its own budget.
+    #
+    # 6% sits a little above the 99th percentile of 28,987 measured overnight
+    # moves on this universe (5.5%). Not the worst case - that was -22.1% -
+    # because a budget sized on the worst case refuses everything. It is the
+    # level at which simultaneous gaps across the whole book should still
+    # leave the account intact.
+    gap_shock_pct: float = Field(default=0.06, gt=0, le=1.0)
+    # What that shock may cost across everything held overnight. Level with the
+    # 5% aggregate risk-at-stop cap, so neither hazard is treated as the lesser
+    # one. Implies a gross-exposure ceiling of about 83% of equity.
+    max_gap_risk_at_shock_pct: float = Field(default=0.05, gt=0, le=1.0)
 
     # --- Trading costs (M27) -------------------------------------------------
     # IBKR charges a MINIMUM per transaction, which a bps-only model cannot

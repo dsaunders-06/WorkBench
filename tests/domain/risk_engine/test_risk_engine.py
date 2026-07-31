@@ -83,7 +83,14 @@ def test_no_edge_rejects():
 async def test_regime_scalar_scales_final_shares():
     bus = EventBus()
     switch = KillSwitch()
-    settings = _settings(per_trade_risk_pct=0.01, atr_stop_multiple=2.5)
+    # Concentration relaxed: this asserts that the scalar *scales*, and a cap
+    # that binds at both scalars would trim them to the same number and hide
+    # exactly the behaviour under test.
+    settings = _settings(
+        per_trade_risk_pct=0.01,
+        atr_stop_multiple=2.5,
+        max_single_name_concentration_pct=1.0,
+    )
     engine = RiskEngine(bus, switch, settings=settings)
     await engine.start()
 

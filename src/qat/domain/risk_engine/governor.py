@@ -180,15 +180,74 @@ class PortfolioGovernor:
                 f"share at ${per_share_risk:,.2f} of risk"
             )
 
-        final_shares = min(proposed_shares, affordable_shares)
+        # --- single-name concentration, TRIMMED not refused (M30) ------------
+        #
+        # PortfolioRiskChecker also tests this, but as a pass/fail. That is the
+        # wrong shape for a cap that binds in normal operation: 1% risk over a
+        # ~5% stop sizes a position at about 20% of equity, so lowering the cap
+        # to 15% under reject semantics would refuse every swing trade outright
+        # rather than making it smaller. Trimming is the established pattern
+        # here - the aggregate risk cap has always worked this way - and it
+        # leaves the checker downstream as a backstop that now never has cause
+        # to fire.
+        name_cap_dollars = self.settings.max_single_name_concentration_pct * equity
+        held_in_name = sum(
+            abs(pos.quantity) * (prices or {}).get(pos.symbol, pos.avg_price)
+            for pos in positions
+            if pos.symbol == symbol
+        ) + sum(
+            order.quantity * (order.reference_price or price)
+            for order in (pending_orders or [])
+            if order.symbol == symbol and order.side == "buy"
+        )
+        name_affordable_shares = max(0.0, name_cap_dollars - held_in_name) / price
+        if name_affordable_shares < 1:
+            return reject(
+                f"{symbol} already holds ${held_in_name:,.0f}, at or above the "
+                f"{self.settings.max_single_name_concentration_pct:.0%} single-name cap"
+            )
+
+        # --- gap risk, budgeted separately from stop risk (M30) --------------
+        #
+        # Every figure above means "if the stop fills". A gap opens through it:
+        # measured across 28,987 overnight holds on this universe, 45 (0.16%)
+        # jumped a 2.5x ATR stop, the worst costing 2.0R instead of 1R on a
+        # -22.1% gap. A different hazard from the one the risk-at-stop cap
+        # governs, so it gets its own budget rather than being squeezed through
+        # the concentration cap.
+        #
+        # The shock applies to NOTIONAL, because that is what a gap moves - the
+        # stop is irrelevant to a price that never traded there.
+        gap_cap_dollars = self.settings.max_gap_risk_at_shock_pct * equity
+        gap_affordable_notional = (
+            gap_cap_dollars / self.settings.gap_shock_pct
+        ) - snap.gross_exposure_dollars
+        gap_affordable_shares = max(0.0, gap_affordable_notional) / price
+        if gap_affordable_shares < 1:
+            return reject(
+                f"a {self.settings.gap_shock_pct:.1%} overnight gap across "
+                f"${snap.gross_exposure_dollars:,.0f} already held would cost more than the "
+                f"{self.settings.max_gap_risk_at_shock_pct:.1%} gap budget"
+            )
+
+        limits = {
+            f"{self.settings.max_aggregate_risk_at_stop_pct:.0%} aggregate risk-at-stop": (
+                affordable_shares
+            ),
+            f"{self.settings.max_single_name_concentration_pct:.0%} single-name": (
+                name_affordable_shares
+            ),
+            f"{self.settings.gap_shock_pct:.0%} overnight-gap": gap_affordable_shares,
+        }
+        final_shares = min(proposed_shares, *limits.values())
         trimmed = final_shares < proposed_shares
 
         reason = "within portfolio limits"
         if trimmed:
+            binding = min(limits, key=lambda name: limits[name])
             reason = (
                 f"trimmed from {proposed_shares:.4g} to {final_shares:.4g} shares to stay "
-                f"under the {self.settings.max_aggregate_risk_at_stop_pct:.2%} aggregate "
-                f"risk-at-stop cap"
+                f"under the {binding} cap"
             )
 
         return GovernorDecision(
@@ -201,6 +260,10 @@ class PortfolioGovernor:
                 "position_count": float(snap.position_count),
                 "headroom_dollars": headroom,
                 "per_share_risk": per_share_risk,
+                "held_in_name_dollars": held_in_name,
+                "gross_exposure_pct": snap.gross_exposure_pct,
+                "gap_loss_at_shock_dollars": snap.gross_exposure_dollars
+                * self.settings.gap_shock_pct,
             },
         )
 

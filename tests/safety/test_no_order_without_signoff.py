@@ -58,6 +58,11 @@ def _build_oms() -> tuple[OMS, PlaceOrderSpy]:
             _env_file=None,
             max_aggregate_risk_at_stop_pct=1.0,
             max_concurrent_positions=100,
+            # M30's caps relaxed for the same stated reason: these isolate the
+            # sign-off gate, and a position trimmed by concentration or the gap
+            # budget never reaches the cash limit under test.
+            max_single_name_concentration_pct=1.0,
+            max_gap_risk_at_shock_pct=1.0,
         ),
     )
     broker = PlaceOrderSpy(seed=1)

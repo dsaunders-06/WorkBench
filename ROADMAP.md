@@ -313,19 +313,43 @@ before live money, self-defeating during a paper test. And it must follow M28:
 the gate reads expectancy and average R, which are gross today, so enforcing it
 first would gate on numbers already known to be wrong.
 
-### M30 - Gap risk as its own concept
+### M30 - Gap risk as its own concept  **[DONE, 31 July]**
 
-Every risk figure currently means *"if the stop fills."* The 5% aggregate cap is
-really "5% if every stop fills as intended". A 1%-risk trade with a 5% stop is
-**20% of equity in notional**; a 30% gap through the stop costs **6% of the
-account**, six times the budgeted loss, from one name.
+Every risk figure meant *"if the stop fills"*. Measured across 28,987
+overnight holds on this universe, **45 (0.16%) gapped through a 2.5x ATR
+stop** - the worst costing 2.0R instead of 1R on a -22.1% gap. Real, but
+milder than the 6R this section originally assumed.
 
-* separate stop risk from gap risk in the governor
-* measure overnight gap exposure
-* single-name concentration 25% -> 10-15%, sector 40% -> 30%
+**Gap risk has its own budget in the governor.** A modelled 6% overnight shock
+(just above the 99th percentile of measured moves) applied to *notional*, must
+cost no more than 5% of equity across everything held. That implies a
+gross-exposure ceiling of about 83%, and it is a different hazard from the
+risk-at-stop cap rather than a variant of it.
 
-Matters more on ASX, where halts pending price-sensitive announcements are
-routine for small and mid caps and a two-week hold spans them by design.
+**Single-name concentration 25% -> 15%, and it now TRIMS rather than refuses.**
+That order matters. `PortfolioRiskChecker` returns pass/fail, and 1% risk over
+a ~5% stop already sizes swing at about 20% of equity - so lowering the cap
+under reject semantics would have refused every swing trade outright rather
+than making it smaller. The mechanism had to change before the number could.
+Trimming is the established pattern here; the aggregate risk cap has always
+worked that way.
+
+**Two defects this exposed:**
+
+* The governor ran only when a caller supplied `positions`, so with an empty
+  book the concentration cap fell through to the reject-style checker - the
+  first trade of the day was refused instead of sized down. It now runs for
+  every buy.
+* `PortfolioRiskChecker` could **block a sell**. Lowering the cap to 15% meant
+  a 20% position could no longer be exited, because the check ran on the
+  resulting concentration and refused it. A rail whose effect is "the account
+  may not de-risk" is a broken rail, and this one had been able to do that
+  since it was written.
+
+**Sector stays at 40%**, deliberately. The roadmap wants 30%, but sector is
+enforced in `PortfolioRiskChecker`, which holds the sector map and has no way
+to trim. Lowering the number before it can trim would reintroduce exactly the
+refuse-everything failure single-name just had.
 
 ### M31 - Churn control
 

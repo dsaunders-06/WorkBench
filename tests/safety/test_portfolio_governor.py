@@ -25,7 +25,15 @@ EQUITY = 100_000.0
 
 
 def _settings(**overrides) -> Settings:
-    base = {"_env_file": None, "max_aggregate_risk_at_stop_pct": 0.05}
+    # Concentration and the gap budget are relaxed by default so these tests
+    # isolate the aggregate risk-at-stop cap they were written for. Both have
+    # their own tests below.
+    base = {
+        "_env_file": None,
+        "max_aggregate_risk_at_stop_pct": 0.05,
+        "max_single_name_concentration_pct": 1.0,
+        "max_gap_risk_at_shock_pct": 1.0,
+    }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
 
@@ -332,3 +340,97 @@ async def test_every_approved_buy_carries_a_protective_stop():
     assert order.stop_price is not None
     assert order.stop_price < 100.0
     assert order.is_bracket is True
+
+
+# --- Single-name concentration and gap risk (M30) --------------------------
+
+
+def test_a_concentrated_candidate_is_trimmed_not_refused():
+    """The whole reason the cap could be lowered. 1% risk over a ~5% stop
+    sizes a position at about 20% of equity, so under the old reject semantics
+    a 15% cap would have refused every swing trade outright rather than making
+    it smaller."""
+    governor = PortfolioGovernor(settings=_settings(max_single_name_concentration_pct=0.15))
+
+    decision = governor.evaluate(
+        symbol="AAA",
+        price=100.0,
+        proposed_shares=200.0,  # $20,000 = 20% of equity
+        stop_price=95.0,
+        positions=[],
+        stops={},
+        equity=EQUITY,
+    )
+
+    assert decision.allowed is True
+    assert decision.max_shares == pytest.approx(150.0)  # trimmed to $15,000
+    assert "single-name" in decision.reason
+
+
+def test_concentration_counts_what_is_already_held_in_that_name():
+    governor = PortfolioGovernor(settings=_settings(max_single_name_concentration_pct=0.15))
+
+    decision = governor.evaluate(
+        symbol="AAA",
+        price=100.0,
+        proposed_shares=100.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+    )
+
+    # $10,000 held against a $15,000 cap leaves room for 50 shares, not 100.
+    assert decision.max_shares == pytest.approx(50.0)
+
+
+def test_the_gap_budget_limits_total_overnight_notional():
+    """Every other figure here means "if the stop fills". A gap opens through
+    it, so the shock applies to notional and gets its own budget."""
+    governor = PortfolioGovernor(
+        settings=_settings(
+            max_single_name_concentration_pct=1.0,
+            gap_shock_pct=0.06,
+            max_gap_risk_at_shock_pct=0.05,
+        )
+    )
+
+    # 5% of equity budget / 6% shock = $83,333 of permitted gross exposure.
+    decision = governor.evaluate(
+        symbol="AAA",
+        price=100.0,
+        proposed_shares=1_000.0,  # asking for $100,000
+        stop_price=95.0,
+        positions=[],
+        stops={},
+        equity=EQUITY,
+    )
+
+    assert decision.allowed is True
+    assert decision.max_shares == pytest.approx(833.3333, rel=1e-4)
+    assert "overnight-gap" in decision.reason
+
+
+def test_a_full_book_refuses_a_new_position_on_gap_risk_alone():
+    governor = PortfolioGovernor(
+        settings=_settings(
+            max_single_name_concentration_pct=1.0,
+            gap_shock_pct=0.06,
+            max_gap_risk_at_shock_pct=0.05,
+        )
+    )
+
+    decision = governor.evaluate(
+        symbol="NEW",
+        price=100.0,
+        proposed_shares=10.0,
+        stop_price=95.0,
+        positions=[Position(symbol="OLD", quantity=900.0, avg_price=100.0)],
+        stops={"OLD": 95.0},
+        equity=EQUITY,
+        prices={"OLD": 100.0},
+    )
+
+    assert decision.allowed is False
+    assert "overnight gap" in decision.reason
