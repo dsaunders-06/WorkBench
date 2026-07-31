@@ -187,6 +187,30 @@ class Settings(BaseSettings):
     enforce_min_holding_period: bool = True
     min_holding_trading_days: int = Field(default=10, ge=0)
 
+    # The escape hatch, and the reason a minimum hold is defensible at all
+    # (M31). A minimum hold blocks a signal-DETERIORATION exit, which is not a
+    # protective one - so on its own it can sit through a broken thesis to save
+    # $12 of commission. Above this loss the hold stops applying.
+    #
+    # Expressed in R because that is what the loss means: at 0.5R down, half
+    # the risk budgeted for the whole trade is already spent and the commission
+    # saved is small against what remains. Protective exits - the resting
+    # broker stop, the delever sweep, the kill-switch - are never delayed by
+    # any of this; they do not come through the signal path.
+    min_holding_loss_escape_r: float = Field(default=0.5, gt=0)
+
+    # Force an exit after this many trading days regardless of signal (M31).
+    # Markets do not know what "two weeks" means, so the time stop is the
+    # counterweight to the minimum hold: one stops the system churning, the
+    # other stops it holding forever on a thesis that never resolved.
+    enforce_time_stop: bool = True
+    time_stop_trading_days: int = Field(default=30, ge=1)
+
+    # Turnover budget: entries per rolling seven days, across the account.
+    # Ten concurrent positions turned over weekly costs $6,240 a year at $12 a
+    # round trip - 6.2% of a $100k account before a single losing trade.
+    max_entries_per_week: int = Field(default=10, ge=1)
+
     # --- Portfolio governor (M15) --------------------------------------------
     # Total loss if every open position hit its stop at once. Per-trade limits
     # bound one trade and say nothing about ten trades each within budget; the

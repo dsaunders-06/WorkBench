@@ -351,15 +351,33 @@ enforced in `PortfolioRiskChecker`, which holds the sector map and has no way
 to trim. Lowering the number before it can trim would reintroduce exactly the
 refuse-everything failure single-name just had.
 
-### M31 - Churn control
+### M31 - Churn control  **[DONE, 31 July]**
 
-The pieces deferred from M27: minimum holding period for signal-driven exits
-(10 trading days, configurable, never delaying a protective exit), a turnover
-budget on `trades_per_week`, and a time stop.
+`enforce_min_holding_period` and `min_holding_trading_days` had been settings
+since M27 and were **read by nothing at all** - the same dead-configuration
+pattern as the M13 equity rails and M6 reconciliation before them.
 
-Open tension to decide explicitly: a minimum hold blocks a *signal-deterioration*
-exit, which is not protective. Sitting through a broken thesis to save $13 of
-commission is the wrong trade above some loss threshold.
+Three rails, all in `SignalToOrderBridge`, which now tracks entry time and
+entry stop from `OrderFilledEvent` because a broker `Position` carries neither:
+
+* **Minimum hold** (10 trading days) on signal-driven exits.
+* **Loss escape** (0.5R), which is what makes the minimum hold defensible. The
+  open tension recorded here was real: a minimum hold blocks a
+  signal-*deterioration* exit, which is not protective, so on its own it would
+  sit through a broken thesis to save $12 of commission. Above 0.5R down, half
+  the risk budgeted for the whole trade is already spent and the hold stops
+  applying.
+* **Time stop** (30 trading days), the counterweight - the reviewer's framing
+  was right that markets do not know what "two weeks" means. One rail stops the
+  system churning, the other stops it holding forever on a thesis that never
+  resolved. Checked on the tick, so the broker is only asked for positions on
+  the rare occasion it fires.
+* **Turnover budget** (10 entries per rolling seven days), on entries only. A
+  budget that blocked exits would be a rail against de-risking.
+
+None of this can delay a protective exit: the resting broker stop, the delever
+sweep and the kill-switch do not come through the signal path. A position whose
+entry this application did not record - an adopted one - is never trapped.
 
 ### M32 - ASX readiness
 
