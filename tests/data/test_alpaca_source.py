@@ -198,3 +198,33 @@ def test_settings_can_select_alpaca_for_both_sources():
 @pytest.mark.parametrize("feed", ["iex", "sip", "delayed_sip"])
 def test_every_documented_feed_is_accepted(feed):
     assert Settings(_env_file=None, alpaca_data_feed=feed).alpaca_data_feed == feed
+
+
+@pytest.mark.asyncio
+async def test_daily_bars_are_requested_split_and_dividend_adjusted():
+    """Alpaca defaults to RAW, which carries a split as a price discontinuity.
+
+    NFLX ran $1,112.11 -> $110.77 overnight on 17 November 2025 on its
+    10-for-1, and unadjusted bars record that as a -90% move. Every indicator
+    computed across it is wrong for weeks - EMA20, EMA50, realised volatility,
+    breadth, and most damagingly ATR, which sets the stop distance and
+    therefore the position size.
+    """
+    client = FakeDataClient(bars={"AAPL": [FakeBar(20, 100.0), FakeBar(21, 101.0)]})
+    source = AlpacaHistorySource(client=client, feed="iex")
+
+    await source.get_daily_bars("AAPL", 2)
+
+    assert client.requests[0].adjustment.value == "all"
+
+
+@pytest.mark.asyncio
+async def test_bulk_daily_bars_are_adjusted_too():
+    """The warm start uses the bulk path, so it is the one that actually feeds
+    the live buffers."""
+    client = FakeDataClient(bars={"AAPL": [FakeBar(20, 100.0)]})
+    source = AlpacaHistorySource(client=client, feed="iex")
+
+    await source.get_daily_bars_many(["AAPL"], 2)
+
+    assert client.requests[0].adjustment.value == "all"

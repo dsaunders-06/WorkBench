@@ -992,6 +992,30 @@ it. An operator can opt in early on paper; nobody can opt out on live.
 This had to follow M28 — before it, the gate would have enforced a bar computed
 on gross figures already known to be optimistic.
 
+## Daily bars are split-adjusted
+
+Alpaca's bar endpoint defaults to **raw** prices, and nothing in this
+application asked it not to. A symbol that split inside the seeded window
+carried the split as a price discontinuity:
+
+```
+2025-11-14  NFLX  close 1,112.11
+2025-11-17  NFLX  open    110.77     <- the 10-for-1, recorded as a -90% move
+```
+
+BKNG, KLAC, NOW and CRWD all showed the same shape over the last 300 sessions.
+Every indicator computed across such a point is wrong for as long as its window
+spans the split — EMA20 and EMA50 for weeks, realised volatility, market
+breadth, and most damagingly **ATR, which sets the stop distance and therefore
+the position size**.
+
+Found while measuring gap risk for M30: a −96% "overnight gap" on BKNG is not a
+gap, and the measurement that produced it was the thing that was wrong. Bars
+are now requested with `adjustment=all`, which also removes the ex-dividend
+step — small on a megacap, but the same class of artefact: a price change no
+holder experienced. NFLX's worst overnight move in the window drops from ~90%
+to 12.46%.
+
 ## Feed liveness and quote freshness are different questions (M28a)
 
 The staleness rail had never once fired correctly. Every trip was a false

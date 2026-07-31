@@ -361,6 +361,7 @@ class AlpacaHistorySource:
         return _bars_to_frame(bars)
 
     async def _request(self, symbols: Sequence[str], n_bars: int) -> Any | None:
+        from alpaca.data.enums import Adjustment
         from alpaca.data.requests import StockBarsRequest
         from alpaca.data.timeframe import TimeFrame
 
@@ -368,11 +369,25 @@ class AlpacaHistorySource:
         # rows returned, so a plain limit would silently include partial
         # sessions rather than n complete trading days.
         start = datetime.now(UTC) - timedelta(days=int(n_bars * 1.5) + _CALENDAR_PADDING_DAYS)
+        # SPLIT-ADJUSTED, which Alpaca does not do by default (M30).
+        #
+        # `adjustment` defaults to raw, so a symbol that split inside the
+        # window carries the split as a price discontinuity: NFLX ran
+        # $1,112.11 -> $110.77 overnight on 17 November 2025 on its 10-for-1,
+        # and BKNG, KLAC, NOW and CRWD all show the same shape. Every
+        # indicator computed across that point is wrong - EMA20 and EMA50 for
+        # weeks, realised volatility, breadth, and most damagingly ATR, which
+        # sets the stop distance and therefore the position size.
+        #
+        # `all` rather than `split` also removes the ex-dividend step, which is
+        # small on a megacap but is the same class of artefact: a price change
+        # that no holder experienced.
         request = StockBarsRequest(
             symbol_or_symbols=list(symbols),
             timeframe=TimeFrame.Day,
             start=start,
             feed=_feed_enum(self.feed),
+            adjustment=Adjustment.ALL,
         )
         try:
             return await asyncio.to_thread(self.client.get_stock_bars, request)
