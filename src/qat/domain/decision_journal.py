@@ -85,8 +85,32 @@ class DecisionJournal:
     def __init__(self, data_dir: str | Path, filename: str = JOURNAL_FILENAME) -> None:
         self.path = Path(data_dir) / filename
         self._lock = threading.Lock()
+        # The last unchanged verdict per symbol, so a rail that refuses the
+        # same setup every minute is recorded once (M31b).
+        self._last_verdict: dict[str, tuple[str, str]] = {}
+
+    def _is_a_repeat(self, entry: JournalEntry) -> bool:
+        """Whether this verdict is identical to the last one for this symbol.
+
+        A strategy re-emits its signal on every tick, so a standing refusal is
+        re-decided once a minute for as long as the setup holds. SPY was
+        refused by the cost rail 249 times in one session - 249 of 262 rows,
+        burying every real event under a decision that had not changed since
+        the first one.
+
+        Only a repeat of the SAME outcome and reason is dropped. A change
+        either way is news and is always written, so the journal still shows
+        when a refusal started and when it stopped.
+        """
+        verdict = (entry.outcome, entry.reason)
+        if self._last_verdict.get(entry.symbol) == verdict:
+            return True
+        self._last_verdict[entry.symbol] = verdict
+        return False
 
     def record(self, entry: JournalEntry) -> None:
+        if self._is_a_repeat(entry):
+            return
         row = asdict(entry)
         try:
             with self._lock:

@@ -45,7 +45,7 @@ The test: *would this change which trades happen?* If yes, it waits.
 Looking for *does the pipeline move*, not *did it make money*. At these sample
 sizes P&L is noise.
 
-## M31b - What the first trading session found  **[1 of 6 done]**
+## M31b - What the first trading session found  **[4 of 6 done]**
 
 The session of 31 July filled **six positions** - CSCO 44, UNP 17, WFC 58,
 CRWD 16, JNJ 19, CVS 47 - all whole shares, no broker refusals, through every
@@ -67,7 +67,7 @@ than it is. Reconciliation compares FILLED QUANTITIES only, which is why it
 caught nothing. This is the same failure as the phantom `transmitted` status on
 30 July: app-side belief and broker reality diverged with nothing watching.
 
-**3. A transiently-blocked order is never re-examined.** The autonomous
+**3. A transiently-blocked order is never re-examined. [DONE]** The autonomous
 executor evaluates each order once, on `OrderPendingSignoffEvent`. An order
 refused for `Opening Volatility` or `Midday Lull` - reasons that expire in
 minutes - is treated exactly like one refused for a permanent reason, and the
@@ -81,17 +81,24 @@ entry date - and the minimum hold and time stop both treat an unknown entry as
 "never applies". A restart silently disarms the churn rails on everything
 already held.
 
-**5. The blotter shows no prices.** Columns are Order ID, Symbol, Side,
+**5. The blotter shows no prices. [DONE]** Columns are Order ID, Symbol, Side,
 Quantity, Status, Created At. No reference price, stop, target or strategy - on
 the screen whose entire purpose is informed human sign-off. Deciding whether to
 approve a stale order on 30 July required reconstructing all of it from the
 decision journal plus a live quote.
 
-**6. Repeated identical refusals flood the journal.** SPY was refused by the
+**6. Repeated identical refusals flood the journal. [DONE]** SPY was refused by the
 cost rail 249 times in one session, once a minute, every minute - 249 of 262
 journal rows. The refusal is correct; logging it 249 times buries every real
-event. Suppress the repeat the way the regime engine logs transitions rather
-than every classification.
+event. Suppressed per symbol: an identical outcome-and-reason pair is written once,
+and any change either way is always written, so the journal still shows when a
+refusal started and when it stopped.
+
+**Remaining: 2 (stop reconciliation) and 4 (persist entry times).** Both are
+about app-side belief diverging from broker reality, which is the same root as
+the phantom `transmitted` status and the expired brackets. 2 is the more
+urgent - the governor sizes new positions against protection it only believes
+is resting.
 
 ## The stack
 

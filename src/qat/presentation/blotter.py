@@ -46,7 +46,23 @@ _REFRESH_INTERVAL_MS = 2000
 _PAPER_STYLE = "background-color: #1b5e20; color: white; padding: 6px; font-weight: bold;"
 _LIVE_STYLE = "background-color: #b71c1c; color: white; padding: 6px; font-weight: bold;"
 _OPERATOR = "operator (blotter)"
-_COLUMNS = ("Order ID", "Symbol", "Side", "Quantity", "Status", "Created At")
+# Price, stop, target and strategy are shown because this is the screen a
+# human signs an order off from, and until M31b it showed none of them. Judging
+# whether a pending order was still safe to approve on 30 July meant
+# reconstructing all four from the decision journal plus a live quote.
+_COLUMNS = (
+    "Order ID",
+    "Symbol",
+    "Side",
+    "Quantity",
+    "Price",
+    "Stop",
+    "Target",
+    "Risk/share",
+    "Strategy",
+    "Status",
+    "Created At",
+)
 
 # Pending first: it is the only actionable set, and defaulting to it keeps the
 # view short even when the account has a long completed-order history.
@@ -151,11 +167,19 @@ class BlotterScreen(QWidget):
             self.orders_table.setRowCount(len(orders))
             rows_to_reselect = []
             for row, order in enumerate(orders):
+                price = order.reference_price
+                stop = order.stop_price
+                risk = (price - stop) if (price and stop and stop < price) else None
                 values = (
                     order.order_id,
                     order.symbol,
                     order.side,
                     f"{order.quantity:g}",
+                    f"{price:,.2f}" if price else "-",
+                    f"{stop:,.2f}" if stop else "-",
+                    f"{order.take_profit_price:,.2f}" if order.take_profit_price else "-",
+                    f"{risk:,.2f}" if risk else "-",
+                    order.strategy or "-",
                     order.status,
                     f"{order.created_at:%Y-%m-%d %H:%M:%S}",
                 )

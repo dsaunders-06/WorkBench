@@ -22,6 +22,8 @@ Three properties worth stating because they are easy to lose in a refactor:
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 
 from qat.config import Settings
@@ -54,6 +56,7 @@ class AutonomousExecutor:
         journal: DecisionJournal,
         equity_monitor: EquityMonitor | None = None,
         settings: Settings | None = None,
+        retry_interval_seconds: float = 60.0,
     ) -> None:
         self.bus = bus
         self.oms = oms
@@ -61,12 +64,48 @@ class AutonomousExecutor:
         self.journal = journal
         self.equity_monitor = equity_monitor
         self.settings = settings or Settings()
+        # Matches the market-data poll: there is no point re-examining an
+        # order more often than the prices behind it change.
+        self.retry_interval_seconds = retry_interval_seconds
+        self._retry_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         self.bus.subscribe(OrderPendingSignoffEvent, self._on_pending)
+        self._retry_task = asyncio.create_task(self._retry_loop())
 
     async def stop(self) -> None:
         self.bus.unsubscribe(OrderPendingSignoffEvent, self._on_pending)
+        if self._retry_task is not None:
+            self._retry_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._retry_task
+            self._retry_task = None
+
+    async def _retry_loop(self) -> None:
+        """Re-examines orders still awaiting sign-off (M31b).
+
+        Evaluation used to happen exactly once, when the order became pending.
+        That treats a reason which expires in minutes - 'session phase
+        Opening Volatility is not eligible' - identically to one that never
+        will, and the symbol stays suppressed meanwhile because the bridge
+        skips anything already pending. It cost three manual reject cycles on
+        30 July and one position on the 31st.
+
+        Re-evaluating a stale order is safe because the gate re-reads the
+        current price and refuses anything that has drifted past
+        autonomous_price_drift_limit_pct from what it was sized against. An
+        order that sat too long fails on drift rather than being signed at a
+        price nobody chose.
+        """
+        while True:
+            await asyncio.sleep(self.retry_interval_seconds)
+            if not self.settings.autonomy_enabled:
+                continue
+            try:
+                for order in self.oms.pending_orders():
+                    await self._consider(order.order_id)
+            except Exception:  # noqa: BLE001 - a bad sweep must not end the loop
+                logger.exception("Retry of pending orders failed - will try again")
 
     async def _on_pending(self, event: OrderPendingSignoffEvent) -> None:
         # Cheapest possible early exit. In recommend mode - the default - this
