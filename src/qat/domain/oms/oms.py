@@ -105,16 +105,33 @@ class OMS:
                 candidate, 0.0, decision.reason or "risk engine rejected"
             )
 
-        notional = decision.final_shares * candidate.price
-        if notional > self.max_order_notional:
+        # Whole shares only (M31a). Every buy leaves here with a protective
+        # bracket, and Alpaca refuses a fractional quantity that carries one:
+        #   {"code":42210000,"message":"fractional orders must be simple orders"}
+        # The sizer works in continuous shares - 1% of equity over a stop
+        # distance almost never lands on an integer - so before this, every
+        # auto-signed order was refused by the broker and nothing could fill.
+        #
+        # Floored rather than rounded: rounding up would take slightly more
+        # risk than the sizer approved, and the whole point of the sizing chain
+        # is that the number it produces is a ceiling.
+        shares = float(int(decision.final_shares))
+        if shares < 1:
             return self._new_rejected_order(
-                candidate, decision.final_shares, "notional above the per-order cap"
+                candidate,
+                0.0,
+                f"sized at {decision.final_shares:.4g} shares, below one whole share - "
+                "a fractional quantity cannot carry a protective bracket",
             )
+
+        notional = shares * candidate.price
+        if notional > self.max_order_notional:
+            return self._new_rejected_order(candidate, shares, "notional above the per-order cap")
 
         order = self._new_pending_order(
             candidate.symbol,
             candidate.side,
-            decision.final_shares,
+            shares,
             candidate.price,
             candidate.strategy,
             # The strategy's stop when it proposed one, otherwise the ATR stop
@@ -269,8 +286,34 @@ class OMS:
                 )
                 return order
 
-        order.status = "transmitted"
-        filled = await self.broker.place_order(order)
+        # The broker decides whether this is transmitted, not us (M31a).
+        #
+        # `order.status = "transmitted"` used to run BEFORE the call, so when
+        # place_order raised, the order kept a status saying it was live at the
+        # broker. Three orders showed as transmitted in the blotter on 31 July
+        # while Alpaca held nothing at all, and reconciliation could not catch
+        # it: that compares FILLED quantities, and an order that never reached
+        # the broker has filled nothing on either side, so both agree.
+        try:
+            filled = await self.broker.place_order(order)
+        except Exception as exc:  # noqa: BLE001 - the broker's refusal is the answer
+            order.status = "rejected"
+            self._orders[order_id] = order
+            logger.exception(
+                "Broker refused order %s (%s %s x%s)",
+                order_id,
+                order.side,
+                order.symbol,
+                order.quantity,
+            )
+            self._record(order, "rejected", f"broker refused: {exc}", operator)
+            return order
+
+        # No status assignment here at all: the returned order carries the
+        # broker's own, mapped by the adapter (Alpaca's accepted/new/pending
+        # become "transmitted", a same-second fill becomes "filled"). Setting
+        # it ourselves would overwrite the one authoritative answer with a
+        # guess - which is what the pre-call assignment was.
         self._orders[order_id] = filled
         signed_qty = filled.quantity if filled.side == "buy" else -filled.quantity
         self._filled_quantities[filled.symbol] = (
