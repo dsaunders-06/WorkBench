@@ -27,6 +27,8 @@ logger = logging.getLogger(__name__)
 
 _FRED_BASE_URL = "https://api.stlouisfed.org/fred/series/observations"
 _FRED_MISSING_VALUE = "."
+# Long enough to clear a rate-limit window, short enough not to delay startup.
+_MACRO_RETRY_SECONDS = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,13 +145,31 @@ async def load_macro_history(source: MacroDataSource, series_ids: Sequence[str])
     A series that cannot be fetched is omitted rather than failing the load:
     seeding with two of the three macro features is worse than three and much
     better than none, and the gap is logged where the operator will see it.
+
+    Retried once, briefly. This runs at startup only, and the cost of losing a
+    series here is a whole session: the feature it feeds sits at its default
+    for every row, which is the constant column that makes the covariance
+    matrix singular. Observed in a smoke test - one transient failure on
+    VIXCLS, and the regime engine fitted 301 bars with a flat VIX.
     """
     observations: dict[str, Sequence[MacroObservation]] = {}
     for series_id in series_ids:
-        try:
-            observations[series_id] = await source.fetch_series(series_id)
-        except Exception:  # noqa: BLE001 - seed with what is available, say what is not
-            logger.exception("Could not load macro history for %s - seeding without it", series_id)
+        for attempt in (1, 2):
+            try:
+                observations[series_id] = await source.fetch_series(series_id)
+                break
+            except Exception:  # noqa: BLE001 - seed with what is available, say what is not
+                if attempt == 1:
+                    logger.warning(
+                        "Macro history for %s failed - retrying once", series_id, exc_info=True
+                    )
+                    await asyncio.sleep(_MACRO_RETRY_SECONDS)
+                    continue
+                logger.exception(
+                    "Could not load macro history for %s after a retry - seeding without it. "
+                    "Its feature column will be constant for this session",
+                    series_id,
+                )
     return MacroHistory(observations)
 
 

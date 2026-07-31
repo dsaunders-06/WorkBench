@@ -224,3 +224,39 @@ def test_resolve_macro_source_warns_loudly_when_falling_back_to_the_mock(monkeyp
     assert isinstance(source, MockMacroSource)
     assert "RANDOM NUMBERS" in caplog.text
     assert "FRED_API_KEY" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_macro_history_retries_a_transient_failure_once():
+    """Losing a series here costs a whole session: its feature sits at the
+    default for every row, which is the constant column that makes the
+    covariance matrix singular. Seen in a smoke test on VIXCLS."""
+
+    class _FailsOnce:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def fetch_series(self, series_id: str) -> list[MacroObservation]:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("FRED rate limit")
+            return _observations(series_id, [("2026-07-24", 18.21)])
+
+    source = _FailsOnce()
+    history = await load_macro_history(source, ["VIXCLS"])
+
+    assert source.calls == 2
+    assert history.as_of("VIXCLS", datetime(2026, 7, 25, tzinfo=UTC)) == pytest.approx(18.21)
+
+
+@pytest.mark.asyncio
+async def test_a_series_that_keeps_failing_is_reported_and_omitted(caplog):
+    class _AlwaysFails:
+        async def fetch_series(self, series_id: str) -> list[MacroObservation]:
+            raise RuntimeError("FRED unreachable")
+
+    with caplog.at_level(logging.ERROR, logger="qat.data.macro_fred"):
+        history = await load_macro_history(_AlwaysFails(), ["VIXCLS"])
+
+    assert history.series == ()
+    assert "constant for this session" in caplog.text
