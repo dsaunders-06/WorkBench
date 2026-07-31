@@ -401,7 +401,7 @@ class Runtime:
         # Evidence layer (spec M16): realised trades, the equity curve, and the
         # reports built from both. The ledger is the only source of truth about
         # whether anything worked; the journal records only what was decided.
-        trade_ledger = TradeLedger(bus, settings.data_dir)
+        trade_ledger = TradeLedger(bus, settings.data_dir, settings=settings)
         equity_curve = EquityCurve(settings.data_dir)
         # The equity monitor already polls the account on a timer, so it doubles
         # as the curve's sampler rather than adding a second poller for the

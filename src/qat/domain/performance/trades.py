@@ -15,6 +15,19 @@ Each closed trade carries its **R-multiple** - profit divided by the risk
 originally taken to the stop - as well as raw P&L. R is the comparable unit:
 a $500 win on a trade risking $100 and a $500 win on one risking $2,000 are
 not the same result, and only R says so.
+
+**Costs are part of the trade, not an adjustment applied later (M28).** Every
+trade records what it cost to open and to close, and reports gross and net
+separately. Until M28 `pnl` was `(exit - entry) x quantity` with no fee term,
+so expectancy, average R, profit factor and the promotion gate that consumes
+them were all computed on money that was never earned. A round trip costs at
+least $12 at IBKR's minimums, which is trivial on a large position and decisive
+on a small one.
+
+There is deliberately no attribute called `pnl` any more. Redefining it to mean
+net would have silently changed the meaning of every existing call site, which
+is the same failure as a placeholder wearing the name of the real thing - so
+callers must now say `gross_pnl` or `net_pnl` and mean it.
 """
 
 from __future__ import annotations
@@ -27,6 +40,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from qat.config import Settings
+from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import OrderFilledEvent
 
@@ -43,11 +58,22 @@ _FIELDS = (
     "entry_price",
     "exit_price",
     "stop_price",
-    "pnl",
+    "gross_pnl",
+    "entry_cost",
+    "exit_cost",
+    "net_pnl",
     "pnl_pct",
     "r_multiple",
+    "gross_r_multiple",
     "risk_per_share",
 )
+
+
+def _share_of(total_cost: float, matched: float, whole: float) -> float:
+    """The part of a per-transaction cost belonging to `matched` of `whole`."""
+    if whole <= 0:
+        return 0.0
+    return total_cost * (matched / whole)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +84,11 @@ class OpenLot:
     stop_price: float | None
     strategy: str | None
     opened_at: datetime
+    # Cost of the fill that opened this lot, for the lot's WHOLE quantity.
+    # Held whole and apportioned at close, because the broker's per-order
+    # commission floor is charged once per transaction: closing a position in
+    # three pieces must not pay three minimum commissions on the entry.
+    entry_cost: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,16 +101,35 @@ class ClosedTrade:
     stop_price: float | None
     opened_at: datetime
     closed_at: datetime
+    # Already apportioned to this trade's quantity - see OpenLot.entry_cost.
+    entry_cost: float = 0.0
+    exit_cost: float = 0.0
 
     @property
-    def pnl(self) -> float:
+    def gross_pnl(self) -> float:
+        """Price movement alone, before it cost anything to capture."""
         return (self.exit_price - self.entry_price) * self.quantity
 
     @property
+    def costs(self) -> float:
+        return self.entry_cost + self.exit_cost
+
+    @property
+    def net_pnl(self) -> float:
+        """What the account actually kept. The number every metric uses."""
+        return self.gross_pnl - self.costs
+
+    @property
     def pnl_pct(self) -> float:
-        if self.entry_price <= 0:
+        """Net return on the capital committed, not the raw price change.
+
+        Costs are charged against the position's own notional so this stays
+        comparable across trade sizes - a $12 round trip is 0.06% of a $20,000
+        position and 1.2% of a $1,000 one.
+        """
+        if self.entry_price <= 0 or self.quantity <= 0:
             return 0.0
-        return (self.exit_price - self.entry_price) / self.entry_price
+        return self.net_pnl / (self.entry_price * self.quantity)
 
     @property
     def risk_per_share(self) -> float | None:
@@ -91,12 +141,25 @@ class ClosedTrade:
 
     @property
     def r_multiple(self) -> float | None:
-        """Profit in units of the risk originally taken.
+        """Net profit in units of the risk originally taken.
+
+        Net, because R is the unit the promotion gate judges a strategy on and
+        a gross R says the strategy earned something the account never saw. The
+        denominator stays the risk as it was defined at entry - the stop
+        distance - since that is what was actually put at hazard.
 
         None rather than 0.0 when no stop is known: a trade with unmeasurable R
         must be excluded from an average, not counted as a breakeven one, or
         every unstopped trade would silently drag the mean toward zero.
         """
+        risk = self.risk_per_share
+        if risk is None or risk <= 0 or self.quantity <= 0:
+            return None
+        return self.net_pnl / (risk * self.quantity)
+
+    @property
+    def gross_r_multiple(self) -> float | None:
+        """R before costs - retained so the drag is visible, never for judging."""
         risk = self.risk_per_share
         if risk is None or risk <= 0:
             return None
@@ -104,7 +167,10 @@ class ClosedTrade:
 
     @property
     def is_win(self) -> bool:
-        return self.pnl > 0
+        """Net. A trade that gained $5 and cost $12 is a loss, and a win rate
+        that counts it otherwise is measuring the market rather than the
+        account."""
+        return self.net_pnl > 0
 
     def as_row(self) -> dict[str, object]:
         return {
@@ -116,9 +182,15 @@ class ClosedTrade:
             "entry_price": round(self.entry_price, 4),
             "exit_price": round(self.exit_price, 4),
             "stop_price": round(self.stop_price, 4) if self.stop_price is not None else "",
-            "pnl": round(self.pnl, 2),
+            "gross_pnl": round(self.gross_pnl, 2),
+            "entry_cost": round(self.entry_cost, 2),
+            "exit_cost": round(self.exit_cost, 2),
+            "net_pnl": round(self.net_pnl, 2),
             "pnl_pct": round(self.pnl_pct, 6),
             "r_multiple": round(self.r_multiple, 4) if self.r_multiple is not None else "",
+            "gross_r_multiple": (
+                round(self.gross_r_multiple, 4) if self.gross_r_multiple is not None else ""
+            ),
             "risk_per_share": (
                 round(self.risk_per_share, 4) if self.risk_per_share is not None else ""
             ),
@@ -131,10 +203,25 @@ class TradeLedger:
     name = "trade-ledger"
 
     def __init__(
-        self, bus: EventBus, data_dir: str | Path, filename: str = TRADES_FILENAME
+        self,
+        bus: EventBus,
+        data_dir: str | Path,
+        filename: str = TRADES_FILENAME,
+        settings: Settings | None = None,
     ) -> None:
         self.bus = bus
         self.path = Path(data_dir) / filename
+        self.settings = settings or Settings()
+        # Modelled, not billed. A paper broker charges nothing, so measuring
+        # the paper account's own fees would report zero and promote a strategy
+        # onto a broker where the same trades lose money (M27's reasoning, now
+        # applied to the measurement as well as to the rail). Real per-fill
+        # commissions from a live broker are not read back yet.
+        self._costs = (
+            CostModel.from_settings(self.settings)
+            if self.settings.apply_costs_in_paper or self.settings.is_live
+            else None
+        )
         self._open_lots: dict[str, deque[OpenLot]] = defaultdict(deque)
         self._closed: list[ClosedTrade] = []
         self._lock = threading.Lock()
@@ -157,14 +244,31 @@ class TradeLedger:
                     stop_price=event.stop_price,
                     strategy=event.strategy,
                     opened_at=event.ts,
+                    entry_cost=self._fill_cost(event.quantity, event.price),
                 )
             )
             return
         self._close_against_lots(event)
 
+    def _fill_cost(self, quantity: float, price: float) -> float:
+        """What one fill costs, for its whole quantity.
+
+        Charged per transaction, which is why it is computed here rather than
+        per closed trade: the commission floor applies once to the order, and
+        a position closed in three pieces pays one floor, not three.
+        """
+        if self._costs is None:
+            return 0.0
+        return self._costs.apply(abs(quantity) * price)
+
     def _close_against_lots(self, event: OrderFilledEvent) -> None:
         remaining = event.quantity
         lots = self._open_lots[event.symbol]
+        # The exit's cost belongs to the whole sell, so it is apportioned
+        # across whatever lots this sell happens to close - by quantity, the
+        # same basis the entry cost is split on.
+        exit_cost_total = self._fill_cost(event.quantity, event.price)
+        exit_quantity = event.quantity
 
         while remaining > 1e-9 and lots:
             lot = lots[0]
@@ -182,6 +286,8 @@ class TradeLedger:
                 stop_price=lot.stop_price,
                 opened_at=lot.opened_at,
                 closed_at=event.ts,
+                entry_cost=_share_of(lot.entry_cost, matched, lot.quantity),
+                exit_cost=_share_of(exit_cost_total, matched, exit_quantity),
             )
             self._record(trade)
 
@@ -196,6 +302,10 @@ class TradeLedger:
                     stop_price=lot.stop_price,
                     strategy=lot.strategy,
                     opened_at=lot.opened_at,
+                    # The remainder keeps the cost still owed on it, so a lot
+                    # closed in pieces charges its entry commission exactly
+                    # once across all of them.
+                    entry_cost=lot.entry_cost - _share_of(lot.entry_cost, matched, lot.quantity),
                 )
 
         if remaining > 1e-9:

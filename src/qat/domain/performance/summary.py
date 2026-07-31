@@ -78,7 +78,21 @@ class PerformanceSummary:
             (
                 "Net P&L",
                 f"${stats.total_pnl:,.2f}",
-                "Realised profit and loss across every closed trade.",
+                "Realised profit and loss across every closed trade, after costs. "
+                "Every figure below is net (M28).",
+            ),
+            (
+                "Gross P&L",
+                f"${stats.gross_pnl:,.2f}",
+                "Price movement alone, before it cost anything to capture. Shown "
+                "beside the net so the gap is a number rather than an assumption.",
+            ),
+            (
+                "Costs",
+                f"${stats.total_costs:,.2f}"
+                + (f" ({stats.cost_drag:.1%} of gross)" if stats.cost_drag is not None else ""),
+                "Commission, exchange fees and modelled slippage. The one lever "
+                "fully under your control: trade less often, or trade bigger.",
             ),
             (
                 "Expectancy",
@@ -114,7 +128,8 @@ class PerformanceSummary:
             (
                 "Profit factor",
                 _ratio(stats.profit_factor),
-                "Gross profit over gross loss. Above 1.0 is a system that made money.",
+                "Net profit over net loss. Above 1.0 is a system that made money "
+                "after paying for the privilege.",
             ),
             (
                 "Holding period",

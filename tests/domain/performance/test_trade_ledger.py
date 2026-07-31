@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from qat.config import Settings
 from qat.domain.bus import EventBus
 from qat.domain.events import OrderFilledEvent
 from qat.domain.performance.trades import EquityCurve, TradeLedger
@@ -56,21 +57,28 @@ async def test_a_buy_then_a_sell_produces_one_closed_trade(tmp_path):
     trades = ledger.closed_trades()
     assert len(trades) == 1
     trade = trades[0]
-    assert trade.pnl == pytest.approx(100.0)
-    assert trade.pnl_pct == pytest.approx(0.10)
-    assert trade.r_multiple == pytest.approx(2.0)  # +10 on 5 of risk
+    assert trade.gross_pnl == pytest.approx(100.0)
+    # Net of the modelled round trip, which the shipped defaults apply in
+    # paper as well as live: 2R gross is less than 2R kept.
+    assert trade.net_pnl < trade.gross_pnl
+    assert trade.r_multiple is not None and 0 < trade.r_multiple < 2.0
+    assert trade.gross_r_multiple == pytest.approx(2.0)  # +10 on 5 of risk
     assert trade.is_win is True
 
 
 @pytest.mark.asyncio
-async def test_a_losing_trade_has_a_negative_r(tmp_path):
+async def test_a_trade_stopped_out_loses_more_than_one_r(tmp_path):
+    """Stopped at exactly the stop, the loss is 1R of price movement plus the
+    cost of having been in the trade at all. A system sized on the assumption
+    that a stop costs exactly 1R is understating every loss it takes."""
     ledger = await _ledger(tmp_path)
     await _fill(ledger, "buy", 10, 100.0, stop=95.0)
     await _fill(ledger, "sell", 10, 95.0, day=1)
 
     trade = ledger.closed_trades()[0]
-    assert trade.pnl == pytest.approx(-50.0)
-    assert trade.r_multiple == pytest.approx(-1.0)
+    assert trade.gross_pnl == pytest.approx(-50.0)
+    assert trade.gross_r_multiple == pytest.approx(-1.0)
+    assert trade.r_multiple is not None and trade.r_multiple < -1.0
     assert trade.is_win is False
 
 
@@ -84,7 +92,7 @@ async def test_a_trade_with_no_stop_has_no_r_rather_than_zero(tmp_path):
 
     trade = ledger.closed_trades()[0]
     assert trade.r_multiple is None
-    assert trade.pnl == pytest.approx(200.0)
+    assert trade.gross_pnl == pytest.approx(200.0)
 
 
 @pytest.mark.asyncio
@@ -111,7 +119,7 @@ async def test_lots_are_matched_first_in_first_out(tmp_path):
     trades = ledger.closed_trades()
     assert len(trades) == 1
     assert trades[0].entry_price == pytest.approx(100.0), "the oldest lot closes first"
-    assert trades[0].pnl == pytest.approx(500.0)
+    assert trades[0].gross_pnl == pytest.approx(500.0)
 
 
 @pytest.mark.asyncio
@@ -124,7 +132,7 @@ async def test_one_sell_can_close_several_lots(tmp_path):
     trades = ledger.closed_trades()
     assert len(trades) == 2
     assert sorted(t.entry_price for t in trades) == [100.0, 120.0]
-    assert sum(t.pnl for t in trades) == pytest.approx(300.0 + 100.0)
+    assert sum(t.gross_pnl for t in trades) == pytest.approx(300.0 + 100.0)
     assert ledger.open_lots("AAA") == []
 
 
@@ -217,3 +225,95 @@ def test_the_equity_curve_appends_and_persists(tmp_path):
     text = (tmp_path / "equity_curve.csv").read_text(encoding="utf-8")
     assert "ts,equity,cash" in text
     assert text.count("\n") == 3  # header plus two rows
+
+
+# --- Costs are part of the trade (M28) ------------------------------------
+#
+# `pnl` was (exit - entry) x quantity with no fee term, so expectancy, average
+# R, profit factor and the promotion gate that reads them were all computed on
+# money the account never kept.
+
+
+async def _costed_ledger(tmp_path, **overrides) -> TradeLedger:
+    base = {"_env_file": None, "commission_bps": 5.0, "slippage_bps": 5.0}
+    base.update(overrides)
+    ledger = TradeLedger(EventBus(), tmp_path, settings=Settings(**base))  # type: ignore[arg-type]
+    await ledger.start()
+    return ledger
+
+
+@pytest.mark.asyncio
+async def test_a_trade_records_what_it_cost_to_open_and_close(tmp_path):
+    ledger = await _costed_ledger(tmp_path, broker_min_commission=0.0)
+    await _fill(ledger, "buy", 100, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 100, 110.0, day=5)
+
+    trade = ledger.closed_trades()[0]
+
+    assert trade.gross_pnl == pytest.approx(1000.0)
+    # 10bps of $10,000 in, 10bps of $11,000 out.
+    assert trade.entry_cost == pytest.approx(10.0)
+    assert trade.exit_cost == pytest.approx(11.0)
+    assert trade.net_pnl == pytest.approx(979.0)
+    assert trade.costs == pytest.approx(21.0)
+
+
+@pytest.mark.asyncio
+async def test_a_small_gain_swallowed_by_costs_is_a_loss(tmp_path):
+    """The case the whole milestone exists for: at IBKR's minimums a round
+    trip costs at least $12, which is decisive on a small position."""
+    ledger = await _costed_ledger(tmp_path, broker_min_commission=6.0, slippage_bps=0.0)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 10, 100.5, day=3)
+
+    trade = ledger.closed_trades()[0]
+
+    assert trade.gross_pnl == pytest.approx(5.0)
+    assert trade.net_pnl < 0
+    assert not trade.is_win, "a $5 gain costing $12 is not a win"
+    assert trade.r_multiple is not None and trade.r_multiple < 0
+
+
+@pytest.mark.asyncio
+async def test_the_commission_floor_is_charged_once_not_once_per_piece(tmp_path):
+    """A position closed in three pieces pays one entry commission. Charging
+    the floor per closed trade would invent fees that were never billed."""
+    ledger = await _costed_ledger(tmp_path, broker_min_commission=6.0, slippage_bps=0.0)
+    await _fill(ledger, "buy", 300, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 100, 110.0, day=1)
+    await _fill(ledger, "sell", 100, 110.0, day=2)
+    await _fill(ledger, "sell", 100, 110.0, day=3)
+
+    trades = ledger.closed_trades()
+
+    assert len(trades) == 3
+    # One entry commission of $15 (5bps of $30,000) spread across the three.
+    assert sum(t.entry_cost for t in trades) == pytest.approx(15.0)
+    # And each exit charged its own floor, because each was its own order.
+    assert [round(t.exit_cost, 2) for t in trades] == [6.0, 6.0, 6.0]
+
+
+@pytest.mark.asyncio
+async def test_one_sell_closing_several_lots_splits_its_cost(tmp_path):
+    ledger = await _costed_ledger(tmp_path, broker_min_commission=6.0, slippage_bps=0.0)
+    await _fill(ledger, "buy", 100, 100.0, stop=95.0)
+    await _fill(ledger, "buy", 100, 105.0, stop=99.0, day=1)
+    await _fill(ledger, "sell", 200, 110.0, day=2)
+
+    trades = ledger.closed_trades()
+
+    assert len(trades) == 2
+    # The single sell's cost, once, divided between the lots it closed.
+    assert sum(t.exit_cost for t in trades) == pytest.approx(11.0)
+
+
+@pytest.mark.asyncio
+async def test_costs_can_be_switched_off_for_a_pure_price_measurement(tmp_path):
+    ledger = await _costed_ledger(tmp_path, apply_costs_in_paper=False)
+    await _fill(ledger, "buy", 100, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 100, 110.0, day=5)
+
+    trade = ledger.closed_trades()[0]
+
+    assert trade.costs == 0.0
+    assert trade.net_pnl == trade.gross_pnl

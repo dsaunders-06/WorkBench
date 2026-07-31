@@ -789,10 +789,9 @@ Costs existed **only in the backtester**. The risk engine, sizer, OMS and
 autonomous executor had no cost awareness at all, so nothing would have stopped
 the system taking a trade whose entire expected profit was fees.
 
-And `ClosedTrade.pnl` is still `(exit - entry) x quantity` with no fee term, so
-every performance metric - expectancy, average R, profit factor - and the
-promotion gate that consumes them are computed **gross**. That is recorded here
-as a known gap, not as fixed: see below.
+And `ClosedTrade.pnl` was `(exit - entry) x quantity` with no fee term, so every
+performance metric - expectancy, average R, profit factor - and the promotion
+gate that consumes them were computed **gross**. Fixed in M28, below.
 
 **The rail** lives in `RiskEngine.evaluate_order`, so it is audited like every
 other decision, and it runs *last* - the cash cap and the governor both shrink
@@ -891,10 +890,62 @@ AUD-denominated ASX account into US positions would mix currencies inside the
 risk arithmetic without complaint. Cheaper to introduce alongside the market
 profiles than afterwards.
 
-**Not yet built**, and deliberately listed rather than quietly dropped: fees on
-`ClosedTrade` so the metrics and promotion gate become net; the minimum holding
-period for signal-driven exits (agreed at 10 trading days, configurable, never
-delaying a protective exit); and a turnover budget on `trades_per_week`.
+**Not yet built**, and deliberately listed rather than quietly dropped: the
+minimum holding period for signal-driven exits (agreed at 10 trading days,
+configurable, never delaying a protective exit); and a turnover budget on
+`trades_per_week`. Fees on `ClosedTrade` landed in M28, below.
+
+## Cost-truthful measurement (M28)
+
+Every performance figure this application reports is now **net**. Expectancy,
+average R, profit factor, win rate, best and worst trade, and the promotion
+gate that reads them: all of it after costs.
+
+Each `ClosedTrade` carries `entry_cost` and `exit_cost` and reports `gross_pnl`,
+`costs` and `net_pnl` separately, so the charge is a number you can act on
+rather than an adjustment applied out of sight. What it looks like at the
+shipped defaults, on a 2% gain against a 5%-wide stop:
+
+| Notional | Gross | Costs | Net | Gross R | Net R |
+|---|---|---|---|---|---|
+| $2,000 | $40.00 | $15.22 | $24.78 | 0.40 | **0.25** |
+| $10,000 | $200.00 | $23.30 | $176.70 | 0.40 | 0.35 |
+| $20,000 | $400.00 | $40.40 | $359.60 | 0.40 | **0.36** |
+| $50,000 | $1,000.00 | $101.00 | $899.00 | 0.40 | 0.36 |
+
+The per-order floor is what makes the small trade bleed — the same error the
+M27 cost model was built to express, now visible in the results as well as in
+the rail. Against a 0.2R promotion floor, the gap between 0.40R and 0.25R
+decides whether a strategy qualifies.
+
+**There is deliberately no `pnl` attribute any more.** Redefining it to mean
+net would have silently changed every existing call site, which is the failure
+this codebase keeps finding — a name that no longer means what it says. Callers
+must now write `gross_pnl` or `net_pnl` and mean it, and the compiler-equivalent
+(a failing test at every site) forced each one to be reviewed.
+
+**A stop-out costs more than 1R.** A trade closed at exactly its stop loses the
+1R of price movement plus the cost of having been in the trade at all. A system
+sized on the assumption that a stop costs exactly 1R understates every loss it
+takes.
+
+**The commission floor is charged once per order, not once per closed trade.**
+A position closed in three pieces pays one entry commission, apportioned across
+the three by quantity; a single sell closing several lots has its cost split the
+same way. Charging the floor per trade would have invented fees that were never
+billed — which, for a system whose whole purpose here is honest measurement,
+would have been its own kind of lie.
+
+**The backtester had the same defect in reverse**, found while doing this work:
+it deducted costs from equity but recorded gross P&L on each trade, so the same
+backtest reported a net CAGR beside a gross profit factor and win rate. Both
+sides now agree.
+
+**These are modelled costs, not billed ones.** A paper broker charges nothing,
+so measuring the paper account's own fees would report zero and promote a
+strategy onto a broker where the same trades lose money. Real per-fill
+commissions from a live broker are not read back yet — that is a separate
+wiring job, and until it exists the figures are as good as the model.
 
 ## Market data resilience
 

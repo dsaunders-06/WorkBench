@@ -48,9 +48,33 @@ _STATUS_COLOURS = {
     "eligible": QColor("#1e3a5f"),
     "not-eligible": QColor("#5b6572"),
 }
-_PROMOTION_COLUMNS = ("Strategy", "Status", "Trades", "Net P&L", "Win rate", "Avg R", "Blocking")
-_TRADE_COLUMNS = ("Closed", "Symbol", "Name", "Strategy", "Qty", "Entry", "Exit", "P&L", "R")
+_PROMOTION_COLUMNS = (
+    "Strategy",
+    "Status",
+    "Trades",
+    "Net P&L",
+    "Costs",
+    "Win rate",
+    "Avg R",
+    "Blocking",
+)
+# Gross and net side by side: the gap between them is the whole point of M28,
+# and a single "P&L" column hides whichever one you are not looking at.
+_TRADE_COLUMNS = (
+    "Closed",
+    "Symbol",
+    "Name",
+    "Strategy",
+    "Qty",
+    "Entry",
+    "Exit",
+    "Gross",
+    "Costs",
+    "Net P&L",
+    "R",
+)
 _METRIC_COLUMNS = ("Metric", "Value", "What it tells you")
+_NET_PNL_COLUMN = _TRADE_COLUMNS.index("Net P&L")
 
 
 class PerformanceScreen(QWidget):
@@ -202,6 +226,7 @@ class PerformanceScreen(QWidget):
                 card.status,
                 str(stats.trade_count),
                 f"${stats.total_pnl:,.2f}",
+                f"${stats.total_costs:,.2f}",
                 f"{stats.win_rate:.0%}" if stats.win_rate is not None else "-",
                 f"{stats.average_r:+.2f}" if stats.average_r is not None else "-",
                 blocking,
@@ -227,13 +252,20 @@ class PerformanceScreen(QWidget):
                 f"{trade.quantity:g}",
                 f"{trade.entry_price:.2f}",
                 f"{trade.exit_price:.2f}",
-                f"{trade.pnl:+,.2f}",
+                f"{trade.gross_pnl:+,.2f}",
+                f"{trade.costs:,.2f}",
+                f"{trade.net_pnl:+,.2f}",
                 f"{trade.r_multiple:+.2f}" if trade.r_multiple is not None else "-",
             )
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if column == 7:
-                    item.setForeground(QColor("#1b5e20") if trade.pnl > 0 else QColor("#b71c1c"))
+                # Looked up by name, not by a literal index. Adding the gross
+                # and cost columns silently moved P&L one place along and left
+                # the colour on the wrong number.
+                if column == _NET_PNL_COLUMN:
+                    item.setForeground(
+                        QColor("#1b5e20") if trade.net_pnl > 0 else QColor("#b71c1c")
+                    )
                 self.trades_table.setItem(row, column, item)
         self.trades_table.resizeColumnsToContents()
 

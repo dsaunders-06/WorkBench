@@ -64,6 +64,10 @@ class VectorizedBacktester:
 
         current_position = 0.0  # signed shares
         entry_price = 0.0
+        # Carried so each Trade can report P&L net of BOTH sides. Equity was
+        # already net here while the trades were gross, so the same backtest
+        # reported a net CAGR beside a gross profit factor and win rate (M28).
+        entry_cost = 0.0
         entry_ts = bars["ts"].iloc[0]
         entry_side: str = "buy"
 
@@ -79,9 +83,10 @@ class VectorizedBacktester:
 
             if desired_direction != current_direction:
                 if current_position != 0:
-                    pnl = (price - entry_price) * current_position
-                    equity += pnl
-                    equity -= self.cost_model.apply(abs(current_position) * price)
+                    gross = (price - entry_price) * current_position
+                    exit_cost = self.cost_model.apply(abs(current_position) * price)
+                    equity += gross
+                    equity -= exit_cost
                     trades.append(
                         Trade(
                             symbol=symbol,
@@ -91,7 +96,7 @@ class VectorizedBacktester:
                             entry_price=entry_price,
                             exit_price=price,
                             quantity=abs(current_position),
-                            pnl=pnl,
+                            pnl=gross - entry_cost - exit_cost,
                         )
                     )
                     current_position = 0.0
@@ -99,7 +104,8 @@ class VectorizedBacktester:
                 if desired_direction != 0:
                     shares = self.sizer.size(equity, price, bar_atr) * abs(target_exposure)
                     if shares > 0:
-                        equity -= self.cost_model.apply(shares * price)
+                        entry_cost = self.cost_model.apply(shares * price)
+                        equity -= entry_cost
                         current_position = shares * desired_direction
                         entry_price = price
                         entry_ts = ts
@@ -110,9 +116,11 @@ class VectorizedBacktester:
 
         if current_position != 0:
             final_price = float(bars["close"].iloc[-1])
-            pnl = (final_price - entry_price) * current_position
-            equity += pnl
-            equity -= self.cost_model.apply(abs(current_position) * final_price)
+            gross = (final_price - entry_price) * current_position
+            exit_cost = self.cost_model.apply(abs(current_position) * final_price)
+            equity += gross
+            equity -= exit_cost
+            pnl = gross - entry_cost - exit_cost
             trades.append(
                 Trade(
                     symbol=symbol,

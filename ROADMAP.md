@@ -320,12 +320,29 @@ A stale quote on one thin ticker should stop trading that ticker. Halting the
 whole account because Berkshire had not printed on IEX by 09:30:15 is a rail
 doing considerably more damage than the hazard it guards against.
 
-### M28 - Cost-truthful measurement
+### M28 - Cost-truthful measurement  **[DONE, 31 July]**
 
 Fees on `ClosedTrade`, gross and net both retained; cost drag in the Metrics tab
-and reports. Expectancy, average R, profit factor and the promotion gate all
-become net. Everything else waits on this, because every judgement about the
-strategy reads these numbers.
+and reports. Expectancy, average R, profit factor and the promotion gate are all
+net.
+
+`pnl` was removed rather than redefined, so every call site had to say which it
+meant. Costs are apportioned from the *fill*, because the commission floor is
+charged once per order - a position closed in three pieces pays one entry
+commission, not three.
+
+Two things the plan did not anticipate. A trade stopped at exactly its stop
+loses **more than 1R**, since the 1R of price movement is joined by the cost of
+having been in the trade; anything sized on "a stop costs 1R" understates every
+loss. And the backtester had the same defect in reverse - costs deducted from
+equity but gross P&L recorded per trade, so one backtest reported a net CAGR
+beside a gross profit factor. Both sides now agree.
+
+Measured at the shipped defaults on a 2% gain: a $20,000 position keeps 0.36R
+of a 0.40R gross move, a $2,000 position keeps 0.25R. Against a 0.2R promotion
+floor that gap decides whether a strategy qualifies.
+
+**This unblocks M29**, which reads exactly these numbers.
 
 ### M29 - Governance consistency
 

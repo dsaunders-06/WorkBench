@@ -42,6 +42,23 @@ class PerformanceStats:
     r_trade_count: int
     best_trade: float | None
     worst_trade: float | None
+    # What the trading cost, and what share of the gross result it took (M28).
+    # Subtracting costs without showing them answers "how did we do" while
+    # hiding the one lever that is fully under the operator's control:
+    # trade less often, or trade bigger.
+    total_costs: float = 0.0
+    gross_pnl: float = 0.0
+
+    @property
+    def cost_drag(self) -> float | None:
+        """Costs as a share of the gross result.
+
+        None when gross is not positive - there is no meaningful ratio between
+        a fee and a loss, and reporting one invites the wrong conclusion.
+        """
+        if self.gross_pnl <= 0:
+            return None
+        return self.total_costs / self.gross_pnl
 
     @property
     def has_enough_history(self) -> bool:
@@ -57,6 +74,12 @@ class PerformanceStats:
             parts.append(f"avg {self.average_r:+.2f}R over {self.r_trade_count} stopped trades")
         if self.profit_factor is not None:
             parts.append(f"profit factor {self.profit_factor:.2f}")
+        if self.total_costs > 0:
+            drag = self.cost_drag
+            parts.append(
+                f"costs ${self.total_costs:,.2f}"
+                + (f" ({drag:.0%} of gross)" if drag is not None else "")
+            )
         return ", ".join(parts) + "."
 
 
@@ -76,9 +99,14 @@ def compute_stats(trades: list[ClosedTrade]) -> PerformanceStats:
             r_trade_count=0,
             best_trade=None,
             worst_trade=None,
+            total_costs=0.0,
+            gross_pnl=0.0,
         )
 
-    pnls = [trade.pnl for trade in trades]
+    # Net, every one of them (M28). Expectancy, profit factor and average R
+    # are what the promotion gate reads, and a gross figure would promote a
+    # strategy on money the account never kept.
+    pnls = [trade.net_pnl for trade in trades]
     wins = [pnl for pnl in pnls if pnl > 0]
     losses = [pnl for pnl in pnls if pnl < 0]
     # Only trades with a known stop have an R. Counting the others as 0R would
@@ -106,6 +134,8 @@ def compute_stats(trades: list[ClosedTrade]) -> PerformanceStats:
         r_trade_count=len(r_values),
         best_trade=max(pnls),
         worst_trade=min(pnls),
+        total_costs=sum(trade.costs for trade in trades),
+        gross_pnl=sum(trade.gross_pnl for trade in trades),
     )
 
 
@@ -213,7 +243,7 @@ def recovery_factor(trades: list[ClosedTrade], points: list[EquityPoint]) -> flo
     peak_equity = max((point.equity for point in points), default=0.0)
     if peak_equity <= 0:
         return None
-    net = sum(trade.pnl for trade in trades)
+    net = sum(trade.net_pnl for trade in trades)
     return net / (drawdown * peak_equity)
 
 
