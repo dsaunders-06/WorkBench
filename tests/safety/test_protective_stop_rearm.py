@@ -327,3 +327,48 @@ async def test_a_new_protective_order_is_allowed_once_the_pending_one_is_gone():
 
     assert second.order_id != first.order_id
     assert second.status == "pending_signoff"
+
+
+# --- Repair on a timer, not only at startup (M33e) ----------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_re_arms_without_a_restart():
+    """Every repair watched on 1 August needed a human to close and reopen the
+    app. A stop that vanishes at 14:00 is not less urgent than one found at
+    launch - it is more so, because nobody is about to restart anything."""
+    broker, oms, bridge = _bridge_holding({"CRWD": 16.0}, {"CRWD": _entry(163.32)})
+    broker._resting_stops = {"CRWD": 163.32}
+
+    # Nothing to do while the stop is there.
+    assert await bridge.rearm_protective_stops() == []
+
+    # It vanishes mid-session, exactly as the brackets did at Friday's close.
+    broker._resting_stops = {}
+
+    assert await bridge.rearm_protective_stops() == ["CRWD"]
+    assert oms.pending_orders()[0].symbol == "CRWD"
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_sweep_does_not_stack_up_orders():
+    """The sweep runs every few minutes forever, so it must be idempotent while
+    a proposal is still awaiting sign-off. The M33d duplicate guard is what
+    makes that true."""
+    _, oms, bridge = _bridge_holding({"CRWD": 16.0}, {"CRWD": _entry(163.32)})
+
+    for _ in range(5):
+        await bridge.rearm_protective_stops()
+
+    assert len([o for o in oms.pending_orders() if o.is_protective_stop]) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_starts_and_stops_with_the_bridge():
+    _, _, bridge = _bridge_holding({}, {})
+
+    await bridge.start()
+    assert bridge._sweep_task is not None and not bridge._sweep_task.done()
+
+    await bridge.stop()
+    assert bridge._sweep_task is None

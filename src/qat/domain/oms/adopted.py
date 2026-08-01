@@ -50,6 +50,15 @@ class AdoptedPositionReport:
     adopted_risk_dollars: float
     """The share of it contributed by adopted positions."""
     cap_pct: float
+    resumed: frozenset[str] = frozenset()
+    """Of these, the ones THIS app opened in an earlier session (M33e).
+
+    "Adopted" has meant two very different things and said the same words for
+    both: a holding some other system or a human put in the account, and this
+    app's own position seen again after a restart. The second is now the
+    normal case - every launch re-adopts what swing opened - and warning about
+    it in the language of the first is how an operator learns to scroll past
+    the banner that exists for the first."""
 
     @property
     def count(self) -> int:
@@ -80,7 +89,19 @@ class AdoptedPositionReport:
     def headline(self) -> str:
         if not self.positions:
             return ""
-        held = f"{self.count} position{'s' if self.count != 1 else ''} not opened by this app"
+        if self.resumed and len(self.resumed) == self.count:
+            held = (
+                f"{self.count} position{'s' if self.count != 1 else ''} resumed after restart"
+                " - opened by this app"
+            )
+        elif self.resumed:
+            foreign = self.count - len(self.resumed)
+            held = (
+                f"{foreign} position{'s' if foreign != 1 else ''} not opened by this app"
+                f" ({len(self.resumed)} resumed after restart)"
+            )
+        else:
+            held = f"{self.count} position{'s' if self.count != 1 else ''} not opened by this app"
         if self.blocking:
             return (
                 f"{held} - aggregate risk-at-stop {self.risk_at_stop_pct:.2%} is at or above "
@@ -95,11 +116,18 @@ class AdoptedPositionReport:
         if not self.positions:
             return ""
         unprotected = self.unprotected
-        lines = [
-            "These were already in the account when the session started, so this "
-            "application did not choose them. Whatever is resting at the broker is "
-            "what their risk is measured to.",
-        ]
+        if self.resumed and len(self.resumed) == self.count:
+            lines = [
+                "These were already in the account when the session started because this "
+                "application opened them in an earlier one - a restart, not a surprise. "
+                "Whatever is resting at the broker is what their risk is measured to.",
+            ]
+        else:
+            lines = [
+                "These were already in the account when the session started, so this "
+                "application did not choose them. Whatever is resting at the broker is "
+                "what their risk is measured to.",
+            ]
         if not unprotected:
             lines.append("Every one of them has a stop resting, so none is counted at full value.")
             return " ".join(lines)
@@ -134,6 +162,7 @@ def assess_adopted_positions(
     settings: Settings,
     prices: dict[str, float] | None = None,
     governor: PortfolioGovernor | None = None,
+    opened_by_this_app: set[str] | None = None,
 ) -> AdoptedPositionReport | None:
     """None when nothing was adopted - the normal case, and no news.
 
@@ -181,4 +210,5 @@ def assess_adopted_positions(
         risk_at_stop_dollars=total.risk_at_stop_dollars,
         adopted_risk_dollars=adopted_only.risk_at_stop_dollars,
         cap_pct=settings.max_aggregate_risk_at_stop_pct,
+        resumed=frozenset(opened_by_this_app or ()) & {p.symbol for p in still_held},
     )

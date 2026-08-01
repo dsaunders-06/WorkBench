@@ -349,6 +349,20 @@ class Runtime:
     watchlist: tuple[str, ...]
     benchmark_symbol: str
     history_source: HistoricalBarSource
+    # Optional so every existing construction, including the tests, is
+    # unaffected. Only the adoption banner reads it.
+    signal_bridge: SignalToOrderBridge | None = None
+
+    def opened_position_symbols(self) -> set[str]:
+        """Symbols this app opened itself, from its own entry record (M33e).
+
+        The adoption banner had no way to tell "someone else traded this
+        account" from "this is my own position after a restart", and said the
+        former for both. The second is the normal case now.
+        """
+        if self.signal_bridge is None:
+            return set()
+        return self.signal_bridge.opened_symbols()
 
     @classmethod
     def build_demo(
@@ -603,6 +617,7 @@ class Runtime:
             decision_journal=decision_journal,
             strategy_engine=strategy_engine,
             available_strategies=available_strategies,
+            signal_bridge=signal_bridge,
             regime_engine=regime_engine,
             ai_service=ai_service,
             watchlist=watchlist,

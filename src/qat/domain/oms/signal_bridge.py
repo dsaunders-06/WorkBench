@@ -28,6 +28,8 @@ maintain historical return series for already-held positions.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import logging
 from dataclasses import dataclass
@@ -142,12 +144,22 @@ class SignalToOrderBridge:
         self._entry_times: list[datetime] = []
         self._time_stopped: set[str] = set()
         self._hold_blocked: set[str] = set()
+        self._sweep_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
         await self.rearm_protective_stops()
+        self._sweep_task = asyncio.create_task(self._sweep_protection())
+
+    def opened_symbols(self) -> set[str]:
+        """Positions this app opened, from the persisted entry record.
+
+        Survives a restart, which is the entire point - the in-memory view is
+        empty at launch, and launch is exactly when the adoption banner runs.
+        """
+        return set(self._entries)
 
     async def rearm_protective_stops(self) -> list[str]:
         """Proposes a stop for every held position that has none (M31d).
@@ -205,6 +217,32 @@ class SignalToOrderBridge:
         self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
         self.bus.unsubscribe(SignalEvent, self._on_signal)
         self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+        if self._sweep_task is not None:
+            self._sweep_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._sweep_task
+            self._sweep_task = None
+
+    async def _sweep_protection(self) -> None:
+        """Re-arms lost protection on an interval, not only at startup (M33e).
+
+        A stop that vanishes at 14:00 is not less urgent than one found at
+        launch - it is more so, because nobody is about to restart the app.
+        Running the same repair on a timer is what makes the rail work
+        unattended.
+
+        The M33d duplicate guard is what makes this safe to run repeatedly: a
+        symbol with a protective order already pending gets that one back
+        rather than another.
+        """
+        while True:
+            await asyncio.sleep(self.settings.protection_sweep_seconds)
+            try:
+                await self.rearm_protective_stops()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - one bad sweep must not end the rail
+                logger.exception("Protection sweep failed; continuing")
 
     async def _on_fill(self, event: OrderFilledEvent) -> None:
         """Remembers when each position was opened, for the churn rails (M31).

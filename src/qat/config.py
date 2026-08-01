@@ -255,6 +255,16 @@ class Settings(BaseSettings):
     delever_sweep_enabled: bool = False
 
     reconciliation_poll_seconds: float = Field(default=300.0, gt=0)
+    # How often to re-check that every held position still has protection
+    # resting, and to propose it where it does not (M33e).
+    #
+    # Detection was already continuous - verify_position_stops runs on the
+    # reconciliation poll - but REPAIR only ever ran at startup, so a bracket
+    # dying mid-session stayed dead until somebody restarted the app. Every
+    # repair watched on 1 August needed a human to close and reopen it. For a
+    # system meant to run unattended across days that is the difference
+    # between self-healing and self-diagnosing.
+    protection_sweep_seconds: float = Field(default=300.0, gt=0)
 
     # How old a symbol's last PRINT may be before that symbol is excluded from
     # signal generation (M28a). Never halts the account.

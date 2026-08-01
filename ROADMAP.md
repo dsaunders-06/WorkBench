@@ -273,10 +273,27 @@ from the ledger's open lots, so Friday reads "Opened 6 position(s), $27,783.86
 committed" with each entry listed, and "Still held 6 position(s)". A genuinely
 quiet day still reads as quiet.
 
-## Known gaps - found by running it, not yet fixed
+## M33e - Both known gaps closed
 
-Both surfaced on 1 August while validating M33b-d against the live account.
-Neither blocks Monday; both matter for a system meant to run unattended.
+**Repair now runs on a timer.** `SignalToOrderBridge` sweeps every
+`protection_sweep_seconds` (default 300) and re-arms anything the broker is no
+longer protecting. Detection was already continuous; repair only ever ran at
+startup, so every fix watched on 1 August needed a human to close and reopen
+the app. A stop that vanishes at 14:00 is not less urgent than one found at
+launch - it is more so, because nobody is about to restart anything. The M33d
+duplicate guard is what makes a repeating sweep safe: a symbol with a proposal
+already pending gets that one back rather than another.
+
+**The banner distinguishes a restart from a surprise.** "Adopted" had meant two
+different things in the same words - a holding someone else put in the account,
+and this app's own position seen again after a restart - and the second is the
+normal case now. `Runtime.opened_position_symbols()` reads the persisted entry
+record, so six positions swing opened yesterday read as "resumed after restart
+- opened by this app" rather than "this application did not choose them". A
+genuinely foreign holding still reads exactly as before, which is the whole
+point: the warning has to stay meaningful for the case it was built for.
+
+## Superseded - the gaps as originally recorded
 
 **Repair is startup-only.** `rearm_protective_stops()` is called from
 `SignalToOrderBridge.start()` and nowhere else. Detection is continuous -

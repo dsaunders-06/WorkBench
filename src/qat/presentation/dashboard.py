@@ -172,6 +172,9 @@ class DashboardScreen(QWidget):
                 stops=self.runtime.oms.position_stops(),
                 equity=equity,
                 settings=self.runtime.settings,
+                # The app's own record of what it opened, so a restart reads
+                # as a restart rather than as an unexplained holding (M33e).
+                opened_by_this_app=self.runtime.opened_position_symbols(),
             )
         )
 
