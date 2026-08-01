@@ -116,6 +116,15 @@ class Settings(BaseSettings):
     per_trade_risk_pct: float = Field(default=0.01, gt=0, le=0.02)
     max_per_trade_risk_pct: float = Field(default=0.02, gt=0, le=0.02)
     kelly_fraction: float = Field(default=0.5, gt=0, le=1.0)
+    # Closed trades a strategy needs before its OWN results size its trades
+    # rather than the defaults (M35).
+    #
+    # 20, not the 5 that MIN_TRADES_FOR_STATS allows for display. Kelly is
+    # violently sensitive to win rate - at a 1.5 win/loss ratio, moving from
+    # 0.55 to 0.75 roughly triples the fraction - so a strategy that opened
+    # with four winners would size up hard on noise. Displaying a statistic
+    # early is harmless; risking money on it is not.
+    edge_min_trades: int = Field(default=20, ge=1)
     atr_stop_multiple: float = Field(default=2.5, gt=0)
     portfolio_es_limit_pct: float = Field(default=0.03, gt=0)
     daily_loss_limit_pct: float = Field(default=0.03, gt=0)

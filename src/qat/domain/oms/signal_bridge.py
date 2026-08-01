@@ -46,6 +46,7 @@ from qat.data.features import compute_atr
 from qat.domain.bus import EventBus
 from qat.domain.events import MarketDataEvent, OrderFilledEvent, SignalEvent
 from qat.domain.oms.oms import OMS
+from qat.domain.performance.edge import ClosedTradeSource, EdgeEstimator
 from qat.domain.risk_engine.engine import OrderCandidate
 
 logger = logging.getLogger(__name__)
@@ -121,12 +122,22 @@ class SignalToOrderBridge:
         max_history: int = 250,
         settings: Settings | None = None,
         bar_interval_seconds: float = 60.0,
+        trade_ledger: ClosedTradeSource | None = None,
     ) -> None:
         self.bus = bus
         self.oms = oms
         self.settings = settings or Settings()
         self.default_win_rate = default_win_rate
         self.default_win_loss_ratio = default_win_loss_ratio
+        # What the strategy has actually achieved, once it has achieved enough
+        # to measure (M35). Without a ledger this returns the defaults for
+        # everything, which is exactly the previous behaviour.
+        self.edge = EdgeEstimator(
+            trade_ledger,
+            settings=self.settings,
+            default_win_rate=default_win_rate,
+            default_win_loss_ratio=default_win_loss_ratio,
+        )
         self.max_history = max_history
         # Real OHLC bars, not one-point-per-tick (M14). This is the most
         # load-bearing of the three aggregators in the app: the ATR computed
@@ -515,13 +526,14 @@ class SignalToOrderBridge:
         if atr <= 0:
             return  # can't size a stop without a valid ATR yet
 
+        edge = self.edge.estimate(strategy)
         candidate = OrderCandidate(
             symbol=symbol,
             side=side,
             price=price,
             atr=atr,
-            win_rate=self.default_win_rate,
-            win_loss_ratio=self.default_win_loss_ratio,
+            win_rate=edge.win_rate,
+            win_loss_ratio=edge.win_loss_ratio,
             candidate_returns=_returns_by_ts(bars),
             strategy=strategy,
             stop_price=stop_price,

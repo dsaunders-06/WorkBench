@@ -273,6 +273,43 @@ from the ledger's open lots, so Friday reads "Opened 6 position(s), $27,783.86
 committed" with each entry listed, and "Still held 6 position(s)". A genuinely
 quiet day still reads as quiet.
 
+## M35 - Sizing on what happened, not on two invented numbers
+
+`SignalToOrderBridge` passed `win_rate=0.55` and `win_loss_ratio=1.5` into
+Kelly sizing as fixed constants, described in its own docstring as "clearly
+documented placeholders, not real edge estimates". Every position size this
+system has ever taken traced back to those two figures.
+
+`EdgeEstimator` measures each strategy on its own closed trades and feeds that
+into the sizer. This is the learning loop: what a strategy achieved decides
+what its next trade risks.
+
+**The care is all in when NOT to switch.** Kelly is violently sensitive to win
+rate - at a 1.5 win/loss ratio, moving from 0.55 to 0.75 roughly triples the
+fraction - so a strategy that opened with four winners would size up hard on
+noise. It stays on the defaults until `edge_min_trades` (20, against the 5
+that `MIN_TRADES_FOR_STATS` allows for *display* - showing a statistic early
+is harmless, risking money on it is not), and even then:
+
+* win rate is clamped to 0.25-0.75, outside which a small sample is far
+  likelier than a real edge;
+* win/loss ratio is clamped to 0.5-4.0, because 50:1 over twenty trades is one
+  outsized winner rather than a payoff profile;
+* a book with no losing trade falls back rather than dividing by zero - that
+  is a sample too kind to learn from, not a ratio.
+
+The switch is logged once per strategy, at WARNING, because it changes every
+position size from that point on.
+
+Ordering matters: `TradeLedger` is now constructed before the bridge, since
+sizing reads from it.
+
+**Blocked behind M34.** The ledger records a closed trade only when
+`OrderFilledEvent` fires, and every exit this system has comes from a stop, a
+target or the time stop - two of which execute at the broker. Until M34
+absorbed those, no closed trade existed to learn from, so this would have
+measured an empty book forever.
+
 ## M34 - A protective order firing looked like a discrepancy
 
 Every closed trade this system will ever produce comes from a stop, a target,

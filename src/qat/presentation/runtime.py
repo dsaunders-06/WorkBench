@@ -396,8 +396,19 @@ class Runtime:
         # Shared by every screen so the account is read once per interval
         # regardless of how many are watching (M21).
         account_poller = AccountPoller(broker, interval_seconds=settings.account_poll_seconds)
+        # Built before the bridge, because sizing reads from it (M35). The
+        # ledger is the only source of truth about whether anything worked;
+        # the journal records only what was decided.
+        trade_ledger = TradeLedger(bus, settings.data_dir, settings=settings)
         signal_bridge = SignalToOrderBridge(
-            bus, oms, settings=settings, bar_interval_seconds=settings.bar_interval_seconds
+            bus,
+            oms,
+            settings=settings,
+            bar_interval_seconds=settings.bar_interval_seconds,
+            # Closes the loop: what a strategy actually achieved decides how
+            # much its next trade risks. Falls back to the documented defaults
+            # until it has edge_min_trades to measure.
+            trade_ledger=trade_ledger,
         )
 
         # Autonomy (spec M13). All four pieces are constructed regardless of
@@ -412,10 +423,9 @@ class Runtime:
         reconciliation_monitor = ReconciliationMonitor(oms, settings=settings, bus=bus)
         delever_sweep = DeleverSweep(oms, risk_engine.governor, settings=settings, bus=bus)
 
-        # Evidence layer (spec M16): realised trades, the equity curve, and the
-        # reports built from both. The ledger is the only source of truth about
-        # whether anything worked; the journal records only what was decided.
-        trade_ledger = TradeLedger(bus, settings.data_dir, settings=settings)
+        # Evidence layer (spec M16): the equity curve and the reports built
+        # from it. The ledger itself is constructed earlier, because sizing now
+        # reads from it.
         equity_curve = EquityCurve(settings.data_dir)
         # The equity monitor already polls the account on a timer, so it doubles
         # as the curve's sampler rather than adding a second poller for the
