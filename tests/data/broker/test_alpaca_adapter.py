@@ -240,3 +240,35 @@ async def test_a_stop_order_without_a_stop_price_is_refused_before_submission():
         )
 
     assert client.submitted == []
+
+
+@pytest.mark.asyncio
+async def test_a_stop_with_a_target_is_submitted_as_a_single_oco():
+    """Two independent resting orders for the same shares can both fill - the
+    price runs to the target, later gaps back through the stop - and the
+    account sells twice what it holds. OCO makes them mutually exclusive at
+    the broker, which is the property the expired bracket used to provide."""
+    from alpaca.trading.enums import OrderClass, TimeInForce
+    from alpaca.trading.requests import LimitOrderRequest
+
+    adapter, client = _adapter()
+
+    await adapter.place_order(
+        Order(
+            symbol="AAPL",
+            side="sell",
+            quantity=50.0,
+            order_id="local-1",
+            stop_price=95.0,
+            take_profit_price=130.0,
+            order_type="stop",
+        )
+    )
+
+    assert len(client.submitted) == 1
+    request = client.submitted[0]
+    assert isinstance(request, LimitOrderRequest)
+    assert request.order_class == OrderClass.OCO
+    assert request.time_in_force == TimeInForce.GTC
+    assert request.stop_loss.stop_price == pytest.approx(95.0)
+    assert request.take_profit.limit_price == pytest.approx(130.0)

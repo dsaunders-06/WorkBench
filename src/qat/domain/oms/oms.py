@@ -374,6 +374,7 @@ class OMS:
                 price=float(price),
                 strategy=order.strategy,
                 stop_price=order.stop_price,
+                take_profit_price=order.take_profit_price,
                 operator=operator,
             )
         )
@@ -598,7 +599,11 @@ class OMS:
         ]
 
     async def submit_protective_stop(
-        self, symbol: str, quantity: float, stop_price: float
+        self,
+        symbol: str,
+        quantity: float,
+        stop_price: float,
+        take_profit_price: float | None = None,
     ) -> Order:
         """Proposes a resting protective stop on a position already held (M31d).
 
@@ -625,15 +630,20 @@ class OMS:
             order_id=new_order_id(),
             status="pending_signoff",
             stop_price=stop_price,
+            # Sent as one OCO when a target is known, so the two levels cancel
+            # each other at the broker instead of both being able to fill.
+            take_profit_price=take_profit_price,
             order_type="stop",
         )
         self._orders[order.order_id] = order
         logger.warning(
-            "Protective stop proposed for unprotected position %s x%g at %.2f - "
+            "Protective %s proposed for unprotected position %s x%g at %.2f%s - "
             "awaiting sign-off",
+            "OCO" if take_profit_price else "stop",
             symbol,
             quantity,
             stop_price,
+            f", target {take_profit_price:.2f}" if take_profit_price else "",
         )
         self._record(order, "pending_signoff", "protective stop for an unprotected position", None)
         await self._announce_pending(order)

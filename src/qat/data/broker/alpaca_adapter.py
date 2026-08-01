@@ -170,6 +170,7 @@ class AlpacaAdapter:
     async def place_order(self, order: Order) -> Order:
         from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
         from alpaca.trading.requests import (
+            LimitOrderRequest,
             MarketOrderRequest,
             StopLossRequest,
             StopOrderRequest,
@@ -188,6 +189,31 @@ class AlpacaAdapter:
         if order.order_type == "stop":
             if order.stop_price is None:
                 raise ValueError(f"stop order for {order.symbol} has no stop price")
+
+            # Both levels known -> ONE OCO, never two orders (M33).
+            #
+            # A resting stop and a resting limit for the same shares are not
+            # independent: if the price runs to the target and later gaps back
+            # through the stop, both fill, and the account sells twice what it
+            # holds - turning a protected long into an accidental short. OCO is
+            # what makes the pair mutually exclusive at the broker, which is
+            # exactly the property a bracket had before its legs expired.
+            if order.take_profit_price is not None:
+                oco_request = LimitOrderRequest(
+                    symbol=order.symbol,
+                    qty=order.quantity,
+                    side=side,
+                    limit_price=round(order.take_profit_price, 2),
+                    time_in_force=TimeInForce.GTC,
+                    order_class=OrderClass.OCO,
+                    take_profit=TakeProfitRequest(limit_price=round(order.take_profit_price, 2)),
+                    stop_loss=StopLossRequest(stop_price=round(order.stop_price, 2)),
+                )
+                placed = await asyncio.to_thread(self._client.submit_order, oco_request)
+                order.order_id = str(getattr(placed, "id", order.order_id))
+                order.status = _map_status(str(getattr(placed, "status", "")))
+                return order
+
             stop_request = StopOrderRequest(
                 symbol=order.symbol,
                 qty=order.quantity,

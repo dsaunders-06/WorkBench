@@ -45,6 +45,8 @@ class MockBroker:
             order.status = "transmitted"
             self._orders[order.order_id] = order
             self._resting_stops[order.symbol] = order.stop_price
+            if order.take_profit_price is not None:
+                self._resting_targets[order.symbol] = order.take_profit_price
             return order
 
         fill_price = self._synthetic_price(order.symbol)

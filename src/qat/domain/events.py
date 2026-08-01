@@ -95,6 +95,9 @@ class OrderFilledEvent(Event):
     price: float
     strategy: str | None = None
     stop_price: float | None = None
+    # Carried for the same reason stop_price is (M33): the bracket legs die
+    # overnight and re-arming needs both levels, not just the protective one.
+    take_profit_price: float | None = None
     operator: str = ""
 
 

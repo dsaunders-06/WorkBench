@@ -140,6 +140,7 @@ async def test_a_nonsense_stop_is_refused():
 
 import json  # noqa: E402
 import tempfile  # noqa: E402
+from dataclasses import replace  # noqa: E402
 from datetime import UTC, datetime, timedelta  # noqa: E402
 from pathlib import Path  # noqa: E402
 
@@ -223,3 +224,63 @@ async def test_a_broker_that_cannot_be_reached_does_not_stop_the_session():
     oms.naked_positions = _fail  # type: ignore[method-assign]
 
     assert await bridge.rearm_protective_stops() == []
+
+
+# --- The target comes back too (M33) -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_re_armed_position_gets_its_target_back_as_one_oco():
+    """The first re-arm restored only the stop, because the entry record was
+    the one place the target was never written down. Six positions came back
+    with downside protection and no way to bank a gain: the only exits left
+    were a stop-out or the 30-day time stop."""
+    broker, oms = _oms({"AAPL": 50.0})
+
+    order = await oms.submit_protective_stop("AAPL", 50.0, 95.0, 130.0)
+    signed = await oms.sign_off(order.order_id, "operator")
+
+    assert signed.stop_price == pytest.approx(95.0)
+    assert signed.take_profit_price == pytest.approx(130.0)
+    assert await broker.resting_stops() == {"AAPL": 95.0}
+    assert broker.resting_target("AAPL") == pytest.approx(130.0)
+
+
+@pytest.mark.asyncio
+async def test_a_stop_and_a_target_are_one_order_not_two():
+    """Two independent resting orders for the same shares can BOTH fill - the
+    price runs to the target, later gaps back through the stop - and the
+    account sells twice what it holds, turning a protected long into an
+    accidental short. OCO is what makes them mutually exclusive."""
+    broker, oms = _oms({"AAPL": 50.0})
+
+    order = await oms.submit_protective_stop("AAPL", 50.0, 95.0, 130.0)
+    await oms.sign_off(order.order_id, "operator")
+
+    assert len(broker.submitted) == 1
+    assert broker.submitted[0].quantity == pytest.approx(50.0)
+
+
+@pytest.mark.asyncio
+async def test_a_position_with_no_recorded_target_still_gets_its_stop():
+    """Every position opened before M33 has a stop on record and no target.
+    Half the protection is worth having."""
+    broker, oms = _oms({"AAPL": 50.0})
+
+    order = await oms.submit_protective_stop("AAPL", 50.0, 95.0)
+    await oms.sign_off(order.order_id, "operator")
+
+    assert await broker.resting_stops() == {"AAPL": 95.0}
+    assert broker.resting_target("AAPL") is None
+
+
+@pytest.mark.asyncio
+async def test_startup_re_arms_both_levels_when_both_are_known():
+    _, oms, bridge = _bridge_holding({"CRWD": 16.0}, {"CRWD": _entry(163.32)})
+    bridge._entries["CRWD"] = replace(bridge._entries["CRWD"], target_price=235.20)
+
+    await bridge.rearm_protective_stops()
+
+    proposed = oms.pending_orders()[0]
+    assert proposed.stop_price == pytest.approx(163.32)
+    assert proposed.take_profit_price == pytest.approx(235.20)

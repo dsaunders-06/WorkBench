@@ -154,6 +154,30 @@ They are proposed, not transmitted. Reducing risk is an argument for letting
 an order through unattended and not an argument for bypassing the gate: a stop
 still sells shares when it is reached.
 
+## M33b - Re-arming restored half the protection
+
+The M31d re-arm put the stops back and not the targets, because the entry
+record was the one place a target was never written down. Six positions came
+back with downside protection and no way to bank a gain: the only exits left
+were a stop-out or the 30-day time stop.
+
+`_Entry` now keeps `target_price`, `OrderFilledEvent` carries it, and the
+re-arm proposes both levels. Files written before this lack the key and are
+read with `.get` - a restart that discarded its entry dates over a missing
+target would disarm the churn rails in order to add one.
+
+**Sent as ONE OCO, never two orders.** A resting stop and a resting limit for
+the same shares are not independent: if the price runs to the target and later
+gaps back through the stop, both fill, and the account sells twice what it
+holds - turning a protected long into an accidental short. OCO is what makes
+the pair mutually exclusive at the broker, which is exactly the property the
+bracket had before its legs expired.
+
+**The six already held cannot be repaired from the app's own records.** Their
+targets were never persisted. The levels are still visible in Alpaca's order
+history as the expired limit sells; restoring them means writing those numbers
+into `open_position_entries.json` by hand.
+
 ## M31c - The Performance tab showed the launch, not the present
 
 Three observations on 1 August - the Closed Trades table empty, no daily report

@@ -56,6 +56,10 @@ class _Entry:
     opened_at: datetime
     price: float
     stop_price: float | None
+    # The profit target the entry went in with (M33). Re-arming restored only
+    # the stop, because this was the one level nothing recorded - so six
+    # positions came back with downside protection and no way to bank a gain.
+    target_price: float | None = None
 
 
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
@@ -177,7 +181,9 @@ class SignalToOrderBridge:
             if entry is None or entry.stop_price is None:
                 unknown.append(symbol)
                 continue
-            await self.oms.submit_protective_stop(symbol, abs(quantity), entry.stop_price)
+            await self.oms.submit_protective_stop(
+                symbol, abs(quantity), entry.stop_price, entry.target_price
+            )
             proposed.append(symbol)
 
         if proposed:
@@ -211,7 +217,12 @@ class SignalToOrderBridge:
         if event.side == "buy":
             self._entries.setdefault(
                 event.symbol,
-                _Entry(opened_at=event.ts, price=event.price, stop_price=event.stop_price),
+                _Entry(
+                    opened_at=event.ts,
+                    price=event.price,
+                    stop_price=event.stop_price,
+                    target_price=event.take_profit_price,
+                ),
             )
             self._entry_times.append(event.ts)
         else:
@@ -239,6 +250,12 @@ class SignalToOrderBridge:
                     stop_price=(
                         float(row["stop_price"]) if row.get("stop_price") is not None else None
                     ),
+                    # .get, not [...]: every file written before M33 lacks this
+                    # key, and a restart that discarded its entry dates over a
+                    # missing target would disarm the churn rails to add one.
+                    target_price=(
+                        float(row["target_price"]) if row.get("target_price") is not None else None
+                    ),
                 )
             except (KeyError, TypeError, ValueError):
                 logger.warning("Ignoring an unreadable entry record for %s", symbol)
@@ -259,6 +276,7 @@ class SignalToOrderBridge:
                 "opened_at": entry.opened_at.isoformat(),
                 "price": entry.price,
                 "stop_price": entry.stop_price,
+                "target_price": entry.target_price,
             }
             for symbol, entry in self._entries.items()
         }
