@@ -1,6 +1,6 @@
 # Quant Advisory Terminal — Product Description
 
-**As at 1 August 2026. Build M35.**
+**As at 1 August 2026. Build M36.**
 
 This document describes what the software currently does, verified against the
 code and against a live paper-trading account. It is written for evaluation, so
