@@ -208,6 +208,42 @@ could not distinguish an OCO whose target leg rested from one the broker
 accepted and flattened. It now names both levels - it is the audit trail for
 exactly that question.
 
+## M33d - The detection query did not understand its own new order shape
+
+M33b taught the app to place an OCO. Nothing taught `resting_stops` to read
+one. An OCO's stop leg sits at status `held` while its partner is live, and is
+returned as a CHILD of the parent order rather than as a top-level row, so a
+flat scan of open stop orders saw nothing.
+
+On 1 August the app read a CRWD position carrying a perfectly good OCO as
+unprotected and proposed a second one. Signed, that is 32 shares of resting
+sell orders against a 16-share position - the double-sell hazard the OCO
+itself was introduced to prevent, arriving instead as two orders a restart
+apart.
+
+**Only the autonomy gate stopped it.** `Autonomy blocked order (sell CRWD): US
+market is closed` was the sole reason it did not self-sign. M33c had just
+removed exactly that block for protective orders, on the correct reasoning
+that a GTC order rests fine outside hours. The rail being removed was the one
+catching the other bug, and M33c was never deployed because of it.
+
+The five plain stops all read back correctly throughout, which is why every
+check before this passed. It took the new order shape to expose that the query
+had never understood it.
+
+Two fixes, because one of them is about the specific miss and the other is
+about the class:
+
+* `resting_stops` asks for nested orders and walks the legs, and tests on the
+  presence of a stop PRICE rather than an order-type string - an OCO leg
+  reports its type inconsistently, where "carries a stop level and would sell"
+  is the property that makes it protection.
+* `submit_protective_stop` refuses to propose a second protective order for a
+  symbol that already has one pending, and returns the existing one. "The
+  broker says nothing is resting" was never safe to act on unilaterally, so
+  the count is enforced where the order is created as well as measured where
+  it is detected.
+
 ## M31c - The Performance tab showed the launch, not the present
 
 Three observations on 1 August - the Closed Trades table empty, no daily report

@@ -284,3 +284,46 @@ async def test_startup_re_arms_both_levels_when_both_are_known():
     proposed = oms.pending_orders()[0]
     assert proposed.stop_price == pytest.approx(163.32)
     assert proposed.take_profit_price == pytest.approx(235.20)
+
+
+# --- Never two protective orders for one symbol (M33d) ------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_second_protective_order_is_not_proposed_while_one_is_pending():
+    """Belt and braces against the detection query being wrong, which it was.
+    An OCO's stop leg rests at `held` and nested under its parent, so a CRWD
+    position carrying a good OCO read as unprotected and a second was
+    proposed - 32 shares of resting sell orders against 16 held."""
+    _, oms = _oms({"CRWD": 16.0})
+
+    first = await oms.submit_protective_stop("CRWD", 16.0, 163.32, 235.20)
+    second = await oms.submit_protective_stop("CRWD", 16.0, 163.32, 235.20)
+
+    assert second.order_id == first.order_id
+    assert len([o for o in oms.pending_orders() if o.is_protective_stop]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_different_symbol_is_still_proposed():
+    _, oms = _oms({"CRWD": 16.0, "CSCO": 44.0})
+
+    await oms.submit_protective_stop("CRWD", 16.0, 163.32)
+    await oms.submit_protective_stop("CSCO", 44.0, 105.56)
+
+    assert len([o for o in oms.pending_orders() if o.is_protective_stop]) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_new_protective_order_is_allowed_once_the_pending_one_is_gone():
+    """The guard is about DUPLICATES, not a one-shot latch. Once the pending
+    order has been signed off or rejected, a genuinely unprotected position
+    must be able to get another."""
+    _, oms = _oms({"CRWD": 16.0})
+    first = await oms.submit_protective_stop("CRWD", 16.0, 163.32)
+    await oms.sign_off(first.order_id, "operator")
+
+    second = await oms.submit_protective_stop("CRWD", 16.0, 163.32)
+
+    assert second.order_id != first.order_id
+    assert second.status == "pending_signoff"

@@ -150,19 +150,40 @@ class AlpacaAdapter:
         DAY, their take-profit legs expired at the close, and Alpaca cancelled
         the paired stops with them. Nothing noticed, because reconciliation
         compares filled quantities and an expired protective leg changes none.
+
+        **Nested, and `held` counts as resting (M33d).** An OCO's stop leg sits
+        at status `held` while its partner is live, and it is returned as a
+        CHILD of the parent order rather than as a top-level row. A flat scan
+        for open stop orders therefore saw nothing.
+
+        That is not a cosmetic miss. On 1 August the app read a CRWD position
+        carrying a perfectly good OCO as unprotected, and proposed a second
+        one - which, signed, would have left 32 shares of resting sell orders
+        against a 16-share position. The five plain stops all read back
+        correctly, which is why every check before that passed: it took the new
+        order shape to expose that the query never understood it.
+
+        Erring toward "protected" here is the safe direction for THIS query and
+        only because the caller is the one that proposes new protection. A
+        false "unprotected" duplicates orders; a false "protected" merely
+        leaves the governor measuring a stop that exists.
         """
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
 
-        request = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
+        request = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200, nested=True)
         orders = await asyncio.to_thread(self._client.get_orders, filter=request)
         resting: dict[str, float] = {}
         for order in orders:
-            order_type = str(getattr(order, "order_type", "")).lower()
-            side = str(getattr(order, "side", "")).lower()
-            stop = getattr(order, "stop_price", None)
-            if "stop" in order_type and "sell" in side and stop is not None:
-                resting[str(order.symbol)] = float(stop)
+            for candidate in _with_legs(order):
+                side = str(getattr(candidate, "side", "")).lower()
+                stop = getattr(candidate, "stop_price", None)
+                # Tested on the stop PRICE rather than the order-type string.
+                # An OCO leg reports its own type inconsistently across
+                # versions, and "carries a stop level and would sell" is the
+                # property that actually makes it protection.
+                if "sell" in side and stop is not None:
+                    resting[str(getattr(candidate, "symbol", ""))] = float(stop)
         return resting
 
     # --- orders -------------------------------------------------------------
@@ -352,6 +373,20 @@ _STATUS_MAP = {
     "expired": "cancelled",
     "rejected": "rejected",
 }
+
+
+def _with_legs(order: object) -> list[object]:
+    """An order and any child legs it carries.
+
+    Alpaca returns an advanced order set (bracket, OCO, OTO) as a parent with
+    its legs nested underneath. Scanning only the top level sees the parent and
+    misses the protection hanging off it.
+    """
+    found = [order]
+    legs = getattr(order, "legs", None) or []
+    for leg in legs:
+        found.extend(_with_legs(leg))
+    return found
 
 
 def _map_status(alpaca_status: str) -> Any:

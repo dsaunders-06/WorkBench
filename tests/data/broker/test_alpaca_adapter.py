@@ -46,6 +46,8 @@ class FakeClient:
     def __init__(self) -> None:
         self.submitted: list[object] = []
         self.cancelled: list[str] = []
+        self.orders: list[object] = []
+        self.order_filters: list[object] = []
 
     def get_account(self) -> FakeAccount:
         return FakeAccount()
@@ -56,6 +58,10 @@ class FakeClient:
     def submit_order(self, order_data: object) -> FakeAlpacaOrder:
         self.submitted.append(order_data)
         return FakeAlpacaOrder()
+
+    def get_orders(self, filter: object = None) -> list[object]:
+        self.order_filters.append(filter)
+        return self.orders
 
     def cancel_order_by_id(self, order_id: str) -> None:
         self.cancelled.append(order_id)
@@ -272,3 +278,48 @@ async def test_a_stop_with_a_target_is_submitted_as_a_single_oco():
     assert request.time_in_force == TimeInForce.GTC
     assert request.stop_loss.stop_price == pytest.approx(95.0)
     assert request.take_profit.limit_price == pytest.approx(130.0)
+
+
+class _OcoLeg:
+    """The stop leg of an OCO: status `held`, nested under its partner."""
+
+    symbol = "CRWD"
+    side = "sell"
+    order_type = "stop"
+    status = "held"
+    stop_price = "163.32"
+    legs = None
+
+
+class _OcoParent:
+    symbol = "CRWD"
+    side = "sell"
+    order_type = "limit"
+    status = "accepted"
+    stop_price = None
+    limit_price = "235.20"
+    legs = [_OcoLeg()]
+
+
+@pytest.mark.asyncio
+async def test_an_oco_stop_leg_counts_as_resting_protection():
+    """The 1 August miss. An OCO's stop leg sits at `held` and is returned as a
+    CHILD of its partner, so a flat scan for open stop orders saw nothing - and
+    the app read a CRWD position carrying a perfectly good OCO as unprotected
+    and proposed a second one. Signed, that is 32 shares of resting sell orders
+    against a 16-share position."""
+    adapter, client = _adapter()
+    client.orders = [_OcoParent()]
+
+    assert await adapter.resting_stops() == {"CRWD": pytest.approx(163.32)}
+
+
+@pytest.mark.asyncio
+async def test_the_orders_query_asks_for_nested_legs():
+    """Without nested=True the legs never arrive to be scanned."""
+    adapter, client = _adapter()
+    client.orders = []
+
+    await adapter.resting_stops()
+
+    assert client.order_filters[-1].nested is True

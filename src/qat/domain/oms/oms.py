@@ -629,6 +629,33 @@ class OMS:
         if stop_price <= 0:
             return self._new_rejected_order_for(symbol, "sell", 0.0)
 
+        # Never two protective orders for one symbol (M33d).
+        #
+        # Belt and braces against the detection query being wrong, which it
+        # was: an OCO's stop leg rests at status `held` and nested under its
+        # parent, so a CRWD position carrying a good OCO read as unprotected
+        # and a second one was proposed. Signed, that is 32 shares of resting
+        # sell orders against a 16-share position.
+        #
+        # The deeper lesson is that "the broker says nothing is resting" was
+        # never safe to act on unilaterally, so the count is enforced here as
+        # well as measured there.
+        already_pending = next(
+            (
+                existing
+                for existing in self.pending_orders()
+                if existing.symbol == symbol and existing.is_protective_stop
+            ),
+            None,
+        )
+        if already_pending is not None:
+            logger.warning(
+                "Protective order for %s already pending (%s) - not proposing another",
+                symbol,
+                already_pending.order_id,
+            )
+            return already_pending
+
         order = Order(
             symbol=symbol,
             side="sell",
