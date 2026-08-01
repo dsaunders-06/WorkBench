@@ -1,49 +1,102 @@
 # Development stack after M27
 
-## Standing rule during the data-collection phase
+## Standing rule during the validation phase
 
-**Nothing lands that changes a trading decision.** The phase exists to find out
-whether the machinery runs end to end and produces a reviewable record. A change
-that alters which trades are taken contaminates the only measurement being made.
+**From 3 August 2026, nothing lands that changes a trading decision.**
 
-**Amended 29 July:** M27a is an authorised exception - the operator has decided
-the live path moves to daily bars, which necessarily changes trading decisions.
-Nothing else changes until it lands.
+Development is finished. M27a through M37 built the machinery; the question
+now is empirical, not architectural - does swing possess an edge that survives
+costs. Every change to decision logic during the trial makes the result harder
+to interpret, because a result then belongs to no single version of the system.
 
-The install stays on **M26** until M27a is ready. M27 is committed but not deployed:
-it adds a rail that refuses trades, which works against a phase whose purpose is
-accumulating them - and it would refuse them on cost assumptions that cannot yet
-be audited, because the metrics are still gross.
+Two independent reviews on 1 August reached the same conclusion independently
+and it is adopted here.
 
-### Blocking - fix immediately
+### Frozen - do not change
 
-Anything that stops data existing:
+Strategy parameters, moving-average lengths, ATR multiple, every risk cap,
+Kelly bounds, regime thresholds and fusion weights, correlation limits, churn
+rails, promotion thresholds, cost model.
+
+The test: *would this change which trades happen, or how large they are?* If
+yes, it waits for the trial to end - however obviously right it looks.
+
+### Fix immediately - anything that stops evidence existing
 
 * the feed dying, or symbols silently dropped
 * the app crashing, hanging, or failing to survive a session
-* `decision_journal.csv` or `risk_decisions.csv` not being written (still
-  unproven - no signal has ever reached them)
-* reconciliation false-tripping the kill-switch and halting a session
 * orders rejected by a bug rather than by a rule
-* the daily report failing at the close
+* the kill-switch tripping on something that is not a real discrepancy
+* protective orders not resting, or not being repaired
+* `trades.csv`, `decision_journal.csv` or `risk_decisions.csv` not being written
+* the daily or weekly report failing
 
-### Deferred - however tempting
+A defect that corrupts the record is worse than one that stops the session,
+because a stopped session is obvious and a corrupted record is not.
 
-Anything that changes decisions: cost-rail calibration, concentration limits,
-exit rules, holding periods, promotion settings, strategy parameters.
+### Allowed without ending the freeze
 
-The test: *would this change which trades happen?* If yes, it waits.
+Recording MORE about decisions already being made. M37 is the model: it added
+regime-at-entry, exit reason, excursion and slippage to every closed trade and
+changed no decision anywhere. Reporting, logging and analysis are not the
+trading logic.
 
-### Morning check
+## Operating cadence
 
-1. `Trading session started - US is open` at 13:30 UTC, then ticks
-2. Any `MARKET DATA DOWN`
-3. Whether the journal and audit CSVs exist yet
-4. Counts: signals generated, orders proposed, orders filled
-5. The daily report's Metrics block
+Sessions run overnight AEST. The US market opens 13:30 UTC, which is 23:30
+AEST in August. Review the following morning.
 
-Looking for *does the pipeline move*, not *did it make money*. At these sample
-sizes P&L is noise.
+### At the open - the first four minutes
+
+1. `Trading session started - US is open` at 13:30 UTC, then ticks arriving
+2. `REGIME ... -> <label> (exposure scalar ...)` within seconds of the bell.
+   Absent means every strategy is gated on the sideways DEFAULT rather than on
+   a measurement - the single most consequential thing that can silently go
+   wrong.
+3. Any `MARKET DATA DOWN` or repeated macro fetch failures
+4. `N carries a stop resting at the broker` - N must equal the position count
+
+### The morning review
+
+1. Counts: signals generated, orders proposed, refused, filled
+2. Any `BROKER-SIDE FILL absorbed` - a protective order fired, and that is a
+   closed trade
+3. Any `Broker reconciliation mismatch` or kill-switch trip. This halts the
+   session until restarted and is the one failure that costs a whole night.
+4. Any `POSITION UNPROTECTED` that was NOT followed by a repair within a sweep
+   interval
+5. Refusal reasons in the audit log - which rail is binding, and whether it
+   should be
+6. The daily report's Metrics block
+
+Looking for *does the pipeline move and does the record hold*, not *did it
+make money*. At these sample sizes P&L is noise.
+
+### What the trial is collecting
+
+The promotion gate needs 30 closed trades per strategy. At the observed rate -
+swing takes roughly one closed trade per position per 30 trading days, and its
+own exit signal effectively never fires - that is three to four months.
+
+Every closed trade now records the regime it was opened in and that regime's
+probability, the exposure scalar applied, how it ended, the holding period,
+realised entry slippage against the price it was sized on, and maximum adverse
+and favourable excursion in R. That is what makes the end of the trial able to
+answer *why*, and none of it can be reconstructed afterwards.
+
+### Questions for the end of the trial, not before
+
+* Which exit type carries the expectancy - target, stop, time stop, signal?
+* Does the regime distribution stay plausible, or is `high_vol` an artefact of
+  one dominant feature?
+* How often does each refusal gate fire, and do its refusals improve outcomes?
+* Is realised slippage consistent with the cost model's assumption?
+* Would trades closed by the time stop have done better held longer?
+* Distribution of R multiples, not the average.
+
+An external review suggested raising the live-trading bar from 30 closed
+trades to 75-100. Worth deciding after the first 30, when the variance is
+visible rather than assumed.
 
 ## M31b - What the first trading session found  **[COMPLETE]**
 
