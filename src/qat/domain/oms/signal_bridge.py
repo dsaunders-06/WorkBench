@@ -17,13 +17,17 @@ both added in M11 after a deployed strategy produced ~75k blotter rows:
   than opening a short in a symbol the account never owned. Set
   allow_short_selling to opt into the old behaviour.
 
-Win-rate/win-loss-ratio inputs to sizing are fixed defaults here, not
-estimated from real historical trade outcomes - a rolling per-strategy
-performance tracker is a natural future addition, not built anywhere in
-this codebase yet. The defaults are clearly documented placeholders, not
-real edge estimates, and existing_returns is left empty (a documented
-simplification - see PortfolioRiskChecker, M6) since this bridge doesn't
-maintain historical return series for already-held positions.
+Win-rate/win-loss-ratio inputs to sizing come from `EdgeEstimator` (M35),
+which measures each strategy on its own closed trades. The documented
+defaults - 0.55 and 1.5 - are still what a strategy sizes on until it has
+`edge_min_trades` of its own history, because Kelly reacts violently to a
+small sample.
+
+`existing_returns` carries real per-symbol return series (M33), built from
+the same warm-started aggregator as the candidate's own. It was an empty
+dict behind a comment calling that a documented simplification, which left
+the correlated-cluster cap with nothing to correlate against and
+PortfolioRiskChecker computing VaR and ES for a book it believed was empty.
 """
 
 from __future__ import annotations
