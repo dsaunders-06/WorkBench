@@ -273,6 +273,44 @@ from the ledger's open lots, so Friday reads "Opened 6 position(s), $27,783.86
 committed" with each entry listed, and "Still held 6 position(s)". A genuinely
 quiet day still reads as quiet.
 
+## M34 - A protective order firing looked like a discrepancy
+
+Every closed trade this system will ever produce comes from a stop, a target,
+or the time stop, and two of those three execute entirely at the broker. No
+order leaves this process, so nothing publishes `OrderFilledEvent` - it is
+raised in exactly one place, `OMS.sign_off`, which only ever runs for orders
+this app transmitted.
+
+Two consequences, and both would have bitten on the first day a stop fired:
+
+* `check_reconciliation` compares tracked quantity against the broker's and
+  trips the kill-switch on any divergence. A stop doing exactly its job read
+  as `tracked=58 broker=0` and would have halted the session.
+* The trade ledger subscribes to that same event, so the closed trade was
+  never recorded. The Performance tab stays empty and the promotion gate
+  accumulates nothing from the only exits this system has - which is Stage 3,
+  the three months of evidence the whole plan rests on, never starting.
+
+Newly urgent because M33b-e armed twelve protective legs across six positions.
+Before this weekend there was nothing resting to fire.
+
+`OMS.absorb_broker_fills` runs BEFORE anything is judged: it asks the broker
+for executions since the last scan, applies any this app did not originate,
+and publishes `OrderFilledEvent` so the ledger records a genuine closed trade.
+Reconciliation then compares a book that already knows what happened.
+
+The real fill price is fetched rather than assumed. A stop fills at or below
+its trigger and a target at or above its limit, so using the level as a proxy
+would put a wrong number into every realised P&L the promotion gate reads.
+
+A genuine discrepancy still trips - a position appearing with no fill to
+explain it is exactly what the rail is for - and a broker that cannot report
+fills behaves precisely as before.
+
+Never observed, unlike the M33 series: this is a code path read rather than a
+failure watched. Six tests, all confirmed failing against the old
+reconciliation.
+
 ## M33e - Both known gaps closed
 
 **Repair now runs on a timer.** `SignalToOrderBridge` sweeps every

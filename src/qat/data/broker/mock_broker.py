@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import random
 import uuid
+from datetime import UTC, datetime
 
 from qat.data.broker.adapter import (
     AccountBalances,
     AccountSummary,
+    BrokerFill,
     Order,
     Position,
 )
@@ -27,6 +29,7 @@ class MockBroker:
         self._positions: dict[str, Position] = {}
         self._resting_stops: dict[str, float | None] = {}
         self._resting_targets: dict[str, float | None] = {}
+        self._broker_fills: list[BrokerFill] = []
         self._cash = _STARTING_CASH
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
@@ -69,6 +72,43 @@ class MockBroker:
             self._resting_stops.pop(order.symbol, None)
             self._resting_targets.pop(order.symbol, None)
         return order
+
+    async def recent_fills(self, since: datetime) -> list[BrokerFill]:
+        """Protective legs the simulator has executed (M34).
+
+        Driven by fill_resting_stop/fill_resting_target rather than by price,
+        so a test can say "the stop fired" without simulating a market.
+        """
+        return [f for f in self._broker_fills if f.filled_at > since]
+
+    def fill_resting_stop(self, symbol: str, price: float | None = None) -> None:
+        """Simulates a resting stop executing at the broker."""
+        self._fill_protective(symbol, price or self._resting_stops.get(symbol) or 0.0)
+
+    def fill_resting_target(self, symbol: str, price: float | None = None) -> None:
+        self._fill_protective(symbol, price or self._resting_targets.get(symbol) or 0.0)
+
+    def _fill_protective(self, symbol: str, price: float) -> None:
+        position = self._positions.get(symbol)
+        if position is None or position.quantity <= 0:
+            return
+        quantity = position.quantity
+        self._broker_fills.append(
+            BrokerFill(
+                order_id=f"broker-{uuid.uuid4().hex[:8]}",
+                symbol=symbol,
+                side="sell",
+                quantity=quantity,
+                price=price,
+                filled_at=datetime.now(UTC),
+            )
+        )
+        # The position closes and its protective legs go with it, exactly as a
+        # real broker does.
+        self._positions.pop(symbol, None)
+        self._resting_stops.pop(symbol, None)
+        self._resting_targets.pop(symbol, None)
+        self._cash += quantity * price
 
     async def resting_stops(self) -> dict[str, float]:
         return {s: v for s, v in self._resting_stops.items() if v is not None}

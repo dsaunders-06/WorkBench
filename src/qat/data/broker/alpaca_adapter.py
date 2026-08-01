@@ -27,10 +27,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
 from typing import Any, cast
 
 from qat.config import Settings
-from qat.data.broker.adapter import AccountBalances, AccountSummary, Order, Position
+from qat.data.broker.adapter import (
+    AccountBalances,
+    AccountSummary,
+    BrokerFill,
+    Order,
+    Position,
+)
 from qat.data.broker.alpaca_client_protocol import AlpacaClientProtocol
 from qat.security import get_secret
 
@@ -185,6 +192,53 @@ class AlpacaAdapter:
                 if "sell" in side and stop is not None:
                     resting[str(getattr(candidate, "symbol", ""))] = float(stop)
         return resting
+
+    async def recent_fills(self, since: datetime) -> list[BrokerFill]:
+        """Executions the broker performed that this app did not transmit (M34).
+
+        A resting stop or target filling closes a position with no order
+        leaving this process, so nothing publishes OrderFilledEvent. Without
+        this the app finds out only through reconciliation, which reads it as
+        a discrepancy and trips the kill-switch on a stop doing its job - and
+        the trade ledger never records the closed trade at all.
+
+        Asks for the real fill price rather than assuming the stop level. A
+        stop fills at or below its trigger and a target at or above its limit,
+        so using the level as a proxy would put a wrong number into every
+        realised P&L the promotion gate reads.
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.CLOSED, limit=200, after=since, nested=True
+        )
+        orders = await asyncio.to_thread(self._client.get_orders, filter=request)
+        fills: list[BrokerFill] = []
+        for order in orders:
+            for candidate in _with_legs(order):
+                if str(getattr(candidate, "status", "")).lower().find("filled") < 0:
+                    continue
+                quantity = _as_float(getattr(candidate, "filled_qty", None))
+                price = _as_float(getattr(candidate, "filled_avg_price", None))
+                filled_at = getattr(candidate, "filled_at", None)
+                if not quantity or not price or filled_at is None:
+                    continue
+                fills.append(
+                    BrokerFill(
+                        order_id=str(getattr(candidate, "id", "")),
+                        symbol=str(getattr(candidate, "symbol", "")),
+                        side=(
+                            "sell"
+                            if "sell" in str(getattr(candidate, "side", "")).lower()
+                            else "buy"
+                        ),
+                        quantity=float(quantity),
+                        price=float(price),
+                        filled_at=filled_at,
+                    )
+                )
+        return fills
 
     # --- orders -------------------------------------------------------------
 

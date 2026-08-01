@@ -56,6 +56,31 @@ class Order:
         return self.order_type == "stop" and self.side == "sell"
 
 
+@dataclass(frozen=True, slots=True)
+class BrokerFill:
+    """An execution the BROKER performed, which this app did not transmit (M34).
+
+    A protective stop or target filling is the normal way a position closes
+    here, and it happens entirely at the broker: no order leaves this process,
+    so nothing publishes OrderFilledEvent and nothing tells the trade ledger a
+    trade closed. Two things follow, and both bite.
+
+    Reconciliation compares tracked quantity against the broker's and trips the
+    kill-switch on any divergence, so a stop doing exactly its job halts the
+    session. And every closed trade this system will ever produce comes from a
+    stop, a target, or the time stop - two of the three are broker-side - so
+    the ledger stays empty and the promotion gate never accumulates the
+    evidence the whole plan rests on.
+    """
+
+    order_id: str
+    symbol: str
+    side: Literal["buy", "sell"]
+    quantity: float
+    price: float
+    filled_at: datetime
+
+
 @dataclass(slots=True)
 class Position:
     symbol: str
@@ -178,6 +203,11 @@ class BrokerAdapter(Protocol):
     # answer more than the three core figures need not implement it - callers
     # fall back to balances_from_summary().
     async def balances(self) -> AccountBalances: ...
+
+    # Optional (M34): executions the broker performed on this app's behalf -
+    # a resting stop or target filling. Adapters that cannot answer return an
+    # empty list, which leaves the previous behaviour exactly as it was.
+    async def recent_fills(self, since: datetime) -> list[BrokerFill]: ...
 
     # Optional (M31b): protective orders actually resting at the broker, so the
     # app can verify its own belief rather than assume it. Adapters that cannot

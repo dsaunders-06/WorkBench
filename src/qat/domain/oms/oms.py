@@ -14,11 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Literal
 
 import pandas as pd
 
-from qat.data.broker.adapter import BrokerAdapter, Order
+from qat.data.broker.adapter import BrokerAdapter, BrokerFill, Order
 from qat.data.broker.mock_broker import new_order_id
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal, JournalEntry
@@ -59,6 +60,10 @@ class OMS:
         # governor can measure aggregate risk-at-stop without re-querying open
         # orders from the broker on every candidate.
         self._position_stops: dict[str, float] = {}
+        # Watermark for absorbing broker-side executions (M34). Starts at
+        # construction, so a fill that happened before this process existed is
+        # already reflected in the adopted baseline rather than double-counted.
+        self._last_fill_scan = datetime.now(UTC)
         # Serialises sign-off so the "re-check cash against the CURRENT
         # balance" step below is actually a check. Concurrently signed orders
         # each fetch the balance before either has spent it, so both see the
@@ -682,6 +687,70 @@ class OMS:
         await self._announce_pending(order)
         return order
 
+    async def absorb_broker_fills(self) -> list[BrokerFill]:
+        """Records executions the broker performed that this app did not send.
+
+        Only fills for orders this process did not originate are applied - an
+        order the app transmitted has already been counted through sign_off,
+        and counting it twice would create the very discrepancy this exists to
+        prevent.
+
+        Publishing OrderFilledEvent is the point as much as the arithmetic is:
+        it is what the trade ledger listens to, so a stop-out or a target
+        finally becomes a CLOSED TRADE on the Performance tab instead of a
+        position that silently vanished.
+
+        A broker that cannot answer changes nothing, and neither does a failed
+        query - the previous behaviour is exactly preserved.
+        """
+        source = getattr(self.broker, "recent_fills", None)
+        if source is None:
+            return []
+        since = self._last_fill_scan
+        try:
+            fills = await source(since)
+        except Exception:
+            logger.exception("Could not read recent broker fills")
+            return []
+
+        self._last_fill_scan = datetime.now(UTC)
+        absorbed: list[BrokerFill] = []
+        for fill in fills:
+            if fill.order_id in self._orders:
+                continue  # this app sent it; sign_off already counted it
+            if fill.filled_at <= since:
+                continue
+            signed = fill.quantity if fill.side == "buy" else -fill.quantity
+            self._filled_quantities[fill.symbol] = (
+                self._filled_quantities.get(fill.symbol, 0.0) + signed
+            )
+            if abs(self._filled_quantities.get(fill.symbol, 0.0)) < 1e-6:
+                # Flat: whatever was protecting it went with it at the broker.
+                self._position_stops.pop(fill.symbol, None)
+            absorbed.append(fill)
+            logger.warning(
+                "BROKER-SIDE FILL absorbed: %s %g %s at %.2f (order %s) - a resting "
+                "protective order executed, and this is now a closed trade",
+                fill.side,
+                fill.quantity,
+                fill.symbol,
+                fill.price,
+                fill.order_id,
+            )
+            if self.bus is not None:
+                await self.bus.publish(
+                    OrderFilledEvent(
+                        order_id=fill.order_id,
+                        symbol=fill.symbol,
+                        side=fill.side,
+                        quantity=fill.quantity,
+                        price=fill.price,
+                        strategy=None,
+                        operator="broker (protective order)",
+                    )
+                )
+        return absorbed
+
     async def check_reconciliation(self) -> bool:
         """Compares OMS-tracked filled quantities against broker-reported
         positions; a mismatch trips the kill-switch (spec §I). Returns True
@@ -690,6 +759,16 @@ class OMS:
         Call adopt_broker_positions() once at startup first, or an account with
         any pre-existing holding reads as a mismatch immediately.
         """
+        # Broker-side executions are absorbed BEFORE anything is judged (M34).
+        #
+        # A resting stop or target filling closes a position with no order
+        # leaving this process, so nothing publishes OrderFilledEvent. Without
+        # this step the comparison below sees tracked=58 against broker=0 and
+        # trips the kill-switch on a stop doing exactly its job - and the trade
+        # ledger never records the closed trade, so the promotion gate
+        # accumulates nothing from the only exits this system actually has.
+        await self.absorb_broker_fills()
+
         # Protection is checked alongside quantity, because they fail in
         # different ways and only one of them was ever being watched.
         await self.verify_position_stops()
