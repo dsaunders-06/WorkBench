@@ -1,0 +1,462 @@
+---
+
+# Investment System Design and Validation Report
+
+## Systematic Swing Trading Strategy with AI-Enhanced Automation Architecture
+
+**Version:** 3.0
+**Document Classification:** Investment System Design & Validation Report
+**Purpose:** Formalisation of a rules-based automated share trading system
+
+---
+
+# Document Control
+
+| Item                      | Detail                                                      |
+| ------------------------- | ----------------------------------------------------------- |
+| Document Title            | Investment System Design and Validation Report              |
+| Version                   | 3.0                                                         |
+| System Type               | Automated quantitative swing trading system                 |
+| Market Focus              | Equity markets                                              |
+| Primary Strategy          | Trend-following pullback swing trading                      |
+| Technology Direction      | AI-enhanced automated trading platform                      |
+| Broker Integration Target | Interactive Brokers API                                     |
+| Development Stage         | Strategy design completed; technical implementation pending |
+
+---
+
+# Executive Summary
+
+This report documents the evolution of a systematic swing trading strategy into a professional-grade investment operating system.
+
+The system combines:
+
+* quantitative trend analysis
+* structured entry criteria
+* risk-based position sizing
+* portfolio construction
+* adaptive market regime detection
+* AI-supported research intelligence
+* broker automation
+* controlled production deployment
+
+The strategy is designed around a fundamental principle:
+
+> Capital preservation enables long-term compounding.
+
+Rather than attempting to predict market movements, the system seeks to identify repeatable market behaviours and exploit them through disciplined execution.
+
+The framework avoids common retail trading weaknesses:
+
+* emotional decision-making
+* uncontrolled position sizing
+* buying declining assets
+* excessive concentration
+* inconsistent exits
+* lack of performance measurement
+
+---
+
+# Executive Assessment
+
+## Overall System Rating
+
+# 9.4 / 10
+
+The strategy demonstrates the characteristics of a mature systematic trading framework.
+
+| Capability             | Assessment |
+| ---------------------- | ---------: |
+| Trading methodology    |       9/10 |
+| Risk management        |      10/10 |
+| Portfolio controls     |     8.5/10 |
+| Automation suitability |     9.5/10 |
+| AI integration         |       9/10 |
+| Governance             |     9.8/10 |
+| Deployment readiness   |     8.5/10 |
+
+---
+
+# 1. Trading Strategy Framework
+
+## 1.1 Strategy Objective
+
+The strategy identifies quality stocks in established upward trends and enters during controlled pullbacks.
+
+The underlying principle:
+
+> Buy strength temporarily discounted, not weakness hoping for recovery.
+
+---
+
+## 1.2 Trend Identification
+
+Primary condition:
+
+```
+20-day moving average > 50-day moving average
+```
+
+This indicates:
+
+* positive short-term momentum
+* improving market sentiment
+* institutional accumulation potential
+
+---
+
+## 1.3 Entry Logic
+
+The system waits for:
+
+1. Established trend
+2. Pullback toward the 20-day moving average
+3. Evidence of buying recovery
+4. Risk-adjusted entry approval
+
+Confirmation may include:
+
+* bullish price action
+* momentum recovery
+* volume improvement
+* relative strength
+
+---
+
+# 2. Risk Management Framework
+
+The risk engine is the primary protection mechanism.
+
+The system separates:
+
+## Signal Engine
+
+Determines:
+
+> Is this an attractive opportunity?
+
+from:
+
+## Risk Engine
+
+Determines:
+
+> Can this opportunity safely consume capital?
+
+---
+
+# Recommended Risk Parameters
+
+| Parameter               |   Setting |
+| ----------------------- | --------: |
+| Risk per trade          |      0.5% |
+| Stop methodology        | ATR-based |
+| Maximum portfolio heat  |        6% |
+| Maximum sector exposure |       30% |
+| Maximum positions       |     10-15 |
+| Daily loss limit        |        2% |
+| Weekly drawdown limit   |        5% |
+
+---
+
+# 3. Position Sizing Model
+
+Position sizing is calculated from risk, not conviction.
+
+Formula:
+
+```
+Position Size =
+Portfolio Risk /
+Risk Per Share
+```
+
+Inputs:
+
+* portfolio value
+* maximum risk percentage
+* stop distance
+* volatility
+* market regime
+* portfolio exposure
+
+---
+
+# 4. Portfolio Construction Model
+
+The portfolio manager determines:
+
+* which opportunities receive capital
+* allocation size
+* diversification
+* exposure limits
+
+Recommended:
+
+| Category                |                     Target |
+| ----------------------- | -------------------------: |
+| Number of holdings      |                      10-15 |
+| Maximum single position |                      8-10% |
+| Maximum sector exposure |                        30% |
+| Minimum cash reserve    | 10-50% depending on market |
+
+---
+
+# 5. Exit Strategy Framework
+
+The recommended exit architecture is a hybrid model.
+
+## Protective Exit
+
+Purpose:
+
+Prevent unacceptable losses.
+
+Method:
+
+* ATR stop loss
+
+---
+
+## Trend Exit
+
+Purpose:
+
+Exit when the original thesis fails.
+
+Indicators:
+
+* moving average break
+* declining momentum
+* relative strength deterioration
+
+---
+
+## Profit Management Exit
+
+Purpose:
+
+Capture large trends.
+
+Methods:
+
+* trailing stops
+* partial profit taking
+
+---
+
+# 6. Market Regime Model
+
+The system adjusts aggressiveness according to market conditions.
+
+## Bull Market
+
+Action:
+
+* full position sizing
+* higher exposure
+* maximum opportunity capture
+
+---
+
+## Neutral Market
+
+Action:
+
+* reduced position sizing
+* stronger filtering
+
+---
+
+## Bear Market
+
+Action:
+
+* preserve capital
+* reduce exposure
+* increase cash
+
+---
+
+# 7. AI Enhancement Architecture
+
+AI is positioned as an intelligence layer, not a replacement for trading discipline.
+
+## Appropriate AI Functions
+
+### Research Assistant
+
+Analyses:
+
+* ASX announcements
+* annual reports
+* financial documents
+
+---
+
+### Sentiment Analysis
+
+Processes:
+
+* news
+* market commentary
+* company communications
+
+---
+
+### Trade Review
+
+Explains:
+
+* why trades succeeded
+* why trades failed
+* recurring patterns
+
+---
+
+### Anomaly Detection
+
+Identifies:
+
+* unusual volatility
+* portfolio concentration
+* system errors
+
+---
+
+# 8. Broker Automation Framework
+
+The production workflow:
+
+```
+Market Data
+      |
+Quantitative Engine
+      |
+AI Intelligence Layer
+      |
+Risk Engine
+      |
+Execution Controller
+      |
+Interactive Brokers API
+      |
+Market
+```
+
+The execution engine must manage:
+
+* order submission
+* confirmations
+* stop placement
+* reconciliation
+* error recovery
+
+---
+
+# 9. Deployment Framework
+
+The system must progress through controlled stages.
+
+## Stage 1
+
+Historical validation
+
+---
+
+## Stage 2
+
+Paper trading
+
+---
+
+## Stage 3
+
+Shadow trading
+
+---
+
+## Stage 4
+
+Limited live deployment
+
+---
+
+## Stage 5
+
+Scaled capital deployment
+
+---
+
+# 10. Implementation Roadmap
+
+## Phase 1 — Quantitative Engine
+
+Build:
+
+* stock scanner
+* indicators
+* signal engine
+* risk engine
+* database
+
+---
+
+## Phase 2 — Trading Platform
+
+Add:
+
+* broker integration
+* portfolio monitoring
+* reporting
+
+---
+
+## Phase 3 — AI Intelligence
+
+Add:
+
+* document analysis
+* research assistant
+* trade explanations
+
+---
+
+## Phase 4 — Production Deployment
+
+Implement:
+
+* controlled live trading
+* monitoring
+* governance processes
+
+---
+
+# Final Assessment
+
+The strategy has matured from a trading concept into a structured automated investment system.
+
+The recommended development direction is:
+
+> Build a quantitative trading platform first, then enhance it with AI.
+
+The next logical document is:
+
+# Automated AI Share Trading Platform
+
+## Technical Design Specification
+
+This document should include:
+
+1. System architecture diagrams
+2. Database schema
+3. Python application structure
+4. IBKR API workflow
+5. AI/RAG architecture
+6. Local LLM deployment design
+7. Backtesting framework
+8. Monitoring dashboard design
+9. Security model
+10. Implementation backlog
+
+

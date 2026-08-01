@@ -174,3 +174,44 @@ def test_the_screen_cannot_produce_a_value_the_application_would_reject(qtbot):
     screen.per_trade_risk_input.setValue(99.0)
 
     assert screen.per_trade_risk_input.value() == pytest.approx(2.0)
+
+
+# --- The screen has to be readable (M36b) -------------------------------------
+
+
+def test_the_settings_content_scrolls(qtbot):
+    """A plain layout on the widget was survivable at six groups and
+    unreadable at eight: Qt compresses every child to fit the window rather
+    than overflowing, so adding the risk limits squeezed the whole screen into
+    illegibility instead of pushing anything off the bottom."""
+    from PySide6.QtWidgets import QScrollArea
+
+    screen = _screen(qtbot)
+    areas = screen.findChildren(QScrollArea)
+
+    assert areas, "the settings content must scroll"
+    assert areas[0].widgetResizable() is True
+
+
+def test_save_is_not_inside_the_scrolling_area(qtbot):
+    """A save button that can be scrolled out of sight is one an operator can
+    reasonably believe does not exist."""
+    from PySide6.QtWidgets import QScrollArea
+
+    screen = _screen(qtbot)
+    scrolled = screen.findChildren(QScrollArea)[0].widget()
+
+    assert screen.save_button.parent() is not scrolled
+    assert screen.save_button not in scrolled.findChildren(type(screen.save_button))
+
+
+def test_the_groups_ask_for_the_room_they_need(qtbot):
+    """The compaction symptom, measured. The content's preferred height must
+    exceed a typical window, which is what makes scrolling necessary rather
+    than cosmetic - if it fitted, nothing would have been squeezed."""
+    from PySide6.QtWidgets import QScrollArea
+
+    screen = _screen(qtbot)
+    content = screen.findChildren(QScrollArea)[0].widget()
+
+    assert content.sizeHint().height() > 900

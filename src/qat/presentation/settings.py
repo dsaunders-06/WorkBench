@@ -25,12 +25,14 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -98,7 +100,26 @@ class SettingsScreen(QWidget):
         self.runtime = runtime
         settings = runtime.settings
 
-        layout = QVBoxLayout(self)
+        # The content scrolls; Save does not (M36b).
+        #
+        # This screen was a plain QVBoxLayout on the widget itself, which was
+        # survivable while it held six groups and unreadable at eight: Qt
+        # compresses every child to fit the window rather than overflowing, so
+        # adding the risk limits squeezed the whole screen into illegibility
+        # instead of pushing anything off the bottom.
+        #
+        # Save and the status line stay outside the scroll area. A save button
+        # that can be scrolled away is a save button an operator can believe
+        # does not exist.
+        outer = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        container = QWidget()
+        outer.addWidget(scroll, stretch=1)
+        scroll.setWidget(container)
+
+        layout = QVBoxLayout(container)
         layout.addWidget(self._build_group())
 
         ai_group = QGroupBox("AI Provider")
@@ -256,14 +277,15 @@ class SettingsScreen(QWidget):
         self.config_location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.config_location)
 
+        layout.addStretch(1)
+
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self._on_save_clicked)
-        layout.addWidget(self.save_button)
+        outer.addWidget(self.save_button)
 
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
-        layout.addWidget(self.status_label)
-        layout.addStretch(1)
+        outer.addWidget(self.status_label)
 
     def _build_group(self) -> QGroupBox:
         """Which build is this, so "am I running the latest?" is answerable.
