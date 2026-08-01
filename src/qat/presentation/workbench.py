@@ -191,7 +191,15 @@ class WorkbenchScreen(QWidget):
             )
             signal_series = generate_signal_series(strategy, symbol, bars, fundamentals)
             backtester = VectorizedBacktester(
-                CostModel(), FixedFractionalSizer(settings=self.runtime.settings)
+                # from_settings, not CostModel() (M33). The bare constructor
+                # defaults min_commission to 0.0 - it exists so pre-M27
+                # backtests keep their old numbers - so every backtest, cone
+                # and walk-forward window this app has ever shown was costed
+                # with NO per-transaction floor, against a configured 6.60.
+                # A round trip is 13.20 before the market moves, and the
+                # promotion gate was reading results that never paid it.
+                CostModel.from_settings(self.runtime.settings),
+                FixedFractionalSizer(settings=self.runtime.settings),
             )
             result = run_walk_forward(
                 backtester,
@@ -272,7 +280,15 @@ class WorkbenchScreen(QWidget):
             signal_series = generate_signal_series(strategy, symbol, bars, fundamentals)
 
             backtester = VectorizedBacktester(
-                CostModel(), FixedFractionalSizer(settings=self.runtime.settings)
+                # from_settings, not CostModel() (M33). The bare constructor
+                # defaults min_commission to 0.0 - it exists so pre-M27
+                # backtests keep their old numbers - so every backtest, cone
+                # and walk-forward window this app has ever shown was costed
+                # with NO per-transaction floor, against a configured 6.60.
+                # A round trip is 13.20 before the market moves, and the
+                # promotion gate was reading results that never paid it.
+                CostModel.from_settings(self.runtime.settings),
+                FixedFractionalSizer(settings=self.runtime.settings),
             )
             result = backtester.run(symbol, bars, signal_series, benchmark_prices=benchmark_prices)
             self._last_result = result
