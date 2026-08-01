@@ -10,6 +10,17 @@ Cross-sectional strategies (Momentum, Value, Quality, Pairs, Sector Rotation,
 Multi-Factor) need real peers in the universe and will simply emit no
 signal here (target exposure stays 0) - multi-asset backtesting is a
 documented future extension, not a bug in this adapter.
+
+**Long-only, because the live system is** (M33). A sell signal used to map to
+MINUS conviction - a short - and it means close the position: swing's carries
+`exit_reason=trend_broken`. Measured on AAPL, mean_reversion spent 48% of the
+series short and volatility 45%, while the live OMS submits buys and
+sells-to-close only and has no path to opening a short at all.
+
+So the backtester was measuring a book this system is structurally incapable
+of holding, and the promotion gate was reading the result. A backtest whose
+answer cannot be acted on is worse than no backtest: it is an answer to a
+question nobody asked, presented beside answers that are real.
 """
 
 from __future__ import annotations
@@ -53,7 +64,9 @@ def generate_signal_series(
         signals = strategy.on_features(snapshot)
         if signals:
             signal = signals[0]
-            current_exposure = signal.conviction if signal.side == "buy" else -signal.conviction
+            # Flat on a sell, not short. See the module docstring: this is what
+            # the live OMS can actually do with the signal.
+            current_exposure = signal.conviction if signal.side == "buy" else 0.0
         exposures.append(current_exposure)
 
     return pd.Series(exposures, index=pd.DatetimeIndex(bars["ts"]), name="target_exposure")

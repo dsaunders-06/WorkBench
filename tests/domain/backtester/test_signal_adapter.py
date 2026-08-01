@@ -7,6 +7,7 @@ import pandas as pd
 
 from qat.data.fundamentals import FundamentalSnapshot, MockFundamentalsSource
 from qat.domain.backtester.signal_adapter import generate_signal_series
+from qat.domain.events import SignalEvent
 from qat.domain.strategies.trend_following import TrendFollowingStrategy
 
 
@@ -65,3 +66,62 @@ def test_uptrend_eventually_produces_positive_exposure():
     signals = generate_signal_series(strategy, "AAA", bars, fundamentals)
 
     assert signals.iloc[-1] > 0.0
+
+
+# --- Long-only, because the live system is (M33) ------------------------------
+
+
+class _AlwaysSells:
+    """A strategy that only ever wants out."""
+
+    name = "always-sells"
+
+    def on_features(self, snapshot):
+        return [
+            SignalEvent(
+                symbol=snapshot.symbol,
+                side="sell",
+                conviction=0.9,
+                strategy=self.name,
+            )
+        ]
+
+
+def test_a_sell_signal_goes_flat_rather_than_short():
+    """A sell used to map to MINUS conviction. Swing's sell carries
+    exit_reason=trend_broken - it means close the position, not reverse it -
+    and the live OMS submits buys and sells-to-close only, so it has no path
+    to opening a short at all. Measured on AAPL before this, mean_reversion
+    spent 48% of the series short and volatility 45%: the backtester was
+    measuring a book this system cannot hold, and the promotion gate was
+    reading the result."""
+    series = generate_signal_series(_AlwaysSells(), "AAA", _bars([10.0] * 40), _fundamentals())
+
+    assert (series >= 0).all()
+    assert series.iloc[-1] == 0.0
+
+
+def test_a_sell_after_a_buy_closes_the_position():
+    class _BuyThenSell:
+        name = "buy-then-sell"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def on_features(self, snapshot):
+            self.calls += 1
+            side = "buy" if self.calls <= 20 else "sell"
+            return [
+                SignalEvent(
+                    symbol=snapshot.symbol,
+                    side=side,
+                    conviction=0.5,
+                    strategy=self.name,
+                )
+            ]
+
+    series = generate_signal_series(_BuyThenSell(), "AAA", _bars([10.0] * 40), _fundamentals())
+
+    assert series.max() == 0.5  # was long
+    assert series.iloc[-1] == 0.0  # then flat, not -0.5
+    assert series.min() == 0.0
