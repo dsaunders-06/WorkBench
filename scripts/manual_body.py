@@ -162,6 +162,7 @@ def write_body(doc: Any, figures: FigureSet) -> None:
     _risk_console(doc, figures)
     _ai_advisor(doc, figures)
     _blotter(doc, figures)
+    _position_protection(doc)
     _screener(doc, figures)
     _performance(doc, figures)
     _session_record(doc)
@@ -1085,6 +1086,93 @@ def _blotter(doc: Any, figures: FigureSet) -> None:
     )
 
 
+def _position_protection(doc: Any) -> None:
+    doc.add_page_break()
+    doc.add_heading("8A. Position Protection and Self-Healing", level=1)
+    doc.add_paragraph(
+        "Every position this application opens is protected at the broker, not in this "
+        "process. The distinction is the whole point: a stop held only in memory disappears "
+        "the moment the application does, leaving the position naked through a crash, a "
+        "dropped connection or a Windows update."
+    )
+
+    doc.add_heading("8A.1 How a Position Is Protected", level=2)
+    doc.add_paragraph(
+        "A new entry is submitted as a bracket: one order carrying the buy, a protective "
+        "stop below it and a profit target above it. The two exit legs are linked as an OCO "
+        "(one-cancels-other), so whichever is reached first executes and the broker cancels "
+        "the other. Without that link the two are independent, and a price that runs to the "
+        "target and later falls through the stop would sell the position twice."
+    )
+    doc.add_paragraph(
+        "Bracketed entries are submitted Good-Til-Cancelled. Submitted for the day instead, "
+        "the target leg expires at the close and the broker cancels the paired stop with it - "
+        "which is exactly how six positions spent a weekend unprotected on 31 July 2026."
+    )
+
+    doc.add_heading("8A.2 What Happens When Protection Disappears", level=2)
+    doc.add_paragraph(
+        "Protection can vanish for reasons this application does not control: an expiry, a "
+        "broker-side cancellation, or a manual cancellation in the broker's own interface. "
+        "Three mechanisms cover it."
+    )
+    _table(
+        doc,
+        ("Mechanism", "When it runs", "What it does"),
+        (
+            (
+                "Verification",
+                "Every reconciliation poll",
+                "Asks the broker what is actually resting and drops any stop this "
+                "application believes in that is not there. A position whose protection is "
+                "unknown counts its FULL VALUE against the risk budget.",
+            ),
+            (
+                "Re-arm at startup",
+                "Every launch",
+                "Proposes a replacement OCO for each held position the broker is not "
+                "protecting, using the stop and target the position was originally sized "
+                "against.",
+            ),
+            (
+                "Protection sweep",
+                "Every five minutes",
+                "The same repair on a timer, so a stop lost mid-session is replaced without "
+                "waiting for a restart.",
+            ),
+        ),
+    )
+    doc.add_paragraph(
+        "The replacement level always comes from the recorded entry, never from a fresh "
+        "calculation. The risk budget was spent on the distance the position was sized "
+        "against, so protecting it at any other distance protects an amount nobody approved. "
+        "A position with no recorded entry stop gets nothing and is logged as unprotected - "
+        "an invented level would look identical to a real one on every screen."
+    )
+    _callout(
+        doc,
+        "Protective orders are not gated on market hours",
+        "A resting stop executes nothing until its level trades, so a closed market is the "
+        "right time to place one rather than a reason to wait. Every other autonomous order "
+        "remains blocked outside session hours. The kill-switch, recommend mode and the "
+        "live-account rule all still take precedence.",
+    )
+
+    doc.add_heading("8A.3 When a Protective Order Fires", level=2)
+    doc.add_paragraph(
+        "A stop or target executing closes the position entirely at the broker: no order "
+        "leaves this application, so nothing here observes it directly. Each reconciliation "
+        "poll therefore asks the broker for executions it did not send, records them as "
+        "closed trades with their real fill prices, and updates its own position tracking "
+        "before comparing anything."
+    )
+    doc.add_paragraph(
+        "Without that step a stop doing its job would read as a discrepancy between tracked "
+        "and actual holdings, trip the kill-switch and halt the session - and the closed "
+        "trade would never reach the Performance screen at all."
+    )
+
+
 def _screener(doc: Any, figures: FigureSet) -> None:
     doc.add_page_break()
     doc.add_heading("9. The Screener", level=1)
@@ -1887,6 +1975,223 @@ def _glossary(doc: Any) -> None:
         ),
     )
 
+    doc.add_heading("A.1 Order and Protection Terms", level=2)
+    _table(
+        doc,
+        ("Term", "Definition"),
+        (
+            (
+                "Bracket",
+                "One submission carrying an entry plus both of its exits - a protective stop "
+                "below and a profit target above. The exits attach at the broker in the same "
+                "message, so there is no window in which the position exists unprotected.",
+            ),
+            (
+                "OCO (one-cancels-other)",
+                "Two linked orders where filling one automatically cancels the other. Used "
+                "to put a stop and a target back on a position already held, where a bracket "
+                "cannot be used because there is no entry left to attach to.",
+            ),
+            (
+                "Protective stop",
+                "A resting sell order that executes if the price falls to a set level. It "
+                "bounds the loss on a position, and is held AT THE BROKER so that it "
+                "survives this application closing.",
+            ),
+            (
+                "Take-profit / target",
+                "A resting sell order that executes if the price rises to a set level. "
+                "Without one, a position can only be closed by its stop, its time stop, or a "
+                "strategy exit signal.",
+            ),
+            (
+                "GTC / DAY",
+                "Good-Til-Cancelled and Day. A DAY order expires at the close; a GTC order "
+                "rests until filled or cancelled. Protective orders are always GTC - a stop "
+                "that expires overnight protects nothing overnight.",
+            ),
+            (
+                "Held (order status)",
+                "A broker status meaning an order is linked into an advanced order set and "
+                "is waiting rather than working independently. An OCO stop leg typically "
+                "shows as held while its partner is live. It is still real protection.",
+            ),
+            (
+                "Resting order",
+                "An order sitting at the broker waiting for its price condition. It consumes "
+                "no cash and executes nothing until triggered.",
+            ),
+            (
+                "Broker-side fill",
+                "An execution the broker performed without this application sending an order "
+                "- a resting stop or target being hit. It must be fetched deliberately, "
+                "because nothing in this process observes it happening.",
+            ),
+            (
+                "Adopted position",
+                "A holding already in the account when a session started. Either something "
+                "else put it there, or this application opened it in an earlier session and "
+                "is resuming - the screen distinguishes the two.",
+            ),
+            (
+                "Re-arm",
+                "Replacing protection that has disappeared, using the stop and target the "
+                "position was originally sized against.",
+            ),
+            (
+                "Reconciliation",
+                "Comparing this application's record of what it holds against what the "
+                "broker reports. A mismatch it cannot explain trips the kill-switch, because "
+                "a wrong view of the account makes every other calculation wrong too.",
+            ),
+        ),
+    )
+
+    doc.add_heading("A.2 Risk and Sizing Terms", level=2)
+    _table(
+        doc,
+        ("Term", "Definition"),
+        (
+            (
+                "ATR (Average True Range)",
+                "How far an instrument typically moves in a period. Stop distances are set "
+                "as a multiple of it, so a volatile name gets a wider stop and a "
+                "correspondingly smaller position.",
+            ),
+            (
+                "Risk-at-stop",
+                "What a position would lose if it hit its stop - not what it is worth. A "
+                "position whose protection is unknown counts its entire value instead.",
+            ),
+            (
+                "Aggregate risk-at-stop",
+                "The same figure summed across every open position: what the account loses "
+                "if everything stops out at once. A per-trade limit says nothing about ten "
+                "trades each individually within budget.",
+            ),
+            (
+                "Gap budget",
+                "A separate allowance for an overnight gap opening THROUGH a stop rather "
+                "than trading to it. Measured on notional, because a gap moves the price "
+                "past a level that never traded.",
+            ),
+            ("Single-name concentration", "The share of account equity in one ticker."),
+            (
+                "Sector concentration",
+                "The share of account equity in one sector - a proxy for correlation that "
+                "fails in a crisis, when apparently different sectors move together.",
+            ),
+            (
+                "Correlated cluster",
+                "Holdings whose returns actually track a candidate at or above a threshold, "
+                "capped together. Measured rather than labelled: eight positions at high "
+                "pairwise correlation are one position taken eight times.",
+            ),
+            (
+                "Trim (versus reject)",
+                "Reducing an order to the size a limit allows instead of refusing it. A cap "
+                "that refuses rather than resizes stops a strategy trading entirely.",
+            ),
+            (
+                "Kelly fraction",
+                "A position size derived from win rate and payoff ratio. Used at a fraction "
+                "of full Kelly, because full Kelly assumes the inputs are exactly right and "
+                "reacts violently when they are not.",
+            ),
+            (
+                "Edge estimate",
+                "The win rate and win/loss ratio a strategy is sized on. Documented defaults "
+                "until it has enough closed trades of its own, then its measured results, "
+                "clamped so a small sample cannot set the risk.",
+            ),
+            (
+                "Minimum holding period",
+                "A floor on how long a position is held before a signal may close it, to "
+                "stop commission costs accumulating on churn.",
+            ),
+            (
+                "Time stop",
+                "A forced exit on a position whose thesis never resolved, after a set number "
+                "of trading days.",
+            ),
+            ("Turnover budget", "A cap on how many new positions may be opened in a week."),
+            (
+                "Commission floor",
+                "A fixed minimum charge per transaction. Trivial on a large position and "
+                "ruinous on a small one, which is why it must be modelled rather than "
+                "approximated as a percentage.",
+            ),
+            (
+                "Slippage",
+                "The difference between the price a decision assumed and the price actually "
+                "obtained.",
+            ),
+        ),
+    )
+
+    doc.add_heading("A.3 Data, Regime and Validation Terms", level=2)
+    _table(
+        doc,
+        ("Term", "Definition"),
+        (
+            (
+                "Warm start",
+                "Seeding the rolling buffers from historical daily bars at launch, so the "
+                "regime detector and the strategies work immediately instead of waiting days "
+                "for live bars to accumulate.",
+            ),
+            (
+                "Probability-mass gating",
+                "Permitting a strategy on the total probability across the regimes it suits, "
+                "rather than on the single most likely label. A strategy suited to three "
+                "regimes holding 60 percent of the probability is not idle because a fourth "
+                "holds 35 percent.",
+            ),
+            (
+                "Staleness rail",
+                "A check that a quote is recent enough to size a trade against. Applied per "
+                "symbol - a thin or halted ticker is a reason to stop trading that symbol, "
+                "never the whole account.",
+            ),
+            (
+                "HMM (Hidden Markov Model)",
+                "The statistical model behind regime classification: it infers which "
+                "unobserved market state best explains the observed features.",
+            ),
+            (
+                "Breadth",
+                "The share of tracked symbols advancing - one of the features the regime "
+                "detector reads.",
+            ),
+            (
+                "Walk-forward",
+                "Testing a strategy on consecutive out-of-sample windows to see whether a "
+                "result holds up across periods rather than only in aggregate.",
+            ),
+            (
+                "In-sample / out-of-sample",
+                "Data a method was developed on versus data it has not seen. Only the second "
+                "is evidence.",
+            ),
+            (
+                "FIFO matching",
+                "First-in-first-out pairing of sells against earlier buys, which determines "
+                "which entry a closed trade's profit is measured from.",
+            ),
+            (
+                "Decision journal",
+                "The record of what was proposed and why, including refusals. Distinct from "
+                "the trade ledger, which records only what actually happened.",
+            ),
+            (
+                "Promotion gate",
+                "The evidence bar a strategy must clear to trade unattended: a minimum "
+                "number of closed trades, positive net P&L, and floors on win rate and "
+                "average R. Always enforced on a live account.",
+            ),
+        ),
+    )
+
 
 def _config_reference(doc: Any) -> None:
     doc.add_page_break()
@@ -1961,5 +2266,76 @@ def _config_reference(doc: Any) -> None:
                 "How often the shared account poller re-reads the broker (Section 3.3).",
             ),
             ("QAT_LOG_LEVEL", "INFO", "Logging verbosity. Written to data/logs/qat.log."),
+            (
+                "QAT_DEPLOYED_STRATEGIES",
+                "(empty)",
+                "Strategies evaluated at startup. Distinct from AUTONOMOUS_STRATEGIES: this "
+                "decides whether a strategy runs at all, that one whether its orders may "
+                "self-sign.",
+            ),
+            (
+                "QAT_PER_TRADE_RISK_PCT",
+                "0.01",
+                "Share of equity risked between entry and stop on one trade.",
+            ),
+            (
+                "QAT_MAX_AGGREGATE_RISK_AT_STOP_PCT",
+                "0.05",
+                "Total loss allowed if every open position stopped out at once.",
+            ),
+            (
+                "QAT_MAX_SINGLE_NAME_CONCENTRATION_PCT",
+                "0.15",
+                "Cap on one ticker as a share of equity. Trimmed to, not refused at.",
+            ),
+            (
+                "QAT_MAX_SECTOR_CONCENTRATION_PCT",
+                "0.30",
+                "Cap on one sector as a share of equity.",
+            ),
+            (
+                "QAT_CORRELATION_CLUSTER_THRESHOLD",
+                "0.70",
+                "Return correlation at or above which a holding counts in a candidate's "
+                "cluster.",
+            ),
+            (
+                "QAT_MAX_CORRELATED_CLUSTER_PCT",
+                "0.30",
+                "Cap on a correlated cluster as a share of equity.",
+            ),
+            (
+                "QAT_MAX_GAP_RISK_AT_SHOCK_PCT",
+                "0.05",
+                "Loss allowed from an overnight gap of GAP_SHOCK_PCT across all holdings.",
+            ),
+            ("QAT_GAP_SHOCK_PCT", "0.06", "The overnight gap size the budget is measured at."),
+            (
+                "QAT_MIN_HOLDING_TRADING_DAYS",
+                "10",
+                "Trading days before a signal may close a position.",
+            ),
+            (
+                "QAT_TIME_STOP_TRADING_DAYS",
+                "30",
+                "Trading days after which an unresolved position is exited.",
+            ),
+            (
+                "QAT_PROTECTION_SWEEP_SECONDS",
+                "300",
+                "How often held positions are re-checked for missing protection " "(Section 8A.2).",
+            ),
+            (
+                "QAT_EDGE_MIN_TRADES",
+                "20",
+                "Closed trades a strategy needs before its own results size its trades "
+                "rather than the defaults.",
+            ),
+            (
+                "QAT_BROKER_MIN_COMMISSION",
+                "6.60",
+                "Fixed minimum charge per transaction, applied in backtests and live cost "
+                "estimates alike.",
+            ),
         ),
     )
