@@ -325,13 +325,19 @@ class OMS:
             if filled.stop_price:
                 self._position_stops[filled.symbol] = float(filled.stop_price)
             self._record(filled, "signed_off", "protective stop resting at the broker", operator)
+            # The target goes in the line too (M33c). This is the audit trail
+            # for "is the position actually protected", and printing only the
+            # stop could not distinguish an OCO whose target leg rested from
+            # one where the broker accepted the order and dropped it.
             logger.info(
-                "Protective stop resting: order=%s operator=%s symbol=%s qty=%s stop=%.2f",
+                "Protective %s resting: order=%s operator=%s symbol=%s qty=%s stop=%.2f%s",
+                "OCO" if filled.take_profit_price else "stop",
                 order_id,
                 operator,
                 filled.symbol,
                 filled.quantity,
                 filled.stop_price or 0.0,
+                f" target={filled.take_profit_price:.2f}" if filled.take_profit_price else "",
             )
             return filled
 

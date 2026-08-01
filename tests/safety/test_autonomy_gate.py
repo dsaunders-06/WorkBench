@@ -324,3 +324,69 @@ def test_every_block_carries_a_reason():
         assert decision.allowed is False
         assert decision.reason.strip()
         assert decision.quantity == 0.0
+
+
+# --- A resting protective order outranks the session check (M33c) -------------
+
+
+def _protective(symbol: str = "AAPL", stop: float = 95.0, target: float | None = None) -> Order:
+    return Order(
+        symbol=symbol,
+        side="sell",
+        quantity=16.0,
+        order_id="protective-1",
+        status="pending_signoff",
+        stop_price=stop,
+        take_profit_price=target,
+        order_type="stop",
+    )
+
+
+def test_a_closed_market_does_not_block_a_resting_protective_order():
+    """Found by running it. On 1 August the app detected an unprotected
+    position, proposed the repair, then blocked ITSELF from applying it because
+    the market was shut - while a manual sign-off of the same order was
+    accepted by Alpaca without complaint, because GTC orders rest fine outside
+    hours. The rail was dormant in exactly the window it exists for: brackets
+    die AT the close."""
+    decision = _gate().evaluate(_protective(), _account(), now=CLOSED_US)
+
+    assert decision.allowed is True
+    assert decision.quantity == 16.0
+
+
+def test_a_holiday_does_not_block_a_resting_protective_order():
+    decision = _gate().evaluate(_protective(target=130.0), _account(), now=CHRISTMAS_US)
+
+    assert decision.allowed is True
+
+
+def test_a_plain_sell_into_a_closed_market_is_still_blocked():
+    """Deliberately narrower than "any sell". A market sell transmitted into a
+    closed market is an unpriced fill at the open; a stop resting GTC executes
+    nothing until its level trades."""
+    decision = _gate().evaluate(_order(side="sell", strategy=None), _account(), now=CLOSED_US)
+
+    assert decision.allowed is False
+    assert "closed" in decision.reason
+
+
+def test_the_kill_switch_still_outranks_a_protective_order():
+    """The exemption is about the session, not about the hard stop. A tripped
+    kill-switch means this app's view of the account cannot be trusted, and
+    that is not a state to be placing orders from."""
+    switch = KillSwitch()
+    switch.trip("reconciliation mismatch")
+
+    decision = _gate(switch=switch).evaluate(_protective(), _account(), now=CLOSED_US)
+
+    assert decision.allowed is False
+    assert "kill-switch" in decision.reason
+
+
+def test_recommend_mode_still_outranks_a_protective_order():
+    decision = _gate(_settings(execution_mode="recommend")).evaluate(
+        _protective(), _account(), now=CLOSED_US
+    )
+
+    assert decision.allowed is False

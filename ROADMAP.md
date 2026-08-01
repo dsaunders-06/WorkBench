@@ -178,6 +178,36 @@ targets were never persisted. The levels are still visible in Alpaca's order
 history as the expired limit sells; restoring them means writing those numbers
 into `open_position_entries.json` by hand.
 
+## M33c - The self-healing rail could not heal anything after hours
+
+Found by running M33b rather than by reading it. On 1 August the app detected
+CRWD unprotected, proposed the OCO repair, and then **blocked itself from
+applying it** because the US market was closed - while a manual sign-off of
+that same order was accepted by Alpaca without complaint, because GTC orders
+rest fine outside hours.
+
+The rail was dormant in precisely the window it exists for. Brackets die AT
+the close; that is how all six positions lost their stops on 31 July.
+Unattended, the repair would have sat in the blotter until Monday with the
+positions bare across the whole weekend.
+
+`AutonomyGate` now lets a resting protective order past the session check.
+Deliberately narrower than "any sell": a market sell transmitted into a closed
+market is an unpriced fill at the open and stays blocked, where a stop or OCO
+placed GTC executes nothing until its level trades, so placing it early costs
+nothing and is the entire point. The kill-switch, recommend mode and the live
+account rule all still outrank it - the exemption is about the session, not
+about the hard stops.
+
+**The OCO shape was confirmed against the real API**, first attempt, no
+refusal. That was the one piece of M33b that had only ever been tested against
+a fake client.
+
+Also: the "protective stop resting" log line printed only the stop, so it
+could not distinguish an OCO whose target leg rested from one the broker
+accepted and flattened. It now names both levels - it is the audit trail for
+exactly that question.
+
 ## M31c - The Performance tab showed the launch, not the present
 
 Three observations on 1 August - the Closed Trades table empty, no daily report

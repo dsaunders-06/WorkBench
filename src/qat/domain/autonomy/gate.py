@@ -116,6 +116,33 @@ class AutonomyGate:
             return block(f"order is not pending sign-off (status={order.status})")
         if order.quantity <= 0:
             return block("order quantity is not positive")
+        # --- A resting protective order outranks the session check (M33c) ---
+        #
+        # Found by running it: on 1 August the app detected an unprotected
+        # position, proposed the repair, and then blocked ITSELF from applying
+        # it because the market was shut - while a manual sign-off of the same
+        # order was accepted by Alpaca without complaint, because GTC orders
+        # rest fine outside hours.
+        #
+        # The rail was dormant in precisely the window it exists for. Brackets
+        # die AT the close; that is when all six positions lost their stops.
+        # Unattended, the fix would have sat in the blotter until Monday with
+        # the positions bare all weekend.
+        #
+        # Deliberately narrower than "any sell". A market sell transmitted into
+        # a closed market is an unpriced fill at the open, and stays blocked. A
+        # stop or OCO placed GTC executes nothing until its level trades, so
+        # placing it early costs nothing and is the entire point.
+        if order.is_protective_stop:
+            return GateDecision(
+                allowed=True,
+                reason="resting protective order - rests GTC, so a closed session is "
+                "the right time to place it rather than a reason to wait",
+                quantity=order.quantity,
+                market=market,
+                session_phase=phase,
+            )
+
         if not session.is_open:
             return block(f"{market} market is closed ({session.closed_reason})")
 
