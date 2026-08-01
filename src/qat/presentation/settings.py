@@ -21,6 +21,7 @@ import requests
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
@@ -242,6 +243,8 @@ class SettingsScreen(QWidget):
         self._refresh_broker_warning()
 
         layout.addWidget(self._build_data_group(settings))
+        layout.addWidget(self._build_risk_group(settings))
+        layout.addWidget(self._build_holding_group(settings))
         layout.addWidget(self._build_execution_group(settings))
 
         # Where these settings actually live (M22). It used to depend on the
@@ -399,6 +402,259 @@ class SettingsScreen(QWidget):
         is_mock_fundamentals = _FUNDAMENTALS_VALUES[self.fundamentals_combo.currentText()] == "mock"
         self.fundamentals_warning.setVisible(is_mock_fundamentals)
         self.fundamentals_note.setVisible(not is_mock_fundamentals)
+
+    def _percent_input(
+        self, value: float, maximum: float, *, decimals: int = 2, minimum: float = 0.01
+    ) -> QDoubleSpinBox:
+        """A limit stored as a fraction, shown as a percentage.
+
+        The configuration file holds 0.15; an operator reasons in 15%. Showing
+        the stored form invites a decimal-place error on a number that governs
+        how much of the account one position may hold.
+        """
+        box = QDoubleSpinBox()
+        box.setRange(minimum, maximum)
+        box.setDecimals(decimals)
+        box.setSuffix("%")
+        box.setValue(value * 100.0)
+        return box
+
+    def _build_risk_group(self, settings: Settings) -> QGroupBox:
+        """Portfolio and per-trade limits (M36).
+
+        These governed every trading decision the application made and were
+        editable only by hand-editing the environment file - so the caps
+        actually in force were invisible on every screen. An operator could
+        not answer "what is my single-name limit" without leaving the app.
+
+        Every field is restart-required like the rest of this screen. That is
+        the conservative choice for numbers a running risk engine has already
+        sized positions against.
+        """
+        group = QGroupBox("Risk Limits")
+        form = QFormLayout(group)
+
+        warning = QLabel(
+            "⚠ These change which trades happen and how large they are. Every one is "
+            "enforced by TRIMMING an order to what fits rather than refusing it, except "
+            "the position count. Lowering a limit does not close anything already held."
+        )
+        warning.setStyleSheet("color: #b71c1c;")
+        warning.setWordWrap(True)
+        form.addRow(warning)
+
+        # Bounds mirror the validators in config.py, so the screen cannot
+        # produce a value the application would then refuse to start on.
+        self.per_trade_risk_input = self._percent_input(settings.per_trade_risk_pct, 2.0)
+        form.addRow("Risk per trade:", self.per_trade_risk_input)
+
+        self.atr_stop_multiple_input = QDoubleSpinBox()
+        self.atr_stop_multiple_input.setRange(0.1, 10.0)
+        self.atr_stop_multiple_input.setDecimals(2)
+        self.atr_stop_multiple_input.setSuffix(" x ATR")
+        self.atr_stop_multiple_input.setValue(settings.atr_stop_multiple)
+        form.addRow("Stop distance:", self.atr_stop_multiple_input)
+
+        self.aggregate_risk_input = self._percent_input(
+            settings.max_aggregate_risk_at_stop_pct, 100.0
+        )
+        form.addRow("Aggregate risk-at-stop:", self.aggregate_risk_input)
+
+        self.single_name_input = self._percent_input(
+            settings.max_single_name_concentration_pct, 100.0
+        )
+        form.addRow("Single-name concentration:", self.single_name_input)
+
+        self.sector_input = self._percent_input(settings.max_sector_concentration_pct, 100.0)
+        form.addRow("Sector concentration:", self.sector_input)
+
+        self.cluster_pct_input = self._percent_input(settings.max_correlated_cluster_pct, 100.0)
+        form.addRow("Correlated-cluster concentration:", self.cluster_pct_input)
+
+        self.cluster_threshold_input = QDoubleSpinBox()
+        self.cluster_threshold_input.setRange(0.0, 1.0)
+        self.cluster_threshold_input.setDecimals(2)
+        self.cluster_threshold_input.setSingleStep(0.05)
+        self.cluster_threshold_input.setValue(settings.correlation_cluster_threshold)
+        form.addRow("...at correlation of:", self.cluster_threshold_input)
+
+        cluster_note = QLabel(
+            "Sector is a label; correlation is measured. Holdings whose returns track a "
+            "candidate at or above this level are capped together, because several names "
+            "moving as one are one position taken several times."
+        )
+        cluster_note.setStyleSheet("color: gray;")
+        cluster_note.setWordWrap(True)
+        form.addRow(cluster_note)
+
+        self.gap_budget_input = self._percent_input(settings.max_gap_risk_at_shock_pct, 100.0)
+        form.addRow("Overnight-gap budget:", self.gap_budget_input)
+
+        self.gap_shock_input = self._percent_input(settings.gap_shock_pct, 100.0)
+        form.addRow("...measured at a gap of:", self.gap_shock_input)
+
+        gap_note = QLabel(
+            "Every other figure here assumes the stop fills. A gap opens through it, so it "
+            "gets its own budget and is measured on position value rather than on the "
+            "distance to the stop."
+        )
+        gap_note.setStyleSheet("color: gray;")
+        gap_note.setWordWrap(True)
+        form.addRow(gap_note)
+
+        self.max_positions_input = QSpinBox()
+        self.max_positions_input.setRange(1, 100)
+        self.max_positions_input.setValue(settings.max_concurrent_positions)
+        form.addRow("Max concurrent positions:", self.max_positions_input)
+
+        self.es_limit_input = self._percent_input(settings.portfolio_es_limit_pct, 100.0)
+        form.addRow("Portfolio Expected Shortfall:", self.es_limit_input)
+
+        self.daily_loss_input = self._percent_input(settings.daily_loss_limit_pct, 100.0)
+        form.addRow("Daily loss limit:", self.daily_loss_input)
+
+        self.drawdown_input = self._percent_input(settings.max_drawdown_limit_pct, 100.0)
+        form.addRow("Max drawdown limit:", self.drawdown_input)
+
+        self.kelly_fraction_input = QDoubleSpinBox()
+        self.kelly_fraction_input.setRange(0.01, 1.0)
+        self.kelly_fraction_input.setDecimals(2)
+        self.kelly_fraction_input.setSingleStep(0.05)
+        self.kelly_fraction_input.setValue(settings.kelly_fraction)
+        form.addRow("Kelly fraction:", self.kelly_fraction_input)
+
+        kelly_note = QLabel(
+            "Full Kelly (1.00) assumes the win rate and payoff ratio are exactly right and "
+            "sizes violently when they are not. Half Kelly is the default for that reason."
+        )
+        kelly_note.setStyleSheet("color: gray;")
+        kelly_note.setWordWrap(True)
+        form.addRow(kelly_note)
+
+        self.cost_to_risk_input = self._percent_input(settings.max_cost_to_risk_pct, 100.0)
+        form.addRow("Max cost as a share of risk:", self.cost_to_risk_input)
+
+        cost_note = QLabel(
+            "Refuses a trade whose commission and slippage would eat this much of the "
+            "amount being risked. A fixed fee is trivial on a large position and ruinous "
+            "on a small one, so this is what stops the account taking trades whose entire "
+            "expected profit is fees."
+        )
+        cost_note.setStyleSheet("color: gray;")
+        cost_note.setWordWrap(True)
+        form.addRow(cost_note)
+
+        self.delever_sweep_check = QCheckBox("Allow the de-lever sweep to SELL automatically")
+        self.delever_sweep_check.setChecked(settings.delever_sweep_enabled)
+        form.addRow(self.delever_sweep_check)
+
+        delever_note = QLabel(
+            "⚠ The only rail here that sells uninvited. The limits above block new risk, "
+            "which unwinds a breach passively as positions close; this trims every position "
+            "proportionally to get back under the cap. Off by default, because a rail that "
+            "sells on its own is a larger delegation than one that declines to buy. "
+            "Disabled, a breach is still measured, logged and blocking."
+        )
+        delever_note.setStyleSheet("color: #b71c1c;")
+        delever_note.setWordWrap(True)
+        form.addRow(delever_note)
+
+        return group
+
+    def _build_holding_group(self, settings: Settings) -> QGroupBox:
+        """Churn control, protection upkeep, and when sizing starts learning."""
+        group = QGroupBox("Holding, Churn && Protection")
+        form = QFormLayout(group)
+
+        churn_note = QLabel(
+            "Commission is a fixed charge per transaction, so these bound how often the "
+            "account trades. Ten positions turned over weekly costs several percent of a "
+            "$100,000 account per year before a single losing trade."
+        )
+        churn_note.setStyleSheet("color: gray;")
+        churn_note.setWordWrap(True)
+        form.addRow(churn_note)
+
+        self.enforce_min_hold_check = QCheckBox("Enforce a minimum holding period")
+        self.enforce_min_hold_check.setChecked(settings.enforce_min_holding_period)
+        form.addRow(self.enforce_min_hold_check)
+
+        self.min_hold_days_input = QSpinBox()
+        self.min_hold_days_input.setRange(0, 250)
+        self.min_hold_days_input.setSuffix(" trading days")
+        self.min_hold_days_input.setValue(settings.min_holding_trading_days)
+        form.addRow("Minimum hold:", self.min_hold_days_input)
+
+        self.loss_escape_input = QDoubleSpinBox()
+        self.loss_escape_input.setRange(0.1, 5.0)
+        self.loss_escape_input.setDecimals(2)
+        self.loss_escape_input.setSuffix(" R")
+        self.loss_escape_input.setValue(settings.min_holding_loss_escape_r)
+        form.addRow("...unless the position is down:", self.loss_escape_input)
+
+        escape_note = QLabel(
+            "The minimum hold must not trap a losing position. A trade this far against its "
+            "entry, measured in units of the risk taken on it, may be closed regardless."
+        )
+        escape_note.setStyleSheet("color: gray;")
+        escape_note.setWordWrap(True)
+        form.addRow(escape_note)
+
+        self.enforce_time_stop_check = QCheckBox("Force an exit on an unresolved position")
+        self.enforce_time_stop_check.setChecked(settings.enforce_time_stop)
+        form.addRow(self.enforce_time_stop_check)
+
+        self.time_stop_days_input = QSpinBox()
+        self.time_stop_days_input.setRange(1, 500)
+        self.time_stop_days_input.setSuffix(" trading days")
+        self.time_stop_days_input.setValue(settings.time_stop_trading_days)
+        form.addRow("Time stop:", self.time_stop_days_input)
+
+        time_stop_note = QLabel(
+            "The time stop is doing more work than it appears to: a strategy whose own exit "
+            "signal rarely fires closes most of its positions this way, so switching it off "
+            "can mean positions are never closed at all."
+        )
+        time_stop_note.setStyleSheet("color: gray;")
+        time_stop_note.setWordWrap(True)
+        form.addRow(time_stop_note)
+
+        self.entries_per_week_input = QSpinBox()
+        self.entries_per_week_input.setRange(1, 200)
+        self.entries_per_week_input.setValue(settings.max_entries_per_week)
+        form.addRow("Max new positions per week:", self.entries_per_week_input)
+
+        self.sweep_seconds_input = QSpinBox()
+        self.sweep_seconds_input.setRange(30, 3600)
+        self.sweep_seconds_input.setSuffix(" seconds")
+        self.sweep_seconds_input.setValue(int(settings.protection_sweep_seconds))
+        form.addRow("Re-check protection every:", self.sweep_seconds_input)
+
+        sweep_note = QLabel(
+            "How often held positions are checked for a missing stop or target, and a "
+            "replacement proposed. Protective orders rest at the broker, so this is what "
+            "notices when one has been cancelled or has expired."
+        )
+        sweep_note.setStyleSheet("color: gray;")
+        sweep_note.setWordWrap(True)
+        form.addRow(sweep_note)
+
+        self.edge_min_trades_input = QSpinBox()
+        self.edge_min_trades_input.setRange(1, 500)
+        self.edge_min_trades_input.setSuffix(" closed trades")
+        self.edge_min_trades_input.setValue(settings.edge_min_trades)
+        form.addRow("Size on measured edge after:", self.edge_min_trades_input)
+
+        edge_note = QLabel(
+            "Until a strategy has this many closed trades of its own, position sizing uses "
+            "the documented defaults rather than its results. Lowering it lets a small, "
+            "possibly lucky sample set the risk."
+        )
+        edge_note.setStyleSheet("color: gray;")
+        edge_note.setWordWrap(True)
+        form.addRow(edge_note)
+
+        return group
 
     def _build_execution_group(self, settings: Settings) -> QGroupBox:
         """Execution mode (spec M13).
@@ -674,6 +930,31 @@ class SettingsScreen(QWidget):
             "QAT_FUNDAMENTALS_SOURCE": _FUNDAMENTALS_VALUES[self.fundamentals_combo.currentText()],
             "QAT_EXECUTION_MODE": self._selected_execution_mode(),
             "QAT_AUTONOMOUS_STRATEGIES": ",".join(self.selected_strategies()),
+            # Percentages are shown as percentages and stored as fractions.
+            "QAT_PER_TRADE_RISK_PCT": _as_fraction(self.per_trade_risk_input),
+            "QAT_ATR_STOP_MULTIPLE": f"{self.atr_stop_multiple_input.value():.2f}",
+            "QAT_MAX_AGGREGATE_RISK_AT_STOP_PCT": _as_fraction(self.aggregate_risk_input),
+            "QAT_MAX_SINGLE_NAME_CONCENTRATION_PCT": _as_fraction(self.single_name_input),
+            "QAT_MAX_SECTOR_CONCENTRATION_PCT": _as_fraction(self.sector_input),
+            "QAT_MAX_CORRELATED_CLUSTER_PCT": _as_fraction(self.cluster_pct_input),
+            "QAT_CORRELATION_CLUSTER_THRESHOLD": f"{self.cluster_threshold_input.value():.2f}",
+            "QAT_MAX_GAP_RISK_AT_SHOCK_PCT": _as_fraction(self.gap_budget_input),
+            "QAT_GAP_SHOCK_PCT": _as_fraction(self.gap_shock_input),
+            "QAT_MAX_CONCURRENT_POSITIONS": str(self.max_positions_input.value()),
+            "QAT_PORTFOLIO_ES_LIMIT_PCT": _as_fraction(self.es_limit_input),
+            "QAT_DAILY_LOSS_LIMIT_PCT": _as_fraction(self.daily_loss_input),
+            "QAT_MAX_DRAWDOWN_LIMIT_PCT": _as_fraction(self.drawdown_input),
+            "QAT_KELLY_FRACTION": f"{self.kelly_fraction_input.value():.2f}",
+            "QAT_ENFORCE_MIN_HOLDING_PERIOD": _as_bool(self.enforce_min_hold_check),
+            "QAT_MIN_HOLDING_TRADING_DAYS": str(self.min_hold_days_input.value()),
+            "QAT_ENFORCE_TIME_STOP": _as_bool(self.enforce_time_stop_check),
+            "QAT_TIME_STOP_TRADING_DAYS": str(self.time_stop_days_input.value()),
+            "QAT_MAX_ENTRIES_PER_WEEK": str(self.entries_per_week_input.value()),
+            "QAT_PROTECTION_SWEEP_SECONDS": str(self.sweep_seconds_input.value()),
+            "QAT_EDGE_MIN_TRADES": str(self.edge_min_trades_input.value()),
+            "QAT_MAX_COST_TO_RISK_PCT": _as_fraction(self.cost_to_risk_input),
+            "QAT_DELEVER_SWEEP_ENABLED": _as_bool(self.delever_sweep_check),
+            "QAT_MIN_HOLDING_LOSS_ESCAPE_R": f"{self.loss_escape_input.value():.2f}",
         }
         # The same absolute path Settings reads from (M22). Left relative, Save
         # wrote a .env beside whatever directory the app was launched from,
@@ -687,3 +968,12 @@ class SettingsScreen(QWidget):
         self._save_broker_secrets()
 
         self.status_label.setText("Saved. Restart the application for changes to take effect.")
+
+
+def _as_fraction(box: QDoubleSpinBox) -> str:
+    """A percentage on screen is a fraction in the file."""
+    return f"{box.value() / 100.0:.6g}"
+
+
+def _as_bool(box: QCheckBox) -> str:
+    return "true" if box.isChecked() else "false"

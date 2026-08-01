@@ -235,9 +235,10 @@ Stated plainly, because omissions matter in evaluation:
 - **No intraday or high-frequency operation.** The live path runs on daily bars.
 - **No options, futures, FX or crypto.** Equities only.
 - **No multi-account or multi-user support.**
-- **Risk limits are not editable in the interface.** They are configurable only
-  by editing the environment file directly. The Settings screen covers
-  connectivity, market, strategies and autonomy — not the risk caps.
+- **No live re-configuration.** Every setting, including the risk limits, is
+  restart-required: Save writes the environment file and the change takes
+  effect on the next launch. This is deliberate for numbers a running risk
+  engine has already sized positions against.
 
 ---
 
@@ -270,8 +271,6 @@ merely tested:
 - **Backtest results for `swing` are not evidence of an edge.** Out-of-sample
   Sharpe across 115 windows: mean 0.19, median −0.05, 49.6% of windows positive,
   standard deviation 2.24. The mean is under one standard error from zero.
-- **One configuration setting is dead.** `max_per_trade_risk_pct` is declared
-  and validated but read by nothing; the equivalent bound is enforced elsewhere.
 - **Broker-side fill absorption has not been exercised.** No protective order
   has yet fired. The code path is tested but unobserved, and Alpaca's response
   shape is the same class of assumption that proved wrong three times during

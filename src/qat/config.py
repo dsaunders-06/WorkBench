@@ -114,7 +114,6 @@ class Settings(BaseSettings):
 
     # --- Risk limits (paper §6/§18, Table 18.1; overridable per-strategy later) ---
     per_trade_risk_pct: float = Field(default=0.01, gt=0, le=0.02)
-    max_per_trade_risk_pct: float = Field(default=0.02, gt=0, le=0.02)
     kelly_fraction: float = Field(default=0.5, gt=0, le=1.0)
     # Closed trades a strategy needs before its OWN results size its trades
     # rather than the defaults (M35).

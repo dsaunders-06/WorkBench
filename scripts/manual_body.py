@@ -2197,9 +2197,10 @@ def _config_reference(doc: Any) -> None:
     doc.add_page_break()
     doc.add_heading("Appendix B: Configuration Reference", level=1)
     doc.add_paragraph(
-        "The Settings screen writes these for you. They are listed for reference and for "
-        "the settings that have no screen of their own. Secrets are never among them: API "
-        "keys live only in the Windows Credential Manager."
+        "The Settings screen writes these for you - including every risk limit, which "
+        "Section 11 covers. They are listed for reference and for the few settings that "
+        "have no screen of their own. Secrets are never among them: API keys live only in "
+        "the Windows Credential Manager."
     )
     _table(
         doc,
