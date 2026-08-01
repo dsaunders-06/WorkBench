@@ -64,6 +64,9 @@ class OMS:
         # construction, so a fill that happened before this process existed is
         # already reflected in the adopted baseline rather than double-counted.
         self._last_fill_scan = datetime.now(UTC)
+        # Why a position ended, keyed by symbol until the fill arrives. After
+        # the fact the price alone cannot separate a time stop from a signal.
+        self._exit_reasons: dict[str, str] = {}
         # Serialises sign-off so the "re-check cash against the CURRENT
         # balance" step below is actually a check. Concurrently signed orders
         # each fetch the balance before either has spent it, so both see the
@@ -148,7 +151,9 @@ class OMS:
         await self._announce_pending(order)
         return order
 
-    async def submit_exit_order(self, symbol: str, quantity: float, price: float) -> Order:
+    async def submit_exit_order(
+        self, symbol: str, quantity: float, price: float, reason: str = "signal"
+    ) -> Order:
         """Closes an existing position at exactly `quantity` shares (spec §I).
 
         Separate from submit_order() rather than a flag on it, because the two
@@ -160,6 +165,7 @@ class OMS:
         if self.symbol_allow_list is not None and symbol not in self.symbol_allow_list:
             return self._new_rejected_order_for(symbol, "sell", 0.0)
 
+        self._exit_reasons[symbol] = reason
         decision = self.risk_engine.evaluate_exit(symbol, quantity, price)
         if not decision.approved or decision.final_shares <= 0:
             return self._new_rejected_order_for(symbol, "sell", 0.0)
@@ -387,6 +393,10 @@ class OMS:
                 stop_price=order.stop_price,
                 take_profit_price=order.take_profit_price,
                 operator=operator,
+                reference_price=order.reference_price,
+                exit_reason=(
+                    self._exit_reasons.pop(order.symbol, "signal") if order.side == "sell" else None
+                ),
             )
         )
 
@@ -747,9 +757,22 @@ class OMS:
                         price=fill.price,
                         strategy=None,
                         operator="broker (protective order)",
+                        exit_reason=self._protective_exit_reason(fill),
                     )
                 )
         return absorbed
+
+    def _protective_exit_reason(self, fill: BrokerFill) -> str:
+        """Which leg of the OCO fired, decided by the level it landed on.
+
+        A stop fills at or below its trigger and a target at or above its
+        limit, so the two are separable by price - and this is the only
+        distinction available, because neither order was sent from here.
+        """
+        stop = self._position_stops.get(fill.symbol)
+        if stop is not None and fill.price <= stop * 1.02:
+            return "stop"
+        return "target"
 
     async def check_reconciliation(self) -> bool:
         """Compares OMS-tracked filled quantities against broker-reported

@@ -122,7 +122,10 @@ class DeleverSweep:
                 # recommend mode a human still approves it; the sweep decides
                 # what to trim, never whether it transmits.
                 await self.oms.submit_exit_order(
-                    pos.symbol, quantity=float(quantity), price=pos.avg_price
+                    pos.symbol,
+                    quantity=float(quantity),
+                    price=pos.avg_price,
+                    reason="delever",
                 )
                 trimmed.append(pos.symbol)
             except Exception:  # noqa: BLE001 - one symbol must not abort the sweep

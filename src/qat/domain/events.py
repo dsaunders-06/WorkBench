@@ -99,6 +99,16 @@ class OrderFilledEvent(Event):
     # overnight and re-arming needs both levels, not just the protective one.
     take_profit_price: float | None = None
     operator: str = ""
+    # Diagnostics, not mechanism (M37). Nothing decides on these; they exist so
+    # that three months of closed trades can answer WHY a result happened and
+    # not only what it was.
+    reference_price: float | None = None
+    """The price the order was sized against, so realised slippage is
+    measurable against the assumption rather than guessed at."""
+    exit_reason: str | None = None
+    """How a position ended: stop, target, time_stop, signal, delever. Set by
+    whichever component actually caused the exit, because after the fact the
+    price alone cannot always distinguish them."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

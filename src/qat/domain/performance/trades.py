@@ -36,14 +36,14 @@ import csv
 import logging
 import threading
 from collections import defaultdict, deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 from qat.config import Settings
 from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
-from qat.domain.events import OrderFilledEvent
+from qat.domain.events import MarketDataEvent, OrderFilledEvent, RegimeEvent
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,14 @@ _FIELDS = (
     "pnl_pct",
     "r_multiple",
     "gross_r_multiple",
+    "regime_at_entry",
+    "regime_probability",
+    "exposure_scalar",
+    "exit_reason",
+    "holding_days",
+    "entry_slippage",
+    "mae_r",
+    "mfe_r",
     "risk_per_share",
 )
 
@@ -89,6 +97,21 @@ class OpenLot:
     # commission floor is charged once per transaction: closing a position in
     # three pieces must not pay three minimum commissions on the entry.
     entry_cost: float = 0.0
+    # --- diagnostics carried from entry to close (M37) --------------------
+    # None of this decides anything. It exists so that a completed trial can
+    # answer WHY a result happened - which regime it was taken in, how it was
+    # sized, how far it went against before it worked - and not merely what
+    # the result was. It cannot be reconstructed afterwards, so it has to be
+    # captured as it happens.
+    regime_at_entry: str | None = None
+    regime_probability: float | None = None
+    exposure_scalar: float | None = None
+    reference_price: float | None = None
+    """The price the order was sized against, so entry slippage is measurable."""
+    worst_price: float | None = None
+    """Lowest price seen while held - maximum adverse excursion."""
+    best_price: float | None = None
+    """Highest price seen while held - maximum favourable excursion."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +127,46 @@ class ClosedTrade:
     # Already apportioned to this trade's quantity - see OpenLot.entry_cost.
     entry_cost: float = 0.0
     exit_cost: float = 0.0
+    # --- diagnostics (M37) ------------------------------------------------
+    regime_at_entry: str | None = None
+    regime_probability: float | None = None
+    exposure_scalar: float | None = None
+    exit_reason: str | None = None
+    reference_price: float | None = None
+    worst_price: float | None = None
+    best_price: float | None = None
+
+    @property
+    def holding_days(self) -> float:
+        return (self.closed_at - self.opened_at).total_seconds() / 86400.0
+
+    @property
+    def entry_slippage(self) -> float | None:
+        """Paid versus assumed on the way in. The cost model assumes a figure;
+        this is what it actually cost, and the difference is the only way to
+        find out whether the assumption holds."""
+        if self.reference_price is None or self.reference_price <= 0:
+            return None
+        return self.entry_price - self.reference_price
+
+    @property
+    def mae_r(self) -> float | None:
+        """How far the trade went against the entry before it resolved, in
+        units of the risk taken. A winner that spent its life at -0.9R was
+        nearly a loser, and the average result hides that entirely."""
+        risk = self.risk_per_share
+        if risk is None or self.worst_price is None:
+            return None
+        return -(self.entry_price - self.worst_price) / risk
+
+    @property
+    def mfe_r(self) -> float | None:
+        """How far it went in favour. A loser that reached +2R first says
+        something about the exit, not the entry."""
+        risk = self.risk_per_share
+        if risk is None or self.best_price is None:
+            return None
+        return (self.best_price - self.entry_price) / risk
 
     @property
     def gross_pnl(self) -> float:
@@ -187,6 +250,20 @@ class ClosedTrade:
             "exit_cost": round(self.exit_cost, 2),
             "net_pnl": round(self.net_pnl, 2),
             "pnl_pct": round(self.pnl_pct, 6),
+            "regime_at_entry": self.regime_at_entry or "",
+            "regime_probability": (
+                round(self.regime_probability, 4) if self.regime_probability is not None else ""
+            ),
+            "exposure_scalar": (
+                round(self.exposure_scalar, 4) if self.exposure_scalar is not None else ""
+            ),
+            "exit_reason": self.exit_reason or "",
+            "holding_days": round(self.holding_days, 3),
+            "entry_slippage": (
+                round(self.entry_slippage, 4) if self.entry_slippage is not None else ""
+            ),
+            "mae_r": round(self.mae_r, 3) if self.mae_r is not None else "",
+            "mfe_r": round(self.mfe_r, 3) if self.mfe_r is not None else "",
             "r_multiple": round(self.r_multiple, 4) if self.r_multiple is not None else "",
             "gross_r_multiple": (
                 round(self.gross_r_multiple, 4) if self.gross_r_multiple is not None else ""
@@ -223,14 +300,45 @@ class TradeLedger:
             else None
         )
         self._open_lots: dict[str, deque[OpenLot]] = defaultdict(deque)
+        # The ledger reads the regime itself rather than having it threaded
+        # through the order path (M37). It is already on the bus, and the
+        # alternative is five components carrying a field none of them uses.
+        self._regime: str | None = None
+        self._regime_probability: float | None = None
+        self._exposure_scalar: float | None = None
         self._closed: list[ClosedTrade] = []
         self._lock = threading.Lock()
 
     async def start(self) -> None:
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        self.bus.subscribe(RegimeEvent, self._on_regime)
+        self.bus.subscribe(MarketDataEvent, self._on_price)
 
     async def stop(self) -> None:
         self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+        self.bus.unsubscribe(RegimeEvent, self._on_regime)
+        self.bus.unsubscribe(MarketDataEvent, self._on_price)
+
+    async def _on_regime(self, event: RegimeEvent) -> None:
+        self._regime = event.label
+        self._regime_probability = event.probs.get(event.label)
+        self._exposure_scalar = event.exposure_scalar
+
+    async def _on_price(self, event: MarketDataEvent) -> None:
+        """Tracks how far each open lot travelled, both ways.
+
+        Recorded on the lot rather than computed at close because the path is
+        gone by then: only the entry and exit prices survive, and those cannot
+        say whether a winner spent a week at -0.9R first.
+        """
+        lots = self._open_lots.get(event.symbol)
+        if not lots or event.price <= 0:
+            return
+        for index, lot in enumerate(lots):
+            worst = min(lot.worst_price, event.price) if lot.worst_price else event.price
+            best = max(lot.best_price, event.price) if lot.best_price else event.price
+            if worst != lot.worst_price or best != lot.best_price:
+                lots[index] = replace(lot, worst_price=worst, best_price=best)
 
     async def _on_fill(self, event: OrderFilledEvent) -> None:
         if event.quantity <= 0 or event.price <= 0:
@@ -245,6 +353,12 @@ class TradeLedger:
                     strategy=event.strategy,
                     opened_at=event.ts,
                     entry_cost=self._fill_cost(event.quantity, event.price),
+                    regime_at_entry=self._regime,
+                    regime_probability=self._regime_probability,
+                    exposure_scalar=self._exposure_scalar,
+                    reference_price=event.reference_price,
+                    worst_price=event.price,
+                    best_price=event.price,
                 )
             )
             return
@@ -288,6 +402,13 @@ class TradeLedger:
                 closed_at=event.ts,
                 entry_cost=_share_of(lot.entry_cost, matched, lot.quantity),
                 exit_cost=_share_of(exit_cost_total, matched, exit_quantity),
+                regime_at_entry=lot.regime_at_entry,
+                regime_probability=lot.regime_probability,
+                exposure_scalar=lot.exposure_scalar,
+                exit_reason=event.exit_reason,
+                reference_price=lot.reference_price,
+                worst_price=lot.worst_price,
+                best_price=lot.best_price,
             )
             self._record(trade)
 
@@ -306,6 +427,12 @@ class TradeLedger:
                     # closed in pieces charges its entry commission exactly
                     # once across all of them.
                     entry_cost=lot.entry_cost - _share_of(lot.entry_cost, matched, lot.quantity),
+                    regime_at_entry=lot.regime_at_entry,
+                    regime_probability=lot.regime_probability,
+                    exposure_scalar=lot.exposure_scalar,
+                    reference_price=lot.reference_price,
+                    worst_price=lot.worst_price,
+                    best_price=lot.best_price,
                 )
 
         if remaining > 1e-9:

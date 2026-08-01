@@ -168,6 +168,15 @@ performs without the application's involvement — a stop or target firing — a
 fetched and absorbed at their real fill prices, both so reconciliation does not
 read them as discrepancies and so they are recorded as genuine closed trades.
 
+Each closed trade also carries diagnostics captured as it happened: the regime
+it was opened in with that regime's probability, the exposure scalar applied,
+how the position ended (stop, target, time stop, signal or de-lever trim), the
+holding period, realised entry slippage against the price it was sized on, and
+the maximum adverse and favourable excursion in units of the risk taken. None of
+it decides anything — it exists so a completed trial can answer why a result
+happened rather than only what it was, and none of it is reconstructable after
+the fact.
+
 A decision journal records what was proposed and why, including refusals,
 distinct from the ledger's record of what actually happened. Daily and weekly
 reports are written automatically, covering opened and held positions as well as
@@ -195,6 +204,15 @@ A vectorised backtester with a cost model matching live economics, Monte Carlo
 trade-sequence resampling, and walk-forward evaluation across non-overlapping
 out-of-sample windows. A headless runner executes all of it across the watchlist
 and reports.
+
+**A caveat on walk-forward that materially limits it.** The windows slice the
+signal series, so a strategy holding a position across a boundary has that
+position re-opened at the start of the next window. Measured on twelve symbols:
+one trade each across the full series, three each across three walk-forward
+windows — one manufactured entry per window. For a continuously-held strategy
+the tool is therefore measuring 60-day slices of a hold rather than the
+strategy's own trade selection, and its Sharpe distribution should be read with
+that in mind.
 
 ### 2.11 AI assistance
 

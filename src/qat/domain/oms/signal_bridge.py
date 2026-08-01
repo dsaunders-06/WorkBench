@@ -369,7 +369,7 @@ class SignalToOrderBridge:
             symbol,
             self.settings.time_stop_trading_days,
         )
-        await self.oms.submit_exit_order(symbol, quantity=held, price=price)
+        await self.oms.submit_exit_order(symbol, quantity=held, price=price, reason="time_stop")
 
     async def _on_signal(self, event: SignalEvent) -> None:
         # A strategy re-emits its signal on EVERY tick for as long as its
@@ -456,7 +456,7 @@ class SignalToOrderBridge:
         if held > 0:
             # Close exactly what is held rather than letting the entry sizer
             # invent an unrelated quantity.
-            await self.oms.submit_exit_order(symbol, quantity=held, price=price)
+            await self.oms.submit_exit_order(symbol, quantity=held, price=price, reason="signal")
             return
         if not self.settings.allow_short_selling:
             return  # long-only: nothing to sell, and opening a short is not wanted
