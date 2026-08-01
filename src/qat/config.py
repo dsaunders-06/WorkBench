@@ -137,6 +137,26 @@ class Settings(BaseSettings):
     # the correlation that survives having picked different tickers, and it is
     # the one that shows up precisely when the names stop looking different.
     max_sector_concentration_pct: float = Field(default=0.30, gt=0, le=1.0)
+    # Correlation as an actual limit, not a table to look at (M33).
+    #
+    # Single-name says one ticker. Sector says one GICS label. Neither catches
+    # six names that happen to move together, and a portfolio of eight
+    # "different" positions with 0.85 pairwise correlation is one position
+    # taken eight times with eight lots of commission.
+    #
+    # Sector is the proxy this system has used for it, and the proxy fails in
+    # exactly the conditions the limit exists for: correlations converge in a
+    # crisis, and a bank and a homebuilder in different sectors stop being
+    # different at the moment it matters.
+    #
+    # 0.7 because that is roughly where two names stop diversifying each other
+    # in any useful way - at 0.7 a second position adds about 30% of the risk
+    # reduction a genuinely independent one would.
+    correlation_cluster_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
+    # Same number as sector, deliberately: a correlated cluster IS a sector,
+    # measured rather than labelled, so a different cap would be saying the
+    # measurement means something different from the label it replaces.
+    max_correlated_cluster_pct: float = Field(default=0.30, gt=0, le=1.0)
 
     # --- Gap risk, budgeted separately from stop risk (M30) ------------------
     # Every other risk figure here means "if the stop fills". A gap opens

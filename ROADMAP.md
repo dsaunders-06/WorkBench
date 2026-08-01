@@ -541,12 +541,51 @@ own), currency handling, and the IBKR live path actually exercised.
 Also: slippage is modelled at a flat 5bps, optimistic for ASX small and mid caps
 where a $20,000 position can be a meaningful share of daily volume.
 
-### M33 - Validation using what already exists
+### M33 - Validation using what already exists  **[DONE, 1 August]**
 
-`monte_carlo.py` and `walk_forward.py` have been built since M4 and never run in
-anger. Run them on swing. Promote correlation from a Risk Console display to an
-actual portfolio limit - sector is currently a proxy for correlation, and in a
-crisis it is a poor one.
+`scripts/validate_strategy.py` runs Monte Carlo and walk-forward across the
+watchlist with the cost model the live system uses. Three findings, all in the
+measuring instrument rather than the strategy:
+
+* **Every backtest was costed with no commission floor.** The Workbench built
+  `CostModel()` bare at both call sites; that constructor defaults
+  `min_commission` to 0.0 so pre-M27 backtests keep their numbers, against a
+  configured 6.60. On swing over 40 symbols the drag is 1.5% of gross P&L at
+  100k per symbol and 10.4% at 20k - a fixed fee is trivial on a large
+  position and ruinous on a small one, and live positions are the small ones.
+* **The backtester could hold shorts the live system cannot open.** The signal
+  adapter mapped a sell to MINUS conviction. It means close the position -
+  swing's carries `exit_reason=trend_broken` - and the live OMS submits buys
+  and sells-to-close only. mean_reversion spent 48% of the AAPL series short,
+  volatility 45%. A sell now goes flat.
+* **Swing barely trades.** Exposure changes 7 times in 300 bars and never
+  returns to zero after bar 52 - one trade per symbol in 14 months. So the
+  Monte Carlo cone resamples near-buy-and-holds, and walk-forward manufactures
+  exactly one entry per window at the slice boundary: 12 symbols, 1 full-run
+  trade each, 3 walk-forward trades each. Neither tool says much about swing
+  until it exits.
+
+**Correlation is a limit now, not a table.** `PortfolioGovernor` trims against
+a correlated cluster the same way it trims single-name and sector: holdings
+whose returns track the candidate's at or above 0.70 are capped at 30%
+combined. The cluster is defined per candidate rather than as a fixed
+partition, which is what correlation actually is.
+
+Sector was the proxy, and the proxy fails in the conditions the limit exists
+for - correlations converge in a crisis, and a bank and a homebuilder in
+different sectors stop being different at the moment that matters.
+
+**The rail had to be fed before it could bite.** `existing_returns` was an
+empty dict in `SignalToOrderBridge`, with a comment calling it a documented
+simplification. It made two rails inert rather than lenient: nothing to
+correlate against, and `PortfolioRiskChecker` computing portfolio VaR and ES
+for a book it believed was empty. The warm start already seeds 300 daily bars
+per symbol - the history existed and was never handed over. Series are indexed
+by timestamp, not bar number, so correlating two symbols compares the same day;
+pairs sharing fewer than 20 observations are skipped, because correlation on a
+handful of points is noise. A symbol with no history is NOT assumed
+correlated - the opposite of the unknown-stop rule, and deliberately so, since
+that default would refuse every symbol the app has never held.
 
 ## Already built, despite appearing on review wishlists
 

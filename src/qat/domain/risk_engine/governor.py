@@ -29,10 +29,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
+import pandas as pd
+
 from qat.config import Settings
 from qat.data.broker.adapter import Order, Position
 
 logger = logging.getLogger(__name__)
+
+# Below this many shared observations a correlation is noise. Trimming a real
+# position on the strength of three overlapping days would be worse than not
+# measuring at all.
+_MIN_CORRELATION_OBSERVATIONS = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +121,41 @@ class PortfolioGovernor:
             equity=equity,
         )
 
+    def _correlated_holdings(
+        self,
+        candidate_returns: pd.Series,
+        existing_returns: dict[str, pd.Series],
+        positions: list[Position],
+    ) -> list[str]:
+        """Held symbols whose returns track the candidate's at or above the
+        threshold.
+
+        Pairs are aligned on their shared index before correlating, and a pair
+        with too little overlap is skipped rather than counted. Correlation on
+        three shared observations is noise, and treating noise as "these move
+        together" would trim real positions for no reason.
+
+        A holding that cannot be measured is NOT assumed correlated. That is
+        the opposite of the unknown-stop rule, and deliberately so: an unknown
+        stop is a position that might be unprotected, where the conservative
+        reading costs nothing but size. An unknown correlation defaults to
+        refusing to trade anything the app has no history for, which is every
+        new symbol.
+        """
+        held = {pos.symbol for pos in positions if abs(pos.quantity) > 0}
+        correlated: list[str] = []
+        for symbol in held:
+            other = existing_returns.get(symbol)
+            if other is None:
+                continue
+            aligned_candidate, aligned_other = candidate_returns.align(other, join="inner")
+            if len(aligned_candidate) < _MIN_CORRELATION_OBSERVATIONS:
+                continue
+            corr = aligned_candidate.corr(aligned_other)
+            if pd.notna(corr) and corr >= self.settings.correlation_cluster_threshold:
+                correlated.append(symbol)
+        return correlated
+
     @staticmethod
     def _per_share_risk(symbol: str, price: float, stops: dict[str, float]) -> float:
         """Risk per share down to the stop, or the whole price when no stop is
@@ -138,6 +180,8 @@ class PortfolioGovernor:
         prices: dict[str, float] | None = None,
         candidate_sector: str | None = None,
         sector_by_symbol: dict[str, str] | None = None,
+        candidate_returns: pd.Series | None = None,
+        existing_returns: dict[str, pd.Series] | None = None,
     ) -> GovernorDecision:
         """Approves, trims, or rejects a candidate against portfolio-level caps."""
         snap = self.snapshot(positions, stops, equity, pending_orders, prices)
@@ -241,6 +285,47 @@ class PortfolioGovernor:
                     f"{self.settings.max_sector_concentration_pct:.0%} sector cap"
                 )
 
+        # --- correlated cluster, TRIMMED not refused (M33) --------------------
+        #
+        # Single-name bounds one ticker. Sector bounds one GICS label. Neither
+        # catches six names that simply move together, and eight "different"
+        # positions at 0.85 pairwise correlation are one position taken eight
+        # times, with eight lots of commission and none of the diversification
+        # the position count implies.
+        #
+        # Sector has been this system's proxy for it, and the proxy fails in
+        # exactly the conditions the limit exists for: correlations converge in
+        # a crisis, and a bank and a homebuilder in different sectors stop
+        # being different at the moment that matters.
+        #
+        # Measured, not labelled. A holding counts toward the candidate's
+        # cluster when their returns correlate at or above the threshold, so
+        # the cluster is defined per-candidate rather than being a fixed
+        # partition of the universe - which is what correlation actually is.
+        cluster_affordable_shares = float("inf")
+        held_in_cluster = 0.0
+        cluster_members: list[str] = []
+        if candidate_returns is not None and existing_returns:
+            cluster_members = self._correlated_holdings(
+                candidate_returns, existing_returns, positions
+            )
+            if cluster_members:
+                cluster_cap_dollars = self.settings.max_correlated_cluster_pct * equity
+                held_in_cluster = sum(
+                    abs(pos.quantity) * (prices or {}).get(pos.symbol, pos.avg_price)
+                    for pos in positions
+                    if pos.symbol in cluster_members
+                )
+                cluster_affordable_shares = max(0.0, cluster_cap_dollars - held_in_cluster) / price
+                if cluster_affordable_shares < 1:
+                    return reject(
+                        f"{len(cluster_members)} holding(s) correlated at or above "
+                        f"{self.settings.correlation_cluster_threshold:.2f} "
+                        f"({', '.join(sorted(cluster_members))}) already hold "
+                        f"${held_in_cluster:,.0f}, at or above the "
+                        f"{self.settings.max_correlated_cluster_pct:.0%} cluster cap"
+                    )
+
         # --- gap risk, budgeted separately from stop risk (M30) --------------
         #
         # Every figure above means "if the stop fills". A gap opens through it:
@@ -277,6 +362,11 @@ class PortfolioGovernor:
             limits[
                 f"{self.settings.max_sector_concentration_pct:.0%} {candidate_sector} sector"
             ] = sector_affordable_shares
+        if cluster_members:
+            limits[
+                f"{self.settings.max_correlated_cluster_pct:.0%} correlated-cluster "
+                f"({len(cluster_members)} name(s))"
+            ] = cluster_affordable_shares
         final_shares = min(proposed_shares, *limits.values())
         trimmed = final_shares < proposed_shares
 
@@ -300,6 +390,8 @@ class PortfolioGovernor:
                 "per_share_risk": per_share_risk,
                 "held_in_name_dollars": held_in_name,
                 "held_in_sector_dollars": held_in_sector,
+                "held_in_cluster_dollars": held_in_cluster,
+                "cluster_size": float(len(cluster_members)),
                 "gross_exposure_pct": snap.gross_exposure_pct,
                 "gap_loss_at_shock_dollars": snap.gross_exposure_dollars
                 * self.settings.gap_shock_pct,

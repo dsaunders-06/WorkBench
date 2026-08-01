@@ -550,3 +550,145 @@ def test_an_unclassified_candidate_is_not_gated_by_sector():
     )
 
     assert decision.max_shares == pytest.approx(150.0)
+
+
+# --- Correlated-cluster concentration (M33) ----------------------------------
+
+
+def _returns(seed: int, n: int = 60, common: pd.Series | None = None, weight: float = 0.0):
+    """A return series, optionally sharing `weight` of a common factor - which
+    is what makes two names correlated without being the same name."""
+    rng = pd.Series(
+        [((seed * 7919 + i * 104729) % 1000 - 500) / 10000.0 for i in range(n)],
+        index=pd.RangeIndex(n),
+    )
+    if common is None:
+        return rng
+    return weight * common + (1.0 - weight) * rng
+
+
+def test_names_that_move_together_are_capped_as_one_cluster():
+    """Single-name bounds one ticker and sector bounds one label. Neither
+    catches several names that simply move together, which is one position
+    taken several times with none of the diversification the count implies."""
+    governor = PortfolioGovernor(
+        settings=_settings(max_correlated_cluster_pct=0.30, max_sector_concentration_pct=1.0)
+    )
+    common = _returns(1)
+    existing = {"AAA": _returns(2, common=common, weight=0.98)}
+    candidate = _returns(3, common=common, weight=0.98)
+
+    decision = governor.evaluate(
+        symbol="BBB",
+        price=100.0,
+        proposed_shares=250.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+        candidate_returns=candidate,
+        existing_returns=existing,
+    )
+
+    # $10,000 of the cluster held against a $30,000 cap leaves 200 shares.
+    assert decision.allowed is True
+    assert decision.max_shares == pytest.approx(200.0)
+    assert "correlated-cluster" in decision.reason
+
+
+def test_an_uncorrelated_holding_is_not_in_the_cluster():
+    governor = PortfolioGovernor(settings=_settings(max_correlated_cluster_pct=0.30))
+    existing = {"AAA": _returns(2)}
+
+    decision = governor.evaluate(
+        symbol="BBB",
+        price=100.0,
+        proposed_shares=250.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+        candidate_returns=_returns(3),
+        existing_returns=existing,
+    )
+
+    assert decision.max_shares == pytest.approx(250.0)
+    assert "correlated-cluster" not in decision.reason
+
+
+def test_too_little_overlap_is_not_treated_as_correlated():
+    """Correlation on a handful of shared observations is noise, and trimming a
+    real position on the strength of it is worse than not measuring."""
+    governor = PortfolioGovernor(settings=_settings(max_correlated_cluster_pct=0.30))
+    common = _returns(1, n=8)
+    existing = {"AAA": _returns(2, n=8, common=common, weight=0.99)}
+
+    decision = governor.evaluate(
+        symbol="BBB",
+        price=100.0,
+        proposed_shares=250.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+        candidate_returns=_returns(3, n=8, common=common, weight=0.99),
+        existing_returns=existing,
+    )
+
+    assert decision.max_shares == pytest.approx(250.0)
+
+
+def test_a_symbol_with_no_history_is_not_assumed_correlated():
+    """The opposite of the unknown-stop rule, deliberately. An unknown stop
+    costs size; an unknown correlation would refuse every symbol the app has
+    no history for, which is every new one."""
+    governor = PortfolioGovernor(settings=_settings(max_correlated_cluster_pct=0.30))
+
+    decision = governor.evaluate(
+        symbol="BBB",
+        price=100.0,
+        proposed_shares=250.0,
+        stop_price=95.0,
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+        stops={"AAA": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0},
+        candidate_returns=_returns(3),
+        existing_returns={},
+    )
+
+    assert decision.max_shares == pytest.approx(250.0)
+
+
+def test_a_full_cluster_rejects_rather_than_sizing_to_nothing():
+    governor = PortfolioGovernor(
+        settings=_settings(max_correlated_cluster_pct=0.30, max_sector_concentration_pct=1.0)
+    )
+    common = _returns(1)
+
+    decision = governor.evaluate(
+        symbol="DDD",
+        price=100.0,
+        proposed_shares=100.0,
+        stop_price=95.0,
+        positions=[
+            Position(symbol="AAA", quantity=100.0, avg_price=100.0),
+            Position(symbol="BBB", quantity=100.0, avg_price=100.0),
+            Position(symbol="CCC", quantity=100.0, avg_price=100.0),
+        ],
+        stops={"AAA": 95.0, "BBB": 95.0, "CCC": 95.0},
+        equity=EQUITY,
+        prices={"AAA": 100.0, "BBB": 100.0, "CCC": 100.0},
+        candidate_returns=_returns(9, common=common, weight=0.98),
+        existing_returns={
+            "AAA": _returns(2, common=common, weight=0.98),
+            "BBB": _returns(4, common=common, weight=0.98),
+            "CCC": _returns(6, common=common, weight=0.98),
+        },
+    )
+
+    assert decision.allowed is False
+    assert "cluster cap" in decision.reason

@@ -235,3 +235,74 @@ def test_an_unreadable_entries_file_is_not_fatal():
     bridge = _bridge(_Broker(), data_dir=data_dir)
 
     assert bridge._entries == {}
+
+
+# --- The rails are actually fed (M33) ----------------------------------------
+
+
+def _seed_daily(bridge, symbol: str, start_price: float, step: float, n: int = 40) -> None:
+    """Bars in strictly increasing time order. The aggregator folds an
+    out-of-order tick into the forming bar, so seeding backwards silently
+    produces a one-bar frame."""
+    base = _NOW + timedelta(days=1)
+    for i in range(n):
+        bridge.bars.add_tick(symbol, base + timedelta(days=i), start_price + i * step, 1.0)
+
+
+@pytest.mark.asyncio
+async def test_held_positions_arrive_as_real_return_series():
+    """existing_returns was an empty dict with a comment calling it a
+    documented simplification. It made two rails inert rather than lenient:
+    the correlated-cluster cap had nothing to correlate against, and
+    PortfolioRiskChecker computed VaR and ES for a book it believed empty."""
+    bridge = _bridge(_Broker(held=100.0))
+    captured: dict[str, object] = {}
+
+    async def _capture(candidate, equity, weights, returns, *args, **kwargs):
+        captured["returns"] = returns
+        captured["candidate"] = candidate
+        return None
+
+    bridge.oms.submit_order = _capture  # type: ignore[method-assign]
+
+    _seed_daily(bridge, "HELD", 100.0, 1.0)
+    _seed_daily(bridge, "CAND", 50.0, 0.5)
+
+    await bridge._submit_sized(
+        "CAND",
+        "buy",
+        bridge.bars.frame("CAND"),
+        60.0,
+        [Position(symbol="HELD", quantity=100.0, avg_price=100.0)],
+    )
+
+    returns = captured["returns"]
+    assert "HELD" in returns, "the held position must arrive with a return series"
+    assert len(returns["HELD"]) > 20
+    # Indexed by timestamp, so correlating two symbols compares the same DAY
+    # rather than the same bar number.
+    assert isinstance(returns["HELD"].index, pd.DatetimeIndex)
+    assert isinstance(captured["candidate"].candidate_returns.index, pd.DatetimeIndex)
+
+
+@pytest.mark.asyncio
+async def test_the_candidates_own_symbol_is_not_in_existing_returns():
+    bridge = _bridge(_Broker(held=100.0))
+    captured: dict[str, object] = {}
+
+    async def _capture(candidate, equity, weights, returns, *args, **kwargs):
+        captured["returns"] = returns
+        return None
+
+    bridge.oms.submit_order = _capture  # type: ignore[method-assign]
+    _seed_daily(bridge, "CAND", 50.0, 0.5)
+
+    await bridge._submit_sized(
+        "CAND",
+        "buy",
+        bridge.bars.frame("CAND"),
+        70.0,
+        [Position(symbol="CAND", quantity=100.0, avg_price=60.0)],
+    )
+
+    assert captured["returns"] == {}

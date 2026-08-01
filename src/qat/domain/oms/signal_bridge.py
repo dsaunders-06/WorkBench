@@ -58,6 +58,22 @@ class _Entry:
     stop_price: float | None
 
 
+def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
+    """Close-to-close returns indexed by TIMESTAMP, not bar number.
+
+    Correlating two symbols on a positional index compares AAPL's fifth bar to
+    MSFT's fifth bar, which are the same day only if both have exactly the same
+    history - true right after a warm start and not true after a symbol misses
+    a tick. A risk rail cannot rest on "usually lines up", so the join key is
+    the timestamp and pairs with too little overlap are dropped upstream.
+    """
+    if len(bars) < 2 or "ts" not in bars or "close" not in bars:
+        return pd.Series(dtype=float)
+    closes = bars["close"].astype(float)
+    closes.index = pd.DatetimeIndex(bars["ts"])
+    return closes.pct_change().dropna()
+
+
 def _trading_days_between(start: datetime, end: datetime) -> int:
     """Weekdays elapsed. An approximation of trading days that ignores market
     holidays - which shortens a ten-day hold by at most a day or two a quarter,
@@ -450,7 +466,7 @@ class SignalToOrderBridge:
             atr=atr,
             win_rate=self.default_win_rate,
             win_loss_ratio=self.default_win_loss_ratio,
-            candidate_returns=bars["close"].pct_change().dropna(),
+            candidate_returns=_returns_by_ts(bars),
             strategy=strategy,
             stop_price=stop_price,
             take_profit_price=take_profit_price,
@@ -458,7 +474,23 @@ class SignalToOrderBridge:
 
         account = await self.oms.broker.account()
         existing_weights = {pos.symbol: pos.quantity * pos.avg_price for pos in positions}
+        # Real return series for what is already held (M33). This was an empty
+        # dict with a comment calling it a documented simplification, and it
+        # made two rails inert rather than lenient: the correlated-cluster cap
+        # has nothing to correlate against, and PortfolioRiskChecker computes
+        # portfolio VaR and ES from a book it believes is empty.
+        #
+        # The warm start already seeds this aggregator with 300 daily bars per
+        # watchlist symbol, so the history exists - it was simply never handed
+        # over. Same source as the candidate's own series, so the two are
+        # measured the same way.
         existing_returns: dict[str, pd.Series] = {}
+        for position in positions:
+            if position.symbol == symbol or abs(position.quantity) <= 0:
+                continue
+            series = _returns_by_ts(self.bars.frame(position.symbol))
+            if not series.empty:
+                existing_returns[position.symbol] = series
 
         await self.oms.submit_order(
             candidate, account.net_liquidation, existing_weights, existing_returns
