@@ -273,6 +273,33 @@ from the ledger's open lots, so Friday reads "Opened 6 position(s), $27,783.86
 committed" with each entry listed, and "Still held 6 position(s)". A genuinely
 quiet day still reads as quiet.
 
+## Known gaps - found by running it, not yet fixed
+
+Both surfaced on 1 August while validating M33b-d against the live account.
+Neither blocks Monday; both matter for a system meant to run unattended.
+
+**Repair is startup-only.** `rearm_protective_stops()` is called from
+`SignalToOrderBridge.start()` and nowhere else. Detection is continuous -
+`verify_position_stops()` runs on the reconciliation poll and will notice a
+stop that has vanished mid-session - but nothing re-arms until the next
+launch. For a session left running across days, a bracket that dies at a close
+stays dead until someone restarts the app. The obvious shape is a periodic
+sweep on the same poll that already detects it, with the same market-closed
+reasoning M33c established.
+
+**The adopted-positions banner misdescribes a restart.** It reads "6 positions
+not opened by this app ... this application did not choose them", which is
+false: swing opened all six on 31 July. What is true is that it did not open
+them *in this session*. The banner is styled as a warning, so firing it on
+every restart for the app's own positions trains the operator to ignore the
+case it exists for - a genuinely foreign holding.
+
+The data to tell them apart is already loaded on both sides:
+`open_position_entries.json` records exactly which positions this app opened
+and when. Adoption should say "re-adopted after restart - opened by this app
+on <date>" for those, and keep the current wording only for symbols absent
+from that file.
+
 ## The stack
 
 Ordered on one principle: **make the measurement honest before making the
