@@ -19,7 +19,7 @@ from docx.shared import Inches, Pt, RGBColor
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from scripts.build_manual import FigureSet
 
-VERSION_LINE = "Version 2.9  |  Milestone M26"
+VERSION_LINE = "Version 3.0  |  Milestone M37"
 FIGURE_WIDTH = Inches(6.2)
 ACCENT = RGBColor(0x1B, 0x3A, 0x5F)
 CAPTION_GREY = RGBColor(0x55, 0x5F, 0x6D)
@@ -203,7 +203,7 @@ def _introduction(doc: Any) -> None:
         "mode unmistakable at all times.",
         "Human sign-off by default - a signal can become a pending order, but only an "
         "explicit, confirmed action on the Order Blotter transmits it. The optional "
-        "auto-trade mode (Section 11.6) is the single deliberate exception, is confined to "
+        "auto-trade mode (Section 11.8) is the single deliberate exception, is confined to "
         "paper accounts, and is off unless you turn it on.",
         "An always-available kill-switch - the Risk Console exposes one control that halts "
         "all new order flow immediately, and five separate conditions can trip it "
@@ -295,7 +295,7 @@ def _introduction(doc: Any) -> None:
                 "Stable storage location",
                 "Settings and records live in one per-user directory instead of beside "
                 "whatever folder the application was launched from, and are migrated "
-                "there on first run (Section 11.7).",
+                "there on first run (Section 11.9).",
             ),
             (
                 "Balances panel",
@@ -367,7 +367,7 @@ def _introduction(doc: Any) -> None:
                 "One per-user directory - %LOCALAPPDATA%\\QuantAdvisoryTerminal - holding a "
                 ".env of non-secret settings and a data folder of records. API keys are never "
                 "in either: they live only in the Windows Credential Manager. The Settings "
-                "screen names the directory. See Section 11.7.",
+                "screen names the directory. See Section 11.9.",
             ),
         ),
     )
@@ -665,12 +665,26 @@ def _adopted_positions(doc: Any) -> None:
         "halt trading on every launch."
     )
     doc.add_paragraph(
-        "Those holdings have a cost that is easy to miss. The application did not open them, "
-        "so it has no record of a protective stop on them, and it treats an unknown stop as "
-        "no stop at all. The whole value of such a position counts against the risk budget. "
-        "Seven inherited holdings in a hundred-thousand-dollar account were enough to put "
-        "risk-at-stop at thirty percent against a five percent limit - which is to say every "
-        "new trade was refused, all day, and nothing on screen said so."
+        "Those holdings have a cost that is easy to miss. A position whose protection the "
+        "application cannot see is treated as having none at all, and its whole value counts "
+        "against the risk budget rather than the distance down to a stop. Seven inherited "
+        "holdings in a hundred-thousand-dollar account were enough to put risk-at-stop at "
+        "thirty percent against a five percent limit - which is to say every new trade was "
+        "refused, all day, and nothing on screen said so."
+    )
+    doc.add_paragraph(
+        "The panel distinguishes two situations that look identical from the outside. A "
+        "holding this application opened in an EARLIER SESSION reads as 'resumed after "
+        "restart': it is the normal case, since every launch re-adopts what the "
+        "strategies opened before. A holding it has no record of reads as 'not opened "
+        "by this app', which is the case the panel exists for. Before they were "
+        "separated the panel said the second for both, and a warning that fires on every "
+        "ordinary restart is one an operator learns to scroll past."
+    )
+    doc.add_paragraph(
+        "Protection is checked against the broker rather than assumed, so a resumed position "
+        "with its stop and target still resting is counted at the distance to its stop, not "
+        "at full value. Section 8A covers what happens when that protection has gone."
     )
     doc.add_paragraph(
         "A panel now appears beneath the market session banner whenever this is happening. "
@@ -826,6 +840,19 @@ def _regime_monitor(doc: Any, figures: FigureSet) -> None:
         "gate so the label does not flicker on noisy data. This screen shows the full "
         "probability distribution, the inputs driving it, and every actual regime change."
     )
+    doc.add_paragraph(
+        "The distribution matters more than the label, because the label is not what gates a "
+        "strategy. Each strategy declares the regimes it suits, and it is permitted on the "
+        "TOTAL PROBABILITY across those regimes rather than on whichever single regime "
+        "happens to be most likely. A strategy suited to sideways, bull and recovery holding "
+        "sixty percent of the probability between them keeps trading even when high "
+        "volatility is the headline label at thirty-five percent."
+    )
+    doc.add_paragraph(
+        "This is why a strategy can be active in a regime it does not list. Reading only the "
+        "header will occasionally suggest the application is trading something it should have "
+        "refused; reading the distribution shows why it did not."
+    )
     _figure(doc, figures, "regime")
 
     doc.add_heading("5.1 Screen Elements", level=2)
@@ -900,7 +927,10 @@ def _risk_console(doc: Any, figures: FigureSet) -> None:
             (
                 "Correlation table",
                 "Pairwise trailing-return correlation across the watchlist, colour-coded. "
-                "High correlation means position limits are counting exposures that are "
+                "Since M33 this is not only a display: holdings whose returns track a "
+                "candidate at or above the configured threshold are capped TOGETHER as a "
+                "cluster, so the table shows the relationships the limit is actually acting "
+                "on. High correlation means position limits are counting exposures that are "
                 "not actually independent.",
             ),
         ),
@@ -1230,7 +1260,7 @@ def _screener(doc: Any, figures: FigureSet) -> None:
         "Which figures here are real",
         "Every column follows its configured source. Price and trend come from the market "
         "data source (Section 11.4); EPS growth, PEG, dividend yield and ROE come from the "
-        "fundamentals source (Section 11.6); sectors are always real, from a curated map. On "
+        "fundamentals source (Section 11.8); sectors are always real, from a curated map. On "
         "the simulated settings those figures are invented, and screening on them exercises "
         "the workflow rather than picking stocks. A dash means the figure does not exist - "
         "an index ETF has no return on equity - which is not the same as a measured zero.",
@@ -1379,7 +1409,66 @@ def _session_record(doc: Any) -> None:
 
 
 def _metrics_panel(doc: Any) -> None:
-    doc.add_heading("10.5 The Metrics Tab", level=2)
+    doc.add_heading("10.5 What Each Closed Trade Records", level=2)
+    doc.add_paragraph(
+        "Every closed trade carries more than its result. The extra columns exist so that a "
+        "completed trial can answer WHY an outcome happened rather than only what it was, "
+        "and none of them can be reconstructed afterwards - the price path is gone by the "
+        "time a trade closes, and the regime has usually moved on."
+    )
+    _table(
+        doc,
+        ("Column", "What it tells you"),
+        (
+            (
+                "Regime at entry",
+                "Which market state the position was opened in, with that regime's "
+                "probability at the time. The regime at EXIT is deliberately not recorded: a "
+                "position held for weeks closes in a different state from the one it was "
+                "taken in, and attributing the result to the exit would answer the wrong "
+                "question.",
+            ),
+            (
+                "Exposure scalar",
+                "The regime multiplier applied when the position was sized, so a small "
+                "position taken in a defensive regime is not mistaken for a small signal.",
+            ),
+            (
+                "Exit reason",
+                "stop, target, time_stop, signal or delever. Set by whatever caused the "
+                "exit rather than inferred, because after the fact the price alone cannot "
+                "separate a time stop from a strategy signal.",
+            ),
+            (
+                "Holding days",
+                "Calendar days from entry to exit.",
+            ),
+            (
+                "Entry slippage",
+                "What the entry actually cost against the price it was sized on. The cost "
+                "model ASSUMES a slippage figure; this is the only way to find out whether "
+                "that assumption holds.",
+            ),
+            (
+                "MAE (R)",
+                "Maximum adverse excursion - how far the trade went against the entry "
+                "before it resolved, in units of the risk taken on it. A winner that spent "
+                "its life at -0.9R was very nearly a loser, and an average result hides "
+                "that completely.",
+            ),
+            (
+                "MFE (R)",
+                "Maximum favourable excursion. A loser that reached +2R first says "
+                "something about the exit rule, not the entry.",
+            ),
+        ),
+    )
+    doc.add_paragraph(
+        "All of it is written to trades.csv alongside the P&L columns. None of it influences "
+        "any decision - the application does not read these back."
+    )
+
+    doc.add_heading("10.6 The Metrics Tab", level=2)
     doc.add_paragraph(
         "The trade list says what the system did. This tab says what the system is, which "
         "is the question a promotion decision actually turns on. Every row carries a "
@@ -1450,6 +1539,13 @@ def _metrics_panel(doc: Any) -> None:
 def _settings(doc: Any, figures: FigureSet) -> None:
     doc.add_page_break()
     doc.add_heading("11. Settings", level=1)
+    doc.add_paragraph(
+        "The screen scrolls: it carries more than fits a window. Save and the status line "
+        "stay fixed below the scrolling area so they cannot be scrolled out of reach. Every "
+        "field on this screen is restart-required - Save writes the configuration file and "
+        "the change takes effect on the next launch, which is the conservative choice for "
+        "numbers a running risk engine has already sized positions against."
+    )
     doc.add_paragraph(
         "Settings configures the application's five external-facing decisions: which AI "
         "provider answers, which market and symbols to follow, which broker holds the "
@@ -1661,7 +1757,135 @@ def _settings(doc: Any, figures: FigureSet) -> None:
         "working, not failing.",
     )
 
-    doc.add_heading("11.6 Execution Mode", level=2)
+    doc.add_heading("11.6 Risk Limits", level=2)
+    doc.add_paragraph(
+        "The caps that decide which trades happen and how large they are. Until M36 these "
+        "were editable only by hand in the configuration file and appeared on no screen, so "
+        "the limits actually in force could not be read anywhere in the application."
+    )
+    _callout(
+        doc,
+        "Percentages on screen, fractions in the file",
+        "The screen shows 15%; the configuration file stores 0.15. The conversion happens in "
+        "both directions so you never handle the stored form. Every field is bounded to what "
+        "the application will accept, so the screen cannot write a value the next launch "
+        "would refuse to start on.",
+        danger=False,
+    )
+    _table(
+        doc,
+        ("Setting", "Default", "What it bounds"),
+        (
+            ("Risk per trade", "1%", "Equity risked between entry and stop on one trade."),
+            ("Stop distance", "2.5 x ATR", "How far the protective stop sits from entry."),
+            (
+                "Aggregate risk-at-stop",
+                "5%",
+                "Total loss if every open position stopped out at once.",
+            ),
+            ("Single-name concentration", "15%", "One ticker as a share of equity."),
+            ("Sector concentration", "30%", "One sector as a share of equity."),
+            (
+                "Correlated-cluster concentration",
+                "30% at 0.70",
+                "Holdings whose returns track a candidate at or above the threshold, capped "
+                "together. Sector is a label; this is measured.",
+            ),
+            (
+                "Overnight-gap budget",
+                "5% at a 6% gap",
+                "Loss allowed from a gap opening THROUGH the stops rather than trading to "
+                "them. Measured on position value, because that is what a gap moves.",
+            ),
+            ("Max concurrent positions", "10", "How thinly the portfolio may be spread."),
+            ("Portfolio Expected Shortfall", "3%", "Average loss in the tail beyond VaR."),
+            ("Daily loss limit", "3%", "Halts new autonomous buys for the day."),
+            ("Max drawdown limit", "20%", "Peak-to-trough decline before the rails engage."),
+            (
+                "Kelly fraction",
+                "0.50",
+                "Full Kelly assumes the win rate and payoff ratio are exactly right and "
+                "sizes violently when they are not.",
+            ),
+            (
+                "Max cost as a share of risk",
+                "10%",
+                "Refuses a trade whose commission and slippage would eat this much of the "
+                "amount being risked.",
+            ),
+        ),
+    )
+    doc.add_paragraph(
+        "Every limit except the position count is enforced by TRIMMING an order to what fits "
+        "rather than refusing it. A cap that refuses instead of resizing stops a strategy "
+        "trading altogether, which is how a 15% single-name limit would behave against a "
+        "sizing chain that lands near 20%."
+    )
+    _callout(
+        doc,
+        "The de-lever sweep is the one rail that sells",
+        "Every limit above blocks NEW risk, which unwinds a breach passively as positions "
+        "close. The de-lever sweep instead trims every position proportionally to get back "
+        "under the cap. It is off by default, because a rail that sells uninvited is a much "
+        "larger delegation than one that declines to buy. Disabled, a breach is still "
+        "measured, logged and blocking.",
+        danger=True,
+    )
+    doc.add_paragraph(
+        "Lowering a limit does not close anything already held. It governs what may be "
+        "opened from that point, and an existing breach unwinds as positions close."
+    )
+
+    doc.add_heading("11.7 Holding, Churn and Protection", level=2)
+    doc.add_paragraph(
+        "Commission is charged per transaction, so how OFTEN the account trades matters as "
+        "much as how much it risks. Ten positions turned over weekly costs several percent "
+        "of a hundred-thousand-dollar account a year before a single losing trade."
+    )
+    _table(
+        doc,
+        ("Setting", "Default", "What it does"),
+        (
+            (
+                "Minimum hold",
+                "10 trading days",
+                "How long a position is held before a signal may close it.",
+            ),
+            (
+                "Loss escape",
+                "0.5 R",
+                "The minimum hold must not trap a losing position. A trade this far against "
+                "its entry may be closed regardless.",
+            ),
+            (
+                "Time stop",
+                "30 trading days",
+                "Forces an exit on a thesis that never resolved. This is doing more work "
+                "than it appears to: a strategy whose own exit signal rarely fires closes "
+                "most of its positions this way.",
+            ),
+            (
+                "Max new positions per week",
+                "10",
+                "A turnover budget, bounding commission drag directly.",
+            ),
+            (
+                "Re-check protection every",
+                "300 seconds",
+                "How often held positions are checked for a missing stop or target, and a "
+                "replacement proposed. See Section 8A.",
+            ),
+            (
+                "Size on measured edge after",
+                "20 closed trades",
+                "Until a strategy has this many results of its own, position sizing uses "
+                "documented defaults rather than its measured win rate and payoff ratio. "
+                "Lowering it lets a small and possibly lucky sample set the risk.",
+            ),
+        ),
+    )
+
+    doc.add_heading("11.8 Execution Mode", level=2)
     _table(
         doc,
         ("Field", "Description"),
@@ -1690,7 +1914,7 @@ def _settings(doc: Any, figures: FigureSet) -> None:
 
 
 def _storage_location(doc: Any) -> None:
-    doc.add_heading("11.7 Where Settings and Records Are Stored", level=2)
+    doc.add_heading("11.9 Where Settings and Records Are Stored", level=2)
     doc.add_paragraph(
         "Everything the application owns lives in one per-user directory, named at the "
         "bottom of the Settings screen so it is never a guess:"
@@ -2207,7 +2431,7 @@ def _config_reference(doc: Any) -> None:
         ("Setting", "Default", "Meaning"),
         (
             ("QAT_TRADING_MODE", "paper", "paper or live."),
-            ("QAT_EXECUTION_MODE", "recommend", "recommend or auto (Section 11.6)."),
+            ("QAT_EXECUTION_MODE", "recommend", "recommend or auto (Section 11.8)."),
             ("QAT_AUTONOMOUS_STRATEGIES", "(empty)", "Strategies cleared to auto-trade."),
             (
                 "QAT_ALLOW_AUTONOMOUS_LIVE_TRADING",
@@ -2259,7 +2483,7 @@ def _config_reference(doc: Any) -> None:
             (
                 "QAT_HOME",
                 "(per-user)",
-                "Relocates settings and records wholesale (Section 11.7).",
+                "Relocates settings and records wholesale (Section 11.9).",
             ),
             (
                 "QAT_ACCOUNT_POLL_SECONDS",
