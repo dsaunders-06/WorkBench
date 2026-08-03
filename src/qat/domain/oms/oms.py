@@ -97,17 +97,41 @@ class OMS:
         # reference, for the same reason cash is (spec M12/M15): a cap a caller
         # can bypass by not passing an argument is not a cap. Pending orders are
         # included because an order awaiting sign-off is committed exposure.
-        decision = self.risk_engine.evaluate_order(
-            candidate,
-            equity,
-            existing_weights,
-            existing_returns,
-            sector_by_symbol,
-            available_cash=account.cash,
-            positions=await self.broker.positions(),
-            position_stops=self.position_stops(),
-            pending_orders=self.pending_orders(),
-        )
+        # An unexpected failure here becomes a REJECTED ORDER, not an
+        # exception (M38).
+        #
+        # On 3 August every one of 1,438 signals raised inside the portfolio
+        # check and the exception propagated out through the event bus. The
+        # bus logged "EventBus handler failed" and moved on, so the session
+        # produced no orders, no refusals, no journal entries and nothing on
+        # any screen. A full trading day looked from the Dashboard exactly
+        # like a day with no setups.
+        #
+        # A rail that refuses is visible and auditable. A rail that throws is
+        # neither, and this is the boundary where that distinction has to be
+        # enforced: submit_order already answers every other failure with a
+        # rejected order carrying a reason.
+        try:
+            decision = self.risk_engine.evaluate_order(
+                candidate,
+                equity,
+                existing_weights,
+                existing_returns,
+                sector_by_symbol,
+                available_cash=account.cash,
+                positions=await self.broker.positions(),
+                position_stops=self.position_stops(),
+                pending_orders=self.pending_orders(),
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced as a refusal, never swallowed
+            logger.exception(
+                "Risk evaluation FAILED for %s - refusing the order rather than "
+                "letting the signal disappear",
+                candidate.symbol,
+            )
+            return self._new_rejected_order(
+                candidate, 0.0, f"risk evaluation failed: {type(exc).__name__}: {exc}"
+            )
         if not decision.approved or decision.final_shares <= 0:
             return self._new_rejected_order(
                 candidate, 0.0, decision.reason or "risk engine rejected"

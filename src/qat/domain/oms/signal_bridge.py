@@ -80,8 +80,17 @@ def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
     """
     if len(bars) < 2 or "ts" not in bars or "close" not in bars:
         return pd.Series(dtype=float)
-    closes = bars["close"].astype(float)
-    closes.index = pd.DatetimeIndex(bars["ts"])
+    frame = bars[["ts", "close"]]
+    # One row per timestamp, latest wins (M38). A duplicated timestamp reaching
+    # PortfolioRiskChecker fails the entire portfolio check, because pandas
+    # cannot reindex from a duplicated axis - which refused every order for a
+    # full session on 3 August. Guarding at the source as well as at the
+    # consumer, because this series is handed to several callers.
+    frame = frame[~frame["ts"].duplicated(keep="last")]
+    if len(frame) < 2:
+        return pd.Series(dtype=float)
+    closes = frame["close"].astype(float)
+    closes.index = pd.DatetimeIndex(frame["ts"])
     return closes.pct_change().dropna()
 
 

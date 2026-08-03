@@ -326,6 +326,51 @@ from the ledger's open lots, so Friday reads "Opened 6 position(s), $27,783.86
 committed" with each entry listed, and "Still held 6 position(s)". A genuinely
 quiet day still reads as quiet.
 
+## M38 - The first live session traded nothing, and said nothing
+
+3 August, the first session of the validation phase. 1,438 signals, 1,413
+exceptions, zero orders, zero refusals, zero journal entries. The Dashboard was
+indistinguishable from a day on which no strategy found a setup.
+
+Every signal died at the same place:
+
+    signal_bridge._on_signal -> _submit_entry -> _submit_sized
+      -> oms.submit_order -> risk_engine.evaluate_order
+      -> portfolio_risk.check -> _combined_portfolio_returns
+    ValueError: cannot reindex on an axis with duplicate labels
+
+That is the M33 path. `_combined_portfolio_returns` builds a DataFrame from the
+per-symbol return series, which pandas does by reindexing each onto the union
+of their indexes - and reindexing FROM an index with duplicate labels raises.
+Before M33 `existing_returns` was an empty dict, so the function only ever
+received one series and the condition could not arise. Handing it real history
+made it reachable.
+
+**Root cause of the duplicate is still unidentified.** Four reproductions
+against live Alpaca data - seeding alone, seeding plus a session of live ticks,
+all six held symbols, and the exact PortfolioRiskChecker call - all pass with
+unique indexes. Whatever produces the duplicate happens in a live session and
+has not been reconstructed offline. The fixes are therefore defensive at both
+ends rather than corrective at the source, and the warning now names the symbol
+so the next occurrence identifies itself.
+
+**The second defect is the one that cost the day.** An exception inside the
+risk pipeline propagated out through the event bus, which logged "EventBus
+handler failed" and continued. A rail that REFUSES is visible, auditable and
+appears in the blotter with a reason; a rail that THROWS is none of those.
+`submit_order` now converts any unexpected failure into a rejected order
+carrying the exception type and message, which is what it already did for every
+other failure mode.
+
+Three fixes: refuse rather than raise at the OMS boundary; drop duplicate
+timestamps in `_combined_portfolio_returns` and name the symbol; drop them at
+the source in `_returns_by_ts`. Six tests, five confirmed failing against the
+previous code.
+
+Worth stating plainly: this was introduced by M33 on 1 August, shipped through
+five subsequent builds, and was caught by neither 1,219 tests nor two external
+reviews. Only a live session found it.
+
 ## M35 - Sizing on what happened, not on two invented numbers
 
 `SignalToOrderBridge` passed `win_rate=0.55` and `win_loss_ratio=1.5` into

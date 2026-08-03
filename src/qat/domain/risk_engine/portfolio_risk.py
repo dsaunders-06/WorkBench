@@ -14,6 +14,7 @@ prior milestones.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -44,6 +45,9 @@ def compute_expected_shortfall(returns: pd.Series, confidence: float = _ES_CONFI
     if len(tail) == 0:
         return var
     return max(0.0, -float(tail.mean()))
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,9 +136,41 @@ class PortfolioRiskChecker:
     ) -> pd.Series:
         if total_equity <= 0:
             return pd.Series(dtype=float)
-        aligned = pd.DataFrame(
-            {symbol: series for symbol, series in returns.items() if symbol in weights}
-        ).dropna()
+        # Duplicate timestamps are dropped, and named when they appear (M38).
+        #
+        # pandas builds this frame by reindexing every series onto the union of
+        # their indexes, and reindexing FROM an index with duplicate labels is
+        # an error rather than a warning. Before M33 this function only ever
+        # received one series - existing_returns was an empty dict - so the
+        # condition could not arise. Feeding it real per-symbol history made it
+        # reachable, and on 3 August it raised on every signal for a whole
+        # session.
+        #
+        # Keeping the last observation per timestamp is the right collapse: a
+        # repeated timestamp means the same bar was recorded twice, and the
+        # later copy is the more complete one.
+        usable: dict[str, pd.Series] = {}
+        for symbol, raw in returns.items():
+            if symbol not in weights or raw is None:
+                continue
+            # Callers legitimately pass a plain sequence - pandas accepted one
+            # here before M38 and several tests rely on it.
+            series = raw if isinstance(raw, pd.Series) else pd.Series(raw)
+            if series.empty:
+                continue
+            if series.index.has_duplicates:
+                duplicated = int(series.index.duplicated().sum())
+                logger.warning(
+                    "%s return series has %d duplicate timestamp(s) - keeping the last "
+                    "observation of each. A duplicated index here would otherwise fail "
+                    "the whole portfolio check and refuse the order.",
+                    symbol,
+                    duplicated,
+                )
+                series = series[~series.index.duplicated(keep="last")]
+            usable[symbol] = series
+
+        aligned = pd.DataFrame(usable).dropna()
         if aligned.empty:
             return pd.Series(dtype=float)
         weight_fractions = pd.Series(
