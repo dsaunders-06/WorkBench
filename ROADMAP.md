@@ -133,9 +133,18 @@ see.
 
 **The shape of the fix.** Ask for `status=all` with `nested=true` and filter
 legs on their OWN status rather than trusting the query. The cost is real:
-11 rows becomes 220, because it returns every order ever placed. It needs
-bounding by date rather than being fetched wholesale on every reconciliation
-poll, and that bound is the part to get right.
+11 rows becomes 220, because it returns every order ever placed. Bounding that
+is M47, and the answer turned out not to be a date - dates age, symbols do not.
+
+Two further behaviours measured on 5 August, both of which contradict what the
+parameter names suggest:
+
+* **`limit` counts RAW orders, not the nested parents returned.** `limit=100`
+  yielded 49 parents; `limit=50` yielded 23. A truncated page does not
+  necessarily look short.
+* **`after=` filters on `submitted_at`, not on fill time.** A protective leg
+  submitted weeks ago and filling today is NOT returned by a query bounded on
+  recent activity. `recent_fills` is bounded exactly that way - see M48.
 
 **The pattern worth naming.** M34 and M46 were the same mistake about
 identifiers - assuming an id means the same thing on both sides of a boundary.
@@ -143,6 +152,44 @@ M31d, M33d and this are the same mistake about queries - assuming a filter
 returns what its name suggests. The corporate-actions work (M39) is the same
 shape again, and should start by measuring what the broker reports through a
 split rather than by reasoning about it.
+
+## M48 - `recent_fills` cannot see the fill it exists to catch  **[OPEN]**
+
+Found while measuring for M47, on 5 August, and not yet fixed.
+
+`recent_fills` asks Alpaca for `status=CLOSED, after=self._last_fill_scan`,
+where that cursor advances to now on every reconciliation poll - so the window
+is about five minutes wide. **`after=` filters on `submitted_at`, not on fill
+time**; this was measured, not assumed. A protective order submitted days or
+weeks ago and filling today therefore falls outside the window and is never
+returned.
+
+That is every protective order the system has. A bracket leg's parent was
+submitted when the position opened; a standalone OCO was submitted when it was
+re-armed. Neither was submitted in the last five minutes.
+
+The consequence lands on the first stop-out this system ever has, and it lands
+twice:
+
+* `absorb_broker_fills` never sees the fill, so no `OrderFilledEvent` is
+  published and **the trade ledger records no closed trade** - the promotion
+  gate accumulates nothing from the only exits swing actually has.
+* Reconciliation then compares tracked 16 against broker 0 and **trips the
+  kill-switch**, halting the session on a stop doing precisely its job.
+
+Losing the record is the worse half. M34 exists to prevent exactly this pair of
+failures and has never been exercised against a real protective fill, because
+there have been no closed trades. The five absorptions on 4 August all worked
+only because those were the app's own entries, filling minutes after they were
+submitted and so inside the window by accident.
+
+**Why it is not simply M47's fix again.** The relevant symbol set is different.
+`resting_stops` asks about currently-held positions; a stop that fills makes
+its position disappear from `positions()`, so "currently held" is the one set
+guaranteed to exclude it. The query needs the OMS's own tracked quantities,
+which the adapter does not have, so the symbol set has to be passed in.
+
+Behind no freeze: this is recording an execution that already happened.
 
 ## Not yet addressed - integral to share trading
 
@@ -441,6 +488,61 @@ about the class:
   broker says nothing is resting" was never safe to act on unilaterally, so
   the count is enforced where the order is created as well as measured where
   it is detected.
+
+## M47 - The detection query was bounded on the wrong axis
+
+M33d taught `resting_stops` to read nested legs and to accept `held`. That
+fixed the standalone OCO and left the bracket case untouched, because no
+bracketed entry had filled yet. On 4 August four did. `status=open` excludes a
+filled parent and takes its still-`held` stop legs out of the result with it,
+so four protected positions read as unprotected, and the app proposed four
+duplicate OCOs at levels identical to the stops already resting - GS 954.84,
+MS 196.93. Alpaca refused them for insufficient shares, once every five
+minutes, 412 times before the operator's morning.
+
+**The bug and the obvious cure were the same mistake.** `status=open` bounds on
+LIFECYCLE and is wrong because a live leg can hang off a dead parent. Bounding
+by DATE instead is the same error in new clothes: a leg belonging to a February
+entry is still live today, and an adopted position has no recorded age at all,
+so every constant is a bet on holding period that the app cannot honour.
+
+The axis that decides relevance is which symbols are actually held, because
+that is the only question the method exists to answer. Symbol membership does
+not age. Measured against the live account on 5 August:
+
+| Query | Rows | Positions resolved |
+|---|---|---|
+| `status=open, nested=true` | 11 | 6 of 10 |
+| `status=all, nested=true` | 220 | 10 of 10 |
+| `status=all, nested=true, symbols=<held>` | **49** | **10 of 10** |
+
+Three things fell out of the measurement that reasoning would not have given:
+
+* Every held position's live leg was the MOST RECENT order for its symbol, and
+  no held symbol had more than ten orders in its entire history.
+* `limit` counts RAW orders, not the nested parents returned - `limit=100`
+  yielded 49 parents and `limit=50` yielded 23. A page can therefore truncate
+  without the row count looking short.
+* `after=` filters on `submitted_at`, not on fill time. That belongs to M48.
+
+So the scan is bounded by symbol, ordered newest-first, and a symbol the broad
+scan cannot resolve is looked up on its own - paged backwards, capped - before
+it is allowed to read as unprotected. "No protection found" now always means we
+went and looked, rather than that the page ran out. The healthy case costs one
+order query; the deep scan never runs.
+
+**The second half matters as much as the first.** Under `status=all` the
+overwhelming majority of what returns is dead - 207 filled and 23 cancelled or
+expired against 22 live - so each leg is now filtered on its OWN status against
+an allowlist of live states. Without that the fix would trade a false
+"unprotected" for a false "protected", and that is the strictly worse
+direction: a duplicate order is caught by the M33d guard and by the broker,
+where a position believed protected is simply never repaired.
+
+**What the defect cost beyond noise.** The four positions counted their full
+value against the aggregate risk-at-stop cap, holding it at 33.66% against a 5%
+limit for the entire session. No new entry could have been sized or approved
+for eight and a half hours. A detection bug had become a trading halt.
 
 ## M31c - The Performance tab showed the launch, not the present
 

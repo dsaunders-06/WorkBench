@@ -9,6 +9,7 @@ real Alpaca round-trip works - see the README for how to check that yourself.
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 
@@ -48,12 +49,15 @@ class FakeClient:
         self.cancelled: list[str] = []
         self.orders: list[object] = []
         self.order_filters: list[object] = []
+        # resting_stops bounds its query by the symbols actually held (M47),
+        # so what the account holds is now part of the fixture.
+        self.positions: list[object] = [FakePosition()]
 
     def get_account(self) -> FakeAccount:
         return FakeAccount()
 
-    def get_all_positions(self) -> list[FakePosition]:
-        return [FakePosition()]
+    def get_all_positions(self) -> list[object]:
+        return self.positions
 
     def submit_order(self, order_data: object) -> FakeAlpacaOrder:
         self.submitted.append(order_data)
@@ -323,3 +327,168 @@ async def test_the_orders_query_asks_for_nested_legs():
     await adapter.resting_stops()
 
     assert client.order_filters[-1].nested is True
+
+
+# --- M47: a live leg under a filled parent -----------------------------------
+
+
+class _BracketStopLeg:
+    """A bracket's stop leg: still `held`, under an entry that has FILLED."""
+
+    symbol = "AAPL"
+    side = "sell"
+    order_type = "stop"
+    status = "held"
+    stop_price = "180.00"
+    legs = None
+
+
+class _CancelledStopLeg:
+    symbol = "AAPL"
+    side = "sell"
+    order_type = "stop"
+    status = "canceled"
+    stop_price = "150.00"
+    legs = None
+
+
+class _FilledEntry:
+    symbol = "AAPL"
+    side = "buy"
+    order_type = "market"
+    status = "filled"
+    stop_price = None
+    submitted_at = datetime(2026, 2, 1, tzinfo=UTC)
+    legs = [_BracketStopLeg()]
+
+
+class _OldCancelledBracket:
+    symbol = "AAPL"
+    side = "buy"
+    order_type = "market"
+    status = "filled"
+    stop_price = None
+    submitted_at = datetime(2026, 1, 1, tzinfo=UTC)
+    legs = [_CancelledStopLeg()]
+
+
+@pytest.mark.asyncio
+async def test_a_live_leg_under_a_filled_parent_is_seen():
+    """The 4 August failure. `status=open` excludes a filled parent and takes
+    its still-`held` stop leg out of the result with it, so four bracketed
+    positions read as unprotected the moment their entries filled - and the app
+    proposed four duplicate OCOs, which Alpaca refused for insufficient
+    shares."""
+    adapter, client = _adapter()
+    client.orders = [_FilledEntry()]
+
+    assert await adapter.resting_stops() == {"AAPL": pytest.approx(180.0)}
+
+
+@pytest.mark.asyncio
+async def test_a_dead_leg_is_not_read_as_protection():
+    """The other half of the fix, and the more dangerous direction. Under
+    status=all the query returns every order the account ever placed; without a
+    check on each leg's OWN status a cancelled stop from a closed trade would
+    report as live protection, and a position believed protected is never
+    repaired."""
+    adapter, client = _adapter()
+    client.orders = [_OldCancelledBracket()]
+
+    assert await adapter.resting_stops() == {}
+
+
+@pytest.mark.asyncio
+async def test_the_scan_is_bounded_by_the_symbols_actually_held():
+    """Bounding by date would reintroduce the same invisibility for an older
+    entry. Symbol membership does not age, so it is the axis that cannot."""
+    adapter, client = _adapter()
+    client.orders = []
+
+    await adapter.resting_stops()
+
+    request = client.order_filters[-1]
+    assert request.symbols == ["AAPL"]  # FakeClient holds exactly one position
+    assert str(request.status).lower().endswith("all")
+    assert request.nested is True
+    assert str(request.direction).lower().endswith("desc")
+
+
+@pytest.mark.asyncio
+async def test_nothing_held_asks_the_broker_nothing():
+    """An empty symbols filter is dropped from the request, which would return
+    the whole account - the unbounded query this change exists to avoid."""
+    adapter, client = _adapter()
+    client.positions = []
+
+    assert await adapter.resting_stops() == {}
+    assert client.order_filters == []
+
+
+class _PagingClient(FakeClient):
+    """Serves one symbol's history in pages, so the deep scan has something to
+    walk. The protective leg is deliberately on the LAST page."""
+
+    def __init__(self, pages: list[list[object]]) -> None:
+        super().__init__()
+        self.pages = pages
+        self.symbol_queries: list[list[str]] = []
+
+    def get_orders(self, filter: object = None) -> list[object]:
+        self.order_filters.append(filter)
+        symbols = list(getattr(filter, "symbols", None) or [])
+        self.symbol_queries.append(symbols)
+        until = getattr(filter, "until", None)
+        if until is None:
+            return self.pages[0]
+        for index, page in enumerate(self.pages[:-1]):
+            if any(getattr(o, "submitted_at", None) == until for o in page):
+                return self.pages[index + 1]
+        return []
+
+
+@pytest.mark.asyncio
+async def test_a_symbol_the_broad_scan_misses_is_looked_up_before_it_reads_naked(monkeypatch):
+    """ "No protection found" must mean we went and looked, not that the page
+    ran out. Every held position's live leg was the most recent order for its
+    symbol when this was measured - the deep scan is what stops that
+    measurement from becoming an assumption."""
+    from qat.data.broker import alpaca_adapter as module
+
+    # A page is "full" at 2 here so the walk is testable without 500 fakes.
+    monkeypatch.setattr(module, "_DEEP_SCAN_LIMIT", 2)
+
+    first = [_OldCancelledBracket(), _OldCancelledBracket()]
+    last = [_FilledEntry()]
+    client = _PagingClient(pages=[first, last])
+    settings = Settings(_env_file=None)  # type: ignore[arg-type]
+    adapter = AlpacaAdapter(client=client, settings=settings)
+
+    assert await adapter.resting_stops() == {"AAPL": pytest.approx(180.0)}
+    # Broad scan first, then the single unresolved symbol on its own.
+    assert client.symbol_queries[0] == ["AAPL"]
+    assert len(client.symbol_queries) > 1
+
+
+@pytest.mark.asyncio
+async def test_the_deep_scan_stops_rather_than_walking_forever(monkeypatch, caplog):
+    """A capped walk that gives up reports UNPROTECTED, which proposes a
+    replacement. Assuming protection exists because we stopped looking is the
+    one answer that can leave a position quietly naked."""
+    from qat.data.broker import alpaca_adapter as module
+
+    monkeypatch.setattr(module, "_DEEP_SCAN_LIMIT", 1)
+    monkeypatch.setattr(module, "_DEEP_SCAN_MAX_PAGES", 2)
+
+    class _EndlessClient(FakeClient):
+        def get_orders(self, filter: object = None) -> list[object]:
+            self.order_filters.append(filter)
+            return [_OldCancelledBracket()]
+
+    client = _EndlessClient()
+    settings = Settings(_env_file=None)  # type: ignore[arg-type]
+    adapter = AlpacaAdapter(client=client, settings=settings)
+
+    with caplog.at_level("WARNING"):
+        assert await adapter.resting_stops() == {}
+    assert "Gave up scanning AAPL" in caplog.text

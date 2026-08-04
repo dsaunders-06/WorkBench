@@ -48,6 +48,37 @@ logger = logging.getLogger(__name__)
 API_KEY_SECRET_NAME = "ALPACA_API_KEY"  # nosec B105 - keyring lookup key, not a secret
 SECRET_KEY_SECRET_NAME = "ALPACA_SECRET_KEY"  # nosec B105 - keyring lookup key, not a secret
 
+# Statuses that mean an order is still working at the broker (M47). `held` is
+# the one that matters most and is the least obvious: an OCO's stop leg rests
+# there for its whole life, waiting on its partner.
+_LIVE_ORDER_STATUSES = frozenset(
+    {
+        "new",
+        "accepted",
+        "accepted_for_bidding",
+        "pending_new",
+        "pending_replace",
+        "pending_cancel",
+        "held",
+        "partially_filled",
+        "calculated",
+        "stopped",
+        "suspended",
+    }
+)
+
+# Alpaca caps `limit` at 500, and it counts RAW orders rather than the parents
+# actually returned - measured 5 August, where limit=100 yielded 49 nested
+# parents and limit=50 yielded 23. Sitting at the cap costs nothing today (the
+# ten held symbols have 49 parents between them) and buys years of headroom
+# before the page could bind, at which point _deep_scan is what notices.
+_RESTING_SCAN_LIMIT = 500
+_DEEP_SCAN_LIMIT = 500
+# Five pages of 500 is more history than any single symbol will plausibly
+# accumulate. The cap exists so a pathological account cannot turn one sweep
+# into an unbounded walk, not because it is expected to bind.
+_DEEP_SCAN_MAX_PAGES = 5
+
 
 class AlpacaCredentialsMissingError(RuntimeError):
     """Raised when no Alpaca API key/secret is available in the keyring."""
@@ -163,35 +194,112 @@ class AlpacaAdapter:
         CHILD of the parent order rather than as a top-level row. A flat scan
         for open stop orders therefore saw nothing.
 
-        That is not a cosmetic miss. On 1 August the app read a CRWD position
-        carrying a perfectly good OCO as unprotected, and proposed a second
-        one - which, signed, would have left 32 shares of resting sell orders
-        against a 16-share position. The five plain stops all read back
-        correctly, which is why every check before that passed: it took the new
-        order shape to expose that the query never understood it.
+        **Bounded by SYMBOL, not by lifecycle or by date (M47).** `status=open`
+        is a bound on lifecycle, and a live leg can hang off a dead parent: on
+        4 August four bracketed entries filled, their still-`held` stop legs
+        went with the parents out of the result, and the app proposed four
+        duplicate OCOs that Alpaca refused for insufficient shares. Bounding
+        by DATE instead would be the same mistake in new clothes - a leg
+        belonging to a February entry is still live today, and an adopted
+        position has no recorded age at all.
 
-        Erring toward "protected" here is the safe direction for THIS query and
-        only because the caller is the one that proposes new protection. A
-        false "unprotected" duplicates orders; a false "protected" merely
-        leaves the governor measuring a stop that exists.
+        The axis that decides relevance is which symbols are actually held,
+        because that is the only question this method exists to answer. Symbol
+        membership does not age, so it cannot make protection invisible the way
+        a lifecycle or date filter does. Measured against the live account on
+        5 August: `status=all` alone returns 220 rows, the same query bounded to
+        the ten held symbols returns 49, and both resolve all ten positions.
+
+        Every held position's live leg was the MOST RECENT order for its symbol
+        in that measurement, which is what `_deep_scan` exists to stop us
+        relying on. A symbol the broad scan cannot resolve is looked up on its
+        own before it is allowed to read as unprotected, so "no protection
+        found" always means we went and looked rather than that the page ran
+        out.
         """
+        held = [str(pos.symbol) for pos in await self.positions() if abs(float(pos.quantity)) > 0]
+        if not held:
+            # Nothing held, nothing to protect, and no reason to ask. The
+            # empty-symbol filter would be dropped from the request and return
+            # the whole account instead.
+            return {}
+
+        resting = await self._protective_legs(held, limit=_RESTING_SCAN_LIMIT)
+        for symbol in held:
+            if symbol not in resting:
+                resting.update(await self._deep_scan(symbol))
+        return resting
+
+    async def _order_page(
+        self,
+        symbols: list[str],
+        limit: int,
+        until: datetime | None = None,
+    ) -> list[Any]:
+        """One page of order history for these symbols, newest first."""
+        from alpaca.common.enums import Sort
         from alpaca.trading.enums import QueryOrderStatus
         from alpaca.trading.requests import GetOrdersRequest
 
-        request = GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200, nested=True)
-        orders = await asyncio.to_thread(self._client.get_orders, filter=request)
-        resting: dict[str, float] = {}
-        for order in orders:
-            for candidate in _with_legs(order):
-                side = str(getattr(candidate, "side", "")).lower()
-                stop = getattr(candidate, "stop_price", None)
-                # Tested on the stop PRICE rather than the order-type string.
-                # An OCO leg reports its own type inconsistently across
-                # versions, and "carries a stop level and would sell" is the
-                # property that actually makes it protection.
-                if "sell" in side and stop is not None:
-                    resting[str(getattr(candidate, "symbol", ""))] = float(stop)
-        return resting
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.ALL,
+            nested=True,
+            symbols=list(symbols),
+            # Newest first, so if `limit` ever binds it drops the OLDEST orders
+            # for these symbols - the ones belonging to trades already closed.
+            direction=Sort.DESC,
+            limit=limit,
+            until=until,
+        )
+        return list(await asyncio.to_thread(self._client.get_orders, filter=request))
+
+    async def _protective_legs(
+        self,
+        symbols: list[str],
+        limit: int,
+        until: datetime | None = None,
+    ) -> dict[str, float]:
+        return _protective_from(await self._order_page(symbols, limit, until))
+
+    async def _deep_scan(self, symbol: str) -> dict[str, float]:
+        """Looks harder at one symbol before letting it read as unprotected.
+
+        Reached only when the broad scan found no live protection for a held
+        position - which is either true, or an artefact of the page ending
+        before that symbol's leg. The two are indistinguishable from the broad
+        result and they want opposite responses, so the cost of telling them
+        apart is spent here and nowhere else. In the healthy case this never
+        runs at all.
+
+        Paging is capped rather than open-ended. Exhausting the cap means the
+        symbol genuinely has more history than we are willing to read, and the
+        conservative answer - unprotected, therefore repaired - is the one that
+        cannot leave a position quietly naked.
+        """
+        until: datetime | None = None
+        for _ in range(_DEEP_SCAN_MAX_PAGES):
+            page = await self._order_page([symbol], limit=_DEEP_SCAN_LIMIT, until=until)
+            found = _protective_from(page)
+            if found:
+                return found
+            stamps = [
+                stamp
+                for stamp in (getattr(order, "submitted_at", None) for order in page)
+                if stamp is not None
+            ]
+            if len(page) < _DEEP_SCAN_LIMIT or not stamps:
+                # A page short of the limit is the end of this symbol's
+                # history, so "nothing resting" is an answer rather than a
+                # place we stopped looking.
+                return {}
+            until = min(stamps)
+        logger.warning(
+            "Gave up scanning %s for resting protection after %d pages - treating it as "
+            "unprotected, which proposes a replacement rather than assuming one exists",
+            symbol,
+            _DEEP_SCAN_MAX_PAGES,
+        )
+        return {}
 
     async def recent_fills(self, since: datetime) -> list[BrokerFill]:
         """Executions the broker performed that this app did not transmit (M34).
@@ -441,6 +549,50 @@ def _with_legs(order: object) -> list[object]:
     for leg in legs:
         found.extend(_with_legs(leg))
     return found
+
+
+def _is_live(status: object) -> bool:
+    """Whether an order is still working at the broker, on its own status.
+
+    An allowlist rather than a list of terminal states. Under `status=all` the
+    overwhelming majority of what comes back is dead - measured on 5 August:
+    207 filled and 23 cancelled or expired against 22 live - so an unrecognised
+    status is far more likely to be a new terminal state than a new live one.
+    Guessing "live" there would report a dead leg as protection, and a position
+    believed protected is never repaired.
+    """
+    return _normalise_status(status) in _LIVE_ORDER_STATUSES
+
+
+def _normalise_status(status: object) -> str:
+    return str(getattr(status, "value", status)).lower().removeprefix("orderstatus.")
+
+
+def _protective_from(orders: list[Any]) -> dict[str, float]:
+    """Live protective legs among these orders, by symbol.
+
+    Each candidate must show it is live ON ITS OWN STATUS rather than be
+    trusted because of what the query was asked for. Without that this change
+    would trade a false "unprotected" for a false "protected", and reading a
+    cancelled stop as protection is the strictly worse direction: it hides a
+    naked position instead of merely proposing a duplicate that the OMS guard
+    and the broker both refuse.
+    """
+    resting: dict[str, float] = {}
+    for order in orders:
+        for candidate in _with_legs(order):
+            side = str(getattr(candidate, "side", "")).lower()
+            stop = getattr(candidate, "stop_price", None)
+            # Tested on the stop PRICE rather than the order-type string. An
+            # OCO leg reports its own type inconsistently across versions, and
+            # "carries a stop level and would sell" is the property that
+            # actually makes it protection.
+            if "sell" not in side or stop is None:
+                continue
+            if not _is_live(getattr(candidate, "status", "")):
+                continue
+            resting[str(getattr(candidate, "symbol", ""))] = float(stop)
+    return resting
 
 
 def _map_status(alpaca_status: str) -> Any:
