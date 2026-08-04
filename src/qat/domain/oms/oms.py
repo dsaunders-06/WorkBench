@@ -744,8 +744,7 @@ class OMS:
         )
         self._orders[order.order_id] = order
         logger.warning(
-            "Protective %s proposed for unprotected position %s x%g at %.2f%s - "
-            "awaiting sign-off",
+            "Protective %s proposed for unprotected position %s x%g at %.2f%s - awaiting sign-off",
             "OCO" if take_profit_price else "stop",
             symbol,
             quantity,
@@ -755,6 +754,28 @@ class OMS:
         self._record(order, "pending_signoff", "protective stop for an unprotected position", None)
         await self._announce_pending(order)
         return order
+
+    def _symbols_to_watch_for_fills(self) -> list[str]:
+        """Symbols a broker-side execution could plausibly arrive for (M48).
+
+        The app's TRACKED quantities, not the broker's positions. A stop firing
+        is precisely the event that removes a position from the broker's list,
+        so asking about what the broker still holds would exclude the one
+        symbol we most need to hear about - the same shape of mistake as
+        bounding the protection query by `status=open`.
+
+        Adopted positions are included by construction: `_filled_quantities`
+        holds them from startup, and their protection was placed in an earlier
+        session. Those are the holdings whose fills the old `after=submitted_at`
+        window could never have returned.
+        """
+        symbols = {
+            symbol for symbol, quantity in self._filled_quantities.items() if abs(quantity) > 1e-6
+        }
+        # Anything with an order in flight too, so a fill cannot arrive for a
+        # symbol that has no tracked quantity yet.
+        symbols.update(order.symbol for order in self._orders.values())
+        return sorted(symbols)
 
     async def absorb_broker_fills(self) -> list[BrokerFill]:
         """Records executions the broker performed that this app did not send.
@@ -777,7 +798,7 @@ class OMS:
             return []
         since = self._last_fill_scan
         try:
-            fills = await source(since)
+            fills = await source(since, self._symbols_to_watch_for_fills())
         except Exception:
             logger.exception("Could not read recent broker fills")
             return []

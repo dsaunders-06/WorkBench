@@ -17,11 +17,13 @@ Two things followed from that, and both bite on the first day a stop fires:
 from __future__ import annotations
 
 import tempfile
+from datetime import timedelta
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
+from qat.data.broker.adapter import Position
 from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.events import OrderFilledEvent
@@ -108,6 +110,64 @@ async def test_the_recorded_exit_price_is_the_real_fill_not_the_stop_level():
     await oms.check_reconciliation()
 
     assert ledger.closed_trades()[0].exit_price == pytest.approx(92.15)
+
+
+@pytest.mark.asyncio
+async def test_the_fill_query_asks_about_what_the_APP_tracks_not_what_the_broker_holds():
+    """M48. A stop firing is precisely the event that removes the position from
+    the broker's list, so bounding the question by the broker's holdings would
+    exclude the one symbol we need to hear about - the same shape of mistake as
+    bounding the protection query by `status=open`."""
+    bus = EventBus()
+    broker, oms = await _opened_position(bus)
+    asked: list[list[str] | None] = []
+    inner = broker.recent_fills
+
+    async def _record(since, symbols=None):
+        asked.append(symbols)
+        return await inner(since, symbols)
+
+    broker.recent_fills = _record  # type: ignore[assignment]
+    oms._last_fill_scan -= timedelta(seconds=1)  # see the note on clock granularity below
+
+    broker.fill_resting_stop("AAA", price=95.0)
+    assert await broker.positions() == [], "the broker no longer holds it"
+
+    await oms.check_reconciliation()
+
+    assert asked and asked[0] is not None
+    assert "AAA" in asked[0], "the symbol whose position just vanished must still be asked about"
+    assert oms.kill_switch.tripped is False
+
+
+@pytest.mark.asyncio
+async def test_an_adopted_position_stopping_out_is_absorbed():
+    """The case the old window could never return. An adopted position's
+    protection was placed in an earlier session, so its `submitted_at` is days
+    old - and the query bounded on submitted_at asked only about the last five
+    minutes."""
+    bus = EventBus()
+    ledger = TradeLedger(bus, tempfile.mkdtemp())
+    await ledger.start()
+    settings = Settings(_env_file=None)
+    switch = KillSwitch()
+    broker = MockBroker(seed=1)
+    # Held before this process existed, protected by an order it never sent.
+    broker._positions["OLD"] = Position(symbol="OLD", quantity=20.0, avg_price=50.0)
+    broker._resting_stops["OLD"] = 45.0
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
+    await oms.adopt_broker_positions()
+    # Windows' clock granularity is coarse enough that construction and the
+    # fill below can land on the same microsecond, and the watermark is
+    # deliberately exclusive. Rewinding it puts the fill unambiguously inside
+    # the window, which is what five minutes of a real session does.
+    oms._last_fill_scan -= timedelta(seconds=1)
+
+    broker.fill_resting_stop("OLD", price=44.80)
+    mismatch = await oms.check_reconciliation()
+
+    assert mismatch is False
+    assert switch.tripped is False
 
 
 @pytest.mark.asyncio

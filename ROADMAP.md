@@ -153,9 +153,9 @@ returns what its name suggests. The corporate-actions work (M39) is the same
 shape again, and should start by measuring what the broker reports through a
 split rather than by reasoning about it.
 
-## M48 - `recent_fills` cannot see the fill it exists to catch  **[OPEN]**
+## M48 - `recent_fills` could not see the fill it exists to catch
 
-Found while measuring for M47, on 5 August, and not yet fixed.
+Found while measuring for M47, on 5 August, and fixed the same day.
 
 `recent_fills` asks Alpaca for `status=CLOSED, after=self._last_fill_scan`,
 where that cursor advances to now on every reconciliation poll - so the window
@@ -187,7 +187,35 @@ submitted and so inside the window by accident.
 `resting_stops` asks about currently-held positions; a stop that fills makes
 its position disappear from `positions()`, so "currently held" is the one set
 guaranteed to exclude it. The query needs the OMS's own tracked quantities,
-which the adapter does not have, so the symbol set has to be passed in.
+which the adapter does not have, so the symbol set is passed in -
+`OMS._symbols_to_watch_for_fills`, built from `_filled_quantities` rather than
+from the broker.
+
+**The fix.** Drop `after=` entirely, bound the query by those symbols the way
+M47 bounds its own, and apply the window to `filled_at` locally - the axis that
+was meant all along. Every order for a tracked symbol now returns, so that
+local check is what stops one poll re-absorbing the account's whole history.
+
+**Measured, because history could not show it.** No protective leg has ever
+filled on this account, and every entry is a market order whose `submitted_at`
+and `filled_at` are the same instant - which is exactly why nothing had ever
+exposed this. The demonstration is therefore structural: take the legs resting
+now and ask whether each query shape can return their order at all, using the
+five-minute cursor the app really runs with. A query that cannot return the
+order can never report its fill.
+
+| | Reachable |
+|---|---|
+| Old shape (`status=closed, after=now-5min`) | **0 of 10** |
+| New shape (`status=all, symbols=<tracked>`) | **10 of 10** |
+
+Ten of ten. Every position in the book would have had its stop-out missed.
+
+**The pattern, for the third time.** M31d, M33d and M47 were all "assume a
+filter returns what its name suggests". `after` is the same mistake in the same
+month - it reads as "activity since" and means "submitted since". The lesson
+already written at the top of this section is now paid for twice: ask the
+broker what its parameters mean, do not read them.
 
 Behind no freeze: this is recording an execution that already happened.
 

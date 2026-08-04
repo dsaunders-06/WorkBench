@@ -73,13 +73,26 @@ class MockBroker:
             self._resting_targets.pop(order.symbol, None)
         return order
 
-    async def recent_fills(self, since: datetime) -> list[BrokerFill]:
+    async def recent_fills(
+        self, since: datetime, symbols: list[str] | None = None
+    ) -> list[BrokerFill]:
         """Protective legs the simulator has executed (M34).
 
         Driven by fill_resting_stop/fill_resting_target rather than by price,
         so a test can say "the stop fired" without simulating a market.
+
+        `symbols` narrows the answer the way the real adapter's query does
+        (M48), so a caller that passes a set which omits a symbol gets the same
+        blind spot here as it would in production. A simulator that quietly
+        answered more fully than the broker would hide the bug rather than
+        reproduce it.
         """
-        return [f for f in self._broker_fills if f.filled_at > since]
+        wanted = set(symbols) if symbols is not None else None
+        return [
+            f
+            for f in self._broker_fills
+            if f.filled_at > since and (wanted is None or f.symbol in wanted)
+        ]
 
     def fill_resting_stop(self, symbol: str, price: float | None = None) -> None:
         """Simulates a resting stop executing at the broker."""

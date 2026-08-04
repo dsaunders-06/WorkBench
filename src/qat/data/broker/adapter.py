@@ -207,7 +207,13 @@ class BrokerAdapter(Protocol):
     # Optional (M34): executions the broker performed on this app's behalf -
     # a resting stop or target filling. Adapters that cannot answer return an
     # empty list, which leaves the previous behaviour exactly as it was.
-    async def recent_fills(self, since: datetime) -> list[BrokerFill]: ...
+    #
+    # `symbols` bounds the question to what the caller is tracking (M48), and
+    # `since` is a FILL-time window - not a "submitted since" one, which is
+    # what Alpaca's own `after=` parameter turns out to mean.
+    async def recent_fills(
+        self, since: datetime, symbols: list[str] | None = None
+    ) -> list[BrokerFill]: ...
 
     # Optional (M31b): protective orders actually resting at the broker, so the
     # app can verify its own belief rather than assume it. Adapters that cannot

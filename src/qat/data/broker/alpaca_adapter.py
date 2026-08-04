@@ -261,6 +261,26 @@ class AlpacaAdapter:
     ) -> dict[str, float]:
         return _protective_from(await self._order_page(symbols, limit, until))
 
+    async def _all_recent_orders(self) -> list[Any]:
+        """The unbounded-by-symbol fallback, for a caller that names no symbols.
+
+        The app's own call always names them, so this is the shape a future
+        caller would reach for without thinking. It is capped and newest-first
+        rather than open-ended, so the worst it can do is read a bounded slice
+        of history.
+        """
+        from alpaca.common.enums import Sort
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.ALL,
+            nested=True,
+            direction=Sort.DESC,
+            limit=_RESTING_SCAN_LIMIT,
+        )
+        return list(await asyncio.to_thread(self._client.get_orders, filter=request))
+
     async def _deep_scan(self, symbol: str) -> dict[str, float]:
         """Looks harder at one symbol before letting it read as unprotected.
 
@@ -301,7 +321,9 @@ class AlpacaAdapter:
         )
         return {}
 
-    async def recent_fills(self, since: datetime) -> list[BrokerFill]:
+    async def recent_fills(
+        self, since: datetime, symbols: list[str] | None = None
+    ) -> list[BrokerFill]:
         """Executions the broker performed that this app did not transmit (M34).
 
         A resting stop or target filling closes a position with no order
@@ -314,23 +336,50 @@ class AlpacaAdapter:
         stop fills at or below its trigger and a target at or above its limit,
         so using the level as a proxy would put a wrong number into every
         realised P&L the promotion gate reads.
-        """
-        from alpaca.trading.enums import QueryOrderStatus
-        from alpaca.trading.requests import GetOrdersRequest
 
-        request = GetOrdersRequest(
-            status=QueryOrderStatus.CLOSED, limit=200, after=since, nested=True
+        **Bounded by symbol and filtered on FILL time (M48).** This asked
+        Alpaca for `after=since`, which reads like "activity since then" and is
+        not: measured on 5 August, `after=` filters on `submitted_at`. The
+        cursor is about five minutes wide, and no protective order is ever five
+        minutes old - a bracket leg's parent was submitted when the position
+        opened, a standalone OCO when it was re-armed. So the one execution
+        this method exists to catch was the one execution it could not see, and
+        the first stop-out would have lost its closed trade AND tripped the
+        kill-switch: M34 defeated in exactly the case it was written for, in a
+        way nothing could notice while the trade count stood at zero.
+
+        `filled_at` is the axis that actually matters, so the window is applied
+        here on the returned orders rather than delegated to a parameter that
+        means something else. The query is bounded the way M47 bounds its own -
+        by the symbols the caller is tracking, which does not age.
+        """
+        if symbols is not None and not symbols:
+            # Nothing tracked, so nothing can have closed behind our back.
+            return []
+        orders = (
+            await self._order_page(symbols, limit=_RESTING_SCAN_LIMIT)
+            if symbols
+            else await self._all_recent_orders()
         )
-        orders = await asyncio.to_thread(self._client.get_orders, filter=request)
         fills: list[BrokerFill] = []
         for order in orders:
             for candidate in _with_legs(order):
+                # Matches `filled` and `partially_filled`, which is the
+                # pre-M48 behaviour and deliberately unchanged: narrowing it
+                # would drop a real execution, and that is a separate question
+                # from which orders are asked for.
                 if str(getattr(candidate, "status", "")).lower().find("filled") < 0:
                     continue
                 quantity = _as_float(getattr(candidate, "filled_qty", None))
                 price = _as_float(getattr(candidate, "filled_avg_price", None))
                 filled_at = getattr(candidate, "filled_at", None)
                 if not quantity or not price or filled_at is None:
+                    continue
+                # The window, applied where it belongs. Every order for a
+                # tracked symbol now comes back, so this is what keeps the
+                # account's whole filled history from being absorbed again on
+                # every poll.
+                if filled_at <= since:
                     continue
                 fills.append(
                     BrokerFill(

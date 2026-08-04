@@ -470,6 +470,97 @@ async def test_a_symbol_the_broad_scan_misses_is_looked_up_before_it_reads_naked
     assert len(client.symbol_queries) > 1
 
 
+# --- M48: the fill of an order submitted long ago ----------------------------
+
+
+_LONG_AGO = datetime(2026, 2, 1, tzinfo=UTC)
+_JUST_NOW = datetime(2026, 8, 5, 12, 0, tzinfo=UTC)
+_WINDOW_OPENED = datetime(2026, 8, 5, 11, 55, tzinfo=UTC)
+
+
+class _StopLegFilledJustNow:
+    id = "leg-1"
+    symbol = "AAPL"
+    side = "sell"
+    status = "filled"
+    stop_price = "180.00"
+    filled_qty = "10"
+    filled_avg_price = "179.55"
+    filled_at = _JUST_NOW
+    submitted_at = _LONG_AGO
+    legs = None
+
+
+class _EntryFilledLongAgo:
+    id = "parent-1"
+    symbol = "AAPL"
+    side = "buy"
+    status = "filled"
+    stop_price = None
+    filled_qty = "10"
+    filled_avg_price = "150.00"
+    filled_at = _LONG_AGO
+    submitted_at = _LONG_AGO
+    legs = [_StopLegFilledJustNow()]
+
+
+@pytest.mark.asyncio
+async def test_a_leg_that_fills_today_is_seen_though_its_parent_is_months_old():
+    """The defect M48 fixes. The query asked Alpaca for `after=since` with a
+    five-minute cursor, and `after=` filters on SUBMITTED_AT - so a protective
+    order placed when the position opened and firing today fell outside the
+    window every time. On the first stop-out that loses the closed trade and
+    trips the kill-switch, which is M34 defeated in the one case it exists
+    for."""
+    adapter, client = _adapter()
+    client.orders = [_EntryFilledLongAgo()]
+
+    fills = await adapter.recent_fills(_WINDOW_OPENED, symbols=["AAPL"])
+
+    assert [f.order_id for f in fills] == ["leg-1"]
+    assert fills[0].side == "sell"
+    assert fills[0].quantity == 10.0
+    assert fills[0].price == pytest.approx(179.55)
+
+
+@pytest.mark.asyncio
+async def test_the_window_is_applied_to_fill_time_not_submission_time():
+    """The entry filled months ago and must not be absorbed again. Every order
+    for a tracked symbol now comes back, so this local check is the only thing
+    standing between one poll and re-absorbing the account's whole history."""
+    adapter, client = _adapter()
+    client.orders = [_EntryFilledLongAgo()]
+
+    fills = await adapter.recent_fills(_WINDOW_OPENED, symbols=["AAPL"])
+
+    assert "parent-1" not in [f.order_id for f in fills]
+
+    # And nothing at all once the window has moved past the leg's fill.
+    assert await adapter.recent_fills(_JUST_NOW, symbols=["AAPL"]) == []
+
+
+@pytest.mark.asyncio
+async def test_the_fill_query_is_bounded_by_symbol_and_not_by_submission_date():
+    adapter, client = _adapter()
+    client.orders = []
+
+    await adapter.recent_fills(_WINDOW_OPENED, symbols=["AAPL", "MSFT"])
+
+    request = client.order_filters[-1]
+    assert request.symbols == ["AAPL", "MSFT"]
+    assert request.after is None, "after= means submitted_at, which is not the question"
+    assert str(request.status).lower().endswith("all")
+    assert request.nested is True
+
+
+@pytest.mark.asyncio
+async def test_tracking_nothing_asks_the_broker_nothing():
+    adapter, client = _adapter()
+
+    assert await adapter.recent_fills(_WINDOW_OPENED, symbols=[]) == []
+    assert client.order_filters == []
+
+
 @pytest.mark.asyncio
 async def test_the_deep_scan_stops_rather_than_walking_forever(monkeypatch, caplog):
     """A capped walk that gives up reports UNPROTECTED, which proposes a
