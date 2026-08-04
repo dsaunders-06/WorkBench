@@ -38,6 +38,7 @@ from qat.domain.performance.reports import (
 from qat.domain.performance.scorecard import build_all_scorecards
 from qat.domain.performance.session_export import export_session
 from qat.domain.performance.summary import PerformanceSummary, build_summary
+from qat.presentation import theme
 from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -46,10 +47,10 @@ _MAX_TRADE_ROWS = 200
 # Matches the market-data poll: nothing here changes faster than the prices.
 _REFRESH_MS = 60_000
 _STATUS_COLOURS = {
-    "promoted": QColor("#1b5e20"),
-    "promoted-below-bar": QColor("#b71c1c"),
-    "eligible": QColor("#1e3a5f"),
-    "not-eligible": QColor("#5b6572"),
+    "promoted": QColor(theme.SUCCESS),
+    "promoted-below-bar": QColor(theme.DANGER),
+    "eligible": QColor(theme.ACCENT),
+    "not-eligible": QColor(theme.MUTED),
 }
 _PROMOTION_COLUMNS = (
     "Strategy",
@@ -233,9 +234,9 @@ class PerformanceScreen(QWidget):
         for row, (label, value, why) in enumerate(rows):
             label_item = QTableWidgetItem(label)
             value_item = QTableWidgetItem(value)
-            value_item.setForeground(QColor("#5b6572") if value == "-" else QColor("#1b5e20"))
+            value_item.setForeground(QColor(theme.MUTED) if value == "-" else QColor(theme.SUCCESS))
             why_item = QTableWidgetItem(why)
-            why_item.setForeground(QColor("#5b6572"))
+            why_item.setForeground(QColor(theme.MUTED))
             for column, item in enumerate((label_item, value_item, why_item)):
                 self.metrics_table.setItem(row, column, item)
         self.metrics_table.resizeColumnsToContents()
@@ -263,7 +264,7 @@ class PerformanceScreen(QWidget):
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 if column == 1:
-                    item.setForeground(_STATUS_COLOURS.get(card.status, QColor("#5b6572")))
+                    item.setForeground(_STATUS_COLOURS.get(card.status, QColor(theme.MUTED)))
                     item.setToolTip(card.summary_line())
                 self.promotion_table.setItem(row, column, item)
         self.promotion_table.resizeColumnsToContents()
@@ -293,7 +294,7 @@ class PerformanceScreen(QWidget):
                 # the colour on the wrong number.
                 if column == _NET_PNL_COLUMN:
                     item.setForeground(
-                        QColor("#1b5e20") if trade.net_pnl > 0 else QColor("#b71c1c")
+                        QColor(theme.SUCCESS) if trade.net_pnl > 0 else QColor(theme.DANGER)
                     )
                 self.trades_table.setItem(row, column, item)
         self.trades_table.resizeColumnsToContents()

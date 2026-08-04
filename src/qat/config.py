@@ -97,6 +97,19 @@ class Settings(BaseSettings):
     # drawdown rails. These rails were dead code before M13; nothing called them.
     equity_poll_seconds: float = Field(default=60.0, gt=0)
 
+    # --- Interface (M45) -----------------------------------------------------
+    # How much the interface explains, and how much it shows.
+    #
+    # "guided"       - every figure carries what it means; advanced controls
+    #                  are absent rather than greyed out.
+    # "standard"     - everything present, explanations on demand.
+    # "professional" - maximum density, explanations off.
+    #
+    # Deliberately NOT a safety control. Warnings, the mode banners, refusal
+    # reasons and the sign-off gate behave identically at all three levels: a
+    # professional user does not get a quieter kill-switch.
+    ui_level: Literal["guided", "standard", "professional"] = "standard"
+
     # --- Storage ---------------------------------------------------------
     storage_backend: Literal["sqlite", "timescale"] = "sqlite"
     database_url: str = "sqlite:///./qat.db"

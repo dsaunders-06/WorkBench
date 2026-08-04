@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from qat.domain import market_calendar as mc
 from qat.domain.session_controller import SessionController
+from qat.presentation import theme
 
 logger = logging.getLogger(__name__)
 
@@ -37,16 +38,16 @@ logger = logging.getLogger(__name__)
 # close, the countdown turns amber.
 ALERT_SECONDS = 30 * 60
 
-_OPEN_COLOUR = "#1b5e20"
-_CLOSED_COLOUR = "#5b6572"
-_ALERT_COLOUR = "#b45309"
+_OPEN_COLOUR = theme.SUCCESS
+_CLOSED_COLOUR = theme.MUTED
+_ALERT_COLOUR = theme.WARNING
 
 # An open market is the single most consequential fact on the Dashboard, so it
 # is a filled banner rather than coloured text (M20). Closed stays deliberately
 # flat: making every state shout is the same as making none of them.
 _BANNER_STYLE = (
     "background-color: {fill}; color: white; padding: 8px; "
-    "border-radius: 4px; font-size: 17px; font-weight: bold;"
+    "border-radius: 4px; font-size: 18px; font-weight: bold;"
 )
 _QUIET_STYLE = "color: {fill}; padding: 8px; font-size: 15px; font-weight: bold;"
 
@@ -172,7 +173,7 @@ class SessionPanel(QFrame):
         # a permanent "ASX closed" row is noise to a US-configured operator.
         self.other_market = QLabel("")
         self.other_market.setStyleSheet(
-            f"color: {_OPEN_COLOUR}; font-size: 12px; font-weight: bold;"
+            f"color: {_OPEN_COLOUR}; font-size: 13px; font-weight: bold;"
         )
         grid.addWidget(self.other_market, 1, 0, 1, 2)
         layout.addLayout(grid)
@@ -214,7 +215,7 @@ class SessionPanel(QFrame):
         self.headline.setStyleSheet(countdown.banner_style)
         self.detail.setText(countdown.detail)
         self.detail.setStyleSheet(
-            f"font-size: 14px; font-weight: bold; color: {countdown.colour};"
+            f"font-size: 15px; font-weight: bold; color: {countdown.colour};"
             if countdown.is_open or countdown.alerting
             else f"font-size: 13px; color: {countdown.colour};"
         )

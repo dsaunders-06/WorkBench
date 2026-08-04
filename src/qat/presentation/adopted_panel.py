@@ -14,18 +14,19 @@ from __future__ import annotations
 from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from qat.domain.oms.adopted import AdoptedPositionReport
+from qat.presentation import theme
 
 # Amber for "you should deal with this", red for "nothing new is being
 # opened until you do". The distinction is the point: an adopted position
 # using some of the budget is a note, one that has exhausted it is a stop.
-_NOTE_COLOUR = "#b45309"
-_BLOCKING_COLOUR = "#b3261e"
+_NOTE_COLOUR = theme.WARNING
+_BLOCKING_COLOUR = theme.DANGER
 
 _HEADLINE_STYLE = (
     "background-color: {fill}; color: white; padding: 8px; "
     "border-radius: 4px; font-size: 15px; font-weight: bold;"
 )
-_BODY_STYLE = "color: #444; padding: 4px 8px; font-size: 12px;"
+_BODY_STYLE = "color: #444; padding: 4px 8px; font-size: 13px;"
 
 
 class AdoptedPositionsPanel(QFrame):

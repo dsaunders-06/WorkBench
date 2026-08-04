@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat.domain.events import MarketDataEvent
+from qat.presentation import theme
 from qat.presentation.runtime import Runtime
 from qat.presentation.widgets import KpiTile
 
@@ -135,7 +136,7 @@ class RiskConsoleScreen(QWidget):
         es_value = portfolio_check["es_975"]
         self.es_tile.set_value(
             f"{es_value:.2%} / {es_limit:.0%}",
-            color="#d9534f" if es_value >= es_limit else "#5cb85c",
+            color=theme.DANGER if es_value >= es_limit else theme.SUCCESS,
         )
         self.concentration_tile.set_value(f"{portfolio_check['single_name_pct']:.2%}")
 

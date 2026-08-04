@@ -57,7 +57,7 @@ class RegimeMonitorScreen(QWidget):
         layout = QVBoxLayout(self)
 
         self.regime_label = QLabel("Regime: (waiting for data...)")
-        self.regime_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        self.regime_label.setStyleSheet("font-size: 15px; font-weight: bold;")
         layout.addWidget(self.regime_label)
 
         self.probability_bars: dict[str, ProbabilityBar] = {}

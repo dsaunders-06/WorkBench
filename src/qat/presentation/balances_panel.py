@@ -33,14 +33,15 @@ from PySide6.QtWidgets import (
 
 from qat.data.broker.account_poller import AccountSnapshot
 from qat.data.broker.adapter import AccountBalances
+from qat.presentation import theme
 
 logger = logging.getLogger(__name__)
 
 NOT_REPORTED = "—"
-_POSITIVE = "#1b5e20"
-_NEGATIVE = "#b71c1c"
-_MUTED = "#5b6572"
-_WARNING = "#b45309"
+_POSITIVE = theme.SUCCESS
+_NEGATIVE = theme.DANGER
+_MUTED = theme.MUTED
+_WARNING = theme.WARNING
 
 
 def money(value: float | None, currency: str | None = None) -> str:

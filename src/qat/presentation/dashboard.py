@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 
 from qat.domain.events import RegimeEvent
 from qat.domain.oms.adopted import assess_adopted_positions
+from qat.presentation import theme
 from qat.presentation.adopted_panel import AdoptedPositionsPanel
 from qat.presentation.balances_panel import BalancesPanel
 from qat.presentation.runtime import Runtime
@@ -57,7 +58,7 @@ class DashboardScreen(QWidget):
         layout.addWidget(self.adopted_panel)
 
         self.regime_header = QLabel("Regime: (waiting for data...)")
-        self.regime_header.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.regime_header.setStyleSheet("font-size: 15px; font-weight: bold;")
         layout.addWidget(self.regime_header)
 
         # The balances panel replaces the old NAV tile (M21). Showing both
@@ -150,7 +151,7 @@ class DashboardScreen(QWidget):
             limit_pct = self.runtime.settings.max_drawdown_limit_pct
             self.drawdown_tile.set_value(
                 f"{drawdown_pct:.2%} / {limit_pct:.0%}",
-                color="#d9534f" if drawdown_pct >= limit_pct else "#5cb85c",
+                color=theme.DANGER if drawdown_pct >= limit_pct else theme.SUCCESS,
             )
 
         if len(self._equity_history) >= _MIN_POINTS_FOR_SHARPE:

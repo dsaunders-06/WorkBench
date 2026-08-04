@@ -44,6 +44,7 @@ from qat.domain.backtester.signal_adapter import generate_signal_series
 from qat.domain.backtester.sizing import FixedFractionalSizer
 from qat.domain.backtester.vectorized_engine import VectorizedBacktester
 from qat.domain.backtester.walk_forward import run_walk_forward
+from qat.presentation import theme
 from qat.presentation.runtime import Runtime
 from qat.presentation.widgets import KpiTile
 
@@ -233,7 +234,9 @@ class WorkbenchScreen(QWidget):
                 item = QTableWidgetItem(value)
                 if column == 3:  # Sharpe: the column the headline is about
                     item.setForeground(
-                        QColor("#1b5e20") if metrics.get("sharpe", 0.0) > 0 else QColor("#b71c1c")
+                        QColor(theme.SUCCESS)
+                        if metrics.get("sharpe", 0.0) > 0
+                        else QColor(theme.DANGER)
                     )
                 self.wf_table.setItem(row, column, item)
         self.wf_table.resizeColumnsToContents()
