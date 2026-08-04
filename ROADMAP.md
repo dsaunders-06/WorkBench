@@ -98,6 +98,52 @@ An external review suggested raising the live-trading bar from 30 closed
 trades to 75-100. Worth deciding after the first 30, when the variance is
 visible rather than assumed.
 
+## How Alpaca actually represents orders - measured, not assumed
+
+Three sessions in a row were disrupted by the same class of mistake: assuming
+how the broker models something rather than asking it. This section records
+what was measured against the live account on 4 August, so the next change does
+not have to rediscover it.
+
+**A protective leg is only returned when its PARENT order is returned.**
+
+Queried against a book holding ten protected positions - six carrying
+standalone OCOs, four carrying brackets attached to entries that had filled:
+
+| Query | Rows | Symbols with a live sell-stop |
+|---|---|---|
+| `status=open, nested=false` | 11 | **0** - legs are not returned as top-level rows at all |
+| `status=open, nested=true` | 11 | 6 - only those whose parent is still `new` |
+| `status=all, nested=true` | 220 | **10** - the four missing ones all have `parent=filled` |
+
+So:
+
+* `nested=false` does not flatten legs into the result. It omits them.
+* `status=open` excludes a filled parent, and takes its still-live `held` legs
+  with it. A bracket's protection becomes invisible the moment the entry fills.
+* Every live protective leg carries status `held`, whatever its parent's state.
+
+**Consequences already paid.** M31d read `resting_stops` as authoritative and
+proposed replacements for six protected positions. M33d taught it to read
+`held` and nested legs, which fixed the OCO case and left the bracket case
+untouched because no bracketed entry had filled yet. On 4 August four did, the
+app declared them unprotected, and proposed four duplicate OCOs - which Alpaca
+refused for insufficient shares, the broker catching what the app could not
+see.
+
+**The shape of the fix.** Ask for `status=all` with `nested=true` and filter
+legs on their OWN status rather than trusting the query. The cost is real:
+11 rows becomes 220, because it returns every order ever placed. It needs
+bounding by date rather than being fetched wholesale on every reconciliation
+poll, and that bound is the part to get right.
+
+**The pattern worth naming.** M34 and M46 were the same mistake about
+identifiers - assuming an id means the same thing on both sides of a boundary.
+M31d, M33d and this are the same mistake about queries - assuming a filter
+returns what its name suggests. The corporate-actions work (M39) is the same
+shape again, and should start by measuring what the broker reports through a
+split rather than by reasoning about it.
+
 ## Not yet addressed - integral to share trading
 
 Found by asking what an equity trading system must handle that this one does
