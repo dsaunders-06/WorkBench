@@ -67,6 +67,17 @@ class OMS:
         # Why a position ended, keyed by symbol until the fill arrives. After
         # the fact the price alone cannot separate a time stop from a signal.
         self._exit_reasons: dict[str, str] = {}
+        # Broker-assigned ids for orders THIS app transmitted (M46).
+        #
+        # `_orders` is keyed by the app's own id, but the adapter overwrites
+        # order.order_id with the broker's on transmit. So a fill arriving from
+        # the broker carries an id that is never a key of `_orders`, and the
+        # "did this app send it" test in absorb_broker_fills matched nothing:
+        # every entry fill was absorbed as if it were a resting protective
+        # order firing, counted a second time, and reconciliation answered the
+        # doubled quantity with the kill-switch. That is what halted the
+        # session on 4 August.
+        self._broker_order_ids: set[str] = set()
         # Serialises sign-off so the "re-check cash against the CURRENT
         # balance" step below is actually a check. Concurrently signed orders
         # each fetch the balance before either has spent it, so both see the
@@ -350,6 +361,10 @@ class OMS:
         # it ourselves would overwrite the one authoritative answer with a
         # guess - which is what the pre-call assignment was.
         self._orders[order_id] = filled
+        # Recorded BEFORE anything else, so an absorb running concurrently can
+        # never see this fill as foreign.
+        if filled.order_id:
+            self._broker_order_ids.add(str(filled.order_id))
 
         # A protective stop is RESTING, not filled (M31d). Counting it as a
         # sell would halve the tracked quantity against a broker that still
@@ -629,6 +644,26 @@ class OMS:
             )
         return lost
 
+    def has_live_buy(self, symbol: str) -> bool:
+        """Whether a buy for this symbol is already awaiting sign-off or in
+        flight at the broker (M46).
+
+        The anti-pyramiding guard asked the broker for POSITIONS, and a
+        transmitted order that has not filled yet is not a position. On
+        4 August two seconds separated MS being transmitted and a fresh signal
+        arriving; the second signal saw no holding and opened the same trade
+        again, for 82 shares against an intended 41.
+
+        The same reasoning the governor already applies to exposure: an order
+        that has been committed is committed, whether or not it has filled.
+        """
+        return any(
+            order.symbol == symbol
+            and order.side == "buy"
+            and order.status in {"pending_signoff", "transmitted"}
+            for order in self._orders.values()
+        )
+
     async def naked_positions(self) -> list[tuple[str, float]]:
         """Held positions with no stop resting at the broker (M31d).
 
@@ -750,8 +785,11 @@ class OMS:
         self._last_fill_scan = datetime.now(UTC)
         absorbed: list[BrokerFill] = []
         for fill in fills:
-            if fill.order_id in self._orders:
-                continue  # this app sent it; sign_off already counted it
+            if fill.order_id in self._broker_order_ids or fill.order_id in self._orders:
+                # This app sent it and sign_off already counted it. Both sets
+                # are checked because an order carries the app's id until it is
+                # transmitted and the broker's afterwards.
+                continue
             if fill.filled_at <= since:
                 continue
             signed = fill.quantity if fill.side == "buy" else -fill.quantity

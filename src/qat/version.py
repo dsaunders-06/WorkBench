@@ -31,7 +31,7 @@ from datetime import UTC, datetime
 # Bump when a milestone ships. Its accuracy is not load-bearing - the commit
 # and the build time beside it are the ground truth, and a stale label is
 # visible precisely because they disagree with it.
-MILESTONE = "M38"
+MILESTONE = "M46"
 
 _UNKNOWN = "unknown"
 

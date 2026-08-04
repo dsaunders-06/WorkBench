@@ -411,6 +411,13 @@ class SignalToOrderBridge:
         if held > 0:
             return  # already long - re-signalling must not pyramid the position
 
+        # A committed order counts even before it fills (M46). Positions alone
+        # miss the window between transmitting an order and the broker
+        # reporting the holding, which is where the duplicate MS entry came
+        # from.
+        if self.oms.has_live_buy(event.symbol):
+            return
+
         await self._submit_entry(event, bars, price, positions)
 
     def _blocked_by_minimum_hold(self, symbol: str, price: float) -> bool:
