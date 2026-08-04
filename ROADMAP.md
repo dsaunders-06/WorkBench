@@ -98,6 +98,105 @@ An external review suggested raising the live-trading bar from 30 closed
 trades to 75-100. Worth deciding after the first 30, when the variance is
 visible rather than assumed.
 
+## Not yet addressed - integral to share trading
+
+Found by asking what an equity trading system must handle that this one does
+not, 4 August, excluding data validation. Sequenced by significance. All of it
+is post-trial: every item except M40 changes which trades happen or how they
+are sized, so it sits behind the validation-phase freeze.
+
+### M39 - Corporate actions
+
+**Nothing in the order, position or protection path knows they exist.**
+`data/validation.py` mentions splits; the trading path has no concept of them.
+
+A 2-for-1 split on a held position produces four independent failures from one
+ordinary event, none of which requires a bug:
+
+* the broker's share count doubles, reconciliation compares tracked 16 against
+  broker 32 and **trips the kill-switch**, halting the session;
+* the resting OCO stop sits at roughly twice the new price - it fills at the
+  open or is nonsense;
+* `open_position_entries.json` still holds the pre-split level, so the re-arm
+  faithfully replaces protection at a price that liquidates the position;
+* the trade ledger's entry price is unadjusted, so P&L and R-multiple on that
+  trade are wrong by the split factor.
+
+Reverse splits, spin-offs, mergers and ticker changes each do some version of
+the same. Historical bars are already split-adjusted (`Adjustment.ALL`, M27a) -
+it is only live positions that are exposed.
+
+The shape of a fix: detect a quantity change the app did not cause and whose
+ratio matches a known corporate action, adjust the tracked quantity, the entry
+record and the resting protection together, and record the adjustment on the
+closed trade so the P&L stays honest. Reconciliation must treat an explained
+ratio change as explained rather than as a discrepancy.
+
+### M40 - Fundamentals are absent from the AI advisory context
+
+`AdvisoryContext` carries symbol, regime, positions, risk metrics, candidate
+signal, backtest stats, macro signal and macro series. It carries **no
+fundamentals at all** - no earnings, no EPS, no valuation, no growth. The AI
+deep-dive reasons about price, regime and macro while knowing nothing about the
+company.
+
+`FundamentalsSource` already exists and already feeds the screener and several
+strategies. Nothing routes it to the advisory layer. This is a regression from
+the original application, where earnings data informed the AI's recommendation.
+
+**Not behind the freeze.** The AI is advisory and cannot place, size or approve
+an order, so adding fundamentals to its context changes no trading decision.
+It is also the cheapest item here - the data is already fetched and cached.
+
+### M41 - Earnings event risk
+
+Fundamentals carry earnings data for screening, but nothing in the trading path
+knows when a held position is about to report. With a 10-day minimum hold and a
+30-day time stop, holding through an announcement is arithmetically
+unavoidable - roughly once a quarter per position.
+
+The gap budget does not cover it. That 6% shock was measured across 28,987
+overnight holds, blending ordinary nights with earnings nights; earnings gaps of
+15-20% are common and a stop does not help, because the price never trades
+there.
+
+Options, in increasing order of intervention: record the earnings date on each
+trade so the trial can measure what holding through one actually costs; size
+down into an announcement; flatten before it. The first is a diagnostic and
+could arguably be done during the trial; the other two change decisions and
+cannot.
+
+### M42 - Partial fills are miscounted
+
+The Alpaca adapter builds requests from `order.quantity` and never writes the
+broker's `filled_qty` back onto the order. `OMS.sign_off` then counts
+`signed_qty = filled.quantity`, so a partially filled buy is recorded at its
+full size while the broker holds less - which reconciliation reads as a
+discrepancy and answers with the kill-switch.
+
+Unlikely on liquid large-caps with market orders, and not unlikely forever. The
+fix is small: read `filled_qty` in the adapter and let the OMS count what the
+broker actually filled.
+
+### M43 - Trading halts
+
+No handling anywhere in the order path. The staleness rail stops a NEW trade
+being sized against a stale quote, which covers entry. It says nothing about the
+case that hurts: the position is held, the symbol is halted, the resting stop
+cannot fill, and it reopens materially lower. Nothing detects the halt and
+nothing flags that a position is currently unexitable.
+
+### M44 - Execution quality
+
+Every order is a market order - `Order.order_type` is only `market` or `stop`,
+and there is no limit-order path. Slippage is modelled at a flat 5bps
+regardless of size, time of day or spread, and market orders in the opening
+minutes are exactly where that assumption is weakest.
+
+M37's `entry_slippage` column measures the gap between assumed and realised on
+every closed trade, so the trial itself will say how wrong the assumption is
+before anything is changed. That measurement should come first.
+
 ## M31b - What the first trading session found  **[COMPLETE]**
 
 The session of 31 July filled **six positions** - CSCO 44, UNP 17, WFC 58,
