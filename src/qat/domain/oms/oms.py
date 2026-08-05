@@ -47,20 +47,36 @@ class _AbsorbedFill:
     filled_at: datetime
     quantity: float
     price: float
+    # False only for a record written before M53, which stored a timestamp and
+    # no quantity. See _absorbed_from_json for why that must read as "finished".
+    quantity_known: bool = True
 
 
 def _absorbed_from_json(entry: object) -> _AbsorbedFill:
     """One `absorbed` entry, in either the M50 or the M53 shape.
 
-    M50 wrote a bare timestamp per order id. A file in that shape is loaded as
-    "seen, quantity unknown" - quantity 0, which makes the whole of any such
-    order eligible to be re-counted. That is the deliberate direction: the file
-    is at most one poll old at startup, adoption has just re-baselined the
-    quantities from the broker anyway, and under-recording a closed trade is the
-    failure this milestone exists to end.
+    M50 wrote a bare timestamp per order id and no quantity. Such a record is
+    loaded as ALREADY FINISHED, and the direction matters more than it looks.
+
+    The alternative - treating the unknown quantity as zero absorbed - makes the
+    whole of that order eligible to be counted a second time. On the file
+    written on 5 August that is a 47-share CVS stop of which 30 were already
+    recorded: re-absorbing it would drive the tracked quantity to -47, record a
+    duplicate closed trade, and trip the kill-switch. That is M46 again, arriving
+    through the migration of the fix for M50.
+
+    So the worst this costs is one legacy fill under-recorded, in a file that is
+    at most a few days old and holds only orders the previous build already
+    absorbed. Under-recording is correctable by hand; double-subtracting halts a
+    session.
     """
     if isinstance(entry, str):
-        return _AbsorbedFill(filled_at=datetime.fromisoformat(entry), quantity=0.0, price=0.0)
+        return _AbsorbedFill(
+            filled_at=datetime.fromisoformat(entry),
+            quantity=0.0,
+            price=0.0,
+            quantity_known=False,
+        )
     if isinstance(entry, dict):
         return _AbsorbedFill(
             filled_at=datetime.fromisoformat(str(entry["filled_at"])),
@@ -905,6 +921,10 @@ class OMS:
             return False
         prior = self._absorbed_fills.get(fill.order_id)
         if prior is not None:
+            if not prior.quantity_known:
+                # Written before M53, so how much was counted is unrecoverable.
+                # Treated as finished - see _absorbed_from_json.
+                return False
             # Seen before - but seen is not the same as finished. An order that
             # is still filling reports the SAME id with a larger filled_qty, so
             # the question is whether anything NEW has executed, not whether the
@@ -957,6 +977,8 @@ class OMS:
         prior = self._absorbed_fills.get(fill.order_id)
         if prior is None:
             return fill
+        if not prior.quantity_known:
+            return None
         delta = fill.quantity - prior.quantity
         if delta <= 1e-9:
             return None

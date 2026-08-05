@@ -450,6 +450,56 @@ async def test_an_order_that_fills_in_pieces_is_counted_in_full():
 
 
 @pytest.mark.asyncio
+async def test_a_pre_m53_fill_record_is_not_re_absorbed(tmp_path):
+    """The migration hazard, and it is the dangerous direction.
+
+    M50 stored a timestamp per order id and no quantity. Reading that as "zero
+    absorbed" makes the WHOLE order eligible again - and the file written on
+    5 August holds a 47-share CVS stop of which 30 were already recorded. Counted
+    twice, tracked goes to -47, a duplicate closed trade is written, and the
+    kill-switch trips. That is M46 arriving through the migration of the fix for
+    M50."""
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    filled_at = datetime.now(UTC) - timedelta(minutes=5)
+    # Byte-for-byte the shape the live file was in.
+    (tmp_path / "absorbed_fills.json").write_text(
+        json.dumps(
+            {
+                "watermark": (filled_at + timedelta(seconds=56)).isoformat(),
+                "absorbed": {"stop-1": filled_at.isoformat()},
+            }
+        ),
+        encoding="utf-8",
+    )
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = MockBroker(seed=1)
+    broker._broker_fills = [
+        BrokerFill(
+            order_id="stop-1",
+            symbol="AAA",
+            side="sell",
+            quantity=47.0,
+            price=95.36,
+            filled_at=filled_at,
+        )
+    ]
+    oms = OMS(
+        broker,
+        RiskEngine(bus, switch, settings=settings),
+        switch,
+        bus=bus,
+        settings=settings,
+    )
+    oms.watch_symbols_for_fills(["AAA"])
+    await oms.adopt_broker_positions()
+
+    assert await oms.absorb_broker_fills() == []
+    assert oms._filled_quantities.get("AAA", 0.0) == pytest.approx(0.0)
+    assert switch.tripped is False
+
+
+@pytest.mark.asyncio
 async def test_a_fully_absorbed_order_is_never_absorbed_again():
     bus = EventBus()
     switch = KillSwitch()
