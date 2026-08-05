@@ -97,7 +97,7 @@ where some were previously write-only:
 | Document | What it holds |
 |---|---|
 | `ROADMAP.md` | Standing rule, operating cadence, the Alpaca order model, M39–M44 unaddressed gaps, and every milestone with its reasoning |
-| `docs/UI_UX_APPROACH.md` | UI/UX plan. Steps 1–2 committed as M45 but **not built or deployed**. Screen work waits for closed trades |
+| `docs/UI_UX_APPROACH.md` | UI/UX plan. Steps 1–2 (design system, expertise plumbing) are done and, since M47, **deployed** — they rode along on master. `theme.py` is consumed by six panels; `ui_level.py` is plumbing no screen reads yet. Steps 3–8 are screen work and wait for closed trades |
 | `docs/PRODUCT_DESCRIPTION.md` | Current capability, written for evaluation, limitations given equal weight |
 | `scripts/manual_body.py` | The user manual's source. Sections 10.3 and 10.5 were corrected for M49 — the manual is not bundled into the executable, so it needs no rebuild of the app |
 | `scripts/watch_session.py` | Live session watcher. `--from-start --no-follow` for morning review |
