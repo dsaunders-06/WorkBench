@@ -31,6 +31,13 @@ _RULES: tuple[tuple[str, str], ...] = (
     ("regime engine has published nothing", "REGIME"),
     ("REGIME ENGINE NOT CLASSIFYING", "REGIME"),
     ("BROKER-SIDE FILL", "CLOSED"),
+    # Startup evidence that M49 and M50 wired up (added 5 August). These are
+    # INFO and match no other rule, so the three lines the operator was told to
+    # watch for would not have appeared at all.
+    ("Broker-fill watermark restored", "RESTORE"),
+    ("open lot(s) to the trade ledger", "RESTORE"),
+    ("closed trade(s) from", "RESTORE"),
+    ("Replayed ", "REPLAY"),
     ("Protective OCO resting", "PROTECT"),
     ("Protective stop resting", "PROTECT"),
     ("Protective OCO proposed", "PROTECT"),
