@@ -334,9 +334,10 @@ Behind no freeze: this is recording an execution that already happened.
 ## Not yet addressed - integral to share trading
 
 Found by asking what an equity trading system must handle that this one does
-not, 4 August, excluding data validation. Sequenced by significance. All of it
-is post-trial: every item except M40 changes which trades happen or how they
-are sized, so it sits behind the validation-phase freeze.
+not, 4 August, excluding data validation. Sequenced by significance. All of what
+remains is post-trial: every item changes which trades happen or how they are
+sized, so it sits behind the validation-phase freeze. **M40 was the one
+exception and is now done** - see its entry below.
 
 ### M39 - Corporate actions
 
@@ -365,21 +366,42 @@ record and the resting protection together, and record the adjustment on the
 closed trade so the P&L stays honest. Reconciliation must treat an explained
 ratio change as explained rather than as a discrepancy.
 
-### M40 - Fundamentals are absent from the AI advisory context
+### M40 - Fundamentals were absent from the AI advisory context  **[DONE]**
 
-`AdvisoryContext` carries symbol, regime, positions, risk metrics, candidate
-signal, backtest stats, macro signal and macro series. It carries **no
-fundamentals at all** - no earnings, no EPS, no valuation, no growth. The AI
-deep-dive reasons about price, regime and macro while knowing nothing about the
-company.
+`AdvisoryContext` carried symbol, regime, positions, risk metrics, candidate
+signal, backtest stats, macro signal and macro series - and **no fundamentals at
+all**. The deep-dive reasoned about price, regime and macro while knowing
+nothing whatever about the company, a regression from the original application
+where earnings informed the recommendation.
 
-`FundamentalsSource` already exists and already feeds the screener and several
-strategies. Nothing routes it to the advisory layer. This is a regression from
-the original application, where earnings data informed the AI's recommendation.
+`FundamentalsSource` already existed, was already cached, and already fed the
+screener and several strategies. Nothing routed it to the advisory layer, so the
+fix needed no new plumbing: both symbol-level call sites reach it through
+`runtime.strategy_engine.fundamentals_source`, and the Workbench had already
+fetched the snapshot to build the signal series it was asking the AI to comment
+on.
 
-**Not behind the freeze.** The AI is advisory and cannot place, size or approve
-an order, so adding fundamentals to its context changes no trading decision.
-It is also the cheapest item here - the data is already fetched and cached.
+**Two things carried deliberately.**
+
+*Absent figures are omitted, not nulled.* A reader given `"roe": null` has to
+know that means "the vendor does not publish it" rather than "it is zero"; a
+reader given nothing at all cannot make that mistake. It is the reasoning behind
+`missing()`, applied to a consumer that is a language model rather than a
+strategy. Measured against the live vendor: JNJ answers 16 fields, CRWD 11 -
+the unprofitable, non-dividend-paying one simply has less to say, and nothing
+invents the difference.
+
+*Synthetic figures announce themselves.* The app falls back to a seeded
+synthetic source when no vendor is configured, and every number it produces is
+invented but entirely plausible - exactly the input a model will reason
+confidently from unless told otherwise. The prompt leads with the warning rather
+than appending it, and `is_synthetic` is stripped from the figures themselves so
+a provenance flag cannot read as a fundamental.
+
+**Not behind the freeze**, and the reason is worth restating: the AI cannot
+place, size or approve an order, so nothing it is told changes a trading
+decision. Nothing here alters what the strategies see - they already had this
+data.
 
 ### M41 - Earnings event risk
 

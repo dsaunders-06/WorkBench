@@ -74,6 +74,24 @@ class AiAdvisorScreen(QWidget):
         self.question_input.clear()
         asyncio.ensure_future(self._ask(question))
 
+    async def _fundamentals_for(self, symbol: str) -> dict[str, object]:
+        """The company's figures, or nothing if they cannot be fetched (M40).
+
+        A vendor lookup failing must not cost the operator their answer: the
+        advisor still has price, regime and macro, and an advisory reply with
+        one input missing is worth more than an error message. The absence is
+        logged rather than shown, because the context itself makes it visible -
+        no fundamentals line appears in the prompt at all.
+        """
+        try:
+            snapshot = await self.runtime.strategy_engine.fundamentals_source.get_fundamentals(
+                symbol
+            )
+        except Exception:
+            logger.exception("Could not fetch fundamentals for %s - asking without them", symbol)
+            return {}
+        return snapshot.available_figures()
+
     async def _ask(self, question: str) -> None:
         self.ask_button.setEnabled(False)
         self.conversation.append(f"<b>You:</b> {question}")
@@ -98,6 +116,7 @@ class AiAdvisorScreen(QWidget):
                 positions=positions,
                 risk_metrics=risk_metrics,
                 candidate_signal={},
+                fundamentals=await self._fundamentals_for(symbol),
                 fetched_notes=[f"User question: {question}"],
             )
             recommendation = await self.runtime.ai_service.get_regime_narrative(context)

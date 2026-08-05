@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from qat.data.fundamentals import FundamentalSnapshot
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.backtester.costs import CostModel
 from qat.domain.backtester.monte_carlo import run_monte_carlo
@@ -305,7 +306,9 @@ class WorkbenchScreen(QWidget):
             # a failing/misconfigured LLM must not discard the results above,
             # but it must be visible rather than silently doing nothing.
             try:
-                await self._render_ai_note(symbol, strategy.name, result, signal_series)
+                await self._render_ai_note(
+                    symbol, strategy.name, result, signal_series, fundamentals
+                )
             except Exception as exc:  # noqa: BLE001 - surfaced to the user below
                 logger.exception("AI robustness note failed")
                 self.ai_note_label.setText(f"AI note unavailable - {exc}")
@@ -345,7 +348,12 @@ class WorkbenchScreen(QWidget):
         self.mc_p95_item.setData(quantiles.loc[0.95].to_numpy())
 
     async def _render_ai_note(
-        self, symbol: str, strategy_name: str, result: BacktestResult, signal_series: pd.Series
+        self,
+        symbol: str,
+        strategy_name: str,
+        result: BacktestResult,
+        signal_series: pd.Series,
+        fundamentals: FundamentalSnapshot | None = None,
     ) -> None:
         context = AdvisoryContext(
             symbol=symbol,
@@ -358,6 +366,10 @@ class WorkbenchScreen(QWidget):
                 "last_target_exposure": float(signal_series.iloc[-1]),
             },
             backtest_stats=result.metrics,
+            # Already fetched for the signal series itself (M40) - the note was
+            # commenting on a fundamentals-driven strategy while knowing none of
+            # the fundamentals that drove it.
+            fundamentals=fundamentals.available_figures() if fundamentals is not None else {},
         )
         recommendation = await self.runtime.ai_service.get_regime_narrative(context)
         flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"

@@ -70,6 +70,23 @@ class FundamentalSnapshot:
             and getattr(self, field.name) is not None
         )
 
+    def available_figures(self) -> dict[str, object]:
+        """The figures this snapshot can actually answer, as a plain dict (M40).
+
+        Absent fields are OMITTED rather than rendered as null. A reader given
+        `"roe": null` has to know that means "the vendor does not publish it"
+        and not "it is zero"; a reader given nothing at all cannot make that
+        mistake. It is the same reasoning `missing()` exists for, applied to a
+        consumer that is a language model rather than a strategy.
+
+        `sector` is always present by construction, and `is_synthetic` rides
+        along because a figure's provenance matters at least as much as its
+        value to anything reasoning about it.
+        """
+        figures: dict[str, object] = {"sector": self.sector, "is_synthetic": self.is_synthetic}
+        figures.update({name: getattr(self, name) for name in self.available_fields()})
+        return figures
+
 
 class FundamentalsSource(Protocol):
     async def get_fundamentals(self, symbol: str) -> FundamentalSnapshot: ...
