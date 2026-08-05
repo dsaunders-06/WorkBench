@@ -39,7 +39,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, Protocol, cast
 
 import pandas as pd
 
@@ -56,6 +56,27 @@ from qat.domain.risk_engine.engine import OrderCandidate
 logger = logging.getLogger(__name__)
 
 _ENTRIES_FILENAME = "open_position_entries.json"
+
+
+class _LotStore(Protocol):
+    """The slice of the trade ledger this bridge needs to rebuild entry lots.
+
+    Narrower than passing TradeLedger itself: the bridge already takes the
+    ledger as a ClosedTradeSource for sizing, and that protocol is about closed
+    trades. Restoring lots is a different question and gets its own shape.
+    """
+
+    def open_lots(self, symbol: str | None = None) -> list[Any]: ...
+
+    def restore_open_lot(
+        self,
+        symbol: str,
+        quantity: float,
+        price: float,
+        stop_price: float | None,
+        strategy: str | None,
+        opened_at: datetime,
+    ) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,8 +203,68 @@ class SignalToOrderBridge:
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
         await self.restore_open_lots()
+        await self.replay_missed_exits()
         await self.rearm_protective_stops()
         self._sweep_task = asyncio.create_task(self._sweep_protection())
+
+    async def replay_missed_exits(self) -> list[str]:
+        """Records exits that executed while this application was not running.
+
+        `restore_open_lots` rebuilds lots for what is HELD, which is exactly the
+        set that excludes these: a stop that fired while the app was down closed
+        its position, so the symbol is gone from the broker and nothing at
+        startup would rebuild the lot its exit needs to close against. The
+        replayed sell would then find no lot and record nothing - the M49 defect
+        surviving inside the M50 fix.
+
+        So the fills are looked at BEFORE they are absorbed, the entry lot is
+        rebuilt from the recorded entry, and only then is the exit applied.
+
+        The quantity is not touched for these - `adopt_broker_positions` already
+        read the post-exit position list from the broker. That separation is the
+        whole difficulty of M50 and it lives in `absorb_broker_fills`; this
+        method exists only to make sure the record has something to attach to.
+        """
+        ledger = self._lot_store()
+        # The symbols this app believed it held when it last ran. Without this
+        # the query asks about nothing at all: the broker has dropped the closed
+        # position and a fresh process adopted a book that never mentioned it,
+        # so both of the sets the OMS can build on its own are empty for exactly
+        # the symbol whose exit needs recording.
+        self.oms.watch_symbols_for_fills(self._entries)
+        try:
+            missed = await self.oms.missed_fills()
+        except Exception:
+            logger.exception("Could not check for exits missed while the app was not running")
+            return []
+        if not missed:
+            return []
+
+        if ledger is not None:
+            for fill in missed:
+                entry = self._entries.get(fill.symbol)
+                if fill.side != "sell" or entry is None or ledger.open_lots(fill.symbol):
+                    continue
+                ledger.restore_open_lot(
+                    symbol=fill.symbol,
+                    quantity=fill.quantity,
+                    price=entry.price,
+                    stop_price=entry.stop_price,
+                    strategy=entry.strategy or self._sole_deployed_strategy(),
+                    opened_at=entry.opened_at,
+                )
+
+        absorbed = await self.oms.absorb_broker_fills(record_only=True)
+        replayed = sorted({fill.symbol for fill in absorbed})
+        if replayed:
+            logger.warning(
+                "Replayed %d execution(s) that happened while this application was not "
+                "running: %s. These are recorded as closed trades now; the position counts "
+                "were already correct, because startup reads them from the broker.",
+                len(absorbed),
+                ", ".join(replayed),
+            )
+        return replayed
 
     async def restore_open_lots(self) -> list[str]:
         """Gives the trade ledger back the entry lots it forgot (M49).
@@ -204,8 +285,8 @@ class SignalToOrderBridge:
         one - the same rule `rearm_protective_stops` applies to an unknown
         stop.
         """
-        ledger = self.trade_ledger
-        if ledger is None or not hasattr(ledger, "restore_open_lot"):
+        ledger = self._lot_store()
+        if ledger is None:
             return []
         try:
             positions = await self.oms.broker.positions()
@@ -247,6 +328,15 @@ class SignalToOrderBridge:
                 ", ".join(sorted(unknown)),
             )
         return restored
+
+    def _lot_store(self) -> _LotStore | None:
+        """The ledger, if it can hold entry lots. A ClosedTradeSource that
+        cannot is still perfectly usable for sizing, so its absence is not an
+        error - it simply means there is nothing to restore into."""
+        ledger = self.trade_ledger
+        if ledger is None or not hasattr(ledger, "restore_open_lot"):
+            return None
+        return cast("_LotStore", ledger)
 
     def _sole_deployed_strategy(self) -> str | None:
         """The strategy to credit an entry that predates M49's record of one.

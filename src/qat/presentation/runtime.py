@@ -392,7 +392,15 @@ class Runtime:
         # decision is journalled in every execution mode (M20), not only the
         # unattended ones.
         decision_journal = DecisionJournal(settings.data_dir)
-        oms = OMS(broker, risk_engine, kill_switch, bus=bus, journal=decision_journal)
+        oms = OMS(
+            broker,
+            risk_engine,
+            kill_switch,
+            bus=bus,
+            journal=decision_journal,
+            # Gives the fill watermark somewhere to survive a restart (M50).
+            settings=settings,
+        )
         # Shared by every screen so the account is read once per interval
         # regardless of how many are watching (M21).
         account_poller = AccountPoller(broker, interval_seconds=settings.account_poll_seconds)

@@ -216,24 +216,54 @@ deployed - `swing`, confirmed by the operator as the only strategy ever
 tested - and to nothing when two are running, where guessing would fabricate an
 attribution inside a per-strategy promotion decision.
 
-## M50 - The absorb watermark does not survive a restart  **[OPEN]**
+## M50 - The absorb watermark did not survive a restart
 
-`OMS._last_fill_scan` starts at construction, so a protective fill that lands
-while the app is down is never absorbed. Reconciliation will not trip, because
-adoption re-baselines quantities from the broker - but the closed trade is lost,
-which after M49 is the only part that still matters.
+`OMS._last_fill_scan` started at construction, so a protective fill that landed
+while the app was down was never asked for. Reconciliation did not trip -
+adoption re-baselines quantities from the broker - but the closed trade was
+lost, which after M49 is the only part that still matters.
 
 Narrower than M49: it needs the app to be down, or restarting, at the moment of
 the fill. Not negligible - the app restarted three times during the 4 August
-session alone, and each restart opens a window of up to the poll interval.
+session alone, and each restart opened a window of up to the poll interval.
 
-**The trap.** Simply persisting the watermark reintroduces M46. On restart,
+**The trap, as predicted.** Simply persisting the watermark reintroduces M46:
 `adopt_broker_positions` has already set `_filled_quantities` from the CURRENT
-broker positions, so re-absorbing a sell from before the restart would subtract
-it a second time and trip the kill-switch on arithmetic. The fix has to
-separate the two things absorption currently does at once: **publish the fill
-for the record** (so the ledger sees it) without **re-applying it to the
-quantity arithmetic** (which adoption already accounts for).
+broker positions, so re-absorbing a pre-restart sell subtracts the same shares
+twice and trips the kill-switch on arithmetic. Absorption has to be split into
+**recording the fill** and **applying it to the quantity arithmetic**.
+
+**The trap's obvious solution was also wrong.** The first attempt decided
+whether a fill was already in the baseline by comparing `filled_at` against the
+moment adoption ran. That is the right *concept* and an unusable *mechanism*:
+the two stamps can land in the same clock tick, and each way of breaking the tie
+trips the kill-switch from one side or the other. It failed three separate tests
+before the design changed rather than the boundary.
+
+The mechanism that works asks nobody's clock. A replay records the fills and
+then **re-reads the positions from the broker**, which is the only thing that
+actually knows what is held. Adoption already uses that principle; this extends
+it. `_adopted_at` was deleted.
+
+**What makes a replay safe to repeat** is `absorbed_fills.json`, holding the
+watermark plus the ids of fills already recorded, pruned to 30 days. A watermark
+alone cannot say whether a fill on its boundary was recorded, and recording a
+closed trade twice would inflate the very count the promotion gate reads. The
+watermark advances only after a pass completes, so a crash replays rather than
+skips - which is safe precisely because the ids make it idempotent.
+
+**A third instance of the same lesson.** The replay found nothing at first,
+because both symbol sets the OMS can build are empty for exactly the symbol it
+needs: the broker has dropped the closed position, and a fresh process adopted a
+book that never mentioned it. Bound by what the app BELIEVED it held - the entry
+records - via `OMS.watch_symbols_for_fills`. M47 bounded by held symbols, M48 by
+tracked symbols, M50 by remembered ones; each time the wrong set was the one
+that looked natural from where the query lived.
+
+Also fixed here: the absorbed fill's `OrderFilledEvent` now carries
+`ts=fill.filled_at` rather than the time it was noticed. A replayed exit can be
+days older than the pass that finds it, and the ledger stamps `closed_at` from
+that field - so without it the evidence would carry holding periods nobody held.
 
 ## M48 - `recent_fills` could not see the fill it exists to catch
 

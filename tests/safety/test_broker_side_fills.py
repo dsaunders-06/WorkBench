@@ -189,6 +189,148 @@ async def test_an_adopted_position_stopping_out_becomes_a_closed_trade(tmp_path)
     assert switch.tripped is False
 
 
+def _entries_file(tmp_path, symbol: str = "OLD") -> None:
+    (tmp_path / "open_position_entries.json").write_text(
+        json.dumps(
+            {
+                symbol: {
+                    "opened_at": "2026-07-20T00:00:00+00:00",
+                    "price": 50.0,
+                    "stop_price": 45.0,
+                    "target_price": 60.0,
+                    "strategy": "swing",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_stop_that_fired_while_the_app_was_down_becomes_a_closed_trade(tmp_path):
+    """M50, and the whole point of it. The watermark started at construction, so
+    a fill from before this process existed was never asked for - and adoption
+    re-baselines what is HELD while saying nothing about what closed. The trade
+    was simply gone."""
+    _entries_file(tmp_path)
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+
+    # --- session one: the app runs, then stops -----------------------------
+    bus_one = EventBus()
+    broker = MockBroker(seed=1)
+    broker._positions["OLD"] = Position(symbol="OLD", quantity=20.0, avg_price=50.0)
+    broker._resting_stops["OLD"] = 45.0
+    oms_one = OMS(
+        broker,
+        RiskEngine(bus_one, KillSwitch(), settings=settings),
+        KillSwitch(),
+        bus=bus_one,
+        settings=settings,
+    )
+    await oms_one.adopt_broker_positions()
+    await oms_one.absorb_broker_fills()  # persists the watermark
+    assert (tmp_path / "absorbed_fills.json").exists()
+    # A second of session one elapsing before it stopped. Without this the
+    # watermark and the fill below land in the same clock tick - Windows'
+    # resolution is coarse enough that they do - and the fill reads as older
+    # than the last scan, which no real five-minute cadence ever produces.
+    oms_one._last_fill_scan -= timedelta(seconds=1)
+    oms_one._save_fill_state()
+
+    # --- the app is not running, and the stop fires ------------------------
+    broker.fill_resting_stop("OLD", price=44.80)
+    assert await broker.positions() == []
+
+    # --- session two: a fresh process, same account ------------------------
+    bus_two = EventBus()
+    switch = KillSwitch()
+    ledger = TradeLedger(bus_two, tmp_path, settings=settings)
+    await ledger.start()
+    oms_two = OMS(
+        broker,
+        RiskEngine(bus_two, switch, settings=settings),
+        switch,
+        bus=bus_two,
+        settings=settings,
+    )
+    bridge = SignalToOrderBridge(bus_two, oms_two, settings=settings, trade_ledger=ledger)
+    await oms_two.adopt_broker_positions()
+    replayed = await bridge.replay_missed_exits()
+
+    assert replayed == ["OLD"]
+    trades = ledger.closed_trades()
+    assert len(trades) == 1
+    assert trades[0].exit_price == pytest.approx(44.80)
+    assert trades[0].entry_price == pytest.approx(50.0)
+    assert trades[0].strategy == "swing"
+    # The exit is stamped when it FILLED, not when it was noticed.
+    assert trades[0].closed_at > trades[0].opened_at
+
+    # And the arithmetic is untouched: adoption already read the post-exit book.
+    assert await oms_two.check_reconciliation() is False
+    assert switch.tripped is False
+
+
+@pytest.mark.asyncio
+async def test_a_replayed_exit_is_not_recorded_twice_by_the_next_restart(tmp_path):
+    """The watermark alone cannot say whether a fill on its boundary was already
+    recorded. Recording a closed trade twice would inflate the very count the
+    promotion gate reads, so the absorbed ids are remembered too."""
+    _entries_file(tmp_path)
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+    broker = MockBroker(seed=1)
+    broker._positions["OLD"] = Position(symbol="OLD", quantity=20.0, avg_price=50.0)
+    broker._resting_stops["OLD"] = 45.0
+
+    bus_one = EventBus()
+    oms_one = OMS(
+        broker,
+        RiskEngine(bus_one, KillSwitch(), settings=settings),
+        KillSwitch(),
+        bus=bus_one,
+        settings=settings,
+    )
+    await oms_one.adopt_broker_positions()
+    await oms_one.absorb_broker_fills()
+    oms_one._last_fill_scan -= timedelta(seconds=1)  # see the note on clock granularity above
+    oms_one._save_fill_state()
+    broker.fill_resting_stop("OLD", price=44.80)
+
+    async def _one_session() -> int:
+        bus = EventBus()
+        switch = KillSwitch()
+        ledger = TradeLedger(bus, tmp_path, settings=settings)
+        await ledger.start()
+        oms = OMS(
+            broker,
+            RiskEngine(bus, switch, settings=settings),
+            switch,
+            bus=bus,
+            settings=settings,
+        )
+        bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+        await oms.adopt_broker_positions()
+        await bridge.replay_missed_exits()
+        return len(ledger.closed_trades())
+
+    assert await _one_session() == 1
+    # A second restart must find nothing left to replay.
+    assert await _one_session() == 1
+
+
+@pytest.mark.asyncio
+async def test_without_a_data_directory_the_previous_behaviour_is_unchanged(tmp_path):
+    """No settings means no watermark file, which means no replay - exactly the
+    pre-M50 behaviour. Degrading to merely incomplete is the right failure."""
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = MockBroker(seed=1)
+    oms = OMS(broker, RiskEngine(bus, switch), switch, bus=bus)
+
+    assert await oms.missed_fills() == []
+    assert not (tmp_path / "absorbed_fills.json").exists()
+
+
 @pytest.mark.asyncio
 async def test_a_position_with_no_entry_record_is_named_not_invented(tmp_path):
     """The broker knows what it paid but not when it was bought. A fabricated

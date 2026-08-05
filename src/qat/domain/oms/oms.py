@@ -13,12 +13,16 @@ the broker. See tests/safety/test_no_order_without_signoff.py.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from datetime import UTC, datetime
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 
+from qat.config import Settings
 from qat.data.broker.adapter import BrokerAdapter, BrokerFill, Order
 from qat.data.broker.mock_broker import new_order_id
 from qat.domain.bus import EventBus
@@ -28,6 +32,12 @@ from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
 logger = logging.getLogger(__name__)
+
+_FILL_STATE_FILENAME = "absorbed_fills.json"
+# How long an absorbed fill's id is remembered. Only needs to outlast the gap
+# between the watermark and now - days, not weeks - but the file is tiny and a
+# generous window costs nothing against the risk of recording a trade twice.
+_ABSORBED_ID_RETENTION = timedelta(days=30)
 
 
 class OMS:
@@ -40,6 +50,7 @@ class OMS:
         symbol_allow_list: set[str] | None = None,
         bus: EventBus | None = None,
         journal: DecisionJournal | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.broker = broker
         # Every order decision is journalled, in every execution mode (M20).
@@ -60,10 +71,26 @@ class OMS:
         # governor can measure aggregate risk-at-stop without re-querying open
         # orders from the broker on every candidate.
         self._position_stops: dict[str, float] = {}
-        # Watermark for absorbing broker-side executions (M34). Starts at
-        # construction, so a fill that happened before this process existed is
-        # already reflected in the adopted baseline rather than double-counted.
-        self._last_fill_scan = datetime.now(UTC)
+        # Watermark for absorbing broker-side executions (M34), now surviving a
+        # restart (M50).
+        #
+        # It started at construction, which reads as "a fill before this process
+        # existed is already in the adopted baseline" - true of the QUANTITY and
+        # false of the RECORD. Adoption re-baselines what is held; it says
+        # nothing about what closed. So a stop firing while the app was down
+        # left no closed trade at all, and the app restarted three times during
+        # the 4 August session alone.
+        #
+        # `_absorbed_fills` is what makes replaying safe: the watermark alone
+        # cannot say whether a fill on the boundary was already recorded, and
+        # guessing either way loses a trade or records it twice.
+        self.settings = settings
+        self._fill_state_path = (
+            Path(settings.data_dir) / _FILL_STATE_FILENAME if settings is not None else None
+        )
+        self._absorbed_fills: dict[str, datetime] = {}
+        self._fill_watch_hint: set[str] = set()
+        self._last_fill_scan = self._load_fill_state()
         # Why a position ended, keyed by symbol until the fill arrives. After
         # the fact the price alone cannot separate a time stop from a signal.
         self._exit_reasons: dict[str, str] = {}
@@ -755,6 +782,103 @@ class OMS:
         await self._announce_pending(order)
         return order
 
+    def _load_fill_state(self) -> datetime:
+        """The watermark the previous run reached, and what it had recorded.
+
+        No file, no settings, or an unreadable file all mean "start from now",
+        which is exactly the pre-M50 behaviour: nothing is replayed, and nothing
+        can be double-recorded either. Degrading to the old behaviour is the
+        right failure here, because the old behaviour was merely incomplete
+        rather than wrong.
+        """
+        if self._fill_state_path is None:
+            return datetime.now(UTC)
+        try:
+            raw = json.loads(self._fill_state_path.read_text(encoding="utf-8"))
+            watermark = datetime.fromisoformat(raw["watermark"])
+            absorbed = {
+                str(order_id): datetime.fromisoformat(stamp)
+                for order_id, stamp in (raw.get("absorbed") or {}).items()
+            }
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            return datetime.now(UTC)
+        self._absorbed_fills = absorbed
+        logger.info(
+            "Broker-fill watermark restored to %s - executions since then are replayed for "
+            "the record, with %d already-recorded fill(s) remembered",
+            watermark.isoformat(timespec="seconds"),
+            len(absorbed),
+        )
+        return watermark
+
+    def _save_fill_state(self) -> None:
+        """Written after each absorb pass, not at shutdown: the restart this
+        exists for is the one nobody planned."""
+        if self._fill_state_path is None:
+            return
+        cutoff = datetime.now(UTC) - _ABSORBED_ID_RETENTION
+        self._absorbed_fills = {
+            order_id: stamp for order_id, stamp in self._absorbed_fills.items() if stamp >= cutoff
+        }
+        payload = {
+            "watermark": self._last_fill_scan.isoformat(),
+            "absorbed": {
+                order_id: stamp.isoformat() for order_id, stamp in self._absorbed_fills.items()
+            },
+        }
+        try:
+            self._fill_state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._fill_state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            logger.exception("Could not persist the broker-fill watermark")
+
+    async def missed_fills(self) -> list[BrokerFill]:
+        """Executions since the watermark that this app has not recorded (M50).
+
+        Read-only on purpose. The caller needs to see what is about to be
+        absorbed BEFORE it is, because a position that closed while the app was
+        down is gone from the broker - so nothing at startup would otherwise
+        rebuild the entry lot its exit has to close against, and the replayed
+        trade would record nothing. See SignalToOrderBridge.replay_missed_exits.
+        """
+        source = getattr(self.broker, "recent_fills", None)
+        if source is None:
+            return []
+        try:
+            fills = await source(self._last_fill_scan, self._symbols_to_watch_for_fills())
+        except Exception:
+            logger.exception("Could not read broker fills missed while the app was not running")
+            return []
+        return [fill for fill in fills if self._is_foreign_unrecorded(fill)]
+
+    def _is_foreign_unrecorded(self, fill: BrokerFill) -> bool:
+        """Whether this fill is one this app neither sent nor has already
+        recorded."""
+        if fill.order_id in self._broker_order_ids or fill.order_id in self._orders:
+            # This app sent it and sign_off already counted it. Both sets are
+            # checked because an order carries the app's id until it is
+            # transmitted and the broker's afterwards.
+            return False
+        if fill.order_id in self._absorbed_fills:
+            # Recorded by an earlier pass, possibly in an earlier process.
+            return False
+        return fill.filled_at > self._last_fill_scan
+
+    def watch_symbols_for_fills(self, symbols: Iterable[str]) -> None:
+        """Symbols to ask about even though nothing here tracks a position in
+        them (M50).
+
+        A stop that fired while the app was down leaves NOTHING behind on this
+        side: the broker no longer lists the position, and a fresh process
+        adopts a book that never mentions it. Both of the obvious symbol sets
+        are therefore empty for precisely the symbol whose exit needs recording.
+
+        The caller that does know is the one holding the entry records - it
+        believed it held these positions when it last ran. Registered once at
+        startup and bounded by the number of positions ever open at a time.
+        """
+        self._fill_watch_hint.update(str(symbol) for symbol in symbols)
+
     def _symbols_to_watch_for_fills(self) -> list[str]:
         """Symbols a broker-side execution could plausibly arrive for (M48).
 
@@ -775,9 +899,12 @@ class OMS:
         # Anything with an order in flight too, so a fill cannot arrive for a
         # symbol that has no tracked quantity yet.
         symbols.update(order.symbol for order in self._orders.values())
+        # And anything a caller believes it held but this process has no record
+        # of - see watch_symbols_for_fills.
+        symbols.update(self._fill_watch_hint)
         return sorted(symbols)
 
-    async def absorb_broker_fills(self) -> list[BrokerFill]:
+    async def absorb_broker_fills(self, record_only: bool = False) -> list[BrokerFill]:
         """Records executions the broker performed that this app did not send.
 
         Only fills for orders this process did not originate are applied - an
@@ -803,32 +930,41 @@ class OMS:
             logger.exception("Could not read recent broker fills")
             return []
 
-        self._last_fill_scan = datetime.now(UTC)
         absorbed: list[BrokerFill] = []
         for fill in fills:
-            if fill.order_id in self._broker_order_ids or fill.order_id in self._orders:
-                # This app sent it and sign_off already counted it. Both sets
-                # are checked because an order carries the app's id until it is
-                # transmitted and the broker's afterwards.
+            if not self._is_foreign_unrecorded(fill):
                 continue
-            if fill.filled_at <= since:
-                continue
-            signed = fill.quantity if fill.side == "buy" else -fill.quantity
-            self._filled_quantities[fill.symbol] = (
-                self._filled_quantities.get(fill.symbol, 0.0) + signed
-            )
-            if abs(self._filled_quantities.get(fill.symbol, 0.0)) < 1e-6:
-                # Flat: whatever was protecting it went with it at the broker.
-                self._position_stops.pop(fill.symbol, None)
+            # The M50 trap, and the reason this is not simply "persist the
+            # watermark". A fill from before the baseline was taken is ALREADY
+            # in `_filled_quantities`, because adoption read it from the
+            # broker's own position list. Applying it again subtracts the same
+            # shares twice and trips the kill-switch on arithmetic - M46 by a
+            # different route. It still has to be RECORDED: adoption re-baselines
+            # what is held and says nothing about what closed.
+            if not record_only:
+                signed = fill.quantity if fill.side == "buy" else -fill.quantity
+                self._filled_quantities[fill.symbol] = (
+                    self._filled_quantities.get(fill.symbol, 0.0) + signed
+                )
+                if abs(self._filled_quantities.get(fill.symbol, 0.0)) < 1e-6:
+                    # Flat: whatever was protecting it went with it at the broker.
+                    self._position_stops.pop(fill.symbol, None)
+            self._absorbed_fills[fill.order_id] = fill.filled_at
             absorbed.append(fill)
             logger.warning(
                 "BROKER-SIDE FILL absorbed: %s %g %s at %.2f (order %s) - a resting "
-                "protective order executed, and this is now a closed trade",
+                "protective order executed, and this is now a closed trade%s",
                 fill.side,
                 fill.quantity,
                 fill.symbol,
                 fill.price,
                 fill.order_id,
+                (
+                    ". It executed while this application was not running, so it is recorded "
+                    "but not re-counted"
+                    if record_only
+                    else ""
+                ),
             )
             if self.bus is not None:
                 await self.bus.publish(
@@ -841,9 +977,52 @@ class OMS:
                         strategy=None,
                         operator="broker (protective order)",
                         exit_reason=self._protective_exit_reason(fill),
+                        # When it FILLED, not when we noticed (M50). The ledger
+                        # stamps closed_at from this, and a replayed exit can be
+                        # days older than the pass that finds it - which would
+                        # put a holding period nobody held into the evidence.
+                        ts=fill.filled_at,
                     )
                 )
+
+        if record_only and absorbed:
+            # The M50 trap, and why this is not simply "persist the watermark".
+            # These executions happened before this process read the account, so
+            # `_filled_quantities` ALREADY reflects them - applying them again
+            # would subtract the same shares twice and trip the kill-switch on
+            # arithmetic, which is M46 arriving by a different route.
+            #
+            # Rather than deciding from timestamps whether a fill is inside the
+            # baseline - two clocks microseconds apart cannot answer that, and
+            # guessing either way trips the kill-switch from one side or the
+            # other - the quantities are simply re-read from the broker, which
+            # is the only thing that actually knows.
+            await self._resync_tracked_quantities()
+
+        # Advanced and persisted only after the pass, so a crash mid-loop
+        # replays rather than skips - and `_absorbed_fills` is what makes a
+        # replay safe to repeat.
+        self._last_fill_scan = datetime.now(UTC)
+        self._save_fill_state()
         return absorbed
+
+    async def _resync_tracked_quantities(self) -> None:
+        """Re-reads the position baseline from the broker after a replay.
+
+        Deliberately quiet, unlike `adopt_broker_positions`: adoption is the
+        event worth announcing, and this is the same read repeated moments later
+        for a known reason.
+        """
+        try:
+            positions = await self.broker.positions()
+        except Exception:
+            logger.exception("Could not re-read positions after replaying missed executions")
+            return
+        self._filled_quantities = {pos.symbol: pos.quantity for pos in positions}
+        held = set(self._filled_quantities)
+        for symbol in [s for s in self._position_stops if s not in held]:
+            # Flat: whatever was protecting it went with it at the broker.
+            self._position_stops.pop(symbol, None)
 
     def _protective_exit_reason(self, fill: BrokerFill) -> str:
         """Which leg of the OCO fired, decided by the level it landed on.
