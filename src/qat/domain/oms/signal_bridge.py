@@ -777,7 +777,35 @@ class SignalToOrderBridge:
             take_profit_price=take_profit_price,
         )
 
-        account = await self.oms.broker.account()
+        # A broker blip must REFUSE the signal, not throw it (M54).
+        #
+        # This call sat outside every guard. On 6 August Alpaca returned HTTP
+        # 500 for ninety seconds, the exception escaped through the event bus,
+        # and the signal vanished - no order, no refusal, no journal entry,
+        # nothing on any screen. Only the stack trace said it had ever existed.
+        #
+        # M38 made exactly this argument about the risk evaluation inside
+        # OMS.submit_order and wrapped it there; this fetch is upstream of that
+        # guard and was missed. The neighbouring paths already got it right -
+        # `_current_positions` falls back to its cache, the equity poll logs and
+        # continues - so the rail that threw was the odd one out.
+        #
+        # A rail that refuses is visible and auditable. A rail that throws is
+        # neither, and the trial is built on the record rather than on the fill.
+        try:
+            account = await self.oms.broker.account()
+        except Exception as exc:  # noqa: BLE001 - surfaced as a refusal, never swallowed
+            logger.warning(
+                "Could not read the account to size %s (%s: %s) - the signal is refused and "
+                "recorded rather than lost. It will be reconsidered on the next tick.",
+                symbol,
+                type(exc).__name__,
+                exc,
+            )
+            self.oms.record_unsized_signal(
+                symbol, side, strategy, f"account unavailable: {type(exc).__name__}"
+            )
+            return
         existing_weights = {pos.symbol: pos.quantity * pos.avg_price for pos in positions}
         # Real return series for what is already held (M33). This was an empty
         # dict with a comment calling it a documented simplification, and it

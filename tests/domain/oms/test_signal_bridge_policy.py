@@ -16,6 +16,7 @@ import pytest
 from qat.config import Settings
 from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
+from qat.domain.decision_journal import DecisionJournal
 from qat.domain.events import MarketDataEvent, SignalEvent
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
@@ -25,7 +26,9 @@ from qat.domain.risk_engine.kill_switch import KillSwitch
 _SYMBOL = "AAA"
 
 
-def _build(**settings_kwargs: object) -> tuple[SignalToOrderBridge, OMS, MockBroker]:
+def _build(
+    journal: DecisionJournal | None = None, **settings_kwargs: object
+) -> tuple[SignalToOrderBridge, OMS, MockBroker]:
     # Unit-scale fixtures: a hundred shares of a $100 stock puts tens of
     # dollars at risk, so the M27 cost rail correctly refuses them as too
     # small to carry a $6-a-side commission. These tests are about sizing,
@@ -37,7 +40,7 @@ def _build(**settings_kwargs: object) -> tuple[SignalToOrderBridge, OMS, MockBro
     switch = KillSwitch()
     risk_engine = RiskEngine(bus, switch, settings=settings)
     broker = MockBroker(seed=1)
-    oms = OMS(broker, risk_engine, switch, max_order_notional=1_000_000.0)
+    oms = OMS(broker, risk_engine, switch, max_order_notional=1_000_000.0, journal=journal)
     bridge = SignalToOrderBridge(bus, oms, settings=settings)
     return bridge, oms, broker
 
@@ -64,6 +67,60 @@ async def _feed_bars(bridge: SignalToOrderBridge, symbol: str = _SYMBOL, n: int 
 
 def _signal(side: str, symbol: str = _SYMBOL) -> SignalEvent:
     return SignalEvent(symbol=symbol, side=side, conviction=1.0, strategy="test")  # type: ignore[arg-type]
+
+
+async def test_a_broker_failure_while_sizing_refuses_the_signal_rather_than_throwing():
+    """M54, and it happened live on 6 August.
+
+    Alpaca returned HTTP 500 for ninety seconds. The account fetch in the sizing
+    path sat outside every guard, so the exception escaped through the event bus
+    and the signal vanished - no order, no refusal, no journal entry, nothing on
+    any screen but a stack trace.
+
+    M38 made this exact argument about the risk evaluation and wrapped it. This
+    call is upstream of that guard and was missed. A rail that refuses is
+    visible and auditable; a rail that throws is neither."""
+    journal = DecisionJournal(tempfile.mkdtemp())
+    bridge, oms, broker = _build(journal=journal)
+    await _feed_bars(bridge)
+
+    async def _boom():
+        raise RuntimeError("500 Internal Server Error")
+
+    broker.account = _boom  # type: ignore[assignment]
+
+    # Must not raise: the bus would log "EventBus handler failed" and move on.
+    await bridge._on_signal(_signal("buy"))
+
+    orders = oms.orders()
+    assert len(orders) == 1, "the signal must leave a record, not a gap"
+    assert orders[0].status == "rejected"
+    assert orders[0].symbol == _SYMBOL
+    # And the reason reaches the audit trail, which is the whole point: "why
+    # did nothing happen" must be answerable from the record.
+    reasons = [row["reason"] for row in journal.entries()]
+    assert any("account unavailable" in r for r in reasons), reasons
+
+
+async def test_the_signal_is_reconsidered_once_the_broker_recovers():
+    """A refusal, not a retry loop - the next tick re-emits the signal if the
+    condition still holds, and inventing a retry here would hide an outage
+    rather than record it."""
+    bridge, oms, broker = _build()
+    await _feed_bars(bridge)
+    original = broker.account
+
+    async def _boom():
+        raise RuntimeError("500 Internal Server Error")
+
+    broker.account = _boom  # type: ignore[assignment]
+    await bridge._on_signal(_signal("buy"))
+    assert oms.orders()[0].status == "rejected"
+
+    broker.account = original  # type: ignore[assignment]
+    await bridge._on_signal(_signal("buy"))
+
+    assert any(o.status == "pending_signoff" for o in oms.orders())
 
 
 async def test_repeated_identical_buy_signal_creates_only_one_order():

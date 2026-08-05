@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 # M39-M44 were enumerated as future gaps on 4 August, before M45-M50 existed, so
 # M40 shipping after M50 is not a regression. "M40" alone would read to an
 # operator as the application having gone backwards.
-MILESTONE = "M53"
+MILESTONE = "M54"
 
 _UNKNOWN = "unknown"
 

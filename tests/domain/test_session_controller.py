@@ -137,6 +137,40 @@ async def test_the_override_starts_a_session_against_a_closed_market():
     assert "manually started" in controller.status_line()
 
 
+async def test_a_forced_start_does_not_claim_the_market_is_open(caplog):
+    """M52. On 6 August these two lines were logged in the same second:
+
+        Trading session force-started by operator (dashboard) while US is closed
+        Trading session started - US is open
+
+    The second contradicted the first. The watcher surfaced only the second, so
+    the operator was told the market was open eight minutes before it was."""
+    controller, _feed, _engine = _controller(SATURDAY)
+    await controller.apply_once()  # stand down first, so the start is a transition
+
+    with caplog.at_level("INFO"):
+        await controller.force_start("tester")
+
+    text = caplog.text
+    assert "is NOT open" in text
+    assert "OPERATOR OVERRIDE" in text
+    assert "is open" not in text.replace("is NOT open", ""), "must not assert an open market"
+    # And it says what the override turns on, because a forced start disarms
+    # the staleness rail's exemption for a shut market.
+    assert "staleness rail" in text
+
+
+async def test_a_real_open_still_reads_as_a_plain_start(caplog):
+    controller, _feed, _engine = _controller(MID_SESSION)
+    controller.active = False  # as at launch, before the first check
+
+    with caplog.at_level("INFO"):
+        await controller.apply_once()
+
+    assert "Trading session started - US is open" in caplog.text
+    assert "OPERATOR OVERRIDE" not in caplog.text
+
+
 async def test_the_override_survives_repeated_checks():
     controller, feed, _ = _controller(SATURDAY)
     await controller.force_start("tester")

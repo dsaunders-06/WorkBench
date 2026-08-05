@@ -378,7 +378,58 @@ The trade itself survived: CVS 30 shares at 95.36 against a 105.475 entry, -1.73
 after costs, the first closed trade this system has ever recorded. The remaining
 17 shares are missing from that record and want correcting by hand.
 
-## M52 - A forced session start still announces "US is open"  **[OPEN]**
+## M54 - A broker blip threw a signal away instead of refusing it
+
+6 August, 03:56. Alpaca returned HTTP 500 from an nginx layer for ninety
+seconds. One line records the cost:
+
+```
+03:56:18 [ERROR] EventBus handler failed
+  signal_bridge._on_signal -> _submit_entry -> _submit_sized -> adapter.account()
+```
+
+`_submit_sized` fetched the account outside every guard, so the exception
+escaped through the event bus and **the signal vanished** - no order, no
+refusal, no journal entry, nothing on any screen but a stack trace.
+
+M38 made precisely this argument about the risk evaluation inside
+`OMS.submit_order` and wrapped it there. This fetch sits upstream of that guard
+and was missed. What makes it clear-cut rather than arguable is that the
+neighbouring paths already got it right during the same outage:
+`_current_positions` fell back to its cache and logged, and the equity poll
+logged and continued. The rail that threw was the odd one out.
+
+A failure now produces a rejected order carrying the reason, through
+`OMS.record_unsized_signal`, so the audit trail answers *"why did nothing
+happen"* with a reason rather than a gap. Deliberately a refusal and not a
+retry: the next tick re-emits the signal if the condition still holds, and a
+retry loop here would hide an outage rather than record it.
+
+**The wider point.** The trial is built on the record, not on the fill. A missed
+order costs one opportunity; a missed RECORD costs the ability to know that
+anything was missed at all.
+
+## M52 - A forced session start announced "US is open"
+
+6 August, 03:21. Two lines, logged in the same second:
+
+```
+Trading session force-started by operator (dashboard) while US is closed
+Trading session started - US is open
+```
+
+The second contradicted the first. It was the generic started message,
+asserting a fact about the market that the line above had just denied - and the
+watcher surfaced only the second, so the operator was told the market was open
+eight minutes before it was.
+
+The started message now says HOW the session started. A forced start logs at
+WARNING, states that the market is NOT open, and names what the override turns
+on - because it also disarms something the stood-down message explicitly
+promises, *"the staleness rail cannot trip on a market that is simply shut"*.
+On 6 August that produced 94 staleness exclusions in six seconds against a
+market closed for seventeen hours. Harmless there; not harmless in general, and
+the operator forcing it deserves to know.
 
 Found live on 5 August, seconds apart in the log:
 

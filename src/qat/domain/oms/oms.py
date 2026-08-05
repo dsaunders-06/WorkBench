@@ -1218,6 +1218,24 @@ class OMS:
             self.kill_switch.check_reconciliation()
         return bool(divergent)
 
+    def record_unsized_signal(
+        self, symbol: str, side: Literal["buy", "sell"], strategy: str | None, reason: str
+    ) -> Order:
+        """A signal that could not even be SIZED, recorded as a refusal (M54).
+
+        Everything upstream of the risk engine used to fail silently: if the
+        account could not be read there was no candidate to reject, so no
+        rejected order was created and nothing reached the journal. The signal
+        left no trace but a stack trace.
+
+        This produces the same rejected order any other refusal does, so the
+        audit trail answers "why did nothing happen" with a reason rather than
+        with a gap. It is deliberately a REJECTION and not a retry: the next
+        tick will re-emit the signal if the condition still holds, and inventing
+        a retry loop here would hide a broker outage rather than record it.
+        """
+        return self._new_rejected_order_for(symbol, side, 0.0, reason, strategy=strategy)
+
     def _new_rejected_order(
         self, candidate: OrderCandidate, quantity: float, reason: str = "rejected"
     ) -> Order:

@@ -143,7 +143,28 @@ class SessionController:
         if active:
             await self.feed.start()
             self.strategy_engine.emitting = True
-            logger.info("Trading session started - %s is open", self.market)
+            # Says HOW the session started rather than asserting the market is
+            # open (M52). On 6 August these two lines were logged in the same
+            # second: "force-started by operator (dashboard) while US is closed"
+            # and "Trading session started - US is open". The second contradicted
+            # the first, and the watcher surfaced only the second, so the
+            # operator was told the market was open eight minutes before it was.
+            #
+            # A forced start also disarms something the stood-down message
+            # promises - "the staleness rail cannot trip on a market that is
+            # simply shut" - and it produced 94 exclusions in six seconds
+            # against a market that had been closed for seventeen hours. Whoever
+            # forces it should be told what they have just turned on.
+            if self.override_until_close:
+                logger.warning(
+                    "Trading session started by OPERATOR OVERRIDE - %s is NOT open. Signals "
+                    "are being generated against whatever last traded, and the staleness rail "
+                    "is now live on a closed market, so symbols will be excluded until they "
+                    "print again. The override lapses at the close.",
+                    self.market,
+                )
+            else:
+                logger.info("Trading session started - %s is open", self.market)
         else:
             await self.feed.stop()
             self.strategy_engine.emitting = False
