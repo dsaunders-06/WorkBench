@@ -93,6 +93,13 @@ class WorkbenchScreen(QWidget):
         layout.addWidget(self.status_label)
 
         self.equity_plot = pg.PlotWidget(title="Equity vs Benchmark")
+        # Bar index, not dates (M55). `result.equity_curve` IS indexed by
+        # timestamp, but `.to_numpy()` at the render site discards that index,
+        # so what reaches the chart is a bare sequence. Labelled for what is
+        # actually drawn rather than for what the data could have supported -
+        # plotting against the real dates is a separate change, and mislabelling
+        # this one in anticipation would be worse than the honest label.
+        theme.label_axes(self.equity_plot, bottom="Daily bars (backtest)", left="Equity ($)")
         self.equity_curve_item = self.equity_plot.plot(pen="y", name="strategy")
         self.benchmark_curve_item = self.equity_plot.plot(pen="c", name="benchmark")
         layout.addWidget(self.equity_plot)
@@ -102,6 +109,12 @@ class WorkbenchScreen(QWidget):
         self._metric_tiles: dict[str, KpiTile] = {}
 
         self.mc_plot = pg.PlotWidget(title="Monte Carlo Outcome Cone")
+        # One step per TRADE, not per day (M55). The paths are built by
+        # resampling the backtest's trade sequence, so the x-axis counts trades
+        # taken - which is why the cone widens with trade count rather than with
+        # elapsed time, and why two strategies' cones are not comparable
+        # side-by-side unless they took the same number of trades.
+        theme.label_axes(self.mc_plot, bottom="Trades simulated", left="Equity ($)")
         self.mc_p5_item = self.mc_plot.plot(pen="r", name="p5")
         self.mc_p50_item = self.mc_plot.plot(pen="y", name="p50")
         self.mc_p95_item = self.mc_plot.plot(pen="g", name="p95")

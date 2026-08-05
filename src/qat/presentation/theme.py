@@ -24,7 +24,7 @@ interface look deliberate rather than accumulated.
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Any, Final
 
 # --------------------------------------------------------------------------
 # Layer 1: primitives. Raw values, named by what they are.
@@ -160,3 +160,26 @@ def banner(colour: str) -> str:
     return (
         f"background-color: {colour}; color: {WHITE}; " f"padding: {SPACE_SM}px; font-weight: bold;"
     )
+
+
+def label_axes(plot: Any, *, bottom: str, left: str) -> None:
+    """Name both axes of a chart, with units (M55).
+
+    Measured before this existed: ONE axis-label call in the whole presentation
+    layer. Every other chart rendered bare axes and left the reader to infer
+    whether the x-axis was dates, trading days or a sample count, and whether
+    the y-axis was dollars, percent or an index. On screens whose purpose is
+    deciding whether a strategy works, that is an invitation to read the wrong
+    quantity confidently.
+
+    Both labels are REQUIRED keyword arguments, and that is the point: a chart
+    whose axes cannot be named is a finding about the chart, not something to
+    label vaguely. "Time" is barely better than nothing - the unit is the part
+    that carries the meaning.
+
+    Lives here rather than in each screen for the same reason every colour
+    does. Twenty hand-styled labels would recreate the inline-stylesheet problem
+    this module exists to end.
+    """
+    plot.setLabel("bottom", bottom)
+    plot.setLabel("left", left)

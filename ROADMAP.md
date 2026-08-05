@@ -406,6 +406,62 @@ The trade itself survived: CVS 30 shares at 95.36 against a 105.475 entry, -1.73
 after costs, the first closed trade this system has ever recorded. The remaining
 17 shares are missing from that record and want correcting by hand.
 
+## M55 - The interface says what it is showing, and stops losing settings
+
+Three requests from the operator on 6 August, done together because they are
+one problem seen from three angles: a screen that knows something and does not
+say it.
+
+**Every chart names both axes, with units.** Measured before: ONE axis-label
+call in the whole presentation layer. The labels are not decoration - writing
+them forced three findings that were invisible while the axes were bare:
+
+* The Dashboard equity chart plots `_equity_history` as a bare list, so its
+  x-axis is **account polls since launch**, not time. Roughly one a minute, with
+  a gap wherever a poll failed. "Time" would have been wrong in exactly the way
+  that matters after an outage.
+* The Workbench equity chart's data **is** indexed by timestamp, and
+  `.to_numpy()` at the render site throws that index away. It is labelled for
+  what is actually drawn - daily bars - because mislabelling it as dates in
+  anticipation of a future fix would be worse than the honest label.
+* The Monte Carlo cone advances one step per **trade**, not per day. That is why
+  it widens with trade count, and why two strategies' cones are not comparable
+  unless they took the same number of trades.
+
+`theme.label_axes` requires both labels as keyword arguments, deliberately: a
+chart whose axes cannot be named is a finding about the chart. A test walks
+every `PlotWidget` in the app and fails on a bare axis, so the next chart cannot
+ship unlabelled.
+
+**The expertise level is finally real.** `ui_level.py` had existed since M45 and
+nothing imported it - one reference in the entire source tree, in `config.py`.
+There was no way for a panel to ask the level and no way for an operator to set
+one. Settings now carries the selector and is its first consumer. An earlier
+handoff described this step as done and deployed; only the design system was.
+
+**Restore Defaults.** There was no way back. An operator who moved a Kelly bound
+or a correlation threshold to see what it did could only return by knowing the
+original, and the originals are visible only in `config.py` - the opposite of
+this screen's own rule that you should always be able to see what governs your
+account. It confirms first, naming the count and the fields; it restores VALUES
+rather than the file, so it can itself be abandoned by closing without saving;
+and it does not touch broker, watchlist, data source, execution mode or
+strategies, because those are configuration the operator entered rather than
+tuning they experimented with.
+
+**An unsaved-changes prompt on close.** Every field here is restart-required,
+which makes an unsaved edit invisible twice over: it did not take effect, and
+nothing on screen says so. Three answers, not two - Save/Discard alone forces a
+decision the operator may not be ready to make, and is how work gets thrown away
+by someone who only meant to stop the prompt.
+
+**One correction the work itself produced.** The plan claimed the operator's
+"Market & Watchlist downwards" boundary excluded the write-only secret fields
+"by construction". It does not: the Alpaca key and secret live in Broker & Cash,
+*below* the line. They are handled explicitly instead - the prompt reports that
+a key was entered and never what, and a test asserts the value cannot appear in
+the dialog.
+
 ## M54 - A broker blip threw a signal away instead of refusing it
 
 6 August, 03:56. Alpaca returned HTTP 500 from an nginx layer for ninety

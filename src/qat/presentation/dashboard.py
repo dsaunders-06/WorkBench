@@ -78,7 +78,11 @@ class DashboardScreen(QWidget):
         layout.addLayout(risk_row)
 
         self.equity_plot = pg.PlotWidget(title="Equity Curve")
-        self.equity_plot.setLabel("left", "NAV")
+        # Samples, not time (M55). This plots `_equity_history` as a bare list,
+        # so the x-axis is the number of account polls since launch - roughly
+        # one a minute, but with gaps wherever a poll failed. Calling it "Time"
+        # would be wrong in exactly the way that matters after an outage.
+        theme.label_axes(self.equity_plot, bottom="Account polls since launch", left="NAV ($)")
         self.equity_curve = self.equity_plot.plot(pen="y")
         layout.addWidget(self.equity_plot)
 

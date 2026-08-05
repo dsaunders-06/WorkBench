@@ -42,7 +42,9 @@ from qat import env_file, security
 from qat.config import Settings
 from qat.domain.ai_advisory.llm_engine import LocalEngine, normalize_openai_base_url
 from qat.paths import app_dir, env_path
+from qat.presentation import theme
 from qat.presentation.runtime import Runtime
+from qat.presentation.ui_level import UiLevel
 from qat.version import build_info
 
 logger = logging.getLogger(__name__)
@@ -86,6 +88,44 @@ _FUNDAMENTALS_LABELS = {
 _FUNDAMENTALS_VALUES = {label: value for value, label in _FUNDAMENTALS_LABELS.items()}
 
 
+def _widget_value(widget: QWidget) -> object:
+    """What a control currently holds, whatever kind of control it is.
+
+    Deliberately narrow: the four widget types this screen actually uses. An
+    unrecognised widget returns None rather than something plausible, so a
+    field added later without being handled here shows up as "never changes"
+    and is caught by the test that walks every tracked field.
+    """
+    if isinstance(widget, QComboBox):
+        return widget.currentText()
+    if isinstance(widget, QCheckBox):
+        return widget.isChecked()
+    if isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+        return widget.value()
+    if isinstance(widget, QLineEdit):
+        return widget.text()
+    return None
+
+
+def _set_widget_value(widget: QWidget, value: object) -> None:
+    """The inverse of `_widget_value`, for restoring a default.
+
+    QSpinBox and QDoubleSpinBox are separated rather than handled by inferring
+    the type from the current value: a whole-number percentage sitting in a
+    double box would round-trip through int() and silently drop its decimals.
+    """
+    if isinstance(widget, QCheckBox):
+        widget.setChecked(bool(value))
+    elif isinstance(widget, QSpinBox):
+        widget.setValue(int(float(str(value))))
+    elif isinstance(widget, QDoubleSpinBox):
+        widget.setValue(float(str(value)))
+    elif isinstance(widget, QLineEdit):
+        widget.setText(str(value))
+    elif isinstance(widget, QComboBox):
+        widget.setCurrentText(str(value))
+
+
 def _readonly_label(text: str) -> QLabel:
     """Selectable so it can be copied into a bug report, but not editable -
     nothing here is a setting."""
@@ -121,6 +161,7 @@ class SettingsScreen(QWidget):
 
         layout = QVBoxLayout(container)
         layout.addWidget(self._build_group())
+        layout.addWidget(self._build_interface_group(settings))
 
         ai_group = QGroupBox("AI Provider")
         ai_form = QFormLayout(ai_group)
@@ -279,13 +320,31 @@ class SettingsScreen(QWidget):
 
         layout.addStretch(1)
 
+        button_row = QHBoxLayout()
         self.save_button = QPushButton("Save")
         self.save_button.clicked.connect(self._on_save_clicked)
-        outer.addWidget(self.save_button)
+        button_row.addWidget(self.save_button, stretch=1)
+        # Beside Save rather than beside the fields it affects: it is a
+        # screen-level action, and putting it next to any one group would
+        # imply it only touches that group.
+        self.restore_defaults_button = QPushButton("Restore Defaults")
+        self.restore_defaults_button.setToolTip(
+            "Put the tuning fields back to the values this build shipped with. "
+            "Broker, watchlist, data source, execution mode and strategies are not touched. "
+            "Nothing is written until you press Save."
+        )
+        self.restore_defaults_button.clicked.connect(self._on_restore_defaults_clicked)
+        button_row.addWidget(self.restore_defaults_button)
+        outer.addLayout(button_row)
 
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         outer.addWidget(self.status_label)
+
+        # Built last, because it names widgets every group above has to have
+        # created first.
+        self._tracked = self._build_tracked_fields()
+        self._baseline = self._snapshot()
 
     def _build_group(self) -> QGroupBox:
         """Which build is this, so "am I running the latest?" is answerable.
@@ -319,6 +378,205 @@ class SettingsScreen(QWidget):
             form.addRow(warning)
 
         return group
+
+    # --- change tracking and defaults (M55) ---------------------------------
+
+    def _build_tracked_fields(self) -> list[tuple[str, QWidget, object]]:
+        """Every field from Market & Watchlist downwards, with whether a
+        default may be restored to it.
+
+        The boundary is the operator's, and it is not arbitrary: everything
+        above it is provider and interface choice, everything below is what the
+        account actually does.
+
+        **`tunable` is the second, narrower question.** Restoring defaults must
+        not wipe the broker selection, the watchlist or the deployed-strategy
+        list - those are configuration an operator entered, not tuning they
+        experimented with. A field can therefore be watched for unsaved changes
+        without being something Restore Defaults may touch.
+
+        The Alpaca key and secret are deliberately ABSENT. They are write-only
+        password fields that start empty and never echo, and an earlier draft of
+        this plan wrongly assumed the operator's boundary excluded them - it
+        does not, they sit in Broker & Cash, below the line. They are handled
+        separately in `unsaved_changes`, which reports only THAT something was
+        entered and never what.
+        """
+        d = Settings(_env_file=None)
+        pct = 100.0  # stored as a fraction, shown as a percentage
+        return [
+            # label, widget, default to restore (None = watched but not tunable)
+            ("Market", self.market_combo, None),
+            ("Watchlist category", self.category_combo, None),
+            ("US curated tickers", self.curated_us_input, None),
+            ("ASX curated tickers", self.curated_asx_input, None),
+            ("Max symbols", self.max_symbols_input, d.watchlist_max_symbols),
+            ("Min avg. daily volume", self.min_volume_input, d.watchlist_min_avg_volume),
+            ("Broker", self.broker_combo, None),
+            ("Minimum cash reserve", self.min_cash_reserve_input, d.min_cash_reserve),
+            ("Market data source", self.data_source_combo, None),
+            ("Alpaca data feed", self.alpaca_feed_combo, None),
+            ("Fundamentals source", self.fundamentals_combo, None),
+            ("Per-trade risk", self.per_trade_risk_input, d.per_trade_risk_pct * pct),
+            ("ATR stop multiple", self.atr_stop_multiple_input, d.atr_stop_multiple),
+            (
+                "Aggregate risk at stop",
+                self.aggregate_risk_input,
+                d.max_aggregate_risk_at_stop_pct * pct,
+            ),
+            (
+                "Single-name concentration",
+                self.single_name_input,
+                d.max_single_name_concentration_pct * pct,
+            ),
+            ("Sector concentration", self.sector_input, d.max_sector_concentration_pct * pct),
+            ("Correlated cluster", self.cluster_pct_input, d.max_correlated_cluster_pct * pct),
+            (
+                "Correlation threshold",
+                self.cluster_threshold_input,
+                d.correlation_cluster_threshold,
+            ),
+            ("Gap risk budget", self.gap_budget_input, d.max_gap_risk_at_shock_pct * pct),
+            ("Gap shock", self.gap_shock_input, d.gap_shock_pct * pct),
+            ("Max concurrent positions", self.max_positions_input, d.max_concurrent_positions),
+            ("Portfolio ES limit", self.es_limit_input, d.portfolio_es_limit_pct * pct),
+            ("Daily loss limit", self.daily_loss_input, d.daily_loss_limit_pct * pct),
+            ("Max drawdown limit", self.drawdown_input, d.max_drawdown_limit_pct * pct),
+            ("Kelly fraction", self.kelly_fraction_input, d.kelly_fraction),
+            ("Enforce minimum hold", self.enforce_min_hold_check, d.enforce_min_holding_period),
+            ("Minimum hold (days)", self.min_hold_days_input, d.min_holding_trading_days),
+            ("Enforce time stop", self.enforce_time_stop_check, d.enforce_time_stop),
+            ("Time stop (days)", self.time_stop_days_input, d.time_stop_trading_days),
+            ("Max entries per week", self.entries_per_week_input, d.max_entries_per_week),
+            ("Protection sweep (seconds)", self.sweep_seconds_input, d.protection_sweep_seconds),
+            ("Edge minimum trades", self.edge_min_trades_input, d.edge_min_trades),
+            ("Max cost to risk", self.cost_to_risk_input, d.max_cost_to_risk_pct * pct),
+            ("De-lever sweep", self.delever_sweep_check, d.delever_sweep_enabled),
+            ("Minimum-hold loss escape", self.loss_escape_input, d.min_holding_loss_escape_r),
+            ("Execution mode", self.execution_mode_combo, None),
+        ]
+
+    def _snapshot(self) -> dict[str, object]:
+        return {label: _widget_value(widget) for label, widget, _ in self._tracked}
+
+    def mark_saved(self) -> None:
+        """The current values become the new "unchanged". Called after a
+        successful Save, or the prompt would keep reporting changes the
+        operator has already committed."""
+        self._baseline = self._snapshot()
+
+    def unsaved_changes(self) -> list[str]:
+        """Which watched fields differ from what was last loaded or saved.
+
+        Compared against the values as LOADED, not against defaults, so
+        re-typing the same number is not a change. A field the operator only
+        scrolled past cannot appear here.
+        """
+        current = self._snapshot()
+        changed = [label for label, value in current.items() if self._baseline.get(label) != value]
+        # Reported, never echoed. That a key was typed is worth telling an
+        # operator about before it is thrown away; the key itself is not ours
+        # to put in a dialog.
+        if self.alpaca_key_input.text().strip():
+            changed.append("Alpaca API key (entered)")
+        if self.alpaca_secret_input.text().strip():
+            changed.append("Alpaca secret key (entered)")
+        return changed
+
+    def _on_restore_defaults_clicked(self) -> None:
+        """Put the tuning fields back to what the application shipped with.
+
+        There was no way back. An operator who moved a Kelly bound or a
+        correlation threshold to see what it did could only return by knowing
+        the original, and the originals are visible only in `config.py` - the
+        opposite of this screen's own rule that you should always be able to see
+        what governs your account.
+
+        Restores VALUES, not the file. Nothing is written until Save, so a
+        restore can itself be abandoned by closing without saving.
+        """
+        pending: list[tuple[str, QWidget, object]] = [
+            (label, widget, default)
+            for label, widget, default in self._tracked
+            if default is not None and _widget_value(widget) != default
+        ]
+
+        if not pending:
+            self.status_label.setText("Every tuning field is already at its default.")
+            return
+
+        names = ", ".join(label for label, _, _ in pending[:8])
+        more = f", and {len(pending) - 8} more" if len(pending) > 8 else ""
+        confirmed = QMessageBox.question(
+            self,
+            "Restore default values?",
+            f"This will change {len(pending)} field(s) back to the values this build "
+            f"shipped with:\n\n{names}{more}.\n\n"
+            "The broker, watchlist, market data source, execution mode and deployed "
+            "strategies are NOT touched - those are your configuration, not tuning.\n\n"
+            "Nothing is written until you press Save.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if confirmed != QMessageBox.StandardButton.Yes:
+            return
+
+        for _label, widget, default in pending:
+            _set_widget_value(widget, default)
+        self.status_label.setText(
+            f"Restored {len(pending)} field(s) to their defaults. "
+            "Nothing is saved yet - press Save, then restart."
+        )
+
+    def _build_interface_group(self, settings: Settings) -> QGroupBox:
+        """The expertise level, finally settable (M55).
+
+        `ui_level.py` has existed since M45 and nothing imported it - the level
+        was a config field with no way to read it and no way to set it. This is
+        the control that makes it real, and this screen is its first consumer.
+
+        Deliberately near the top, above everything it governs, because a
+        control that changes what else is on screen should not itself be
+        somewhere further down that screen.
+
+        **Not a safety control.** Warnings, the mode and execution banners,
+        refusal reasons and the sign-off gate are identical at every level.
+        Nothing here quietens a rail; it only decides how much is explained and
+        whether controls needing judgement are present.
+        """
+        group = QGroupBox("Interface")
+        form = QFormLayout(group)
+
+        self.ui_level_combo = QComboBox()
+        for level in (UiLevel.GUIDED, UiLevel.STANDARD, UiLevel.PROFESSIONAL):
+            self.ui_level_combo.addItem(level.label, level)
+        self.ui_level_combo.setCurrentText(UiLevel.from_settings(settings).label)
+        self.ui_level_combo.currentTextChanged.connect(self._refresh_level_description)
+        form.addRow("Detail level:", self.ui_level_combo)
+
+        self.ui_level_description = QLabel("")
+        self.ui_level_description.setWordWrap(True)
+        self.ui_level_description.setStyleSheet(theme.text(theme.MUTED))
+        form.addRow(self.ui_level_description)
+
+        note = QLabel(
+            "Changes what is EXPLAINED and what is SHOWN, never what is enforced. "
+            "Warnings, the sign-off gate and every risk limit behave identically at all "
+            "three levels. Takes effect at the next restart, like every setting here."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(theme.text(theme.MUTED))
+        form.addRow(note)
+
+        self._refresh_level_description()
+        return group
+
+    def _selected_ui_level(self) -> UiLevel:
+        data = self.ui_level_combo.currentData()
+        return data if isinstance(data, UiLevel) else UiLevel.STANDARD
+
+    def _refresh_level_description(self) -> None:
+        self.ui_level_description.setText(self._selected_ui_level().describes_itself)
 
     def _build_data_group(self, settings: Settings) -> QGroupBox:
         """Market data source (spec M14).
@@ -931,6 +1189,12 @@ class SettingsScreen(QWidget):
             return False, f"{normalized} rejected the request: {exc}"
         return True, f"completions OK at {normalized} (model {engine.model!r})"
 
+    def save_now(self) -> None:
+        """Save without a button press, for the close prompt. Named rather than
+        letting the window reach for the private handler, so the entry point is
+        deliberate and testable."""
+        self._on_save_clicked()
+
     def _on_save_clicked(self) -> None:
         updates = {
             "QAT_GENERAL_REQUEST_PROVIDER": _PROVIDER_VALUES[self.general_provider.currentText()],
@@ -977,6 +1241,7 @@ class SettingsScreen(QWidget):
             "QAT_MAX_COST_TO_RISK_PCT": _as_fraction(self.cost_to_risk_input),
             "QAT_DELEVER_SWEEP_ENABLED": _as_bool(self.delever_sweep_check),
             "QAT_MIN_HOLDING_LOSS_ESCAPE_R": f"{self.loss_escape_input.value():.2f}",
+            "QAT_UI_LEVEL": self._selected_ui_level().name.lower(),
         }
         # The same absolute path Settings reads from (M22). Left relative, Save
         # wrote a .env beside whatever directory the app was launched from,
@@ -989,6 +1254,7 @@ class SettingsScreen(QWidget):
             self.anthropic_key_input.clear()
         self._save_broker_secrets()
 
+        self.mark_saved()
         self.status_label.setText("Saved. Restart the application for changes to take effect.")
 
 

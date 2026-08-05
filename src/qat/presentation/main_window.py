@@ -9,7 +9,15 @@ it updates live as the kill-switch trips rather than only at startup.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel, QMainWindow, QTabWidget, QVBoxLayout, QWidget
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import (
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from qat.domain.events import KillSwitchEvent, MarketDataFeedEvent, RegimeHealthEvent
 from qat.presentation.ai_advisor import AiAdvisorScreen
@@ -78,10 +86,47 @@ class MainWindow(QMainWindow):
         tabs.addTab(BlotterScreen(runtime), "Order Blotter")
         tabs.addTab(ScreenerScreen(runtime), "Screener")
         tabs.addTab(PerformanceScreen(runtime), "Performance")
-        tabs.addTab(SettingsScreen(runtime), "Settings")
+        self.settings_screen = SettingsScreen(runtime)
+        tabs.addTab(self.settings_screen, "Settings")
         layout.addWidget(tabs)
 
         self.setCentralWidget(central)
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt's name
+        """Do not throw away settings the operator changed but did not save (M55).
+
+        Every field on the Settings screen is restart-required, which makes an
+        unsaved edit invisible twice over: it did not take effect, and nothing
+        on screen says so. An operator can change a risk limit, close the
+        window, restart, and reasonably believe the new limit is live.
+
+        Three answers rather than two. Save/Discard alone forces a decision the
+        operator may not be ready to make, and is how unsaved work gets thrown
+        away by someone who only meant to stop the prompt.
+        """
+        changed = self.settings_screen.unsaved_changes()
+        if not changed:
+            super().closeEvent(event)
+            return
+
+        names = ", ".join(changed[:6])
+        more = f", and {len(changed) - 6} more" if len(changed) > 6 else ""
+        answer = QMessageBox.question(
+            self,
+            "Save settings before closing?",
+            f"{len(changed)} unsaved change(s) on the Settings screen:\n\n{names}{more}.\n\n"
+            "These take effect at the next launch. Closing without saving discards them.",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Cancel:
+            event.ignore()
+            return
+        if answer == QMessageBox.StandardButton.Save:
+            self.settings_screen.save_now()
+        super().closeEvent(event)
 
     async def _on_kill_switch(self, event: KillSwitchEvent) -> None:
         # The reason comes from the event, not from KillSwitch.reason: both
