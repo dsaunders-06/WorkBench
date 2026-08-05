@@ -16,7 +16,10 @@ Two things followed from that, and both bite on the first day a stop fires:
 
 from __future__ import annotations
 
+import json
+import logging
 import tempfile
+from contextlib import contextmanager
 from datetime import timedelta
 
 import pandas as pd
@@ -28,6 +31,7 @@ from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.events import OrderFilledEvent
 from qat.domain.oms.oms import OMS
+from qat.domain.oms.signal_bridge import SignalToOrderBridge
 from qat.domain.performance.trades import TradeLedger
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -138,6 +142,91 @@ async def test_the_fill_query_asks_about_what_the_APP_tracks_not_what_the_broker
     assert asked and asked[0] is not None
     assert "AAA" in asked[0], "the symbol whose position just vanished must still be asked about"
     assert oms.kill_switch.tripped is False
+
+
+@pytest.mark.asyncio
+async def test_an_adopted_position_stopping_out_becomes_a_closed_trade(tmp_path):
+    """M49, end to end and the whole point of the trial. Absorbing the fill was
+    never enough: the ledger matches a sell against an ENTRY LOT, and lots were
+    in memory only, so every position - all of which were opened in earlier
+    sessions - closed into nothing. The counter could not move off zero."""
+    (tmp_path / "open_position_entries.json").write_text(
+        json.dumps(
+            {
+                "OLD": {
+                    "opened_at": "2026-07-20T00:00:00+00:00",
+                    "price": 50.0,
+                    "stop_price": 45.0,
+                    "target_price": 60.0,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+    bus = EventBus()
+    switch = KillSwitch()
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    await ledger.start()
+    broker = MockBroker(seed=1)
+    broker._positions["OLD"] = Position(symbol="OLD", quantity=20.0, avg_price=50.0)
+    broker._resting_stops["OLD"] = 45.0
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
+    bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+    await oms.adopt_broker_positions()
+    await bridge.restore_open_lots()
+    oms._last_fill_scan -= timedelta(seconds=1)
+
+    broker.fill_resting_stop("OLD", price=44.80)
+    await oms.check_reconciliation()
+
+    trades = ledger.closed_trades()
+    assert len(trades) == 1
+    assert trades[0].entry_price == pytest.approx(50.0)
+    assert trades[0].exit_price == pytest.approx(44.80)
+    # Attributed, or the per-strategy promotion gate still counts nothing.
+    assert trades[0].strategy == "swing"
+    assert switch.tripped is False
+
+
+@pytest.mark.asyncio
+async def test_a_position_with_no_entry_record_is_named_not_invented(tmp_path):
+    """The broker knows what it paid but not when it was bought. A fabricated
+    open date would put invented holding periods into the evidence the trial
+    exists to produce, so the position is skipped and said out loud."""
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+    bus = EventBus()
+    switch = KillSwitch()
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    await ledger.start()
+    broker = MockBroker(seed=1)
+    broker._positions["MYSTERY"] = Position(symbol="MYSTERY", quantity=5.0, avg_price=10.0)
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
+    bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+
+    with caplog_at_warning() as records:
+        restored = await bridge.restore_open_lots()
+
+    assert restored == []
+    assert ledger.open_lots() == []
+    assert any("MYSTERY" in r.getMessage() for r in records)
+
+
+@contextmanager
+def caplog_at_warning():
+    records: list[logging.LogRecord] = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    handler = _Collector(level=logging.WARNING)
+    logger = logging.getLogger("qat.domain.oms.signal_bridge")
+    logger.addHandler(handler)
+    try:
+        yield records
+    finally:
+        logger.removeHandler(handler)
 
 
 @pytest.mark.asyncio

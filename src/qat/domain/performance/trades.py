@@ -74,6 +74,14 @@ _FIELDS = (
     "mae_r",
     "mfe_r",
     "risk_per_share",
+    # The three raw inputs behind entry_slippage, mae_r and mfe_r (M49). Only
+    # the derived figures were written, so a trade read back from this file
+    # could never recompute them and the M37 diagnostics would degrade to blank
+    # on the first restart. Added while the file does not yet exist, so there
+    # is nothing to migrate.
+    "reference_price",
+    "worst_price",
+    "best_price",
 )
 
 
@@ -82,6 +90,18 @@ def _share_of(total_cost: float, matched: float, whole: float) -> float:
     if whole <= 0:
         return 0.0
     return total_cost * (matched / whole)
+
+
+def _optional_float(value: str | None) -> float | None:
+    """A CSV cell that is legitimately blank, not zero. Writing "" for absent
+    and reading it back as 0.0 would turn "no stop recorded" into "stop at
+    zero", which every R-multiple downstream would then believe."""
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,7 +291,46 @@ class ClosedTrade:
             "risk_per_share": (
                 round(self.risk_per_share, 4) if self.risk_per_share is not None else ""
             ),
+            "reference_price": (
+                round(self.reference_price, 4) if self.reference_price is not None else ""
+            ),
+            "worst_price": round(self.worst_price, 4) if self.worst_price is not None else "",
+            "best_price": round(self.best_price, 4) if self.best_price is not None else "",
         }
+
+    @classmethod
+    def from_row(cls, row: dict[str, str]) -> ClosedTrade | None:
+        """Rebuild a trade from its CSV row, or None if the row is unusable.
+
+        Only the stored fields are read - everything else on this class is
+        derived, and recomputing it is the point. A row this cannot parse is
+        skipped rather than raising: a corrupt line must not cost the app every
+        trade recorded after it.
+        """
+        try:
+            return cls(
+                symbol=row["symbol"],
+                strategy=row.get("strategy") or None,
+                quantity=float(row["quantity"]),
+                entry_price=float(row["entry_price"]),
+                exit_price=float(row["exit_price"]),
+                stop_price=_optional_float(row.get("stop_price")),
+                opened_at=datetime.fromisoformat(row["opened_at"]),
+                closed_at=datetime.fromisoformat(row["closed_at"]),
+                entry_cost=float(row.get("entry_cost") or 0.0),
+                exit_cost=float(row.get("exit_cost") or 0.0),
+                regime_at_entry=row.get("regime_at_entry") or None,
+                regime_probability=_optional_float(row.get("regime_probability")),
+                exposure_scalar=_optional_float(row.get("exposure_scalar")),
+                exit_reason=row.get("exit_reason") or None,
+                # .get, so a file written before M49 still loads - it simply
+                # has no excursion data to restore.
+                reference_price=_optional_float(row.get("reference_price")),
+                worst_price=_optional_float(row.get("worst_price")),
+                best_price=_optional_float(row.get("best_price")),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
 
 
 class TradeLedger:
@@ -306,8 +365,93 @@ class TradeLedger:
         self._regime: str | None = None
         self._regime_probability: float | None = None
         self._exposure_scalar: float | None = None
-        self._closed: list[ClosedTrade] = []
         self._lock = threading.Lock()
+        # Read back, not started empty (M49). This list is what EdgeEstimator
+        # sizes from, what the promotion gate counts, and what every report
+        # reads. It was in-memory only while the file beside it was append-only
+        # and never opened, so the trade count reset to zero on every restart -
+        # and the app restarts every session. A gate needing 30 closed trades
+        # could never have reached them.
+        self._closed: list[ClosedTrade] = self._load_closed()
+
+    def _load_closed(self) -> list[ClosedTrade]:
+        """Trades earlier sessions closed.
+
+        A missing file is a first run, not an error. An unreadable ROW is
+        skipped and counted rather than allowed to abort the load, because
+        losing every trade after a corrupt line is a far worse failure than
+        losing the line.
+        """
+        if not self.path.exists():
+            return []
+        trades: list[ClosedTrade] = []
+        skipped = 0
+        try:
+            with self.path.open(newline="", encoding="utf-8") as handle:
+                for row in csv.DictReader(handle):
+                    trade = ClosedTrade.from_row(row)
+                    if trade is None:
+                        skipped += 1
+                    else:
+                        trades.append(trade)
+        except OSError:
+            logger.exception("Could not read %s - starting with no closed-trade history", self.path)
+            return []
+        if trades or skipped:
+            logger.info(
+                "Restored %d closed trade(s) from %s%s",
+                len(trades),
+                self.path.name,
+                f", skipping {skipped} unreadable row(s)" if skipped else "",
+            )
+        return trades
+
+    def restore_open_lot(
+        self,
+        symbol: str,
+        quantity: float,
+        price: float,
+        stop_price: float | None,
+        strategy: str | None,
+        opened_at: datetime,
+    ) -> bool:
+        """Re-create the entry lot for a position opened before this run (M49).
+
+        A closed trade is only produced by matching a sell against an entry
+        lot, and lots lived in memory alone. So a position opened in an earlier
+        session - which, with a ten-day minimum hold and a session per night,
+        is every position this system holds - could have its stop fire, be
+        absorbed correctly, log "this is now a closed trade", and record
+        nothing. The ledger's counter could not move off zero, which is the one
+        number the whole validation phase exists to produce.
+
+        Refuses to touch a symbol that already has lots. Restoration is a
+        startup step and must never compete with a live fill for the same
+        position: the running record is always the better one.
+
+        The excursion fields start at the entry price rather than being
+        invented, so MAE and MFE on a restored lot measure from the restart
+        forward. That understates both, and understating a diagnostic is
+        acceptable where fabricating one is not.
+        """
+        if quantity <= 0 or price <= 0:
+            return False
+        if self._open_lots.get(symbol):
+            return False
+        self._open_lots[symbol].append(
+            OpenLot(
+                symbol=symbol,
+                quantity=quantity,
+                price=price,
+                stop_price=stop_price,
+                strategy=strategy,
+                opened_at=opened_at,
+                entry_cost=self._fill_cost(quantity, price),
+                worst_price=price,
+                best_price=price,
+            )
+        )
+        return True
 
     async def start(self) -> None:
         self.bus.subscribe(OrderFilledEvent, self._on_fill)

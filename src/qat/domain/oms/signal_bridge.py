@@ -67,6 +67,10 @@ class _Entry:
     # the stop, because this was the one level nothing recorded - so six
     # positions came back with downside protection and no way to bank a gain.
     target_price: float | None = None
+    # Which strategy opened it (M49). The promotion gate counts closed trades
+    # PER STRATEGY, so a lot restored without this would rebuild the trade and
+    # still not count towards anything.
+    strategy: str | None = None
 
 
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
@@ -142,6 +146,9 @@ class SignalToOrderBridge:
         self.settings = settings or Settings()
         self.default_win_rate = default_win_rate
         self.default_win_loss_ratio = default_win_loss_ratio
+        # Kept, not just handed to the estimator: startup also has to give the
+        # ledger back the open lots it does not persist (M49).
+        self.trade_ledger = trade_ledger
         # What the strategy has actually achieved, once it has achieved enough
         # to measure (M35). Without a ledger this returns the defaults for
         # everything, which is exactly the previous behaviour.
@@ -174,8 +181,83 @@ class SignalToOrderBridge:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        await self.restore_open_lots()
         await self.rearm_protective_stops()
         self._sweep_task = asyncio.create_task(self._sweep_protection())
+
+    async def restore_open_lots(self) -> list[str]:
+        """Gives the trade ledger back the entry lots it forgot (M49).
+
+        Here for the same reason `rearm_protective_stops` is: this is the only
+        component holding both halves. The broker knows what is held and in
+        what size; `_entries` knows what each position was opened at and
+        against which stop - and the stop is not decoration, it is the
+        denominator of every R-multiple the promotion gate reads.
+
+        Runs before the sweep, so a position whose protection is repaired in
+        the same startup already has a lot waiting for the eventual exit.
+
+        A position with NO entry record is skipped and named. The broker knows
+        its average price but not when it was opened, and a fabricated open
+        date would put invented holding periods into the evidence the trial
+        exists to produce. Better a visibly missing trade than a quietly wrong
+        one - the same rule `rearm_protective_stops` applies to an unknown
+        stop.
+        """
+        ledger = self.trade_ledger
+        if ledger is None or not hasattr(ledger, "restore_open_lot"):
+            return []
+        try:
+            positions = await self.oms.broker.positions()
+        except Exception:
+            logger.exception("Could not read positions to restore the trade ledger's open lots")
+            return []
+
+        restored: list[str] = []
+        unknown: list[str] = []
+        for position in positions:
+            quantity = abs(position.quantity)
+            if quantity <= 0:
+                continue
+            entry = self._entries.get(position.symbol)
+            if entry is None:
+                unknown.append(position.symbol)
+                continue
+            if ledger.restore_open_lot(
+                symbol=position.symbol,
+                quantity=quantity,
+                price=entry.price,
+                stop_price=entry.stop_price,
+                strategy=entry.strategy or self._sole_deployed_strategy(),
+                opened_at=entry.opened_at,
+            ):
+                restored.append(position.symbol)
+
+        if restored:
+            logger.info(
+                "Restored %d open lot(s) to the trade ledger: %s. Without this a stop firing "
+                "on a position opened in an earlier session records no closed trade at all.",
+                len(restored),
+                ", ".join(sorted(restored)),
+            )
+        if unknown:
+            logger.warning(
+                "No entry record for %s, so no lot could be restored - if these close, the "
+                "exit is absorbed but produces no closed trade and no P&L",
+                ", ".join(sorted(unknown)),
+            )
+        return restored
+
+    def _sole_deployed_strategy(self) -> str | None:
+        """The strategy to credit an entry that predates M49's record of one.
+
+        Resolved from what is actually deployed rather than hard-coded, and
+        only when there is exactly one candidate - with two running, which
+        opened a given position is genuinely unknown and guessing would put a
+        fabricated attribution into a per-strategy promotion decision.
+        """
+        deployed = self.settings.deployed_strategies_tuple
+        return deployed[0] if len(deployed) == 1 else None
 
     def opened_symbols(self) -> set[str]:
         """Positions this app opened, from the persisted entry record.
@@ -284,6 +366,7 @@ class SignalToOrderBridge:
                     price=event.price,
                     stop_price=event.stop_price,
                     target_price=event.take_profit_price,
+                    strategy=event.strategy,
                 ),
             )
             self._entry_times.append(event.ts)
@@ -318,6 +401,11 @@ class SignalToOrderBridge:
                     target_price=(
                         float(row["target_price"]) if row.get("target_price") is not None else None
                     ),
+                    # Same reasoning for M49's addition. A file written before
+                    # it names no strategy, and the fallback is resolved at
+                    # restore time from what is actually deployed rather than
+                    # guessed here.
+                    strategy=row.get("strategy") or None,
                 )
             except (KeyError, TypeError, ValueError):
                 logger.warning("Ignoring an unreadable entry record for %s", symbol)
@@ -339,6 +427,7 @@ class SignalToOrderBridge:
                 "price": entry.price,
                 "stop_price": entry.stop_price,
                 "target_price": entry.target_price,
+                "strategy": entry.strategy,
             }
             for symbol, entry in self._entries.items()
         }

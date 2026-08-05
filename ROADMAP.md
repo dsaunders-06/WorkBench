@@ -153,6 +153,88 @@ returns what its name suggests. The corporate-actions work (M39) is the same
 shape again, and should start by measuring what the broker reports through a
 split rather than by reasoning about it.
 
+## M49 - The ledger could not record the trades the trial exists to collect
+
+Found on 5 August by asking whether M48's missed fill actually cost anything.
+It does, but the far larger problem was that **a fill which IS caught recorded
+nothing either**. Demonstrated before it was fixed:
+
+```
+absorbed fills     : 1
+open lots in ledger: []
+CLOSED TRADES      : 0
+```
+
+Two independent halves, each fatal on its own.
+
+**Entry lots lived in memory alone.** A closed trade is only produced by
+matching a sell against an entry lot, and `TradeLedger._open_lots` starts empty
+on every run. A position opened in an earlier session therefore had no lot - and
+with a ten-day minimum hold, a thirty-day time stop and a session per night,
+that is every position this system holds. Its stop would fire, be absorbed
+correctly by M48, log *"this is now a closed trade"*, and record nothing. The
+log line was false.
+
+**Closed trades did not survive a restart either.** `_closed` was in-memory
+while `closed_trades.csv` beside it was append-only and never read back. Every
+consumer - `EdgeEstimator`, the promotion gate, the scorecard, the reports -
+goes through `closed_trades()`. So the count reset to zero every night, and a
+gate needing 30 per strategy could never have reached them.
+
+Together: **the validation phase could not produce its own evidence.** Not
+"would have been noisy" - could not produce it at all, for months, while every
+screen showed the system working.
+
+The sizing consequence runs opposite to intuition. The only recordable trades
+were those opened AND closed inside one session, which for a ten-day-minimum
+swing strategy means fast losses. So whatever accumulated was biased toward
+losers, and `EdgeEstimator` would have sized DOWN on it. Less dangerous than
+the reverse, and just as wrong.
+
+**The fix.** Reconstruct the lots at startup from the broker's positions plus
+`open_position_entries.json`, which already carries the open date, the entry
+price and the stop - and the stop is not decoration, it is the denominator of
+every R-multiple the gate reads. Read `closed_trades.csv` back at construction.
+Three raw columns (`reference_price`, `worst_price`, `best_price`) join the
+file so a reloaded trade can still recompute the M37 excursion diagnostics; the
+file did not exist yet, so there was nothing to migrate.
+
+Restoration lives in `SignalToOrderBridge` for the same reason re-arming does:
+it is the only component holding both halves. It refuses to touch a symbol that
+already has lots, because a startup step must never outrank a live fill.
+
+**Two things deliberately not invented.** A position with no entry record is
+skipped and named in a WARNING - the broker knows what it paid but not when it
+was bought, and a fabricated open date would put invented holding periods into
+the evidence. And excursion on a restored lot measures from the restart
+forward, understating MAE and MFE, which is acceptable where fabricating them
+is not.
+
+Strategy attribution is now recorded on each entry. Entries predating this fix
+name none, so it resolves to the sole deployed strategy when exactly one is
+deployed - `swing`, confirmed by the operator as the only strategy ever
+tested - and to nothing when two are running, where guessing would fabricate an
+attribution inside a per-strategy promotion decision.
+
+## M50 - The absorb watermark does not survive a restart  **[OPEN]**
+
+`OMS._last_fill_scan` starts at construction, so a protective fill that lands
+while the app is down is never absorbed. Reconciliation will not trip, because
+adoption re-baselines quantities from the broker - but the closed trade is lost,
+which after M49 is the only part that still matters.
+
+Narrower than M49: it needs the app to be down, or restarting, at the moment of
+the fill. Not negligible - the app restarted three times during the 4 August
+session alone, and each restart opens a window of up to the poll interval.
+
+**The trap.** Simply persisting the watermark reintroduces M46. On restart,
+`adopt_broker_positions` has already set `_filled_quantities` from the CURRENT
+broker positions, so re-absorbing a sell from before the restart would subtract
+it a second time and trip the kill-switch on arithmetic. The fix has to
+separate the two things absorption currently does at once: **publish the fill
+for the record** (so the ledger sees it) without **re-applying it to the
+quantity arithmetic** (which adoption already accounts for).
+
 ## M48 - `recent_fills` could not see the fill it exists to catch
 
 Found while measuring for M47, on 5 August, and fixed the same day.

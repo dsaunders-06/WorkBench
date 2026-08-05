@@ -12,7 +12,7 @@ import pytest
 
 from qat.config import Settings
 from qat.domain.bus import EventBus
-from qat.domain.events import OrderFilledEvent
+from qat.domain.events import MarketDataEvent, OrderFilledEvent
 from qat.domain.performance.trades import EquityCurve, TradeLedger
 
 _BASE = datetime(2026, 7, 20, 14, 0, tzinfo=UTC)
@@ -64,6 +64,101 @@ async def test_a_buy_then_a_sell_produces_one_closed_trade(tmp_path):
     assert trade.r_multiple is not None and 0 < trade.r_multiple < 2.0
     assert trade.gross_r_multiple == pytest.approx(2.0)  # +10 on 5 of risk
     assert trade.is_win is True
+
+
+@pytest.mark.asyncio
+async def test_a_stop_out_on_a_position_from_an_earlier_session_records_a_trade(tmp_path):
+    """M49. Entry lots lived in memory alone, so a position opened in an earlier
+    session had none - and with a ten-day minimum hold and a session per night,
+    that is every position this system holds. The sell was absorbed correctly,
+    logged "this is now a closed trade", and recorded nothing."""
+    ledger = await _ledger(tmp_path)
+
+    assert ledger.restore_open_lot(
+        symbol="AAA",
+        quantity=20.0,
+        price=50.0,
+        stop_price=45.0,
+        strategy="swing",
+        opened_at=_BASE - timedelta(days=16),
+    )
+    await _fill(ledger, "sell", 20, 44.80)
+
+    trades = ledger.closed_trades("swing")
+    assert len(trades) == 1
+    assert trades[0].entry_price == pytest.approx(50.0)
+    assert trades[0].stop_price == pytest.approx(45.0)
+    assert trades[0].gross_r_multiple == pytest.approx(-1.04)
+    assert trades[0].holding_days == pytest.approx(16.0)
+
+
+@pytest.mark.asyncio
+async def test_restoring_never_overwrites_a_lot_the_session_already_has(tmp_path):
+    """Restoration is a startup step and must never compete with a live fill.
+    The running record is always the better one - it has the real fill price."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+
+    assert not ledger.restore_open_lot(
+        symbol="AAA",
+        quantity=10.0,
+        price=999.0,
+        stop_price=1.0,
+        strategy="swing",
+        opened_at=_BASE,
+    )
+    assert ledger.open_lots("AAA")[0].price == pytest.approx(100.0)
+
+
+@pytest.mark.asyncio
+async def test_the_closed_trade_count_survives_a_restart(tmp_path):
+    """The promotion gate needs 30 closed trades per strategy and the app
+    restarts every session. The list was in-memory while the file beside it was
+    append-only and never opened, so the count reset to zero every night and
+    could never have reached the gate."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 10, 110.0, day=3)
+    assert len(ledger.closed_trades()) == 1
+
+    restarted = TradeLedger(EventBus(), tmp_path)
+
+    assert len(restarted.closed_trades()) == 1
+    assert len(restarted.closed_trades("swing")) == 1
+    assert restarted.strategies() == ["swing"]
+
+
+@pytest.mark.asyncio
+async def test_a_reloaded_trade_keeps_its_excursion_diagnostics(tmp_path):
+    """Only the DERIVED figures were written, so a reloaded trade could never
+    recompute MAE or MFE and the M37 diagnostics would blank on first restart."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    for price in (92.0, 118.0):
+        await ledger._on_price(
+            MarketDataEvent(symbol="AAA", price=price, volume=1, ts=_BASE + timedelta(days=1))
+        )
+    await _fill(ledger, "sell", 10, 110.0, day=3)
+
+    before = ledger.closed_trades()[0]
+    after = TradeLedger(EventBus(), tmp_path).closed_trades()[0]
+
+    assert before.mae_r is not None
+    assert after.mae_r == pytest.approx(before.mae_r)
+    assert after.mfe_r == pytest.approx(before.mfe_r)
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_row_does_not_cost_the_rows_after_it(tmp_path):
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 10, 110.0, day=3)
+
+    lines = ledger.path.read_text(encoding="utf-8").splitlines()
+    corrupt = lines[1].replace("110.0", "not-a-price")
+    ledger.path.write_text("\n".join([lines[0], corrupt, lines[1]]) + "\n", encoding="utf-8")
+
+    assert len(TradeLedger(EventBus(), tmp_path).closed_trades()) == 1
 
 
 @pytest.mark.asyncio
