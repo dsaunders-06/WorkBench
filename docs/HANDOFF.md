@@ -7,7 +7,10 @@ the detail that block points at.
 
 ## Where things stand
 
-- **Deployed:** M50 (`914b9af`). Repo clean and pushed, one branch (`master`).
+- **Deployed:** M50+M40 (`ddd5875`). Repo clean and pushed, one branch
+  (`master`). The compound label is deliberate: M39–M44 were enumerated as
+  future gaps before M45–M50 existed, so M40 shipping after M50 is not a
+  regression, and "M40" alone would read as one.
 - **Account:** Alpaca paper, ten positions — AMAT 7, AMD 7, CRWD 16, CSCO 44,
   CVS 47, GS 7, JNJ 19, MS 82, UNP 17, WFC 58. All ten protected, and verified
   against the live account: **the app now sees all ten** (it saw six).
@@ -30,6 +33,11 @@ one left unfixed and the first stop-out still produces nothing.
 | **M49** | No entry lot for adopted positions; closed trades never reloaded | Trade recorded, and it survives a restart |
 | **M50** | Fills while the app was down were never asked for | Replayed and recorded at next start |
 
+**M40** shipped alongside them and is unrelated: the AI advisory context carried
+no fundamentals at all, so the deep-dive reasoned about price, regime and macro
+while knowing nothing about the company. Outside the freeze — the AI cannot
+place, size or approve an order, and the strategies already had that data.
+
 The measured cost of M47 alone, from the 4 August session: 412 duplicate orders
 refused, and the aggregate risk-at-stop cap pinned at 33.66% against a 5% limit
 for eight and a half hours, so no new entry could have been approved.
@@ -48,19 +56,21 @@ New lines, whose **absence** is the signal something did not wire up:
 
 ## The open task — nothing is mid-flight
 
-1. **Watch a session on M50.** The first closed trade is the evidence the whole
-   trial exists to collect, and four separate defects stood between the system
-   and recording one.
-2. **Clock-granularity fragility in tests.** Windows' clock is coarse enough
+1. **Watch a session on M50+M40.** The first closed trade is the evidence the
+   whole trial exists to collect, and four separate defects stood between the
+   system and recording one. Nothing else on this list matters as much.
+2. **Then delete the pre-M46 install backups.** Eleven sit in `C:\`, roughly
+   4.4 GB, five from 5 August. The operator has authorised deleting the pre-M46
+   set — `M26`, `M27a`, `M27a.1`, `M31`, `M31a` — **once testing has succeeded**,
+   and not before. The M46–M50 backups stay for now.
+3. **Clock-granularity fragility in tests.** Windows' clock is coarse enough
    that two `datetime.now(UTC)` calls return the same value, and three separate
-   test failures today traced to it. The M48/M50 tests nudge a watermark back a
-   second to work around it; the older broker-side-fill tests pass on timing
-   luck. Worth making the time source explicit and injectable instead.
-3. **M40 — fundamentals absent from the AI advisory context.** Cheapest item in
-   ROADMAP.md, and not behind the freeze.
-4. **Ten install backups** now sit in `C:\`, four from today, roughly 4 GB. The
-   pre-M46 ones are almost certainly dead weight. Deleting installs is the
-   operator's call; ask which go.
+   test failures on 5 August traced to it. The M48/M50 tests nudge a watermark
+   back a second to work around it; the older broker-side-fill tests pass on
+   timing luck. Worth making the time source explicit and injectable instead.
+4. **The recurring `Could not generate a report narrative` warning.** Fired on
+   both the 3 and 4 August daily reports. The report itself is still written, so
+   it is cosmetic — but it has never been chased.
 
 ## Files the app now reads as well as writes
 
@@ -130,18 +140,21 @@ Continuing work on QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Read docs/HANDOFF.md first, then the standing rule at the top of ROADMAP.md and
 the section titled "How Alpaca actually represents orders".
 
-Deployed build is M50; repo is clean and pushed on master.
+Deployed build is M50+M40; repo is clean and pushed on master.
 
 Nothing is mid-flight. M47 through M50 fixed the four defects that stood between
 this system and recording a single closed trade - protection invisible after an
 entry filled, the fill of a resting order unqueryable, no entry lot to match it
 against, and no memory of fills that happened while the app was down. The trade
-counter can now move off zero for the first time; it has never done so.
+counter can now move off zero for the first time; it has never done so. M40
+shipped alongside and is unrelated - fundamentals into the AI advisory context.
 
 The next thing that matters is watching a session run and confirming the new
 startup lines appear: "Broker-fill watermark restored", "Restored N open lot(s)
 to the trade ledger", and "N carries a stop resting at the broker" reading 10
-rather than 6.
+rather than 6. Once that session has succeeded, the operator has authorised
+deleting the pre-M46 install backups in C:\ (M26, M27a, M27a.1, M31, M31a) and
+not before.
 
 Constraints: read %LOCALAPPDATA%\QuantAdvisoryTerminal via PowerShell only,
 never Bash. The operator's terminal is PowerShell 5.1, so use ; not && and a
