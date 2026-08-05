@@ -31,7 +31,12 @@ from datetime import UTC, datetime
 # Bump when a milestone ships. Its accuracy is not load-bearing - the commit
 # and the build time beside it are the ground truth, and a stale label is
 # visible precisely because they disagree with it.
-MILESTONE = "M50"
+#
+# Compound, because the numbering is a naming scheme rather than a sequence:
+# M39-M44 were enumerated as future gaps on 4 August, before M45-M50 existed, so
+# M40 shipping after M50 is not a regression. "M40" alone would read to an
+# operator as the application having gone backwards.
+MILESTONE = "M50+M40"
 
 _UNKNOWN = "unknown"
 
