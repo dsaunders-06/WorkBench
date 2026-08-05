@@ -1333,6 +1333,19 @@ def _performance(doc: Any, figures: FigureSet) -> None:
         ),
     )
 
+    _callout(
+        doc,
+        "Trade history accumulates across sessions",
+        "The trade count on this screen is the running total, not this session's. Closed "
+        "trades are read back from closed_trades.csv at every launch, and positions opened in "
+        "an earlier session are restored into the ledger at startup from the recorded entry, "
+        "so a stop firing weeks after the entry still produces a complete trade with its "
+        "correct entry price, stop and holding period. A position held when this application "
+        "first met it has no recorded entry, and is named in the log at startup: its eventual "
+        "exit is still handled correctly at the broker, but it cannot produce a closed trade, "
+        "because nothing here knows what it cost or when it was opened.",
+    )
+
     doc.add_heading("10.3 Closed Trades and Reports", level=2)
     _table(
         doc,
@@ -1464,8 +1477,10 @@ def _metrics_panel(doc: Any) -> None:
         ),
     )
     doc.add_paragraph(
-        "All of it is written to trades.csv alongside the P&L columns. None of it influences "
-        "any decision - the application does not read these back."
+        "All of it is written to closed_trades.csv alongside the P&L columns, and read back "
+        "at every launch. None of these diagnostic columns influences a decision - sizing and "
+        "the promotion bar read the P&L figures, not the excursion ones - but the file as a "
+        "whole is now load-bearing rather than a passive record."
     )
 
     doc.add_heading("10.6 The Metrics Tab", level=2)
