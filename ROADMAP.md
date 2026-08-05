@@ -331,6 +331,36 @@ broker what its parameters mean, do not read them.
 
 Behind no freeze: this is recording an execution that already happened.
 
+## M52 - A forced session start still announces "US is open"  **[OPEN]**
+
+Found live on 5 August, seconds apart in the log:
+
+```
+13:21:37Z  Trading session force-started by operator (dashboard) while US is closed
+13:21:37Z  Trading session started - US is open
+```
+
+The second line contradicts the first. It is the generic session-started
+message and it asserts a fact about the market that the line above has just
+denied. An operator reading the second line - or a watcher surfacing it, which
+is how this was found - is told the market is open eight minutes before it is.
+
+Small, and squarely against this project's own standard: a log line that says
+something false is worse than one that says nothing. The started message should
+state how the session started, not assume.
+
+**Worth fixing at the same time: what a forced start actually turns off.** The
+stood-down message promises that "the staleness rail cannot trip on a market
+that is simply shut". Forcing the session open removes exactly that protection,
+and on 5 August it produced 94 staleness exclusions in six seconds against a
+market that had been closed for seventeen hours. They were harmless - they
+self-cleared at the real open, and nothing was proposed - but an operator who
+forces a start deserves to be told what they have just disarmed.
+
+No trade or record was affected, so this is not behind the freeze and not
+urgent. It belongs with the Settings/UX work, being the same class of problem:
+the application knowing something and not saying it.
+
 ## M51 - Evaluation: does the information this system captures earn its place  **[OPEN, details deliberately deferred]**
 
 Raised by the operator on 5 August. Partly built already, and immature - which

@@ -25,6 +25,11 @@ from pathlib import Path
 # What to surface, and how to label it. Ordered: the first pattern that matches
 # a message wins, so the specific sits above the general.
 _RULES: tuple[tuple[str, str], ...] = (
+    # Above the generic rule, because it is the line that explains the one
+    # below it. Without this the watcher printed "Trading session started - US
+    # is open" on its own and the operator had no way to see that the open was
+    # forced rather than reached - which is exactly what happened on 5 August.
+    ("force-started by operator", "FORCED"),
     ("Trading session started", "SESSION"),
     ("Trading session stood down", "SESSION"),
     ("REGIME ", "REGIME"),
