@@ -146,6 +146,58 @@ Risk limits being *visible but read-only* at Guided matters: an operator should
 always be able to see what is governing their account, even before they are
 ready to change it.
 
+#### 4.3a Two behaviours Settings is missing (added 5 August)
+
+Requested by the operator, and both belong to this screen's rework rather than
+to a separate milestone. Neither changes a trading decision; both change how
+easy it is to make one by accident.
+
+**Restore defaults.** There is no way back. An operator who has edited a Kelly
+bound or a correlation threshold to see what it does has no way to return to the
+shipped values except by knowing what they were, and the shipped values are only
+visible in `config.py`. That is the opposite of the "always be able to see what
+is governing their account" rule above.
+
+Requirements, in the spirit of the rest of the screen:
+
+* Confirm before acting, and say what will change — a count and the field names,
+  not "are you sure".
+* Scope it. Restoring *every* field would clear the broker connection, the
+  watchlist and the deployed-strategy list, which are the operator's
+  configuration rather than tuning. Defaults belong to the tuning groups.
+* Do not write silently. It is a bulk edit to fields that govern the account, so
+  it should leave the same restart-required message any other edit does, and the
+  same audit trail if one exists.
+* It restores the field VALUES, not the file. Nothing is saved until Save is
+  pressed, so a restore can itself be abandoned by closing without saving.
+
+**Unsaved-changes prompt on exit.** Every field on this screen is
+restart-required, which means an unsaved edit is invisible twice over: it did
+not take effect, and there is nothing on screen that says so. An operator can
+change a risk limit, close the window, restart, and reasonably believe the new
+limit is live.
+
+Requirements:
+
+* Scope is **Market & Watchlist downwards** — the operator's stated boundary.
+  Above it sits the broker/API section, whose write-only secret fields must
+  never be diffed or echoed back (§2), so they are excluded by construction as
+  well as by request.
+* Compare against the values as loaded, not against defaults, so re-typing the
+  same value is not treated as a change.
+* Three answers, not two: Save, Discard, Cancel. A two-button prompt forces a
+  decision the operator may not be ready to make and is how unsaved work gets
+  thrown away.
+* Name what changed. Consistent with the habit of explaining consequences:
+  "3 unsaved changes: max position size, ATR multiple, correlation limit."
+* The prompt must not fire on a screen the operator only scrolled through. A
+  spin box that emits a change signal on focus alone would make this an
+  irritation that gets clicked past reflexively, which is worse than not having
+  it.
+
+Both are Guided-first features: the expert knows they did not press Save, and
+the novice is the one who loses an afternoon to it.
+
 ### 4.4 Performance — did any of this work
 
 *Do not touch:* promotion status colour coding, the "gate advises" note, the

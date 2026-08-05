@@ -331,6 +331,63 @@ broker what its parameters mean, do not read them.
 
 Behind no freeze: this is recording an execution that already happened.
 
+## M51 - Evaluation: does the information this system captures earn its place  **[OPEN, details deliberately deferred]**
+
+Raised by the operator on 5 August. Partly built already, and immature - which
+is the point of naming it now rather than later.
+
+**The question it exists to answer is one nothing else asks.** Every rail,
+journal and ledger in this application answers *is the information being
+captured*. M37 added excursion and exit reason, M20 journals every decision, M49
+made the closed-trade record survive a restart. All of that is capture. None of
+it asks the next question: **is the captured information used, does its use add
+value, and does anything here reduce effectiveness?**
+
+Those are different questions and the second is harder. A field that is
+faithfully recorded, correctly displayed and never acted on is pure cost. A
+signal that is acted on but degrades outcomes is worse than cost. Neither shows
+up as a defect, a failed test or a red line in a log - the system reports
+perfect health while carrying both.
+
+**What is already built and counts toward this:**
+
+* `decision_journal.csv` - every proposal, refusal and its reason
+* `risk_decisions.csv` - which rail bound, with its inputs
+* `closed_trades.csv` - M37's diagnostics: regime at entry, exposure scalar,
+  exit reason, MAE, MFE, entry slippage
+* The promotion gate and scorecard - the only piece that currently closes a loop
+* `entry_slippage` specifically, which was designed to answer whether the cost
+  model's assumption holds (M44)
+
+**What is missing is the analysis layer over them**, and the discipline of
+deciding what to do when the answer is unflattering.
+
+**Sequencing: after the app is stable, and after the trial has data.** Deliberately
+not now, for two reasons. This milestone is *about* the evidence, so building it
+before there is any evidence would mean designing measures against imagined
+data - the mistake the walk-forward numbers already made. And the app has been
+stable for less than a day; four defects that silently prevented any closed
+trade from being recorded were fixed on 5 August, so nothing in
+`closed_trades.csv` predates that.
+
+Concretely it sits behind: a session running clean on M50+M40, and the first
+meaningful batch of closed trades. It sits ahead of the UI/UX screen work, which
+also waits on closed trades, because what evaluation concludes should shape what
+the Performance screens are built to show.
+
+**Details to be worked out with the operator when it starts.** Candidate
+questions it should be able to answer, recorded so the intent is not lost:
+
+* Which recorded fields have ever changed a decision, and which never have?
+* Which rail binds most often, and does binding it improve or degrade the
+  outcome distribution?
+* Does the AI advisory layer change any outcome, in either direction? It cannot
+  place an order, so its value is entirely in whether the operator's decisions
+  are better with it than without.
+* Is the regime classification adding value, or is the exposure scalar merely
+  adding variance?
+* What does the trial cost in fields nobody reads?
+
 ## Not yet addressed - integral to share trading
 
 Found by asking what an equity trading system must handle that this one does
