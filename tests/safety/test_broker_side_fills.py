@@ -498,6 +498,21 @@ async def test_a_pre_m53_fill_record_is_not_re_absorbed(tmp_path):
     assert oms._filled_quantities.get("AAA", 0.0) == pytest.approx(0.0)
     assert switch.tripped is False
 
+    # And it must still read as finished after being written back out. Fixing
+    # only the load path left the save path dropping the flag, so a migrated
+    # record round-tripped to "0 absorbed, quantity known" and the whole order
+    # became eligible again on the NEXT restart.
+    reloaded = OMS(
+        broker,
+        RiskEngine(EventBus(), KillSwitch(), settings=settings),
+        KillSwitch(),
+        settings=settings,
+    )
+    reloaded.watch_symbols_for_fills(["AAA"])
+    await reloaded.adopt_broker_positions()
+    assert await reloaded.absorb_broker_fills() == []
+    assert reloaded._filled_quantities.get("AAA", 0.0) == pytest.approx(0.0)
+
 
 @pytest.mark.asyncio
 async def test_a_fully_absorbed_order_is_never_absorbed_again():

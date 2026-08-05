@@ -78,10 +78,16 @@ def _absorbed_from_json(entry: object) -> _AbsorbedFill:
             quantity_known=False,
         )
     if isinstance(entry, dict):
+        quantity = float(entry.get("quantity") or 0.0)
         return _AbsorbedFill(
             filled_at=datetime.fromisoformat(str(entry["filled_at"])),
-            quantity=float(entry.get("quantity") or 0.0),
+            quantity=quantity,
             price=float(entry.get("price") or 0.0),
+            # A dict with no flag was written by the build that persisted a
+            # migrated record without one. Zero absorbed is exactly that case,
+            # and it has to keep reading as "finished" rather than as "none of
+            # it counted yet".
+            quantity_known=bool(entry.get("quantity_known", quantity > 0.0)),
         )
     raise ValueError("unrecognised absorbed-fill record")
 
@@ -882,6 +888,12 @@ class OMS:
                     "filled_at": seen.filled_at.isoformat(),
                     "quantity": seen.quantity,
                     "price": seen.price,
+                    # Written, or a migrated record round-trips back to
+                    # "0 absorbed, quantity known" and the whole order becomes
+                    # eligible again on the NEXT restart - the same hazard
+                    # _absorbed_from_json exists to close, reintroduced through
+                    # the save path because only the load path was fixed.
+                    "quantity_known": seen.quantity_known,
                 }
                 for order_id, seen in self._absorbed_fills.items()
             },
