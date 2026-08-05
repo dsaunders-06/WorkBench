@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Iterable
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
@@ -32,6 +33,42 @@ from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _AbsorbedFill:
+    """How much of one broker order this app has already counted (M53).
+
+    Quantity, not just a timestamp: a partially filling order reports the same
+    id repeatedly with a growing `filled_qty`, so "have I seen this id" is the
+    wrong question and answering it cost a session on 5 August.
+    """
+
+    filled_at: datetime
+    quantity: float
+    price: float
+
+
+def _absorbed_from_json(entry: object) -> _AbsorbedFill:
+    """One `absorbed` entry, in either the M50 or the M53 shape.
+
+    M50 wrote a bare timestamp per order id. A file in that shape is loaded as
+    "seen, quantity unknown" - quantity 0, which makes the whole of any such
+    order eligible to be re-counted. That is the deliberate direction: the file
+    is at most one poll old at startup, adoption has just re-baselined the
+    quantities from the broker anyway, and under-recording a closed trade is the
+    failure this milestone exists to end.
+    """
+    if isinstance(entry, str):
+        return _AbsorbedFill(filled_at=datetime.fromisoformat(entry), quantity=0.0, price=0.0)
+    if isinstance(entry, dict):
+        return _AbsorbedFill(
+            filled_at=datetime.fromisoformat(str(entry["filled_at"])),
+            quantity=float(entry.get("quantity") or 0.0),
+            price=float(entry.get("price") or 0.0),
+        )
+    raise ValueError("unrecognised absorbed-fill record")
+
 
 _FILL_STATE_FILENAME = "absorbed_fills.json"
 # How long an absorbed fill's id is remembered. Only needs to outlast the gap
@@ -88,7 +125,7 @@ class OMS:
         self._fill_state_path = (
             Path(settings.data_dir) / _FILL_STATE_FILENAME if settings is not None else None
         )
-        self._absorbed_fills: dict[str, datetime] = {}
+        self._absorbed_fills: dict[str, _AbsorbedFill] = {}
         self._fill_watch_hint: set[str] = set()
         self._last_fill_scan = self._load_fill_state()
         # Why a position ended, keyed by symbol until the fill arrives. After
@@ -797,8 +834,8 @@ class OMS:
             raw = json.loads(self._fill_state_path.read_text(encoding="utf-8"))
             watermark = datetime.fromisoformat(raw["watermark"])
             absorbed = {
-                str(order_id): datetime.fromisoformat(stamp)
-                for order_id, stamp in (raw.get("absorbed") or {}).items()
+                str(order_id): _absorbed_from_json(entry)
+                for order_id, entry in (raw.get("absorbed") or {}).items()
             }
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
             return datetime.now(UTC)
@@ -818,12 +855,19 @@ class OMS:
             return
         cutoff = datetime.now(UTC) - _ABSORBED_ID_RETENTION
         self._absorbed_fills = {
-            order_id: stamp for order_id, stamp in self._absorbed_fills.items() if stamp >= cutoff
+            order_id: seen
+            for order_id, seen in self._absorbed_fills.items()
+            if seen.filled_at >= cutoff
         }
         payload = {
             "watermark": self._last_fill_scan.isoformat(),
             "absorbed": {
-                order_id: stamp.isoformat() for order_id, stamp in self._absorbed_fills.items()
+                order_id: {
+                    "filled_at": seen.filled_at.isoformat(),
+                    "quantity": seen.quantity,
+                    "price": seen.price,
+                }
+                for order_id, seen in self._absorbed_fills.items()
             },
         }
         try:
@@ -852,17 +896,74 @@ class OMS:
         return [fill for fill in fills if self._is_foreign_unrecorded(fill)]
 
     def _is_foreign_unrecorded(self, fill: BrokerFill) -> bool:
-        """Whether this fill is one this app neither sent nor has already
+        """Whether this fill is one this app neither sent nor has fully
         recorded."""
         if fill.order_id in self._broker_order_ids or fill.order_id in self._orders:
             # This app sent it and sign_off already counted it. Both sets are
             # checked because an order carries the app's id until it is
             # transmitted and the broker's afterwards.
             return False
-        if fill.order_id in self._absorbed_fills:
-            # Recorded by an earlier pass, possibly in an earlier process.
-            return False
+        prior = self._absorbed_fills.get(fill.order_id)
+        if prior is not None:
+            # Seen before - but seen is not the same as finished. An order that
+            # is still filling reports the SAME id with a larger filled_qty, so
+            # the question is whether anything NEW has executed, not whether the
+            # id is familiar. `_unabsorbed_part` answers that.
+            return fill.quantity > prior.quantity + 1e-9
         return fill.filled_at > self._last_fill_scan
+
+    def _fill_query_floor(self) -> datetime:
+        """How far back to ask, which is NOT simply the watermark (M53).
+
+        An order still filling keeps the `filled_at` of its first execution, and
+        that stamp is already behind the watermark by the time the rest of it
+        completes. Asking from the watermark therefore excludes the very order
+        whose remainder is outstanding - the adapter drops it before the OMS
+        ever sees it, so the delta arithmetic below never gets the chance to
+        run. That is what let 17 CVS shares vanish on 5 August.
+
+        So the floor reaches back past every fill still remembered. Re-reading a
+        completed one costs nothing: its cumulative quantity is unchanged, the
+        delta is zero, and it is skipped. `_absorbed_fills` is pruned to 30
+        days, and the query is bounded by symbol, so the window cannot grow
+        without limit.
+        """
+        floor = self._last_fill_scan
+        if self._absorbed_fills:
+            oldest = min(seen.filled_at for seen in self._absorbed_fills.values())
+            # A second before, because the brokers' filters are exclusive and an
+            # order's remainder carries the same stamp as its first piece.
+            floor = min(floor, oldest - timedelta(seconds=1))
+        return floor
+
+    def _unabsorbed_part(self, fill: BrokerFill) -> BrokerFill | None:
+        """The part of this execution not already counted, or None (M53).
+
+        A protective order does not always fill in one go. On 5 August a CVS
+        stop gapped through at the open and filled 47 shares in pieces; this
+        method's absence meant the app read it mid-fill, absorbed 30, recorded
+        the id as done, and never counted the remaining 17. Tracked 17 against a
+        broker holding 0 is a discrepancy, and reconciliation answered it with
+        the kill-switch - eight minutes into the first session that had ever
+        recorded a closed trade.
+
+        `BrokerFill.quantity` is CUMULATIVE (`filled_qty`), and so is `price`
+        (`filled_avg_price`). The increment's own price therefore has to be
+        recovered from the two running averages rather than assumed to be the
+        latest one - otherwise a second piece filled at a different price would
+        be recorded at the blended average, and the realised P&L would be wrong
+        by the difference.
+        """
+        prior = self._absorbed_fills.get(fill.order_id)
+        if prior is None:
+            return fill
+        delta = fill.quantity - prior.quantity
+        if delta <= 1e-9:
+            return None
+        # value_new = total_value - value_already_counted
+        increment_value = (fill.price * fill.quantity) - (prior.price * prior.quantity)
+        price = increment_value / delta if delta > 0 else fill.price
+        return replace(fill, quantity=delta, price=price)
 
     def watch_symbols_for_fills(self, symbols: Iterable[str]) -> None:
         """Symbols to ask about even though nothing here tracks a position in
@@ -923,16 +1024,18 @@ class OMS:
         source = getattr(self.broker, "recent_fills", None)
         if source is None:
             return []
-        since = self._last_fill_scan
         try:
-            fills = await source(since, self._symbols_to_watch_for_fills())
+            fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
         except Exception:
             logger.exception("Could not read recent broker fills")
             return []
 
         absorbed: list[BrokerFill] = []
-        for fill in fills:
-            if not self._is_foreign_unrecorded(fill):
+        for raw in fills:
+            if not self._is_foreign_unrecorded(raw):
+                continue
+            fill = self._unabsorbed_part(raw)
+            if fill is None:
                 continue
             # The M50 trap, and the reason this is not simply "persist the
             # watermark". A fill from before the baseline was taken is ALREADY
@@ -949,7 +1052,12 @@ class OMS:
                 if abs(self._filled_quantities.get(fill.symbol, 0.0)) < 1e-6:
                     # Flat: whatever was protecting it went with it at the broker.
                     self._position_stops.pop(fill.symbol, None)
-            self._absorbed_fills[fill.order_id] = fill.filled_at
+            prior = self._absorbed_fills.get(raw.order_id)
+            self._absorbed_fills[raw.order_id] = _AbsorbedFill(
+                filled_at=raw.filled_at,
+                quantity=(prior.quantity if prior else 0.0) + fill.quantity,
+                price=raw.price,
+            )
             absorbed.append(fill)
             logger.warning(
                 "BROKER-SIDE FILL absorbed: %s %g %s at %.2f (order %s) - a resting "

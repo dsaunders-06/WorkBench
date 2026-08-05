@@ -331,6 +331,53 @@ broker what its parameters mean, do not read them.
 
 Behind no freeze: this is recording an execution that already happened.
 
+## M53 - A partial fill halted the first session that ever recorded a trade
+
+5 August, eight minutes after the open, and caused by M50's own dedupe.
+
+A CVS stop gapped through at the open and filled **47 shares in pieces**. The
+app read the order mid-fill, absorbed **30**, recorded the order id in
+`absorbed_fills.json` as done, and never counted the remaining 17. Tracked 17
+against a broker holding 0 is a discrepancy, and reconciliation answered it with
+the kill-switch.
+
+**Three separate mistakes, each of which alone was enough.**
+
+*The dedupe asked the wrong question.* M50 keyed on order id: "have I seen
+this?" A partially filling order reports the SAME id with a growing
+`filled_qty`, so the question had to be "has anything new executed?". Fixed by
+remembering how much of each order has been counted and absorbing only the
+delta.
+
+*The increment's price is not the latest average.* `BrokerFill.quantity` and
+`.price` are both cumulative, so the second piece's own price has to be
+recovered as `(avg_new x qty_new - avg_old x qty_old) / delta`. Taking the
+blended average instead would misstate realised P&L on every multi-piece exit.
+
+*The query floor excluded the very order it needed.* An order still filling
+keeps the `filled_at` of its first execution, which is already behind the
+watermark by the time the rest completes - so the adapter dropped it before the
+OMS could see it, and the delta arithmetic never ran. The floor now reaches back
+past every fill still remembered. Re-reading a completed one is free: its
+cumulative quantity is unchanged, the delta is zero, it is skipped.
+
+**And a fourth, in the bridge.** `_on_fill` dropped the whole entry record on
+any sell. A partial exit therefore left the remainder with no stop to re-arm to,
+no minimum hold, no time stop, and no way for a later exit to become a closed
+trade - the entry it would have been measured from was gone. It is now asked of
+the broker whether the position is actually flat, and a failed query keeps the
+record, because a stale record is cleaned up by the time stop within a sweep
+where a deleted one cannot be recovered at all.
+
+**This is M42, which the roadmap called "unlikely on liquid large-caps with
+market orders, and not unlikely forever".** Forever turned out to be eleven
+hours. It was made certain, and permanent, by M50's id-only dedupe - a fix that
+introduced the failure it was written to prevent, in a narrower case.
+
+The trade itself survived: CVS 30 shares at 95.36 against a 105.475 entry, -1.73R
+after costs, the first closed trade this system has ever recorded. The remaining
+17 shares are missing from that record and want correcting by hand.
+
 ## M52 - A forced session start still announces "US is open"  **[OPEN]**
 
 Found live on 5 August, seconds apart in the log:

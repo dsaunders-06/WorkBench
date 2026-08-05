@@ -208,6 +208,10 @@ async def test_a_closed_position_is_forgotten_across_a_restart():
     broker = _Broker()
     first = _bridge(broker, data_dir=data_dir)
     await _opened(first, days_ago=2)
+    # The sell happened AT THE BROKER, so the account is flat by the time the
+    # event is handled. Whether the record may be dropped is now asked of the
+    # account rather than assumed from the event (M53).
+    broker.held = 0.0
     await first._on_fill(
         OrderFilledEvent(
             order_id="o2",
@@ -224,6 +228,40 @@ async def test_a_closed_position_is_forgotten_across_a_restart():
     second = _bridge(_Broker(), data_dir=data_dir)
 
     assert "AAA" not in second._entries
+
+
+@pytest.mark.asyncio
+async def test_a_partial_exit_keeps_the_entry_record_for_what_remains():
+    """M53. A partial sell used to drop the whole record, leaving the remaining
+    shares with no stop to re-arm to, no minimum hold, no time stop, and no way
+    for a later exit to become a closed trade - the entry it would have been
+    measured from was gone.
+
+    On 5 August a CVS stop filled 30 of 47. It was harmless only because the
+    rest filled seconds later and the position went flat anyway."""
+    data_dir = tempfile.mkdtemp()
+    broker = _Broker()
+    bridge = _bridge(broker, data_dir=data_dir)
+    await _opened(bridge, days_ago=2)
+
+    broker.held = 30.0  # 70 of 100 sold, 30 still held
+    await bridge._on_fill(
+        OrderFilledEvent(
+            order_id="o2",
+            symbol="AAA",
+            side="sell",
+            quantity=70.0,
+            price=101.0,
+            strategy="swing",
+            stop_price=None,
+            ts=_NOW,
+        )
+    )
+
+    assert "AAA" in bridge._entries
+    assert bridge._entries["AAA"].stop_price == 95.0
+    # And it survives the restart, so the remainder can still be re-armed.
+    assert "AAA" in _bridge(_Broker(held=30.0), data_dir=data_dir)._entries
 
 
 def test_an_unreadable_entries_file_is_not_fatal():

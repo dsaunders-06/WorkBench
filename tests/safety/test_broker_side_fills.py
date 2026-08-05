@@ -20,13 +20,14 @@ import json
 import logging
 import tempfile
 from contextlib import contextmanager
-from datetime import timedelta
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import Position
+from qat.data.broker.adapter import BrokerFill, Position
 from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.events import OrderFilledEvent
@@ -399,6 +400,79 @@ async def test_an_adopted_position_stopping_out_is_absorbed():
 
     assert mismatch is False
     assert switch.tripped is False
+
+
+@pytest.mark.asyncio
+async def test_an_order_that_fills_in_pieces_is_counted_in_full():
+    """M53, and it halted a live session. A CVS stop gapped through at the open
+    and filled 47 shares in pieces. The app read it mid-fill, absorbed 30,
+    recorded the id as done, and never counted the remaining 17 - because the
+    dedupe asked "have I seen this id" when the question is "has anything new
+    executed". Tracked 17 against a broker holding 0 is a discrepancy, and
+    reconciliation answered it with the kill-switch."""
+    bus = EventBus()
+    switch = KillSwitch()
+    settings = Settings(_env_file=None)
+    broker = MockBroker(seed=1)
+    broker._positions["AAA"] = Position(symbol="AAA", quantity=47.0, avg_price=105.0)
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
+    await oms.adopt_broker_positions()
+    oms._last_fill_scan -= timedelta(seconds=1)
+
+    # The broker reports cumulative filled_qty and a cumulative average price.
+    partial = BrokerFill(
+        order_id="stop-1",
+        symbol="AAA",
+        side="sell",
+        quantity=30.0,
+        price=95.0,
+        filled_at=datetime.now(UTC),
+    )
+    complete = replace(partial, quantity=47.0, price=96.0)
+
+    broker._broker_fills = [partial]
+    broker._positions["AAA"] = Position(symbol="AAA", quantity=17.0, avg_price=105.0)
+    assert len(await oms.absorb_broker_fills()) == 1
+    assert oms._filled_quantities["AAA"] == pytest.approx(17.0)
+
+    broker._broker_fills = [complete]
+    broker._positions.pop("AAA")  # the rest fills and the account goes flat
+    rest = await oms.absorb_broker_fills()
+
+    assert len(rest) == 1
+    assert rest[0].quantity == pytest.approx(17.0), "only the NEW shares"
+    # The increment's own price, recovered from the two running averages -
+    # (96*47 - 95*30)/17 - not the blended average, which would misstate P&L.
+    assert rest[0].price == pytest.approx((96.0 * 47 - 95.0 * 30) / 17)
+    assert oms._filled_quantities["AAA"] == pytest.approx(0.0)
+    assert await oms.check_reconciliation() is False
+    assert switch.tripped is False
+
+
+@pytest.mark.asyncio
+async def test_a_fully_absorbed_order_is_never_absorbed_again():
+    bus = EventBus()
+    switch = KillSwitch()
+    settings = Settings(_env_file=None)
+    broker = MockBroker(seed=1)
+    broker._positions["AAA"] = Position(symbol="AAA", quantity=10.0, avg_price=100.0)
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
+    await oms.adopt_broker_positions()
+    oms._last_fill_scan -= timedelta(seconds=1)
+    broker._broker_fills = [
+        BrokerFill(
+            order_id="stop-1",
+            symbol="AAA",
+            side="sell",
+            quantity=10.0,
+            price=95.0,
+            filled_at=datetime.now(UTC),
+        )
+    ]
+
+    assert len(await oms.absorb_broker_fills()) == 1
+    assert await oms.absorb_broker_fills() == []
+    assert oms._filled_quantities["AAA"] == pytest.approx(0.0)
 
 
 @pytest.mark.asyncio

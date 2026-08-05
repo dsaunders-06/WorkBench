@@ -329,6 +329,28 @@ class SignalToOrderBridge:
             )
         return restored
 
+    async def _is_flat(self, symbol: str) -> bool:
+        """Whether the position is actually gone, asked of the broker (M53).
+
+        The broker is the authority on what is held - the lesson M50 paid for
+        twice. A sell event says shares left; only the account says whether any
+        remain.
+
+        A failed query answers "not flat", which KEEPS the entry record. The
+        conservative direction here is to retain: a stale record for a closed
+        position is cleaned up by the time stop within a sweep, where a deleted
+        record for an open one cannot be recovered at all.
+        """
+        try:
+            positions = await self.oms.broker.positions()
+        except Exception:
+            logger.exception(
+                "Could not confirm whether %s is flat - keeping its entry record", symbol
+            )
+            return False
+        held = next((p.quantity for p in positions if p.symbol == symbol), 0.0)
+        return abs(held) < 1e-6
+
     def _lot_store(self) -> _LotStore | None:
         """The ledger, if it can hold entry lots. A ClosedTradeSource that
         cannot is still perfectly usable for sizing, so its absence is not an
@@ -460,9 +482,25 @@ class SignalToOrderBridge:
                 ),
             )
             self._entry_times.append(event.ts)
-        else:
+        elif await self._is_flat(event.symbol):
             self._entries.pop(event.symbol, None)
             self._time_stopped.discard(event.symbol)
+        else:
+            # A PARTIAL exit leaves a position behind, and its entry record is
+            # the only thing that can protect it (M53). Dropping the record on
+            # the first piece of a multi-piece sell left the remainder with no
+            # stop to re-arm to, no minimum hold, no time stop, and no way for a
+            # later exit to ever become a closed trade - because the entry it
+            # would be measured from was gone.
+            #
+            # On 5 August a CVS stop filled 30 of 47 and the record went with
+            # the first 30. It happened to be harmless only because the rest
+            # filled seconds later and the position went flat anyway.
+            logger.info(
+                "%s partially exited - keeping its entry record for the %s that remain",
+                event.symbol,
+                "shares",
+            )
         self._save_entries()
 
     def _load_entries(self) -> dict[str, _Entry]:
