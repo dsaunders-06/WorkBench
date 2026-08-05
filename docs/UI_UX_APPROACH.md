@@ -94,6 +94,35 @@ panel can be shown or hidden per user. Level is a starting point, not a cage.
 
 ---
 
+## 3a. Cross-cutting: every chart states what it is showing
+
+Requested by the operator on 6 August. It spans screens, so it belongs to the
+design system rather than to any one page.
+
+**Measured: one axis-label call in the entire presentation layer.** Every other
+chart — the equity curve, the Monte Carlo cone, the walk-forward windows, the
+regime history, the price panels — renders bare axes. The reader is expected to
+infer that the x-axis is trading days rather than calendar days, or bar count,
+or seconds; and that the y-axis is dollars rather than percent, R multiples or
+an index. On a screen whose purpose is deciding whether a strategy works, that
+is an invitation to read the wrong quantity confidently.
+
+The requirement:
+
+* **Both axes labelled on every chart**, with units — "Equity ($)", "Trading
+  days", "R multiple", "Return (%)". The unit is the part that matters; a label
+  reading "Time" is barely better than nothing.
+* **Say which time base.** Several of these plot bar index, not dates. If the
+  x-axis is bars, it says bars.
+* **Labels come from the design system**, not from per-chart styling — this is
+  exactly the "67 inline stylesheets" problem in miniature, and adding twenty
+  hand-styled labels would recreate it.
+* **A chart that cannot say what its axes mean should be questioned rather than
+  labelled.** If nobody can state the unit, that is a finding about the chart.
+
+Cheap, and unusually high value per hour: it costs no new data, no new
+computation, and removes a whole class of silent misreading.
+
 ## 4. Page by page
 
 ### 4.1 Dashboard — "is it working, and what do I hold"
@@ -282,6 +311,15 @@ it is invisible to the operator, which makes it the safest possible first step.
 **2. Build the expertise-level mechanism.** A setting, a way for any panel to
 ask the current level, and a level selector. No screen changes yet — this is
 plumbing.
+
+> **Status, corrected 6 August: step 1 is done, step 2 is not.** `theme.py` is
+> real and consumed by six panels. `ui_level` exists as a config field and a
+> module that **nothing imports** — `grep` finds one reference in the whole
+> source tree, in `config.py`. There is no way for a panel to ask the level and
+> no way for an operator to set it. An earlier handoff described both steps as
+> done and deployed; only the first was. Step 2 has to be finished before step 3
+> can prove anything, because Settings is where the level model was going to be
+> demonstrated.
 
 **3. Settings.** Worst clunk, highest payoff, and it is configuration rather
 than trading, so the blast radius is smallest. Also the best place to prove the

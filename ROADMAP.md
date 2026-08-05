@@ -41,6 +41,34 @@ regime-at-entry, exit reason, excursion and slippage to every closed trade and
 changed no decision anywhere. Reporting, logging and analysis are not the
 trading logic.
 
+## The conservative baseline — decided 6 August
+
+**The configuration is frozen as it stands, and runs for two weeks. Review
+around 20 August.**
+
+Taken deliberately, with the alternative costed. Overnight on 5–6 August the
+book refused 503 orders: **479 for the 10-position limit and 24 for the 5%
+aggregate risk cap.** The two rails are co-binding by construction — measured
+per-position risk averages 0.49% of equity, so ten positions fill a 5% budget
+almost exactly, and raising either one alone changes nothing.
+
+Widening was considered and declined. The case for it was that the freeze's cost
+is proportional to evidence already collected, and that stood at one closed
+trade — so 6 August was the cheapest moment the change would ever have. The case
+against, which won: the build had been stable for hours rather than weeks, and a
+baseline nobody has observed is not a baseline. Widening remains available at
+the review, and will cost only the trades banked by then.
+
+Recorded because it is a decision, not a derivation: a later reader finding a
+10-position limit and a nearly-idle book should know it was chosen and left
+alone, not overlooked.
+
+**What this baseline is expected to produce.** Roughly ten closed trades a month
+at the observed turnover, dominated by stops and time stops rather than by the
+strategy's own exit signal — 29 entries produced zero signal exits over 1.19
+years. Two weeks is therefore a test of whether the machinery holds, not of
+whether the edge exists.
+
 ## Operating cadence
 
 Sessions run overnight AEST. The US market opens 13:30 UTC, which is 23:30
