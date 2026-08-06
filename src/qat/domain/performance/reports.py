@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+from qat.domain.evaluation.refusals import RefusalSummary, format_refusal_section
 from qat.domain.performance.metrics import (
     PerformanceStats,
     compute_stats,
@@ -66,6 +67,10 @@ class PerformanceReport:
     summary: PerformanceSummary | None
     scorecards: list[StrategyScorecard]
     blocked_counts: dict[str, int]
+    # Why orders did not happen (M51). Optional, so every existing caller and
+    # test keeps working - and None means "the analysis was not asked for",
+    # which is a different statement from "there were no refusals".
+    refusals: RefusalSummary | None = None
     # Positions opened in the period, and what is held at the end of it (M31c).
     # Every figure above is built from CLOSED trades, so a day with six entries
     # and no exits read exactly like a day when nothing happened at all - which
@@ -173,6 +178,13 @@ class PerformanceReport:
                 lines.append(f"- **{name}** - {stats.summary_line()}")
             lines.append("")
 
+        # Ahead of the autonomy block, because it answers the larger question.
+        # "Autonomy declined" says the gate held; this says whether anything
+        # ever reached the gate, and at a full book that is the difference
+        # between a quiet market and a strangled strategy.
+        if self.refusals is not None:
+            lines.append(format_refusal_section(self.refusals))
+
         if self.blocked_counts:
             lines.extend(["### Autonomy decisions blocked", ""])
             for reason, count in sorted(
@@ -211,6 +223,7 @@ def build_report(
     blocked_counts: dict[str, int] | None = None,
     open_lots: list[OpenLot] | None = None,
     narrative: str | None = None,
+    refusals: RefusalSummary | None = None,
 ) -> PerformanceReport:
     lots = open_lots or []
     held = tuple(
@@ -247,6 +260,7 @@ def build_report(
         by_strategy=by_strategy,
         scorecards=scorecards or [],
         blocked_counts=blocked_counts or {},
+        refusals=refusals,
         opened=opened,
         held=held,
         narrative=narrative,
