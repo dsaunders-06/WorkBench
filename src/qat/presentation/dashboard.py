@@ -46,7 +46,6 @@ class DashboardScreen(QWidget):
         # Parallel to it, and trimmed with it (M56). Kept as epoch seconds
         # because that is what DateAxisItem reads.
         self._equity_times: list[float] = []
-        self._seed_equity_history()
 
         layout = QVBoxLayout(self)
 
@@ -100,6 +99,14 @@ class DashboardScreen(QWidget):
         theme.label_axes(self.equity_plot, bottom="Time", left="NAV ($)")
         self.equity_curve = self.equity_plot.plot(pen="y")
         layout.addWidget(self.equity_plot)
+
+        # After the curve exists, and the position is load-bearing (M56a).
+        # This ran at the top of __init__ beside the two lists it fills, which
+        # read naturally and was wrong: the seed also DRAWS, and the thing it
+        # draws onto is created here. Against an empty data directory the draw
+        # sits behind a falsy `if` and never runs, so every test passed while
+        # the app could not start on any machine with recorded history.
+        self._seed_equity_history()
 
         layout.addWidget(QLabel("Positions"))
         self.positions_table = QTableWidget(0, 3)

@@ -25,6 +25,12 @@ from pathlib import Path
 # What to surface, and how to label it. Ordered: the first pattern that matches
 # a message wins, so the specific sits above the general.
 _RULES: tuple[tuple[str, str], ...] = (
+    # First, because it identifies the build every line below it came from.
+    # The operator is told to check the stamp at the open, and until 6 August
+    # the watcher filtered out the only line carrying it - so the check could
+    # only be done by reading qat.log separately, which defeats the point of
+    # having a live view at all.
+    ("Build: ", "BUILD"),
     # Above the generic rule, because it is the line that explains the one
     # below it. Without this the watcher printed "Trading session started - US
     # is open" on its own and the operator had no way to see that the open was

@@ -60,6 +60,42 @@ def test_the_dashboard_equity_chart_keeps_times_and_values_in_step(qtbot):
     assert len(screen._equity_times) == len(screen._equity_history)
 
 
+def test_the_dashboard_seeds_its_chart_from_a_curve_that_actually_has_history(qtbot, tmp_path):
+    """M56a. The seed drew onto `self.equity_curve` before the constructor had
+    created it, so a launch against recorded history died with AttributeError
+    before the window opened - and the traceback never reached the log, so the
+    session simply went quiet.
+
+    The two tests above passed throughout, because `build_demo` points at an
+    empty data directory: `_equity_history` came back `[]`, the `if` guarding
+    the draw was never entered, and `len(times) == len(history)` compared two
+    empty lists. Every assertion held while the app could not start.
+
+    So this writes a real `equity_curve.csv` first. Reading back what the curve
+    is actually plotting, rather than what the lists contain, is the point -
+    seeding that populates the lists and never reaches the plot is the failure
+    this is here to catch.
+    """
+    curve = tmp_path / "equity_curve.csv"
+    curve.write_text(
+        "ts,equity,cash\n"
+        "2026-08-05T15:12:19+00:00,100415.94,69845.06\n"
+        "2026-08-06T01:35:05+00:00,101307.36,44772.74\n",
+        encoding="utf-8",
+    )
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    runtime = Runtime.build_demo(settings=settings)
+
+    screen = DashboardScreen(runtime)
+    qtbot.addWidget(screen)
+
+    times, equities = screen.equity_curve.getData()
+    assert list(equities) == [100415.94, 101307.36]
+    # Epoch seconds off the recorded timestamps, not 0 and 1 - the gap between
+    # these two samples is ten hours, and the axis has to show it as ten hours.
+    assert times[1] - times[0] == (10 * 60 + 22) * 60 + 46
+
+
 def test_the_workbench_charts_name_their_units(qtbot):
     runtime = Runtime.build_demo(settings=Settings(_env_file=None))
     screen = WorkbenchScreen(runtime)
