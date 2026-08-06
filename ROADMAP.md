@@ -41,6 +41,30 @@ regime-at-entry, exit reason, excursion and slippage to every closed trade and
 changed no decision anywhere. Reporting, logging and analysis are not the
 trading logic.
 
+## Where this is ultimately going — stated 6 August
+
+**The long-term intent is to trade the ASX only.** US equities on Alpaca paper
+are the vehicle for the validation phase, not the destination.
+
+Recorded because it changes how several things should be judged, and because a
+reader finding a US-only broker in an ASX-bound system should know it was a
+staging decision rather than an oversight:
+
+* **Alpaca cannot reach the ASX at all.** It is US equities only, and the app
+  already warns when market and broker disagree. Reaching the destination means
+  a different adapter - `ibkr` exists in the broker list and is unimplemented
+  beyond the seam.
+* **The trial's evidence may not transfer.** The promotion gate is accumulating
+  30 closed trades on US megacaps, through Alpaca paper, on US session hours,
+  with a US commission model. An ASX system shares none of those. What the
+  trial genuinely validates is the MACHINERY - that protection rests, fills are
+  absorbed, trades are recorded, rails bind - which is market-agnostic. The
+  EDGE numbers are not, and should not be carried across without being
+  re-earned.
+* **An ASX/Alpaca mismatch is therefore not a hazard to guard against.** It was
+  considered as a refuse-to-start after the 6 August incident and deliberately
+  declined: the mismatch is the direction of travel, and a guard would fight it.
+
 ## The conservative baseline — decided 6 August
 
 **The configuration is frozen as it stands, and runs for two weeks. Review
