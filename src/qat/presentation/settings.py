@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -126,6 +127,15 @@ def _set_widget_value(widget: QWidget, value: object) -> None:
         widget.setCurrentText(str(value))
 
 
+def _note(text: str) -> QLabel:
+    """A muted, wrapping explanatory line - the pattern this screen uses more
+    than any other."""
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setStyleSheet(theme.text(theme.MUTED))
+    return label
+
+
 def _readonly_label(text: str) -> QLabel:
     """Selectable so it can be copied into a bug report, but not editable -
     nothing here is a setting."""
@@ -159,9 +169,30 @@ class SettingsScreen(QWidget):
         outer.addWidget(scroll, stretch=1)
         scroll.setWidget(container)
 
+        # Basic and Advanced, because nine groups in one column is a wall (M56).
+        #
+        # The split is by CONSEQUENCE, not by difficulty. Advanced holds the two
+        # groups that change which trades happen and how large they are - the
+        # risk limits and the holding/churn/protection rails. Everything else is
+        # connection, data source and interface: things you set up once.
+        #
+        # Deliberately NOT wired to the detail level, though the two are
+        # related. The level is about how much is EXPLAINED; this is about which
+        # page a control is on. Making one drive the other would mean an
+        # operator who wanted denser text also lost a tab, which is not what
+        # either control promises. The level may later choose the opening tab.
         layout = QVBoxLayout(container)
-        layout.addWidget(self._build_group())
-        layout.addWidget(self._build_interface_group(settings))
+        self.section_tabs = QTabWidget()
+        basic = QWidget()
+        basic_layout = QVBoxLayout(basic)
+        advanced = QWidget()
+        advanced_layout = QVBoxLayout(advanced)
+        self.section_tabs.addTab(basic, "Basic")
+        self.section_tabs.addTab(advanced, "Advanced")
+        layout.addWidget(self.section_tabs)
+
+        basic_layout.addWidget(self._build_group())
+        basic_layout.addWidget(self._build_interface_group(settings))
 
         ai_group = QGroupBox("AI Provider")
         ai_form = QFormLayout(ai_group)
@@ -210,7 +241,7 @@ class SettingsScreen(QWidget):
         test_row.addStretch(1)
         ai_form.addRow(test_row)
 
-        layout.addWidget(ai_group)
+        basic_layout.addWidget(ai_group)
 
         market_group = QGroupBox("Market && Watchlist")
         market_form = QFormLayout(market_group)
@@ -245,7 +276,7 @@ class SettingsScreen(QWidget):
         self.min_volume_input.setValue(settings.watchlist_min_avg_volume)
         market_form.addRow("Min avg. daily volume:", self.min_volume_input)
 
-        layout.addWidget(market_group)
+        basic_layout.addWidget(market_group)
 
         broker_group = QGroupBox("Broker && Cash")
         broker_form = QFormLayout(broker_group)
@@ -301,13 +332,13 @@ class SettingsScreen(QWidget):
         cash_note.setWordWrap(True)
         broker_form.addRow(cash_note)
 
-        layout.addWidget(broker_group)
+        basic_layout.addWidget(broker_group)
         self._refresh_broker_warning()
 
-        layout.addWidget(self._build_data_group(settings))
-        layout.addWidget(self._build_risk_group(settings))
-        layout.addWidget(self._build_holding_group(settings))
-        layout.addWidget(self._build_execution_group(settings))
+        basic_layout.addWidget(self._build_data_group(settings))
+        advanced_layout.addWidget(self._build_risk_group(settings))
+        advanced_layout.addWidget(self._build_holding_group(settings))
+        basic_layout.addWidget(self._build_execution_group(settings))
 
         # Where these settings actually live (M22). It used to depend on the
         # working directory, which meant an operator editing one .env could be
@@ -316,9 +347,17 @@ class SettingsScreen(QWidget):
         self.config_location.setStyleSheet("color: gray;")
         self.config_location.setWordWrap(True)
         self.config_location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(self.config_location)
+        basic_layout.addWidget(self.config_location)
 
-        layout.addStretch(1)
+        basic_layout.addStretch(1)
+        advanced_layout.addWidget(
+            _note(
+                "These two groups change WHICH TRADES HAPPEN and how large they are. "
+                "Everything on Basic is connection, data and interface - set up once. "
+                "That is the split, not difficulty."
+            )
+        )
+        advanced_layout.addStretch(1)
 
         button_row = QHBoxLayout()
         self.save_button = QPushButton("Save")
@@ -335,6 +374,15 @@ class SettingsScreen(QWidget):
         )
         self.restore_defaults_button.clicked.connect(self._on_restore_defaults_clicked)
         button_row.addWidget(self.restore_defaults_button)
+        # Exit lives here because this is the screen with unsaved work to lose,
+        # and it goes through the SAME close path as the window's X - so the
+        # unsaved-changes prompt cannot be bypassed by using the button instead.
+        self.exit_button = QPushButton("Exit")
+        self.exit_button.setToolTip(
+            "Close the application. You will be asked about any unsaved settings first."
+        )
+        self.exit_button.clicked.connect(self._on_exit_clicked)
+        button_row.addWidget(self.exit_button)
         outer.addLayout(button_row)
 
         self.status_label = QLabel("")
@@ -507,13 +555,14 @@ class SettingsScreen(QWidget):
 
         names = ", ".join(label for label, _, _ in pending[:8])
         more = f", and {len(pending) - 8} more" if len(pending) > 8 else ""
+        # Short on purpose. The first draft explained at length which groups
+        # were spared, which buried the only two facts that decide the answer:
+        # what changes, and that nothing is written yet.
         confirmed = QMessageBox.question(
             self,
             "Restore default values?",
-            f"This will change {len(pending)} field(s) back to the values this build "
-            f"shipped with:\n\n{names}{more}.\n\n"
-            "The broker, watchlist, market data source, execution mode and deployed "
-            "strategies are NOT touched - those are your configuration, not tuning.\n\n"
+            f"Reset {len(pending)} tuning field(s) to this build's defaults:\n\n{names}{more}.\n\n"
+            "Your broker, watchlist and strategies are untouched. "
             "Nothing is written until you press Save.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.Cancel,
@@ -1188,6 +1237,19 @@ class SettingsScreen(QWidget):
         except Exception as exc:  # noqa: BLE001 - reported verbatim to the user
             return False, f"{normalized} rejected the request: {exc}"
         return True, f"completions OK at {normalized} (model {engine.model!r})"
+
+    def _on_exit_clicked(self) -> None:
+        """Closes the main window rather than quitting the process directly.
+
+        Deliberate: `window.close()` runs `closeEvent`, which is where the
+        unsaved-changes prompt lives. Calling `QApplication.quit()` here would
+        give the operator a second way out of the application that skips the
+        guard - and the button most likely to be pressed with unsaved work on
+        screen is exactly the one that must not.
+        """
+        window = self.window()
+        if window is not None:
+            window.close()
 
     def save_now(self) -> None:
         """Save without a button press, for the close prompt. Named rather than

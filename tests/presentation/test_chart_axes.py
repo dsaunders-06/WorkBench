@@ -34,16 +34,30 @@ def test_label_axes_names_both_sides(qtbot):
     assert _axis_text(plot, "left") == "Equity ($)"
 
 
-def test_the_dashboard_equity_chart_says_it_plots_polls_not_time(qtbot):
-    """It plots `_equity_history` as a bare list, so the x-axis is the number of
-    account polls since launch - with gaps wherever a poll failed. Calling it
-    "Time" would be wrong in exactly the way that matters after an outage."""
+def test_the_dashboard_equity_chart_plots_against_real_time(qtbot):
+    """M56. It counted account polls, so an overnight close and a busy minute
+    occupied the same width and a failed poll shortened the axis instead of
+    leaving a gap. Equity at 14:03 is a fact an operator can act on; equity at
+    "sample 412" is not."""
     runtime = Runtime.build_demo(settings=Settings(_env_file=None))
     screen = DashboardScreen(runtime)
     qtbot.addWidget(screen)
 
-    assert "poll" in _axis_text(screen.equity_plot, "bottom").lower()
+    assert _axis_text(screen.equity_plot, "bottom") == "Time"
     assert "$" in _axis_text(screen.equity_plot, "left")
+    # A date axis, not a numeric one - this is what makes the spacing reflect
+    # real elapsed time and pick ticks appropriate to the visible span.
+    assert isinstance(screen.equity_plot.getPlotItem().getAxis("bottom"), pg.DateAxisItem)
+
+
+def test_the_dashboard_equity_chart_keeps_times_and_values_in_step(qtbot):
+    """Two parallel lists trimmed independently would silently shear the curve
+    against its own timestamps."""
+    runtime = Runtime.build_demo(settings=Settings(_env_file=None))
+    screen = DashboardScreen(runtime)
+    qtbot.addWidget(screen)
+
+    assert len(screen._equity_times) == len(screen._equity_history)
 
 
 def test_the_workbench_charts_name_their_units(qtbot):

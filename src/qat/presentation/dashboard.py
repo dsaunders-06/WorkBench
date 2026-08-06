@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 
 import pandas as pd
 import pyqtgraph as pg
@@ -42,6 +43,10 @@ class DashboardScreen(QWidget):
         super().__init__(parent)
         self.runtime = runtime
         self._equity_history: list[float] = []
+        # Parallel to it, and trimmed with it (M56). Kept as epoch seconds
+        # because that is what DateAxisItem reads.
+        self._equity_times: list[float] = []
+        self._seed_equity_history()
 
         layout = QVBoxLayout(self)
 
@@ -77,12 +82,22 @@ class DashboardScreen(QWidget):
             risk_row.addWidget(tile)
         layout.addLayout(risk_row)
 
-        self.equity_plot = pg.PlotWidget(title="Equity Curve")
-        # Samples, not time (M55). This plots `_equity_history` as a bare list,
-        # so the x-axis is the number of account polls since launch - roughly
-        # one a minute, but with gaps wherever a poll failed. Calling it "Time"
-        # would be wrong in exactly the way that matters after an outage.
-        theme.label_axes(self.equity_plot, bottom="Account polls since launch", left="NAV ($)")
+        # Real clock time, not a sample count (M56).
+        #
+        # This plotted `_equity_history` as a bare list, so the x-axis counted
+        # account polls. Two problems, and the second is the serious one: an
+        # overnight close and a busy minute occupied the same width, and a poll
+        # that failed silently shortened the axis rather than leaving a gap.
+        # Equity at 14:03 is a fact an operator can act on; equity at "sample
+        # 412" is not.
+        #
+        # DateAxisItem also solves the spacing question on its own - it chooses
+        # ticks appropriate to the visible span, so a session shows times of day
+        # and a fortnight shows dates, without this screen deciding which.
+        self.equity_plot = pg.PlotWidget(
+            title="Equity Curve", axisItems={"bottom": pg.DateAxisItem()}
+        )
+        theme.label_axes(self.equity_plot, bottom="Time", left="NAV ($)")
         self.equity_curve = self.equity_plot.plot(pen="y")
         layout.addWidget(self.equity_plot)
 
@@ -132,6 +147,29 @@ class DashboardScreen(QWidget):
             logger.exception("Dashboard refresh failed")
             self.regime_header.setText(f"Dashboard refresh failed: {exc}")
 
+    def _seed_equity_history(self) -> None:
+        """Start from what was already recorded, not from an empty axis (M56).
+
+        `equity_curve.csv` has been written every poll since 26 July and read
+        back since M31c, so the history exists - the chart simply never asked
+        for it and began blank at every launch. On a time axis that matters
+        more than it did on a sample count: an axis whose range is "the last
+        four minutes" cannot show that the market was shut overnight.
+
+        Failure here is not worth a broken screen. The live path appends to
+        these lists regardless, so an unreadable curve costs the historical
+        span and nothing else.
+        """
+        try:
+            points = self.runtime.equity_curve.points()[-_MAX_EQUITY_POINTS:]
+        except Exception:  # noqa: BLE001 - a dashboard must still open
+            logger.warning("Could not seed the equity chart from the recorded curve", exc_info=True)
+            return
+        self._equity_times = [point.ts.timestamp() for point in points]
+        self._equity_history = [point.equity for point in points]
+        if self._equity_history:
+            self.equity_curve.setData(self._equity_times, self._equity_history)
+
     async def _refresh(self) -> None:
         # One shared, throttled read rather than two broker calls per tick.
         # This screen's two-second timer was spending sixty requests a minute
@@ -144,9 +182,12 @@ class DashboardScreen(QWidget):
         if equity is None:
             return
         self._equity_history.append(equity)
+        self._equity_times.append(datetime.now(UTC).timestamp())
         if len(self._equity_history) > _MAX_EQUITY_POINTS:
-            del self._equity_history[: len(self._equity_history) - _MAX_EQUITY_POINTS]
-        self.equity_curve.setData(self._equity_history)
+            trim = len(self._equity_history) - _MAX_EQUITY_POINTS
+            del self._equity_history[:trim]
+            del self._equity_times[:trim]
+        self.equity_curve.setData(self._equity_times, self._equity_history)
 
         if len(self._equity_history) >= 2:
             peak = max(self._equity_history)
