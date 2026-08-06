@@ -23,6 +23,7 @@ from typing import Protocol
 
 from qat.config import Settings
 from qat.domain import market_calendar as mc
+from qat.domain.evaluation.approvals import summarise_approvals
 from qat.domain.evaluation.refusals import load_risk_decisions, summarise_refusals
 from qat.domain.performance.reports import (
     DAILY_REPORT_FILENAME,
@@ -173,9 +174,11 @@ class PerformanceReporter:
         # The rest of this report counts outcomes. At a ten-position cap the
         # behaviour lives in the refusals: on 5 August the book refused 540
         # candidates and took five, and none of that appeared anywhere.
-        refusals = summarise_refusals(
-            load_risk_decisions(self.settings.data_dir, since=start.isoformat())
-        )
+        decisions = load_risk_decisions(self.settings.data_dir, since=start.isoformat())
+        refusals = summarise_refusals(decisions)
+        # The same rows read from the other side: not what was blocked, but how
+        # close what passed came to being blocked.
+        approvals = summarise_approvals(decisions, self.settings)
 
         trades = self.ledger.closed_trades()
         scorecards = build_all_scorecards(
@@ -194,6 +197,7 @@ class PerformanceReporter:
             blocked_counts=blocked,
             open_lots=self.ledger.open_lots(),
             refusals=refusals,
+            approvals=approvals,
         )
 
         # The narrative is optional and its failure is not the report's

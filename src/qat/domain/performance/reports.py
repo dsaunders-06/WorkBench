@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+from qat.domain.evaluation.approvals import ApprovalSummary, format_approval_section
 from qat.domain.evaluation.refusals import RefusalSummary, format_refusal_section
 from qat.domain.performance.metrics import (
     PerformanceStats,
@@ -71,6 +72,8 @@ class PerformanceReport:
     # test keeps working - and None means "the analysis was not asked for",
     # which is a different statement from "there were no refusals".
     refusals: RefusalSummary | None = None
+    # And how close the ones that DID happen came to not happening (M51).
+    approvals: ApprovalSummary | None = None
     # Positions opened in the period, and what is held at the end of it (M31c).
     # Every figure above is built from CLOSED trades, so a day with six entries
     # and no exits read exactly like a day when nothing happened at all - which
@@ -185,6 +188,11 @@ class PerformanceReport:
         if self.refusals is not None:
             lines.append(format_refusal_section(self.refusals))
 
+        # Immediately after, because the two are one question asked from both
+        # sides: what was blocked, and what nearly was.
+        if self.approvals is not None:
+            lines.append(format_approval_section(self.approvals))
+
         if self.blocked_counts:
             lines.extend(["### Autonomy decisions blocked", ""])
             for reason, count in sorted(
@@ -224,6 +232,7 @@ def build_report(
     open_lots: list[OpenLot] | None = None,
     narrative: str | None = None,
     refusals: RefusalSummary | None = None,
+    approvals: ApprovalSummary | None = None,
 ) -> PerformanceReport:
     lots = open_lots or []
     held = tuple(
@@ -261,6 +270,7 @@ def build_report(
         scorecards=scorecards or [],
         blocked_counts=blocked_counts or {},
         refusals=refusals,
+        approvals=approvals,
         opened=opened,
         held=held,
         narrative=narrative,
