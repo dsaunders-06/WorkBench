@@ -430,6 +430,55 @@ The trade itself survived: CVS 30 shares at 95.36 against a 105.475 entry, -1.73
 after costs, the first closed trade this system has ever recorded. The remaining
 17 shares are missing from that record and want correcting by hand.
 
+## M56a - The build shipped for the session could not start at all
+
+6 August, found nine and a half hours before the open by launching the deployed
+build rather than waiting to launch it at 23:15.
+
+M56 seeded the equity chart from `equity_curve.csv` so it opens showing history.
+The seed both fills two lists and DRAWS, and it was called from the top of
+`DashboardScreen.__init__` - beside the lists, forty lines above the plot it
+draws onto. Every launch against a recorded curve died on
+`AttributeError: 'DashboardScreen' object has no attribute 'equity_curve'`
+before the window opened.
+
+**All 1,341 tests passed throughout.** `Runtime.build_demo` points at an empty
+data directory, so `points()` returned nothing, `_equity_history` came back
+empty, and the draw sat behind a falsy `if` that was never entered. The M56 test
+written to guard exactly this asserted `len(times) == len(history)` - which is
+`0 == 0`. Every assertion held while the application could not start on any
+machine with a curve on disk. This one had 7,193 samples.
+
+**The failure mode was the dangerous one: the traceback never reached
+`qat.log`.** The log stopped after `DEPLOYED swing - now live: swing` and said
+nothing further. The session controller had not yet stood down, no engine had
+started, and nothing recorded that anything was wrong. Watched live, this build
+prints its stamp, two restore lines, and then goes quiet - which is
+indistinguishable from the quiet session a full book at the position limit is
+supposed to produce. The operator was primed to expect silence and would have
+read a dead terminal as the rails working.
+
+The fix is the call moved below the plot construction. The position is
+load-bearing and now says so in a comment, because the original placement is the
+one that reads naturally.
+
+**The test that matters writes a real `equity_curve.csv` first** and reads back
+what the curve is plotting through `getData()`, rather than what the lists
+contain. Seeding that populates the lists and never reaches the plot is the
+failure; a test that only inspects the lists cannot see it.
+
+**The pattern, for the fourth time in two days.** M53a, M50's dedupe, M54's
+swallowed error and this are all the same shape: the test exercised the logic
+being thought about, and the defect was in the layer that was not. Here the
+unexamined layer was the fixture - an empty data directory made the dangerous
+branch unreachable, so the guard tested the guard's absence. **A test whose
+fixture cannot reach the failure is not evidence.** Where a defect depends on
+recorded state existing, the test has to write that state.
+
+Also: `watch_session.py` did not match `Build:`, so the one line carrying the
+stamp was filtered out of the live view the operator is told to check it in.
+Added.
+
 ## M55 - The interface says what it is showing, and stops losing settings
 
 Three requests from the operator on 6 August, done together because they are
