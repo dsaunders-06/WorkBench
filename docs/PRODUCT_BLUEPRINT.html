@@ -1,0 +1,537 @@
+<title>Quant Advisory Terminal — Product Blueprint</title>
+<style>
+  :root{
+    --paper:#F6F7F8; --card:#FFFFFF; --ink:#16191D; --muted:#5B6672;
+    --rule:#D9DEE3; --rule-strong:#B9C2CB;
+    --accent:#0F5C6E; --accent-soft:#E4EEF1;
+    --stop:#A8342A; --stop-soft:#F6E7E5;
+    --pass:#2F6B4F; --pass-soft:#E4EFE9;
+    --serif:Georgia,"Iowan Old Style","Times New Roman",serif;
+    --sans:ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"Cascadia Mono","SF Mono",Consolas,"Liberation Mono",monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --paper:#14171A; --card:#1B1F23; --ink:#E7EAED; --muted:#96A1AC;
+      --rule:#2B3138; --rule-strong:#3D454E;
+      --accent:#5AB6CB; --accent-soft:#16323A;
+      --stop:#E08278; --stop-soft:#341F1D;
+      --pass:#7FBF9E; --pass-soft:#1A2C24;
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#14171A; --card:#1B1F23; --ink:#E7EAED; --muted:#96A1AC;
+    --rule:#2B3138; --rule-strong:#3D454E;
+    --accent:#5AB6CB; --accent-soft:#16323A;
+    --stop:#E08278; --stop-soft:#341F1D;
+    --pass:#7FBF9E; --pass-soft:#1A2C24;
+  }
+  :root[data-theme="light"]{
+    --paper:#F6F7F8; --card:#FFFFFF; --ink:#16191D; --muted:#5B6672;
+    --rule:#D9DEE3; --rule-strong:#B9C2CB;
+    --accent:#0F5C6E; --accent-soft:#E4EEF1;
+    --stop:#A8342A; --stop-soft:#F6E7E5;
+    --pass:#2F6B4F; --pass-soft:#E4EFE9;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--serif); font-size:16.5px; line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  .sheet{max-width:47rem; margin:0 auto; padding:4rem 2rem 6rem; display:flex; flex-direction:column; gap:3.25rem}
+  p{margin:0 0 1rem; max-width:65ch}
+  p:last-child{margin-bottom:0}
+  strong{font-weight:700}
+  code,.mono{font-family:var(--mono); font-size:.88em; font-variant-numeric:tabular-nums}
+
+  .eyebrow{
+    font-family:var(--sans); font-size:.7rem; font-weight:650; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 .6rem;
+  }
+  h1{
+    font-family:var(--serif); font-size:2.6rem; line-height:1.12; font-weight:700;
+    margin:0 0 1rem; text-wrap:balance; letter-spacing:-.015em;
+  }
+  h2{
+    font-family:var(--serif); font-size:1.5rem; line-height:1.25; font-weight:700;
+    margin:0 0 .35rem; text-wrap:balance; letter-spacing:-.01em;
+  }
+  h3{
+    font-family:var(--sans); font-size:.78rem; font-weight:680; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--muted); margin:0 0 .75rem;
+  }
+  .lede{font-size:1.12rem; color:var(--muted); max-width:60ch}
+
+  header.head{border-bottom:2px solid var(--ink); padding-bottom:1.75rem}
+  .meta{
+    display:flex; flex-wrap:wrap; gap:.5rem 1.75rem; margin-top:1.5rem;
+    font-family:var(--sans); font-size:.76rem; color:var(--muted);
+  }
+  .meta b{font-weight:650; color:var(--ink); font-family:var(--mono)}
+
+  section{display:flex; flex-direction:column; gap:1rem}
+  .sec-head{border-top:1px solid var(--rule-strong); padding-top:1.1rem}
+
+  /* pipeline — the one genuinely sequential thing here */
+  .stages{display:flex; flex-direction:column; gap:0; counter-reset:stage}
+  .stage{
+    display:grid; grid-template-columns:2.6rem 1fr; gap:1.1rem;
+    padding:1rem 0; border-bottom:1px solid var(--rule);
+  }
+  .stage:last-child{border-bottom:0}
+  .stage-n{
+    counter-increment:stage; font-family:var(--mono); font-size:.82rem; font-weight:700;
+    color:var(--accent); padding-top:.18rem;
+  }
+  .stage-n::before{content:counter(stage,decimal-leading-zero)}
+  .stage h4{font-family:var(--sans); font-size:.98rem; font-weight:650; margin:0 0 .3rem}
+  .stage p{font-size:.95rem; margin:0; color:var(--muted); max-width:58ch}
+  .where{
+    display:inline-block; font-family:var(--sans); font-size:.66rem; font-weight:650;
+    letter-spacing:.08em; text-transform:uppercase; padding:.12rem .45rem;
+    border:1px solid currentColor; border-radius:2px; margin-left:.5rem; vertical-align:.1em;
+  }
+  .w-app{color:var(--accent)}
+  .w-broker{color:var(--pass)}
+  .w-human{color:var(--stop)}
+
+  table{border-collapse:collapse; width:100%; font-family:var(--sans); font-size:.87rem}
+  .scroll{overflow-x:auto; -webkit-overflow-scrolling:touch}
+  th{
+    text-align:left; font-size:.68rem; letter-spacing:.09em; text-transform:uppercase;
+    color:var(--muted); font-weight:650; padding:0 .8rem .55rem 0;
+    border-bottom:1px solid var(--rule-strong); white-space:nowrap;
+  }
+  td{padding:.62rem .8rem .62rem 0; border-bottom:1px solid var(--rule); vertical-align:top}
+  td:first-child{font-weight:600; white-space:nowrap}
+  td.val{font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--accent); white-space:nowrap}
+  tr:last-child td{border-bottom:0}
+
+  .split{display:grid; grid-template-columns:1fr 1fr; gap:1.25rem}
+  .panel{
+    background:var(--card); border:1px solid var(--rule); border-radius:3px;
+    padding:1.15rem 1.25rem; display:flex; flex-direction:column; gap:.6rem;
+  }
+  .panel.app{border-top:3px solid var(--accent)}
+  .panel.broker{border-top:3px solid var(--pass)}
+  .panel h4{font-family:var(--sans); font-size:.92rem; font-weight:680; margin:0}
+  .panel ul{margin:0; padding-left:1.1rem; font-size:.92rem; color:var(--muted)}
+  .panel li{margin-bottom:.35rem}
+  .panel li:last-child{margin-bottom:0}
+
+  .callout{
+    border-left:3px solid var(--accent); background:var(--accent-soft);
+    padding:1rem 1.25rem; border-radius:0 3px 3px 0;
+  }
+  .callout.warn{border-left-color:var(--stop); background:var(--stop-soft)}
+  .callout p{font-size:.97rem; margin:0}
+  .callout p + p{margin-top:.7rem}
+
+  .cannot{display:flex; flex-direction:column; gap:.55rem; margin:0; padding:0; list-style:none}
+  .cannot li{
+    display:grid; grid-template-columns:1.6rem 1fr; gap:.6rem; font-size:.97rem;
+    align-items:start;
+  }
+  .cannot .x{color:var(--stop); font-family:var(--mono); font-weight:700; padding-top:.05rem}
+
+  figure{margin:.5rem 0 0; display:flex; flex-direction:column; gap:.75rem}
+  figure svg{width:100%; height:auto; display:block}
+  figcaption{
+    font-family:var(--sans); font-size:.8rem; line-height:1.5; color:var(--muted);
+    max-width:62ch; border-left:2px solid var(--rule-strong); padding-left:.75rem;
+  }
+  .dgm-label{font-family:var(--sans); font-size:12px; font-weight:600}
+  .dgm-zone{font-family:var(--sans); font-size:11px; font-weight:700; letter-spacing:.1em}
+  .dgm-note{font-family:var(--sans); font-size:11px}
+  .dgm-num{font-family:var(--mono); font-size:12px; font-weight:700}
+
+  footer{
+    border-top:2px solid var(--ink); padding-top:1.25rem;
+    font-family:var(--sans); font-size:.78rem; color:var(--muted);
+  }
+
+  @media (max-width:640px){
+    .sheet{padding:2.5rem 1.25rem 4rem}
+    h1{font-size:2rem}
+    .split{grid-template-columns:1fr}
+  }
+
+  @media print{
+    :root{
+      --paper:#fff; --card:#fff; --ink:#000; --muted:#333;
+      --rule:#bbb; --rule-strong:#666; --accent:#0F5C6E;
+      --accent-soft:#fff; --stop-soft:#fff; --pass-soft:#fff;
+    }
+    @page{margin:18mm 16mm}
+    body{font-size:10.5pt}
+    .sheet{max-width:none; padding:0; gap:1.6rem}
+    section, .panel, .stage, table{break-inside:avoid}
+    h2{break-after:avoid}
+    .callout{border-left-width:2px}
+  }
+</style>
+
+<div class="sheet">
+
+  <header class="head">
+    <p class="eyebrow">Product Blueprint</p>
+    <h1>Quant&nbsp;Advisory&nbsp;Terminal</h1>
+    <p class="lede">A disciplined trading assistant. It watches a list of shares, proposes trades
+      against written rules, and refuses far more often than it acts — then records why, every time.</p>
+    <div class="meta">
+      <span>Mode <b>Paper — no real money</b></span>
+      <span>Market <b>US equities</b></span>
+      <span>Broker <b>Alpaca (paper)</b></span>
+      <span>Phase <b>Validation</b></span>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head"><h2>What it is, and what it is not</h2></div>
+    <p><strong>It is a rule-keeper.</strong> The trading ideas themselves are ordinary and public —
+      the value is that every idea is forced through the same checks, in the same order, with the
+      same limits, and nothing is skipped because it looked obvious at the time.</p>
+    <p><strong>It is not a money machine.</strong> Nothing here predicts prices. The system is
+      currently being tested to answer one question: <em>does this approach make money after costs,
+      often enough to be worth running?</em> That question is still open, and the honest answer today
+      is that there is not yet enough evidence to say.</p>
+    <div class="callout">
+      <p><strong>The single most important idea in this document:</strong> the app and the broker are
+        two different places. Anything that must survive a power cut, a crash, or the app simply
+        being closed has to live <em>at the broker</em> — and the protective sell orders do.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>How a trade actually happens</h2></div>
+    <p>Seven stages, in this order, every time. A candidate that fails any stage stops there and the
+      reason is written down.</p>
+    <div class="stages">
+
+      <div class="stage"><div class="stage-n"></div><div>
+        <h4>Price data arrives <span class="where w-app">In the app</span></h4>
+        <p>Live prices for about 100 shares. If a share stops trading for 15 minutes it is set aside
+          rather than acted on — a stale price is worse than no price.</p>
+      </div></div>
+
+      <div class="stage"><div class="stage-n"></div><div>
+        <h4>The market's mood is classified <span class="where w-app">In the app</span></h4>
+        <p>A statistical model sorts conditions into four states — calm, rising, falling, volatile —
+          and sets an exposure dial between 0 and 1. In a defensive state every position is sized
+          smaller, automatically.</p>
+      </div></div>
+
+      <div class="stage"><div class="stage-n"></div><div>
+        <h4>A strategy raises its hand <span class="where w-app">In the app</span></h4>
+        <p>One strategy is live: <span class="mono">swing</span>. It looks for shares in an
+          established uptrend. It only ever <em>suggests</em>; it cannot size or place anything.</p>
+      </div></div>
+
+      <div class="stage"><div class="stage-n"></div><div>
+        <h4>The trade is sized against a stop <span class="where w-app">In the app</span></h4>
+        <p>Before deciding how many shares, the system decides where it would admit it was wrong —
+          <span class="mono">2.5×</span> the share's recent daily range below entry. The number of
+          shares is then whatever puts <span class="mono">1%</span> of the account at risk if that
+          level is reached. Bigger swings mean fewer shares, not more risk.</p>
+      </div></div>
+
+      <div class="stage"><div class="stage-n"></div><div>
+        <h4>Every limit is checked <span class="where w-app">In the app</span></h4>
+        <p>Eleven separate gates, listed overleaf. Most trim the order down to what fits rather than
+          rejecting it outright. If nothing fits, it is refused and the reason recorded.</p>
+      </div></div>
+
+      <div class="stage"><div class="stage-n"></div><div>
+        <h4>A human signs it off <span class="where w-human">Person</span></h4>
+        <p>Nothing reaches the broker without an explicit, named approval. This is the one rule with
+          no exceptions. (An opt-in setting can delegate this to the system for a named strategy —
+          see <em>Three brakes</em>.)</p>
+      </div></div>
+
+      <div class="stage"><div class="stage-n"></div><div>
+        <h4>It is sent, with its exits attached <span class="where w-broker">At the broker</span></h4>
+        <p>The buy goes out bundled with two sell orders — a protective stop below and a profit
+          target above. They are linked: if one fills, the other is cancelled. They sit at the broker
+          indefinitely, whether or not the app is running.</p>
+      </div></div>
+
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>The gates, and what each one is for</h2></div>
+    <p>These are the written limits. Values shown are the ones currently in force.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Gate</th><th>Now</th><th>What it prevents</th></tr></thead>
+        <tbody>
+          <tr><td>Risk per trade</td><td class="val">1%</td><td>Any single idea mattering too much.</td></tr>
+          <tr><td>Stop distance</td><td class="val">2.5× ATR</td><td>Being stopped out by ordinary daily noise.</td></tr>
+          <tr><td>Total risk at stop</td><td class="val">5%</td><td>Ten sensible trades adding up to one reckless one.</td></tr>
+          <tr><td>Open positions</td><td class="val">10</td><td>Spreading attention and cash too thinly.</td></tr>
+          <tr><td>One company</td><td class="val">15%</td><td>A single company's bad news dominating the account.</td></tr>
+          <tr><td>One sector</td><td class="val">30%</td><td>Owning eight banks and calling it diversified.</td></tr>
+          <tr><td>Correlated group</td><td class="val">30%</td><td>Different names that move together anyway.</td></tr>
+          <tr><td>Overnight gap budget</td><td class="val">5%</td><td>A shock that opens past the stop before it can work.</td></tr>
+          <tr><td>Cost vs risk</td><td class="val">10%</td><td>Trades too small to carry their own commission.</td></tr>
+          <tr><td>Minimum hold</td><td class="val">10 days</td><td>Churning in and out and paying fees twice over.</td></tr>
+          <tr><td>Time stop</td><td class="val">30 days</td><td>Capital parked forever in an idea that never resolved.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Two further limits act on the account rather than a trade: trading pauses if the day is down
+      <span class="mono">3%</span>, and a drawdown of <span class="mono">20%</span> from the high-water
+      mark is treated as a hard limit.</p>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Where the protection actually lives</h2></div>
+    <p>This is the distinction worth insisting on, because it decides what happens on the worst day.</p>
+    <div class="split">
+      <div class="panel app">
+        <h4>In the app — stops when the app stops</h4>
+        <ul>
+          <li>Deciding position size</li>
+          <li>Checking every gate</li>
+          <li>Watching for lost protection, every 5 minutes</li>
+          <li>Comparing its own records against the broker's</li>
+          <li>The kill switch</li>
+        </ul>
+      </div>
+      <div class="panel broker">
+        <h4>At the broker — works regardless</h4>
+        <ul>
+          <li>The protective stop on every position</li>
+          <li>The profit target paired with it</li>
+          <li>Cancelling one when the other fills</li>
+          <li>Refusing to sell shares that aren't there</li>
+        </ul>
+      </div>
+    </div>
+    <p>If the computer is switched off overnight, every position still has a working stop sitting at
+      the broker. When the app restarts it asks the broker what is actually resting — it never
+      assumes its own memory is right — and proposes a replacement for anything missing.</p>
+
+    <figure>
+      <svg viewBox="0 0 880 372" role="img"
+           aria-label="A trade passes through five checks inside the app, then a human sign-off at the boundary, after which the buy order and its two linked exit orders rest at the broker and survive the app being closed.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <!-- zone labels -->
+        <text class="dgm-zone" x="20" y="22" fill="currentColor">IN THE APP</text>
+        <text class="dgm-note" x="20" y="38" fill="currentColor" opacity=".65">stops when the app stops</text>
+        <g style="color:var(--accent)">
+          <text class="dgm-zone" x="676" y="22" fill="currentColor">AT THE BROKER</text>
+          <text class="dgm-note" x="676" y="38" fill="currentColor" opacity=".8">works regardless</text>
+          <line x1="592" y1="52" x2="592" y2="306" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 5"/>
+        </g>
+
+        <!-- five in-app stages -->
+        <g fill="none" stroke="currentColor" stroke-width="1.25">
+          <rect x="20" y="86" width="94" height="46" rx="2"/>
+          <rect x="122" y="86" width="94" height="46" rx="2"/>
+          <rect x="224" y="86" width="94" height="46" rx="2"/>
+          <rect x="326" y="86" width="94" height="46" rx="2"/>
+          <rect x="428" y="86" width="94" height="46" rx="2"/>
+        </g>
+        <g class="dgm-label" fill="currentColor" text-anchor="middle">
+          <text x="67" y="108">Prices</text><text x="67" y="123" opacity=".6">every 60s</text>
+          <text x="169" y="108">Market</text><text x="169" y="123" opacity=".6">mood</text>
+          <text x="271" y="108">Strategy</text><text x="271" y="123" opacity=".6">suggests</text>
+          <text x="377" y="108">Size vs</text><text x="377" y="123" opacity=".6">the stop</text>
+          <text x="475" y="108">11 gates</text><text x="475" y="123" opacity=".6">trim or refuse</text>
+        </g>
+        <g stroke="currentColor" stroke-width="1.25" marker-end="url(#ar)">
+          <line x1="114" y1="109" x2="120" y2="109"/>
+          <line x1="216" y1="109" x2="222" y2="109"/>
+          <line x1="318" y1="109" x2="324" y2="109"/>
+          <line x1="420" y1="109" x2="426" y2="109"/>
+          <line x1="522" y1="109" x2="534" y2="109"/>
+        </g>
+
+        <!-- sign-off, straddling the boundary -->
+        <g style="color:var(--stop)">
+          <rect x="536" y="80" width="112" height="58" rx="2" fill="none" stroke="currentColor" stroke-width="2"/>
+          <text class="dgm-label" x="592" y="104" fill="currentColor" text-anchor="middle">Sign-off</text>
+          <text class="dgm-note" x="592" y="120" fill="currentColor" text-anchor="middle" opacity=".8">a named person</text>
+        </g>
+        <line x1="648" y1="109" x2="672" y2="109" stroke="currentColor" stroke-width="1.25" marker-end="url(#ar)"/>
+
+        <!-- broker side -->
+        <g style="color:var(--accent)">
+          <rect x="676" y="86" width="184" height="46" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text class="dgm-label" x="768" y="114" fill="currentColor" text-anchor="middle">Buy order</text>
+
+          <line x1="768" y1="132" x2="768" y2="166" stroke="currentColor" stroke-width="1.25" marker-end="url(#ar)"/>
+          <text class="dgm-note" x="776" y="152" fill="currentColor" opacity=".8">sent with both exits</text>
+
+          <rect x="676" y="170" width="184" height="42" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text class="dgm-label" x="768" y="196" fill="currentColor" text-anchor="middle">Protective stop</text>
+
+          <rect x="676" y="238" width="184" height="42" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <text class="dgm-label" x="768" y="264" fill="currentColor" text-anchor="middle">Profit target</text>
+
+          <path d="M668,191 L656,191 L656,259 L668,259" fill="none" stroke="currentColor" stroke-width="1.25"/>
+          <text class="dgm-note" x="650" y="228" fill="currentColor" text-anchor="end" opacity=".85">one fills,</text>
+          <text class="dgm-note" x="650" y="242" fill="currentColor" text-anchor="end" opacity=".85">other cancels</text>
+        </g>
+
+        <!-- the return question -->
+        <path d="M768,280 L768,332 L60,332 L60,140" fill="none" stroke="currentColor"
+              stroke-width="1.25" stroke-dasharray="4 4" marker-end="url(#ar)"/>
+        <text class="dgm-note" x="414" y="326" fill="currentColor" text-anchor="middle" opacity=".75">
+          every 5 minutes the app asks the broker what is actually resting — it never trusts its own memory
+        </text>
+      </svg>
+      <figcaption>Everything left of the dashed line stops when the application stops. Everything
+        right of it keeps working — which is why the protective stop is placed at the broker with the
+        buy, not held in the app to be sent later. The dashed return path is the app checking the
+        broker's answer against its own records; a disagreement halts all new orders.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>How the AI is used</h2></div>
+    <p>The AI is a commentator, not a trader. It explains context in plain language: what the wider
+      market is doing, what a company's fundamentals look like, and how a period's results read.</p>
+    <ul class="cannot">
+      <li><span class="x">✕</span><span>It cannot place an order.</span></li>
+      <li><span class="x">✕</span><span>It cannot decide how large a position should be.</span></li>
+      <li><span class="x">✕</span><span>It cannot approve, override, or relax any limit above.</span></li>
+    </ul>
+    <p>Every number the AI discusses is calculated in ordinary code first and handed to it as settled
+      fact. It narrates figures; it never produces them. Anything fetched from outside — news,
+      commentary — is passed in clearly labelled as untrusted, so instructions hidden inside it
+      cannot become instructions to the system.</p>
+    <div class="callout warn">
+      <p><strong>A deliberate limitation.</strong> Because the AI cannot affect a decision, it also
+        cannot be blamed for one. If a trade goes wrong, the reason is in the rules and the recorded
+        inputs — not in what a language model said that day.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>Three brakes</h2></div>
+    <div class="split">
+      <div class="panel">
+        <h4>Sign-off</h4>
+        <p style="font-size:.92rem;color:var(--muted);margin:0">No order reaches the broker without a
+          named approval. Auto-approval can be switched on for one named strategy at a time, on paper
+          only, and it is off unless deliberately enabled.</p>
+      </div>
+      <div class="panel">
+        <h4>Kill switch</h4>
+        <p style="font-size:.92rem;color:var(--muted);margin:0">If the app's record of what is held
+          ever disagrees with the broker's, all new orders halt until a person looks. Disagreement
+          means something is not understood — and acting on a misunderstanding is the expensive kind
+          of mistake.</p>
+      </div>
+    </div>
+    <div class="panel" style="border-top:3px solid var(--stop)">
+      <h4>The freeze</h4>
+      <p style="font-size:.92rem;color:var(--muted);margin:0">While the system is being evaluated, no
+        change is permitted that would alter which trades happen or how large they are — however
+        obviously right it looks. A result has to belong to one version of the system, or it means
+        nothing. Fixing faults and recording more detail remain allowed.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>How you would know it works</h2></div>
+    <p>A strategy is not considered proven until it has produced <strong>30 completed trades</strong>
+      with a positive average result, a win rate above <span class="mono">40%</span>, and no single
+      loss larger than three times the average win. Until then it is marked as unproven on screen,
+      even while it trades.</p>
+    <p>Every completed trade is recorded with the price paid, the price received, the costs, how far
+      it moved against the position before resolving, and why it ended. Every refusal is recorded
+      with the rule that stopped it. The point is that in three months there is an evidence file,
+      not an impression.</p>
+    <div class="callout">
+      <p><strong>Where it stands today.</strong> One completed trade — a loss of
+        <span class="mono">$482</span>, closed by its protective stop exactly as designed. Ten
+        positions open, all protected. The system is refusing roughly nineteen candidates for every
+        one it accepts, almost always because the ten-position limit is already full.</p>
+    </div>
+
+    <figure>
+      <svg viewBox="0 0 880 286" role="img"
+           aria-label="Of 1,418 candidates considered, 1,001 were refused by the position limit, 269 by the cost-to-risk rule, 106 by the total risk cap, leaving 42 accepted.">
+        <text class="dgm-label" x="40" y="30" fill="currentColor">1,418 candidates considered</text>
+        <text class="dgm-note" x="40" y="48" fill="currentColor" opacity=".65">26 July to 6 August · segment widths are to scale</text>
+
+        <!-- stacked bar, widths proportional to counts -->
+        <g stroke="currentColor" stroke-width="1">
+          <rect x="40"  y="72" width="536" height="60" fill="currentColor" fill-opacity=".14"/>
+          <rect x="576" y="72" width="144" height="60" fill="currentColor" fill-opacity=".30"/>
+          <rect x="720" y="72" width="57"  height="60" fill="currentColor" fill-opacity=".46"/>
+        </g>
+        <g style="color:var(--accent)">
+          <rect x="777" y="72" width="23" height="60" fill="currentColor" stroke="currentColor" stroke-width="1"/>
+        </g>
+
+        <!-- leaders and labels, staggered so the narrow segments stay readable -->
+        <g stroke="currentColor" stroke-width="1" opacity=".5">
+          <line x1="308" y1="132" x2="308" y2="160"/>
+          <line x1="648" y1="132" x2="648" y2="160"/>
+          <line x1="748" y1="132" x2="748" y2="196"/>
+        </g>
+        <g style="color:var(--accent)">
+          <line x1="788" y1="132" x2="788" y2="232" stroke="currentColor" stroke-width="1.25"/>
+        </g>
+
+        <g fill="currentColor" text-anchor="middle">
+          <text class="dgm-num" x="308" y="178">1,001</text>
+          <text class="dgm-note" x="308" y="194" opacity=".75">the book was already full — 10 positions</text>
+
+          <text class="dgm-num" x="648" y="178">269</text>
+          <text class="dgm-note" x="648" y="194" opacity=".75">too small to carry its own commission</text>
+
+          <text class="dgm-num" x="748" y="214">106</text>
+          <text class="dgm-note" x="748" y="230" opacity=".75">total risk already at the 5% cap</text>
+        </g>
+
+        <g style="color:var(--accent)" fill="currentColor" text-anchor="end">
+          <text class="dgm-num" x="860" y="250">42 accepted</text>
+          <text class="dgm-note" x="860" y="266">3 in every 100</text>
+        </g>
+      </svg>
+      <figcaption>The two darker refusals mean opposite things. <strong>1,107 were capacity</strong> —
+        the book was full, which says nothing about the trade. <strong>269 were the trade itself
+        failing a test</strong>, which says something about the strategy. Counting them together
+        would produce a number nobody could act on; the system records them separately for exactly
+        that reason.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="sec-head"><h2>What it deliberately does not do</h2></div>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Not done</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>Trade real money</td><td>Paper only, until the evidence exists.</td></tr>
+          <tr><td>Short selling</td><td>Long positions only; losses are bounded by the price reaching zero.</td></tr>
+          <tr><td>Borrow to trade</td><td>Purchases are capped at available cash. This cannot be switched off.</td></tr>
+          <tr><td>Sell without being asked</td><td>One rail could trim positions automatically; it is off by default.</td></tr>
+          <tr><td>Handle share splits</td><td>Not yet built. A split would need manual attention.</td></tr>
+          <tr><td>Avoid earnings dates</td><td>Not yet built. Positions can be held through announcements.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>These are listed because a blueprint that only describes strengths is a sales brochure. The
+      last two are known gaps with fixes planned; the rest are choices.</p>
+  </section>
+
+  <footer>
+    Quant Advisory Terminal · Product blueprint · Paper trading, validation phase · Every figure
+    quoted is the value currently in force and can be read on the Settings screen of the running
+    application.
+  </footer>
+
+</div>
