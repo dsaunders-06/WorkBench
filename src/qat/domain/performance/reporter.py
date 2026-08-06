@@ -167,7 +167,14 @@ class PerformanceReporter:
     async def _build(self, period: str, label: str, start: date, end: date) -> PerformanceReport:
         blocked = {}
         if self.journal is not None:
-            blocked = summarise_blocked_reasons(self.journal.entries())
+            # Bounded to the reported period, like everything else here (M56b).
+            # Unbounded, a clean day inherited every kill-switch and every
+            # unprotected position the journal had ever recorded - the 6 August
+            # daily reported a kill-switch that fired on the 4th and 434
+            # unprotected positions from days it did not cover.
+            blocked = summarise_blocked_reasons(
+                self.journal.entries(), since=start.isoformat(), until=end.isoformat()
+            )
 
         # Why orders did NOT happen, over the reported period (M51).
         #

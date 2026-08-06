@@ -14,7 +14,7 @@ from qat.config import Settings
 from qat.data.broker.adapter import AccountSummary, Order, Position
 from qat.domain.bus import EventBus
 from qat.domain.oms.oms import OMS
-from qat.domain.risk_engine.delever import DeleverSweep
+from qat.domain.risk_engine.delever import _FAILURES_BEFORE_ERROR, DeleverSweep
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.governor import PortfolioGovernor
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -25,8 +25,13 @@ class _Broker:
         self._positions = dict(positions)
         self.equity = equity
         self.placed: list[Order] = []
+        # Set to raise on the next positions() call, the way a broker that has
+        # closed the connection does.
+        self.fail_with: BaseException | None = None
 
     async def positions(self) -> list[Position]:
+        if self.fail_with is not None:
+            raise self.fail_with
         return [Position(symbol=s, quantity=q, avg_price=100.0) for s, q in self._positions.items()]
 
     async def account(self) -> AccountSummary:
@@ -62,6 +67,60 @@ def _build(positions: dict[str, float], stops: dict[str, float] | None = None, *
         oms._position_stops.update(stops)
     sweep = DeleverSweep(oms, PortfolioGovernor(settings), settings=settings, poll_seconds=3600.0)
     return broker, oms, sweep
+
+
+@pytest.mark.asyncio
+async def test_a_single_failed_sweep_warns_rather_than_erroring(caplog):
+    """M56b. Alpaca dropping a connection is a blip the next sweep fixes, but
+    it logged at ERROR with a full traceback - indistinguishable, to anything
+    counting errors, from the rail being broken."""
+    broker, _, sweep = _build({"A": 100.0}, {"A": 99.0}, delever_sweep_enabled=True)
+    broker.fail_with = ConnectionError("Remote end closed connection")
+
+    with caplog.at_level("WARNING"):
+        await sweep._attempt_sweep()
+
+    assert [r.levelname for r in caplog.records] == ["WARNING"]
+    assert "Remote end closed connection" in caplog.text, "the cause still has to be visible"
+
+
+@pytest.mark.asyncio
+async def test_sweeps_failing_in_a_row_escalate_to_an_error(caplog):
+    """A blip and a rail that has stopped working are different states, and the
+    difference is whether the next sweep recovers."""
+    broker, _, sweep = _build({"A": 100.0}, {"A": 99.0}, delever_sweep_enabled=True)
+    broker.fail_with = ConnectionError("still down")
+
+    with caplog.at_level("WARNING"):
+        for _ in range(_FAILURES_BEFORE_ERROR + 2):
+            await sweep._attempt_sweep()
+
+    levels = [r.levelname for r in caplog.records]
+    assert "ERROR" in levels, "a persistent failure must still be loud"
+    assert levels.count("ERROR") == 1, "escalate once at the crossing, not on every retry"
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_sweep_forgets_the_earlier_failures(caplog):
+    """Otherwise two unrelated blips a week apart escalate as though they were
+    consecutive. This is the wiring, not the counter: the reset lives beside
+    the success, and only a real sweep exercises it."""
+    broker, _, sweep = _build({"A": 100.0}, {"A": 99.0}, delever_sweep_enabled=True)
+
+    broker.fail_with = ConnectionError("blip")
+    for _ in range(_FAILURES_BEFORE_ERROR - 1):
+        await sweep._attempt_sweep()
+
+    broker.fail_with = None
+    await sweep._attempt_sweep()  # recovers
+
+    broker.fail_with = ConnectionError("later, unrelated blip")
+    caplog.clear()  # caplog accumulates for the whole test; only the last matters
+    with caplog.at_level("WARNING"):
+        await sweep._attempt_sweep()
+
+    assert [r.levelname for r in caplog.records] == ["WARNING"]
+    assert "(1 in a row)" in caplog.text, "the streak restarted rather than carrying over"
 
 
 @pytest.mark.asyncio

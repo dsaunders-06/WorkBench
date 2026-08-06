@@ -33,6 +33,13 @@ from qat.domain.risk_engine.governor import PortfolioGovernor
 
 logger = logging.getLogger(__name__)
 
+# Consecutive failures before a blip is treated as a broken rail (M56b).
+# The broker closing a connection mid-request is ordinary and the next sweep
+# five minutes later fixes it; the sweep still stopping an hour later is not.
+# Logging both at ERROR made them indistinguishable to anything counting
+# errors, and the noisy case is by far the common one.
+_FAILURES_BEFORE_ERROR = 3
+
 
 class DeleverSweep:
     """Engine (per domain.orchestrator.Engine protocol)."""
@@ -53,6 +60,7 @@ class DeleverSweep:
         self.bus = bus
         self.poll_seconds = poll_seconds
         self.last_fraction = 0.0
+        self._consecutive_failures = 0
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -69,12 +77,50 @@ class DeleverSweep:
     async def _run(self) -> None:
         while True:
             await asyncio.sleep(self.poll_seconds)
-            try:
-                await self.poll()
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - one bad sweep must not end the rail
-                logger.exception("Delever sweep failed; continuing")
+            await self._attempt_sweep()
+
+    async def _attempt_sweep(self) -> None:
+        """One attempt, plus the bookkeeping that decides how loudly a failure
+        is reported.
+
+        Split out from `_run` so that the streak logic can be driven directly
+        rather than through a sleep loop. Testing the two `_note_*` calls in
+        isolation would leave the wiring between them - which resets the streak
+        and when - unexercised, and that wiring is where this kind of defect
+        actually lives.
+        """
+        try:
+            await self.poll()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - one bad sweep must not end the rail
+            self._note_failed_sweep(exc)
+        else:
+            self._consecutive_failures = 0
+
+    def _note_failed_sweep(self, exc: BaseException) -> None:
+        """One failed sweep, logged at a level that reflects what it means.
+
+        The cause is named either way - a warning that does not say what broke
+        is no better than silence. Only the traceback waits for the escalation,
+        because that is the point at which someone has to read it.
+        """
+        self._consecutive_failures += 1
+        if self._consecutive_failures < _FAILURES_BEFORE_ERROR:
+            logger.warning(
+                "Delever sweep failed (%d in a row); the next sweep retries: %r",
+                self._consecutive_failures,
+                exc,
+            )
+        elif self._consecutive_failures == _FAILURES_BEFORE_ERROR:
+            # Once, at the crossing. Escalating on every subsequent failure
+            # would turn a persistent outage back into the flood this exists
+            # to stop.
+            logger.error(
+                "Delever sweep has failed %d times in a row - the rail is not running",
+                self._consecutive_failures,
+                exc_info=exc,
+            )
 
     async def poll(self) -> list[str]:
         """One sweep. Returns the symbols an exit order was raised for.

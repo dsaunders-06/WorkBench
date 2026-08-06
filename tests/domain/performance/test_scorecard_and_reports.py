@@ -267,6 +267,76 @@ def test_blocked_autonomy_reasons_are_counted_and_grouped():
     assert "all autonomy preconditions met" not in counts
 
 
+def test_blocked_reasons_are_bounded_to_the_reported_period():
+    """M56b. Every other section of a report covers the period in its heading;
+    this one covered all of history, so a clean day inherited every kill-switch
+    and unprotected position the journal had ever recorded."""
+    rows = [
+        {
+            "timestamp": "2026-08-04T14:00:00+00:00",
+            "outcome": "blocked",
+            "reason": "kill-switch active",
+        },
+        {
+            "timestamp": "2026-08-04T14:01:00+00:00",
+            "outcome": "blocked",
+            "reason": "protective stop for an unprotected position",
+        },
+        {
+            "timestamp": "2026-08-06T14:00:00+00:00",
+            "outcome": "blocked",
+            "reason": "already at the 10-position limit",
+        },
+    ]
+    counts = summarise_blocked_reasons(rows, since="2026-08-06", until="2026-08-06")
+
+    assert counts == {"already at the 10-position limit": 1}
+    # The specific misreading this exists to stop: a quiet day reporting a
+    # kill-switch that fired two days earlier.
+    assert "kill-switch active" not in counts
+
+
+def test_blocked_reasons_without_bounds_still_count_everything():
+    """The bounds are opt-in - a caller that does not ask for a period gets the
+    whole journal, which is what the weekly and any ad-hoc caller rely on."""
+    rows = [
+        {
+            "timestamp": "2026-08-04T14:00:00+00:00",
+            "outcome": "blocked",
+            "reason": "kill-switch active",
+        },
+        {
+            "timestamp": "2026-08-06T14:00:00+00:00",
+            "outcome": "blocked",
+            "reason": "already at the 10-position limit",
+        },
+    ]
+    assert sum(summarise_blocked_reasons(rows).values()) == 2
+
+
+def test_blocked_reasons_collapse_causes_that_differ_only_in_their_amounts():
+    """One cause, not ninety rows. The cost rail quotes the exact dollars at
+    risk, so 90 candidates produced 90 distinct keys and 8,907 characters of
+    report - which is what pushed the narrative past its context cap."""
+    rows = [
+        {
+            "outcome": "blocked",
+            "reason": f"Round-trip cost $18.24 is 13.2% of the ${amount} at risk, "
+            "above the 10.0% limit",
+        }
+        for amount in ("138.38", "138.37", "138.42", "138.30")
+    ]
+    counts = summarise_blocked_reasons(rows)
+
+    assert len(counts) == 1
+    assert next(iter(counts.values())) == 4
+    # The position limit keeps its number, because "10-position limit" names the
+    # rail rather than quoting a measurement.
+    assert summarise_blocked_reasons(
+        [{"outcome": "blocked", "reason": "already at the 10-position limit"}]
+    ) == {"already at the 10-position limit": 1}
+
+
 def test_a_narrative_is_optional_and_its_absence_is_not_an_error():
     report = build_report("daily", "Test day", [_trade(10.0)], [], _BASE.date(), _BASE.date())
     assert report.narrative is None

@@ -39,6 +39,57 @@ def _reporter(tmp_path, now: datetime) -> PerformanceReporter:
     )
 
 
+class _JournalStub:
+    """Enough of DecisionJournal for a report: rows, newest last."""
+
+    def __init__(self, rows: list[dict[str, str]]) -> None:
+        self._rows = rows
+
+    def entries(self, limit: int | None = None) -> list[dict[str, str]]:
+        return self._rows[-limit:] if limit else list(self._rows)
+
+
+@pytest.mark.asyncio
+async def test_a_daily_report_counts_only_the_days_own_blocked_decisions(tmp_path):
+    """M56b, and the layer the defect actually lived in.
+
+    `summarise_blocked_reasons` was always capable of being bounded; `_build`
+    never passed it a period, so a daily report inherited every blocked
+    decision ever journalled. Bounding the helper alone would leave this
+    passing untouched, so it is asserted here through the written report.
+    """
+    journal = _JournalStub(
+        [
+            {
+                "timestamp": "2026-07-20T14:00:00+00:00",
+                "outcome": "blocked",
+                "reason": "kill-switch active - daily loss",
+            },
+            {
+                "timestamp": "2026-07-23T14:00:00+00:00",
+                "outcome": "blocked",
+                "reason": "already at the 10-position limit",
+            },
+        ]
+    )
+    reporter = PerformanceReporter(
+        TradeLedger(EventBus(), tmp_path),
+        EquityCurve(tmp_path),
+        settings=Settings(_env_file=None),
+        data_dir=tmp_path,
+        check_interval_seconds=3600.0,
+        clock=lambda: AFTER_CLOSE,
+        journal=journal,
+    )
+
+    assert await reporter.maybe_report() == ["daily"]
+    written = (tmp_path / "daily_reports.md").read_text(encoding="utf-8")
+
+    assert "already at the 10-position limit" in written
+    # Three days earlier, and nothing to do with the day being reported.
+    assert "kill-switch active" not in written
+
+
 @pytest.mark.asyncio
 async def test_nothing_is_reported_while_the_market_is_still_open(tmp_path):
     assert await _reporter(tmp_path, MIDSESSION).maybe_report() == []

@@ -14,6 +14,7 @@ append-only text file is trivially diffable, greppable and survivable.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -277,7 +278,18 @@ def build_report(
     )
 
 
-def summarise_blocked_reasons(journal_rows: list[dict[str, str]]) -> dict[str, int]:
+# Amounts a reason quotes as evidence, rather than as the name of a rail. Both
+# are anchored ($ before, % after) so a bare integer like the "10" in
+# "10-position limit" keeps its number - that one names the rail, and reads
+# wrong as "N-position limit".
+_QUOTED_AMOUNT = re.compile(r"\$[\d,]+(?:\.\d+)?|[\d,]+(?:\.\d+)?%")
+
+
+def summarise_blocked_reasons(
+    journal_rows: list[dict[str, str]],
+    since: str | None = None,
+    until: str | None = None,
+) -> dict[str, int]:
     """Counts why autonomy declined to act, grouped by the leading clause of
     each reason.
 
@@ -285,17 +297,38 @@ def summarise_blocked_reasons(journal_rows: list[dict[str, str]]) -> dict[str, i
     nothing qualified and a day with no trades because the cash floor stopped
     eleven candidates are completely different states of the world, and only
     this tells them apart.
+
+    `since` and `until` are inclusive ISO dates bounding which rows count, and
+    they are opt-in: a caller that passes neither gets the whole journal, as
+    every caller did before M56b. A caller that passes them gets only rows it
+    can prove fall in the period - a row with no readable timestamp is dropped
+    rather than assumed current, because assuming current is exactly the bug.
     """
     counts: dict[str, int] = {}
+    bounded = since is not None or until is not None
     for row in journal_rows:
         if row.get("outcome", "").startswith("auto_signed"):
             continue
+        if bounded:
+            day = (row.get("timestamp") or "")[:10]
+            if len(day) != 10:
+                continue
+            if since is not None and day < since:
+                continue
+            if until is not None and day > until:
+                continue
         reason = (row.get("reason") or "").strip()
         if not reason:
             continue
         # Group by the reason's leading clause so per-symbol detail (prices,
         # quantities) does not fragment one cause into many rows.
         key = reason.split(" (")[0].split(" - ")[0].strip()
+        # The leading clause alone was not enough. A reason that quotes its
+        # measurement before any bracket - "Round-trip cost $18.24 is 13.2% of
+        # the $138.38 at risk" - produced a separate row per candidate: 90 keys
+        # for one rail, 8,907 characters of report, and a narrative that could
+        # not be generated because the result blew its context cap.
+        key = _QUOTED_AMOUNT.sub("N", key)
         counts[key] = counts.get(key, 0) + 1
     return counts
 
