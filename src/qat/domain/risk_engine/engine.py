@@ -60,6 +60,15 @@ class OrderCandidate:
     # risk limit describe a trade nobody placed.
     stop_price: float | None = None
     take_profit_price: float | None = None
+    # Trading days until the next scheduled earnings announcement (M57).
+    #
+    # None means the calendar could not answer, which is a real answer: a
+    # vendor does not know the next print for every listing, and an ETF has no
+    # earnings at all. It reads as "this rail abstains", the same convention
+    # the fundamentals strategies use for a missing figure - never as "safe".
+    # Negative means the date has already passed and the risk it names is
+    # historical.
+    days_to_earnings: int | None = None
 
 
 class RiskEngine:
@@ -96,6 +105,30 @@ class RiskEngine:
 
     async def _on_regime(self, event: RegimeEvent) -> None:
         self.regime_scalar = event.exposure_scalar
+
+    def _earnings_scalar(self, candidate: OrderCandidate, inputs: dict[str, Any]) -> float:
+        """Half size into a scheduled earnings print, full size otherwise (M57).
+
+        Applied beside the regime scalar because it is the same kind of thing -
+        a market-condition multiplier on size - rather than a gate. The two
+        compound, which is intended: a binary event during a regime the
+        strategy is already being sized down for deserves both.
+
+        Buys only. Every sizing rail here bounds ADDED risk, and halving an
+        exit would leave half a position exposed to the very event the rail
+        exists to worry about.
+        """
+        if not self.settings.enforce_earnings_event_risk or candidate.side != "buy":
+            return 1.0
+        days = candidate.days_to_earnings
+        if days is None:
+            return 1.0  # the calendar could not answer; this rail abstains
+        inputs["days_to_earnings"] = days
+        if not 0 <= days <= self.settings.earnings_blackout_days:
+            return 1.0
+        scalar = self.settings.earnings_event_size_scalar
+        inputs["earnings_event_scalar"] = scalar
+        return scalar
 
     def evaluate_order(
         self,
@@ -163,7 +196,7 @@ class RiskEngine:
             raw_shares = risk_budget / stop_distance
             inputs["resized_for_stop_budget"] = True
 
-        scaled_shares = raw_shares * self.regime_scalar
+        scaled_shares = raw_shares * self.regime_scalar * self._earnings_scalar(candidate, inputs)
 
         # No-leverage rule (spec M12): a buy can never cost more than the cash
         # actually available, less a reserve that can never be zero. Applies to

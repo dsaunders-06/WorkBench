@@ -46,6 +46,7 @@ import pandas as pd
 from qat.config import Settings
 from qat.data.bars import MultiSymbolAggregator
 from qat.data.broker.adapter import Position
+from qat.data.earnings import EarningsCalendar, NullEarningsCalendar
 from qat.data.features import compute_atr
 from qat.domain.bus import EventBus
 from qat.domain.events import MarketDataEvent, OrderFilledEvent, SignalEvent
@@ -119,6 +120,21 @@ def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
     return closes.pct_change().dropna()
 
 
+def _earnings_distance(calendar: EarningsCalendar, symbol: str) -> int | None:
+    """Sessions to the next print, or None if nothing can answer (M57).
+
+    Wrapped rather than called directly so that a calendar which misbehaves
+    cannot stop an order being evaluated. The rail this feeds only ever makes a
+    position smaller, so losing the answer costs the protection and nothing
+    else - whereas raising here would refuse a trade the rules permit.
+    """
+    try:
+        return calendar.trading_days_until(symbol)
+    except Exception:  # noqa: BLE001 - an optional rail must never block an order
+        logger.debug("Earnings distance unavailable for %s", symbol, exc_info=True)
+        return None
+
+
 def _trading_days_between(start: datetime, end: datetime) -> int:
     """Weekdays elapsed. An approximation of trading days that ignores market
     holidays - which shortens a ten-day hold by at most a day or two a quarter,
@@ -161,10 +177,15 @@ class SignalToOrderBridge:
         settings: Settings | None = None,
         bar_interval_seconds: float = 60.0,
         trade_ledger: ClosedTradeSource | None = None,
+        earnings_calendar: EarningsCalendar | None = None,
     ) -> None:
         self.bus = bus
         self.oms = oms
         self.settings = settings or Settings()
+        # Optional by design (M57). Absent, every candidate reports an unknown
+        # distance and the event-risk rail abstains - which is the behaviour
+        # this bridge had before the rail existed.
+        self.earnings_calendar: EarningsCalendar = earnings_calendar or NullEarningsCalendar()
         self.default_win_rate = default_win_rate
         self.default_win_loss_ratio = default_win_loss_ratio
         # Kept, not just handed to the estimator: startup also has to give the
@@ -736,6 +757,9 @@ class SignalToOrderBridge:
             take_profit_price=_meta_price(event.meta, "target_price"),
         )
 
+    def _days_to_earnings(self, symbol: str) -> int | None:
+        return _earnings_distance(self.earnings_calendar, symbol)
+
     async def _submit_short(
         self,
         symbol: str,
@@ -775,6 +799,7 @@ class SignalToOrderBridge:
             strategy=strategy,
             stop_price=stop_price,
             take_profit_price=take_profit_price,
+            days_to_earnings=self._days_to_earnings(symbol),
         )
 
         # A broker blip must REFUSE the signal, not throw it (M54).

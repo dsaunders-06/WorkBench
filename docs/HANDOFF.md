@@ -172,10 +172,12 @@ Three findings worth carrying forward:
   not that they run — see *"The pre-flight"* above. Zips are made by hand;
   `invoke package` does not create one.
 - **Validation freeze:** nothing lands that changes which trades happen or how
-  large they are. **Lifted once, deliberately, for M56c on 7 August** - the
-  regime gate was suppressing exits as well as entries. That is the only
-  decision-affecting change since 3 August; everything else has been defect
-  fixes and reporting.
+  large they are. **Lifted once, deliberately, on 7 August** for two changes
+  shipped together — M56c, where the regime gate was suppressing exits as well
+  as entries, and M57, the earnings event-risk rail. Those are the only
+  decision-affecting changes since 3 August; everything else has been defect
+  fixes and reporting. Everything else measured that day was **booked, not
+  acted on** — see ROADMAP.md, *"Booked for the September review"*.
 
 ## What not to re-derive
 

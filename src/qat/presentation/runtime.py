@@ -30,6 +30,7 @@ from qat.data import universe
 from qat.data.broker.account_poller import AccountPoller
 from qat.data.broker.adapter import BrokerAdapter
 from qat.data.broker.mock_broker import MockBroker
+from qat.data.earnings import EarningsCalendar, NullEarningsCalendar, YFinanceEarningsCalendar
 from qat.data.feature_engine import FeatureEngine
 from qat.data.fundamentals import FundamentalsSource, MockFundamentalsSource
 from qat.data.history import HistoricalBarSource, resolve_history_source
@@ -267,6 +268,30 @@ def resolve_macro_source(settings: Settings) -> MacroDataSource:
     return MockMacroSource(seed=1)
 
 
+def _build_earnings_calendar(settings: Settings) -> EarningsCalendar:
+    """The real calendar when the rail is on and a real vendor is configured.
+
+    Follows `fundamentals_source` rather than taking a switch of its own: both
+    answer "is this run talking to a real vendor", and a mock run inventing
+    earnings dates would size positions down on fabricated events.
+
+    Failure returns the null calendar rather than raising. This rail can only
+    make a position smaller, so losing it costs the protection - where failing
+    to start would cost the session.
+    """
+    if not settings.enforce_earnings_event_risk or settings.fundamentals_source != "yfinance":
+        return NullEarningsCalendar()
+    try:
+        return YFinanceEarningsCalendar(settings.data_dir)
+    except Exception as exc:  # noqa: BLE001 - degrade, but say so
+        logger.warning(
+            "Could not build the earnings calendar (%s) - trades will be sized without the "
+            "event-risk rail, which is the pre-M57 behaviour.",
+            exc,
+        )
+        return NullEarningsCalendar()
+
+
 def resolve_fundamentals_source(
     settings: Settings,
     history_source: HistoricalBarSource,
@@ -284,7 +309,7 @@ def resolve_fundamentals_source(
     vendor" into a screen of confident invented figures.
     """
     if settings.fundamentals_source != "yfinance":
-        return MockFundamentalsSource(seed=1)
+        return MockFundamentalsSource(seed=1)  # the earnings calendar follows the same switch
 
     try:
         from qat.data.fundamentals_cache import CachingFundamentalsSource, FundamentalsCache
@@ -417,6 +442,10 @@ class Runtime:
             # much its next trade risks. Falls back to the documented defaults
             # until it has edge_min_trades to measure.
             trade_ledger=trade_ledger,
+            # Event risk (M57). Built here rather than inside the bridge so a
+            # paper or mock run gets the null calendar and the rail abstains,
+            # exactly as it did before the rail existed.
+            earnings_calendar=_build_earnings_calendar(settings),
         )
 
         # Autonomy (spec M13). All four pieces are constructed regardless of

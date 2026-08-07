@@ -430,6 +430,72 @@ The trade itself survived: CVS 30 shares at 95.36 against a 105.475 entry, -1.73
 after costs, the first closed trade this system has ever recorded. The remaining
 17 shares are missing from that record and want correcting by hand.
 
+## M57 - Earnings are a scheduled event, not a draw from the distribution
+
+7 August, from an independent review, and the one recommendation in it that was
+both correct and unbuilt. Ships with M56c as a single deliberate break in the
+freeze.
+
+Every other rail here reasons about how prices usually move. An earnings
+announcement does not obey that: it is a known date carrying a binary outcome,
+and the gap it produces can open straight through a resting stop - the one
+hazard a stop cannot cover, because the price never trades there. This ledger
+has already paid for it once, when the CVS stop gapped at an open and filled 47
+shares in pieces.
+
+**Halve, not refuse.** Refusing loses the setup outright, and at a ten-position
+limit this book already turns away hundreds of candidates a night for capacity
+it cannot use. The direction of an earnings move is unknown; that it can be
+large is not, so the response is to take the same trade at half weight. The
+scalar sits beside the regime scalar because it is the same kind of thing - a
+market-condition multiplier on size - and the two compound deliberately.
+
+**Unknown means abstain, never safe.** A vendor genuinely cannot answer for
+every listing and an ETF has no earnings at all. Every failure - no network, a
+corrupt cache, an unparseable date, a calendar object of an unexpected shape -
+returns None and the rail sizes normally, because that is the pre-M57 behaviour
+and this rail can only ever make a position smaller. The guarantee is enforced
+at the public boundary rather than inside the private fetch, after a test
+demonstrated that a guard in the helper alone does not hold the contract.
+
+**Distances are trading days**, matching the minimum hold and the time stop.
+Five calendar days across a weekend is three sessions, and a rail specified in
+sessions should count them against the real exchange calendar rather than
+dividing by seven.
+
+Verified against the live vendor rather than only in tests - it answered for
+all ten held symbols, and two sit inside the window today: AMAT reports on
+14 August (5 sessions) and CSCO on 13 August (4). Both would be halved.
+
+**Known limitation, recorded rather than quietly widened.** This sizes ENTRIES.
+AMAT reports while we already hold it and the rail does nothing for an open
+position. Trimming into a print for something already held is a different
+decision - it sells - and belongs with the exit work, not here.
+
+## Booked for the September review
+
+Measured on 7 August, deliberately not acted on. Each waits for the mid-September
+time-stop burst to supply closed trades, because every figure below comes from a
+replay over the ten symbols currently held - a selected set, good enough to rank
+options against each other and not good enough to size a book on.
+
+| | What | Evidence |
+|---|---|---|
+| 1 | **Correlation window 300 -> 60 days.** Cheap and correct: on 60 days AMAT/AMD scores 0.79 and on 300 it scores 0.58, so a genuinely correlated pair we hold is currently invisible to the rail | Measured, 500 overlapping returns |
+| 2 | **The correlated-cluster cap is unreachable.** At ten positions averaging 0.49% risk, a 30% cluster needs about six names moving together; only 2 of 45 pairs clear 0.70 even on the responsive window. This answers M51's open question - the book is genuinely diversified, and the cap is redundant against the position limit and the single-name cap that bind first | Measured |
+| 3 | **Time stop 30 -> 45 days.** Best measured return case of anything examined: 7.36 against 6.44 net R per slot-year. Also the weakest evidence base, and it lengthens an already-slow evidence cycle | Replay, 75 trades |
+| 4 | **The minimum hold is inert.** Sweeping 0, 3, 5, 10 and 15 trading days produces identical results - same trades, same expectancy, same signal exits. The stop or target resolves the position before a trend break occurs, so the rail never binds. Removing it would simplify the configuration and change nothing | Replay |
+| 5 | **Trim an open position into its earnings print.** M57 sizes entries only. This one sells, so it belongs with the exit work | Not measured |
+
+**Not booked, and why.** Position sizing was modelled and rejected: cost on the
+positions actually held is 3.8% of risk against a 10% limit, and the entire
+prize from escaping the commission floor is 1.54 percentage points, worth about
+0.015R a trade. The two ways to collect it - fewer positions, or a higher
+aggregate cap - cost evidence rate and drawdown respectively, both worth more
+than the saving. An earlier note in this session claiming 13.2% read the
+report's refusal rows, which are candidates the cost rail rejected for being
+too small, and mistook the rejected population for the accepted one.
+
 ## Where the 30-day hold came from, and what the exits actually do
 
 Recorded 7 August, after the operator asked why the hold is 30 days when swing

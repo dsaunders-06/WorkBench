@@ -179,6 +179,26 @@ class Settings(BaseSettings):
     # measurement means something different from the label it replaces.
     max_correlated_cluster_pct: float = Field(default=0.30, gt=0, le=1.0)
 
+    # --- Event risk: earnings (M57) ------------------------------------------
+    # Every other rail here reasons about a distribution of price moves. An
+    # earnings announcement is not a draw from that distribution - it is a
+    # scheduled, binary event whose gap can jump straight through a resting
+    # stop, which is the one hazard a stop cannot protect against. The ledger
+    # has already paid for this once: the CVS stop gapped at an open and filled
+    # 47 shares in pieces.
+    #
+    # Halve rather than refuse, deliberately. Refusing loses the trade outright,
+    # and at a ten-position limit this book already turns away hundreds of
+    # candidates a night for capacity it cannot use. Halving keeps the setup
+    # and takes the binary risk at half weight, which is what the hazard
+    # actually warrants - the direction is unknown, the magnitude is not.
+    enforce_earnings_event_risk: bool = True
+    # Trading days, matching every other holding rail here. Five covers the
+    # announcement and the session either side of it; a wider window would
+    # catch setups whose thesis resolves long before the print.
+    earnings_blackout_days: int = Field(default=5, ge=0)
+    earnings_event_size_scalar: float = Field(default=0.5, gt=0.0, le=1.0)
+
     # --- Gap risk, budgeted separately from stop risk (M30) ------------------
     # Every other risk figure here means "if the stop fills". A gap opens
     # through it, and the stop is irrelevant to a price that never traded
