@@ -144,6 +144,20 @@ def _readonly_label(text: str) -> QLabel:
     return label
 
 
+def _scrolled(page: QWidget) -> QScrollArea:
+    """A tab page that scrolls on its own.
+
+    One scroll area per page rather than one around the tab widget, so the
+    selector stays put and a long Basic page does not decide how far Advanced
+    scrolls.
+    """
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    area.setWidget(page)
+    return area
+
+
 class SettingsScreen(QWidget):
     def __init__(self, runtime: Runtime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -161,13 +175,18 @@ class SettingsScreen(QWidget):
         # Save and the status line stay outside the scroll area. A save button
         # that can be scrolled away is a save button an operator can believe
         # does not exist.
+        #
+        # The Basic/Advanced selector stays outside it too, and for exactly the
+        # same reason (M57a). M56 put the tab widget INSIDE one shared scroll
+        # area; the Basic page is seven groups tall, so reading it means
+        # scrolling, and scrolling took the selector off the top of the screen
+        # with everything else. Nothing was missing and nothing raised - the
+        # only route to the risk limits just left the view, which an operator
+        # correctly reported as the settings being gone.
+        #
+        # So the tabs are fixed and each PAGE scrolls independently, which also
+        # stops a long Basic page dictating how far Advanced scrolls.
         outer = QVBoxLayout(self)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        container = QWidget()
-        outer.addWidget(scroll, stretch=1)
-        scroll.setWidget(container)
 
         # Basic and Advanced, because nine groups in one column is a wall (M56).
         #
@@ -181,15 +200,14 @@ class SettingsScreen(QWidget):
         # page a control is on. Making one drive the other would mean an
         # operator who wanted denser text also lost a tab, which is not what
         # either control promises. The level may later choose the opening tab.
-        layout = QVBoxLayout(container)
         self.section_tabs = QTabWidget()
         basic = QWidget()
         basic_layout = QVBoxLayout(basic)
         advanced = QWidget()
         advanced_layout = QVBoxLayout(advanced)
-        self.section_tabs.addTab(basic, "Basic")
-        self.section_tabs.addTab(advanced, "Advanced")
-        layout.addWidget(self.section_tabs)
+        self.section_tabs.addTab(_scrolled(basic), "Basic")
+        self.section_tabs.addTab(_scrolled(advanced), "Advanced")
+        outer.addWidget(self.section_tabs, stretch=1)
 
         basic_layout.addWidget(self._build_group())
         basic_layout.addWidget(self._build_interface_group(settings))
