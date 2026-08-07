@@ -10,13 +10,13 @@ did not trade at all, for the whole session.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from qat.data.fundamentals import MockFundamentalsSource
 from qat.domain.bus import EventBus
-from qat.domain.events import RegimeEvent
+from qat.domain.events import MarketDataEvent, RegimeEvent, SignalEvent
 from qat.domain.regime import Regime
 from qat.domain.strategies.engine import StrategyEngine
 from qat.domain.strategies.swing import SwingStrategy
@@ -47,6 +47,128 @@ async def _publish(engine: StrategyEngine, probs: dict[str, float], label: str) 
     await engine._on_regime(
         RegimeEvent(label=label, probs=probs, exposure_scalar=1.0, ts=datetime.now(UTC))
     )
+
+
+async def _feed_a_bar(engine: StrategyEngine, symbol: str = "AAA", held: float = 0.0) -> None:
+    """Enough ticks to get past the warm-up and reach the dispatch loop."""
+    if held:
+        engine._current_positions = lambda: _positions({symbol: held})  # type: ignore[method-assign]
+    start = datetime(2026, 8, 7, 14, 0, tzinfo=UTC)
+    for n in range(60):
+        await engine._on_market_data(
+            MarketDataEvent(
+                symbol=symbol,
+                price=100.0 + n * 0.1,
+                volume=1_000.0,
+                ts=start + timedelta(minutes=n),
+            )
+        )
+
+
+async def _positions(holdings: dict[str, float]) -> dict[str, float]:
+    return holdings
+
+
+class _AlwaysSignals:
+    """Emits whichever side it is told to, so the gate can be tested without
+    also depending on whether a real setup happens to be present."""
+
+    def __init__(self, side: str) -> None:
+        self.name = f"always-{side}"
+        self.side = side
+        self.asked = 0
+
+    def suitable_regimes(self):
+        return {Regime.SIDEWAYS}  # a minority of _30_JULY, so ineligible
+
+    def params(self):
+        return {}
+
+    def on_features(self, snapshot):
+        self.asked += 1
+        return [
+            SignalEvent(
+                symbol=snapshot.symbol,
+                side=self.side,
+                conviction=1.0,
+                strategy=self.name,
+                meta={},
+                ts=snapshot.as_of,
+            )
+        ]
+
+
+@pytest.mark.asyncio
+async def test_an_ineligible_strategy_is_still_asked_to_exit_what_it_holds():
+    """M56c. The gate sat above on_features, and on_features is the only route
+    to an exit signal - so an ineligible strategy was not asked to sell, it was
+    not asked anything.
+
+    That is why 29 entries produced zero signal exits in 1.19 years. Swing's
+    exit condition IS a broken trend, and broken trends are what the excluded
+    regimes are, so the strategy was reliably switched off exactly when it had
+    something to say about a position it was still holding.
+    """
+    seller = _AlwaysSignals("sell")
+    engine = _engine(strategies=[seller])
+    await _publish(engine, _30_JULY, "high_vol")
+    assert engine.is_eligible(seller) is False
+
+    published: list[SignalEvent] = []
+
+    async def collect(event: SignalEvent) -> None:
+        published.append(event)
+
+    engine.bus.subscribe(SignalEvent, collect)
+
+    await _feed_a_bar(engine, held=100.0)
+
+    assert seller.asked > 0, "an ineligible strategy must still be asked about its holdings"
+    assert published, "and its exit must actually reach the bus"
+    assert {s.side for s in published} == {"sell"}
+
+
+@pytest.mark.asyncio
+async def test_an_ineligible_strategy_cannot_sell_what_is_not_held():
+    """The narrowing that matters. Mean reversion emits a sell on overbought
+    RSI whether or not anything is held, so permitting sells outright would let
+    an excluded strategy OPEN short exposure - the opposite of the gate's
+    purpose."""
+    seller = _AlwaysSignals("sell")
+    engine = _engine(strategies=[seller])
+    await _publish(engine, _30_JULY, "high_vol")
+
+    published: list[SignalEvent] = []
+
+    async def collect(event: SignalEvent) -> None:
+        published.append(event)
+
+    engine.bus.subscribe(SignalEvent, collect)
+
+    await _feed_a_bar(engine, held=0.0)
+
+    assert published == [], "nothing is held, so this sell would open a position"
+
+
+@pytest.mark.asyncio
+async def test_an_ineligible_strategy_still_cannot_open_anything():
+    """The other half, and the half that must not regress: the gate exists to
+    stop entries in regimes a strategy was not built for."""
+    buyer = _AlwaysSignals("buy")
+    engine = _engine(strategies=[buyer])
+    await _publish(engine, _30_JULY, "high_vol")
+    assert engine.is_eligible(buyer) is False
+
+    published: list[SignalEvent] = []
+
+    async def collect(event: SignalEvent) -> None:
+        published.append(event)
+
+    engine.bus.subscribe(SignalEvent, collect)
+
+    await _feed_a_bar(engine)
+
+    assert published == [], "an ineligible strategy must not be able to buy"
 
 
 @pytest.mark.asyncio

@@ -7,10 +7,16 @@ the detail that block points at.
 
 ## Where things stand
 
-- **Deployed:** M56a+M51 (`ce15676`), verified by hash against the build.
-- **Repo:** clean, pushed, one branch (`master`), HEAD `ce15676`.
-- **App:** not running. Launch before the next session; the stamp should read
-  `M56a+M51 (ce15676)`. **Not `M56+M51` — that build cannot start.**
+- **Deployed:** M56b+M51 (`3b35c27`), verified by hash and confirmed to start.
+  **M56c is built but not deployed** — it changes exits, so it wants a
+  deliberate decision about which session it first runs in.
+- **Repo:** clean, pushed, one branch (`master`).
+- **App:** running. The stamp should read `M56b+M51 (3b35c27)` or later.
+  **Never `M56+M51` — that build cannot start.**
+- **Holding period:** see ROADMAP.md, *"Where the 30-day hold came from"*. The
+  30 was set by a churn milestone with no reference to swing's own cycle, and
+  measurement says it is roughly right regardless — shortening it toward the
+  originally intended 10 days would roughly halve net return per slot-year.
 - **Account:** equity $101,363. Ten positions — AMAT 7, AMD 7, CRWD 16, CSCO 44,
   GS 7, JNJ 19, MS 41, UNP 17, VRTX 19, WFC 58. All protected.
 - **Closed trades: one.** CVS, −$482.18, −1.68R. The first this system has ever
@@ -166,7 +172,10 @@ Three findings worth carrying forward:
   not that they run — see *"The pre-flight"* above. Zips are made by hand;
   `invoke package` does not create one.
 - **Validation freeze:** nothing lands that changes which trades happen or how
-  large they are.
+  large they are. **Lifted once, deliberately, for M56c on 7 August** - the
+  regime gate was suppressing exits as well as entries. That is the only
+  decision-affecting change since 3 August; everything else has been defect
+  fixes and reporting.
 
 ## What not to re-derive
 

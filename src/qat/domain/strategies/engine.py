@@ -27,7 +27,7 @@ from qat.data.broker.adapter import Position
 from qat.data.features import FeatureBuilder
 from qat.data.fundamentals import FundamentalSnapshot, FundamentalsSource
 from qat.domain.bus import EventBus
-from qat.domain.events import DataStaleEvent, MarketDataEvent, RegimeEvent
+from qat.domain.events import DataStaleEvent, MarketDataEvent, RegimeEvent, SignalEvent
 from qat.domain.regime import Regime
 from qat.domain.strategies.base import FeatureSnapshot, Strategy, SymbolContext
 
@@ -337,7 +337,49 @@ class StrategyEngine:
             )
 
         for strategy in self.strategies:
-            if not self.is_eligible(strategy):
-                continue
+            # Eligibility gates ENTRIES, not exits (M56c).
+            #
+            # This was `continue`, which skipped `on_features` entirely - and
+            # `on_features` is the only route to an exit signal, so an
+            # ineligible strategy was not declining to sell, it was never asked.
+            # Swing orders its exit check first for exactly this reason; the
+            # gate defeated that one layer up.
+            #
+            # The correlation is what made it costly rather than merely untidy.
+            # Swing's exit condition IS a broken trend, and a broken trend is
+            # what the excluded regimes are - so the strategy was reliably
+            # switched off precisely when it had something to say about a
+            # position it still held. Measured: 29 entries, zero signal exits
+            # in 1.19 years, against a condition true on 29% of days.
+            #
+            # A strategy that may not open a position may still manage one it
+            # already has. The gate's purpose - no entries in regimes this was
+            # not built for - is unchanged.
+            eligible = self.is_eligible(strategy)
             for signal in strategy.on_features(snapshot):
+                if not eligible and not self._closes_an_open_position(signal, snapshot):
+                    continue
+                if not eligible:
+                    logger.info(
+                        "%s is not eligible in this regime but is exiting %s - a strategy "
+                        "that may not open a position may still close one",
+                        strategy.name,
+                        signal.symbol,
+                    )
                 await self.bus.publish(signal)
+
+    @staticmethod
+    def _closes_an_open_position(signal: SignalEvent, snapshot: FeatureSnapshot) -> bool:
+        """Whether this signal reduces something already held.
+
+        Deliberately narrower than "it is a sell". Several strategies here are
+        symmetric signal generators - mean reversion emits a sell on overbought
+        RSI whether or not anything is held - so permitting sells from an
+        ineligible strategy would let it OPEN short exposure in a regime it was
+        excluded from, which is the opposite of what the gate is for.
+
+        Holdings are account-level rather than per-strategy, which is the right
+        conservatism: the question being asked is whether this order can add
+        exposure, and against an empty book every sell can.
+        """
+        return signal.side == "sell" and snapshot.held_quantity(signal.symbol) > 0

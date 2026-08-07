@@ -430,6 +430,117 @@ The trade itself survived: CVS 30 shares at 95.36 against a 105.475 entry, -1.73
 after costs, the first closed trade this system has ever recorded. The remaining
 17 shares are missing from that record and want correcting by hand.
 
+## Where the 30-day hold came from, and what the exits actually do
+
+Recorded 7 August, after the operator asked why the hold is 30 days when swing
+was designed around a shorter cycle. The answer is that **the strategy's own
+timeframe never entered the decision.**
+
+Both rails come from M31, a portfolio churn-and-cost milestone. The commit says
+so plainly: the time stop is 30 trading days because *"markets do not know what
+two weeks means: one rail stops the system churning, the other stops it holding
+forever on a thesis that never resolved."* The minimum hold is 10 trading days
+on a commission argument - *"ten concurrent positions turned over weekly costs
+$6,240 a year... at ten trading days it is 3.1%."* Neither number was derived
+from, or checked against, how long a swing setup is supposed to last.
+
+**Swing's intended holding period is not recorded anywhere in this repository.**
+`swing.py` cites "paper §4.10" and the paper is not in the tree. That is why
+nothing objected when M31 chose 30.
+
+### What the exits do, measured
+
+Replaying the real entry rule, the 2.5-ATR stop, the 2R target and both rails
+over two years of daily bars for the ten held symbols - 75 trades:
+
+| Ends the trade | Share | Median days | Mean R |
+|---|---|---|---|
+| Stop | 37% | 6.5 | -1.00 |
+| Target | 35% | 19 | +2.00 |
+| Time stop | 21% | 30 | +0.85 |
+| Signal | 7% | 7 | -0.63 |
+
+Three things follow, and the operator's instinct was right about the first two:
+
+1. **The give-back is real and large.** Mean peak reached is 1.30R; mean
+   realised is 0.46R. **59% of trades are still open after their best price**,
+   for a median five further days. The best price arrives around day 11.
+2. **The minimum hold is inert.** Sweeping it across 0, 3, 5, 10 and 15 trading
+   days changes nothing at all - same 75 trades, same 0.46R, same 5 signal
+   exits. By the time a trend break occurs, the stop or the target has almost
+   always resolved the position already, so the rail never binds. It has been
+   costing nothing and buying nothing.
+3. **Strengthening the sell decision makes it worse, decisively.** Charging the
+   measured round trip of 0.132R (from `risk_decisions.csv`: $18.24 against
+   $138.38 at risk):
+
+| | Trades | Gross R | Net R | Turns/yr | **Net R/yr/slot** |
+|---|---|---|---|---|---|
+| Today | 75 | 0.46 | 0.33 | 15.3 | **5.00** |
+| Trail 2 ATR | 123 | 0.20 | 0.06 | 29.9 | 1.92 |
+| Trail 1 ATR | 155 | 0.13 | 0.00 | 65.7 | 0.14 |
+
+And on the time stop itself, holding *longer* is better, not shorter:
+
+| Time stop | Net R | **Net R/yr/slot** |
+|---|---|---|
+| 10 days | 0.09 | 2.59 |
+| 20 days | 0.17 | 3.19 |
+| 30 days (today) | 0.33 | **5.00** |
+| 45 days | 0.44 | **6.07** |
+
+**So the 30 was arrived at for the wrong reason and is roughly right anyway.** A
+10-day cycle would approximately halve net return per slot-year. Every attempt
+to bank the give-back earlier multiplies trade count into a cost structure that
+eats the entire edge - which is M51's finding arriving from a second direction:
+**cost, not exit timing, is the binding constraint.** At 13.2% of risk per round
+trip the strategy cannot afford to trade more often, and the lever that would
+change that is position SIZE, not holding period.
+
+Caveat on all of the above: this replay applies no regime gate, so it counts
+trades the live system would not have taken. It is the right comparison for
+ranking the exit rails against each other and the wrong one for predicting
+live return.
+
+## M56c - The regime gate switched off exits, not just entries
+
+7 August. The first change since 3 August that alters a trading decision, made
+with the freeze explicitly lifted for it by the operator.
+
+`StrategyEngine` gated on eligibility with `continue`, above `on_features` -
+and `on_features` is the only route to an exit signal. An ineligible strategy
+was therefore not declining to sell. **It was never asked anything.** Swing
+orders its exit check first inside `on_features` precisely because "does the
+reason I am holding still hold" is a different question from "is this a good
+entry"; the gate defeated that one layer up. Same shape as M47, M50 and M56a -
+the layer being reasoned about was right, the layer above it was not.
+
+What made it costly rather than untidy is the correlation. **Swing's exit
+condition IS a broken trend, and a broken trend is what the excluded regimes
+are.** The strategy was reliably switched off in exactly the conditions that
+would have made it sell. That is the mechanism behind a limitation
+`PRODUCT_DESCRIPTION.md` had already recorded without explaining: 29 entries,
+zero signal exits, 1.19 years.
+
+Measured on two years of daily bars for the ten held symbols, the condition was
+true on **29% of days**, with 31 distinct trend breaks and at least one in every
+symbol. The rule was never rare - it was never consulted.
+
+**The fix is narrower than "allow sells".** Several strategies here are
+symmetric signal generators: mean reversion emits a sell on overbought RSI
+whether or not anything is held. Permitting sells outright would have let an
+excluded strategy OPEN short exposure, which is the reverse of the gate's
+purpose. The condition is therefore *closes an open position* - a sell whose
+symbol is actually held. A strategy that may not open a position may still
+manage one it already has.
+
+**What it is worth, measured rather than assumed.** Replaying the strategy over
+the same bars, signal exits are about 7% of exits and average -0.63R against a
+stop at -1.00R. So this is not an edge improvement - it is the system cutting a
+broken thesis roughly 0.37R earlier than the stop would have. The value is
+correctness: holding positions the system has decided it is not qualified to
+manage was wrong independently of what it earns.
+
 ## M56a - The build shipped for the session could not start at all
 
 6 August, found nine and a half hours before the open by launching the deployed
