@@ -278,6 +278,19 @@ which is *"the kill-switch tripping on something that is not a real
 discrepancy"* and *"protective orders not resting, or not being repaired"* -
 both in the fix-immediately list.
 
+### The analysis behind these decisions is kept, not just its conclusions
+
+`scripts/analysis/` holds the scripts that produced every figure in the booked
+list, with a README saying what each one answers. They were written in a
+scratch directory and would have been lost with the session, leaving the
+conclusions in prose and no way to re-run them.
+
+**That matters most for booked item 3.** The time stop was declined because it
+was measured on a replay over ten currently-held symbols rather than on
+evidence. When September delivers real closed trades, `swing_rail_sweep.py` and
+`swing_net_of_costs.py` should be re-run against those before the question is
+reopened - which is only possible because they still exist.
+
 ### Group 2 — does the captured data earn its place (M44, M51's open half)
 
 Both wait for the September trades. M58 built the reading; M44 is specifically
