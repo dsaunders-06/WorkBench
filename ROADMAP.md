@@ -210,6 +210,91 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M70 - A lot opened live never learned what it paid
+
+8 August. The residual half of M65, and the half that could not be healed at
+startup.
+
+`_announce_fill` publishes when an order reaches "filled" OR "transmitted",
+taking `order.filled_price or order.reference_price`. Alpaca returns "filled"
+only on a same-second fill; anything queued, slow or partial acknowledges as
+"transmitted", where there is no fill price - so what went out was the price the
+order was SIZED against. Two subscribers then built on it: the bridge stored it
+with `setdefault`, and the ledger opened the lot at it and derived `entry_cost`
+and both excursion seeds from it.
+
+**`reconcile_entry_prices` heals that at the next startup. A position opened and
+closed inside one session never reaches a next startup** - its ClosedTrade is
+already written, against a basis the account never paid, wrong in both the P&L
+and the R-multiple denominator. That is the case the M65 fix structurally cannot
+reach, and it is the case that writes the record.
+
+**The price was already in the building.** `recent_fills` returns every filled
+order for a tracked symbol carrying `filled_avg_price`, and
+`_symbols_to_watch_for_fills` includes anything with an order in flight - so the
+app's own entry comes back on the very next poll and was discarded at
+`_is_foreign_unrecorded`, because it is ours. The authoritative number was
+fetched every poll and thrown away. The fix stops throwing it away.
+
+`EntryPriceCorrectedEvent` carries it, and is deliberately **not** a second
+`OrderFilledEvent`: that one is a fact about a quantity as much as a price, and
+both its subscribers act on the quantity - the ledger opens a lot per buy, and
+sign_off has already counted the fill. Re-announcing would double the position
+on the Performance tab and re-create the M46 discrepancy that halted 4 August.
+
+**A second consequence, which nothing looked broken about.** `entry_slippage` is
+`entry_price - reference_price`, and for a live-opened lot both were set from the
+same transmit-time announcement - so it read **zero by construction** on every
+entry this app has ever opened. M44 is scheduled to ask in September whether the
+flat 5bps cost assumption holds, and `entry_slippage` is its instrument. It would
+have answered "no slippage, ever": a fabricated measurement rather than a
+measured one, and indistinguishable from a real result.
+
+**Found while building it, and it is not cosmetic.** `_fill_query_floor` already
+reaches back past every remembered fill, precisely because an order still filling
+keeps the `filled_at` of its FIRST execution - that is what let 17 CVS shares
+vanish on 5 August. But it reaches back past `_absorbed_fills` only, and an order
+this app sent is never absorbed. So a partial entry was covered by neither term:
+its price would be corrected to the average of the first piece and then never
+again, because the row carrying the final average still carries the first piece's
+stamp and falls outside the window. `_own_partial_fill_stamps` closes that, and
+is dropped as soon as the order completes.
+
+The freeze: fix-immediately, as anything that corrupts the record is. Noted
+because it is not free - `entry.price` feeds the minimum-hold loss escape at
+`signal_bridge.py`, so a corrected price can change one exit decision. That is
+the same exposure the deployed startup heal already carries, and the direction is
+towards the truth rather than away from it.
+
+16 tests. Verified by disabling the fix and confirming 9 of them fail, and by
+disabling the floor reach-back alone and confirming the partial-fill case fails
+on its own.
+
+## M71 - The same root cause on the way OUT - found, not fixed
+
+8 August, found while building M70 and deliberately left.
+
+`_announce_fill` does not distinguish sides. A sell this app transmits - a signal
+exit, a time stop, a delever trim - announces at the reference price for exactly
+the same reason, and `_close_against_lots` takes the ClosedTrade's **exit** price
+from it. So realised P&L is wrong on the way out too, and directly rather than
+through a basis.
+
+Two things make it a separate item rather than part of M70:
+
+* **Most exits here are broker-side.** A resting stop or target fills at the
+  broker and arrives through `absorb_broker_fills` carrying the real price, which
+  is already right. The app-transmitted sell is the minority path.
+* **Correcting it means rewriting a record already on disk.** M70 corrects an
+  open lot in memory, before anything is written. By the time an exit price is
+  known to be wrong the ClosedTrade is in `closed_trades.csv`, and rewriting a
+  written trade is a different class of change - the same class as the CVS
+  correction, which was done by hand and backed up first.
+
+Not yet verified against a live transmitted sell; the above is read from the
+code. Do that before designing the fix, and check whether a market sell inside
+market hours comes back "filled" often enough that the path is rare in practice.
+
 ## M69 - The walk-forward panel did not state its own limitation
 
 8 August. Step 4.5 of `UI_UX_APPROACH.md`, and the brief was right this time -

@@ -50,7 +50,12 @@ from qat.data.broker.adapter import Position
 from qat.data.earnings import EarningsCalendar, NullEarningsCalendar
 from qat.data.features import compute_atr
 from qat.domain.bus import EventBus
-from qat.domain.events import MarketDataEvent, OrderFilledEvent, SignalEvent
+from qat.domain.events import (
+    EntryPriceCorrectedEvent,
+    MarketDataEvent,
+    OrderFilledEvent,
+    SignalEvent,
+)
 from qat.domain.oms.oms import OMS
 from qat.domain.performance.edge import ClosedTradeSource, EdgeEstimator
 from qat.domain.risk_engine.engine import OrderCandidate
@@ -233,6 +238,7 @@ class SignalToOrderBridge:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         # Before restore_open_lots, or the ledger is rebuilt from the price the
         # order was SIZED against rather than the one it filled at (M65).
         await self.reconcile_entry_prices()
@@ -619,6 +625,7 @@ class SignalToOrderBridge:
         self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
         self.bus.unsubscribe(SignalEvent, self._on_signal)
         self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+        self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -690,6 +697,24 @@ class SignalToOrderBridge:
                 event.symbol,
                 "shares",
             )
+        self._save_entries()
+
+    async def _on_entry_price_corrected(self, event: EntryPriceCorrectedEvent) -> None:
+        """Puts the price actually paid into the entry record, mid-session (M70).
+
+        `_on_fill` stores the announced price with `setdefault`, so the genuine
+        one could never replace it and the record stayed wrong until the next
+        launch healed it. What `reconcile_entry_prices` does at startup, this
+        does the moment the broker says what it charged.
+
+        Only the price moves - the same rule, for the same reasons: the stop is
+        the level the risk budget was spent on and re-arming reads it, and the
+        open date drives the churn rails.
+        """
+        entry = self._entries.get(event.symbol)
+        if entry is None:
+            return
+        self._entries[event.symbol] = replace(entry, price=event.price)
         self._save_entries()
 
     def _load_entries(self) -> dict[str, _Entry]:

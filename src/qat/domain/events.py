@@ -119,6 +119,34 @@ class OrderFilledEvent(Event):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class EntryPriceCorrectedEvent(Event):
+    """What an order THIS APP transmitted actually filled at (M70).
+
+    Deliberately not a second OrderFilledEvent. That one is a fact about a
+    quantity as much as a price, and both its subscribers act on the quantity:
+    the ledger opens a lot per buy, and sign_off has already counted the fill.
+    Re-announcing would double the position on the Performance tab and
+    re-create the M46 discrepancy that halted the 4 August session. This says
+    one thing only - the price was wrong, here is the right one.
+
+    Published when the broker reports a fill for an order the app sent at a
+    price that differs from the one announced at transmit. `_announce_fill`
+    fires at "transmitted" as well as "filled", and at transmit there is no
+    fill price, so what it published was the price the order was SIZED
+    against.
+    """
+
+    order_id: str
+    symbol: str
+    price: float
+    """What the broker charged. `filled_avg_price`, so a partial that later
+    completes reports the cumulative average and corrects again."""
+    announced_price: float
+    """What was published at transmit, carried so the log can state the
+    difference rather than only the destination."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DataStaleEvent(Event):
     """ONE symbol's quote is too old to size a trade against (M28a).
 

@@ -36,6 +36,7 @@ import csv
 import logging
 import threading
 from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -43,7 +44,12 @@ from pathlib import Path
 from qat.config import Settings
 from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
-from qat.domain.events import MarketDataEvent, OrderFilledEvent, RegimeEvent
+from qat.domain.events import (
+    EntryPriceCorrectedEvent,
+    MarketDataEvent,
+    OrderFilledEvent,
+    RegimeEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +129,27 @@ def _optional_float(value: str | None) -> float | None:
         return None
 
 
+def _reseeded(
+    current: float | None,
+    seed: float,
+    actual: float,
+    pick: Callable[[float, float], float],
+) -> float | None:
+    """An excursion extreme after its seed turns out to have been wrong (M70).
+
+    Both extremes start life as the entry price, so when that price is
+    corrected an untouched extreme is simply the wrong number and is replaced.
+    Once a real tick has moved it the tick is evidence and the correction is
+    not, so the range is widened to include the price actually paid rather than
+    overwritten by it.
+    """
+    if current is None:
+        return actual
+    if current == seed:
+        return actual
+    return pick(current, actual)
+
+
 @dataclass(frozen=True, slots=True)
 class OpenLot:
     symbol: str
@@ -153,6 +180,12 @@ class OpenLot:
     """Highest price seen while held - maximum favourable excursion."""
     earnings_at_entry: date | None = None
     """The next scheduled announcement as known when the lot was opened (M41)."""
+    order_id: str | None = None
+    """The broker's id for the order that opened this lot, so a late price
+    correction lands on the right lot rather than on whichever one the symbol
+    happened to hold (M70). None on a lot restored at startup, which needs no
+    correction - `reconcile_entry_prices` has already healed the record it was
+    rebuilt from."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -508,13 +541,48 @@ class TradeLedger:
 
     async def start(self) -> None:
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         self.bus.subscribe(RegimeEvent, self._on_regime)
         self.bus.subscribe(MarketDataEvent, self._on_price)
 
     async def stop(self) -> None:
         self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+        self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         self.bus.unsubscribe(RegimeEvent, self._on_regime)
         self.bus.unsubscribe(MarketDataEvent, self._on_price)
+
+    async def _on_entry_price_corrected(self, event: EntryPriceCorrectedEvent) -> None:
+        """Rebases an open lot onto the price the account actually paid (M70).
+
+        The lot is what becomes a ClosedTrade, so correcting the entry record
+        and leaving this alone would repair the file and still write the wrong
+        trade - with the wrong P&L and the wrong R-multiple denominator, both
+        of which feed the promotion gate.
+
+        Matched on the order id rather than the symbol. A lot restored at
+        startup carries none, and it does not need one: `reconcile_entry_prices`
+        has already corrected the record it was rebuilt from.
+        """
+        lots = self._open_lots.get(event.symbol)
+        if not lots or event.price <= 0:
+            return
+        for index, lot in enumerate(lots):
+            if lot.order_id != event.order_id or lot.price == event.price:
+                continue
+            lots[index] = replace(
+                lot,
+                price=event.price,
+                # Derived from the price, so a corrected price with a stale
+                # cost is a trade paying commission on a fill that never
+                # happened.
+                entry_cost=self._fill_cost(lot.quantity, event.price),
+                # The excursion seeds were the announced price. Left alone they
+                # would put a price the market never printed into MAE and MFE -
+                # so the seed is replaced where it is still the seed, and merely
+                # widened where a real tick has already moved it.
+                worst_price=_reseeded(lot.worst_price, event.announced_price, event.price, min),
+                best_price=_reseeded(lot.best_price, event.announced_price, event.price, max),
+            )
 
     async def _on_regime(self, event: RegimeEvent) -> None:
         self._regime = event.label
@@ -557,6 +625,7 @@ class TradeLedger:
                     worst_price=event.price,
                     best_price=event.price,
                     earnings_at_entry=event.earnings_at_entry,
+                    order_id=event.order_id,
                 )
             )
             return

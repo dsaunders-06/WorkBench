@@ -28,7 +28,11 @@ from qat.data.broker.adapter import BrokerAdapter, BrokerFill, Order
 from qat.data.broker.mock_broker import new_order_id
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal, JournalEntry
-from qat.domain.events import OrderFilledEvent, OrderPendingSignoffEvent
+from qat.domain.events import (
+    EntryPriceCorrectedEvent,
+    OrderFilledEvent,
+    OrderPendingSignoffEvent,
+)
 from qat.domain.oms.anomaly import PositionAnomalyStore
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -103,6 +107,11 @@ _ABSORBED_ID_RETENTION = timedelta(days=30)
 # loose enough to absorb rounding on the latter is blind to a real move on the
 # former. At 1e-4 this absorbs cent-level rounding on every price in the book.
 _STOP_LEVEL_TOLERANCE = 1e-4
+# The same relative test, for the same reason, applied to what an entry paid
+# against what its announcement claimed (M70). Matches the tolerance
+# `reconcile_entry_prices` heals to at startup, so the live correction and the
+# startup one cannot disagree about whether a price needs correcting.
+_ANNOUNCED_PRICE_TOLERANCE = 1e-4
 
 
 class OMS:
@@ -159,6 +168,11 @@ class OMS:
             Path(settings.data_dir) / _FILL_STATE_FILENAME if settings is not None else None
         )
         self._absorbed_fills: dict[str, _AbsorbedFill] = {}
+        # When an order THIS app sent was first seen partially filled (M70).
+        # In memory only, and deliberately: it exists to widen one query window
+        # while a fill is outstanding, and an order still filling across a
+        # restart is re-read from the broker by adoption anyway.
+        self._own_partial_fill_stamps: dict[str, datetime] = {}
         self._fill_watch_hint: set[str] = set()
         self._last_fill_scan = self._load_fill_state()
         # Why a position ended, keyed by symbol until the fill arrives. After
@@ -1129,13 +1143,23 @@ class OMS:
         delta is zero, and it is skipped. `_absorbed_fills` is pruned to 30
         days, and the query is bounded by symbol, so the window cannot grow
         without limit.
+
+        **The app's OWN partials need the same reach, and were not getting it
+        (M70).** `_absorbed_fills` holds foreign executions only - an order this
+        app sent is never absorbed - so an entry still filling was covered by
+        neither term. Its price would be corrected to the average of the first
+        piece and then never again, because the row carrying the final average
+        still has the first piece's stamp and falls outside the window. The
+        stamp is dropped as soon as the order is complete, so this reaches back
+        only while something genuinely is outstanding.
         """
         floor = self._last_fill_scan
-        if self._absorbed_fills:
-            oldest = min(seen.filled_at for seen in self._absorbed_fills.values())
+        stamps = [seen.filled_at for seen in self._absorbed_fills.values()]
+        stamps.extend(self._own_partial_fill_stamps.values())
+        if stamps:
             # A second before, because the brokers' filters are exclusive and an
             # order's remainder carries the same stamp as its first piece.
-            floor = min(floor, oldest - timedelta(seconds=1))
+            floor = min(floor, min(stamps) - timedelta(seconds=1))
         return floor
 
     def _unabsorbed_part(self, fill: BrokerFill) -> BrokerFill | None:
@@ -1237,6 +1261,10 @@ class OMS:
         absorbed: list[BrokerFill] = []
         for raw in fills:
             if not self._is_foreign_unrecorded(raw):
+                # Ours, and already counted - but not therefore worthless. This
+                # is the only place the price we actually PAID arrives for an
+                # order this app sent, and it used to be dropped here (M70).
+                await self._correct_announced_price(raw)
                 continue
             fill = self._unabsorbed_part(raw)
             if fill is None:
@@ -1317,6 +1345,88 @@ class OMS:
         self._last_fill_scan = datetime.now(UTC)
         self._save_fill_state()
         return absorbed
+
+    def _order_the_broker_calls(self, broker_order_id: str) -> Order | None:
+        """The app's record of an order, found by the id the BROKER uses.
+
+        `_orders` is keyed by the app's own id and the adapter overwrites
+        `order.order_id` with the broker's on transmit, so the key and the
+        attribute disagree for every transmitted order - which is exactly the
+        M46 mismatch. Both are checked, in that order: the attribute is the one
+        a fill can be matched on, and the key is what an adapter that preserves
+        the id leaves behind.
+        """
+        for order in self._orders.values():
+            if str(order.order_id) == broker_order_id:
+                return order
+        return self._orders.get(broker_order_id)
+
+    async def _correct_announced_price(self, raw: BrokerFill) -> None:
+        """Announces what an order this app sent actually filled at (M70).
+
+        `_announce_fill` publishes at "transmitted" as well as at "filled", and
+        at transmit there is no fill price - so what went out was the price the
+        order was SIZED against. Alpaca acknowledges asynchronously, so that is
+        the normal case rather than the exceptional one: 8 of the 10 positions
+        held on 8 August recorded a price the account never paid, AMD by 141
+        bps.
+
+        `reconcile_entry_prices` heals that at the next startup. A position
+        opened and closed inside one session never reaches a next startup - its
+        ClosedTrade is already written, against a basis that is wrong in both
+        the P&L and the R-multiple denominator. This is that gap.
+
+        Nothing here touches a quantity. The fill was counted at sign-off, and
+        counting it again is the M46 discrepancy that halted 4 August.
+        """
+        if self.bus is None or raw.side != "buy" or raw.price <= 0:
+            return
+        order = self._order_the_broker_calls(raw.order_id)
+        if order is None or order.side != "buy":
+            return
+        # Remembered only while the order is genuinely still filling, so
+        # `_fill_query_floor` reaches back far enough to see the row carrying
+        # the final average - which keeps the FIRST execution's stamp.
+        if raw.quantity + 1e-9 < order.quantity:
+            self._own_partial_fill_stamps[raw.order_id] = raw.filled_at
+        else:
+            self._own_partial_fill_stamps.pop(raw.order_id, None)
+        announced = order.filled_price or order.reference_price
+        if not announced or announced <= 0:
+            # Nothing was published to correct - `_announce_fill` returns early
+            # without a price, so no entry record was ever built from one.
+            return
+        if abs(raw.price - announced) <= _ANNOUNCED_PRICE_TOLERANCE * abs(announced):
+            return
+        if self.anomalies.is_quarantined(raw.symbol):
+            # The rule `reconcile_entry_prices` already applies. A corporate
+            # action changes what the broker reports legitimately, and a
+            # position in that state is one M60 exists to stop anything writing
+            # to - including this.
+            return
+        # Recorded on the order too, so the next poll compares against the
+        # corrected figure and stays quiet. A partial that later completes
+        # reports a larger cumulative average and corrects again, which is what
+        # keeping the guard on DIFFERENCE rather than on having-run-once buys.
+        order.filled_price = raw.price
+        logger.warning(
+            "ENTRY PRICE CORRECTED: %s filled at %.4f, announced at %.4f (%+.1f bps). The "
+            "announcement went out at transmit, where the only price available is the one the "
+            "order was SIZED against - so the entry record, the open lot's cost basis and every "
+            "R-multiple measured from it were wrong by that difference.",
+            raw.symbol,
+            raw.price,
+            announced,
+            10_000.0 * (raw.price - announced) / announced,
+        )
+        await self.bus.publish(
+            EntryPriceCorrectedEvent(
+                order_id=raw.order_id,
+                symbol=raw.symbol,
+                price=raw.price,
+                announced_price=float(announced),
+            )
+        )
 
     async def _resync_tracked_quantities(self) -> None:
         """Re-reads the position baseline from the broker after a replay.
