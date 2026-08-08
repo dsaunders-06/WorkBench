@@ -312,6 +312,26 @@ it is invisible to the operator, which makes it the safest possible first step.
 ask the current level, and a level selector. No screen changes yet — this is
 plumbing.
 
+> **Status, corrected again 8 August.** Steps 1, 2 and 3 are now done in the
+> sense the plan meant them — but with one gap that matters more than it looks.
+>
+> **The level is settable and consumed by nothing.** `UiLevel` is imported by
+> `config.py`, `env_file.py`, `first_run.py`, `settings.py` and its own module.
+> `explains()` and `shows_advanced()` are called by **zero** screens. Settings'
+> Basic/Advanced split is deliberately not wired to it. So an operator can now
+> set the level (M55), and is asked for it on first run (M58a), and nothing
+> anywhere behaves differently as a result.
+>
+> That makes the M58a dialog a promise the application does not keep: it says
+> the choice decides how much is explained and how much is shown, and today it
+> decides neither. **Step 4 should be the screen that makes it true** — or the
+> prompt should wait until one does. Either is defensible; shipping the question
+> without the consequence is not.
+>
+> Same category as the minimum-hold rail: configuration that persists, displays,
+> and changes nothing. Worth naming in both places because the pattern keeps
+> recurring.
+
 > **Status, corrected 6 August: step 1 is done, step 2 is not.** `theme.py` is
 > real and consumed by six panels. `ui_level` exists as a config field and a
 > module that **nothing imports** — `grep` finds one reference in the whole

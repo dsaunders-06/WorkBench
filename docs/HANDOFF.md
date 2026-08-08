@@ -220,8 +220,14 @@ Three findings worth carrying forward:
 
 ## The next block of work — M39 first, grouped
 
-Reviewed 8 August. What remains splits into three groups, and the first is the
-one to build.
+Reviewed 8 August. What remains splits into **four** groups. Group 1 is the one
+to build next; Group 4 can run alongside it, because it touches no trading
+logic.
+
+The first version of this review listed three and omitted the interface work
+entirely. It was caught by the operator asking why there was no reference to
+it - which is worth recording, because a review that quietly drops a whole
+workstream reads exactly like a review that has considered it and found nothing.
 
 ### Group 1 — external changes to a held position (M39, then M43)
 
@@ -277,6 +283,55 @@ both in the fix-immediately list.
 Both wait for the September trades. M58 built the reading; M44 is specifically
 whether the flat 5bps slippage assumption holds, and `entry_slippage` answers it
 the moment there are enough trades to average. Nothing to do until then.
+
+### Group 4 — the interface, steps 4–8 of UI_UX_APPROACH.md
+
+**Omitted from the first version of this review, and it should not have been.**
+Steps 1–3 are done: the design system, the level mechanism, and Settings. Steps
+4–8 remain — Dashboard, Performance, Order Blotter, the research screens, AI
+Advisor.
+
+This group sits **alongside** Group 1 rather than behind it. It touches no
+trading logic, so it is unaffected by the freeze and can proceed in parallel.
+One sequencing constraint survives from the original plan: **Performance (step
+5) waits until there are closed trades to display**, which means September.
+Dashboard (step 4) has no such dependency and is ready now. Order Blotter stays
+deliberately last of the operational screens - it is the most safety-critical,
+and should be touched when the design system is proven rather than while it is
+in flux.
+
+#### The expertise level is settable and consumed by nothing
+
+Found 8 August, by checking rather than assuming:
+
+```
+imports UiLevel        : config.py, env_file.py, first_run.py,
+                         settings.py, ui_level.py
+panels branching on it : none
+```
+
+`explains()` and `shows_advanced()` exist in `ui_level.py` and are called by
+zero screens. The only consumers are the combo box that sets the level, the
+first-run dialog that asks for it, and the config field that stores it -
+Settings' own Basic/Advanced split is explicitly *not* wired to it. This is the
+same category as the minimum hold: configuration that persists, displays, and
+changes nothing.
+
+M45 always said the module was plumbing that screens would adopt one at a time.
+None has.
+
+**This makes M58a a promise the application does not keep.** That first-run
+dialog tells the operator the choice decides how much is explained and how much
+is shown, and today it decides neither. It was built on 8 August without
+checking whether anything consumed the setting. Two honest resolutions:
+
+1. **Dashboard consumes the level as part of step 4** - the level becomes real
+   and the dialog keeps its promise. This is the recommended one, because step 4
+   is next in the UI/UX order regardless.
+2. **Hold the prompt** until the first screen that branches on the level ships.
+
+Whichever is chosen, it should be chosen deliberately: asking a first-run
+question about an inert setting is worse than not asking.
 
 ### Group 3 — M32, ASX readiness
 
