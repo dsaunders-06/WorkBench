@@ -7,9 +7,16 @@ the detail that block points at.
 
 ## Where things stand
 
-- **Deployed:** M41+M42 (`ec0f5bf`), verified by hash and confirmed to start,
+- **Deployed:** M58c+M41 (`194f9de`), verified by hash and confirmed to start,
   8 August. Everything below is in it.
-- **Repo:** clean, pushed, one branch (`master`).
+- **Repo:** clean, pushed, one branch (`master`). **HEAD is ahead of the
+  deployed build**, by documentation and `scripts/analysis/` only — verified,
+  not assumed: `git diff 194f9de..HEAD -- src/` is empty, so the installed
+  binary is current in behaviour and does not need rebuilding. Check that
+  before concluding the install is stale; it is the same check that caught the
+  M55/M56 mismatch on 6 August.
+- **Analysis:** `scripts/analysis/` holds the scripts behind every figure in
+  the booked list, with a README. Read it before reopening booked item 3.
 - **App:** running. The stamp should read `M41+M42 (ec0f5bf)` or later.
   **Never `M56+M51` — that build cannot start.**
 - **Next session:** Monday night. US markets are shut for the weekend, which is
