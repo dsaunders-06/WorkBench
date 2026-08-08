@@ -37,6 +37,30 @@ Tuesday's session **will halt** when the split lands, until the anomaly is
 declared in the Risk Console. That is M60 working, and it is the first live
 exercise of it.
 
+## ⚠️ Found 8 August, not yet fixed — M66
+
+**The aggregate risk-at-stop that gates every new entry is measured against
+ENTRY prices, not current ones.** The app reports 5.02%; measured against
+current prices it is **5.87%**, against a 5.00% cap.
+
+`PortfolioGovernor.snapshot` does `prices.get(symbol) or pos.avg_price`, and
+`avg_price` is the broker's `avg_entry_price`. The `prices` argument is plumbed
+through `snapshot`, `evaluate` and `delever_fraction` — and **nothing in the
+trading path ever passes it.** `RiskEngine` and `DeleverSweep` both omit it;
+only `adopted.py`, a display path, supplies it. So this is not a stood-down
+artefact: every entry decision this system has ever made used entry prices.
+
+**A winning book understates its risk**, because a position that has gained has
+further to fall to its stop. The bias grows with profit and is backwards from
+prudent.
+
+It changes which trades happen and how large they are, so it is **inside the
+freeze** and needs a recorded lift. It also interacts with the market-data
+finding — whichever prices get passed should come from the same feed decision,
+or the fix bakes in the IEX bias. **Do not start it before Tuesday.**
+
+Verify with `scripts/analysis/verify_gating_figures.py`.
+
 ## ⚠️ Found 8 August, not yet fixed — M65
 
 **The entry record holds the price we asked for, not the price we paid.** 8 of
@@ -291,7 +315,29 @@ through a split. M39's adjustment cannot be designed without it.
   Tuesday's session will halt when the split lands until the anomaly is
   declared in the Risk Console. That is M60 working, and its first live run.
 
-FOUND 8 AUGUST, NOT YET FIXED — M65, read this before anything else
+FOUND 8 AUGUST, NOT YET FIXED — M66, the more serious of the two
+The aggregate risk-at-stop that GATES EVERY NEW ENTRY is measured against ENTRY
+prices, not current ones. The app reports 5.02%; against current prices it is
+5.87%, on a 5.00% cap.
+
+  PortfolioGovernor.snapshot does `prices.get(symbol) or pos.avg_price`, and
+  avg_price is the broker's avg_entry_price. The `prices` argument is plumbed
+  through snapshot, evaluate and delever_fraction and NOTHING IN THE TRADING
+  PATH EVER PASSES IT - RiskEngine and DeleverSweep both omit it, and only
+  adopted.py (a display) supplies it. Not a stood-down artefact: every entry
+  decision this system has made used entry prices.
+
+  A WINNING BOOK UNDERSTATES ITS RISK, because a position that has gained has
+  further to fall to its stop. The bias grows with profit, backwards from
+  prudent. Same pattern as shows_advanced() before M63: a parameter plumbed
+  everywhere and supplied by nothing.
+
+  Inside the freeze - it changes which trades happen and how large. Interacts
+  with the market-data finding: whichever prices get passed should come from
+  the same feed decision or the fix bakes in the IEX bias. NOT BEFORE TUESDAY.
+  Verify with scripts/analysis/verify_gating_figures.py.
+
+FOUND 8 AUGUST, NOT YET FIXED — M65
 The entry record holds the price we ASKED, not the price we PAID. 8 of 10 open
 positions differ; AMD by 141 bps, GS by 52. _announce_fill publishes when
 status is "filled" OR "transmitted" and takes filled_price or reference_price -

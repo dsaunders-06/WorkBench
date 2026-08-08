@@ -58,6 +58,7 @@ Both talk to the paper account. Neither places, cancels or modifies an order.
 | `probe_market_data.py` | What running on IEX rather than the consolidated tape costs in ATR, and therefore in position size. Uses the application's own `compute_atr`, so it measures what the app would do rather than a reimplementation. Findings in `docs/MARKET_DATA_FINDINGS.md` |
 | `realised_slippage.py` | Realised entry slippage against the flat 5bps the cost model charges, from the decision journal's reference price and the broker's actual fills. Aggregated by ORDER, not by fill - a partially filling order reports one row per piece and would otherwise be counted several times. Findings in ROADMAP, M65 |
 | `probe_entry_basis.py` | Whether the recorded entry price matches what the broker charged. It does not, on 8 of 10 positions - see ROADMAP, M65 |
+| `verify_gating_figures.py` | Independently recomputes the aggregate risk-at-stop that refuses every new entry, and compares recorded stops against what actually rests. Found M66: the running figure uses ENTRY prices, so 5.02% reported is 5.87% in current terms |
 | `capture_split_state.py` | One symbol's position and resting orders before and after a corporate action, so the two can be diffed. Nothing recovers the pre-split state after the fact |
 
 `exercise_m54.py` is worth re-running whenever the Alpaca adapter changes: it is

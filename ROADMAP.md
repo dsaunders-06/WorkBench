@@ -1401,6 +1401,50 @@ has no ratio to match, so detection is a different question from M39's - and
 that is the whole remaining cost, which was the point of building the concept
 once.
 
+### M66 - Aggregate risk-at-stop is measured against ENTRY prices  **[FOUND 8 AUGUST, NOT YET FIXED]**
+
+Found by independently recomputing the one number that is currently refusing
+every new entry in the book.
+
+**The application reports 5.02%. Measured against current prices it is 5.87%.**
+
+```
+basis                                 risk $     pct
+current price (what is at risk NOW)  5,947.28   5.87%
+avg entry price (the fallback)       5,078.77   5.02%   <- matches the app exactly
+```
+
+**The mechanism.** `PortfolioGovernor.snapshot` does
+`price = prices.get(pos.symbol) or pos.avg_price`, and `avg_price` maps to the
+broker's `avg_entry_price`. The `prices` argument is threaded all the way
+through `snapshot`, `evaluate` and `delever_fraction` — and **nothing in the
+trading path ever passes it.** `RiskEngine` calls `governor.evaluate(...)`
+without it, and `DeleverSweep` calls `governor.snapshot(...)` without it. The
+only caller that supplies prices is `adopted.py`, which is a display path.
+
+So this is not a stood-down-session artefact. **Every entry decision and every
+de-lever check has always been made against the prices the positions were
+opened at.**
+
+**Why the direction matters.** Risk per share is `price − stop`. A position that
+has gained has further to fall to its stop, so **a winning book understates its
+risk** and believes it has headroom it does not have; a losing book overstates
+it and refuses trades it could take. The bias is backwards from prudent, and it
+grows with profit.
+
+Right now the book is at **5.87% against a 5.00% cap** while reporting 5.02% —
+already 17% over the cap in reality, and only marginally over on paper.
+
+**Same pattern as `shows_advanced()` before M63**: a parameter that exists, is
+plumbed through every layer, and is supplied by nothing. *When something is
+added, ask what reads it* — here, what *writes* it.
+
+**Not fixed, and not to be fixed before Tuesday.** It changes which trades are
+permitted and how large they are, so it is squarely inside the validation
+freeze and needs a deliberate, recorded lift. It also interacts with the
+market-data finding: whichever prices are passed should come from the same feed
+decision, or the fix would bake in the IEX bias.
+
 ### M65 - The entry record holds the price we ASKED, not the price we PAID  **[FOUND 8 AUGUST, NOT YET FIXED]**
 
 Found while measuring realised slippage against the flat 5bps assumption, and
