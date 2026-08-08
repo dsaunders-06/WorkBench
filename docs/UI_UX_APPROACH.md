@@ -374,11 +374,16 @@ Lower traffic, mostly Professional, least urgent.
 **8. AI Advisor.** Already simple. Leave it alone until the rest sets the
 pattern.
 
-> **Status, 8 August. Every screen except Performance is done** - Dashboard
-> (M63), Workbench (M69 caveats, M74 levels and summary), Regime Monitor (M64),
-> Risk Console (M67, M68), Screener (M72), AI Advisor (M73) and the **Order
-> Blotter (M77)**. **Remaining: Performance (waits for September), and step 1,
-> which is not finished.**
+> **Status, 8 August. Group 4 is complete except Performance**, which waits for
+> September - Dashboard (M63), Workbench (M69 caveats, M74 levels and summary),
+> Regime Monitor (M64), Risk Console (M67, M68), Screener (M72), AI Advisor
+> (M73) and the **Order Blotter (M77)**.
+>
+> **Step 1 is finished too (M75)**, having been recorded as done while 22 live
+> raw-hex sites survived across five modules. It is now guarded by a test that
+> fails on a hex colour in any presentation string literal — without which the
+> next screen re-introduces one and nobody notices until the restyle that was
+> supposed to be a single edit.
 >
 > **Keyboard sign-off (§4.2, Professional) was decided against, not skipped.**
 > §4.2's own "do not touch" line protects sign-off and reject as *distinct,

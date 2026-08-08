@@ -84,9 +84,9 @@ positions on deploy.
 
 Verify with `scripts/analysis/verify_gating_figures.py`.
 
-## What landed after the handoff was written — M70, M72, M73, M74, M76, M77
+## What landed after the handoff was written — M70, M72–M77
 
-All four checks clean, **1,667 tests**. Repo clean and **pushed**. None of it is
+All four checks clean, **1,671 tests**. Repo clean and **pushed**. None of it is
 deployed, and none of it should be before Tuesday.
 
 **M70 — the residual half of M65, and the half startup could not heal.**
@@ -156,15 +156,24 @@ Guided now reads *"Position limit — the book was full — says nothing about t
 trade."* Keyboard sign-off, which §4.2 lists for Professional, was **decided
 against and recorded as such.**
 
-**M75 — recorded, NOT fixed.** `theme.callout` had zero consumers until M72, and
-the reason turned out to be structural: **25 raw-hex sites survive across seven
-of the eight presentation files**, all of them theme primitives written longhand,
-and `settings.py` hand-writes the exact `callout("warning")` string twice. The
-design system was declared done and is half-migrated. Finish it in one pass when
-the Order Blotter's turn comes.
+**M75 — DONE.** `theme.callout` had zero consumers until M72, and the reason was
+structural: the call sites that needed it still held the literal it was
+extracted from. **§5 step 1 was recorded as done and was half-done** — 22 live
+raw-hex sites across five presentation modules, all theme primitives written
+longhand, `settings.py` hand-writing the `callout("warning")` string twice.
 
-That is the **fifth** instance of the `shows_advanced()` pattern. Ask what reads
-it.
+Now finished, and **guarded**: a test walks every module in `qat.presentation`
+except `theme.py` and fails on a six-digit hex inside a *string literal*
+(`tokenize`, so a comment discussing a colour is not an offence). Without that,
+the next hand-written `#b71c1c` arrives with the next screen — which is exactly
+how 22 accumulated after step 1 was declared complete.
+
+**Every colour is byte-identical**, proved by diffing normalised declarations
+rather than eyeballing. Eleven sites move padding to the 4px rhythm's 8px
+(banners 6→8, kill-switch 10→8); nothing else moves.
+
+That was the **fifth** instance of the `shows_advanced()` pattern; M77 made six.
+Ask what reads it.
 
 ## M65 — found and FIXED 8 August, not yet deployed
 
@@ -203,7 +212,7 @@ inside a session carries it until the next startup.
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
   is refusing new entries. That is the rails working.
 - **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,667 tests**; ruff, black, mypy, bandit clean.
+- **1,671 tests**; ruff, black, mypy, bandit clean.
 
 ## What landed on 8 August
 
@@ -406,7 +415,7 @@ Repo clean and pushed - `git log --oneline -1` for the tip.
   and MONDAY NEEDS NONE OF IT. Do not deploy before the split test.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,667 tests
+VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,671 tests
 pass; ruff, black, mypy, bandit clean.
 
 LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
@@ -604,10 +613,9 @@ and was wrong). Free tier: real-time is IEX only, but SIP HISTORICAL is free.
   baseline. DECIDE IT AFTER TUESDAY - nothing should change sizing between now
   and the split measurement.
 
-GROUP 4, THE INTERFACE — EVERY SCREEN EXCEPT PERFORMANCE IS DONE
-Dashboard, Workbench, Regime Monitor, Risk Console, Screener, AI Advisor and
-the Order Blotter (M77). Remaining: PERFORMANCE (waits for September) and
-STEP 1, which is not finished.
+GROUP 4, THE INTERFACE — DONE except PERFORMANCE, which waits for September
+Dashboard, Workbench, Regime Monitor, Risk Console, Screener, AI Advisor, the
+Order Blotter (M77) and step 1 (M75). Nothing else in Group 4 is outstanding.
 
   M77 also DECIDED AGAINST keyboard sign-off, which §4.2 lists for
   Professional - recorded as decided rather than skipped. §4.2's own "do not
@@ -615,15 +623,14 @@ STEP 1, which is not finished.
   and an accelerator makes it less deliberate on the one screen where a
   mis-key reaches the broker.
 
-  M75 - THE DESIGN SYSTEM WAS DECLARED DONE AND IS HALF-DONE. 25 raw-hex
-  colour sites survive across seven of the eight presentation files, every one
-  a theme.py primitive written longhand (#b71c1c is DANGER, #1b5e20 is
-  SUCCESS, #b45309 is WARNING, #1e3a5f is ACCENT). settings.py lines 672 and
-  721 hand-write the exact string theme.callout("warning") returns, character
-  for character - which is why callout had ZERO consumers until M72. A restyle
-  would change some screens and not others, which is worse than not having
-  extracted it. Finish it in ONE PASS when the Blotter's turn comes, screens
-  rendered before and after. Mechanical, and no rush.
+  M75 finished step 1, which had been RECORDED AS DONE AND WAS HALF-DONE: 22
+  live raw-hex sites across five presentation modules, every one a theme.py
+  primitive written longhand, and settings.py hand-writing the exact string
+  theme.callout("warning") returns - which is why callout had ZERO consumers
+  until M72. Every colour is byte-identical; eleven sites move padding to the
+  4px rhythm. It is now GUARDED by a test that walks qat.presentation and
+  fails on a hex inside a string literal, because that is the only thing that
+  stops the next screen re-introducing one.
 
   READ §4.x AS INTENT AND CHECK ITS PARTICULARS FIRST. The brief has now been
   wrong in detail FIVE times - M63 on the Balances premise, M64 on the macro
