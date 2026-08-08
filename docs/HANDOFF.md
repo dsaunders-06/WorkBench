@@ -84,9 +84,9 @@ positions on deploy.
 
 Verify with `scripts/analysis/verify_gating_figures.py`.
 
-## What landed after the handoff was written — M70, M72, M73, M74
+## What landed after the handoff was written — M70, M72, M73, M74, M76, M77
 
-All four checks clean, **1,637 tests**. Repo clean and **pushed**. None of it is
+All four checks clean, **1,667 tests**. Repo clean and **pushed**. None of it is
 deployed, and none of it should be before Tuesday.
 
 **M70 — the residual half of M65, and the half startup could not heal.**
@@ -141,6 +141,21 @@ summary §4.5 lists for Standard was never written — Standard got twelve KPI t
 in **alphabetical order**, `alpha` first, with nothing to say which of them
 decides anything.
 
+**M76 — ticker dropdowns sort alphabetically**, on whichever screen they appear.
+Sorted *at the dropdown*, never in `runtime.watchlist`: the Risk Console indexes
+that tuple positionally against its correlation matrix, so sorting it in place
+would move a rail's data rather than a control's labels.
+
+**M77 — the Blotter could not say why an order was refused.** Eleven columns and
+no reason field; `Order` carries no reason attribute and `OMS._record` writes it
+to the decision journal instead. §4.2 says *"do not touch the reason text on a
+rejection"* — **there was none to touch.** And `refusals.rail_of` has turned
+§4.2's own example into plain language since M51, read by the reporter and the
+Risk Console but never by the screen where an operator meets a refused order.
+Guided now reads *"Position limit — the book was full — says nothing about the
+trade."* Keyboard sign-off, which §4.2 lists for Professional, was **decided
+against and recorded as such.**
+
 **M75 — recorded, NOT fixed.** `theme.callout` had zero consumers until M72, and
 the reason turned out to be structural: **25 raw-hex sites survive across seven
 of the eight presentation files**, all of them theme primitives written longhand,
@@ -188,7 +203,7 @@ inside a session carries it until the next startup.
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
   is refusing new entries. That is the rails working.
 - **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,637 tests**; ruff, black, mypy, bandit clean.
+- **1,667 tests**; ruff, black, mypy, bandit clean.
 
 ## What landed on 8 August
 
@@ -391,7 +406,7 @@ Repo clean and pushed - `git log --oneline -1` for the tip.
   and MONDAY NEEDS NONE OF IT. Do not deploy before the split test.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,637 tests
+VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,667 tests
 pass; ruff, black, mypy, bandit clean.
 
 LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
@@ -424,6 +439,18 @@ LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
        never written - Standard got twelve KPI tiles in ALPHABETICAL order,
        alpha first, with nothing to say which of them decides anything.
   M75  RECORDED, NOT FIXED. The design system is half-migrated - see below.
+       M77 took two of its 25 sites (the Blotter's mode banner); 23 remain.
+  M76  ticker dropdowns sort alphabetically, on whichever screen they appear.
+       Sorted AT THE DROPDOWN, never in runtime.watchlist - the Risk Console
+       indexes that tuple positionally against its correlation matrix.
+  M77  the Blotter could not say WHY an order was refused. Eleven columns and
+       no reason field; Order carries no reason attribute and OMS._record
+       writes it to the decision journal instead. §4.2 says "do not touch the
+       reason text on a rejection" - there was none to touch. And
+       refusals.rail_of has turned §4.2's own example into plain language
+       since M51, read by the reporter and the Risk Console but never by the
+       screen where an operator meets a refused order. Guided now reads
+       "Position limit - the book was full - says nothing about the trade".
   M73  §4.9 was wrong on BOTH claims. The advisory-only framing it says not to
        touch existed only in a docstring, while the screen printed
        [BUY, confidence=80%] in bold - inside an app that trades unattended.
@@ -577,10 +604,16 @@ and was wrong). Free tier: real-time is IEX only, but SIP HISTORICAL is free.
   baseline. DECIDE IT AFTER TUESDAY - nothing should change sizing between now
   and the split measurement.
 
-GROUP 4, THE INTERFACE — every research screen is done
-Dashboard, Workbench, Regime Monitor, Risk Console, Screener, AI Advisor.
-Remaining: the ORDER BLOTTER (deliberately LAST, most safety-critical),
-Performance (waits for September), and STEP 1, which is not finished.
+GROUP 4, THE INTERFACE — EVERY SCREEN EXCEPT PERFORMANCE IS DONE
+Dashboard, Workbench, Regime Monitor, Risk Console, Screener, AI Advisor and
+the Order Blotter (M77). Remaining: PERFORMANCE (waits for September) and
+STEP 1, which is not finished.
+
+  M77 also DECIDED AGAINST keyboard sign-off, which §4.2 lists for
+  Professional - recorded as decided rather than skipped. §4.2's own "do not
+  touch" line protects sign-off and reject as DISTINCT, DELIBERATE actions,
+  and an accelerator makes it less deliberate on the one screen where a
+  mis-key reaches the broker.
 
   M75 - THE DESIGN SYSTEM WAS DECLARED DONE AND IS HALF-DONE. 25 raw-hex
   colour sites survive across seven of the eight presentation files, every one

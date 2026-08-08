@@ -374,11 +374,17 @@ Lower traffic, mostly Professional, least urgent.
 **8. AI Advisor.** Already simple. Leave it alone until the rest sets the
 pattern.
 
-> **Status, 8 August.** Steps 2, 3, 4 and every research screen are done -
-> Dashboard (M63), Workbench (M69 caveats, M74 levels and summary), Regime
-> Monitor (M64), Risk Console (M67, M68), Screener (M72) and AI Advisor (M73).
-> **Remaining: the Order Blotter (deliberately last), Performance (waits for
-> September), and step 1, which is not finished.**
+> **Status, 8 August. Every screen except Performance is done** - Dashboard
+> (M63), Workbench (M69 caveats, M74 levels and summary), Regime Monitor (M64),
+> Risk Console (M67, M68), Screener (M72), AI Advisor (M73) and the **Order
+> Blotter (M77)**. **Remaining: Performance (waits for September), and step 1,
+> which is not finished.**
+>
+> **Keyboard sign-off (§4.2, Professional) was decided against, not skipped.**
+> §4.2's own "do not touch" line protects sign-off and reject as *distinct,
+> deliberate* actions, and an accelerator on the transmit action makes it less
+> deliberate on the one screen where a mis-key reaches the broker. See ROADMAP
+> M77.
 >
 > **Step 1 was recorded as done and is half-done — see ROADMAP M75.** 25 raw-hex
 > colour sites survive across seven of the eight presentation files, every one of
