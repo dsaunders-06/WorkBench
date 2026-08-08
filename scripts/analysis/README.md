@@ -56,6 +56,8 @@ Both talk to the paper account. Neither places, cancels or modifies an order.
 | `exercise_m54.py` | Whether M54's broker-failure refusal actually works against a **real** SDK failure, using deliberately invalid credentials. Its tests use fakes that raise on command, which proves the handler catches an exception and not that the real failure is the shape it expects. Writes to a scratch directory, never the live one. Findings in ROADMAP, M61 |
 | `probe_feed_entitlement.py` | Whether SIP is genuinely paid for, or just the free tier's historical access. Only a request for RECENT data separates the two — a successful query for last week's bars proves nothing |
 | `probe_market_data.py` | What running on IEX rather than the consolidated tape costs in ATR, and therefore in position size. Uses the application's own `compute_atr`, so it measures what the app would do rather than a reimplementation. Findings in `docs/MARKET_DATA_FINDINGS.md` |
+| `realised_slippage.py` | Realised entry slippage against the flat 5bps the cost model charges, from the decision journal's reference price and the broker's actual fills. Aggregated by ORDER, not by fill - a partially filling order reports one row per piece and would otherwise be counted several times. Findings in ROADMAP, M65 |
+| `probe_entry_basis.py` | Whether the recorded entry price matches what the broker charged. It does not, on 8 of 10 positions - see ROADMAP, M65 |
 | `capture_split_state.py` | One symbol's position and resting orders before and after a corporate action, so the two can be diffed. Nothing recovers the pre-split state after the fact |
 
 `exercise_m54.py` is worth re-running whenever the Alpaca adapter changes: it is

@@ -1401,6 +1401,61 @@ has no ratio to match, so detection is a different question from M39's - and
 that is the whole remaining cost, which was the point of building the concept
 once.
 
+### M65 - The entry record holds the price we ASKED, not the price we PAID  **[FOUND 8 AUGUST, NOT YET FIXED]**
+
+Found while measuring realised slippage against the flat 5bps assumption, and
+it is a bigger finding than the thing that was being measured.
+
+**8 of the 10 open positions have a recorded entry price that differs from what
+the broker actually charged.**
+
+```
+sym       recorded  broker paid   diff bps      stop    R err
+AMD         503.16       510.27      141.3    405.55    +7.3%
+GS         1049.25      1054.75       52.4    954.84    +5.8%
+VRTX        487.20       487.99       16.2    456.27    +2.6%
+AMAT        541.55       540.55      -18.5    445.04    -1.0%
+```
+
+**The mechanism.** `OMS._announce_fill` publishes when
+`order.status in ("filled", "transmitted")` — *including transmitted* — and
+takes `price = order.filled_price or order.reference_price`. At transmit there
+is no fill price, so it publishes the REFERENCE. `SignalToOrderBridge._on_fill`
+then records the entry with **`setdefault`**, so when the genuine fill arrives
+the true price cannot replace it. Nothing else corrects it: an entry this app
+transmitted is in `_broker_order_ids`, so `absorb_broker_fills` skips it by
+design.
+
+**What it corrupts.** `restore_open_lots` passes `entry.price` as the lot's cost
+basis, so:
+
+* realised P&L will be wrong by the drift on every one of these trades;
+* the **R-multiple denominator** is wrong, because R is
+  `(exit − entry) / (entry − stop)` — AMD's true risk per share is 7.3% larger
+  than recorded;
+* both feed the **promotion gate** and the September evidence burst.
+
+The freeze's own list says *"a defect that corrupts the record is worse than one
+that stops the session"*, and this is squarely that. It changes no trading
+decision — sizing already happened on the reference price — so fixing it is
+inside the freeze rather than against it.
+
+**Why it was invisible.** CVS, the only closed trade, drifted 1.4 bps. Its P&L
+is right by luck, so the one record that could have exposed this does not.
+
+**The shape of a fix, not yet built.** Publish the entry record from the
+*filled* price, which means either not announcing at `transmitted` or correcting
+the record when the fill lands. `setdefault` is load-bearing for a different
+reason — M53's partial exits — so it cannot simply become an assignment.
+Existing records need correcting by hand, as the CVS ledger was.
+
+**Adjacent, and separate: there is no drift check on a manually signed order.**
+`autonomy/gate.py` refuses an autonomous order that has drifted past
+`autonomous_price_drift_limit_pct` from what it was sized against. Nothing
+applies that to a hand-signed one. AMD was signed off in a batch 31 minutes
+after the open, by which time it had moved 1.4% from the price the risk engine
+sized it on.
+
 ### M44 - Execution quality
 
 Every order is a market order - `Order.order_type` is only `market` or `stop`,

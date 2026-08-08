@@ -37,6 +37,29 @@ Tuesday's session **will halt** when the split lands, until the anomaly is
 declared in the Risk Console. That is M60 working, and it is the first live
 exercise of it.
 
+## ⚠️ Found 8 August, not yet fixed — M65
+
+**The entry record holds the price we asked for, not the price we paid.** 8 of
+the 10 open positions differ; AMD by 141 bps, GS by 52.
+
+`OMS._announce_fill` publishes when status is `"filled"` **or `"transmitted"`**
+and takes `order.filled_price or order.reference_price`. At transmit there is no
+fill price, so it publishes the reference — and `_on_fill` records it with
+`setdefault`, so the real fill can never replace it.
+
+`restore_open_lots` uses `entry.price` as the lot's cost basis, so realised P&L
+will be wrong by the drift and the **R-multiple denominator** is wrong with it —
+AMD's true risk per share is 7.3% larger than recorded. Both feed the promotion
+gate and the September burst.
+
+It changes no trading decision (sizing already happened on the reference), so
+fixing it is inside the freeze rather than against it. It was invisible because
+CVS — the only closed trade — drifted 1.4 bps and is right by luck.
+
+**Not fixed tonight deliberately:** `setdefault` is load-bearing for M53's
+partial exits, so it cannot simply become an assignment, and existing records
+need correcting by hand. See ROADMAP, M65. **Do not start it before Tuesday.**
+
 ## Where things stand
 
 - **Deployed:** `M63+M62 (49482c2)`, hash-verified, **launched and confirmed
@@ -267,6 +290,25 @@ through a split. M39's adjustment cannot be designed without it.
 
   Tuesday's session will halt when the split lands until the anomaly is
   declared in the Risk Console. That is M60 working, and its first live run.
+
+FOUND 8 AUGUST, NOT YET FIXED — M65, read this before anything else
+The entry record holds the price we ASKED, not the price we PAID. 8 of 10 open
+positions differ; AMD by 141 bps, GS by 52. _announce_fill publishes when
+status is "filled" OR "transmitted" and takes filled_price or reference_price -
+at transmit there is no fill price, so it publishes the REFERENCE, and _on_fill
+records it with setdefault so the real fill can never replace it.
+
+  restore_open_lots uses entry.price as the lot's cost basis, so P&L will be
+  wrong by the drift and the R-MULTIPLE DENOMINATOR is wrong with it: AMD's
+  true risk per share is 7.3% larger than recorded. Both feed the promotion
+  gate and the September burst. "A defect that corrupts the record is worse
+  than one that stops the session."
+
+  It changes no trading decision, so fixing it is INSIDE the freeze. It was
+  invisible because CVS - the only closed trade - drifted 1.4 bps and is right
+  by luck. NOT fixed tonight on purpose: setdefault is load-bearing for M53's
+  partial exits, and existing records need correcting by hand. See ROADMAP M65.
+  DO NOT START IT BEFORE TUESDAY.
 
 WHAT LANDED 8 AUGUST
   M59  a protective stop whose LEVEL moved was invisible
