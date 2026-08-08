@@ -7,12 +7,31 @@ the detail that block points at.
 
 ## Where things stand
 
-- **Deployed:** M56b+M51 (`3b35c27`), verified by hash and confirmed to start.
-  **M56c is built but not deployed** — it changes exits, so it wants a
-  deliberate decision about which session it first runs in.
+- **Deployed:** M41+M42 (`ec0f5bf`), verified by hash and confirmed to start,
+  8 August. Everything below is in it.
 - **Repo:** clean, pushed, one branch (`master`).
-- **App:** running. The stamp should read `M56b+M51 (3b35c27)` or later.
+- **App:** running. The stamp should read `M41+M42 (ec0f5bf)` or later.
   **Never `M56+M51` — that build cannot start.**
+- **Next session:** Monday night. US markets are shut for the weekend, which is
+  what the 8 August development window was for.
+
+### What landed on 7–8 August, in order
+
+| | |
+|---|---|
+| **M56b** | Report bounded to the day it claims to cover. The blocked section was lifetime totals under a daily heading — the 6 August daily reported a kill-switch that fired on the 4th |
+| **M56c** | The regime gate no longer suppresses EXITS. It gated `on_features` entirely, and that is the only route to an exit signal, so an ineligible strategy was never asked to sell. 29 entries, zero signal exits, 1.19 years |
+| **M57** | Earnings event risk — entries halved within 5 trading days of a print |
+| **M57a** | The Advanced settings tab was unreachable: the selector sat inside the scroll area |
+| **M57b** | `_with_narrative` deleted the report it annotated. Unmasked by M56b — the narrator had been failing for six reports, so the field-dropping path never ran |
+| **M57c** | Three observability fixes: the regime line that described a mechanism replaced in M27b, shutdown logging, and the earnings lookup taken off the async signal path |
+| **M58** | The M37 diagnostics finally read |
+| **M58a** | Detail-level chooser, first run only |
+| **M58b** | Correlation measured over 60 bars, not the whole 300-bar buffer |
+| **M42** | Partial fills counted at what the broker filled. **Same failure that halted 5 August**, on the path M53 never touched |
+| **M41** | Whether a trade was held through its earnings print, recorded on the trade |
+
+1,423 tests; ruff, black, mypy, bandit clean.
 - **Holding period:** see ROADMAP.md, *"Where the 30-day hold came from"*. The
   30 was set by a churn milestone with no reference to swing's own cycle, and
   measurement says it is roughly right regardless — shortening it toward the
@@ -198,6 +217,72 @@ Three findings worth carrying forward:
 - **`risk_decisions.csv` `inputs` is a Python repr, not JSON** — single quotes,
   `True`, `None`. Parse with `ast.literal_eval` after trying JSON.
 - Why swing rarely exits — 29 entries, zero signal exits over 1.19 years.
+
+## The next block of work — M39 first, grouped
+
+Reviewed 8 August. What remains splits into three groups, and the first is the
+one to build.
+
+### Group 1 — external changes to a held position (M39, then M43)
+
+**They are the same problem twice.** Something outside this application changes
+the state of a position it holds, and the reconciliation and protection
+machinery misreads the result:
+
+* **M39, a split.** Broker quantity doubles. Reconciliation compares tracked 16
+  against broker 32 and trips the kill-switch. The resting OCO sits at roughly
+  twice the new price. `open_position_entries.json` still holds the pre-split
+  level, so the re-arm faithfully replaces protection at a price that
+  liquidates. The ledger's entry price is unadjusted, so P&L and R on that trade
+  are wrong by the split factor.
+* **M43, a halt.** The position is held, the symbol is halted, the resting stop
+  cannot fill, and it reopens materially lower. Nothing detects it and nothing
+  flags that the position is currently unexitable.
+
+Both need the same two seams: **reconciliation being able to be told a
+difference is explained**, and **a position being in a state the ordinary path
+must not treat as ordinary**. Build that concept once and it serves both.
+
+**Suggested order, which is also the dependency order:**
+
+1. The position-anomaly concept plus the reconciliation seam. Today
+   reconciliation compares and trips; it needs a way to be told "this one is
+   accounted for".
+2. M39 detection and adjustment.
+3. M43, reusing the anomaly concept.
+
+**The design risk worth naming before anyone starts.** M39's adjustment has to
+be atomic across four places — tracked quantity, the entry record, the resting
+protection and the ledger basis. **A partial adjustment is worse than none**:
+correcting the quantity but not the stop leaves protection at twice the price,
+which liquidates the position at the next open. All four or none.
+
+**On testability**, which was the operator's question. The roadmap's own warning
+applies — *"should start by measuring what the broker reports through a split
+rather than by reasoning about it"* — and no split has occurred. But the
+detection does not have to guess: **yfinance is already a dependency and carries
+split history**, so a quantity change whose ratio and date match a published
+split is explainable without knowing Alpaca's exact representation. That half is
+fully testable now against synthetic ratios. What waits for a real event is only
+the confirmation of how Alpaca reports it.
+
+**On the freeze.** M39 does not change which trades happen or how large they
+are. It stops a corporate action destroying a position and halting a session,
+which is *"the kill-switch tripping on something that is not a real
+discrepancy"* and *"protective orders not resting, or not being repaired"* -
+both in the fix-immediately list.
+
+### Group 2 — does the captured data earn its place (M44, M51's open half)
+
+Both wait for the September trades. M58 built the reading; M44 is specifically
+whether the flat 5bps slippage assumption holds, and `entry_slippage` answers it
+the moment there are enough trades to average. Nothing to do until then.
+
+### Group 3 — M32, ASX readiness
+
+The destination, and much the largest. Needs a market-data decision (yfinance
+delayed and unofficial, versus IBKR's own), currency handling, and the IBKR live
+path actually exercised. Separate piece of work, not adjacent to anything above.
 
 ## A note on how the defects were found
 
