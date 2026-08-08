@@ -1848,10 +1848,23 @@ questions it should be able to answer, recorded so the intent is not lost:
 ## Not yet addressed - integral to share trading
 
 Found by asking what an equity trading system must handle that this one does
-not, 4 August, excluding data validation. Sequenced by significance. All of what
-remains is post-trial: every item changes which trades happen or how they are
-sized, so it sits behind the validation-phase freeze. **M40 was the one
-exception and is now done** - see its entry below.
+not, 4 August, excluding data validation. Sequenced by significance.
+
+**Status, 8 August — the section title is now true of about half its contents,
+and each entry carries its own tag:**
+
+| Still open | Done |
+|---|---|
+| **M39** corporate actions — waits on the MNST captures | **M40** fundamentals in the advisory context |
+| **M43** trading halts — needs a websocket consumer | **M41** earnings event risk |
+| **M44** execution quality — waits for September trades | **M42** partial fills |
+| **M66** risk-at-stop on entry prices — designed, **inside the freeze** | **M65** entry price recorded wrong — fixed, and finished by **M70** |
+
+The original framing said all of it was post-trial because every item changes
+which trades happen. That held when it was written and no longer does: M40, M41,
+M42 and M65 all turned out to be recording or context defects rather than
+sizing ones. **M66 is the one that genuinely still sits behind the freeze**, and
+it is the reason this section should be read before any recalibration window.
 
 ### M39 - Corporate actions
 
@@ -2076,7 +2089,15 @@ Checked rather than assumed: `QAT_DELEVER_SWEEP_ENABLED=false`, so the stricter
 figure cannot force a sale. With the sweep enabled, a jump from 5.02% to 5.87%
 would have trimmed all ten positions the moment it deployed.
 
-### M65 - The entry record held the price we ASKED, not the price we PAID  **[FIXED 8 AUGUST]**
+### M65 - The entry record held the price we ASKED, not the price we PAID  **[FIXED 8 AUGUST — completed by M70]**
+
+> **This entry describes half the fix.** `reconcile_entry_prices` heals the
+> record at the NEXT startup, and a position opened and closed inside one
+> session never reaches a next startup - its ClosedTrade is already written
+> against a basis the account never paid. **See M70**, which corrects the price
+> live from the fill the broker was already reporting, and which found that
+> `entry_slippage` had been zero by construction on every entry this app ever
+> opened.
 
 **Fixed by `SignalToOrderBridge.reconcile_entry_prices()`**, which runs at
 startup *before* `restore_open_lots` - ordering is the whole point, since that
