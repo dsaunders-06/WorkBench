@@ -117,7 +117,7 @@ US open is **13:30 UTC / 23:30 AEST**.
 - [ ] **6. Confirm the startup lines.** Their absence is the signal, not their
       content:
 
-      Build: M60+M59 (ae33689, ...)
+      Build: M63+M62 (49482c2, ...)
       Broker-fill watermark restored to ...
       Restored 1 closed trade(s) from closed_trades.csv
       Restored 11 open lot(s) ... or a line naming MNST as having no entry record
@@ -207,3 +207,11 @@ run — this build was launched and confirmed working on 8 August.
 
 **Nothing here requires a code change or a redeploy.** The deployed build
 already contains everything the test needs.
+
+**The build was changed on Saturday afternoon**, from `M60+M59 (ae33689)` to
+`M63+M62 (49482c2)`, and launched and confirmed working the same afternoon. The
+change is reporting and interface only - it alters no trading decision, and the
+position and risk caps are unchanged at 10 and 5.00%. The Dashboard's Balances
+panel now separates the figures this system acts on from the broker's own
+margin and buying-power numbers, which is cosmetic but will look different from
+the last time you saw it.
