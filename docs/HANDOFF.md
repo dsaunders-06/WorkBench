@@ -19,6 +19,12 @@ adjustment cannot be designed without it, and this paper account has processed
 **The procedure is written, printed and standalone: `docs/MNST_SPLIT_TEST.md`.**
 It assumes no memory of the conversation that produced it. Read that, not this.
 
+**⚠️ The order's status is unverified since 06:41 UTC on 8 August.** It was
+accepted and queued then. Alpaca returned `503 service temporary unavailable`
+during the final handover check on Saturday evening, so it could not be re-read
+— the market was shut, so nothing was at risk. **Confirm the order is still
+there on Monday before relying on it;** step 3 of the sheet does exactly that.
+
 Three things from it that must not be lost:
 
 * **The app must NOT be running when the order fills.** It does not track MNST,
@@ -325,6 +331,13 @@ through a split. M39's adjustment cannot be designed without it.
 
   THE PROCEDURE IS docs/MNST_SPLIT_TEST.md. It is standalone and printed.
   Follow that, not a reconstruction of it.
+
+  ORDER STATUS UNVERIFIED SINCE 06:41 UTC 8 August. It was accepted and queued
+  then - 8 shares, market, GTC. Alpaca returned 503 "service temporary
+  unavailable" during the final handover check on Saturday evening, so the
+  order could not be re-read. The market was shut, so nothing was at risk.
+  CONFIRM IT IS STILL THERE ON MONDAY before relying on it - step 3 of the
+  sheet does exactly that.
 
   Three things from it that must not be lost:
    - The app must NOT be running when the order fills. It does not track MNST,
