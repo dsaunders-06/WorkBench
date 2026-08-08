@@ -97,6 +97,11 @@ _FILL_STATE_FILENAME = "absorbed_fills.json"
 # between the watermark and now - days, not weeks - but the file is tiny and a
 # generous window costs nothing against the risk of recording a trade twice.
 _ABSORBED_ID_RETENTION = timedelta(days=30)
+# A resting stop is "the same level" within a RELATIVE tolerance. An absolute
+# epsilon cannot serve a book holding both WFC at 87 and GS at 1,040 - one
+# loose enough to absorb rounding on the latter is blind to a real move on the
+# former. At 1e-4 this absorbs cent-level rounding on every price in the book.
+_STOP_LEVEL_TOLERANCE = 1e-4
 
 
 class OMS:
@@ -705,7 +710,18 @@ class OMS:
         Unprotected positions are dropped from the record rather than kept,
         so the governor falls back to treating them as fully at risk - the
         existing "unknown protection is no protection" rule, now reached by
-        evidence instead of assumption. Returns the symbols that lost a stop.
+        evidence instead of assumption. A position whose stop MOVED is a
+        different case: it is still protected, so the recorded level is
+        replaced by what the broker actually says rather than dropped.
+
+        Both are returned. The caller's question is "which symbols is my
+        protection record no longer trustworthy for", and both answer yes.
+
+        The level check exists because the presence check was not one. Until
+        M39 this compared `symbol not in resting`, so a stop resting at a
+        DIFFERENT price passed - and `_position_stops` is the denominator of
+        every risk-at-stop figure the governor gates new entries on, so a
+        belief wrong by a factor mis-states the aggregate for the whole book.
 
         A broker that cannot answer returns nothing, and nothing is changed:
         an adapter without the capability must not be read as "no stops rest
@@ -719,20 +735,46 @@ class OMS:
             return []
 
         held = {pos.symbol for pos in await self.broker.positions() if abs(pos.quantity) > 0}
-        lost = [
-            symbol
-            for symbol in list(self._position_stops)
-            if symbol in held and symbol not in resting
-        ]
+        lost: list[str] = []
+        drifted: list[tuple[str, float, float]] = []
+        for symbol, believed in list(self._position_stops.items()):
+            if symbol not in held:
+                continue
+            actual = resting.get(symbol)
+            if actual is None:
+                lost.append(symbol)
+                continue
+            if abs(actual - believed) > _STOP_LEVEL_TOLERANCE * abs(believed):
+                drifted.append((symbol, believed, actual))
+
         for symbol in lost:
             self._position_stops.pop(symbol, None)
+        for symbol, _believed, actual in drifted:
+            # Replaced, not dropped. The position IS protected - just not where
+            # this app thought - and the broker is the authority on what rests.
+            # Dropping it would count a protected position at full value and
+            # overstate the aggregate the governor gates new entries on.
+            self._position_stops[symbol] = actual
+
         if lost:
             logger.error(
                 "POSITION UNPROTECTED: %s held with no stop resting at the broker. The stop "
                 "this app recorded is gone, so these now count their full value as at risk",
                 ", ".join(sorted(lost)),
             )
-        return lost
+        if drifted:
+            # ERROR, and named with both levels. A protective level moving
+            # without this app moving it is exactly as significant as one
+            # disappearing, and until M39 nothing looked for it at all.
+            logger.error(
+                "PROTECTION LEVEL CHANGED at the broker: %s. This app did not move these, so "
+                "risk-at-stop was being measured against the wrong distance",
+                ", ".join(
+                    f"{symbol} believed={believed:g} resting={actual:g}"
+                    for symbol, believed, actual in sorted(drifted)
+                ),
+            )
+        return sorted(lost + [symbol for symbol, _, _ in drifted])
 
     def has_live_buy(self, symbol: str) -> bool:
         """Whether a buy for this symbol is already awaiting sign-off or in
