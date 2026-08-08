@@ -317,13 +317,13 @@ Repo clean and pushed - `git log --oneline -1` for the tip.
 
   HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN src/, and unlike earlier handoffs
   that is a real difference, not documentation. `git diff 49482c2..HEAD -- src/`
-  covers M64, M65, M67 and M68 - the Regime Monitor, the entry-price
-  reconciliation, and both halves of the Risk Console. All presentation or
-  record-correction; NONE of it changes a trading decision, and MONDAY NEEDS
-  NONE OF IT. Do not deploy before the split test.
+  covers M64, M65, M67, M68 and M69 - the Regime Monitor, the entry-price
+  reconciliation, both halves of the Risk Console, and the Workbench caveats.
+  All presentation or record-correction; NONE of it changes a trading decision,
+  and MONDAY NEEDS NONE OF IT. Do not deploy before the split test.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,556 tests
+VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,565 tests
 pass; ruff, black, mypy, bandit clean.
 
 THE THING WITH A CLOCK
