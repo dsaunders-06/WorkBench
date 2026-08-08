@@ -35,14 +35,17 @@ from qat.domain.performance.reports import (
     WEEKLY_REPORT_FILENAME,
     ReportWriter,
 )
-from qat.domain.performance.scorecard import build_all_scorecards
+from qat.domain.performance.scorecard import StrategyScorecard, build_all_scorecards
 from qat.domain.performance.session_export import export_session
 from qat.domain.performance.summary import PerformanceSummary, build_summary
+from qat.domain.performance.trades import ClosedTrade
 from qat.presentation import theme
 from qat.presentation.runtime import Runtime
+from qat.presentation.ui_level import UiLevel
 
 logger = logging.getLogger(__name__)
 
+NOT_AVAILABLE = "—"  # em dash: absent, never a measured zero
 _MAX_TRADE_ROWS = 200
 # Matches the market-data poll: nothing here changes faster than the prices.
 _REFRESH_MS = 60_000
@@ -79,18 +82,92 @@ _TRADE_COLUMNS = (
 )
 _METRIC_COLUMNS = ("Metric", "Value", "What it tells you")
 _NET_PNL_COLUMN = _TRADE_COLUMNS.index("Net P&L")
+# §4.4: "for analysis, not monitoring. Professional only." Appended rather than
+# interleaved so the column a reader looks for does not move with the level -
+# a table whose "Net P&L" is in a different place at each level is worse than
+# one that is merely longer.
+_DIAGNOSTIC_COLUMNS = (
+    "Regime at entry",
+    "Exit reason",
+    "MAE (R)",
+    "MFE (R)",
+    "Slippage",
+)
+
+
+def _diagnostics(trade: ClosedTrade) -> tuple[str, ...]:
+    """The M37 columns, for one trade.
+
+    Every one of these is `None` on a trade that predates the milestone that
+    started recording it, and an em dash says so rather than printing a zero -
+    the rule `_percent` follows on the Screener and `available_figures` follows
+    for the model.
+
+    **Slippage is the one to read carefully.** It is `entry_price -
+    reference_price`, and until M70 both came from the same transmit-time
+    announcement, so it was zero BY CONSTRUCTION on every entry this app had
+    ever opened. A run of exact zeroes here is that defect's fingerprint, not a
+    frictionless fill, and it will persist for every trade opened before M70
+    reaches the account.
+    """
+    return (
+        trade.regime_at_entry or NOT_AVAILABLE,
+        trade.exit_reason or NOT_AVAILABLE,
+        f"{trade.mae_r:+.2f}" if trade.mae_r is not None else NOT_AVAILABLE,
+        f"{trade.mfe_r:+.2f}" if trade.mfe_r is not None else NOT_AVAILABLE,
+        f"{trade.entry_slippage:+.4f}" if trade.entry_slippage is not None else NOT_AVAILABLE,
+    )
+
+
+def _verdict(card: StrategyScorecard) -> str:
+    """One strategy's promotion status, in a sentence (M79).
+
+    §4.4's Guided column: "one verdict per strategy in words, plus what is
+    blocking it". The table says `not-eligible` in a Status column beside a
+    semicolon-joined `Blocking` list, which is precise and assumes the reader
+    knows there is a bar, what it is, and that failing it is normal this early.
+
+    Leads with the trade count when there is not enough evidence to say
+    anything, because "not eligible" reads as a verdict on the strategy and at
+    this stage it is a verdict on the sample.
+    """
+    stats = card.stats
+    failing = card.failing
+    if stats.trade_count == 0:
+        return f"<b>{card.strategy}</b>: no closed trades yet - nothing to judge it on."
+    blocking = ", ".join(c.name for c in failing)
+    if card.status == "promoted":
+        return (
+            f"<b>{card.strategy}</b>: live, and clearing the promotion bar on "
+            f"{stats.trade_count} closed trade(s)."
+        )
+    if card.status == "promoted-below-bar":
+        return (
+            f"<b>{card.strategy}</b>: live, but NOT clearing the bar - {blocking}. "
+            "It was promoted anyway, which the gate allows and records."
+        )
+    if card.status == "eligible":
+        return (
+            f"<b>{card.strategy}</b>: clears the bar on {stats.trade_count} closed "
+            "trade(s), and is not live. Deploy it in the Strategy Workbench."
+        )
+    return (
+        f"<b>{card.strategy}</b>: not yet clearing the bar on {stats.trade_count} "
+        f"closed trade(s). Waiting on: {blocking}."
+    )
 
 
 class PerformanceScreen(QWidget):
     def __init__(self, runtime: Runtime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.runtime = runtime
+        self.level = UiLevel.from_settings(runtime.settings)
 
         layout = QVBoxLayout(self)
 
         header = QHBoxLayout()
         self.headline = QLabel("Performance: (not yet loaded)")
-        self.headline.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.headline.setStyleSheet(theme.text(theme.ACCENT, size=theme.SUBHEAD, bold=True))
         self.refresh_button = QPushButton("Refresh")
         self.refresh_button.clicked.connect(self._on_refresh_clicked)
         self.export_button = QPushButton("Export Session")
@@ -120,12 +197,20 @@ class PerformanceScreen(QWidget):
         promotion_note.setStyleSheet(theme.text(theme.MUTED))
         promotion_note.setWordWrap(True)
         promotion_layout.addWidget(promotion_note)
+
+        # Guided reads sentences; everyone else reads the table (§4.4). Both
+        # are built from the same scorecards, so they cannot disagree.
+        self.verdicts = QLabel("")
+        self.verdicts.setWordWrap(True)
+        self.verdicts.setStyleSheet(theme.text(theme.ACCENT, size=theme.BODY))
+        promotion_layout.addWidget(self.verdicts)
+
         self.promotion_table = QTableWidget(0, len(_PROMOTION_COLUMNS))
         self.promotion_table.setHorizontalHeaderLabels(list(_PROMOTION_COLUMNS))
         promotion_layout.addWidget(self.promotion_table)
         layout.addWidget(promotion_box)
 
-        tabs = QTabWidget()
+        self.tabs = tabs = QTabWidget()
 
         # Leads the tab strip: these are the figures that say what the system
         # is, where the trade list only says what it did.
@@ -134,8 +219,15 @@ class PerformanceScreen(QWidget):
         self.metrics_table.verticalHeader().setVisible(False)
         tabs.addTab(self.metrics_table, "Metrics")
 
-        self.trades_table = QTableWidget(0, len(_TRADE_COLUMNS))
-        self.trades_table.setHorizontalHeaderLabels(list(_TRADE_COLUMNS))
+        self.trade_columns = (
+            _TRADE_COLUMNS + _DIAGNOSTIC_COLUMNS if self.level.prefers_density() else _TRADE_COLUMNS
+        )
+        self.trades_table = QTableWidget(0, len(self.trade_columns))
+        self.trades_table.setHorizontalHeaderLabels(list(self.trade_columns))
+        # Sortable only where the diagnostics are, per §4.4 - sorting is what
+        # makes "which regime did the losers happen in" answerable, and that is
+        # an analysis question rather than a monitoring one.
+        self.trades_table.setSortingEnabled(self.level.prefers_density())
         tabs.addTab(self.trades_table, "Closed trades")
 
         self.daily_view = QTextEdit()
@@ -153,7 +245,30 @@ class PerformanceScreen(QWidget):
         self._live_timer.setInterval(_REFRESH_MS)
         self._live_timer.timeout.connect(self.refresh)
 
+        self._apply_level()
         self.refresh()
+
+    def _apply_level(self) -> None:
+        """Three levels, three outcomes (§4.4).
+
+        Guided gets one sentence per strategy and nothing else: the promotion
+        table's four statuses and semicolon-joined blocking list are precise and
+        assume the reader knows there is a bar and that failing it is normal at
+        this stage.
+
+        Standard gets the table and the tabs. Professional additionally gets the
+        M37 diagnostic columns and sorting - "for analysis, not monitoring",
+        which is the brief's own distinction and a good one: regime-at-entry and
+        MAE/MFE answer questions you ask of a finished record, not of a running
+        session.
+
+        The headline stays at every level. It is the one line that says whether
+        the account made money, and that is not a matter of expertise.
+        """
+        detailed = self.level.shows_advanced()
+        self.verdicts.setVisible(not detailed)
+        self.promotion_table.setVisible(detailed)
+        self.tabs.setVisible(detailed)
 
     def _on_export_clicked(self) -> None:
         """Runs on the UI thread: zipping a handful of small text files is far
@@ -247,6 +362,10 @@ class PerformanceScreen(QWidget):
             {name: ledger.closed_trades(name) for name in ledger.strategies()},
             self.runtime.settings,
         )
+        self.verdicts.setText(
+            "<br><br>".join(_verdict(card) for card in cards)
+            or "No strategy has produced a closed trade yet."
+        )
         self.promotion_table.setRowCount(len(cards))
         for row, card in enumerate(cards):
             stats = card.stats
@@ -272,9 +391,15 @@ class PerformanceScreen(QWidget):
     def _render_trades(self) -> None:
         # Newest first: a review starts from what just happened.
         trades = list(reversed(self.runtime.trade_ledger.closed_trades()))[:_MAX_TRADE_ROWS]
+        # Sorting is disabled while the rows are written and restored after.
+        # A sorted QTableWidget re-orders on every setItem, so filling it row by
+        # row scatters each trade's cells across whatever rows the partial sort
+        # had reached.
+        sorting = self.trades_table.isSortingEnabled()
+        self.trades_table.setSortingEnabled(False)
         self.trades_table.setRowCount(len(trades))
         for row, trade in enumerate(trades):
-            values = (
+            values: tuple[str, ...] = (
                 f"{trade.closed_at:%Y-%m-%d %H:%M}",
                 trade.symbol,
                 instruments.name_for(trade.symbol),
@@ -287,6 +412,8 @@ class PerformanceScreen(QWidget):
                 f"{trade.net_pnl:+,.2f}",
                 f"{trade.r_multiple:+.2f}" if trade.r_multiple is not None else "-",
             )
+            if self.level.prefers_density():
+                values += _diagnostics(trade)
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 # Looked up by name, not by a literal index. Adding the gross
@@ -297,6 +424,7 @@ class PerformanceScreen(QWidget):
                         QColor(theme.SUCCESS) if trade.net_pnl > 0 else QColor(theme.DANGER)
                     )
                 self.trades_table.setItem(row, column, item)
+        self.trades_table.setSortingEnabled(sorting)
         self.trades_table.resizeColumnsToContents()
 
     def _render_reports(self) -> None:

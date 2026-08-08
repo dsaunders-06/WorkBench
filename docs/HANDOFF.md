@@ -84,9 +84,9 @@ positions on deploy.
 
 Verify with `scripts/analysis/verify_gating_figures.py`.
 
-## What landed after the handoff was written — M70, M72–M77
+## What landed after the handoff was written — M70, M72–M79
 
-All four checks clean, **1,671 tests**. Repo clean and **pushed**. None of it is
+All four checks clean, **1,690 tests**. Repo clean and **pushed**. None of it is
 deployed, and none of it should be before Tuesday.
 
 **M70 — the residual half of M65, and the half startup could not heal.**
@@ -212,7 +212,7 @@ inside a session carries it until the next startup.
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
   is refusing new entries. That is the rails working.
 - **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,671 tests**; ruff, black, mypy, bandit clean.
+- **1,690 tests**; ruff, black, mypy, bandit clean.
 
 ## What landed on 8 August
 
@@ -415,7 +415,7 @@ Repo clean and pushed - `git log --oneline -1` for the tip.
   and MONDAY NEEDS NONE OF IT. Do not deploy before the split test.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,671 tests
+VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,690 tests
 pass; ruff, black, mypy, bandit clean.
 
 LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
@@ -613,9 +613,21 @@ and was wrong). Free tier: real-time is IEX only, but SIP HISTORICAL is free.
   baseline. DECIDE IT AFTER TUESDAY - nothing should change sizing between now
   and the split measurement.
 
-GROUP 4, THE INTERFACE — DONE except PERFORMANCE, which waits for September
+GROUP 4, THE INTERFACE — COMPLETE
 Dashboard, Workbench, Regime Monitor, Risk Console, Screener, AI Advisor, the
-Order Blotter (M77) and step 1 (M75). Nothing else in Group 4 is outstanding.
+Order Blotter (M77), step 1 (M75, M78) and Performance (M79). Nothing in
+Group 4 is outstanding.
+
+  PERFORMANCE WAS BUILT NOW, NOT IN SEPTEMBER, and this handoff previously
+  said the opposite. §5 step 5 says "worth being good before there is
+  something to read", and §7 warns against the interface changing "underneath
+  the reading" - September is when the reading STARTS. Its Professional level
+  now carries the M37 diagnostics, which had never been displayed anywhere.
+
+  WATCH THE SLIPPAGE COLUMN when trades start closing. Until M70 it was zero
+  BY CONSTRUCTION, so a run of exact zeroes is that defect's fingerprint
+  rather than a frictionless fill - and it persists for every trade opened
+  before M70 reaches the account.
 
   M77 also DECIDED AGAINST keyboard sign-off, which §4.2 lists for
   Professional - recorded as decided rather than skipped. §4.2's own "do not

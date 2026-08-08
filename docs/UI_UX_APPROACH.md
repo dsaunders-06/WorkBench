@@ -374,10 +374,16 @@ Lower traffic, mostly Professional, least urgent.
 **8. AI Advisor.** Already simple. Leave it alone until the rest sets the
 pattern.
 
-> **Status, 8 August. Group 4 is complete except Performance**, which waits for
-> September - Dashboard (M63), Workbench (M69 caveats, M74 levels and summary),
-> Regime Monitor (M64), Risk Console (M67, M68), Screener (M72), AI Advisor
-> (M73) and the **Order Blotter (M77)**.
+> **Status, 8 August. GROUP 4 IS COMPLETE** - Dashboard (M63), Workbench (M69
+> caveats, M74 levels and summary), Regime Monitor (M64), Risk Console (M67,
+> M68), Screener (M72), AI Advisor (M73), the Order Blotter (M77) and
+> **Performance (M79)**.
+>
+> **Performance was built now rather than in September, on this document's own
+> reasoning.** Step 5 says "worth being good before there is something to read",
+> and §7 warns against the interface changing "underneath the reading" -
+> September is when the reading starts, so September is when not to rebuild the
+> instrument. An earlier handoff said it waits; it was wrong.
 >
 > **Step 1 is finished too (M75)**, having been recorded as done while 22 live
 > raw-hex sites survived across five modules. It is now guarded by a test that

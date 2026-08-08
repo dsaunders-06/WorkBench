@@ -210,6 +210,52 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M79 - Performance, the screen the answer gets read from
+
+8 August. Step 4.4, and the last screen in Group 4.
+
+**Built now rather than in September, against the handoff and with the plan.**
+The handoff said Performance waits for September. §5 step 5 says the opposite -
+*"Where the trial's answer will eventually be read. Worth being good before
+there is something to read"* - and §7's caution is that the interface must not
+change "underneath the reading". **September is when the reading starts**, so
+September is precisely when not to rebuild the instrument. The handoff was
+wrong; the plan was right, twice over.
+
+**It consumed no level at all**, and the M37 diagnostic columns §4.4 lists for
+Professional did not exist. `_TRADE_COLUMNS` ran Closed → R with no
+regime-at-entry, exit reason, MAE/MFE or slippage, though `ClosedTrade` has
+computed all five since M37 - the fourth screen found holding data it never
+displayed, after `is_synthetic`, `refusals.rail_of` and the journal reason.
+
+Guided gets **one verdict per strategy in words**. The table reports one of four
+statuses beside a semicolon-joined blocking list: precise, and it assumes the
+reader knows there is a bar, what it is, and that failing it this early is
+normal rather than damning. The verdict leads with the trade count when there is
+nothing to judge, because *"not eligible"* reads as a verdict on the strategy
+when it is a verdict on the sample.
+
+Professional gets the diagnostics **appended, not interleaved** - a table whose
+"Net P&L" sits in a different column at each level is worse than one that is
+merely longer - and sorting, which is what makes "which regime did the losers
+happen in" answerable at all.
+
+**Slippage is worth watching when it lands.** It is `entry_price -
+reference_price`, and until M70 both came from the same transmit-time
+announcement, so it was zero by construction. A run of exact zeroes in that
+column is M70's fingerprint rather than a frictionless fill, and it will persist
+for every trade opened before M70 reaches the account. The column shows the zero
+rather than hiding it: that is what makes the defect visible in the record it
+corrupted.
+
+Every unrecorded diagnostic is an em dash, never a zero - the rule the Screener
+and the advisory prompt both already follow.
+
+The headline stays at every level. Whether the account made money is not a
+matter of expertise.
+
+13 tests.
+
 ## M78 - The M75 guard caught one spelling and missed three
 
 8 August, found an hour after M75 declared the presentation layer clean.
