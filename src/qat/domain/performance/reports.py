@@ -21,6 +21,11 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from qat.domain.evaluation.approvals import ApprovalSummary, format_approval_section
+from qat.domain.evaluation.diagnostics import (
+    TradeDiagnostics,
+    format_diagnostics_section,
+    summarise_diagnostics,
+)
 from qat.domain.evaluation.refusals import RefusalSummary, format_refusal_section
 from qat.domain.performance.metrics import (
     PerformanceStats,
@@ -75,6 +80,10 @@ class PerformanceReport:
     refusals: RefusalSummary | None = None
     # And how close the ones that DID happen came to not happening (M51).
     approvals: ApprovalSummary | None = None
+    # What the closed trades turned out to be, beyond their P&L (M58): what
+    # ended them, how much of the best price was kept, how near a loss the
+    # winners came. None means the analysis was not asked for.
+    diagnostics: TradeDiagnostics | None = None
     # Positions opened in the period, and what is held at the end of it (M31c).
     # Every figure above is built from CLOSED trades, so a day with six entries
     # and no exits read exactly like a day when nothing happened at all - which
@@ -194,6 +203,12 @@ class PerformanceReport:
         if self.approvals is not None:
             lines.append(format_approval_section(self.approvals))
 
+        # And what the trades that DID happen turned out to be (M58). The two
+        # sections above are about orders; this is the only one about outcomes
+        # beyond the headline P&L.
+        if self.diagnostics is not None:
+            lines.append(format_diagnostics_section(self.diagnostics))
+
         if self.blocked_counts:
             lines.extend(["### Autonomy decisions blocked", ""])
             for reason, count in sorted(
@@ -272,6 +287,16 @@ def build_report(
         blocked_counts=blocked_counts or {},
         refusals=refusals,
         approvals=approvals,
+        # Computed here rather than passed in, because unlike the two above it
+        # needs nothing this function does not already hold - and a section
+        # that has to be remembered at every call site is a section that will
+        # eventually be forgotten at one.
+        #
+        # Scoped to the PERIOD, like everything else in this report (M56b).
+        # That makes it near-empty on most dailies and it should be: the whole
+        # book time-stops inside three days in mid-September, so the weekly
+        # covering that is where roughly ten trades arrive at once.
+        diagnostics=summarise_diagnostics(period_trades),
         opened=opened,
         held=held,
         narrative=narrative,
