@@ -56,6 +56,11 @@ _WF_COLUMNS = ("From", "To", "CAGR", "Sharpe", "Max DD", "Trades")
 # Below this many windows the spread of a metric across them is arithmetic
 # rather than evidence, and saying so beats printing a confident number.
 _MIN_INFORMATIVE_WINDOWS = 3
+# At or below this many trades per window, the windows are slices of a hold
+# rather than independent tests. Two rather than one, because a window with two
+# trades is still an entry manufactured at the boundary plus one real exit -
+# swing's measured shape is exactly one per window.
+_MAX_TRADES_FOR_SLICING_CAVEAT = 2
 _METRICS_PER_ROW = 5
 
 
@@ -436,5 +441,34 @@ def _walk_forward_headline(result: WalkForwardResult) -> str:
         )
     else:
         parts.append("Reasonably consistent across periods.")
+
+    # The caveat the panel omitted, and the deploy gate is on this screen.
+    #
+    # Walk-forward slicing MANUFACTURES an entry at each window boundary. For a
+    # continuously-held strategy that means the windows are 60-day chunks of one
+    # hold rather than N independent tests - and every figure above is computed
+    # from them. ROADMAP measured it: swing changes exposure 7 times in 300
+    # bars, giving 3 walk-forward trades across 3 windows, and "neither tool
+    # says much about swing until it exits".
+    #
+    # APPENDED rather than substituted, because both facts can be true at once:
+    # the windows may be perfectly consistent AND built on too few trades to
+    # mean anything.
+    #
+    # Stated as the COUNT THIS RUN PRODUCED rather than as a standing warning. A
+    # disclaimer on every result is scrolled past; a number computed from the
+    # run in front of you is not. It therefore self-suppresses when the strategy
+    # trades enough, which is what stops it becoming the boilerplate it replaced.
+    trades = [len(window.out_sample_result.trades) for window in windows]
+    total_trades = sum(trades)
+    if total_trades <= count * _MAX_TRADES_FOR_SLICING_CAVEAT:
+        per_window = total_trades / count
+        parts.append(
+            f"But {total_trades} trade(s) across {count} window(s) - "
+            f"{per_window:.1f} per window. Slicing manufactures the entry at each "
+            "boundary, so for a strategy that holds continuously these are chunks "
+            "of one hold rather than independent tests, and the figures above "
+            "describe the slicing as much as the strategy."
+        )
 
     return " ".join(parts)

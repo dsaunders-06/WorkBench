@@ -210,6 +210,54 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M69 - The walk-forward panel did not state its own limitation
+
+8 August. Step 4.5 of `UI_UX_APPROACH.md`, and the brief was right this time -
+checked before building, after being wrong in detail three times running.
+
+**Walk-forward slicing MANUFACTURES an entry at each window boundary.** For a
+continuously-held strategy the windows are therefore 60-day chunks of one hold
+rather than N independent tests - and every figure the panel prints is computed
+from them. This document already measured it:
+
+> Swing barely trades. Exposure changes 7 times in 300 bars and never returns to
+> zero after bar 52 - one trade per symbol in 14 months. So the Monte Carlo cone
+> resamples near-buy-and-holds, and walk-forward manufactures exactly one entry
+> per window at the slice boundary: 12 symbols, 1 full-run trade each, 3
+> walk-forward trades each. **Neither tool says much about swing until it
+> exits.**
+
+**The deploy gate is on this screen.** An operator reading a Sharpe spread
+computed from one trade per window is the over-reading that matters, and the
+`Trades` column was already there - the number was on screen with nothing to say
+what it implied.
+
+### Stated as a measurement, not a warning
+
+The caveat names **the count this run produced**:
+
+```
+... Reasonably consistent across periods. But 3 trade(s) across 3 window(s) -
+1.0 per window. Slicing manufactures the entry at each boundary, so for a
+strategy that holds continuously these are chunks of one hold rather than
+independent tests, and the figures above describe the slicing as much as the
+strategy.
+```
+
+A standing disclaimer is scrolled past; a number computed from the run in front
+of you is not. It therefore **self-suppresses** when the strategy trades enough,
+which is what stops it becoming the boilerplate it replaced - and a test pins
+that.
+
+**Appended rather than substituted**, because both facts can be true at once:
+the windows may be perfectly consistent AND built on too few trades to mean
+anything. The existing headline chain already worked this way, so this is one
+more branch rather than a new mechanism.
+
+**Still outstanding:** ROADMAP's own sentence covers the **Monte Carlo cone**
+too - it "resamples near-buy-and-holds" for the same reason - and that panel
+still states no caveat. Same fix, same screen, not yet done.
+
 ## M68 - The correlation table measured a different quantity from the rail
 
 8 August. Step 4.7 of `UI_UX_APPROACH.md`, second half.
