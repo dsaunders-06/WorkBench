@@ -1445,7 +1445,41 @@ freeze and needs a deliberate, recorded lift. It also interacts with the
 market-data finding: whichever prices are passed should come from the same feed
 decision, or the fix would bake in the IEX bias.
 
-### M65 - The entry record holds the price we ASKED, not the price we PAID  **[FOUND 8 AUGUST, NOT YET FIXED]**
+### M65 - The entry record held the price we ASKED, not the price we PAID  **[FIXED 8 AUGUST]**
+
+**Fixed by `SignalToOrderBridge.reconcile_entry_prices()`**, which runs at
+startup *before* `restore_open_lots` - ordering is the whole point, since that
+method passes `entry.price` as the lot's cost basis and a correction applied
+afterwards would leave the ledger holding the number this removes.
+
+It asks the **broker**, because the broker is the authority on what was paid
+exactly as it is the authority on what is held. That heals the records already
+on disk rather than only preventing new ones, which matters because eight wrong
+ones are sitting there now.
+
+Only the price moves. The stop is the level the risk budget was spent on and
+re-arming reads it; the open date drives the churn rails.
+
+**A quarantined position is never corrected.** A corporate action changes
+`avg_entry_price` legitimately - a 2-for-1 split halves it - so "correcting" to
+the post-event figure would silently rewrite the basis of exactly the position
+M60 exists to stop anything touching.
+
+A broker that cannot be read changes nothing: a wrong price is bad, and a price
+overwritten from a failed read is worse.
+
+**What this does NOT fix.** `_announce_fill` still publishes the reference price
+at `transmitted`, so a lot created live inside a session still carries it until
+the next startup reconciles. Closing the root cause means either not announcing
+at `transmitted` - which risks losing the event entirely, since it is unproven
+that an order reaches `filled` in-process - or re-announcing on the true fill.
+Recorded rather than quietly left.
+
+**Operational note: the first launch of a build containing this rewrites
+`open_position_entries.json` for eight positions.** Back that file up first, as
+`closed_trades.csv` was before the CVS correction.
+
+### The finding, as originally recorded
 
 Found while measuring realised slippage against the flat 5bps assumption, and
 it is a bigger finding than the thing that was being measured.

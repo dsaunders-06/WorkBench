@@ -36,7 +36,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
@@ -57,6 +57,10 @@ from qat.domain.risk_engine.engine import OrderCandidate
 logger = logging.getLogger(__name__)
 
 _ENTRIES_FILENAME = "open_position_entries.json"
+# A recorded entry price within this of what the broker charged is the same
+# price. Relative rather than absolute, for the reason M59 gives: a book holding
+# WFC at 87 and GS at 1,040 cannot share an absolute epsilon.
+_ENTRY_PRICE_TOLERANCE = 1e-4
 
 
 class _LotStore(Protocol):
@@ -228,6 +232,9 @@ class SignalToOrderBridge:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        # Before restore_open_lots, or the ledger is rebuilt from the price the
+        # order was SIZED against rather than the one it filled at (M65).
+        await self.reconcile_entry_prices()
         await self.restore_open_lots()
         await self.replay_missed_exits()
         await self.rearm_protective_stops()
@@ -320,6 +327,74 @@ class SignalToOrderBridge:
                 ", ".join(replayed),
             )
         return replayed
+
+    async def reconcile_entry_prices(self) -> list[str]:
+        """Corrects a recorded entry price to what the broker actually charged
+        (M65).
+
+        `OMS._announce_fill` publishes when an order reaches "filled" OR
+        "transmitted", taking `order.filled_price or order.reference_price`. At
+        transmit there is no fill price, so it publishes the REFERENCE - and
+        `_on_fill` stores that with `setdefault`, so the genuine fill can never
+        replace it. Nothing corrected it afterwards either: an entry this app
+        transmitted is in `_broker_order_ids`, so `absorb_broker_fills` skips it
+        by design.
+
+        Measured on the live book, 8 of 10 positions held a price that differed
+        from what was paid - AMD by 141 bps. `restore_open_lots` passes
+        `entry.price` as the lot's cost basis, so realised P&L and the
+        R-multiple DENOMINATOR were both wrong by that drift, and both feed the
+        promotion gate.
+
+        Asks the broker, because the broker is the authority on what was paid
+        exactly as it is the authority on what is held. That heals records
+        already written rather than only preventing new ones, which matters
+        because the eight wrong ones are sitting on disk right now.
+
+        Runs BEFORE `restore_open_lots`, or the ledger would be rebuilt from the
+        very number this removes.
+
+        Only the price moves. The stop is the level the risk budget was spent on
+        and re-arming reads it; the open date drives the churn rails.
+        """
+        if not self._entries:
+            return []
+        try:
+            positions = await self.oms.broker.positions()
+        except Exception:
+            # A wrong price is bad; a price overwritten from a failed read is
+            # worse, so this degrades to leaving the record alone.
+            logger.exception("Could not read positions to reconcile recorded entry prices")
+            return []
+
+        corrected: list[str] = []
+        for position in positions:
+            entry = self._entries.get(position.symbol)
+            if entry is None or not position.avg_price:
+                continue
+            # A corporate action changes avg_entry_price legitimately - a
+            # 2-for-1 split halves it - so correcting to the post-event figure
+            # would silently rewrite the basis of a position M60 exists to stop
+            # anything touching.
+            if self.oms.anomalies.is_quarantined(position.symbol):
+                continue
+            paid = float(position.avg_price)
+            if abs(paid - entry.price) <= _ENTRY_PRICE_TOLERANCE * abs(entry.price):
+                continue
+            self._entries[position.symbol] = replace(entry, price=paid)
+            corrected.append(position.symbol)
+
+        if corrected:
+            self._save_entries()
+            logger.warning(
+                "Corrected the recorded entry price for %s to what the broker charged. The "
+                "record held the price the order was SIZED against, not the price it filled "
+                "at, so P&L and every R-multiple on these was wrong by that difference.",
+                ", ".join(
+                    f"{symbol} -> {self._entries[symbol].price:g}" for symbol in sorted(corrected)
+                ),
+            )
+        return corrected
 
     async def restore_open_lots(self) -> list[str]:
         """Gives the trade ledger back the entry lots it forgot (M49).

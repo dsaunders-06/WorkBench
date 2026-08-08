@@ -61,7 +61,26 @@ or the fix bakes in the IEX bias. **Do not start it before Tuesday.**
 
 Verify with `scripts/analysis/verify_gating_figures.py`.
 
-## ⚠️ Found 8 August, not yet fixed — M65
+## M65 — found and FIXED 8 August, not yet deployed
+
+The entry record held the price we asked for, not the price we paid: 8 of 10
+positions differed, AMD by 141 bps, and `restore_open_lots` used it as the lot's
+cost basis — so P&L and every R-multiple denominator were wrong by that drift.
+
+**Fixed** by `SignalToOrderBridge.reconcile_entry_prices()`, which asks the
+broker at startup, *before* the ledger is rebuilt. It heals the eight records
+already on disk. A quarantined position is never corrected, because a split
+changes `avg_entry_price` legitimately.
+
+**⚠️ The first launch of a build containing this rewrites
+`open_position_entries.json` for eight positions. Back that file up first**, as
+`closed_trades.csv` was before the CVS correction.
+
+Not deployed. See ROADMAP M65 for what it does *not* fix — `_announce_fill`
+still publishes the reference price at `transmitted`, so a lot created live
+inside a session carries it until the next startup.
+
+## Superseded — the original M65 note
 
 **The entry record holds the price we asked for, not the price we paid.** 8 of
 the 10 open positions differ; AMD by 141 bps, GS by 52.
@@ -337,7 +356,21 @@ prices, not current ones. The app reports 5.02%; against current prices it is
   the same feed decision or the fix bakes in the IEX bias. NOT BEFORE TUESDAY.
   Verify with scripts/analysis/verify_gating_figures.py.
 
-FOUND 8 AUGUST, NOT YET FIXED — M65
+M65 — FOUND AND FIXED 8 AUGUST, NOT DEPLOYED
+Fixed by SignalToOrderBridge.reconcile_entry_prices(), which asks the broker at
+startup BEFORE restore_open_lots rebuilds the ledger, and heals the eight
+records already on disk. Quarantined positions are never corrected, because a
+split changes avg_entry_price legitimately.
+
+  THE FIRST LAUNCH OF A BUILD CONTAINING THIS REWRITES
+  open_position_entries.json FOR EIGHT POSITIONS. Back that file up first, as
+  closed_trades.csv was before the CVS correction.
+
+  What it does NOT fix: _announce_fill still publishes the reference price at
+  "transmitted", so a lot created live inside a session carries it until the
+  next startup reconciles. See ROADMAP M65.
+
+The original finding, for context
 The entry record holds the price we ASKED, not the price we PAID. 8 of 10 open
 positions differ; AMD by 141 bps, GS by 52. _announce_fill publishes when
 status is "filled" OR "transmitted" and takes filled_price or reference_price -
