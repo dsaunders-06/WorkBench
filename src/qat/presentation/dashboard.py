@@ -104,7 +104,7 @@ class DashboardScreen(QWidget):
             title="Equity Curve", axisItems={"bottom": pg.DateAxisItem()}
         )
         theme.label_axes(self.equity_plot, bottom="Time", left="NAV ($)")
-        self.equity_curve = self.equity_plot.plot(pen="y")
+        self.equity_curve = self.equity_plot.plot(pen=theme.SERIES_PRIMARY)
         layout.addWidget(self.equity_plot)
 
         # After the curve exists, and the position is load-bearing (M56a).

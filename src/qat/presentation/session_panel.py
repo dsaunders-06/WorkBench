@@ -46,7 +46,7 @@ _ALERT_COLOUR = theme.WARNING
 # is a filled banner rather than coloured text (M20). Closed stays deliberately
 # flat: making every state shout is the same as making none of them.
 _BANNER_STYLE = (
-    "background-color: {fill}; color: white; padding: 8px; "
+    "background-color: {fill}; color: " + theme.WHITE + "; padding: 8px; "
     "border-radius: 4px; font-size: 18px; font-weight: bold;"
 )
 _QUIET_STYLE = "color: {fill}; padding: 8px; font-size: 15px; font-weight: bold;"
@@ -156,7 +156,8 @@ class SessionPanel(QFrame):
         # by every child, which drew a box around each individual label.
         self.setObjectName("sessionPanel")
         self.setStyleSheet(
-            "QFrame#sessionPanel { border: 1px solid #444; border-radius: 4px; padding: 6px; }"
+            f"QFrame#sessionPanel {{ border: 1px solid {theme.BORDER}; "
+            "border-radius: 4px; padding: 6px; }}"
         )
 
         layout = QVBoxLayout(self)

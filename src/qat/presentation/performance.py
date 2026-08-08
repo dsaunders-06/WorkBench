@@ -107,7 +107,7 @@ class PerformanceScreen(QWidget):
 
         self.export_status = QLabel("")
         self.export_status.setWordWrap(True)
-        self.export_status.setStyleSheet("color: gray;")
+        self.export_status.setStyleSheet(theme.text(theme.MUTED))
         layout.addWidget(self.export_status)
 
         promotion_box = QGroupBox("Promotion status")
@@ -117,7 +117,7 @@ class PerformanceScreen(QWidget):
             "this table shows you doing it. Enable "
             "<code>QAT_ENFORCE_PROMOTION_EVIDENCE</code> to make the bar binding."
         )
-        promotion_note.setStyleSheet("color: gray;")
+        promotion_note.setStyleSheet(theme.text(theme.MUTED))
         promotion_note.setWordWrap(True)
         promotion_layout.addWidget(promotion_note)
         self.promotion_table = QTableWidget(0, len(_PROMOTION_COLUMNS))

@@ -139,7 +139,8 @@ class BalancesPanel(QFrame):
 
         self.setObjectName("balancesPanel")
         self.setStyleSheet(
-            "QFrame#balancesPanel { border: 1px solid #444; border-radius: 4px; padding: 6px; }"
+            f"QFrame#balancesPanel {{ border: 1px solid {theme.BORDER}; "
+            "border-radius: 4px; padding: 6px; }}"
         )
 
         outer = QVBoxLayout(self)

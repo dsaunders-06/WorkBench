@@ -129,9 +129,10 @@ class WorkbenchScreen(QWidget):
 
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
-        # theme.DANGER, not #d9534f. The design system's own migration note
-        # says '#d9534f (3 uses) -> DANGER'; this was one of the sites it did
-        # not reach, and 24 more like it survive elsewhere (M74).
+        # theme.DANGER, not a hand-written red. The design system's own
+        # migration note claimed three uses consolidated; this was a live one it
+        # had not reached (M74). M75 took the remaining 22, M78 the named
+        # colours and the plot pens.
         self.status_label.setStyleSheet(theme.text(theme.DANGER))
         layout.addWidget(self.status_label)
 
@@ -151,8 +152,10 @@ class WorkbenchScreen(QWidget):
         # plotting against the real dates is a separate change, and mislabelling
         # this one in anticipation would be worse than the honest label.
         theme.label_axes(self.equity_plot, bottom="Daily bars (backtest)", left="Equity ($)")
-        self.equity_curve_item = self.equity_plot.plot(pen="y", name="strategy")
-        self.benchmark_curve_item = self.equity_plot.plot(pen="c", name="benchmark")
+        self.equity_curve_item = self.equity_plot.plot(pen=theme.SERIES_PRIMARY, name="strategy")
+        self.benchmark_curve_item = self.equity_plot.plot(
+            pen=theme.SERIES_BENCHMARK, name="benchmark"
+        )
         layout.addWidget(self.equity_plot)
 
         self.metrics_grid = QGridLayout()
@@ -166,9 +169,9 @@ class WorkbenchScreen(QWidget):
         # elapsed time, and why two strategies' cones are not comparable
         # side-by-side unless they took the same number of trades.
         theme.label_axes(self.mc_plot, bottom="Trades simulated", left="Equity ($)")
-        self.mc_p5_item = self.mc_plot.plot(pen="r", name="p5")
-        self.mc_p50_item = self.mc_plot.plot(pen="y", name="p50")
-        self.mc_p95_item = self.mc_plot.plot(pen="g", name="p95")
+        self.mc_p5_item = self.mc_plot.plot(pen=theme.BAND_LOW, name="p5")
+        self.mc_p50_item = self.mc_plot.plot(pen=theme.BAND_MID, name="p50")
+        self.mc_p95_item = self.mc_plot.plot(pen=theme.BAND_HIGH, name="p95")
         layout.addWidget(self.mc_plot)
 
         # What the cone was resampled FROM. Without it, a cone built from one

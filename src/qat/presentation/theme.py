@@ -44,9 +44,19 @@ AMBER_600: Final = "#b45309"
 AMBER_50: Final = "#fef3c7"
 
 SLATE_500: Final = "#5b6572"
+SLATE_800: Final = "#444444"
 NAVY_900: Final = "#1e3a5f"
 
 WHITE: Final = "#ffffff"
+
+# Saturated primaries, for CHARTS only (M78). These are drawn on pyqtgraph's
+# near-black plot background, where every colour above - chosen to sit on a pale
+# UI - is close to invisible. They are their own family for that reason, and
+# nothing outside a plot should reach for them.
+PURE_YELLOW: Final = "#ffff00"
+PURE_CYAN: Final = "#00ffff"
+PURE_RED: Final = "#ff0000"
+PURE_GREEN: Final = "#00ff00"
 
 # --------------------------------------------------------------------------
 # Layer 2: semantics. Named by what they mean.
@@ -86,6 +96,39 @@ Load-bearing: an unavailable number rendered at full weight reads as data.
 
 ACCENT: Final = NAVY_900
 """Structural emphasis. Deliberately not a status colour."""
+
+BORDER: Final = SLATE_800
+"""The hairline round a panel. Four screens spelled this `#444` by hand."""
+
+
+# --------------------------------------------------------------------------
+# Chart series. Named by their ROLE IN A PLOT, not by status (M78).
+# --------------------------------------------------------------------------
+# Six pyqtgraph pens were single letters - `pen="y"`, `pen="r"` - which is
+# outside the palette in the most literal way: not a wrong colour, no colour at
+# all, just a code the library resolves. Naming them is what lets a future
+# change to the cone's colours happen here instead of in three files.
+#
+# Deliberately NOT mapped onto DANGER/WARNING/SUCCESS. Those are dark by design
+# so they read as text on a pale surface, and on the plot's black background
+# they disappear. Same meanings, different medium, so different values.
+
+SERIES_PRIMARY: Final = PURE_YELLOW
+"""The strategy's own equity curve - the line the screen is about."""
+
+SERIES_BENCHMARK: Final = PURE_CYAN
+"""What buying the index did over the same bars. Deliberately cool against the
+warm primary, so the two are separable without reading the legend."""
+
+BAND_LOW: Final = PURE_RED
+"""The p5 edge of a Monte Carlo cone."""
+
+BAND_MID: Final = PURE_YELLOW
+"""The p50 path. Shares the primary's colour because it is the same claim -
+"this is the central case" - made about a distribution instead of a history."""
+
+BAND_HIGH: Final = PURE_GREEN
+"""The p95 edge."""
 
 # --------------------------------------------------------------------------
 # Type scale. Four steps, down from eight sizes with no ratio.

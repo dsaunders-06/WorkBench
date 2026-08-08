@@ -6,15 +6,19 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QProgressBar, QVBoxLayout, QWidget
 
+from qat.presentation import theme
+
 
 class KpiTile(QFrame):
     def __init__(self, label: str, value: str = "-", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet("QFrame { border: 1px solid #444; border-radius: 4px; padding: 6px; }")
+        self.setStyleSheet(
+            f"QFrame {{ border: 1px solid {theme.BORDER}; border-radius: 4px; padding: 6px; }}"
+        )
         layout = QVBoxLayout(self)
         self._label = QLabel(label)
-        self._label.setStyleSheet("color: gray; font-size: 11px;")
+        self._label.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
         self._value = QLabel(value)
         self._value.setStyleSheet("font-size: 18px; font-weight: bold;")
         layout.addWidget(self._label)

@@ -35,10 +35,10 @@ _NOTE_COLOUR = theme.WARNING
 _BLOCKING_COLOUR = theme.DANGER
 
 _HEADLINE_STYLE = (
-    "background-color: {fill}; color: white; padding: 8px; "
+    "background-color: {fill}; color: " + theme.WHITE + "; padding: 8px; "
     "border-radius: 4px; font-size: 15px; font-weight: bold;"
 )
-_BODY_STYLE = "color: #444; padding: 4px 8px; font-size: 13px;"
+_BODY_STYLE = f"color: {theme.BORDER}; padding: 4px 8px; font-size: {theme.BODY}px;"
 
 
 class AdoptedPositionsPanel(QFrame):

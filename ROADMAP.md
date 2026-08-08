@@ -210,6 +210,52 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M78 - The M75 guard caught one spelling and missed three
+
+8 August, found an hour after M75 declared the presentation layer clean.
+
+M75 migrated 22 hex sites and added a test asserting no screen writes a colour
+by hand. **The claim was true only of hex.** Thirty-two hand-written colours
+survived it:
+
+| | Count | Already was |
+|---|---|---|
+| `color: gray` | 20 | `MUTED` |
+| `pen="y"` / `"c"` / `"r"` / `"g"` | 6 | nothing - see below |
+| `#444` (three digits) | 4 | `BORDER`, now named |
+| `color: white` | 2 | `WHITE` |
+
+`MUTED`'s own docstring calls it **load-bearing** - *"an unavailable number
+rendered at full weight reads as data"* - and twenty screens reached past it for
+a browser default. `#444` is three digits, which a six-digit pattern cannot see.
+And a pyqtgraph pen code is not a wrong colour so much as **no colour at all**: a
+single letter the plotting library resolves, invisible to any search for a
+colour.
+
+**A guard that catches one spelling and misses three teaches the wrong lesson** -
+that the rule is about hex, rather than about where colour decisions live. Its
+own tests now assert what it sees, case by case, because M75's version passed
+while thirty-two offences sat in the tree.
+
+### The charts got a family rather than a mapping
+
+The obvious move - point the pens at `DANGER`, `WARNING`, `SUCCESS` - would have
+been wrong. Those are dark by design so they read as text on a pale surface, and
+pyqtgraph draws on near-black, where they are close to invisible. Same meanings,
+different medium, so different values: `SERIES_PRIMARY`, `SERIES_BENCHMARK`,
+`BAND_LOW/MID/HIGH`, holding the exact colours already drawn. Nothing changes on
+screen; the cone's colours now live in one place.
+
+`BAND_MID` shares `SERIES_PRIMARY`'s yellow deliberately - it is the same claim,
+"this is the central case", made about a distribution instead of a history.
+
+**One deliberate shade shift:** `gray` (`#808080`) becomes `MUTED` (`#5b6572`) at
+twenty sites. That is the token written for exactly this use, and the direction
+the design system exists to move in.
+
+10 tests, five of which plant a colour in each spelling and assert the scanner
+catches it.
+
 ## M77 - The Blotter could not say why an order was refused
 
 8 August. Step 4.2, the last screen in Group 4 and the most safety-critical.

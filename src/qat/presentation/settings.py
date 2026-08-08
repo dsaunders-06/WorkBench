@@ -346,7 +346,7 @@ class SettingsScreen(QWidget):
             "available cash - the account cannot be leveraged. The minimum is $0.01: this "
             "rule cannot be switched off."
         )
-        cash_note.setStyleSheet("color: gray;")
+        cash_note.setStyleSheet(theme.text(theme.MUTED))
         cash_note.setWordWrap(True)
         broker_form.addRow(cash_note)
 
@@ -362,7 +362,7 @@ class SettingsScreen(QWidget):
         # working directory, which meant an operator editing one .env could be
         # looking at a different one from the app - and had no way to tell.
         self.config_location = QLabel(f"Settings and records are stored in {app_dir()}")
-        self.config_location.setStyleSheet("color: gray;")
+        self.config_location.setStyleSheet(theme.text(theme.MUTED))
         self.config_location.setWordWrap(True)
         self.config_location.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         basic_layout.addWidget(self.config_location)
@@ -677,7 +677,7 @@ class SettingsScreen(QWidget):
             "rate-limited and can return nothing without warning - the app degrades to "
             "simulated data with a logged warning rather than stopping."
         )
-        real_note.setStyleSheet("color: gray;")
+        real_note.setStyleSheet(theme.text(theme.MUTED))
         real_note.setWordWrap(True)
         form.addRow(real_note)
 
@@ -699,7 +699,7 @@ class SettingsScreen(QWidget):
             "subscription - without one, those requests fail and the app falls back to "
             "simulated data with a logged warning."
         )
-        self.alpaca_feed_note.setStyleSheet("color: gray;")
+        self.alpaca_feed_note.setStyleSheet(theme.text(theme.MUTED))
         self.alpaca_feed_note.setWordWrap(True)
         form.addRow(self.alpaca_feed_note)
 
@@ -726,7 +726,7 @@ class SettingsScreen(QWidget):
             "a strategy that needs one abstains on that symbol rather than guessing. "
             "<b>Expect noticeably fewer signals</b> than on simulated data."
         )
-        self.fundamentals_note.setStyleSheet("color: gray;")
+        self.fundamentals_note.setStyleSheet(theme.text(theme.MUTED))
         self.fundamentals_note.setWordWrap(True)
         form.addRow(self.fundamentals_note)
 
@@ -826,7 +826,7 @@ class SettingsScreen(QWidget):
             "candidate at or above this level are capped together, because several names "
             "moving as one are one position taken several times."
         )
-        cluster_note.setStyleSheet("color: gray;")
+        cluster_note.setStyleSheet(theme.text(theme.MUTED))
         cluster_note.setWordWrap(True)
         form.addRow(cluster_note)
 
@@ -841,7 +841,7 @@ class SettingsScreen(QWidget):
             "gets its own budget and is measured on position value rather than on the "
             "distance to the stop."
         )
-        gap_note.setStyleSheet("color: gray;")
+        gap_note.setStyleSheet(theme.text(theme.MUTED))
         gap_note.setWordWrap(True)
         form.addRow(gap_note)
 
@@ -870,7 +870,7 @@ class SettingsScreen(QWidget):
             "Full Kelly (1.00) assumes the win rate and payoff ratio are exactly right and "
             "sizes violently when they are not. Half Kelly is the default for that reason."
         )
-        kelly_note.setStyleSheet("color: gray;")
+        kelly_note.setStyleSheet(theme.text(theme.MUTED))
         kelly_note.setWordWrap(True)
         form.addRow(kelly_note)
 
@@ -883,7 +883,7 @@ class SettingsScreen(QWidget):
             "on a small one, so this is what stops the account taking trades whose entire "
             "expected profit is fees."
         )
-        cost_note.setStyleSheet("color: gray;")
+        cost_note.setStyleSheet(theme.text(theme.MUTED))
         cost_note.setWordWrap(True)
         form.addRow(cost_note)
 
@@ -914,7 +914,7 @@ class SettingsScreen(QWidget):
             "account trades. Ten positions turned over weekly costs several percent of a "
             "$100,000 account per year before a single losing trade."
         )
-        churn_note.setStyleSheet("color: gray;")
+        churn_note.setStyleSheet(theme.text(theme.MUTED))
         churn_note.setWordWrap(True)
         form.addRow(churn_note)
 
@@ -939,7 +939,7 @@ class SettingsScreen(QWidget):
             "The minimum hold must not trap a losing position. A trade this far against its "
             "entry, measured in units of the risk taken on it, may be closed regardless."
         )
-        escape_note.setStyleSheet("color: gray;")
+        escape_note.setStyleSheet(theme.text(theme.MUTED))
         escape_note.setWordWrap(True)
         form.addRow(escape_note)
 
@@ -958,7 +958,7 @@ class SettingsScreen(QWidget):
             "signal rarely fires closes most of its positions this way, so switching it off "
             "can mean positions are never closed at all."
         )
-        time_stop_note.setStyleSheet("color: gray;")
+        time_stop_note.setStyleSheet(theme.text(theme.MUTED))
         time_stop_note.setWordWrap(True)
         form.addRow(time_stop_note)
 
@@ -978,7 +978,7 @@ class SettingsScreen(QWidget):
             "replacement proposed. Protective orders rest at the broker, so this is what "
             "notices when one has been cancelled or has expired."
         )
-        sweep_note.setStyleSheet("color: gray;")
+        sweep_note.setStyleSheet(theme.text(theme.MUTED))
         sweep_note.setWordWrap(True)
         form.addRow(sweep_note)
 
@@ -993,7 +993,7 @@ class SettingsScreen(QWidget):
             "the documented defaults rather than its results. Lowering it lets a small, "
             "possibly lucky sample set the risk."
         )
-        edge_note.setStyleSheet("color: gray;")
+        edge_note.setStyleSheet(theme.text(theme.MUTED))
         edge_note.setWordWrap(True)
         form.addRow(edge_note)
 
@@ -1024,7 +1024,7 @@ class SettingsScreen(QWidget):
             "<b>Auto-trade</b>: qualifying orders are signed off without confirmation. "
             "Paper accounts only."
         )
-        mode_note.setStyleSheet("color: gray;")
+        mode_note.setStyleSheet(theme.text(theme.MUTED))
         mode_note.setWordWrap(True)
         form.addRow(mode_note)
 
@@ -1073,7 +1073,7 @@ class SettingsScreen(QWidget):
             "Autonomy is granted per strategy, never to all of them at once. A strategy not "
             "listed here still produces recommendations for your sign-off."
         )
-        strategies_note.setStyleSheet("color: gray;")
+        strategies_note.setStyleSheet(theme.text(theme.MUTED))
         strategies_note.setWordWrap(True)
         form.addRow(strategies_note)
 
@@ -1107,7 +1107,7 @@ class SettingsScreen(QWidget):
             self.selected_strategies_label.setStyleSheet(theme.text(theme.DANGER_STRONG, bold=True))
         else:
             self.selected_strategies_label.setText("Cleared: none - every order waits for you.")
-            self.selected_strategies_label.setStyleSheet("color: gray;")
+            self.selected_strategies_label.setStyleSheet(theme.text(theme.MUTED))
         # Written straight to the line edit. setCurrentText() on a combo only
         # takes effect when the text matches an existing item, so the summary
         # was silently discarded and the stale current item stayed on show.
