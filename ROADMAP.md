@@ -210,6 +210,97 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M63 - The Dashboard says which figures this system will act on
+
+8 August. Step 4 of `UI_UX_APPROACH.md`, and the first Dashboard work.
+
+**The brief's diagnosis was wrong, and checking took two minutes.** §4.1 says the
+Balances panel shows twelve fields *"most of them dashes on an Alpaca paper
+account - margin, day trades, short market value"*, and prescribes collapsing
+the unavailable ones. Measured against the live account: **ten of eleven cells
+carry a figure**, and only the day-trade count is a dash. Margin is reported and
+substantial. The prescribed fix would have collapsed one cell and addressed
+nothing.
+
+**The real problem is inapplicable data at equal weight.** Margin and buying
+power are real, prominent, and describe broker capabilities this application
+structurally refuses to use - a buy's notional can never exceed available cash,
+and that is not configurable. Buying power reads **$336,486 against $44,771
+spendable**. The panel's own docstring already called that gap *"the single most
+confusing thing about running the two side by side"*, and only a tooltip said so.
+
+So the panel is two groups: what the system acts on, and *"At the broker - not
+used by this system"*. Short market value is demoted for being structurally zero
+on a long-only system rather than for being missing. **Account status stays
+primary at every level** - `BLOCKED` is the one genuinely safety-relevant cell
+here.
+
+### Three settings must give three outcomes
+
+The first draft gave Guided and Standard **identical screens**, because
+`explains()` is true for both. That is M58a in miniature - an operator picks a
+level and nothing changes. Caught by the operator in review, before
+implementation.
+
+| | Guided | Standard | Professional |
+|---|---|---|---|
+| Captions | on | on | off |
+| "At the broker" group | absent | folded | open |
+
+`prefers_density()` is the new predicate; `shows_advanced()` gains **its first
+consumer since M45**, which is the exact gap the handoff records, and it fitted
+without anything being invented for it.
+
+Hiding figures at Guided is sanctioned by `ui_level`'s own doctrine - *"a control
+that is absent is one level away, and the level selector says so"* - and M58c's
+"never quieter" rule governs safety content, which balances are not. At Guided
+the buying-power cell is gone, so the caption beneath **Spendable here** is what
+stops an operator seeing $336k at Alpaca and finding nothing here to explain it.
+
+### Rendered, not trusted to a green suite
+
+The panel was screenshotted at all three levels before the commit. Two defects
+that every test passed through:
+
+* the demoted row orphaned its fifth cell onto a row of its own, reading as a
+  new section rather than the tail of this one;
+* the caption font was off the closed type scale - caught by the design
+  system's own test, which is step 1 of this work doing its job.
+
+## M62 - A broker payload fragmented one cause into many
+
+8 August. A guard on a rail that had already failed once for this reason.
+
+The daily report's narrative died on its 8,000-char context cap **every day from
+31 July to 6 August**. M56b fixed it on 7 August, by bounding the report to the
+day it covers and stripping quoted amounts out of the aggregation key. Verified
+rather than assumed: today's code over 6 August's journal rows yields **3 keys
+and 118 characters**, where the report actually written that day had **113 keys
+and 9,020**.
+
+So this is not that fix. It closes the one route out of it that remains.
+
+`OMS.sign_off` records `f"broker refused: {exc}"`, and an Alpaca exception is a
+JSON blob carrying the quantities of that specific order:
+
+```
+312x broker refused: {"available":"0","code":40310000,"existing_qty":"7", ...
+104x broker refused: {"available":"0","code":40310000,"existing_qty":"82", ...
+```
+
+Every distinct `existing_qty` mints a new key - exactly the fragmentation the
+amount-stripping exists to stop, arriving by a route it cannot see, because the
+varying parts are bare integers inside JSON rather than `$` or `%` amounts.
+Nothing bounds how many there could be; they have simply not yet landed inside a
+bounded reported day. On 4 August's real rows this takes 10 keys to 9.
+
+**The journal keeps the whole payload. Only the grouping key drops it.**
+
+The row cap is the guard that does not depend on predicting the next
+pathological reason string: twelve causes are named, then the remainder is
+counted rather than listed. Nothing is silently dropped - what is omitted is
+named and counted - and 113 near-identical rows were unreadable anyway.
+
 ## M61 - Testing the machinery deliberately, instead of waiting for luck
 
 8 August. A reframing more than a feature, and it resolves a tension this
