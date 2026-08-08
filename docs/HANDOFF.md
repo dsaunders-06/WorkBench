@@ -19,11 +19,15 @@ adjustment cannot be designed without it, and this paper account has processed
 **The procedure is written, printed and standalone: `docs/MNST_SPLIT_TEST.md`.**
 It assumes no memory of the conversation that produced it. Read that, not this.
 
-**⚠️ The order's status is unverified since 06:41 UTC on 8 August.** It was
-accepted and queued then. Alpaca returned `503 service temporary unavailable`
-during the final handover check on Saturday evening, so it could not be re-read
-— the market was shut, so nothing was at risk. **Confirm the order is still
-there on Monday before relying on it;** step 3 of the sheet does exactly that.
+**Order re-confirmed at 11:36 UTC on 8 August:** one live order, `buy market
+qty=8.0, status=accepted, tif=gtc`, no position yet — which is correct, it fills
+at Monday's open. The split announcement is unchanged: `old_rate=1.0,
+new_rate=2.0, ex_date=2026-08-11`.
+
+Alpaca returned `503 service temporary unavailable` for several minutes earlier
+that evening. **The outage left the order untouched**, which is worth knowing:
+a broker being unreachable is not the same as a broker having lost something.
+Step 3 of the sheet re-checks the fill on Monday regardless.
 
 Three things from it that must not be lost:
 
@@ -332,12 +336,11 @@ through a split. M39's adjustment cannot be designed without it.
   THE PROCEDURE IS docs/MNST_SPLIT_TEST.md. It is standalone and printed.
   Follow that, not a reconstruction of it.
 
-  ORDER STATUS UNVERIFIED SINCE 06:41 UTC 8 August. It was accepted and queued
-  then - 8 shares, market, GTC. Alpaca returned 503 "service temporary
-  unavailable" during the final handover check on Saturday evening, so the
-  order could not be re-read. The market was shut, so nothing was at risk.
-  CONFIRM IT IS STILL THERE ON MONDAY before relying on it - step 3 of the
-  sheet does exactly that.
+  ORDER RE-CONFIRMED 11:36 UTC 8 August: one live order, buy market qty=8.0,
+  status=accepted, tif=gtc, no position yet - correct, it fills at the open.
+  Alpaca was returning 503 for several minutes earlier that evening and the
+  outage left the order untouched. Step 3 of the sheet re-checks the fill on
+  Monday regardless.
 
   Three things from it that must not be lost:
    - The app must NOT be running when the order fills. It does not track MNST,
