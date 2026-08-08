@@ -210,6 +210,55 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M72 - The Screener never said whether its figures were real
+
+8 August. Step 4.8 of `UI_UX_APPROACH.md`. The brief's premise held this time -
+the filters really are raw factor inputs - but checking it against the code
+found something the brief does not mention, and it is the larger of the two.
+
+**`is_synthetic` has ridden on every `FundamentalSnapshot` since M18.** Its own
+docstring says why: *"Carried on the snapshot rather than inferred from the
+source's type, so anything downstream that displays or reasons about a number
+can say where it came from."* `available_figures()` duly passes it to the LLM,
+so **the AI Advisor has known the provenance of these figures all along and the
+operator reading the table has not.** The Screener renders nine fundamental
+columns and never asked.
+
+Not hypothetical. `fundamentals_source` defaults to `"mock"`, and
+`resolve_fundamentals_source` degrades to the same seeded source when the real
+one cannot be built - logging that *"every fundamental figure shown or traded on
+will be INVENTED"* and then rendering a table indistinguishable from a real one.
+Checked against the live install before claiming it: `QAT_FUNDAMENTALS_SOURCE=yfinance`,
+no fallback warnings in the log, and a 135KB `fundamentals_cache.json`. So the
+deployed build shows real figures and the hazard is **latent, not active** - it
+bites a fresh install and a lost vendor.
+
+The caption is loud when invented, quiet when real, and counts unanswerable
+figures separately - an ETF with no earnings growth is a different failure from
+an invented one, and was already visible per cell as an em dash. Same shape as
+M69: state what this run produced rather than printing a standing disclaimer.
+
+**The presets.** §4.8's complaint is that a PEG spinbox says nothing about what
+a PEG of 1.5 implies, so each preset carries the sentence explaining its
+threshold rather than only a name for it. Guided gets named screens alone,
+Standard gets both, Professional gets the raw filters alone - three levels,
+three outcomes, asserted as one test that the three do not collapse.
+
+**Deferred deliberately: "saved custom screens"** from §4.8's Professional
+column. That is new persisted configuration, and configuration that persists and
+changes nothing is this project's most repeated defect - `shows_advanced()` had
+zero consumers from M45 until 8 August, and the minimum hold and the M37
+diagnostics were the same pattern. It waits until something reads it.
+
+**Rendering found what the suite could not, again.** The Market/Category/Sector
+row was spreading three combo boxes across the full window with each label
+stranded from the control it names. Pre-existing, and invisible until the new
+threshold row sat compact beside it. Every test passed through it, exactly as
+they did through M63's orphaned grid row and off-scale font.
+
+18 tests. Verified by reintroducing the M58a mistake - keying the threshold row
+on `explains()` - and confirming the collapse detector catches it.
+
 ## M70 - A lot opened live never learned what it paid
 
 8 August. The residual half of M65, and the half that could not be healed at
