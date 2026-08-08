@@ -31,6 +31,11 @@ _RULES: tuple[tuple[str, str], ...] = (
     # only be done by reading qat.log separately, which defeats the point of
     # having a live view at all.
     ("Build: ", "BUILD"),
+    # Immediately after the stamp, because it changes how the PREVIOUS
+    # session's log should be read (M57c). A log that simply stops is
+    # otherwise identical to a quiet session, which is where M56a hid.
+    ("ended WITHOUT reaching its shutdown", "LOSTRUN"),
+    ("shutdown reached normally", "STOPPED"),
     # Above the generic rule, because it is the line that explains the one
     # below it. Without this the watcher printed "Trading session started - US
     # is open" on its own and the operator had no way to see that the open was
