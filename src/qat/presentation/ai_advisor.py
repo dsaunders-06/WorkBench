@@ -207,7 +207,7 @@ class AiAdvisorScreen(QWidget):
         except Exception as exc:  # noqa: BLE001 - surfaced to the user below
             logger.exception("AI advisor request failed")
             self.conversation.append(
-                f"<b style='color:#b71c1c'>Advisor unavailable:</b> {exc}<br>"
+                f"<b style='color:{theme.DANGER}'>Advisor unavailable:</b> {exc}<br>"
                 "Check the AI provider settings (Settings tab), then restart the application."
             )
         finally:

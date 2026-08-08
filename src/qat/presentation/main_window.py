@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat.domain.events import KillSwitchEvent, MarketDataFeedEvent, RegimeHealthEvent
+from qat.presentation import theme
 from qat.presentation.ai_advisor import AiAdvisorScreen
 from qat.presentation.blotter import BlotterScreen
 from qat.presentation.dashboard import DashboardScreen
@@ -31,15 +32,23 @@ from qat.presentation.screener import ScreenerScreen
 from qat.presentation.settings import SettingsScreen
 from qat.presentation.workbench import WorkbenchScreen
 
-_PAPER_STYLE = "background-color: #1b5e20; color: white; padding: 6px; font-weight: bold;"
-_LIVE_STYLE = "background-color: #b71c1c; color: white; padding: 6px; font-weight: bold;"
+# The banners, through the design system (M75). `theme.banner` was written for
+# exactly these - "the mode and execution banners, which state the two facts
+# that change what every other number on screen means" - and every literal
+# below was already a theme primitive spelled out by hand.
+#
+# Colours are unchanged to the byte; only the padding moves, 6px to the 4px
+# rhythm's 8px. That is the consolidation the scale exists for, and it is
+# stated here rather than discovered later.
+_PAPER_STYLE = theme.banner(theme.SUCCESS)
+_LIVE_STYLE = theme.banner(theme.DANGER)
 
-_RECOMMEND_STYLE = "background-color: #1e3a5f; color: white; padding: 6px; font-weight: bold;"
-_AUTO_STYLE = "background-color: #b45309; color: white; padding: 6px; font-weight: bold;"
-_HALTED_STYLE = "background-color: #7f1d1d; color: white; padding: 6px; font-weight: bold;"
+_RECOMMEND_STYLE = theme.banner(theme.ACCENT)
+_AUTO_STYLE = theme.banner(theme.WARNING)
+_HALTED_STYLE = theme.banner(theme.DANGER_STRONG)
 # Amber, not the halt red: an outage is a condition to notice, a halt is a
 # decision that was taken. Painting them identically would blur the two.
-_FEED_DOWN_STYLE = "background-color: #b45309; color: white; padding: 6px; font-weight: bold;"
+_FEED_DOWN_STYLE = theme.banner(theme.WARNING)
 
 
 class MainWindow(QMainWindow):

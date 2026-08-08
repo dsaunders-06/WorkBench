@@ -337,9 +337,10 @@ left alone in a layout stretches and centres its text.
 19 tests. Verified by keying walk-forward and deploy on `shows_advanced()` - the
 M58a mistake - and confirming three tests fail, the deploy one among them.
 
-## M75 - The design system was declared done and is half-done
+## M75 - The design system was declared done and was half-done - now finished
 
-8 August, found while doing M74 and deliberately not finished.
+8 August. Found while doing M74, deliberately deferred to the Blotter's turn,
+and completed once M77 had proved the system across every screen.
 
 §5 step 1 - *"67 inline stylesheets become one central sheet"* - is recorded as
 done. **25 raw-hex colour sites survive across seven of the eight presentation
@@ -363,14 +364,50 @@ it; the old values were never removed from most of them. A restyle would
 therefore change some screens and not others, which is worse than not having
 extracted it.
 
-Left for its own pass because finishing it means editing the **Order Blotter**,
-which §5 sequences deliberately last - most safety-critical, and to be touched
-when the design system is proven. M74 migrated the one site in `workbench.py`
-(`#d9534f`, which theme's own migration note claims to have consolidated).
+### What it actually changed
 
-Mechanical, and there is no rush: it changes a handful of sites by a shade and
-nothing else. Do it when the Blotter's turn comes, in one pass, with the screens
-rendered before and after.
+**22 live sites**, across `main_window`, `risk_console`, `settings`,
+`ai_advisor` and `regime_monitor`; M74 had already taken `workbench`'s and M77
+the Blotter's two.
+
+**Every colour is byte-identical.** Proved rather than eyeballed, by normalising
+each old literal against what `theme` returns and diffing the declarations. The
+only differences are:
+
+| | Was | Now |
+|---|---|---|
+| Banner padding (main_window ×6) | `6px` | `8px` |
+| Kill-switch padding (risk_console ×2) | `10px` | `8px` |
+| Callout padding (settings ×3) | `6px` | `8px` |
+| `color` spelling | `white` | `#ffffff` |
+
+So eleven sites converge on the 4px rhythm's `SPACE_SM`, and nothing else moves.
+That is the consolidation the scale exists for, stated here rather than
+discovered later. The Risk Console and Settings were rendered afterwards and
+looked at.
+
+### The part that makes it stay fixed
+
+`test_design_system_is_the_only_source_of_colour` walks every module in
+`qat.presentation` except `theme.py` and fails on a six-digit hex inside a
+**string literal**. Without a guard the next hand-written `#b71c1c` arrives with
+the next screen and nobody notices until the restyle that was supposed to be one
+edit - which is exactly how 22 of them accumulated after step 1 was recorded as
+done.
+
+`tokenize`, not a text scan, so the M74 comment in `workbench.py` that quotes
+`#d9534f` while explaining its removal is not an offence: discussing a colour is
+not using one, and a guard that cannot tell the difference gets disabled rather
+than obeyed. Two further tests check the scanner would actually catch a planted
+literal and would not flag a comment - a guard that silently checks nothing is
+worse than no guard.
+
+### A correction
+
+An earlier note here said two `#d9534f` uses survived in code. They did not:
+both occurrences were inside the M74 comment quoting the literal. The migration
+note in `theme.py` **was** nonetheless inaccurate - M74 found a live `#d9534f`
+in `workbench.py` that its claimed three-use consolidation had not reached.
 
 ## M73 - The AI Advisor's "do not touch" framing did not exist
 

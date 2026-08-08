@@ -194,7 +194,7 @@ class RegimeMonitorScreen(QWidget):
         except Exception as exc:  # noqa: BLE001 - surfaced to the operator below
             logger.exception("Macro analysis failed")
             self.macro_ai_output.setHtml(
-                f"<b style='color:#b71c1c'>AI synthesis unavailable:</b> {exc}<br>"
+                f"<b style='color:{theme.DANGER}'>AI synthesis unavailable:</b> {exc}<br>"
                 "The deterministic read above is unaffected. Check the AI provider "
                 "settings (Settings tab), then restart the application."
             )
@@ -208,7 +208,7 @@ class RegimeMonitorScreen(QWidget):
         ]
         if assessment.regime != deterministic_regime:
             parts.append(
-                "<b style='color:#b45309'>Differs from the deterministic read "
+                f"<b style='color:{theme.WARNING}'>Differs from the deterministic read "
                 f"({deterministic_regime.replace('_', '-').title()}).</b>"
             )
         parts.append(assessment.reasoning)

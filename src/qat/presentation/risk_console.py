@@ -35,8 +35,10 @@ _REFRESH_INTERVAL_MS = 2000
 _CORRELATION_WINDOW = 60
 _MIN_POINTS_FOR_CORRELATION = 5
 
-_TRIPPED_STYLE = "background-color: #b71c1c; color: white; font-weight: bold; padding: 10px;"
-_ACTIVE_STYLE = "background-color: #1b5e20; color: white; font-weight: bold; padding: 10px;"
+# The kill-switch state, through the design system (M75). Colours unchanged to
+# the byte; the padding moves 10px to the rhythm's 8px.
+_TRIPPED_STYLE = theme.banner(theme.DANGER)
+_ACTIVE_STYLE = theme.banner(theme.SUCCESS)
 
 _OPERATOR = "operator (risk console)"
 

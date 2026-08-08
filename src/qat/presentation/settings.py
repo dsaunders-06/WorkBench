@@ -234,7 +234,7 @@ class SettingsScreen(QWidget):
             "⚠ Position and portfolio data will be sent to Anthropic's cloud API "
             "for these requests."
         )
-        self.sensitive_warning.setStyleSheet("color: #b71c1c;")
+        self.sensitive_warning.setStyleSheet(theme.text(theme.DANGER))
         self.sensitive_warning.setWordWrap(True)
         ai_form.addRow(self.sensitive_warning)
         self._refresh_sensitive_warning()
@@ -310,7 +310,7 @@ class SettingsScreen(QWidget):
             "⚠ Alpaca trades US equities only - it cannot trade an ASX watchlist. "
             "Switch Market to US to use it."
         )
-        self.broker_warning.setStyleSheet("color: #b71c1c;")
+        self.broker_warning.setStyleSheet(theme.text(theme.DANGER))
         self.broker_warning.setWordWrap(True)
         broker_form.addRow(self.broker_warning)
 
@@ -440,7 +440,7 @@ class SettingsScreen(QWidget):
                 "reproduced from the commit above."
             )
             warning.setWordWrap(True)
-            warning.setStyleSheet("color: #b45309; font-weight: bold;")
+            warning.setStyleSheet(theme.text(theme.WARNING, bold=True))
             form.addRow(warning)
 
         return group
@@ -668,9 +668,7 @@ class SettingsScreen(QWidget):
             "from a seeded random walk, not from any market. Nothing observed in this mode "
             "tells you how a strategy would behave on real data."
         )
-        self.data_warning.setStyleSheet(
-            "color: #78350f; background: #fef3c7; border: 1px solid #b45309; padding: 6px;"
-        )
+        self.data_warning.setStyleSheet(theme.callout("warning"))
         self.data_warning.setWordWrap(True)
         form.addRow(self.data_warning)
 
@@ -717,9 +715,7 @@ class SettingsScreen(QWidget):
             "generated, not reported. Nine of the fifteen strategies select on these, so on "
             "this setting their picks carry no information about the companies."
         )
-        self.fundamentals_warning.setStyleSheet(
-            "color: #78350f; background: #fef3c7; border: 1px solid #b45309; padding: 6px;"
-        )
+        self.fundamentals_warning.setStyleSheet(theme.callout("warning"))
         self.fundamentals_warning.setWordWrap(True)
         form.addRow(self.fundamentals_warning)
 
@@ -786,7 +782,7 @@ class SettingsScreen(QWidget):
             "enforced by TRIMMING an order to what fits rather than refusing it, except "
             "the position count. Lowering a limit does not close anything already held."
         )
-        warning.setStyleSheet("color: #b71c1c;")
+        warning.setStyleSheet(theme.text(theme.DANGER))
         warning.setWordWrap(True)
         form.addRow(warning)
 
@@ -902,7 +898,7 @@ class SettingsScreen(QWidget):
             "sells on its own is a larger delegation than one that declines to buy. "
             "Disabled, a breach is still measured, logged and blocking."
         )
-        delever_note.setStyleSheet("color: #b71c1c;")
+        delever_note.setStyleSheet(theme.text(theme.DANGER))
         delever_note.setWordWrap(True)
         form.addRow(delever_note)
 
@@ -1088,9 +1084,7 @@ class SettingsScreen(QWidget):
             "phase. Those rails limit the damage; they do not make the strategy correct. "
             "Review the decision journal regularly."
         )
-        self.autonomy_warning.setStyleSheet(
-            "color: #7f1d1d; background: #fee2e2; border: 1px solid #b91c1c; padding: 6px;"
-        )
+        self.autonomy_warning.setStyleSheet(theme.callout("danger"))
         self.autonomy_warning.setWordWrap(True)
         form.addRow(self.autonomy_warning)
 
@@ -1110,7 +1104,7 @@ class SettingsScreen(QWidget):
         chosen = self.selected_strategies()
         if chosen:
             self.selected_strategies_label.setText(f"Cleared: {', '.join(chosen)}")
-            self.selected_strategies_label.setStyleSheet("color: #7f1d1d; font-weight: bold;")
+            self.selected_strategies_label.setStyleSheet(theme.text(theme.DANGER_STRONG, bold=True))
         else:
             self.selected_strategies_label.setText("Cleared: none - every order waits for you.")
             self.selected_strategies_label.setStyleSheet("color: gray;")
@@ -1187,7 +1181,7 @@ class SettingsScreen(QWidget):
         finally:
             self.broker_test_button.setEnabled(True)
         self.broker_test_result.setText(("✓ " if ok else "✗ ") + message)
-        self.broker_test_result.setStyleSheet(f"color: {'#1b5e20' if ok else '#b71c1c'};")
+        self.broker_test_result.setStyleSheet(theme.text(theme.SUCCESS if ok else theme.DANGER))
 
     def _check_broker(self, broker: str) -> tuple[bool, str]:
         if broker != "alpaca":
@@ -1228,7 +1222,7 @@ class SettingsScreen(QWidget):
         finally:
             self.test_connection_button.setEnabled(True)
         self.test_connection_result.setText(("✓ " if ok else "✗ ") + message)
-        self.test_connection_result.setStyleSheet(f"color: {'#1b5e20' if ok else '#b71c1c'};")
+        self.test_connection_result.setStyleSheet(theme.text(theme.SUCCESS if ok else theme.DANGER))
 
     @staticmethod
     def _check_connection(base_url: str, model: str) -> tuple[bool, str]:
