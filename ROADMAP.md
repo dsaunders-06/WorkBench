@@ -210,6 +210,86 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M68 - The correlation table measured a different quantity from the rail
+
+8 August. Step 4.7 of `UI_UX_APPROACH.md`, second half.
+
+The Risk Console's matrix correlated **~60 intraday TICK samples** — about the
+last hour at a 60-second poll. The cluster cap correlates **60 DAILY bars**,
+about three months, a window M58b chose deliberately after finding that 300 bars
+averaged away a genuinely correlated pair.
+
+So the table an operator read to understand the correlation limit was not
+showing the correlation that enforces it. **AMAT/AMD at 0.79 against a 0.70
+threshold — a binding pair in the live book — could not appear on it at all**,
+because it was not that quantity.
+
+`PortfolioGovernor.binding_pairs()` publishes the rail's own answer. The
+pairwise computation is extracted into `_pair_correlation` and **shared** with
+`_correlated_holdings`, so alignment, the twenty-observation minimum and the
+sixty-bar window are one implementation rather than two that resemble each
+other. The existing governor tests passing unchanged is what says the refactor
+altered no behaviour.
+
+Read-only, adding no judgement — it publishes a calculation the rail already
+performs — so it changes no decision and sits inside the freeze.
+
+**The screen asks and never recomputes.** A test replaces the governor's method
+with one returning a pair the raw numbers would not produce and asserts that is
+still what renders. That is the test which fails if someone later "simplifies"
+the panel by correlating `_price_history` again.
+
+Binding pairs show at **every** level: a constraint on what may be traded is the
+fact, and the matrix is the detail. "Nothing held" and "held things that do not
+correlate" are worded differently, because only one of them is reassuring.
+
+## M67 - The screen called "why was I refused" did not answer that
+
+8 August. Step 4.7, first half.
+
+It showed four VaR/ES tiles, a correlation matrix, the kill-switch and (since
+M60) quarantined positions — and **nothing about refusals**.
+
+That mattered more than it had that morning, because **M64 made the Regime
+Monitor point here**: when the regime permits a strategy and nothing still
+trades, that screen now says *"the reason is a risk rail — see the Risk
+Console."* A forward reference to a screen that cannot answer is the M58a
+pattern, and it was created and closed on the same day.
+
+The numbers come from `summarise_refusals` over `load_risk_decisions` — the same
+functions the daily report uses — so the screen and the report cannot describe
+one night differently. A test asserts the headline is identical to what the
+report would print, which is what fails if someone counts rows on the screen
+instead.
+
+### The brief was overruled, and it is the third time
+
+§4.7 puts *"kill-switch control"* at Professional and hides the screen entirely
+at Guided. `ui_level.py` says warnings, **refusal reasons** and the sign-off gate
+are identical at every level, and that safety is not a level. A Guided operator
+unable to reach the halt control is the worst thing that document could have
+produced.
+
+**Depth varies; presence does not.** Guided gets the plain sentence, Standard
+adds the families and their counts, Professional adds the audit log. Tests pin
+the kill-switch at all three levels.
+
+Third time the brief has been wrong in detail — M63 on the Balances premise,
+M64 on the macro panel, this on the level. Recorded rather than worked around
+silently.
+
+### Caught by rendering it against the real record
+
+The first draft loaded the whole file, so it read **"2,629 candidates
+considered"** while meaning *since the file was created*. That is **M56b
+exactly** — lifetime totals under a heading implying a session, the defect where
+the 6 August report claimed a kill-switch that had fired on the 4th —
+reintroduced on a screen one day after being fixed in the report.
+
+The synthetic ten-row fixture could never have shown it. Now bounded to today,
+the heading says so, and a test writes a row dated yesterday and asserts it is
+excluded.
+
 ## M64 - The Regime Monitor says what the regime DOES
 
 8 August. Step 4.6 of `UI_UX_APPROACH.md`.

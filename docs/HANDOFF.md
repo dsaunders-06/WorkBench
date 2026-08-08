@@ -93,46 +93,23 @@ Not deployed. See ROADMAP M65 for what it does *not* fix — `_announce_fill`
 still publishes the reference price at `transmitted`, so a lot created live
 inside a session carries it until the next startup.
 
-## Superseded — the original M65 note
-
-**The entry record holds the price we asked for, not the price we paid.** 8 of
-the 10 open positions differ; AMD by 141 bps, GS by 52.
-
-`OMS._announce_fill` publishes when status is `"filled"` **or `"transmitted"`**
-and takes `order.filled_price or order.reference_price`. At transmit there is no
-fill price, so it publishes the reference — and `_on_fill` records it with
-`setdefault`, so the real fill can never replace it.
-
-`restore_open_lots` uses `entry.price` as the lot's cost basis, so realised P&L
-will be wrong by the drift and the **R-multiple denominator** is wrong with it —
-AMD's true risk per share is 7.3% larger than recorded. Both feed the promotion
-gate and the September burst.
-
-It changes no trading decision (sizing already happened on the reference), so
-fixing it is inside the freeze rather than against it. It was invisible because
-CVS — the only closed trade — drifted 1.4 bps and is right by luck.
-
-**Not fixed tonight deliberately:** `setdefault` is load-bearing for M53's
-partial exits, so it cannot simply become an assignment, and existing records
-need correcting by hand. See ROADMAP, M65. **Do not start it before Tuesday.**
-
 ## Where things stand
 
 - **Deployed:** `M63+M62 (49482c2)`, hash-verified, **launched and confirmed
   running** on 8 August, and alive through a full reconciliation poll cycle with
   no false positives.
-- **Repo:** clean, pushed, `master` at `55ad716`.
-- **HEAD IS AHEAD OF THE DEPLOYED BUILD IN `src/`, and this time that is real.**
-  `git diff 49482c2..HEAD -- src/` shows `regime_monitor.py` and
-  `strategies/engine.py`. It is M64 only — presentation, plus a listener hook
-  that changes no gating. **Monday needs none of it.** Do not deploy before the
-  split test on its account.
+- **Repo:** clean, pushed. `git log --oneline -1` gives the tip; the handoff commit is always at or near it.
+- **HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN `src/`, and that is real.**
+  `git diff 49482c2..HEAD -- src/` covers M64, M65, M67 and M68 — the Regime
+  Monitor, the entry-price reconciliation, and both halves of the Risk Console.
+  All presentation or record-correction; **none of it changes a trading
+  decision, and Monday needs none of it.** Do not deploy before the split test.
 - **Account:** equity ~$101,245. Ten positions — AMAT 7, AMD 7, CRWD 16, CSCO 44,
   GS 7, JNJ 19, MS 41, UNP 17, VRTX 19, WFC 58 — all protected, all carrying a
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
   is refusing new entries. That is the rails working.
 - **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,519 tests**; ruff, black, mypy, bandit clean.
+- **1,556 tests**; ruff, black, mypy, bandit clean.
 
 ## What landed on 8 August
 
@@ -144,6 +121,10 @@ need correcting by hand. See ROADMAP, M65. **Do not start it before Tuesday.**
 | **M62** | A broker JSON payload fragmented one cause into 113 report rows. Guard plus a row cap |
 | **M63** | Dashboard balances: two groups, level-aware |
 | **M64** | Regime Monitor: says which strategies the regime permits, and found a concurrency race doing it |
+| **M65** | The entry record held the price we asked, not the price we paid. **Found and fixed** |
+| **M66** | The risk cap that gates every entry uses ENTRY prices. **Found, designed, not built** |
+| **M67** | The Risk Console now answers "why was I refused", closing a forward reference M64 created hours earlier |
+| **M68** | Its correlation table was measuring intraday ticks where the rail measures 60 daily bars |
 
 ## The reframing that changed how we work
 
@@ -234,11 +215,16 @@ measurement.
 
 ### Group 4 — the interface
 
-Steps 1–3 done. **Step 4 (Dashboard) and 4.6 (Regime Monitor) now done.**
-Remaining: Screener, Strategy Workbench, AI Advisor (§4.9 calls that one "the
-simplest screen, and fine"). **Order Blotter deliberately last** — most
-safety-critical, and should be touched when the design system is proven.
-**Performance (step 5) waits for September.**
+Steps 1–3 done. **Step 4 (Dashboard), 4.6 (Regime Monitor) and 4.7 (Risk
+Console, both halves) now done.** Remaining: Screener, Strategy Workbench, AI
+Advisor (§4.9 calls that one "the simplest screen, and fine"). **Order Blotter
+deliberately last** — most safety-critical, and should be touched when the
+design system is proven. **Performance (step 5) waits for September.**
+
+**The brief has now been wrong in detail three times** — M63 on the Balances
+premise ("most of them dashes"; ten of eleven report a figure), M64 on the macro
+panel, M67 on the level. Read §4.x as a statement of intent and check its
+particulars against the code and the account before implementing them.
 
 Two things the last two screens established, worth carrying:
 
@@ -311,16 +297,17 @@ orders".
 
 STATE
 Deployed build M63+M62 (49482c2), verified by hash and confirmed to start.
-Repo clean and pushed at 55ad716.
+Repo clean and pushed - `git log --oneline -1` for the tip.
 
-  HEAD IS AHEAD OF THE DEPLOYED BUILD IN src/, and unlike previous handoffs
+  HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN src/, and unlike earlier handoffs
   that is a real difference, not documentation. `git diff 49482c2..HEAD -- src/`
-  shows regime_monitor.py and strategies/engine.py — M64 only, presentation
-  plus a listener hook that changes no gating. MONDAY NEEDS NONE OF IT. Do not
-  deploy before the split test on its account.
+  covers M64, M65, M67 and M68 - the Regime Monitor, the entry-price
+  reconciliation, and both halves of the Risk Console. All presentation or
+  record-correction; NONE of it changes a trading decision, and MONDAY NEEDS
+  NONE OF IT. Do not deploy before the split test.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,519 tests
+VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,556 tests
 pass; ruff, black, mypy, bandit clean.
 
 THE THING WITH A CLOCK
@@ -383,24 +370,18 @@ split changes avg_entry_price legitimately.
   "transmitted", so a lot created live inside a session carries it until the
   next startup reconciles. See ROADMAP M65.
 
-The original finding, for context
-The entry record holds the price we ASKED, not the price we PAID. 8 of 10 open
-positions differ; AMD by 141 bps, GS by 52. _announce_fill publishes when
-status is "filled" OR "transmitted" and takes filled_price or reference_price -
-at transmit there is no fill price, so it publishes the REFERENCE, and _on_fill
-records it with setdefault so the real fill can never replace it.
+  What it was: _announce_fill publishes when status is "filled" OR
+  "transmitted" and takes filled_price or reference_price. At transmit there is
+  no fill price, so it published the REFERENCE, and _on_fill stored it with
+  setdefault so the real fill could never replace it. 8 of 10 positions
+  differed, AMD by 141 bps. restore_open_lots uses entry.price as the lot's
+  cost basis, so P&L and the R-MULTIPLE DENOMINATOR were both wrong by that
+  drift - AMD's true risk per share is 7.3% larger than recorded - and both
+  feed the promotion gate and the September burst.
 
-  restore_open_lots uses entry.price as the lot's cost basis, so P&L will be
-  wrong by the drift and the R-MULTIPLE DENOMINATOR is wrong with it: AMD's
-  true risk per share is 7.3% larger than recorded. Both feed the promotion
-  gate and the September burst. "A defect that corrupts the record is worse
-  than one that stops the session."
-
-  It changes no trading decision, so fixing it is INSIDE the freeze. It was
-  invisible because CVS - the only closed trade - drifted 1.4 bps and is right
-  by luck. NOT fixed tonight on purpose: setdefault is load-bearing for M53's
-  partial exits, and existing records need correcting by hand. See ROADMAP M65.
-  DO NOT START IT BEFORE TUESDAY.
+  Invisible because CVS, the only closed trade, drifted 1.4 bps and is right by
+  luck. "A defect that corrupts the record is worse than one that stops the
+  session."
 
 WHAT LANDED 8 AUGUST
   M59  a protective stop whose LEVEL moved was invisible
@@ -412,6 +393,14 @@ WHAT LANDED 8 AUGUST
   M63  Dashboard balances, two groups, level-aware
   M64  Regime Monitor says which strategies the regime permits — and found an
        asyncio.gather race doing it
+  M65  the entry record held the price we ASKED, not the price we PAID — found
+       and FIXED, and it heals the eight wrong records already on disk
+  M66  the risk cap gating every entry uses ENTRY prices — found and DESIGNED,
+       not built, because it is inside the freeze
+  M67  the Risk Console now answers "why was I refused", closing a forward
+       reference M64 created hours earlier
+  M68  its correlation table measured intraday ticks where the rail measures 60
+       daily bars, so a binding pair could not appear on it at all
 
 THE REFRAMING THAT CHANGED HOW WE WORK
 The trial does two conflicting jobs: collect edge evidence (wants a frozen
