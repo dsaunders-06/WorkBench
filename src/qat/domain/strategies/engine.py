@@ -81,6 +81,9 @@ class StrategyEngine:
         self._regime_is_real = False
         self._warned_about_default = False
         self._deployment_listeners: list[Callable[[], None]] = []
+        # Views that must not read this engine's eligibility mid-update - see
+        # add_eligibility_listener for the race that makes this necessary.
+        self._eligibility_listeners: list[Callable[[], None]] = []
         self.regime_eligibility_mass = regime_eligibility_mass
         # The full distribution, not just the label it collapses to (M27b).
         self._current_probs: dict[str, float] = {}
@@ -220,6 +223,7 @@ class StrategyEngine:
         self._regime_is_real = True
         self._current_probs = dict(event.probs)
         self._log_eligibility_changes()
+        self._notify_eligibility_listeners()
 
     def _eligible_mass(self, strategy: Strategy) -> float | None:
         """How much of the distribution sits in this strategy's regimes.
@@ -246,6 +250,47 @@ class StrategyEngine:
         if mass is None:
             return self._current_regime in strategy.suitable_regimes()
         return mass >= self.regime_eligibility_mass
+
+    def add_eligibility_listener(self, listener: Callable[[], None]) -> None:
+        """Called synchronously once this engine has finished reading a regime.
+
+        A plain callback rather than a bus subscription, and the reason is a
+        race rather than a preference. `EventBus.publish` dispatches with
+        `asyncio.gather`, so every handler for a RegimeEvent runs CONCURRENTLY -
+        subscription order buys nothing. A screen that subscribed to
+        RegimeEvent and then asked `is_eligible()` could therefore read the
+        distribution from the PREVIOUS regime, and would do so exactly when a
+        regime changes, which is the one moment anybody is looking.
+
+        Fired after `_current_probs` is updated, so a listener always sees the
+        state the engine has just decided on. Same reasoning as KillSwitch's
+        listener, where views of the switch silently disagreed with it.
+
+        Fired on every regime read rather than only on a change, so a listener
+        can render current state without needing its own initial fetch.
+        """
+        self._eligibility_listeners.append(listener)
+
+    def _notify_eligibility_listeners(self) -> None:
+        for listener in self._eligibility_listeners:
+            try:
+                listener()
+            except Exception:  # noqa: BLE001 - a bad view must not stop gating
+                logger.exception("An eligibility listener failed")
+
+    def eligible_mass(self, strategy: Strategy) -> float | None:
+        """How much of the distribution sits in this strategy's regimes.
+
+        Public so a screen can SHOW the figure the decision was made on rather
+        than recomputing it from the published probabilities. Two derivations of
+        one number drift, and an operator would then be reading an explanation
+        of a decision taken on different arithmetic - the same reason the
+        adopted-positions panel reuses the governor's figure instead of its own.
+
+        None before any RegimeEvent has arrived, which callers must present as
+        "not yet known" rather than as a measurement.
+        """
+        return self._eligible_mass(strategy)
 
     def _log_eligibility_changes(self) -> None:
         """Says which strategies just became able or unable to trade.

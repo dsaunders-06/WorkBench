@@ -37,7 +37,9 @@ from qat.domain.ai_advisory.schema import MacroAssessment
 from qat.domain.events import MacroEvent, MarketDataEvent, RegimeEvent
 from qat.domain.macro_analysis import compute_macro_signal
 from qat.domain.regime import ALL_REGIMES
+from qat.presentation import theme
 from qat.presentation.runtime import Runtime
+from qat.presentation.ui_level import UiLevel
 from qat.presentation.widgets import ProbabilityBar
 
 logger = logging.getLogger(__name__)
@@ -56,9 +58,48 @@ class RegimeMonitorScreen(QWidget):
 
         layout = QVBoxLayout(self)
 
+        self.level = UiLevel.from_settings(runtime.settings)
+
         self.regime_label = QLabel("Regime: (waiting for data...)")
-        self.regime_label.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.regime_label.setStyleSheet(f"font-size: {theme.SUBHEAD}px; font-weight: bold;")
         layout.addWidget(self.regime_label)
+
+        # --- What the regime DOES, which the screen never said ------------
+        #
+        # The label and the bars are the INPUTS. Whether a strategy may trade
+        # is the consequence, and it is not the label: since M27b eligibility
+        # is probability MASS across a strategy's suitable regimes. An operator
+        # reading "Regime: bull" and inferring swing is trading can be wrong in
+        # either direction, and a strategy silently ineligible for a session
+        # looks exactly like one that found no setup.
+        self.eligibility_label = QLabel("Strategies: (waiting for a regime...)")
+        self.eligibility_label.setWordWrap(True)
+        self.eligibility_label.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        layout.addWidget(self.eligibility_label)
+
+        self.mass_detail = QLabel("")
+        self.mass_detail.setWordWrap(True)
+        self.mass_detail.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
+        self.mass_detail.setVisible(self.level.shows_advanced())
+        layout.addWidget(self.mass_detail)
+
+        self.scalar_sentence = QLabel("")
+        self.scalar_sentence.setWordWrap(True)
+        self.scalar_sentence.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
+        self.scalar_sentence.setVisible(self.level.explains())
+        layout.addWidget(self.scalar_sentence)
+
+        # Names the neighbour rather than deriving a second refusal picture.
+        # "Why did nothing happen" usually has a non-regime answer - the
+        # position limit or the risk cap - and that question belongs to the
+        # Risk Console. Two screens computing one answer is how they drift.
+        self.elsewhere_hint = QLabel(
+            "This screen covers the regime only. If the regime permits a strategy and "
+            "nothing still trades, the reason is a risk rail - see the Risk Console."
+        )
+        self.elsewhere_hint.setWordWrap(True)
+        self.elsewhere_hint.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
+        layout.addWidget(self.elsewhere_hint)
 
         self.probability_bars: dict[str, ProbabilityBar] = {}
         for regime in sorted(r.value for r in ALL_REGIMES):
@@ -66,13 +107,19 @@ class RegimeMonitorScreen(QWidget):
             self.probability_bars[regime] = bar
             layout.addWidget(bar)
 
-        layout.addWidget(self._build_macro_panel())
+        self.macro_panel = self._build_macro_panel()
+        self.macro_panel.setVisible(self.level.shows_advanced())
+        layout.addWidget(self.macro_panel)
 
-        layout.addWidget(QLabel("Feature drivers"))
+        self.driver_header = QLabel("Feature drivers")
         self.driver_table = QTableWidget(0, 2)
         self.driver_table.setHorizontalHeaderLabels(["Driver", "Value"])
-        layout.addWidget(self.driver_table)
+        for widget in (self.driver_header, self.driver_table):
+            widget.setVisible(self.level.prefers_density())
+            layout.addWidget(widget)
 
+        # Never level-gated. A regime change can switch a strategy off for a
+        # session, and this record is how that gets reconstructed afterwards.
         layout.addWidget(QLabel("Transition history"))
         self.history_list = QListWidget()
         layout.addWidget(self.history_list)
@@ -80,6 +127,10 @@ class RegimeMonitorScreen(QWidget):
         self.runtime.bus.subscribe(RegimeEvent, self._on_regime)
         self.runtime.bus.subscribe(MacroEvent, self._on_macro)
         self.runtime.bus.subscribe(MarketDataEvent, self._on_market_data)
+        # Not a bus subscription: the engine tells us once it has finished
+        # reading the regime, so we can never render a verdict it has not made
+        # yet. See StrategyEngine.add_eligibility_listener.
+        self.runtime.strategy_engine.add_eligibility_listener(self._refresh_eligibility)
 
     def _build_macro_panel(self) -> QGroupBox:
         box = QGroupBox("Macro market conditions")
@@ -184,9 +235,56 @@ class RegimeMonitorScreen(QWidget):
             if not name.endswith("(benchmark) price")
         }
 
+    def _refresh_eligibility(self) -> None:
+        """What the regime permits, stated from the component that decides it.
+
+        `is_eligible` and `eligible_mass` are ASKED, never reproduced here. A
+        screen that summed the published probabilities itself would be a second
+        derivation of the same number, and the two drift - leaving the operator
+        reading an explanation of a decision taken on different arithmetic. Same
+        rule the adopted-positions panel follows.
+
+        Driven by the engine's own listener rather than by this screen's
+        RegimeEvent handler, and that is a correctness matter rather than a
+        style one: `EventBus.publish` uses `asyncio.gather`, so both handlers
+        run concurrently and reading the engine from ours could return the
+        PREVIOUS regime's verdict - at exactly the moment a regime changes.
+        """
+        engine = self.runtime.strategy_engine
+        strategies = list(engine.strategies)
+        if not strategies:
+            self.eligibility_label.setText("Strategies: none deployed.")
+            self.mass_detail.setText("")
+            return
+
+        verdicts: list[str] = []
+        details: list[str] = []
+        for strategy in strategies:
+            permitted = engine.is_eligible(strategy)
+            verdicts.append(f"{strategy.name}: {'PERMITTED' if permitted else 'NOT PERMITTED'}")
+            mass = engine.eligible_mass(strategy)
+            suitable = " / ".join(sorted(r.value for r in strategy.suitable_regimes()))
+            if mass is None:
+                details.append(f"{strategy.name}: no distribution yet; suits {suitable}")
+            else:
+                details.append(
+                    f"{strategy.name}: {mass:.2f} of the distribution sits in {suitable} "
+                    f"(threshold {engine.regime_eligibility_mass:.2f})"
+                )
+        self.eligibility_label.setText("Strategies - " + "; ".join(verdicts))
+        self.mass_detail.setText("\n".join(details))
+
     async def _on_regime(self, event: RegimeEvent) -> None:
         self.regime_label.setText(
             f"Regime: {event.label} (exposure scalar={event.exposure_scalar:.2f})"
+        )
+        # Straight from the event, so no ordering question arises - unlike
+        # eligibility, which belongs to the strategy engine. Set regardless of
+        # level and merely hidden (M58c), so anything reading this screen
+        # programmatically still sees the whole story.
+        self.scalar_sentence.setText(
+            f"Positions are sized at {event.exposure_scalar * 100:.0f}% of normal "
+            "while this regime holds."
         )
         self._regime_probs = event.probs
         for label, prob in event.probs.items():
