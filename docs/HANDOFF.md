@@ -320,18 +320,23 @@ changes nothing.
 M45 always said the module was plumbing that screens would adopt one at a time.
 None has.
 
-**This makes M58a a promise the application does not keep.** That first-run
-dialog tells the operator the choice decides how much is explained and how much
-is shown, and today it decides neither. It was built on 8 August without
-checking whether anything consumed the setting. Two honest resolutions:
+**This made M58a a promise the application did not keep.** That first-run dialog
+tells the operator the choice decides how much is explained and how much is
+shown, and it decided neither. It was built on 8 August without checking whether
+anything consumed the setting.
 
-1. **Dashboard consumes the level as part of step 4** - the level becomes real
-   and the dialog keeps its promise. This is the recommended one, because step 4
-   is next in the UI/UX order regardless.
-2. **Hold the prompt** until the first screen that branches on the level ships.
+**Closed the same day (M58c).** `AdoptedPositionsPanel` is now the first screen
+to consume the level, chosen because it already separated the two things the
+level distinguishes: `headline()` is a warning and `explanation()` explains it.
+At Professional the explanation is hidden. The headline, its colour, and the
+fact that the panel appears at all are identical at every level, and a test
+asserts it - **safety is not a level**, so a professional operator gets a denser
+screen and never a quieter one. The explanation text is still set when hidden,
+so anything reading the panel programmatically sees the whole story.
 
-Whichever is chosen, it should be chosen deliberately: asking a first-run
-question about an inert setting is worse than not asking.
+That is one panel, not the Dashboard. **Step 4 extends the same seam to the rest
+of the screen**; what it no longer has to do is make the level mean something
+for the first time.
 
 ### Group 3 — M32, ASX readiness
 

@@ -29,6 +29,7 @@ from qat.presentation.adopted_panel import AdoptedPositionsPanel
 from qat.presentation.balances_panel import BalancesPanel
 from qat.presentation.runtime import Runtime
 from qat.presentation.session_panel import SessionPanel
+from qat.presentation.ui_level import UiLevel
 from qat.presentation.widgets import KpiTile
 
 logger = logging.getLogger(__name__)
@@ -58,7 +59,10 @@ class DashboardScreen(QWidget):
 
         # Directly under the session panel, because when this fires it is the
         # answer to "the market is open and nothing is happening".
-        self.adopted_panel = AdoptedPositionsPanel()
+        # The expertise level, finally consumed by a screen (M58c). Read once
+        # at construction like every other setting - the level takes effect at
+        # the next restart, which is what Settings promises.
+        self.adopted_panel = AdoptedPositionsPanel(level=UiLevel.from_settings(runtime.settings))
         layout.addWidget(self.adopted_panel)
 
         self.regime_header = QLabel("Regime: (waiting for data...)")

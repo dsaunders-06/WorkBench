@@ -322,11 +322,24 @@ plumbing.
 > set the level (M55), and is asked for it on first run (M58a), and nothing
 > anywhere behaves differently as a result.
 >
-> That makes the M58a dialog a promise the application does not keep: it says
-> the choice decides how much is explained and how much is shown, and today it
-> decides neither. **Step 4 should be the screen that makes it true** — or the
-> prompt should wait until one does. Either is defensible; shipping the question
-> without the consequence is not.
+> That made the M58a dialog a promise the application did not keep: it says the
+> choice decides how much is explained and how much is shown, and it decided
+> neither.
+>
+> **Closed the same day (M58c).** `AdoptedPositionsPanel` is the first screen to
+> consume the level, chosen because it already separates the two things the
+> level distinguishes - `headline()` is a warning, `explanation()` explains it.
+> At Professional the explanation is hidden; the headline, its colour and the
+> fact the panel appears at all are identical at every level, and a test asserts
+> that. **Safety is not a level**: a professional operator gets a denser screen,
+> never a quieter one.
+>
+> The text is still SET when hidden, only not shown, so anything reading the
+> panel programmatically still sees the whole story.
+>
+> This is one panel, not the Dashboard. Step 4 extends the same seam to the rest
+> of the screen; what it no longer has to do is make the level mean something
+> for the first time.
 >
 > Same category as the minimum-hold rail: configuration that persists, displays,
 > and changes nothing. Worth naming in both places because the pattern keeps
