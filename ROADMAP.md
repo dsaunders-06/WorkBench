@@ -1439,11 +1439,23 @@ already 17% over the cap in reality, and only marginally over on paper.
 plumbed through every layer, and is supplied by nothing. *When something is
 added, ask what reads it* — here, what *writes* it.
 
-**Not fixed, and not to be fixed before Tuesday.** It changes which trades are
-permitted and how large they are, so it is squarely inside the validation
-freeze and needs a deliberate, recorded lift. It also interacts with the
-market-data finding: whichever prices are passed should come from the same feed
-decision, or the fix would bake in the IEX bias.
+**Not fixed, and not to be deployed before Tuesday.** It changes which trades
+are permitted and how large they are, so it is squarely inside the validation
+freeze and needs a deliberate, recorded lift.
+
+**Correction, same day.** This entry first said the fix was coupled to the
+market-data decision and should wait for it. **That was wrong.** Alpaca's
+`Position.current_price` is the CONSOLIDATED tape — measured against both feeds
+for all ten held positions, 10 matched SIP and 0 matched IEX. So the price the
+fix needs is already in every `positions()` response the app makes, is free on
+this tier, and carries none of the IEX range bias. The fix is one extra fallback
+tier in `snapshot`, plus an optional `current_price` on `Position`, and needs no
+caller changes at all. Designed in
+`docs/superpowers/specs/2026-08-08-risk-at-stop-current-prices-design.md`.
+
+Checked rather than assumed: `QAT_DELEVER_SWEEP_ENABLED=false`, so the stricter
+figure cannot force a sale. With the sweep enabled, a jump from 5.02% to 5.87%
+would have trimmed all ten positions the moment it deployed.
 
 ### M65 - The entry record held the price we ASKED, not the price we PAID  **[FIXED 8 AUGUST]**
 

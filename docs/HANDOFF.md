@@ -55,9 +55,22 @@ further to fall to its stop. The bias grows with profit and is backwards from
 prudent.
 
 It changes which trades happen and how large they are, so it is **inside the
-freeze** and needs a recorded lift. It also interacts with the market-data
-finding — whichever prices get passed should come from the same feed decision,
-or the fix bakes in the IEX bias. **Do not start it before Tuesday.**
+freeze** and needs a recorded lift. **Do not deploy before Tuesday.**
+
+**Designed, not built** —
+`docs/superpowers/specs/2026-08-08-risk-at-stop-current-prices-design.md`. It is
+smaller than it looks: **Alpaca's `Position.current_price` is the consolidated
+tape** (10 of 10 matched SIP, 0 matched IEX), so the price is already in every
+`positions()` response, free on this tier, and free of the IEX bias. One extra
+fallback tier in `snapshot` plus an optional field on `Position`; no caller
+changes.
+
+An earlier version of this section said the fix was coupled to the market-data
+decision. It is not.
+
+Checked rather than assumed: `QAT_DELEVER_SWEEP_ENABLED=false`, so the stricter
+figure cannot force a sale. With the sweep enabled it would have trimmed all ten
+positions on deploy.
 
 Verify with `scripts/analysis/verify_gating_figures.py`.
 
