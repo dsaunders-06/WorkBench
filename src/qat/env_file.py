@@ -13,6 +13,32 @@ from pathlib import Path
 from qat.paths import env_path
 
 
+def has_key(key: str, path: str | Path | None = None) -> bool:
+    """Whether this setting has ever been written down (M58a).
+
+    Distinct from "does Settings have a value for it", which is always true -
+    every field has a default. The difference matters for anything that should
+    be asked once: `ui_level` defaults to "standard", so an operator who
+    deliberately chose Standard and one who has never been asked are
+    indistinguishable by value, and only the file can tell them apart.
+
+    A missing or unreadable file reads as "never written", which is the safe
+    direction: the cost is asking a question once more than necessary.
+    """
+    path = Path(path) if path is not None else env_path()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("#") or "=" not in stripped:
+            continue
+        if stripped.split("=", 1)[0].strip() == key:
+            return True
+    return False
+
+
 def update_env_file(updates: dict[str, str], path: str | Path | None = None) -> None:
     # Defaults to the app directory rather than a working-directory-relative
     # ".env" (M22): the previous default wrote wherever the process happened to

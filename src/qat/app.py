@@ -12,12 +12,14 @@ import logging
 import sys
 
 import qasync
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from qat.config import Settings
 from qat.logging import configure_logging
 from qat.migration import migrate_legacy_layout
 from qat.paths import ensure_app_dir
+from qat.presentation.first_run import prompt_for_detail_level_if_never_chosen
 from qat.presentation.main_window import MainWindow
 from qat.presentation.runtime import Runtime
 from qat.run_marker import RunMarker, describe_previous_run
@@ -68,6 +70,20 @@ def main() -> None:
 
     window = MainWindow(runtime)
     window.show()
+
+    # Asked once, and deliberately AFTER the engines are running (M58a).
+    #
+    # This is a modal dialog, so wherever it is shown it blocks. Ahead of
+    # `start_all` it would block with no feed, no reconciliation and no
+    # protection re-arm - an operator who launched and walked away would leave
+    # a book unprotected behind a question about text density. Scheduled on the
+    # Qt loop instead, it appears once the runtime is up.
+    #
+    # Nothing is lost by waiting: the level takes effect at the next restart,
+    # like every setting, so asking earlier would not have changed this run
+    # anyway. On every launch after the first it returns immediately, because
+    # the condition is whether the setting has ever been WRITTEN.
+    QTimer.singleShot(0, lambda: prompt_for_detail_level_if_never_chosen(window))
 
     try:
         with loop:
