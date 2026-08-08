@@ -205,6 +205,159 @@ returns what its name suggests. The corporate-actions work (M39) is the same
 shape again, and should start by measuring what the broker reports through a
 split rather than by reasoning about it.
 
+**That measurement was taken on 8 August - see M60.** The announcement side is
+now known rather than assumed. What Alpaca does to a held QUANTITY and to a
+resting OCO through a split is still unmeasured, and M39's adjustment waits on
+it.
+
+## M59 - A protective stop that moved was invisible
+
+8 August, found while measuring for M39 and independent of it. No corporate
+action is needed for this to bite.
+
+`verify_position_stops` compared PRESENCE - `symbol not in resting` - so a stop
+that was still resting, at a different price, passed the check. Only
+disappearance was ever watched. The 31 July incident that created this rail was
+six stops vanishing at once, and the rail was built to the shape of that
+incident rather than to the question it was asked.
+
+**Why this is not bookkeeping.** `_position_stops` is the denominator of every
+risk-at-stop figure `PortfolioGovernor` gates new entries on: a position with a
+known stop risks the distance to that stop, one without risks its whole value.
+The book sits at **5.02% against a 5.00% cap**, so a belief wrong by a factor
+mis-states the aggregate - and the aggregate is shared. A wrong denominator on
+one symbol refuses entries in every other.
+
+**A drifted stop is replaced, not dropped.** The position IS protected, just not
+where this app thought, and the broker is the authority on what rests. Dropping
+it would count a protected position at full value and overstate the very
+aggregate the fix exists to correct.
+
+**The tolerance is relative, not absolute.** A book holding WFC at 87 and GS at
+1,040 cannot share an absolute epsilon: one loose enough to absorb rounding on
+GS is blind to a real move on WFC. At 1e-4 it absorbs cent-level rounding on
+every price in the book.
+
+The only production caller discards the return value, so widening its meaning
+from "lost its stop" to "protection no longer trustworthy" breaks nothing.
+
+## M60 - Something outside this application changed a held position
+
+8 August. The part M39 (corporate actions) and M43 (halts) share, built once so
+the second costs a producer rather than a mechanism: **reconciliation being able
+to be told a difference is explained, and a position being in a state the
+ordinary path must not treat as ordinary.**
+
+### What Alpaca actually reports, measured
+
+Three read-only probes against the paper account, per the instruction in *"How
+Alpaca actually represents orders"* above.
+
+A forward split is `old_rate=1.0, new_rate=4.0` - the ratio is `new/old`. A
+reverse split inverts it. Each record carries `ex_date`, `record_date`,
+`payable_date`, `target_symbol`, `target_original_cusip` and a stable
+`corporate_action_id`. `GetCorporateAnnouncementsRequest` accepts a `symbol`
+filter server-side, so a detector queries one symbol rather than sifting the
+~1,600 records a year the market produces.
+
+Two traps in that data:
+
+* **`target_symbol` is absent on roughly 10% of records** - 32 of 291 reverse
+  and 8 of 63 forward splits in an 88-day sample. A market-wide scan is
+  unreliable; the per-symbol query is the right shape.
+* **`payable_date` can precede `ex_date`.** CRWD's are 1 and 2 July. `ex_date`
+  is the one to key on.
+
+`TradingClient` wraps no account-activities method in alpaca-py 0.43.5 -
+activities are Broker-API-only there. The REST endpoint answers directly, and
+says this account has processed **zero corporate actions, ever**.
+
+### The near-miss that shaped it
+
+**CRWD split 4-for-1 with ex_date 2 July.** We hold 16, bought on 31 July -
+after the split - and the resting OCO is correctly sized for 16 post-split
+shares. Nothing is wrong with the position.
+
+That is exactly why it matters. **A detector matching on symbol and ratio over a
+recent window would flag our CRWD holding as split-explained today, and be
+wrong.** The false positive is in the book, not in a thought experiment. Any
+future detector must gate on `ex_date` falling after the position was opened.
+
+It is also why automatic detection is **deliberately not in this milestone**.
+The piece that can be wrong in the dangerous direction - declining to halt on a
+divergence that is not a split - is the piece deferred until there is evidence
+to build it against.
+
+### The binding rule, which is the design
+
+An explanation is tied to the quantity the **broker** reported when it was
+declared. Without that binding, declaring a symbol explained once grants
+permanent immunity and the next genuine divergence passes in silence - the
+failure `adopt_broker_positions` already warns about, where an operator is
+trained to ignore the one signal meaning *"my view of the account cannot be
+trusted"*. A difference declared at 16-to-64 does not explain a later 64-to-128.
+
+Quarantine and explanation are deliberately separate questions: a position that
+moves again stops being explained and stays quarantined, because it is no less
+suspect for having moved.
+
+### Block writes, allow exits
+
+New entries and de-lever trims are refused; an ordinary exit is allowed and
+**re-sized from the broker**, because the tracked quantity is the one known to
+be wrong - selling 16 of 64 leaves three quarters of a position nobody intended
+to keep. Refusing exits would be the shape M56c was a defect for, where a gate
+quietly suppressed the only route to selling. The single exception is a broker
+read that fails: exiting a known-wrong quantity on a symbol already flagged as
+untrustworthy is worse than not exiting, and the refusal is a rejected order
+carrying a reason rather than a silent gate.
+
+Two further sites, both previously silent:
+
+* **`rearm_protective_stops` is the liquidation guard.** The recorded entry stop
+  predates whatever quarantined the position, so re-arming from it after a
+  4-for-1 split rests a sell-stop at roughly four times the new price - which
+  triggers immediately and liquidates at the next open.
+* **`restore_open_lots` was corrupting the ledger silently.** It takes QUANTITY
+  from the broker and BASIS from `_entries`, so after an external quantity
+  change it builds a lot at the post-event size on the pre-event basis - and no
+  warning fires, because the entry record exists. P&L is then wrong by the
+  event's factor and R wrong in its denominator, feeding the promotion gate and
+  the September evidence. **`_Entry` carries no quantity**, so there is nothing
+  to compare against and no cheaper guard than the quarantine.
+
+### The restart that laundered it
+
+`adopt_broker_positions` reseeds `_filled_quantities` wholesale from the broker,
+so a divergence **vanishes** across a restart: tracked matches broker,
+reconciliation is content, and the entry record and ledger stay wrong. With an
+overnight session and a restart between each one, that is the normal path and
+not an edge case. The store therefore persists, is loaded before adoption, and a
+quarantined position whose quantity has changed *again* is reported before the
+evidence is overwritten. The adoption banner names quarantined positions,
+because the operator is told to read the startup lines.
+
+### What this does not do
+
+**It contains damage; it does not repair it.** A declared anomaly stays
+quarantined until the underlying records are corrected by hand, as the CVS
+ledger was on 6 August. The Risk Console carries a permanent line saying so, and
+a test asserts that wording - *"declared"* reading as *"fixed"* is the one
+failure this could introduce, and a reviewer sees the text once where an
+operator sees it every session.
+
+Nothing is quarantined today, so the only behaviour that changes on the next
+session is M59's.
+
+### Under the freeze
+
+Both milestones are fix-immediately and neither changes which trades the
+strategy chooses or how it sizes them. M59 is *"protective orders not resting,
+or not being repaired"*; M60 is *"the kill-switch tripping on something that is
+not a real discrepancy"*. M60 adds no automatic judgement: the application halts
+less **only** where a human has explicitly said why, and otherwise refuses
+strictly more than before.
+
 ## M49 - The ledger could not record the trades the trial exists to collect
 
 Found on 5 August by asking whether M48's missed fill actually cost anything.
@@ -886,6 +1039,20 @@ record and the resting protection together, and record the adjustment on the
 closed trade so the P&L stays honest. Reconciliation must treat an explained
 ratio change as explained rather than as a discrepancy.
 
+**Half of that is now built - see M60, 8 August.** Reconciliation can be told a
+difference is explained, the position is quarantined from the write path, and
+neither the re-arm nor the ledger restore will act on it. What remains is the
+DETECTION and the ADJUSTMENT, and both wait on one measurement: what Alpaca does
+to a held quantity and to a resting OCO through a split. The announcement side
+is measured; this side has zero observations, because the account has never
+processed a corporate action.
+
+**The adjustment is where the four-way atomicity risk lives** - tracked
+quantity, entry record, resting protection, ledger basis. A partial adjustment
+is worse than none: correcting the quantity but not the stop leaves protection
+at four times the price, which liquidates at the next open. M60's quarantine is
+what gives that adjustment somewhere safe to fail partway.
+
 ### M40 - Fundamentals were absent from the AI advisory context  **[DONE]**
 
 `AdvisoryContext` carried symbol, regime, positions, risk metrics, candidate
@@ -1004,6 +1171,13 @@ being sized against a stale quote, which covers entry. It says nothing about the
 case that hurts: the position is held, the symbol is halted, the resting stop
 cannot fill, and it reopens materially lower. Nothing detects the halt and
 nothing flags that a position is currently unexitable.
+
+**The flagging half is now built - see M60, 8 August.** A halted position needs
+exactly what a split-affected one needs: to be in a state the ordinary path
+refuses to treat as ordinary. What M43 still needs is its own producer - a halt
+has no ratio to match, so detection is a different question from M39's - and
+that is the whole remaining cost, which was the point of building the concept
+once.
 
 ### M44 - Execution quality
 
