@@ -210,6 +210,72 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M77 - The Blotter could not say why an order was refused
+
+8 August. Step 4.2, the last screen in Group 4 and the most safety-critical.
+
+**§4.2 protects a reason text the screen never displayed.** *"Do not touch: …
+the reason text on a rejection"* and *"Enhance: rejection reasons are written for
+an engineer reading a log"* both presume a reason is on this screen. It was not:
+eleven columns and no reason field, `Order` carries no reason attribute, and
+`OMS._record` writes it to the decision journal instead. So the Blotter listed
+rejected orders - `_new_rejected_order` creates real ones - and **could not say
+why any of them was rejected.** Sixth time §4.x has been wrong in detail, and
+the same shape as M73: the brief guarding something that was never built.
+
+**The plain-language layer already existed and this screen did not read it.**
+`refusals.rail_of` turns §4.2's own example - *"sized at 0.4 shares, below one
+whole share …"* - into *"Sized below one whole share"*, and has since M51. Its
+consumers were the reporter and the Risk Console; never the screen where an
+operator meets a refused order. **Sixth instance of the `shows_advanced()`
+pattern.** Layered exactly as the brief asks: label in the cell, the rail's own
+words with every figure on hover, so the layering hides nothing.
+
+Guided also gets what the FAMILY means, because "Position limit" still assumes
+you know the book has one - and `classify().means` is a sentence written for
+that. It now reads *"Position limit - the book was full - says nothing about the
+trade."*
+
+**What the level may not touch.** M45 puts the sign-off gate and the mode banner
+outside the level model, and tests assert both identical at all three levels,
+including that declining the confirm dialog reaches `oms.sign_off` zero times.
+Guided is allowed to be STRICTER - one order at a time, enforced in the
+selection model so a batch cannot be formed at all - and nothing is allowed to
+be looser.
+
+**Keyboard sign-off, listed for Professional, was decided against.** §4.2's own
+"do not touch" line protects sign-off and reject as *distinct, deliberate*
+actions, and an accelerator on the transmit action makes it less deliberate on
+the one screen where a mis-key reaches the broker. The confirm dialog would
+still gate it, so the invariant would hold - but the upside is a second saved
+and the downside is a transmission nobody meant. Recorded as decided rather than
+skipped.
+
+**Rendering found three things the suite passed through** - the fourth screen
+running:
+
+* At Guided a pending order read *"proposed by swing - not recognised - see the
+  note below"*. `classify` returns UNCLASSIFIED for anything that is not a
+  refusal, and that sentence belongs to the refusal REPORT where a note does
+  follow. The refusal vocabulary now applies only to refusals.
+* The Reason column was a 120px stub - *"Sized below on…"* - truncated hardest
+  at Guided where the text is longest, while the table left a third of the
+  window empty to its right.
+* The `_rendered_signature` did not include the reason, so a row kept the dash
+  it was first drawn with until something else about it changed.
+
+**The journal is not re-read on every tick.** `entries()` re-parses the whole
+CSV - 464KB live - and this screen refreshes every two seconds. Reasons are
+cached by order id, which is safe because a reason is written once and never
+changes, and misses are throttled.
+
+Two of M75's 25 raw-hex sites are gone: the mode banner now uses
+`theme.banner`, whose docstring names this exact use.
+
+26 tests. The M58a collapse detector caught the change that added it: keying the
+family sentence on `explains()` rendered Guided and Standard identically,
+because `explains()` is true for both.
+
 ## M76 - Ticker dropdowns are alphabetical
 
 8 August. Small, and a standing rule rather than a one-off: **every dropdown
