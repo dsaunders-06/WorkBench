@@ -196,6 +196,14 @@ class OMS:
         if self.symbol_allow_list is not None and candidate.symbol not in self.symbol_allow_list:
             return self._new_rejected_order(candidate, 0.0, "symbol not on the allow list")
 
+        # Ahead of the kill-switch check so the refusal names the anomaly
+        # rather than a generic halt, and ahead of the risk pipeline because
+        # sizing against a quantity known to be wrong is wrong however
+        # carefully it is done.
+        anomaly = self.anomalies.get(candidate.symbol)
+        if anomaly is not None:
+            return self._new_rejected_order(candidate, 0.0, f"position anomaly - {anomaly.reason}")
+
         if self.kill_switch.tripped:
             return self._new_rejected_order(candidate, 0.0, "kill-switch tripped")
 
@@ -299,6 +307,38 @@ class OMS:
         """
         if self.symbol_allow_list is not None and symbol not in self.symbol_allow_list:
             return self._new_rejected_order_for(symbol, "sell", 0.0)
+
+        anomaly = self.anomalies.get(symbol)
+        if anomaly is not None:
+            if reason == "delever":
+                # A trim sized against a quantity known to be wrong is the trim
+                # doing the damage. Exits are allowed below; trims are not.
+                return self._new_rejected_order_for(
+                    symbol,
+                    "sell",
+                    0.0,
+                    f"position anomaly - de-lever trim refused ({anomaly.reason})",
+                )
+            held = await self._broker_quantity(symbol)
+            if held is None:
+                # Refusing an exit is normally the M56c defect. Here the
+                # alternative is selling a quantity this app has already
+                # recorded as untrustworthy, and the refusal is a rejected
+                # order carrying a reason rather than a silent gate.
+                return self._new_rejected_order_for(
+                    symbol,
+                    "sell",
+                    0.0,
+                    f"position anomaly - could not read the broker to size the exit "
+                    f"({anomaly.reason})",
+                )
+            logger.warning(
+                "Exit on quarantined %s sized from the broker at %g, not the tracked %g",
+                symbol,
+                held,
+                quantity,
+            )
+            quantity = held
 
         self._exit_reasons[symbol] = reason
         decision = self.risk_engine.evaluate_exit(symbol, quantity, price)
@@ -817,6 +857,23 @@ class OMS:
             for pos in await self.broker.positions()
             if abs(pos.quantity) > 0 and pos.symbol not in resting
         ]
+
+    async def _broker_quantity(self, symbol: str) -> float | None:
+        """What the broker says is held, or None if it cannot be asked.
+
+        None and zero are different answers and must not collapse: zero means
+        the position is gone, None means this app does not know - and sizing an
+        exit on a guess is what the quarantine exists to prevent.
+        """
+        try:
+            positions = await self.broker.positions()
+        except Exception:
+            logger.exception("Could not read the broker to size an exit on %s", symbol)
+            return None
+        return next(
+            (abs(pos.quantity) for pos in positions if pos.symbol == symbol),
+            0.0,
+        )
 
     async def submit_protective_stop(
         self,
