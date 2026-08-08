@@ -17,6 +17,7 @@ import contextlib
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -240,18 +241,17 @@ class PerformanceReporter:
 
 
 def _with_narrative(report: PerformanceReport, narrative: str) -> PerformanceReport:
-    return PerformanceReport(
-        period=report.period,
-        period_label=report.period_label,
-        generated_at=report.generated_at,
-        stats=report.stats,
-        summary=report.summary,
-        opening_equity=report.opening_equity,
-        closing_equity=report.closing_equity,
-        max_drawdown_pct=report.max_drawdown_pct,
-        sharpe=report.sharpe,
-        by_strategy=report.by_strategy,
-        scorecards=report.scorecards,
-        blocked_counts=report.blocked_counts,
-        narrative=narrative,
-    )
+    """The same report, plus its narrative (M57b).
+
+    `replace`, not a hand-written constructor call. This listed every field
+    explicitly and the list stopped at `blocked_counts`, so `refusals`,
+    `approvals`, `opened` and `held` - all four added after it, all four with
+    defaults - reverted to those defaults the instant a narrative succeeded.
+
+    It hid for six reports because the narrator was failing on a context-size
+    cap, so this line never ran. M56b shrank the report, the narrator returned,
+    and the 7 August daily silently lost both M51 evaluation sections and its
+    held positions. A frozen dataclass that grows fields will outlive any
+    constructor call that names them one by one.
+    """
+    return replace(report, narrative=narrative)

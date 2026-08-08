@@ -12,6 +12,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from qat.config import Settings
+from qat.domain.evaluation.approvals import summarise_approvals
+from qat.domain.evaluation.refusals import summarise_refusals
 from qat.domain.performance.metrics import (
     MIN_TRADES_FOR_STATS,
     compute_stats,
@@ -19,6 +21,7 @@ from qat.domain.performance.metrics import (
     sharpe_ratio,
 )
 from qat.domain.performance.reports import (
+    PerformanceReport,
     build_report,
     summarise_blocked_reasons,
 )
@@ -335,6 +338,71 @@ def test_blocked_reasons_collapse_causes_that_differ_only_in_their_amounts():
     assert summarise_blocked_reasons(
         [{"outcome": "blocked", "reason": "already at the 10-position limit"}]
     ) == {"already at the 10-position limit": 1}
+
+
+def test_attaching_a_narrative_keeps_every_other_field(qtbot=None):
+    """M57b. `_with_narrative` rebuilt the report by listing its fields, and
+    the list stopped at `blocked_counts` - so refusals, approvals, opened and
+    held silently reverted to their defaults the moment a narrative succeeded.
+
+    It went unnoticed because the narrator had been failing since 4 August on a
+    context-size cap, so this path had not run in six reports. M56b shrank the
+    report, the narrator came back, and the 7 August daily lost both M51
+    sections and its held positions.
+
+    Written over `dataclasses.fields` rather than by naming them, because
+    naming them by hand is the defect.
+    """
+    from dataclasses import fields
+
+    from qat.domain.performance.reporter import _with_narrative
+
+    trade = _trade(10.0)
+    report = build_report(
+        "daily",
+        "Test day",
+        [trade],
+        [],
+        _BASE.date(),
+        _BASE.date(),
+        blocked_counts={"a reason": 1},
+        refusals=summarise_refusals([]),
+        approvals=summarise_approvals([], Settings(_env_file=None)),
+        open_lots=[],
+    )
+
+    carried = _with_narrative(report, "some narrative")
+
+    assert carried.narrative == "some narrative"
+    for field in fields(PerformanceReport):
+        if field.name == "narrative":
+            continue
+        assert getattr(carried, field.name) == getattr(
+            report, field.name
+        ), f"{field.name} was dropped when the narrative was attached"
+
+
+def test_a_report_with_a_narrative_still_renders_the_evaluation_sections():
+    """The symptom as an operator meets it: the sections vanish from the
+    written markdown, not merely from an object."""
+    from qat.domain.performance.reporter import _with_narrative
+
+    report = build_report(
+        "daily",
+        "Test day",
+        [],
+        [],
+        _BASE.date(),
+        _BASE.date(),
+        refusals=summarise_refusals([]),
+        approvals=summarise_approvals([], Settings(_env_file=None)),
+    )
+
+    markdown = _with_narrative(report, "notes").to_markdown()
+
+    assert "### Why orders did not happen" in markdown
+    assert "### What the approvals nearly were" in markdown
+    assert "### Analyst notes" in markdown
 
 
 def test_a_narrative_is_optional_and_its_absence_is_not_an_error():
