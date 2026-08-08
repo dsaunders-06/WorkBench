@@ -102,7 +102,13 @@ class AiAdvisorScreen(QWidget):
 
         input_row = QHBoxLayout()
         self.symbol_picker = QComboBox()
-        for symbol in runtime.watchlist:
+        # Alphabetical, not watchlist order (M76). `resolve_watchlist` returns
+        # the universe's own order, which is roughly by market capitalisation -
+        # meaningful to the universe and not to someone hunting for WFC in a
+        # list of a hundred. Sorted at the dropdown rather than in the watchlist
+        # itself: risk_console maps that tuple to correlation-matrix indices, so
+        # reordering it there would move a rail's data rather than a control.
+        for symbol in sorted(runtime.watchlist):
             self.symbol_picker.addItem(symbol)
         self.question_input = QLineEdit()
         self.question_input.setPlaceholderText("Ask a research question...")

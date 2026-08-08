@@ -107,7 +107,9 @@ class WorkbenchScreen(QWidget):
         for strategy in runtime.available_strategies:
             self.strategy_picker.addItem(strategy.name)
         self.symbol_picker = QComboBox()
-        for symbol in runtime.watchlist:
+        # Alphabetical (M76). See the note in ai_advisor: sorted at the dropdown,
+        # never in `runtime.watchlist`, which the Risk Console indexes positionally.
+        for symbol in sorted(runtime.watchlist):
             self.symbol_picker.addItem(symbol)
         self.run_button = QPushButton("Run Backtest")
         self.run_button.clicked.connect(self._on_run_clicked)

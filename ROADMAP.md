@@ -210,6 +210,26 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M76 - Ticker dropdowns are alphabetical
+
+8 August. Small, and a standing rule rather than a one-off: **every dropdown
+listing tickers sorts alphabetically, on whichever screen it appears.**
+
+`universe.resolve_watchlist` returns the universe's own order - roughly by market
+capitalisation, and the demo watchlist opens `SPY, AAPL, MSFT, GOOGL`. That order
+means something to the universe and nothing to somebody hunting for WFC in a list
+of a hundred. Both symbol pickers used it.
+
+**Sorted at the dropdown, never in `runtime.watchlist`.** The Risk Console builds
+its correlation matrix by indexing that tuple positionally - `index_by_symbol`
+enumerated against headers set from the same order - so sorting the watchlist
+itself would move a rail's data rather than a control's labels. A test asserts
+that building either screen leaves the tuple untouched.
+
+Two screens carry one today (Workbench, AI Advisor). One test each rather than a
+loop over a registry, so a screen added later that forgets is caught by the
+absence of its own test rather than by a passing loop that never knew about it.
+
 ## M74 - The Workbench had no level, and no summary to give one
 
 8 August. Step 4.5, the half M69 did not cover.
