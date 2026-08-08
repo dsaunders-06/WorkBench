@@ -61,6 +61,10 @@ _MIN_INFORMATIVE_WINDOWS = 3
 # trades is still an entry manufactured at the boundary plus one real exit -
 # swing's measured shape is exactly one per window.
 _MAX_TRADES_FOR_SLICING_CAVEAT = 2
+# Below this, resampling a trade sequence produces one observation repeated
+# rather than a distribution. Ten is not a statistical threshold - it is the
+# point below which the cone is obviously misleading rather than merely thin.
+_MIN_TRADES_FOR_A_CONE = 10
 _METRICS_PER_ROW = 5
 
 
@@ -124,6 +128,13 @@ class WorkbenchScreen(QWidget):
         self.mc_p50_item = self.mc_plot.plot(pen="y", name="p50")
         self.mc_p95_item = self.mc_plot.plot(pen="g", name="p95")
         layout.addWidget(self.mc_plot)
+
+        # What the cone was resampled FROM. Without it, a cone built from one
+        # trade looks exactly like a cone built from two hundred.
+        self.mc_caption = QLabel("")
+        self.mc_caption.setWordWrap(True)
+        self.mc_caption.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
+        layout.addWidget(self.mc_caption)
 
         layout.addWidget(self._build_walk_forward_group())
 
@@ -318,7 +329,7 @@ class WorkbenchScreen(QWidget):
             self._render_result(result, benchmark_prices, backtester.starting_equity)
 
             mc_result = run_monte_carlo(result.trades, starting_equity=backtester.starting_equity)
-            self._render_monte_carlo(mc_result.paths)
+            self._render_monte_carlo(mc_result.paths, len(result.trades))
 
             # The AI note is commentary on a backtest that already succeeded -
             # a failing/misconfigured LLM must not discard the results above,
@@ -359,11 +370,12 @@ class WorkbenchScreen(QWidget):
 
         self.status_label.setText("  ".join(result.warnings))
 
-    def _render_monte_carlo(self, paths: pd.DataFrame) -> None:
+    def _render_monte_carlo(self, paths: pd.DataFrame, trade_count: int) -> None:
         quantiles = paths.quantile([0.05, 0.50, 0.95], axis=1)
         self.mc_p5_item.setData(quantiles.loc[0.05].to_numpy())
         self.mc_p50_item.setData(quantiles.loc[0.50].to_numpy())
         self.mc_p95_item.setData(quantiles.loc[0.95].to_numpy())
+        self.mc_caption.setText(_monte_carlo_caption(trade_count))
 
     async def _render_ai_note(
         self,
@@ -396,6 +408,35 @@ class WorkbenchScreen(QWidget):
             f"[{recommendation.recommendation.upper()}, confidence={confidence_pct}] "
             f"{recommendation.rationale} (risk flags: {flags})"
         )
+
+
+def _monte_carlo_caption(trade_count: int) -> str:
+    """What the cone was built from, and whether that is enough to be a cone.
+
+    The other half of the sentence M69 addressed. ROADMAP covers both tools at
+    once - *"the Monte Carlo cone resamples near-buy-and-holds, and walk-forward
+    manufactures exactly one entry per window at the slice boundary"* - and only
+    the walk-forward panel was given its caveat.
+
+    The cone is built by RESAMPLING the backtest's trade sequence. Resampling a
+    sequence of one trade produces something that looks like a distribution and
+    is one observation repeated: the spread between p5 and p95 is then an
+    artefact of the resampling, not a range of plausible outcomes.
+
+    Names the count rather than warning in the abstract, and self-suppresses
+    above the threshold, for the same reason as the walk-forward caveat - a
+    disclaimer printed on every result stops being read.
+    """
+    if trade_count <= 0:
+        return "No trades to resample: the cone above is empty, not a forecast of zero."
+    caption = f"Resampled from {trade_count} trade(s) in the backtest above."
+    if trade_count <= _MIN_TRADES_FOR_A_CONE:
+        caption += (
+            " That is too few to resample into a distribution - the spread between"
+            " p5 and p95 is one observation repeated, not a range of plausible"
+            " outcomes."
+        )
+    return caption
 
 
 def _walk_forward_headline(result: WalkForwardResult) -> str:

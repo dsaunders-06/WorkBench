@@ -254,9 +254,27 @@ the windows may be perfectly consistent AND built on too few trades to mean
 anything. The existing headline chain already worked this way, so this is one
 more branch rather than a new mechanism.
 
-**Still outstanding:** ROADMAP's own sentence covers the **Monte Carlo cone**
-too - it "resamples near-buy-and-holds" for the same reason - and that panel
-still states no caveat. Same fix, same screen, not yet done.
+### The cone beside it, closed the same day
+
+The sentence above covers **both** tools, and the first pass gave only the
+walk-forward panel its caveat. The cone is built by **resampling** the
+backtest's trade sequence, so resampling a sequence of one trade produces
+something that looks like a distribution and is one observation repeated - the
+spread between p5 and p95 is then an artefact of the resampling rather than a
+range of plausible outcomes.
+
+It now carries a caption naming what it was built from:
+
+```
+Resampled from 1 trade(s) in the backtest above. That is too few to resample
+into a distribution - the spread between p5 and p95 is one observation
+repeated, not a range of plausible outcomes.
+```
+
+Same self-suppressing rule: above ten trades it states the count and stops.
+**Zero trades is worded separately** - "the cone above is empty, not a forecast
+of zero" - because an empty cone and a cone predicting no growth look identical
+and mean opposite things.
 
 ## M68 - The correlation table measured a different quantity from the rail
 

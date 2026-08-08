@@ -195,3 +195,46 @@ def test_no_windows_still_says_so_and_claims_nothing_about_trades():
 
     assert "No complete windows" in headline
     assert "slic" not in headline.lower()
+
+
+# --- The same defect in the cone beside it (M69) -------------------------------
+#
+# ROADMAP's sentence covers both tools: "the Monte Carlo cone resamples
+# near-buy-and-holds, and walk-forward manufactures exactly one entry per window
+# at the slice boundary". The cone is built by RESAMPLING the backtest's trade
+# sequence, so a sequence of one trade is resampled into a cone that looks like
+# a distribution and is one observation repeated.
+
+
+def test_a_cone_built_from_one_trade_says_so():
+    from qat.presentation.workbench import _monte_carlo_caption
+
+    caption = _monte_carlo_caption(1)
+
+    assert "1 trade" in caption
+    assert "resampl" in caption.lower()
+
+
+def test_the_cone_caption_names_the_count_it_was_built_from():
+    from qat.presentation.workbench import _monte_carlo_caption
+
+    assert "4 trade" in _monte_carlo_caption(4)
+
+
+def test_a_cone_with_enough_trades_carries_no_caveat():
+    """Self-suppressing, for the same reason as the walk-forward caveat: a
+    warning printed on every result stops being read."""
+    from qat.presentation.workbench import _monte_carlo_caption
+
+    caption = _monte_carlo_caption(40)
+
+    assert "40 trade" in caption
+    assert "one observation repeated" not in caption
+
+
+def test_no_trades_at_all_is_not_described_as_a_distribution():
+    from qat.presentation.workbench import _monte_carlo_caption
+
+    caption = _monte_carlo_caption(0)
+
+    assert "no trades" in caption.lower()

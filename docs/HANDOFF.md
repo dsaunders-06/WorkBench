@@ -102,15 +102,15 @@ inside a session carries it until the next startup.
 - **HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN `src/`, and that is real.**
   `git diff 49482c2..HEAD -- src/` covers M64, M65, M67, M68 and M69 — the
   Regime Monitor, the entry-price reconciliation, both halves of the Risk
-  Console, and the walk-forward caveat.
-  All presentation or record-correction; **none of it changes a trading
-  decision, and Monday needs none of it.** Do not deploy before the split test.
+  Console, and the Workbench caveats. All presentation or record-correction;
+  **none of it changes a trading decision, and Monday needs none of it.** Do
+  not deploy before the split test.
 - **Account:** equity ~$101,245. Ten positions — AMAT 7, AMD 7, CRWD 16, CSCO 44,
   GS 7, JNJ 19, MS 41, UNP 17, VRTX 19, WFC 58 — all protected, all carrying a
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
   is refusing new entries. That is the rails working.
 - **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,561 tests**; ruff, black, mypy, bandit clean.
+- **1,565 tests**; ruff, black, mypy, bandit clean.
 
 ## What landed on 8 August
 
@@ -126,7 +126,7 @@ inside a session carries it until the next startup.
 | **M66** | The risk cap that gates every entry uses ENTRY prices. **Found, designed, not built** |
 | **M67** | The Risk Console now answers "why was I refused", closing a forward reference M64 created hours earlier |
 | **M68** | Its correlation table was measuring intraday ticks where the rail measures 60 daily bars |
-| **M69** | Walk-forward stated no caveat, on the screen that holds the deploy gate |
+| **M69** | Walk-forward *and* the Monte Carlo cone stated no caveat, on the screen that holds the deploy gate |
 
 ## The reframing that changed how we work
 
@@ -224,10 +224,8 @@ simplest screen, and fine"). **Order Blotter deliberately last** — most
 safety-critical, and should be touched when the design system is proven.
 **Performance (step 5) waits for September.**
 
-**One known gap left open in M69:** the **Monte Carlo cone** has the same defect
-as the walk-forward panel — ROADMAP says it "resamples near-buy-and-holds" for
-the same reason — and it still states no caveat. Same screen, same fix, not
-done.
+M69 covers **both** tools on that screen — the walk-forward panel and the Monte
+Carlo cone beside it, which resamples the same too-short trade sequence.
 
 **The brief has now been wrong in detail three times** — M63 on the Balances
 premise ("most of them dashes"; ten of eleven report a figure), M64 on the macro
@@ -409,10 +407,12 @@ WHAT LANDED 8 AUGUST
        reference M64 created hours earlier
   M68  its correlation table measured intraday ticks where the rail measures 60
        daily bars, so a binding pair could not appear on it at all
-  M69  the walk-forward panel stated no caveat, on the screen that holds the
-       DEPLOY GATE - slicing manufactures an entry per window, so for a
-       continuously-held strategy the figures describe the slicing. The Monte
-       Carlo cone has the same gap and is NOT yet done
+  M69  the walk-forward panel AND the Monte Carlo cone beside it stated no
+       caveat, on the screen that holds the DEPLOY GATE. Slicing manufactures
+       an entry per window, and the cone resamples the same too-short trade
+       sequence, so for a continuously-held strategy both describe the method
+       as much as the strategy. Both now name the count they were built from,
+       and self-suppress when it is healthy
 
 THE REFRAMING THAT CHANGED HOW WE WORK
 The trial does two conflicting jobs: collect edge evidence (wants a frozen
