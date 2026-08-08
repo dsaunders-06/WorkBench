@@ -178,6 +178,11 @@ Three findings worth carrying forward:
   decision-affecting changes since 3 August; everything else has been defect
   fixes and reporting. Everything else measured that day was **booked, not
   acted on** — see ROADMAP.md, *"Booked for the September review"*.
+  **Lifted once more on 8 August**, for M58b alone: the correlated-cluster rail
+  now measures over 60 bars rather than the whole 300-bar buffer. Verified
+  against the live book to change no decision — the cap needs 5.5 correlated
+  names to bind and the book holds one pair. The other two parameter changes on
+  the table were declined with reasons recorded.
 
 ## What not to re-derive
 

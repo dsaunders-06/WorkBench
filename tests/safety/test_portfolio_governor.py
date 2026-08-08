@@ -567,6 +567,59 @@ def _returns(seed: int, n: int = 60, common: pd.Series | None = None, weight: fl
     return weight * common + (1.0 - weight) * rng
 
 
+def test_correlation_is_measured_over_the_recent_window_not_the_whole_buffer():
+    """M58b. The series carry 300 daily bars because VaR and ES are computed
+    from the same dict, but a 300-day correlation is a different quantity from
+    a 60-day one - and it is the wrong one here.
+
+    Measured on the real book: AMAT and AMD, two semiconductor names, score
+    0.79 over sixty days and 0.58 over three hundred. The long window averages
+    away exactly the co-movement this rail exists to catch.
+
+    Built as a pair that is uncorrelated for a long history and tightly
+    correlated only recently, so a rail reading the whole buffer misses it and
+    one reading the window does not.
+    """
+    old = pd.Series(
+        [((i * 104729) % 1000 - 500) / 10000.0 for i in range(240)],
+        index=pd.RangeIndex(240),
+    )
+    other_old = pd.Series(
+        [((i * 7919) % 1000 - 500) / 10000.0 for i in range(240)],
+        index=pd.RangeIndex(240),
+    )
+    recent = _returns(11, n=60)
+    recent.index = pd.RangeIndex(240, 300)
+
+    candidate = pd.concat([old, recent])
+    existing = {"AAA": pd.concat([other_old, recent * 0.99])}
+
+    def cluster_for(window: int) -> float:
+        governor = PortfolioGovernor(
+            settings=_settings(
+                max_correlated_cluster_pct=0.30,
+                max_sector_concentration_pct=1.0,
+                correlation_window_bars=window,
+            )
+        )
+        return governor.evaluate(
+            symbol="BBB",
+            price=100.0,
+            proposed_shares=250.0,
+            stop_price=95.0,
+            positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+            stops={"AAA": 95.0},
+            equity=EQUITY,
+            prices={"AAA": 100.0},
+            candidate_returns=candidate,
+            existing_returns=existing,
+        ).max_shares
+
+    # Over the recent window the pair clusters, so the cap trims the order.
+    # Over the whole buffer the same pair is diluted below the threshold.
+    assert cluster_for(60) < cluster_for(300)
+
+
 def test_names_that_move_together_are_capped_as_one_cluster():
     """Single-name bounds one ticker and sector bounds one label. Neither
     catches several names that simply move together, which is one position

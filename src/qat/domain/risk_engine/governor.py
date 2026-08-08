@@ -141,8 +141,21 @@ class PortfolioGovernor:
         reading costs nothing but size. An unknown correlation defaults to
         refusing to trade anything the app has no history for, which is every
         new symbol.
+
+        Measured over the most recent `correlation_window_bars` of the OVERLAP
+        (M58b), not over the whole buffer. The series handed in carry 300 daily
+        bars because VaR and Expected Shortfall are computed from the same
+        dict and want that depth - but a 300-day correlation is a different
+        quantity from a 60-day one, and it is the wrong one here. AMAT and AMD
+        score 0.79 over sixty days and 0.58 over three hundred; the long window
+        averages away precisely the co-movement this rail exists to catch.
+
+        The window is applied AFTER aligning, so it is sixty shared
+        observations rather than sixty calendar days of whichever series
+        happens to be longer.
         """
         held = {pos.symbol for pos in positions if abs(pos.quantity) > 0}
+        window = self.settings.correlation_window_bars
         correlated: list[str] = []
         for symbol in held:
             other = existing_returns.get(symbol)
@@ -151,6 +164,8 @@ class PortfolioGovernor:
             aligned_candidate, aligned_other = candidate_returns.align(other, join="inner")
             if len(aligned_candidate) < _MIN_CORRELATION_OBSERVATIONS:
                 continue
+            aligned_candidate = aligned_candidate.tail(window)
+            aligned_other = aligned_other.tail(window)
             corr = aligned_candidate.corr(aligned_other)
             if pd.notna(corr) and corr >= self.settings.correlation_cluster_threshold:
                 correlated.append(symbol)

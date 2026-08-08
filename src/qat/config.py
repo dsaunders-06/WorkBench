@@ -174,6 +174,24 @@ class Settings(BaseSettings):
     # in any useful way - at 0.7 a second position adds about 30% of the risk
     # reduction a genuinely independent one would.
     correlation_cluster_threshold: float = Field(default=0.70, ge=0.0, le=1.0)
+    # How many recent observations the correlation is measured over (M58b).
+    #
+    # It used to be the whole buffer - 300 daily bars - and a 300-day
+    # correlation is a different quantity from a 60-day one. Measured across
+    # 500 overlapping returns on the ten held names: AMAT and AMD, two
+    # semiconductor names, score 0.79 on 60 days and 0.58 on 300. The long
+    # window averages away exactly the co-movement this rail exists to catch,
+    # because correlations converge in the conditions that matter and a
+    # year-long mean dilutes them back down.
+    #
+    # Sixty because it is a quarter of a trading year - long enough that
+    # twenty-plus overlapping observations are essentially guaranteed, short
+    # enough to still be describing the present regime.
+    #
+    # Applied ONLY to the correlation, not to the shared return series: VaR and
+    # Expected Shortfall are computed from the same dict and want more history,
+    # not less. Truncating at the source would quietly degrade both.
+    correlation_window_bars: int = Field(default=60, ge=20)
     # Same number as sector, deliberately: a correlated cluster IS a sector,
     # measured rather than labelled, so a different cap would be saying the
     # measurement means something different from the label it replaces.
