@@ -770,6 +770,15 @@ class OMS:
         opened by this application, so nothing here carries a stop it placed."""
         return dict(self._adopted_baseline)
 
+    def filled_quantities(self) -> dict[str, float]:
+        """What this app believes is held, per symbol.
+
+        A copy, and public, so a screen can show the app's own view alongside
+        the broker's without reaching into `_filled_quantities` - the number a
+        reconciliation difference is one half of.
+        """
+        return dict(self._filled_quantities)
+
     def position_stops(self) -> dict[str, float]:
         """Protective stops this session attached to its own entries.
 

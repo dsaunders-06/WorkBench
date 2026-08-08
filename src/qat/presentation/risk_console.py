@@ -6,12 +6,16 @@ layer and cannot be hidden.
 
 from __future__ import annotations
 
+import logging
+
 import pandas as pd
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QPlainTextEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -30,6 +34,10 @@ _MIN_POINTS_FOR_CORRELATION = 5
 
 _TRIPPED_STYLE = "background-color: #b71c1c; color: white; font-weight: bold; padding: 10px;"
 _ACTIVE_STYLE = "background-color: #1b5e20; color: white; font-weight: bold; padding: 10px;"
+
+_OPERATOR = "operator (risk console)"
+
+logger = logging.getLogger(__name__)
 
 
 class RiskConsoleScreen(QWidget):
@@ -54,6 +62,28 @@ class RiskConsoleScreen(QWidget):
             kpi_row.addWidget(tile)
         layout.addLayout(kpi_row)
 
+        layout.addWidget(QLabel("Quarantined positions"))
+        self.anomaly_caption = QLabel(
+            "A declared anomaly explains a difference so the session is not halted. It does "
+            "NOT correct the quantity, the entry record, the resting protection or the "
+            "ledger - that is still manual."
+        )
+        self.anomaly_caption.setWordWrap(True)
+        layout.addWidget(self.anomaly_caption)
+        self.anomaly_list = QPlainTextEdit()
+        self.anomaly_list.setReadOnly(True)
+        layout.addWidget(self.anomaly_list)
+
+        anomaly_row = QHBoxLayout()
+        self.declare_anomaly_button = QPushButton("Declare a difference explained...")
+        self.declare_anomaly_button.clicked.connect(self._on_declare_clicked)
+        self.clear_anomaly_button = QPushButton("Clear a quarantine...")
+        self.clear_anomaly_button.clicked.connect(self._on_clear_clicked)
+        anomaly_row.addWidget(self.declare_anomaly_button)
+        anomaly_row.addWidget(self.clear_anomaly_button)
+        layout.addLayout(anomaly_row)
+        self._refresh_anomalies()
+
         layout.addWidget(QLabel("Correlation (trailing window)"))
         self.correlation_table = QTableWidget(len(runtime.watchlist), len(runtime.watchlist))
         self.correlation_table.setHorizontalHeaderLabels(list(runtime.watchlist))
@@ -69,6 +99,82 @@ class RiskConsoleScreen(QWidget):
     def _on_timer_tick(self) -> None:
         self._refresh_from_audit_log()
         self._refresh_correlation_table()
+        self._refresh_anomalies()
+
+    def _refresh_anomalies(self) -> None:
+        active = self.runtime.oms.anomalies.active()
+        if not active:
+            self.anomaly_list.setPlainText("No quarantined positions.")
+            return
+        self.anomaly_list.setPlainText(
+            "\n".join(
+                f"{a.symbol}  tracked={a.tracked_quantity:g} broker={a.broker_quantity:g}  "
+                f"{a.reason}  (declared by {a.declared_by}, "
+                f"{a.declared_at:%Y-%m-%d %H:%M} UTC)"
+                for a in active
+            )
+        )
+
+    def _declare_anomaly(self, symbol: str, reason: str) -> None:
+        """Binds the declaration to what the broker reports right now.
+
+        Captured here rather than typed by the operator, because the binding is
+        what stops one declaration granting a symbol permanent immunity - and a
+        hand-typed quantity is exactly the thing that would be typed to match
+        whatever silences the alert.
+
+        Read from the poller's CACHED snapshot: a Qt slot cannot await, and
+        blocking the UI thread on a broker round-trip would be worse. With no
+        snapshot the action declines rather than binding to a zero, because a
+        wrong binding either silences a real divergence or fails to explain the
+        actual one.
+        """
+        snapshot = self.runtime.account_poller.last_snapshot
+        if snapshot is None:
+            logger.error(
+                "Cannot declare an anomaly on %s: the broker's positions have not been read "
+                "yet, and binding a declaration to a guessed quantity is worse than not "
+                "declaring it. Try again once the account has been polled.",
+                symbol,
+            )
+            return
+        broker_quantity = next(
+            (abs(pos.quantity) for pos in snapshot.positions if pos.symbol == symbol), 0.0
+        )
+        self.runtime.oms.anomalies.declare(
+            symbol=symbol,
+            reason=reason,
+            declared_by=_OPERATOR,
+            tracked_quantity=self.runtime.oms.filled_quantities().get(symbol, 0.0),
+            broker_quantity=broker_quantity,
+        )
+        self._refresh_anomalies()
+
+    def _clear_anomaly(self, symbol: str) -> None:
+        self.runtime.oms.anomalies.clear(symbol, operator=_OPERATOR)
+        self._refresh_anomalies()
+
+    def _on_declare_clicked(self) -> None:
+        symbol, ok = QInputDialog.getText(self, "Declare explained", "Symbol:")
+        if not ok or not symbol.strip():
+            return
+        reason, ok = QInputDialog.getText(
+            self, "Declare explained", "Why is this difference explained?"
+        )
+        if not ok or not reason.strip():
+            # A declaration with no reason is the one that cannot be reviewed
+            # later, so an empty one is refused rather than stored blank.
+            return
+        self._declare_anomaly(symbol.strip().upper(), reason.strip())
+
+    def _on_clear_clicked(self) -> None:
+        active = [a.symbol for a in self.runtime.oms.anomalies.active()]
+        if not active:
+            return
+        symbol, ok = QInputDialog.getItem(self, "Clear quarantine", "Symbol:", active, 0, False)
+        if not ok or not symbol:
+            return
+        self._clear_anomaly(symbol)
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
         """Only buffers the price - recomputing correlations here would run

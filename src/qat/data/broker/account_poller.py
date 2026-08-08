@@ -81,6 +81,18 @@ class AccountPoller:
     _fetched_at: float = field(default=0.0, init=False)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
 
+    @property
+    def last_snapshot(self) -> AccountSnapshot | None:
+        """The cached snapshot without fetching one, or None if nothing has
+        been read yet.
+
+        For synchronous callers - a Qt slot cannot await `snapshot()`, and
+        blocking the UI thread on a broker round-trip to avoid that would be
+        worse than the problem. None is a real answer here and callers are
+        expected to decline rather than to assume a zero.
+        """
+        return self._snapshot
+
     async def snapshot(self, force: bool = False) -> AccountSnapshot:
         """The cached snapshot, refreshed at most once per interval.
 
