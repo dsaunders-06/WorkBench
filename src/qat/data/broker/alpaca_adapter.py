@@ -504,6 +504,22 @@ class AlpacaAdapter:
         filled_price = getattr(placed, "filled_avg_price", None)
         if filled_price is not None:
             order.filled_price = _as_float(filled_price)
+        # What actually executed, not what was asked for (M42).
+        #
+        # `qty` and `filled_qty` are different fields and only the second is
+        # true. This wrote back the id, the status and the price and left the
+        # quantity at the requested size, so OMS.sign_off counted a buy for 100
+        # that filled 60 as 100 held - and reconciliation answers a 40-share
+        # discrepancy with the kill-switch. That is how the 5 August session
+        # ended, and M53 fixed only the sibling path: fills replayed FROM the
+        # broker, never orders this application places itself.
+        #
+        # Guarded on being positive: an accepted-but-unfilled order reports
+        # filled_qty of 0, and writing that back would read as "this position
+        # was closed" rather than "it has not started".
+        filled_qty = _as_float(getattr(placed, "filled_qty", None))
+        if filled_qty > 0:
+            order.quantity = filled_qty
         return order
 
     async def cancel_order(self, order_id: str) -> Order:

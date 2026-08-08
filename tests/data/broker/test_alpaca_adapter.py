@@ -49,6 +49,7 @@ class FakeClient:
         self.cancelled: list[str] = []
         self.orders: list[object] = []
         self.order_filters: list[object] = []
+        self.next_order: object | None = None
         # resting_stops bounds its query by the symbols actually held (M47),
         # so what the account holds is now part of the fixture.
         self.positions: list[object] = [FakePosition()]
@@ -59,9 +60,10 @@ class FakeClient:
     def get_all_positions(self) -> list[object]:
         return self.positions
 
-    def submit_order(self, order_data: object) -> FakeAlpacaOrder:
+    def submit_order(self, order_data: object) -> object:
         self.submitted.append(order_data)
-        return FakeAlpacaOrder()
+        # Overridable so a test can hand back a partially filled order (M42).
+        return self.next_order or FakeAlpacaOrder()
 
     def get_orders(self, filter: object = None) -> list[object]:
         self.order_filters.append(filter)
@@ -110,6 +112,56 @@ async def test_place_order_submits_and_adopts_the_broker_order_id():
     assert result.order_id == "alpaca-order-1"
     # An accepted-but-unfilled order must not be reported as filled.
     assert result.status == "transmitted"
+
+
+class FakePartiallyFilledOrder:
+    """What Alpaca returns when a market order fills short of what was asked.
+
+    `qty` is what was requested and `filled_qty` is what actually executed -
+    the two are different fields and only the second is true.
+    """
+
+    id = "alpaca-order-2"
+    symbol = "AAPL"
+    qty = "100"
+    filled_qty = "60"
+    side = "OrderSide.BUY"
+    status = "partially_filled"
+    filled_avg_price = "190.50"
+
+
+async def test_place_order_reports_what_actually_filled_not_what_was_asked():
+    """M42, and the sibling of M53 that outlived it.
+
+    M53 fixed the path where fills are replayed FROM the broker. This is the
+    path where the application places an order itself, and it wrote back the
+    id, the status and the fill price while leaving `quantity` at the size
+    requested. The OMS then counts that as held.
+
+    Tracking 100 against a broker holding 60 is a 40-share discrepancy, and
+    reconciliation answers a discrepancy with the kill-switch - which is
+    exactly how the 5 August session ended.
+    """
+    adapter, client = _adapter()
+    client.next_order = FakePartiallyFilledOrder()
+    order = Order(symbol="AAPL", side="buy", quantity=100, order_id="local-id")
+
+    result = await adapter.place_order(order)
+
+    assert result.quantity == 60.0, "the order must carry what the broker filled"
+    assert result.filled_price == 190.50
+
+
+async def test_place_order_leaves_an_unfilled_order_at_its_requested_size():
+    """An accepted-but-unfilled order has filled nothing, and reporting zero
+    would read as "this position was closed" rather than "not yet started"."""
+    adapter, client = _adapter()
+    order = Order(symbol="AAPL", side="buy", quantity=5, order_id="local-id")
+
+    result = await adapter.place_order(order)
+
+    assert result.status == "transmitted"
+    assert result.quantity == 5.0
 
 
 async def test_cancel_order_calls_through_and_returns_the_order():
