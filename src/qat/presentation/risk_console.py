@@ -7,6 +7,7 @@ layer and cannot be hidden.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 import pandas as pd
 from PySide6.QtCore import QTimer
@@ -23,9 +24,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from qat.domain.evaluation.refusals import load_risk_decisions, summarise_refusals
 from qat.domain.events import MarketDataEvent
 from qat.presentation import theme
 from qat.presentation.runtime import Runtime
+from qat.presentation.ui_level import UiLevel
 from qat.presentation.widgets import KpiTile
 
 _REFRESH_INTERVAL_MS = 2000
@@ -45,6 +48,7 @@ class RiskConsoleScreen(QWidget):
         super().__init__(parent)
         self.runtime = runtime
         self._price_history: dict[str, list[float]] = {symbol: [] for symbol in runtime.watchlist}
+        self.level = UiLevel.from_settings(runtime.settings)
 
         layout = QVBoxLayout(self)
 
@@ -61,6 +65,36 @@ class RiskConsoleScreen(QWidget):
         for tile in (self.var95_tile, self.var99_tile, self.es_tile, self.concentration_tile):
             kpi_row.addWidget(tile)
         layout.addLayout(kpi_row)
+
+        # --- Why nothing traded, which this screen is named for ----------
+        #
+        # It showed VaR tiles, a matrix and the kill-switch, and nothing about
+        # refusals. M64 then made the Regime Monitor point HERE when the regime
+        # permits a strategy and nothing still trades, so a forward reference
+        # existed to a screen that could not answer it.
+        #
+        # The numbers come from summarise_refusals - the same function the
+        # daily report uses - so the screen and the report cannot describe the
+        # same night differently.
+        # The heading states the period. M56b's defect was not the arithmetic,
+        # it was a total under a heading that implied a narrower window.
+        layout.addWidget(QLabel("Why orders did not happen - today"))
+        self.refusal_headline = QLabel("No sizing decisions recorded.")
+        self.refusal_headline.setWordWrap(True)
+        self.refusal_headline.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        layout.addWidget(self.refusal_headline)
+
+        self.refusal_detail = QPlainTextEdit()
+        self.refusal_detail.setReadOnly(True)
+        self.refusal_detail.setMaximumHeight(110)
+        self.refusal_detail.setVisible(self.level.shows_advanced())
+        layout.addWidget(self.refusal_detail)
+
+        self.audit_log = QPlainTextEdit()
+        self.audit_log.setReadOnly(True)
+        self.audit_log.setMaximumHeight(130)
+        self.audit_log.setVisible(self.level.prefers_density())
+        layout.addWidget(self.audit_log)
 
         layout.addWidget(QLabel("Quarantined positions"))
         self.anomaly_caption = QLabel(
@@ -100,6 +134,50 @@ class RiskConsoleScreen(QWidget):
         self._refresh_from_audit_log()
         self._refresh_correlation_table()
         self._refresh_anomalies()
+        self.refresh_refusals()
+
+    def refresh_refusals(self) -> None:
+        """Why orders did not happen, in the report's own words.
+
+        `summarise_refusals` is ASKED, never reproduced. A screen that counted
+        the rows itself would be a second derivation of the same night, and the
+        two would eventually disagree with no way for the operator to tell which
+        was lying - the rule the adopted-positions panel and the Regime Monitor
+        already follow.
+
+        Public because it must be callable without waiting on the 2s timer.
+        """
+        # BOUNDED TO TODAY, which is the whole of M56b's lesson: that defect
+        # was lifetime totals sitting under a daily heading, and the 6 August
+        # report claimed a kill-switch that had fired on the 4th. Unbounded,
+        # this panel reads "2,629 candidates considered" while meaning "since
+        # the file was created", and an operator would take it for tonight.
+        today = datetime.now(UTC).date().isoformat()
+        rows = load_risk_decisions(self.runtime.settings.data_dir, since=today)
+        summary = summarise_refusals(rows)
+        self.refusal_headline.setText(summary.headline())
+
+        # Families rather than raw reason strings: capacity against candidate is
+        # the split that decides what to do. Capacity says change the limits;
+        # candidate says look at the strategy.
+        lines = [
+            f"{family.value}: {count}  -  {family.means}"
+            for family, count in sorted(
+                summary.by_family.items(), key=lambda kv: (-kv[1], kv[0].value)
+            )
+        ]
+        self.refusal_detail.setPlainText(
+            "\n".join(lines) if lines else "No refusals in the record."
+        )
+
+        entries = self.runtime.risk_engine.audit_log.entries()
+        self.audit_log.setPlainText(
+            "\n".join(
+                f"{entry.symbol}  {'approved' if entry.approved else 'refused'}  {entry.reason}"
+                for entry in entries[-40:]
+            )
+            or "No audit entries yet."
+        )
 
     def _refresh_anomalies(self) -> None:
         active = self.runtime.oms.anomalies.active()
