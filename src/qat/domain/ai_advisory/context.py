@@ -52,7 +52,17 @@ class AdvisoryContext:
             symbol_line,
             f"Regime: {self.regime_label} (probabilities: {self.regime_probs})",
             f"Current positions: {self.positions}",
-            f"Risk metrics: {self.risk_metrics}",
+            # Absent is stated, not rendered as an empty container (M73). The
+            # caller used to substitute 0.0 for a metric the last risk check
+            # did not record, so "no VaR was computed" reached the model as "VaR
+            # is zero" - the same mistake the fundamentals block below exists to
+            # avoid, in the same prompt.
+            (
+                f"Risk metrics: {self.risk_metrics}"
+                if self.risk_metrics
+                else "Risk metrics: none available - no portfolio risk check has been recorded "
+                "yet this session. Treat this as UNKNOWN, not as zero risk."
+            ),
             f"Candidate signal: {self.candidate_signal}",
         ]
         if self.macro_signal:

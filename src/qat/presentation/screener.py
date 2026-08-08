@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 from qat.data import instruments, universe
 from qat.data.features import compute_trend
 from qat.data.fundamentals import SECTORS
+from qat.presentation import theme
 from qat.presentation.runtime import Runtime
 from qat.presentation.ui_level import UiLevel
 
@@ -184,6 +185,7 @@ class ScreenerScreen(QWidget):
 
         self.preset_summary = QLabel("")
         self.preset_summary.setWordWrap(True)
+        self.preset_summary.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
         layout.addWidget(self.preset_summary)
 
         filters = QFormLayout()
@@ -274,6 +276,7 @@ class ScreenerScreen(QWidget):
         self.provenance_label = QLabel("")
         self.provenance_label.setWordWrap(True)
         layout.addWidget(self.provenance_label)
+        self._style_provenance(warning=False)
 
         self.results_table = QTableWidget(0, len(_COLUMNS))
         self.results_table.setHorizontalHeaderLabels(list(_COLUMNS))
@@ -281,6 +284,24 @@ class ScreenerScreen(QWidget):
 
         self._apply_level()
         self._apply_preset(_PRESETS[0])
+
+    def _style_provenance(self, *, warning: bool) -> None:
+        """Invented figures get the bordered callout; real ones get a caption.
+
+        `theme.callout` had **zero consumers** when this was written - extracted
+        in the design-system step and adopted by nothing, which is the same
+        pattern as `shows_advanced()` sitting unread from M45 until M63. Its own
+        docstring calls the callout "the best thing about this interface and the
+        easiest to lose in a restyle", and it was already most of the way lost.
+
+        "warning" rather than "danger" is deliberate: theme defines warning as
+        "needs attention but nothing is broken", and nothing IS broken - the
+        screen is working exactly as configured. What is wrong is what the
+        operator would otherwise conclude from it.
+        """
+        self.provenance_label.setStyleSheet(
+            theme.callout("warning") if warning else theme.text(theme.MUTED, size=theme.CAPTION)
+        )
 
     def _apply_level(self) -> None:
         """Three levels, three outcomes.
@@ -415,6 +436,7 @@ class ScreenerScreen(QWidget):
             self._render_results(rows)
             self.status_label.setText(f"{len(rows)} of {len(symbols)} candidates matched.")
             self.provenance_label.setText(_provenance_caption(rows, explains=self.level.explains()))
+            self._style_provenance(warning=any(row.is_synthetic for row in rows))
         except Exception as exc:  # noqa: BLE001 - surfaced to the user below
             logger.exception("Screener run failed")
             self.status_label.setText(f"Screen failed: {exc}")

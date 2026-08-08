@@ -28,6 +28,7 @@ from __future__ import annotations
 import pytest
 
 from qat.config import Settings
+from qat.presentation import theme
 from qat.presentation.runtime import Runtime
 from qat.presentation.screener import (
     _PRESETS,
@@ -152,6 +153,37 @@ async def test_the_demo_runtime_is_reported_as_synthetic(qtbot):
     await screen._run_screen()
 
     assert "INVENTED" in screen.provenance_label.text()
+
+
+@pytest.mark.asyncio
+async def test_invented_figures_get_the_bordered_callout(qtbot):
+    """`theme.callout` had zero consumers when this was written - extracted in
+    the design-system step and adopted by nothing, the same shape as
+    `shows_advanced()` sitting unread from M45 until M63."""
+    screen = _screen(qtbot)
+    screen.category_combo.setCurrentText("megacap")
+    screen.min_avg_volume_input.setValue(0)
+
+    await screen._run_screen()
+
+    assert screen.provenance_label.styleSheet() == theme.callout("warning")
+
+
+def test_the_quiet_case_is_a_caption_rather_than_a_callout(qtbot):
+    """A bordered amber block on every run is the disclaimer nobody reads."""
+    screen = _screen(qtbot)
+
+    screen._style_provenance(warning=False)
+
+    assert screen.provenance_label.styleSheet() == theme.text(theme.MUTED, size=theme.CAPTION)
+
+
+def test_the_labels_are_styled_from_the_design_system(qtbot):
+    """§3a: labels come from the design system, not from per-widget styling -
+    a hand-styled label is the 67-stylesheet problem returning one at a time."""
+    screen = _screen(qtbot)
+
+    assert screen.preset_summary.styleSheet() == theme.text(theme.MUTED, size=theme.CAPTION)
 
 
 # --- presets ------------------------------------------------------------------

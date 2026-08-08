@@ -210,6 +210,54 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M73 - The AI Advisor's "do not touch" framing did not exist
+
+8 August. Step 4.9, audited rather than accepted - the brief calls this "the
+simplest screen, and fine", and it was wrong on both of its claims. That is the
+FIFTH time §4.x has been wrong in detail.
+
+**"Do not touch: the advisory-only framing. The user must never be led to think
+the AI can act."** The framing lived in the module docstring - *"an analyst,
+never a trader"* - which the operator never sees. On screen it printed
+`[BUY, confidence=80%]` in bold and said nothing about what happened next. The
+brief was protecting something that was never built.
+
+It matters more here than it would in most applications, because **this one also
+trades unattended** - `QAT_EXECUTION_MODE=auto` on the live install. A
+recommendation displayed inside an application that places its own orders
+invites exactly the inference §4.9 wants prevented, and nothing on screen
+prevented it. The advisor genuinely never touches the OMS; that fact simply had
+no representation in the interface.
+
+Not level-aware, deliberately. M45: safety is not a level, and a Professional
+operator is not less entitled to know which half of the application is speaking.
+
+**"Enhance: little."** It fed the model a zero it never measured:
+
+    "var_95": portfolio_check.get("var_95", 0.0)
+
+so "no risk check has run this session" reached the model as "VaR is zero" - no
+tail risk - and a language model cannot ask which was meant. **The same prompt,
+eleven lines further down, promises the opposite in as many words:** *"fields the
+vendor could not answer are omitted rather than zeroed"*. The Screener's em dash
+and `available_figures()` state the same rule again. The one consumer that
+cannot ask got the version the rest of the codebase refuses to produce.
+
+Absent keys are now omitted, and `to_prompt_text` says "UNKNOWN, not zero risk"
+rather than rendering an empty dict. Each answer also states what it was
+reasoning without - synthetic fundamentals, or no risk figures - because
+`to_prompt_text` already told the MODEL both and told the operator neither,
+leaving the two working from different information about the same reply.
+
+**`theme.callout` had zero consumers.** Extracted in the design-system step and
+adopted by nothing, while its own docstring calls the pattern "the best thing
+about this interface and the easiest to lose in a restyle". It was already most
+of the way lost. M72's synthetic-fundamentals warning is its first caller.
+Same shape as `shows_advanced()` sitting unread from M45 until M63, and the
+fourth instance of that pattern this document records.
+
+15 tests.
+
 ## M72 - The Screener never said whether its figures were real
 
 8 August. Step 4.8 of `UI_UX_APPROACH.md`. The brief's premise held this time -
