@@ -923,7 +923,30 @@ place, size or approve an order, so nothing it is told changes a trading
 decision. Nothing here alters what the strategies see - they already had this
 data.
 
-### M41 - Earnings event risk
+### M41 - Earnings event risk  **[DONE, 7-8 August]**
+
+Delivered in two halves. **M57** sizes an entry down to 50% within five trading
+days of a scheduled print - "size down into an announcement", the middle of the
+three options below. **M41 proper**, 8 August, is the first: the announcement
+date known at entry now rides from the order through the fill onto the closed
+trade, so the trial can measure what holding through one actually costs.
+
+The date rather than the distance, deliberately. A distance measured at entry
+against a holding period measured at exit only approximates the question; the
+date answers it exactly. And it has to be captured as it happens for the same
+reason the rest of M37 does - by the time a position closes, the calendar has
+rolled to the following quarter, so the fact stops being recoverable the moment
+the trade is opened.
+
+Three states, kept as three across every boundary including the CSV: held
+through, avoided, and unknown. An ETF has no earnings and an adopted position
+was never sized against a calendar, and writing those as "avoided" would merge
+them permanently with trades that genuinely dodged an event.
+
+**The third option - flatten before the announcement - remains undone**, and is
+a decision change rather than a diagnostic.
+
+### M41 - Earnings event risk, as originally recorded
 
 Fundamentals carry earnings data for screening, but nothing in the trading path
 knows when a held position is about to report. With a 10-day minimum hold and a
@@ -941,7 +964,28 @@ down into an announcement; flatten before it. The first is a diagnostic and
 could arguably be done during the trial; the other two change decisions and
 cannot.
 
-### M42 - Partial fills are miscounted
+### M42 - Partial fills are miscounted  **[DONE, 8 August]**
+
+Fixed exactly as described below, and the description understated it: this is
+the same failure that halted the 5 August session, on the one path M53 never
+touched. M53 fixed fills replayed FROM the broker; this is orders the
+application places itself. `place_order` wrote back the id, the status and the
+fill price and left `quantity` at the requested size, so a buy for 100 that
+filled 60 was tracked as 100 - a 40-share discrepancy, which reconciliation
+answers with the kill-switch.
+
+Guarded on being positive: an accepted-but-unfilled order reports `filled_qty`
+of 0, and writing that back would read as "this position was closed" rather
+than "it has not started".
+
+**Nearly missed, and worth recording why.** The first tests were written at the
+OMS, against a mock that already wrote the filled quantity back - so they passed
+before the fix as well as after, proving the mock behaved while the real
+adapter did not. That is the M56a mistake again: testing the layer being
+reasoned about rather than the layer holding the defect. The test that mattered
+sits at the adapter and failed with `assert 100 == 60.0`.
+
+### M42 - Partial fills, as originally recorded
 
 The Alpaca adapter builds requests from `order.quantity` and never writes the
 broker's `filled_qty` back onto the order. `OMS.sign_off` then counts

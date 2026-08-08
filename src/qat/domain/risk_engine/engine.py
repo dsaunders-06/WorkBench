@@ -12,6 +12,7 @@ exposure by RegimeEvent.exposure_scalar").
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Literal
 
 import pandas as pd
@@ -69,6 +70,12 @@ class OrderCandidate:
     # Negative means the date has already passed and the risk it names is
     # historical.
     days_to_earnings: int | None = None
+    # The announcement date itself, carried for the RECORD rather than for the
+    # rail (M41). The rail needs a distance; a closed trade needs a date, so
+    # that "was this held through its print" is answerable exactly rather than
+    # inferred from a distance measured at entry against a holding period
+    # measured at exit.
+    earnings_date: date | None = None
 
 
 class RiskEngine:

@@ -43,6 +43,8 @@ _MAX_LOOKAHEAD_TRADING_DAYS = 400
 class EarningsCalendar(Protocol):
     def trading_days_until(self, symbol: str, as_of: date | None = None) -> int | None: ...
 
+    def next_earnings(self, symbol: str) -> date | None: ...
+
     def refresh(self, symbols: Iterable[str]) -> int: ...
 
 
@@ -54,6 +56,9 @@ class NullEarningsCalendar:
     """
 
     def trading_days_until(self, symbol: str, as_of: date | None = None) -> int | None:
+        return None
+
+    def next_earnings(self, symbol: str) -> date | None:
         return None
 
     def refresh(self, symbols: Iterable[str]) -> int:

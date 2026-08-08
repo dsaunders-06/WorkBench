@@ -17,7 +17,7 @@ import json
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -268,6 +268,7 @@ class OMS:
             # bracket rather than naked.
             stop_price=candidate.stop_price or decision.stop_price,
             take_profit_price=candidate.take_profit_price,
+            earnings_date=candidate.earnings_date,
         )
         await self._announce_pending(order)
         return order
@@ -335,6 +336,7 @@ class OMS:
         strategy: str | None = None,
         stop_price: float | None = None,
         take_profit_price: float | None = None,
+        earnings_date: date | None = None,
     ) -> Order:
         order = Order(
             symbol=symbol,
@@ -346,6 +348,7 @@ class OMS:
             strategy=strategy,
             stop_price=stop_price,
             take_profit_price=take_profit_price,
+            earnings_date=earnings_date,
         )
         self._orders[order.order_id] = order
         self._record(order, "proposed", "awaiting sign-off")
@@ -519,6 +522,7 @@ class OMS:
                 take_profit_price=order.take_profit_price,
                 operator=operator,
                 reference_price=order.reference_price,
+                earnings_at_entry=order.earnings_date,
                 exit_reason=(
                     self._exit_reasons.pop(order.symbol, "signal") if order.side == "sell" else None
                 ),

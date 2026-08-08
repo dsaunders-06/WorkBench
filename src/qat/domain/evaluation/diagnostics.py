@@ -37,8 +37,19 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, field
 from statistics import fmean
+from typing import TYPE_CHECKING
 
-from qat.domain.performance.trades import ClosedTrade
+if TYPE_CHECKING:  # pragma: no cover - annotations only
+    # Behind TYPE_CHECKING because importing it for real is a cycle:
+    # `qat.domain.performance.__init__` imports the reporter, which imports the
+    # reports module, which imports this one. It is only ever an annotation
+    # here, and `from __future__ import annotations` keeps those as strings.
+    #
+    # The full suite passed with this as a plain import - pytest happened to
+    # reach `performance` first - and it failed the moment a test imported this
+    # module directly. An import order that works by luck is not a working
+    # import order.
+    from qat.domain.performance.trades import ClosedTrade
 
 _UNRECORDED = "unrecorded"
 
@@ -90,6 +101,12 @@ class TradeDiagnostics:
     mean_entry_slippage: float | None = None
     mean_cost_share_of_risk: float | None = None
     mean_holding_days: float | None = None
+    # Trades held through a scheduled earnings print, and what they were worth
+    # against those that avoided one (M41).
+    through_earnings: int = 0
+    avoided_earnings: int = 0
+    mean_r_through_earnings: float | None = None
+    mean_r_avoiding_earnings: float | None = None
     unrecorded_fields: tuple[str, ...] = ()
     # Carried rather than looked up, so the summary and the section that
     # renders it cannot disagree about what counted as enough.
@@ -123,6 +140,8 @@ def summarise_diagnostics(trades: list[ClosedTrade]) -> TradeDiagnostics:
     slippage: list[float] = []
     cost_share: list[float] = []
     holding: list[float] = []
+    r_through: list[float] = []
+    r_avoided: list[float] = []
     held_past_best = 0
     missing: Counter[str] = Counter()
 
@@ -172,6 +191,15 @@ def summarise_diagnostics(trades: list[ClosedTrade]) -> TradeDiagnostics:
         if risk is not None and risk > 0 and trade.quantity > 0:
             cost_share.append(trade.costs / (risk * trade.quantity))
 
+        # Held through a print, or not, or unknowable - three states, kept as
+        # three (M41). An unknown date is not a "no": an ETF has no earnings
+        # and an adopted position was never sized against a calendar.
+        through = trade.held_through_earnings
+        if through is None:
+            missing["earnings_at_entry"] += 1
+        elif r is not None:
+            (r_through if through else r_avoided).append(r)
+
     threshold = _min_trades_for_stats()
     enough = measurable >= threshold
     return TradeDiagnostics(
@@ -194,6 +222,12 @@ def summarise_diagnostics(trades: list[ClosedTrade]) -> TradeDiagnostics:
         mean_entry_slippage=_mean(slippage) if enough else None,
         mean_cost_share_of_risk=_mean(cost_share) if enough else None,
         mean_holding_days=_mean(holding) if enough else None,
+        # Counts unconditionally: "three of ten were held through a print" is
+        # exact and useful long before any average is.
+        through_earnings=len(r_through),
+        avoided_earnings=len(r_avoided),
+        mean_r_through_earnings=_mean(r_through) if enough else None,
+        mean_r_avoiding_earnings=_mean(r_avoided) if enough else None,
         unrecorded_fields=tuple(sorted(missing)),
     )
 
@@ -251,6 +285,20 @@ def format_diagnostics_section(d: TradeDiagnostics) -> str:
         lines.append("|---|---|---|")
         for regime, (count, mean) in d.by_regime.items():
             lines.append(f"| {regime} | {count} | {mean:+.2f} |")
+        lines.append("")
+
+    if d.through_earnings or d.avoided_earnings:
+        line = (
+            f"**Earnings.** {d.through_earnings} of "
+            f"{d.through_earnings + d.avoided_earnings} datable trades were held through a "
+            "scheduled announcement"
+        )
+        if d.mean_r_through_earnings is not None and d.mean_r_avoiding_earnings is not None:
+            line += (
+                f" - {d.mean_r_through_earnings:+.2f}R against "
+                f"{d.mean_r_avoiding_earnings:+.2f}R for those that avoided one"
+            )
+        lines.append(line + ".")
         lines.append("")
 
     execution: list[str] = []

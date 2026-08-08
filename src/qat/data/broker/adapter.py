@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal, Protocol
 
 OrderStatus = Literal["new", "pending_signoff", "transmitted", "filled", "cancelled", "rejected"]
@@ -40,6 +40,13 @@ class Order:
     # indistinguishable from a market sell, and submitting it as one would
     # liquidate the position it was meant to protect.
     order_type: Literal["market", "stop"] = "market"
+    # The next scheduled earnings announcement as it was known when this order
+    # was sized (M41). Diagnostics, never mechanism - the event-risk rail works
+    # off a distance and has already done its work by the time this is carried.
+    # It rides here so that a closed trade can answer whether it was held
+    # through a print, which is not reconstructable afterwards: by the time the
+    # trade closes, the calendar has moved on to the next quarter.
+    earnings_date: date | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property

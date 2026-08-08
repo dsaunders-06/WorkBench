@@ -37,7 +37,7 @@ import contextlib
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
@@ -799,6 +799,18 @@ class SignalToOrderBridge:
     def _days_to_earnings(self, symbol: str) -> int | None:
         return _earnings_distance(self.earnings_calendar, symbol)
 
+    def _earnings_date(self, symbol: str) -> date | None:
+        """The announcement date, for the record rather than for the rail (M41).
+
+        Same guarding as the distance: cache-only underneath, and a calendar
+        that misbehaves yields None rather than stopping an order.
+        """
+        try:
+            return self.earnings_calendar.next_earnings(symbol)
+        except Exception:  # noqa: BLE001 - a diagnostic must never block an order
+            logger.debug("Earnings date unavailable for %s", symbol, exc_info=True)
+            return None
+
     async def _submit_short(
         self,
         symbol: str,
@@ -839,6 +851,7 @@ class SignalToOrderBridge:
             stop_price=stop_price,
             take_profit_price=take_profit_price,
             days_to_earnings=self._days_to_earnings(symbol),
+            earnings_date=self._earnings_date(symbol),
         )
 
         # A broker blip must REFUSE the signal, not throw it (M54).

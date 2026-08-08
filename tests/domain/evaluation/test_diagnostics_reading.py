@@ -9,7 +9,7 @@ thin to mean anything.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from qat.domain.evaluation.diagnostics import (
     format_diagnostics_section,
@@ -34,6 +34,7 @@ def _trade(
     entry_cost: float = 0.0,
     exit_cost: float = 0.0,
     quantity: float = 10.0,
+    earnings: date | None = None,
 ) -> ClosedTrade:
     entry = 100.0
     return ClosedTrade(
@@ -52,6 +53,7 @@ def _trade(
         best_price=best,
         worst_price=worst,
         reference_price=reference,
+        earnings_at_entry=earnings,
     )
 
 
@@ -177,6 +179,42 @@ def test_costs_are_reported_as_a_share_of_the_risk_taken():
     summary = summarise_diagnostics(_enough(entry_cost=2.5, exit_cost=2.5))
 
     assert summary.mean_cost_share_of_risk == 0.10
+
+
+def test_trades_held_through_an_earnings_print_are_counted_separately():
+    """M41. With a 10-day minimum hold and a 30-day time stop, holding through
+    an announcement is arithmetically unavoidable about once a quarter per
+    position - so the trial has to be able to say what it cost."""
+    through = [_trade(pnl_per_share=-5.0, earnings=date(2026, 8, 2), days=5.0) for _ in range(3)]
+    avoided = [_trade(pnl_per_share=10.0, earnings=date(2026, 9, 30), days=5.0) for _ in range(2)]
+
+    summary = summarise_diagnostics(through + avoided)
+
+    assert summary.through_earnings == 3
+    assert summary.avoided_earnings == 2
+    assert summary.mean_r_through_earnings == -1.0
+    assert summary.mean_r_avoiding_earnings == 2.0
+
+    section = format_diagnostics_section(summary)
+    assert "3 of 5 datable trades were held through a scheduled announcement" in section
+
+
+def test_an_unknown_earnings_date_is_neither_held_through_nor_avoided():
+    """Three states kept as three. An ETF has no earnings and an adopted
+    position was never sized against a calendar - reporting those as "avoided"
+    would put them in the same bucket as trades that genuinely dodged one."""
+    summary = summarise_diagnostics(_enough(earnings=None))
+
+    assert summary.through_earnings == 0
+    assert summary.avoided_earnings == 0
+    assert "earnings_at_entry" in summary.unrecorded_fields
+
+
+def test_the_counts_are_exact_before_any_average_is_offered():
+    summary = summarise_diagnostics([_trade(earnings=date(2026, 8, 2), days=5.0)])
+
+    assert summary.through_earnings == 1
+    assert summary.mean_r_through_earnings is None, "one trade is not an average"
 
 
 def test_an_unrecorded_exit_reason_is_named_rather_than_dropped():

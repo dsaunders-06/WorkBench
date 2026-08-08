@@ -12,7 +12,7 @@ producers and consumers for each.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 
@@ -105,6 +105,13 @@ class OrderFilledEvent(Event):
     reference_price: float | None = None
     """The price the order was sized against, so realised slippage is
     measurable against the assumption rather than guessed at."""
+    earnings_at_entry: date | None = None
+    """The next scheduled announcement as known when the order was sized (M41).
+
+    Carried because it cannot be recovered later: by the time the trade closes
+    the calendar has rolled to the following quarter, so "was this held through
+    a print" stops being answerable the moment the position is opened.
+    """
     exit_reason: str | None = None
     """How a position ended: stop, target, time_stop, signal, delever. Set by
     whichever component actually caused the exit, because after the fact the

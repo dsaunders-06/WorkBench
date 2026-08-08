@@ -6,7 +6,7 @@ promotion gate concludes rests on these numbers being right.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -285,6 +285,84 @@ async def test_closed_trades_are_persisted_to_csv(tmp_path):
     assert "symbol,strategy" in text
     assert "AAA" in text
     assert "swing" in text
+
+
+@pytest.mark.asyncio
+async def test_the_earnings_date_survives_the_round_trip_to_disk(tmp_path):
+    """M41. The date is carried from the entry order and cannot be recovered
+    afterwards - by the time the trade closes the calendar has rolled to the
+    next quarter, so a column that failed to persist would lose the fact
+    permanently rather than merely delay it."""
+    bus = EventBus()
+    ledger = TradeLedger(bus, tmp_path)
+    await ledger.start()
+
+    await bus.publish(
+        OrderFilledEvent(
+            order_id="1",
+            symbol="AAA",
+            side="buy",
+            quantity=10,
+            price=100.0,
+            stop_price=95.0,
+            strategy="swing",
+            ts=_BASE,
+            earnings_at_entry=date(2026, 7, 22),
+        )
+    )
+    await bus.publish(
+        OrderFilledEvent(
+            order_id="2",
+            symbol="AAA",
+            side="sell",
+            quantity=10,
+            price=110.0,
+            strategy="swing",
+            ts=_BASE + timedelta(days=5),
+        )
+    )
+    await ledger.stop()
+
+    text = (tmp_path / "closed_trades.csv").read_text(encoding="utf-8")
+    assert "earnings_at_entry" in text
+    assert "2026-07-22" in text
+
+    reloaded = TradeLedger(EventBus(), tmp_path).closed_trades()
+    assert len(reloaded) == 1
+    assert reloaded[0].earnings_at_entry == date(2026, 7, 22)
+    assert reloaded[0].held_through_earnings is True
+
+
+@pytest.mark.asyncio
+async def test_a_trade_with_no_earnings_date_reloads_as_unknown_not_as_false(tmp_path):
+    """Three states kept as three across the file boundary. Writing an unknown
+    as False would merge it permanently with trades that genuinely avoided a
+    print, and no later read could separate them again."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 10, 110.0, day=1)
+    await ledger.stop()
+
+    reloaded = TradeLedger(EventBus(), tmp_path).closed_trades()
+
+    assert reloaded[0].earnings_at_entry is None
+    assert reloaded[0].held_through_earnings is None
+
+
+def test_a_pre_m41_file_still_loads(tmp_path):
+    """Every closed_trades.csv written before this column exists lacks it, and
+    a restart that discarded its whole trade history over a missing diagnostic
+    would be the M33 mistake a second time."""
+    (tmp_path / "closed_trades.csv").write_text(
+        "opened_at,closed_at,symbol,strategy,quantity,entry_price,exit_price,stop_price\n"
+        "2026-08-01T00:00:00+00:00,2026-08-05T00:00:00+00:00,CVS,swing,47,105.475,95.597,99.355\n",
+        encoding="utf-8",
+    )
+
+    trades = TradeLedger(EventBus(), tmp_path).closed_trades()
+
+    assert len(trades) == 1
+    assert trades[0].earnings_at_entry is None
 
 
 @pytest.mark.asyncio

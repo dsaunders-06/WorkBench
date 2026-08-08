@@ -37,7 +37,7 @@ import logging
 import threading
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from qat.config import Settings
@@ -82,6 +82,13 @@ _FIELDS = (
     "reference_price",
     "worst_price",
     "best_price",
+    # The announcement date known at entry, and whether it fell inside the
+    # trade's life (M41). The second is derivable from the first, and is
+    # written anyway: the question a reader actually asks is "was this held
+    # through a print", and making them recompute it from two dates invites
+    # them not to.
+    "earnings_at_entry",
+    "held_through_earnings",
 )
 
 
@@ -90,6 +97,18 @@ def _share_of(total_cost: float, matched: float, whole: float) -> float:
     if whole <= 0:
         return 0.0
     return total_cost * (matched / whole)
+
+
+def _optional_date(value: str | None) -> date | None:
+    """An ISO date cell that is legitimately blank. Anything unparseable reads
+    as absent rather than raising - a diagnostic column must never be able to
+    stop a trade history loading."""
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value[:10])
+    except ValueError:
+        return None
 
 
 def _optional_float(value: str | None) -> float | None:
@@ -132,6 +151,8 @@ class OpenLot:
     """Lowest price seen while held - maximum adverse excursion."""
     best_price: float | None = None
     """Highest price seen while held - maximum favourable excursion."""
+    earnings_at_entry: date | None = None
+    """The next scheduled announcement as known when the lot was opened (M41)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +176,25 @@ class ClosedTrade:
     reference_price: float | None = None
     worst_price: float | None = None
     best_price: float | None = None
+    earnings_at_entry: date | None = None
+
+    @property
+    def held_through_earnings(self) -> bool | None:
+        """Whether a scheduled announcement fell inside this trade's life (M41).
+
+        None when no date was known, which is a third state and not a "no": an
+        ETF has no earnings, a vendor cannot answer for every listing, and a
+        trade adopted from the broker was never sized against a calendar at
+        all. Reporting those as "did not hold through one" would put them in
+        the same bucket as trades that genuinely avoided the event.
+
+        The comparison is against the date recorded AT ENTRY on purpose. By the
+        time a position closes the calendar has rolled to the next quarter, so
+        asking again afterwards answers a different question.
+        """
+        if self.earnings_at_entry is None:
+            return None
+        return self.opened_at.date() <= self.earnings_at_entry <= self.closed_at.date()
 
     @property
     def holding_days(self) -> float:
@@ -296,6 +336,15 @@ class ClosedTrade:
             ),
             "worst_price": round(self.worst_price, 4) if self.worst_price is not None else "",
             "best_price": round(self.best_price, 4) if self.best_price is not None else "",
+            "earnings_at_entry": (
+                self.earnings_at_entry.isoformat() if self.earnings_at_entry is not None else ""
+            ),
+            # Blank rather than False when unknown. "No date was available" and
+            # "a date was available and the trade avoided it" are different
+            # facts, and writing both as False would merge them permanently.
+            "held_through_earnings": (
+                "" if self.held_through_earnings is None else str(self.held_through_earnings)
+            ),
         }
 
     @classmethod
@@ -328,6 +377,10 @@ class ClosedTrade:
                 reference_price=_optional_float(row.get("reference_price")),
                 worst_price=_optional_float(row.get("worst_price")),
                 best_price=_optional_float(row.get("best_price")),
+                # .get, not [...]: every file written before M41 lacks this
+                # column, and a restart that discarded its whole trade history
+                # over a missing diagnostic would be the M33 mistake again.
+                earnings_at_entry=_optional_date(row.get("earnings_at_entry")),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -503,6 +556,7 @@ class TradeLedger:
                     reference_price=event.reference_price,
                     worst_price=event.price,
                     best_price=event.price,
+                    earnings_at_entry=event.earnings_at_entry,
                 )
             )
             return
@@ -553,6 +607,7 @@ class TradeLedger:
                 reference_price=lot.reference_price,
                 worst_price=lot.worst_price,
                 best_price=lot.best_price,
+                earnings_at_entry=lot.earnings_at_entry,
             )
             self._record(trade)
 
