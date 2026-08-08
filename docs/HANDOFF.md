@@ -84,10 +84,10 @@ positions on deploy.
 
 Verify with `scripts/analysis/verify_gating_figures.py`.
 
-## What landed after the handoff was written — M70, M72, M73
+## What landed after the handoff was written — M70, M72, M73, M74
 
-All four checks clean, **1,618 tests**. Repo clean; **committed, not pushed**.
-None of it is deployed, and none of it should be before Tuesday.
+All four checks clean, **1,637 tests**. Repo clean and **pushed**. None of it is
+deployed, and none of it should be before Tuesday.
 
 **M70 — the residual half of M65, and the half startup could not heal.**
 `_announce_fill` publishes at `transmitted` as well as `filled`, and at transmit
@@ -133,8 +133,23 @@ fed the model `var_95: 0.0` when no risk check had run, eleven lines above a
 prompt that promises "fields the vendor could not answer are omitted rather than
 zeroed". Both fixed.
 
-**`theme.callout` had zero consumers** until M72 — the fourth instance of the
-`shows_advanced()` pattern. Ask what reads it.
+**M74 — the Workbench consumed no level**, so every operator saw the walk-forward
+panel and the **deploy control**, the one control on that screen that changes
+what the account does. Now Professional only; the deploy *gate* is untouched.
+Guided gets a notice rather than an emptied screen. And the plain-language
+summary §4.5 lists for Standard was never written — Standard got twelve KPI tiles
+in **alphabetical order**, `alpha` first, with nothing to say which of them
+decides anything.
+
+**M75 — recorded, NOT fixed.** `theme.callout` had zero consumers until M72, and
+the reason turned out to be structural: **25 raw-hex sites survive across seven
+of the eight presentation files**, all of them theme primitives written longhand,
+and `settings.py` hand-writes the exact `callout("warning")` string twice. The
+design system was declared done and is half-migrated. Finish it in one pass when
+the Order Blotter's turn comes.
+
+That is the **fifth** instance of the `shows_advanced()` pattern. Ask what reads
+it.
 
 ## M65 — found and FIXED 8 August, not yet deployed
 
@@ -173,7 +188,7 @@ inside a session carries it until the next startup.
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
   is refusing new entries. That is the rails working.
 - **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,618 tests**; ruff, black, mypy, bandit clean.
+- **1,637 tests**; ruff, black, mypy, bandit clean.
 
 ## What landed on 8 August
 
@@ -376,7 +391,7 @@ Repo clean and pushed - `git log --oneline -1` for the tip.
   and MONDAY NEEDS NONE OF IT. Do not deploy before the split test.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,618 tests
+VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,637 tests
 pass; ruff, black, mypy, bandit clean.
 
 LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
@@ -401,6 +416,14 @@ LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
        not. Latent, not active: the live install runs yfinance with no
        fallback warnings. Presets added, level-aware; saved custom screens
        deferred deliberately.
+  M74  the Workbench consumed NO level, so every operator saw the walk-forward
+       panel and the DEPLOY CONTROL - the one control on that screen that
+       changes what the account does. Now Professional only; the deploy GATE
+       itself is untouched. Guided gets a notice rather than an emptied
+       screen. And the plain-language summary §4.5 lists for Standard was
+       never written - Standard got twelve KPI tiles in ALPHABETICAL order,
+       alpha first, with nothing to say which of them decides anything.
+  M75  RECORDED, NOT FIXED. The design system is half-migrated - see below.
   M73  §4.9 was wrong on BOTH claims. The advisory-only framing it says not to
        touch existed only in a docstring, while the screen printed
        [BUY, confidence=80%] in bold - inside an app that trades unattended.
@@ -554,9 +577,20 @@ and was wrong). Free tier: real-time is IEX only, but SIP HISTORICAL is free.
   baseline. DECIDE IT AFTER TUESDAY - nothing should change sizing between now
   and the split measurement.
 
-GROUP 4, THE INTERFACE — steps 1-3, 4, 4.5, 4.6, 4.7, 4.8 and 4.9 done
-Remaining: the REST of the Strategy Workbench, the Order Blotter (deliberately
-LAST, most safety-critical), and Performance (waits for September).
+GROUP 4, THE INTERFACE — every research screen is done
+Dashboard, Workbench, Regime Monitor, Risk Console, Screener, AI Advisor.
+Remaining: the ORDER BLOTTER (deliberately LAST, most safety-critical),
+Performance (waits for September), and STEP 1, which is not finished.
+
+  M75 - THE DESIGN SYSTEM WAS DECLARED DONE AND IS HALF-DONE. 25 raw-hex
+  colour sites survive across seven of the eight presentation files, every one
+  a theme.py primitive written longhand (#b71c1c is DANGER, #1b5e20 is
+  SUCCESS, #b45309 is WARNING, #1e3a5f is ACCENT). settings.py lines 672 and
+  721 hand-write the exact string theme.callout("warning") returns, character
+  for character - which is why callout had ZERO consumers until M72. A restyle
+  would change some screens and not others, which is worse than not having
+  extracted it. Finish it in ONE PASS when the Blotter's turn comes, screens
+  rendered before and after. Mechanical, and no rush.
 
   READ §4.x AS INTENT AND CHECK ITS PARTICULARS FIRST. The brief has now been
   wrong in detail FIVE times - M63 on the Balances premise, M64 on the macro

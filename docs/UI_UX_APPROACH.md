@@ -374,11 +374,18 @@ Lower traffic, mostly Professional, least urgent.
 **8. AI Advisor.** Already simple. Leave it alone until the rest sets the
 pattern.
 
-> **Status, 8 August.** Steps 1, 2, 3, 4 and the research screens are done -
-> Dashboard (M63), Workbench caveats (M69), Regime Monitor (M64), Risk Console
-> (M67, M68), Screener (M72) and AI Advisor (M73). **Remaining: the rest of the
-> Workbench, the Order Blotter (deliberately last), and Performance (waits for
-> September).**
+> **Status, 8 August.** Steps 2, 3, 4 and every research screen are done -
+> Dashboard (M63), Workbench (M69 caveats, M74 levels and summary), Regime
+> Monitor (M64), Risk Console (M67, M68), Screener (M72) and AI Advisor (M73).
+> **Remaining: the Order Blotter (deliberately last), Performance (waits for
+> September), and step 1, which is not finished.**
+>
+> **Step 1 was recorded as done and is half-done — see ROADMAP M75.** 25 raw-hex
+> colour sites survive across seven of the eight presentation files, every one of
+> them a `theme.py` primitive written longhand, and `settings.py` hand-writes the
+> exact string `theme.callout("warning")` returns — twice. That is why `callout`
+> had no consumers until M72. Finish it in one pass when the Blotter's turn
+> comes, with the screens rendered before and after.
 >
 > **Read §4.x as intent and check its particulars first.** The brief has now
 > been wrong in detail FIVE times: M63 on the Balances premise ("most of them
