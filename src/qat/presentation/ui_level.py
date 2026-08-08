@@ -60,6 +60,17 @@ class UiLevel(IntEnum):
         """Whether controls that need judgement to set should be present."""
         return self >= UiLevel.STANDARD
 
+    def prefers_density(self) -> bool:
+        """Whether detail should be open rather than folded away.
+
+        The third question, and distinct from `shows_advanced()` in exactly one
+        place that matters: Standard wants the detail PRESENT but folded, so a
+        screen keyed on `shows_advanced()` alone cannot tell Standard from
+        Professional. Without this the Balances panel rendered two of its three
+        levels identically.
+        """
+        return self >= UiLevel.PROFESSIONAL
+
 
 _BY_NAME = {
     "guided": UiLevel.GUIDED,

@@ -72,7 +72,10 @@ class DashboardScreen(QWidget):
         # The balances panel replaces the old NAV tile (M21). Showing both
         # would put two numbers for the same money on one screen and invite the
         # question of why they differ - they do not.
-        self.balances_panel = BalancesPanel(runtime.settings.min_cash_reserve)
+        self.balances_panel = BalancesPanel(
+            runtime.settings.min_cash_reserve,
+            level=UiLevel.from_settings(runtime.settings),
+        )
         layout.addWidget(self.balances_panel)
 
         # The three risk figures survive as a compact line rather than tiles:
