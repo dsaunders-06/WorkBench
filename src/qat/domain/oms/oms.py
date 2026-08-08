@@ -29,6 +29,7 @@ from qat.data.broker.mock_broker import new_order_id
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal, JournalEntry
 from qat.domain.events import OrderFilledEvent, OrderPendingSignoffEvent
+from qat.domain.oms.anomaly import PositionAnomalyStore
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -176,6 +177,13 @@ class OMS:
         # individually-affordable orders collectively overdraw the account.
         # Bulk human sign-off and unattended execution both hit this path.
         self._signoff_lock = asyncio.Lock()
+        # Positions in a state the ordinary path must not treat as ordinary
+        # (M39/M43). Persisted, because adoption reseeds tracked quantities
+        # from the broker at every launch and would otherwise launder the very
+        # divergence this records.
+        self.anomalies = PositionAnomalyStore(settings.data_dir if settings is not None else None)
+        # Explained divergences are logged once per session, not once per poll.
+        self._explained_logged: set[str] = set()
 
     async def submit_order(
         self,
@@ -1231,6 +1239,12 @@ class OMS:
 
         Call adopt_broker_positions() once at startup first, or an account with
         any pre-existing holding reads as a mismatch immediately.
+
+        A divergence the anomaly store EXPLAINS is not a mismatch (M39). The
+        return value keeps its meaning - "a halting mismatch was found" - so
+        ReconciliationMonitor, which publishes KillSwitchEvent on True, needs
+        no change. An explained symbol is still quarantined; explanation and
+        quarantine are separate questions.
         """
         # Broker-side executions are absorbed BEFORE anything is judged (M34).
         #
@@ -1253,16 +1267,40 @@ class OMS:
             if abs(self._filled_quantities.get(symbol, 0.0) - broker_positions.get(symbol, 0.0))
             > 1e-6
         }
-        if divergent:
+        explained = {
+            symbol: pair
+            for symbol, pair in divergent.items()
+            if self.anomalies.explains(symbol, pair[1])
+        }
+        unexplained = {
+            symbol: pair for symbol, pair in divergent.items() if symbol not in explained
+        }
+
+        for symbol, (tracked, actual) in sorted(explained.items()):
+            if symbol in self._explained_logged:
+                continue
+            self._explained_logged.add(symbol)
+            anomaly = self.anomalies.get(symbol)
+            logger.warning(
+                "%s tracked=%g broker=%g is explained by a declared position anomaly (%s) - "
+                "not halting. The symbol stays quarantined and its records are still "
+                "uncorrected.",
+                symbol,
+                tracked,
+                actual,
+                anomaly.reason if anomaly is not None else "reason unavailable",
+            )
+
+        if unexplained:
             logger.error(
                 "Broker reconciliation mismatch: %s",
                 ", ".join(
                     f"{sym} tracked={tracked:g} broker={actual:g}"
-                    for sym, (tracked, actual) in sorted(divergent.items())
+                    for sym, (tracked, actual) in sorted(unexplained.items())
                 ),
             )
             self.kill_switch.check_reconciliation()
-        return bool(divergent)
+        return bool(unexplained)
 
     def record_unsized_signal(
         self, symbol: str, side: Literal["buy", "sell"], strategy: str | None, reason: str
