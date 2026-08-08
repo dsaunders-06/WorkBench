@@ -9,6 +9,7 @@ something that is not a real discrepancy".
 from __future__ import annotations
 
 import csv
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -19,6 +20,8 @@ from qat.data.broker.adapter import Position
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal
 from qat.domain.oms.oms import OMS
+from qat.domain.oms.signal_bridge import SignalToOrderBridge, _Entry
+from qat.domain.performance.trades import TradeLedger
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -308,3 +311,81 @@ async def test_an_unquarantined_symbol_is_untouched(tmp_path):
 
     assert order.status == "pending_signoff"
     assert order.quantity == 7.0
+
+
+# --- The two signal-bridge sites ---------------------------------------------
+#
+# Both tests carry a POSITIVE CONTROL - an unquarantined symbol alongside the
+# quarantined one - because both methods return [] on several early paths, and
+# a test that cannot reach the code it guards passes for the wrong reason. That
+# is the M56a trap, where an empty fixture compared two empty lists.
+
+
+def _bridge(tmp_path, oms: OMS) -> SignalToOrderBridge:
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    return SignalToOrderBridge(
+        bus=EventBus(),
+        oms=oms,
+        settings=settings,
+        trade_ledger=TradeLedger(EventBus(), tmp_path, settings=settings),
+    )
+
+
+def _entry(stop: float | None = 163.32) -> _Entry:
+    return _Entry(
+        opened_at=datetime(2026, 7, 31, tzinfo=UTC),
+        price=187.40,
+        stop_price=stop,
+        target_price=235.20,
+        strategy="swing",
+    )
+
+
+@pytest.mark.asyncio
+async def test_rearm_skips_a_quarantined_position(tmp_path, caplog):
+    """The liquidation guard, and the reason this task exists at all.
+
+    `_entries[symbol].stop_price` is the PRE-event level. Re-arming from it
+    after a 4-for-1 split rests a stop at roughly four times the new price,
+    which on a long position triggers immediately and liquidates it at the
+    next open.
+    """
+    _, oms = _build_exit(tmp_path, {"CRWD": 64.0, "AMD": 7.0})
+    bridge = _bridge(tmp_path, oms)
+    bridge._entries["CRWD"] = _entry()
+    bridge._entries["AMD"] = _entry()
+    _quarantine(oms, "CRWD", 16.0, 64.0)
+
+    with caplog.at_level("ERROR"):
+        proposed = await bridge.rearm_protective_stops()
+
+    assert "CRWD" not in proposed
+    # The control: the same call DID re-arm the unquarantined position, so the
+    # skip above is a decision and not an early return.
+    assert "AMD" in proposed
+    assert "CRWD" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_lot_restore_skips_a_quarantined_position(tmp_path, caplog):
+    """`restore_open_lots` takes QUANTITY from the broker and BASIS from
+    `_entries`, so after an external quantity change it builds a lot at the
+    post-event size on the pre-event basis - silently, because the entry record
+    exists so no `unknown` warning fires. P&L is then wrong by the event's
+    factor and R is wrong in its denominator, feeding the promotion gate.
+
+    `_Entry` carries no quantity, so there is nothing to compare against and no
+    cheaper guard than this.
+    """
+    _, oms = _build_exit(tmp_path, {"CRWD": 64.0, "AMD": 7.0})
+    bridge = _bridge(tmp_path, oms)
+    bridge._entries["CRWD"] = _entry()
+    bridge._entries["AMD"] = _entry()
+    _quarantine(oms, "CRWD", 16.0, 64.0)
+
+    with caplog.at_level("WARNING"):
+        restored = await bridge.restore_open_lots()
+
+    assert "CRWD" not in restored
+    assert "AMD" in restored
+    assert "CRWD" in caplog.text

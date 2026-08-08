@@ -351,9 +351,13 @@ class SignalToOrderBridge:
 
         restored: list[str] = []
         unknown: list[str] = []
+        quarantined: list[str] = []
         for position in positions:
             quantity = abs(position.quantity)
             if quantity <= 0:
+                continue
+            if self.oms.anomalies.is_quarantined(position.symbol):
+                quarantined.append(position.symbol)
                 continue
             entry = self._entries.get(position.symbol)
             if entry is None:
@@ -381,6 +385,18 @@ class SignalToOrderBridge:
                 "No entry record for %s, so no lot could be restored - if these close, the "
                 "exit is absorbed but produces no closed trade and no P&L",
                 ", ".join(sorted(unknown)),
+            )
+        if quarantined:
+            # A visibly missing lot rather than a quietly wrong one - the rule
+            # this module already applies to an unknown stop. Quantity comes
+            # from the broker and basis from `_entries`, so after an external
+            # quantity change the lot would be built at the post-event size on
+            # the pre-event basis, and nothing would say so.
+            logger.warning(
+                "No lot restored for quarantined position(s) %s - the entry basis on record "
+                "does not match what the broker holds, so a lot built from it would be wrong "
+                "by the same factor. These produce no closed trade until corrected.",
+                ", ".join(sorted(quarantined)),
             )
         return restored
 
@@ -461,7 +477,11 @@ class SignalToOrderBridge:
 
         proposed: list[str] = []
         unknown: list[str] = []
+        quarantined: list[str] = []
         for symbol, quantity in naked:
+            if self.oms.anomalies.is_quarantined(symbol):
+                quarantined.append(symbol)
+                continue
             entry = self._entries.get(symbol)
             if entry is None or entry.stop_price is None:
                 unknown.append(symbol)
@@ -483,6 +503,18 @@ class SignalToOrderBridge:
                 "POSITION UNPROTECTED with no recorded entry stop: %s. No stop can be proposed "
                 "for these without inventing a level - close them or stop them manually.",
                 ", ".join(sorted(unknown)),
+            )
+        if quarantined:
+            # The liquidation guard. The recorded entry stop predates whatever
+            # quarantined the position, so re-arming from it after a 4-for-1
+            # split rests a sell-stop at roughly four times the new price -
+            # which triggers immediately and liquidates at the next open.
+            logger.error(
+                "POSITION UNPROTECTED and quarantined: %s. The recorded entry stop is from "
+                "before the change that quarantined it, so re-arming from it would rest "
+                "protection at a level that liquidates. No stop is proposed - protect or "
+                "close these manually.",
+                ", ".join(sorted(quarantined)),
             )
         return proposed
 
