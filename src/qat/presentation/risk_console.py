@@ -118,11 +118,36 @@ class RiskConsoleScreen(QWidget):
         layout.addLayout(anomaly_row)
         self._refresh_anomalies()
 
-        layout.addWidget(QLabel("Correlation (trailing window)"))
+        # Which pairs actually BIND, from the rail rather than from this
+        # screen's own arithmetic. The matrix below correlates ~60 intraday
+        # tick samples - about the last hour - while the cluster cap correlates
+        # 60 daily bars, about three months. They are different quantities, and
+        # only one of them refuses trades.
+        self.binding_pairs_label = QLabel("")
+        self.binding_pairs_label.setWordWrap(True)
+        self.binding_pairs_label.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        layout.addWidget(self.binding_pairs_label)
+
+        self.correlation_caption = QLabel(
+            "The table below is a short intraday window, shown for shape. The line above "
+            "is the measure the cluster cap actually enforces."
+        )
+        self.correlation_caption.setWordWrap(True)
+        self.correlation_caption.setStyleSheet(
+            f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;"
+        )
+        self.correlation_caption.setVisible(self.level.shows_advanced())
+        layout.addWidget(self.correlation_caption)
+
+        self.correlation_header = QLabel("Correlation (trailing window)")
+        self.correlation_header.setVisible(self.level.shows_advanced())
+        layout.addWidget(self.correlation_header)
         self.correlation_table = QTableWidget(len(runtime.watchlist), len(runtime.watchlist))
         self.correlation_table.setHorizontalHeaderLabels(list(runtime.watchlist))
         self.correlation_table.setVerticalHeaderLabels(list(runtime.watchlist))
+        self.correlation_table.setVisible(self.level.shows_advanced())
         layout.addWidget(self.correlation_table)
+        self.refresh_binding_pairs()
 
         self.runtime.bus.subscribe(MarketDataEvent, self._on_market_data)
 
@@ -135,6 +160,42 @@ class RiskConsoleScreen(QWidget):
         self._refresh_correlation_table()
         self._refresh_anomalies()
         self.refresh_refusals()
+        self.refresh_binding_pairs()
+
+    def refresh_binding_pairs(self) -> None:
+        """Pairs at or above the cluster threshold, asked of the governor.
+
+        Never recomputed here. The screen and the rail must not derive "are
+        these correlated" separately - they would drift, and an operator
+        reading one while the other refused the trade could not tell which was
+        binding.
+
+        Shown at EVERY level: it is a constraint on what may be traded, and the
+        matrix below is the detail rather than the fact.
+        """
+        bridge = self.runtime.signal_bridge
+        if bridge is None:
+            self.binding_pairs_label.setText("Correlation clusters: no strategy bridge running.")
+            return
+        symbols = sorted(self.runtime.opened_position_symbols())
+        if not symbols:
+            self.binding_pairs_label.setText("Correlation clusters: nothing held.")
+            return
+
+        returns = bridge.return_series(symbols)
+        threshold = self.runtime.settings.correlation_cluster_threshold
+        pairs = self.runtime.risk_engine.governor.binding_pairs(returns)
+        if not pairs:
+            self.binding_pairs_label.setText(
+                f"Correlation clusters: none of the {len(symbols)} held position(s) "
+                f"pair at or above {threshold:.2f}."
+            )
+            return
+        self.binding_pairs_label.setText(
+            "Correlation clusters AT OR ABOVE "
+            f"{threshold:.2f}: "
+            + ", ".join(f"{left}/{right} {corr:.2f}" for left, right, corr in pairs)
+        )
 
     def refresh_refusals(self) -> None:
         """Why orders did not happen, in the report's own words.

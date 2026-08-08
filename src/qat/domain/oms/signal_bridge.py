@@ -36,6 +36,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -516,6 +517,27 @@ class SignalToOrderBridge:
         """
         deployed = self.settings.deployed_strategies_tuple
         return deployed[0] if len(deployed) == 1 else None
+
+    def return_series(self, symbols: Iterable[str]) -> dict[str, pd.Series]:
+        """The daily return series this bridge feeds the risk engine.
+
+        Public so a screen can be shown the correlation the RAIL measures. The
+        Risk Console was correlating its own ~60 intraday tick samples - about
+        the last hour - while the cluster cap correlates 60 daily bars, about
+        three months. Handing over the same series is what stops the screen and
+        the rail describing different quantities.
+
+        Same construction as `_submit_sized` uses, indexed by timestamp rather
+        than bar number: correlating two symbols positionally compares AAPL's
+        fifth bar to MSFT's fifth, which are the same day only until one misses
+        a tick.
+        """
+        series: dict[str, pd.Series] = {}
+        for symbol in symbols:
+            returns = _returns_by_ts(self.bars.frame(symbol))
+            if not returns.empty:
+                series[symbol] = returns
+        return series
 
     def opened_symbols(self) -> set[str]:
         """Positions this app opened, from the persisted entry record.

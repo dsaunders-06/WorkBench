@@ -155,21 +155,68 @@ class PortfolioGovernor:
         happens to be longer.
         """
         held = {pos.symbol for pos in positions if abs(pos.quantity) > 0}
-        window = self.settings.correlation_window_bars
         correlated: list[str] = []
         for symbol in held:
             other = existing_returns.get(symbol)
             if other is None:
                 continue
-            aligned_candidate, aligned_other = candidate_returns.align(other, join="inner")
-            if len(aligned_candidate) < _MIN_CORRELATION_OBSERVATIONS:
-                continue
-            aligned_candidate = aligned_candidate.tail(window)
-            aligned_other = aligned_other.tail(window)
-            corr = aligned_candidate.corr(aligned_other)
-            if pd.notna(corr) and corr >= self.settings.correlation_cluster_threshold:
+            corr = self._pair_correlation(candidate_returns, other)
+            if corr is not None and corr >= self.settings.correlation_cluster_threshold:
                 correlated.append(symbol)
         return correlated
+
+    def _pair_correlation(self, left: pd.Series, right: pd.Series) -> float | None:
+        """One pair's correlation on the rail's terms, or None if unmeasurable.
+
+        Extracted so `binding_pairs` cannot drift from `_correlated_holdings`.
+        Two derivations of "are these correlated" would eventually disagree, and
+        an operator reading one while the other refused the trade would have no
+        way to tell which was binding.
+        """
+        aligned_left, aligned_right = left.align(right, join="inner")
+        if len(aligned_left) < _MIN_CORRELATION_OBSERVATIONS:
+            return None
+        window = self.settings.correlation_window_bars
+        corr = aligned_left.tail(window).corr(aligned_right.tail(window))
+        return float(corr) if pd.notna(corr) else None
+
+    def binding_pairs(
+        self,
+        returns: dict[str, pd.Series],
+        positions: list[Position] | None = None,
+    ) -> list[tuple[str, str, float]]:
+        """Held pairs at or above the cluster threshold, strongest first.
+
+        Exists because the Risk Console's correlation table was computing its
+        own answer from ~60 intraday TICK samples - about the last hour - while
+        this rail correlates 60 DAILY bars, about three months. The table an
+        operator read to understand the correlation limit was therefore not
+        showing the correlation that enforces it.
+
+        Read-only, and deliberately so: it exposes what the rail already
+        computes rather than adding a judgement of its own. Nothing here decides
+        anything.
+
+        `positions` narrows to what is actually held, since a watchlist symbol
+        the book does not own cannot breach a cap on holdings. Omitted, every
+        symbol in `returns` is considered - which is what a screen showing the
+        whole watchlist wants.
+        """
+        symbols = sorted(returns)
+        if positions is not None:
+            held = {pos.symbol for pos in positions if abs(pos.quantity) > 0}
+            symbols = [symbol for symbol in symbols if symbol in held]
+
+        threshold = self.settings.correlation_cluster_threshold
+        pairs: list[tuple[str, str, float]] = []
+        for i, left in enumerate(symbols):
+            # Each unordered pair once: A/B and B/A are the same fact, and
+            # reporting both would double every cluster on screen.
+            for right in symbols[i + 1 :]:
+                corr = self._pair_correlation(returns[left], returns[right])
+                if corr is not None and corr >= threshold:
+                    pairs.append((left, right, corr))
+        return sorted(pairs, key=lambda pair: -pair[2])
 
     @staticmethod
     def _per_share_risk(symbol: str, price: float, stops: dict[str, float]) -> float:

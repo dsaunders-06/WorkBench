@@ -199,6 +199,61 @@ def test_yesterdays_refusals_are_not_reported_as_tonights(qtbot, tmp_path):
     assert "1 candidate(s) considered" in screen.refusal_headline.text()
 
 
+# --- Binding correlation pairs, from the rail rather than the screen ----------
+
+
+@pytest.mark.parametrize("level", [UiLevel.GUIDED, UiLevel.STANDARD, UiLevel.PROFESSIONAL])
+def test_binding_pairs_are_stated_at_every_level(qtbot, tmp_path, level):
+    """A constraint on what may be traded. The matrix is the detail; this is
+    the fact."""
+    screen = _screen(qtbot, tmp_path, level)
+
+    assert screen.binding_pairs_label.isVisible() is True
+    assert screen.binding_pairs_label.text().strip() != ""
+
+
+def test_the_matrix_is_detail_and_the_pairs_are_not(qtbot, tmp_path):
+    """Guided gets the binding fact without the N x N table it cannot read."""
+    guided = _screen(qtbot, tmp_path, UiLevel.GUIDED)
+    standard = _screen(qtbot, tmp_path, UiLevel.STANDARD)
+
+    assert guided.correlation_table.isVisible() is False
+    assert standard.correlation_table.isVisible() is True
+    assert guided.binding_pairs_label.isVisible() is True
+
+
+def test_the_pairs_come_from_the_governor_not_from_this_screen(qtbot, tmp_path):
+    """Reuse, pinned. The screen's own intraday matrix would say something
+    different; what must appear is the rail's answer, because that is the one
+    that refuses the trade.
+
+    This is the test that fails if someone later 'simplifies' the panel by
+    correlating `_price_history` instead.
+    """
+    screen = _screen(qtbot, tmp_path, UiLevel.STANDARD)
+    screen.runtime.risk_engine.governor.binding_pairs = (  # type: ignore[method-assign]
+        lambda returns, positions=None: [("AMAT", "AMD", 0.79)]
+    )
+    screen.runtime.signal_bridge._entries["AMAT"] = object()  # type: ignore[assignment]
+    screen.runtime.signal_bridge._entries["AMD"] = object()  # type: ignore[assignment]
+
+    screen.refresh_binding_pairs()
+
+    text = screen.binding_pairs_label.text()
+    assert "AMAT/AMD" in text
+    assert "0.79" in text
+
+
+def test_nothing_held_says_so_rather_than_claiming_no_correlation(qtbot, tmp_path):
+    """ "Nothing held" and "held things that do not correlate" are different
+    states of the world, and only one of them is reassuring."""
+    screen = _screen(qtbot, tmp_path, UiLevel.STANDARD)
+
+    screen.refresh_binding_pairs()
+
+    assert "nothing held" in screen.binding_pairs_label.text().lower()
+
+
 def test_guided_and_standard_are_not_the_same_screen(qtbot, tmp_path):
     """The defect the Balances design reached review with, pinned again."""
     _busy_night(tmp_path)
