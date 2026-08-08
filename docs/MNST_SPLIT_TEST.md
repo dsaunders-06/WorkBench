@@ -33,6 +33,13 @@ Paper account. No real money is involved at any point.
 
 Queued outside market hours, so Alpaca submits it at Monday's open.
 
+**The protective stop may not be attached to the buy.** Alpaca's order ticket
+will not accept a stop price below the market for a *buy* order — that field is
+for a stop-ENTRY, not for protection. If no bracket or stop-loss attachment was
+available, the buy was placed on its own and **the sell-stop is placed on Monday
+instead**, at step 4a below. Either way the stop only has to be resting before
+Tuesday's ex-date, not before Monday's fill.
+
 **Expect the position to be liquidated on Tuesday.** Post-split MNST trades near
 $45.43, and a sell-stop resting at $72.68 is then *above* the market — it
 triggers immediately unless Alpaca adjusts it. That is the M39 hazard, and
@@ -72,6 +79,23 @@ US open is **13:30 UTC / 23:30 AEST**.
 - [ ] **3. Confirm the order filled**, at Alpaca in the browser. Note the actual
       fill price and quantity. If it did **not** fill, stop here — there is
       nothing to observe, and see "If it did not fill" below.
+
+- [ ] **4a. Make sure a protective stop is resting.** Check the open orders at
+      Alpaca for a **sell stop at $72.68**.
+
+      If it is there, nothing to do. If it is **not** — because the buy was
+      placed without an attached stop — place it now, while the app is still
+      closed:
+
+          Sell · 8 shares · Stop · stop price $72.68 · GTC
+
+      This validates now because you hold the shares and $72.68 is below the
+      market. Do not place a sell *limit* as well: two unlinked sell orders
+      against the same 8 shares can both execute.
+
+      Without a resting stop the position counts its full $726 value against the
+      aggregate risk cap instead of its $145 risk — harmless here, since the cap
+      is already binding, but the split test wants a stop to observe.
 
 - [ ] **4. Capture the pre-split state.** This is the half that cannot be
       recovered afterwards. In PowerShell:
