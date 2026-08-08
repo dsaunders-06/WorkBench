@@ -210,6 +210,58 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M64 - The Regime Monitor says what the regime DOES
+
+8 August. Step 4.6 of `UI_UX_APPROACH.md`.
+
+The screen rendered the label and seven probability bars - the **inputs** - and
+never which strategies that permits, which is the fact governing whether
+anything trades.
+
+**Eligibility is not the label.** Since M27b it is probability *mass*, summed
+across a strategy's suitable regimes against a 0.5 threshold, because the label
+is one draw from a distribution and collapsing to it turns a near-tie into a
+certainty. So an operator reading `Regime: bear` had to *infer* that swing had
+stopped. Now the screen says `swing: NOT PERMITTED`, and at Standard shows the
+arithmetic - `0.20 of the distribution sits in bull / low_vol / recovery /
+sideways (threshold 0.50)` - which is self-checking against the bars beside it.
+
+Direct precedent for the error: **M57c had to fix a regime LOG line that
+described a mechanism replaced in M27b.** The screen carried the same defect and
+nothing had corrected it.
+
+Eligibility is **asked** of `StrategyEngine`, never recomputed from `probs`.
+`eligible_mass()` became public for that rather than the arithmetic being
+duplicated in a view - the same reuse rule the adopted-positions panel follows.
+
+### The race, which is why this was not just a label change
+
+`EventBus.publish` dispatches with **`asyncio.gather`**, so every handler for a
+`RegimeEvent` runs concurrently. Subscription order buys nothing. A screen that
+asked `is_eligible()` from its own handler could therefore render the
+**previous** regime's verdict - at exactly the moment a regime changes, which is
+the one moment anybody is looking at this screen.
+
+So `StrategyEngine` now notifies listeners after it has read the distribution,
+matching `KillSwitch.add_listener`, which exists for precisely this reason:
+views of the switch silently disagreed with it.
+
+**It surfaced as one failing test out of eighteen** - a bear regime reporting
+swing as PERMITTED - and was easy to dismiss as a fixture problem. It was not. A
+test now gives the screen a bear event the engine has not seen and asserts the
+verdict does *not* move.
+
+### Scope
+
+Kept to the regime. When the regime permits a strategy and nothing still trades,
+the screen **names the Risk Console** rather than deriving a second refusal
+picture that could disagree with the first - §4.7 owns that question.
+
+Departs from the brief on the macro panel, which it places at Professional only.
+Standard is the default level and already has it, so that would strip a feature
+from the default experience; the driver table alone distinguishes Professional.
+Recorded as a decision, not an oversight.
+
 ## M63 - The Dashboard says which figures this system will act on
 
 8 August. Step 4 of `UI_UX_APPROACH.md`, and the first Dashboard work.
