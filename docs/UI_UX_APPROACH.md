@@ -374,6 +374,27 @@ Lower traffic, mostly Professional, least urgent.
 **8. AI Advisor.** Already simple. Leave it alone until the rest sets the
 pattern.
 
+> **Status, 8 August.** Steps 1, 2, 3, 4 and the research screens are done -
+> Dashboard (M63), Workbench caveats (M69), Regime Monitor (M64), Risk Console
+> (M67, M68), Screener (M72) and AI Advisor (M73). **Remaining: the rest of the
+> Workbench, the Order Blotter (deliberately last), and Performance (waits for
+> September).**
+>
+> **Read §4.x as intent and check its particulars first.** The brief has now
+> been wrong in detail FIVE times: M63 on the Balances premise ("most of them
+> dashes"; ten of eleven report a figure), M64 on the macro panel, M67 on the
+> level, and M73 on both of §4.9's claims at once - the advisory-only framing it
+> said not to touch did not exist, and the screen it called "fine" was feeding
+> the model a fabricated zero. Checking the brief against the code is what found
+> M72's provenance gap as well, which §4.8 does not mention at all.
+>
+> **Two things every remaining screen should copy.** Render it and look at it -
+> that found M63's orphaned grid row, its off-scale font, and M72's stranded
+> filter labels, all of which every test passed through. And ask what reads it:
+> `shows_advanced()` had no consumers from M45 until M63, `theme.callout` had
+> none until M72, and `is_synthetic` reached the language model but never the
+> operator until M72. That pattern has now recurred four times.
+
 ---
 
 ## 6. Which skill, and its limits

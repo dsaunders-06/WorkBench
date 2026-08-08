@@ -84,6 +84,58 @@ positions on deploy.
 
 Verify with `scripts/analysis/verify_gating_figures.py`.
 
+## What landed after the handoff was written — M70, M72, M73
+
+All four checks clean, **1,618 tests**. Repo clean; **committed, not pushed**.
+None of it is deployed, and none of it should be before Tuesday.
+
+**M70 — the residual half of M65, and the half startup could not heal.**
+`_announce_fill` publishes at `transmitted` as well as `filled`, and at transmit
+there is no fill price, so it published the price the order was *sized* against.
+`reconcile_entry_prices` heals that at the next startup; **a position opened and
+closed inside one session never reaches a next startup**, and its ClosedTrade is
+already written against a basis the account never paid. The true price was
+already arriving every poll in `recent_fills` and being discarded because the
+order was ours. `EntryPriceCorrectedEvent` now carries it to the entry record
+and the open lot — deliberately not a second `OrderFilledEvent`, which would
+double the position and re-create M46.
+
+Two things it turned up:
+
+* **`entry_slippage` was zero by construction** on every entry this app has ever
+  opened, because the lot's `price` and its `reference_price` came from the same
+  announcement. **M44 is scheduled to measure the cost model with that
+  instrument in September** and would have read "no slippage, ever".
+* **A partial entry would have been corrected once and never again.**
+  `_fill_query_floor` reaches back past remembered fills because an order still
+  filling keeps its FIRST execution's stamp — but past `_absorbed_fills` only,
+  and an order this app sent is never absorbed. `_own_partial_fill_stamps`
+  closes it.
+
+**M71 — recorded, NOT fixed.** The same root cause on app-transmitted *sells*
+makes the ClosedTrade's **exit** price wrong too. Left separate because
+correcting it means rewriting a record already on disk. **Read from the code,
+not yet verified against a live transmitted sell** — do that before designing it.
+
+**M72 — the Screener never said whether its figures were real.** `is_synthetic`
+has ridden on every snapshot since M18, and `available_figures()` passes it to
+the LLM, so the AI Advisor knew the provenance and the operator did not. The
+default `fundamentals_source` is `"mock"`, and the resolver degrades to the same
+seeded source when the vendor cannot be built. Checked before claiming it: the
+live install runs yfinance with no fallback warnings, so **the hazard is latent,
+not active.** Presets added, level-aware; "saved custom screens" deliberately
+deferred as configuration nothing would read.
+
+**M73 — §4.9 was wrong on both claims.** The advisory-only framing it says not
+to touch existed only in a docstring, while the screen printed `[BUY,
+confidence=80%]` in bold — inside an application that trades unattended. And it
+fed the model `var_95: 0.0` when no risk check had run, eleven lines above a
+prompt that promises "fields the vendor could not answer are omitted rather than
+zeroed". Both fixed.
+
+**`theme.callout` had zero consumers** until M72 — the fourth instance of the
+`shows_advanced()` pattern. Ask what reads it.
+
 ## M65 — found and FIXED 8 August, not yet deployed
 
 The entry record held the price we asked for, not the price we paid: 8 of 10
@@ -110,17 +162,18 @@ inside a session carries it until the next startup.
   no false positives.
 - **Repo:** clean, pushed. `git log --oneline -1` gives the tip; the handoff commit is always at or near it.
 - **HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN `src/`, and that is real.**
-  `git diff 49482c2..HEAD -- src/` covers M64, M65, M67, M68 and M69 — the
-  Regime Monitor, the entry-price reconciliation, both halves of the Risk
-  Console, and the Workbench caveats. All presentation or record-correction;
-  **none of it changes a trading decision, and Monday needs none of it.** Do
-  not deploy before the split test.
+  `git diff 49482c2..HEAD -- src/` covers M64, M65, M67, M68, M69, M70, M72 and
+  M73 — the Regime Monitor, the entry-price reconciliation and its live half,
+  both halves of the Risk Console, the Workbench caveats, the Screener and the
+  AI Advisor. All presentation or record-correction; **none of it changes a
+  trading decision, and Monday needs none of it.** Do not deploy before the
+  split test.
 - **Account:** equity ~$101,245. Ten positions — AMAT 7, AMD 7, CRWD 16, CSCO 44,
   GS 7, JNJ 19, MS 41, UNP 17, VRTX 19, WFC 58 — all protected, all carrying a
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
   is refusing new entries. That is the rails working.
 - **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,565 tests**; ruff, black, mypy, bandit clean.
+- **1,618 tests**; ruff, black, mypy, bandit clean.
 
 ## What landed on 8 August
 
@@ -323,8 +376,37 @@ Repo clean and pushed - `git log --oneline -1` for the tip.
   and MONDAY NEEDS NONE OF IT. Do not deploy before the split test.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,565 tests
+VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,618 tests
 pass; ruff, black, mypy, bandit clean.
+
+LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
+  M70  the residual half of M65, and the half startup could NOT heal. A lot
+       opened and closed inside one session never reaches the next startup, so
+       reconcile_entry_prices could not reach it and its ClosedTrade was
+       already written against a basis the account never paid. The true price
+       was arriving every poll in recent_fills and being discarded because the
+       order was ours. Two things it turned up: entry_slippage was ZERO BY
+       CONSTRUCTION on every entry ever opened, and M44 is scheduled to
+       measure the cost model with that instrument in September; and a partial
+       entry would have been corrected once and never again, because
+       _fill_query_floor reaches back past _absorbed_fills only and an order
+       this app sent is never absorbed.
+  M71  RECORDED, NOT FIXED. Same root cause on app-transmitted SELLS makes the
+       ClosedTrade's EXIT price wrong. Separate because fixing it means
+       rewriting a record already on disk. Read from the code, NOT yet
+       verified against a live transmitted sell - do that first.
+  M72  the Screener never said whether its figures were real. is_synthetic has
+       ridden on every snapshot since M18 and available_figures() passes it to
+       the LLM, so the AI Advisor knew the provenance and the operator did
+       not. Latent, not active: the live install runs yfinance with no
+       fallback warnings. Presets added, level-aware; saved custom screens
+       deferred deliberately.
+  M73  §4.9 was wrong on BOTH claims. The advisory-only framing it says not to
+       touch existed only in a docstring, while the screen printed
+       [BUY, confidence=80%] in bold - inside an app that trades unattended.
+       And it fed the model var_95=0.0 when no risk check had run, eleven
+       lines above a prompt promising that unanswerable fields are "omitted
+       rather than zeroed".
 
 THE THING WITH A CLOCK
 MNST splits 2-for-1, ex-date Tuesday 11 August, and a buy for 8 shares is
@@ -472,14 +554,25 @@ and was wrong). Free tier: real-time is IEX only, but SIP HISTORICAL is free.
   baseline. DECIDE IT AFTER TUESDAY - nothing should change sizing between now
   and the split measurement.
 
-GROUP 4, THE INTERFACE — steps 1-3, 4 and 4.6 done
-Remaining: Screener, Strategy Workbench, AI Advisor. Order Blotter
-deliberately LAST (most safety-critical). Performance waits for September.
-Two rules the last two screens established: three settings must produce three
-outcomes (the Balances design reached review rendering Guided and Standard
-identically — M58a in miniature), and RENDER IT rather than trusting the suite
-(screenshotting found an orphaned grid row and an off-scale font that every
-test passed through).
+GROUP 4, THE INTERFACE — steps 1-3, 4, 4.5, 4.6, 4.7, 4.8 and 4.9 done
+Remaining: the REST of the Strategy Workbench, the Order Blotter (deliberately
+LAST, most safety-critical), and Performance (waits for September).
+
+  READ §4.x AS INTENT AND CHECK ITS PARTICULARS FIRST. The brief has now been
+  wrong in detail FIVE times - M63 on the Balances premise, M64 on the macro
+  panel, M67 on the level, and M73 on both of §4.9's claims at once. Checking
+  it against the code is also what found M72, which §4.8 does not mention.
+
+  Three rules the finished screens established:
+   - THREE SETTINGS MUST PRODUCE THREE OUTCOMES. The Balances design reached
+     review rendering Guided and Standard identically because explains() is
+     true for both. M72 asserts the non-collapse as its own test.
+   - RENDER IT rather than trusting the suite. That found M63's orphaned grid
+     row and off-scale font, and M72's stranded filter labels - every test
+     passed through all three.
+   - ASK WHAT READS IT. shows_advanced() had no consumers from M45 until M63,
+     theme.callout had none until M72, and is_synthetic reached the language
+     model but never the operator until M72. Four instances now.
 
 CONSTRAINTS
   Read %LOCALAPPDATA%\QuantAdvisoryTerminal via PowerShell ONLY, never Bash.
