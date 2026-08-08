@@ -446,6 +446,9 @@ class Runtime:
             # paper or mock run gets the null calendar and the rail abstains,
             # exactly as it did before the rail existed.
             earnings_calendar=_build_earnings_calendar(settings),
+            # Warmed over the traded universe at startup, so the rail is armed
+            # by the bell rather than filling one symbol at a time (M57c).
+            warm_symbols=watchlist,
         )
 
         # Autonomy (spec M13). All four pieces are constructed regardless of

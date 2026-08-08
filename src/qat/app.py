@@ -20,6 +20,7 @@ from qat.migration import migrate_legacy_layout
 from qat.paths import ensure_app_dir
 from qat.presentation.main_window import MainWindow
 from qat.presentation.runtime import Runtime
+from qat.run_marker import RunMarker, describe_previous_run
 from qat.version import build_info
 
 logger = logging.getLogger(__name__)
@@ -54,14 +55,31 @@ def main() -> None:
         settings.broker,
     )
 
+    # Before anything else can fail: whether the LAST run stopped or died
+    # (M57c). Logged at WARNING because it changes how the previous session's
+    # log should be read - a log that simply stops is otherwise identical to a
+    # quiet session, which is precisely how the M56a crash hid.
+    marker = RunMarker(settings.data_dir)
+    lost_run = describe_previous_run(marker.claim())
+    if lost_run:
+        logger.warning("%s", lost_run)
+
     runtime = Runtime.build_demo(settings=settings)
 
     window = MainWindow(runtime)
     window.show()
 
-    with loop:
-        loop.run_until_complete(runtime.orchestrator.start_all())
-        loop.run_forever()
+    try:
+        with loop:
+            loop.run_until_complete(runtime.orchestrator.start_all())
+            loop.run_forever()
+    finally:
+        # The line whose absence was the problem. In `finally` so that an
+        # orderly close and an exception on the way out both say so; only a
+        # process that never returns here stays silent, which is exactly the
+        # case the marker exists to catch.
+        logger.info("Quant Advisory Terminal stopped - shutdown reached normally")
+        marker.release()
 
 
 if __name__ == "__main__":

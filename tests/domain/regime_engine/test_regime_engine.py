@@ -188,9 +188,16 @@ async def test_every_transition_is_logged_with_both_labels(caplog):
 
     assert len(transitions) == expected
     assert "-> " in transitions[0]
-    # The consequence, not just the label: a transition decides which
-    # strategies are eligible to trade at all.
-    assert "skipped" in transitions[0]
+    # The consequence, stated accurately (M57c). This previously asserted that
+    # the line said strategies excluding the label "are now skipped" - which
+    # pinned the pre-M27b mechanism into a test and is why the wrong message
+    # survived the change to mass-based gating. The label governs SIZE; the
+    # distribution governs eligibility.
+    assert "exposure scalar" in transitions[0]
+    assert "MASS" in transitions[0]
+    assert (
+        "skipped" not in transitions[0]
+    ), "the label does not skip strategies - probability mass decides eligibility"
 
 
 @pytest.mark.asyncio

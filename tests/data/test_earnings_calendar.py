@@ -81,6 +81,76 @@ def test_a_cached_date_is_used_and_measured_in_sessions(tmp_path) -> None:
     assert calendar.trading_days_until("AAA", as_of=FRIDAY) == 2
 
 
+def test_the_lookup_never_reaches_the_network(tmp_path) -> None:
+    """M57c, and the guarantee is structural rather than a matter of care.
+
+    This ran on the signal path for every candidate. On 7 August 1,898 sizing
+    decisions produced two cached symbols - the shape of a throttled vendor
+    call with an event loop waiting on it. A cold cache now abstains, exactly
+    as an unknown date does.
+    """
+    calendar = YFinanceEarningsCalendar(tmp_path)
+
+    def explode(symbol: str) -> date | None:
+        raise AssertionError("the hot path must never fetch")
+
+    calendar._fetch = explode  # type: ignore[method-assign]
+
+    assert calendar.next_earnings("AAA") is None
+    assert calendar.trading_days_until("AAA") is None
+
+
+def test_refresh_is_the_only_thing_that_fetches(tmp_path) -> None:
+    calendar = YFinanceEarningsCalendar(tmp_path)
+    asked: list[str] = []
+
+    def fetch(symbol: str) -> date | None:
+        asked.append(symbol)
+        return TUESDAY
+
+    calendar._fetch = fetch  # type: ignore[method-assign]
+
+    assert calendar.refresh(["AAA", "BBB"]) == 2
+    assert asked == ["AAA", "BBB"]
+    # And now the hot path can answer without touching the network at all.
+    calendar._fetch = lambda symbol: (_ for _ in ()).throw(AssertionError("no"))  # type: ignore[method-assign]
+    assert calendar.trading_days_until("AAA", as_of=FRIDAY) == 2
+
+
+def test_refresh_skips_what_is_already_cached(tmp_path) -> None:
+    """A warm pass over a hundred symbols every restart would be a hundred
+    vendor calls for dates that move quarterly."""
+    (tmp_path / CACHE_FILENAME).write_text(
+        json.dumps(
+            {"AAA": {"fetched_at": "2999-01-01T00:00:00+00:00", "next_earnings": "2026-08-11"}}
+        ),
+        encoding="utf-8",
+    )
+    calendar = YFinanceEarningsCalendar(tmp_path)
+    calendar._fetch = lambda symbol: None  # type: ignore[method-assign]
+
+    assert calendar.refresh(["AAA", "BBB"]) == 1, "only the uncached symbol"
+
+
+def test_a_refresh_that_fails_on_one_symbol_still_does_the_rest(tmp_path) -> None:
+    calendar = YFinanceEarningsCalendar(tmp_path)
+
+    def fetch(symbol: str) -> date | None:
+        if symbol == "BAD":
+            raise RuntimeError("vendor down")
+        return TUESDAY
+
+    calendar._fetch = fetch  # type: ignore[method-assign]
+
+    assert calendar.refresh(["BAD", "GOOD"]) == 2
+    assert calendar.trading_days_until("GOOD", as_of=FRIDAY) == 2
+    assert calendar.trading_days_until("BAD") is None
+
+
+def test_the_null_calendar_can_be_refreshed_without_effect() -> None:
+    assert NullEarningsCalendar().refresh(["AAA", "BBB"]) == 0
+
+
 def test_an_unreadable_cache_degrades_to_empty(tmp_path) -> None:
     (tmp_path / CACHE_FILENAME).write_text("{ not json", encoding="utf-8")
     calendar = YFinanceEarningsCalendar(tmp_path)

@@ -357,10 +357,21 @@ class RegimeEngine:
     ) -> None:
         """Every classification, and transitions loudly.
 
-        A regime is a gate, not a display: strategies whose suitable_regimes()
-        excludes the current label are skipped entirely, so a transition can
-        switch a promoted strategy off for a whole session. That happened on
-        29 July and had to be reconstructed afterwards from a blank UI field.
+        A regime is a gate, not a display, so a transition is worth saying out
+        loud - it happened on 29 July and had to be reconstructed afterwards
+        from a blank UI field.
+
+        But the line has to describe the gate that EXISTS (M57c). It used to
+        say "strategies whose suitable regimes exclude <label> are now
+        skipped", which was true only before M27b replaced label membership
+        with probability mass. On 7 August it published `bear` while swing was
+        correctly eligible on 100% mass, and the two lines together read as a
+        malfunction for anyone who believed the message - which cost a live
+        session's worth of investigation to disprove.
+
+        What the label actually governs is the exposure scalar. What decides
+        eligibility is the distribution, and the two can legitimately disagree
+        because the label is hysteretic and deliberately lags.
         """
         ranked = ", ".join(
             f"{regime.value}={prob:.2f}"
@@ -368,12 +379,13 @@ class RegimeEngine:
         )
         if label != self._last_label:
             logger.info(
-                "REGIME %s -> %s (exposure scalar %.2f). Strategies whose suitable regimes "
-                "exclude %s are now skipped. Top probabilities: %s. VIX=%.2f, curve=%.2f",
+                "REGIME %s -> %s (exposure scalar %.2f). The label sets position SIZE; which "
+                "strategies may trade is decided by probability MASS, so a strategy can stay "
+                "eligible under a label that excludes it. Top probabilities: %s. "
+                "VIX=%.2f, curve=%.2f",
                 self._last_label or "none",
                 label,
                 scalar,
-                label,
                 ranked,
                 vix_level,
                 yield_curve_slope,

@@ -178,6 +178,7 @@ class SignalToOrderBridge:
         bar_interval_seconds: float = 60.0,
         trade_ledger: ClosedTradeSource | None = None,
         earnings_calendar: EarningsCalendar | None = None,
+        warm_symbols: tuple[str, ...] = (),
     ) -> None:
         self.bus = bus
         self.oms = oms
@@ -186,6 +187,10 @@ class SignalToOrderBridge:
         # distance and the event-risk rail abstains - which is the behaviour
         # this bridge had before the rail existed.
         self.earnings_calendar: EarningsCalendar = earnings_calendar or NullEarningsCalendar()
+        # What to pre-fetch dates for at startup (M57c). Empty means no warm
+        # pass, which is what every test and the null calendar want.
+        self._warm_symbols = warm_symbols
+        self._warm_task: asyncio.Task[None] | None = None
         self.default_win_rate = default_win_rate
         self.default_win_loss_ratio = default_win_loss_ratio
         # Kept, not just handed to the estimator: startup also has to give the
@@ -227,6 +232,35 @@ class SignalToOrderBridge:
         await self.replay_missed_exits()
         await self.rearm_protective_stops()
         self._sweep_task = asyncio.create_task(self._sweep_protection())
+        self._warm_task = asyncio.create_task(self._warm_earnings())
+
+    async def _warm_earnings(self) -> None:
+        """Fill the earnings cache off the event loop, before the bell (M57c).
+
+        The lookup itself is cache-only, so a cold cache silently abstains
+        rather than blocking - which is safe but means the rail does nothing
+        until something warms it. This is that something: one pass over the
+        watchlist, in a thread, so a hundred vendor calls cannot hold up the
+        loop that is meanwhile placing orders.
+
+        Failure is logged and dropped. A cold cache costs the protection; a
+        raising warm task would cost the session.
+        """
+        if not self._warm_symbols:
+            return
+        try:
+            fetched = await asyncio.to_thread(self.earnings_calendar.refresh, self._warm_symbols)
+        except Exception:  # noqa: BLE001 - diagnostics must not end a session
+            logger.warning("Could not warm the earnings calendar", exc_info=True)
+            return
+        if fetched:
+            logger.info(
+                "Earnings calendar warmed for %d symbol(s) - trades within %d trading days of a "
+                "print are sized at %.0f%%",
+                fetched,
+                self.settings.earnings_blackout_days,
+                self.settings.earnings_event_size_scalar * 100,
+            )
 
     async def replay_missed_exits(self) -> list[str]:
         """Records exits that executed while this application was not running.
@@ -461,6 +495,11 @@ class SignalToOrderBridge:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._sweep_task
             self._sweep_task = None
+        if self._warm_task is not None:
+            self._warm_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._warm_task
+            self._warm_task = None
 
     async def _sweep_protection(self) -> None:
         """Re-arms lost protection on an interval, not only at startup (M33e).

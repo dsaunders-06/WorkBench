@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
@@ -42,6 +43,8 @@ _MAX_LOOKAHEAD_TRADING_DAYS = 400
 class EarningsCalendar(Protocol):
     def trading_days_until(self, symbol: str, as_of: date | None = None) -> int | None: ...
 
+    def refresh(self, symbols: Iterable[str]) -> int: ...
+
 
 class NullEarningsCalendar:
     """Answers nothing, for runs and tests that are not about this rail.
@@ -52,6 +55,9 @@ class NullEarningsCalendar:
 
     def trading_days_until(self, symbol: str, as_of: date | None = None) -> int | None:
         return None
+
+    def refresh(self, symbols: Iterable[str]) -> int:
+        return 0
 
 
 def trading_days_between(start: date, end: date, market: mc.Market = "US") -> int:
@@ -142,12 +148,27 @@ class YFinanceEarningsCalendar:
         except ValueError:
             return False, None
 
-    def next_earnings(self, symbol: str) -> date | None:
-        hit, cached = self._cached(symbol)
-        if hit:
-            return cached
+    def refresh(self, symbols: Iterable[str]) -> int:
+        """Fetch anything not already cached. Blocking, and meant to be.
+
+        This is the ONLY method that touches the network, so the hot path
+        cannot accidentally acquire a vendor call (M57c). Call it from a
+        thread, away from the event loop.
+        """
+        fetched = 0
+        for symbol in symbols:
+            hit, _ = self._cached(symbol)
+            if hit:
+                continue
+            self._store(symbol, self._fetch_guarded(symbol))
+            fetched += 1
+        if fetched:
+            self._save()
+        return fetched
+
+    def _fetch_guarded(self, symbol: str) -> date | None:
         try:
-            fetched = self._fetch(symbol)
+            return self._fetch(symbol)
         except Exception:  # noqa: BLE001 - the guarantee belongs at the boundary
             # _fetch guards its own vendor call too, but this rail's contract
             # is "never raises", and a contract enforced only inside a private
@@ -155,12 +176,25 @@ class YFinanceEarningsCalendar:
             # the session.
             logger.debug("Earnings lookup failed for %s", symbol, exc_info=True)
             return None
+
+    def _store(self, symbol: str, announcement: date | None) -> None:
         self._entries[symbol] = {
             _FETCHED_AT: datetime.now(UTC).isoformat(),
-            _NEXT_EARNINGS: fetched.isoformat() if fetched else None,
+            _NEXT_EARNINGS: announcement.isoformat() if announcement else None,
         }
-        self._save()
-        return fetched
+
+    def next_earnings(self, symbol: str) -> date | None:
+        """The cached answer, or None. Never fetches.
+
+        Cache-only by construction, because this is reached from the signal
+        path on every candidate. On 7 August it was a blocking vendor call
+        there: 1,898 sizing decisions produced two cached symbols, which is the
+        shape of something being throttled while an event loop waits for it.
+        A miss abstains, exactly as an unknown date does, and `refresh` fills
+        the cache in the background so misses become rare rather than blocking.
+        """
+        _hit, cached = self._cached(symbol)
+        return cached
 
     def _fetch(self, symbol: str) -> date | None:
         try:
