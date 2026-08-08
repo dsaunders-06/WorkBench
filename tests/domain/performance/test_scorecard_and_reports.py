@@ -7,7 +7,7 @@ sample, and it advises rather than acts.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -338,6 +338,69 @@ def test_blocked_reasons_collapse_causes_that_differ_only_in_their_amounts():
     assert summarise_blocked_reasons(
         [{"outcome": "blocked", "reason": "already at the 10-position limit"}]
     ) == {"already at the 10-position limit": 1}
+
+
+def test_a_broker_refusal_payload_does_not_fragment_the_cause():
+    """The same failure as the cost rail, by a route the amount-stripping
+    misses.
+
+    `OMS.sign_off` records `f"broker refused: {exc}"`, and the Alpaca exception
+    is a JSON blob carrying the quantities of the specific order:
+
+        broker refused: {"available":"0","code":40310000,"existing_qty":"7", ...
+
+    Every distinct `existing_qty` therefore mints a new key. The 6 August
+    journal holds two variants of one cause at ~200 chars each, and nothing
+    bounds how many there could be - they simply have not yet landed inside a
+    bounded reported day. The journal keeps the full payload; only the
+    GROUPING key is normalised.
+    """
+    rows = [
+        {
+            "outcome": "blocked",
+            "reason": (
+                'broker refused: {"available":"0","code":40310000,'
+                f'"existing_qty":"{qty}","held_for_orders":"{qty}",'
+                '"message":"insufficient qty available for order",'
+                f'"related_orders":["{qty}-abc"],"symbol":"MS"}}'
+            ),
+        }
+        for qty in ("7", "82", "41", "16", "58", "19", "44", "17")
+    ]
+
+    counts = summarise_blocked_reasons(rows)
+
+    assert counts == {"broker refused": 8}
+
+
+def test_the_blocked_section_is_bounded_however_many_causes_there_are():
+    """Defence in depth, and the guard that does not depend on predicting the
+    next pathological reason string.
+
+    Normalising keys fixes the causes we have seen; a row cap bounds the damage
+    from the one we have not. The narrative died twice on report size, and both
+    times the section that grew was this one.
+    """
+    report = build_report(
+        period="daily",
+        period_label="Test day",
+        trades=[],
+        equity_points=[],
+        start=date(2026, 8, 6),
+        end=date(2026, 8, 6),
+        blocked_counts={f"a distinct and rather wordy cause number {i}": 1 for i in range(200)},
+    )
+
+    markdown = report.to_markdown()
+    section = markdown.split("### Autonomy decisions blocked")[1]
+
+    assert len(section) < 2000
+    # Nothing is silently dropped: what is omitted is named and counted, and
+    # the decision journal still holds every row in full.
+    named = [line for line in section.splitlines() if line.startswith("- 1x ")]
+    assert len(named) == 12
+    assert "and 188 further cause(s)" in section
+    assert len(named) + 188 == 200
 
 
 def test_attaching_a_narrative_keeps_every_other_field(qtbot=None):

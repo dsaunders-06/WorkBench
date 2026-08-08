@@ -211,10 +211,18 @@ class PerformanceReport:
 
         if self.blocked_counts:
             lines.extend(["### Autonomy decisions blocked", ""])
-            for reason, count in sorted(
-                self.blocked_counts.items(), key=lambda kv: (-kv[1], kv[0])
-            ):
+            ranked = sorted(self.blocked_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            for reason, count in ranked[:_MAX_BLOCKED_ROWS]:
                 lines.append(f"- {count}x {reason}")
+            remainder = ranked[_MAX_BLOCKED_ROWS:]
+            if remainder:
+                # The total is never lost, only the per-row detail past the cap.
+                # A section of 113 near-identical rows is unreadable anyway, and
+                # the decision journal still holds every one of them in full.
+                lines.append(
+                    f"- _and {len(remainder)} further cause(s), "
+                    f"{sum(count for _, count in remainder)} decision(s) in total_"
+                )
             lines.append("")
 
         if self.scorecards:
@@ -309,6 +317,20 @@ def build_report(
 # wrong as "N-position limit".
 _QUOTED_AMOUNT = re.compile(r"\$[\d,]+(?:\.\d+)?|[\d,]+(?:\.\d+)?%")
 
+# A structured payload a reason carries verbatim. `OMS.sign_off` records
+# `f"broker refused: {exc}"`, and an Alpaca exception is a JSON blob holding the
+# quantities of that specific order - so every distinct `existing_qty` mints a
+# new key, the same fragmentation the amount-stripping above exists to stop,
+# arriving by a route it cannot see. The journal keeps the whole payload; only
+# the GROUPING key drops it.
+_EMBEDDED_PAYLOAD = re.compile(r"\s*[{\[].*", re.DOTALL)
+
+# How many distinct causes the blocked section will name before summarising the
+# rest. Defence in depth: normalising keys fixes the fragmentation we have seen,
+# and this bounds the damage from the one we have not. The narrative has died
+# twice on report size, and both times this was the section that grew.
+_MAX_BLOCKED_ROWS = 12
+
 
 def summarise_blocked_reasons(
     journal_rows: list[dict[str, str]],
@@ -354,6 +376,9 @@ def summarise_blocked_reasons(
         # for one rail, 8,907 characters of report, and a narrative that could
         # not be generated because the result blew its context cap.
         key = _QUOTED_AMOUNT.sub("N", key)
+        key = _EMBEDDED_PAYLOAD.sub("", key).rstrip(" :").strip()
+        if not key:
+            continue
         counts[key] = counts.get(key, 0) + 1
     return counts
 
