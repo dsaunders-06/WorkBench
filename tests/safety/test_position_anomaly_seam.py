@@ -389,3 +389,111 @@ async def test_lot_restore_skips_a_quarantined_position(tmp_path, caplog):
     assert "CRWD" not in restored
     assert "AMD" in restored
     assert "CRWD" in caplog.text
+
+
+# --- The restart laundering ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_restart_does_not_erase_a_quarantine(tmp_path):
+    """`adopt_broker_positions` does `self._filled_quantities = dict(adopted)`
+    - wholesale from the broker - so a restart makes the divergence VANISH.
+    Tracked matches broker, reconciliation is content, and the entry record and
+    ledger stay wrong. With an overnight session and a restart between each
+    one, that is the normal path.
+
+    The fixture writes the persisted file, because a test whose fixture cannot
+    reach the failure is not evidence (M56a).
+    """
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    switch = KillSwitch()
+    broker = _Broker({"CRWD": 16.0})
+    first = OMS(
+        broker, RiskEngine(EventBus(), switch, settings=settings), switch, settings=settings
+    )
+    await first.adopt_broker_positions()
+    broker._positions["CRWD"] = 64.0
+    first.anomalies.declare(
+        symbol="CRWD",
+        reason="4-for-1 split, ex 2 July",
+        declared_by="operator",
+        tracked_quantity=16.0,
+        broker_quantity=64.0,
+    )
+    assert (tmp_path / "position_anomalies.json").exists()
+
+    # A new session, same data directory, broker now reporting the post-split
+    # quantity as if it had always been so.
+    second_switch = KillSwitch()
+    second = OMS(
+        broker,
+        RiskEngine(EventBus(), second_switch, settings=settings),
+        second_switch,
+        settings=settings,
+    )
+    await second.adopt_broker_positions()
+
+    assert second.anomalies.is_quarantined("CRWD") is True
+
+
+@pytest.mark.asyncio
+async def test_a_further_change_on_a_quarantined_position_is_reported(tmp_path, caplog):
+    """A position that moves AGAIN after being declared has not been looked at.
+    Adoption is where that is noticed, because adoption is what overwrites the
+    evidence."""
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    switch = KillSwitch()
+    broker = _Broker({"CRWD": 64.0})
+    oms = OMS(broker, RiskEngine(EventBus(), switch, settings=settings), switch, settings=settings)
+    oms.anomalies.declare(
+        symbol="CRWD",
+        reason="4-for-1 split",
+        declared_by="operator",
+        tracked_quantity=16.0,
+        broker_quantity=64.0,
+    )
+
+    broker._positions["CRWD"] = 128.0
+    with caplog.at_level("ERROR"):
+        await oms.adopt_broker_positions()
+
+    assert "MOVED AGAIN" in caplog.text
+    assert "CRWD" in caplog.text
+    assert oms.anomalies.is_quarantined("CRWD") is True
+
+
+@pytest.mark.asyncio
+async def test_the_adoption_banner_names_quarantined_positions(tmp_path, caplog):
+    """The operator is told to read the startup lines and treat their ABSENCE
+    as the signal, so this belongs there and not only in the UI."""
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    switch = KillSwitch()
+    broker = _Broker({"CRWD": 64.0, "AMD": 7.0})
+    oms = OMS(broker, RiskEngine(EventBus(), switch, settings=settings), switch, settings=settings)
+    oms.anomalies.declare(
+        symbol="CRWD",
+        reason="4-for-1 split",
+        declared_by="operator",
+        tracked_quantity=16.0,
+        broker_quantity=64.0,
+    )
+
+    with caplog.at_level("WARNING"):
+        await oms.adopt_broker_positions()
+
+    assert "QUARANTINED" in caplog.text
+    assert "CRWD" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_banner_is_silent_when_nothing_is_quarantined(tmp_path, caplog):
+    """A line that appears every session is one nobody reads."""
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    switch = KillSwitch()
+    broker = _Broker({"AMD": 7.0})
+    oms = OMS(broker, RiskEngine(EventBus(), switch, settings=settings), switch, settings=settings)
+
+    with caplog.at_level("WARNING"):
+        await oms.adopt_broker_positions()
+
+    assert "QUARANTINED" not in caplog.text

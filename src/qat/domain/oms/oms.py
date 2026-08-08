@@ -670,6 +670,7 @@ class OMS:
         reached by evidence rather than by assumption.
         """
         adopted = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
+        self._report_anomalies_that_moved_again(adopted)
         self._filled_quantities = dict(adopted)
         self._adopted_baseline = dict(adopted)
         if not adopted:
@@ -692,6 +693,15 @@ class OMS:
             ", ".join(f"{sym} {qty:g}" for sym, qty in sorted(adopted.items())),
             len(self._position_stops),
         )
+        quarantined = [a.symbol for a in self.anomalies.active() if a.symbol in adopted]
+        if quarantined:
+            logger.warning(
+                "%d adopted position(s) are QUARANTINED: %s. New entries, de-lever trims and "
+                "protection re-arming are refused for these, and their records are still "
+                "uncorrected - a declaration explains a difference, it does not repair it.",
+                len(quarantined),
+                ", ".join(sorted(quarantined)),
+            )
         if naked:
             # Its own line, at ERROR, and worded as the position being exposed
             # rather than as bookkeeping. This is the state that both loses
@@ -703,6 +713,36 @@ class OMS:
                 ", ".join(naked),
             )
         return adopted
+
+    def _report_anomalies_that_moved_again(self, adopted: dict[str, float]) -> None:
+        """A quarantined position whose quantity has changed AGAIN since it was
+        declared (M39).
+
+        Checked here, before `_filled_quantities` is overwritten, because
+        adoption is precisely what destroys the evidence: it reseeds tracked
+        quantities wholesale from the broker, so a second change would
+        otherwise be absorbed into the new baseline and never seen. The
+        declaration no longer explains what is held, so reconciliation will
+        halt on it - which is correct, and the operator should know why before
+        it happens rather than afterwards.
+        """
+        moved_again = [
+            anomaly
+            for anomaly in self.anomalies.active()
+            if abs(adopted.get(anomaly.symbol, 0.0) - anomaly.broker_quantity) > 1e-6
+        ]
+        if not moved_again:
+            return
+        logger.error(
+            "QUARANTINED POSITION MOVED AGAIN since it was declared: %s. The declaration no "
+            "longer explains what the broker holds, so reconciliation will halt on these "
+            "until they are re-declared or cleared.",
+            ", ".join(
+                f"{anomaly.symbol} declared={anomaly.broker_quantity:g} "
+                f"now={adopted.get(anomaly.symbol, 0.0):g}"
+                for anomaly in sorted(moved_again, key=lambda a: a.symbol)
+            ),
+        )
 
     async def _resting_stops(self) -> dict[str, float]:
         """What the broker says is actually working, or nothing it can vouch for.
