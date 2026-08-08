@@ -113,6 +113,7 @@ class OMS:
         kill_switch: KillSwitch,
         max_order_notional: float = 50_000.0,
         symbol_allow_list: set[str] | None = None,
+        entry_allow_list: set[str] | None = None,
         bus: EventBus | None = None,
         journal: DecisionJournal | None = None,
         settings: Settings | None = None,
@@ -128,6 +129,10 @@ class OMS:
         self.kill_switch = kill_switch
         self.max_order_notional = max_order_notional
         self.symbol_allow_list = symbol_allow_list
+        # Entries only (M61). `symbol_allow_list` above gates exits too, so it
+        # cannot be used to narrow what may be OPENED without also making
+        # everything else unsellable - see Settings.entry_allow_list.
+        self.entry_allow_list = entry_allow_list
         self.bus = bus
         self._orders: dict[str, Order] = {}
         self._filled_quantities: dict[str, float] = {}
@@ -195,6 +200,11 @@ class OMS:
     ) -> Order:
         if self.symbol_allow_list is not None and candidate.symbol not in self.symbol_allow_list:
             return self._new_rejected_order(candidate, 0.0, "symbol not on the allow list")
+
+        if self.entry_allow_list is not None and candidate.symbol not in self.entry_allow_list:
+            return self._new_rejected_order(
+                candidate, 0.0, "symbol not on the entry allow list (machinery test in progress)"
+            )
 
         # Ahead of the kill-switch check so the refusal names the anomaly
         # rather than a generic halt, and ahead of the risk pipeline because

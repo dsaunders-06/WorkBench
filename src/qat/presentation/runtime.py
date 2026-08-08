@@ -425,6 +425,10 @@ class Runtime:
             journal=decision_journal,
             # Gives the fill watermark somewhere to survive a restart (M50).
             settings=settings,
+            # Normally None. Set only while a machinery test needs the caps
+            # widened without letting the strategy open anything it likes in
+            # the same session (M61). Entries only - exits are never gated.
+            entry_allow_list=settings.entry_allow_list_set(),
         )
         # Shared by every screen so the account is read once per interval
         # regardless of how many are watching (M21).

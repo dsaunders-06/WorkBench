@@ -302,6 +302,21 @@ class Settings(BaseSettings):
     # sign-off is committed exposure that has not filled yet.
     max_concurrent_positions: int = Field(default=10, gt=0)
 
+    # Symbols the strategy may ENTER, comma-separated. Empty means no
+    # restriction, which is the ordinary state and must stay the default.
+    #
+    # For deliberate machinery testing (M61): observing a corporate action means
+    # holding the affected name, and admitting it means widening the position
+    # and risk caps - at which point the strategy is free to open anything else
+    # in the same session. This narrows that to the symbol under test without
+    # touching how anything is sized.
+    #
+    # ENTRY ONLY, deliberately. `symbol_allow_list` already exists on the OMS
+    # and gates exits as well, so pointing THAT at one symbol would make every
+    # other held position unsellable through the app - a gate silently
+    # suppressing the only route to selling, which is what M56c was.
+    entry_allow_list: str = ""
+
     # The delever sweep targets this fraction of the cap rather than the cap
     # itself: landing exactly on the boundary re-triggers the sweep from
     # ordinary price movement alone on the very next check.
@@ -548,6 +563,17 @@ class Settings(BaseSettings):
     @property
     def deployed_strategies_tuple(self) -> tuple[str, ...]:
         return tuple(s.strip() for s in self.deployed_strategies.split(",") if s.strip())
+
+    def entry_allow_list_set(self) -> set[str] | None:
+        """Symbols the strategy may enter, or None for no restriction.
+
+        None rather than an empty set, because the two mean opposite things
+        downstream: an empty set would refuse every entry in the book, and a
+        setting left at its default must never do that. Upper-cased, since
+        every symbol elsewhere in the system is.
+        """
+        symbols = {s.strip().upper() for s in self.entry_allow_list.split(",") if s.strip()}
+        return symbols or None
 
     @property
     def autonomy_enabled(self) -> bool:

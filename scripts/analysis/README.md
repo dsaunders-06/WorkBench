@@ -46,6 +46,19 @@ what the mid-September time-stop burst delivers and what M58's diagnostics read.
 before revisiting the time stop** — the whole reason booked item 3 was declined
 is that it was measured on this replay rather than on evidence.
 
+## The two live-broker scripts, which are not replays
+
+Both talk to the paper account. Neither places, cancels or modifies an order.
+
+| Script | What it answers |
+|---|---|
+| `probe_alpaca_splits.py` | What Alpaca actually reports about a split — `old_rate`/`new_rate`, the date fields, whether the symbol filter works server-side, and how often `target_symbol` is missing. Written because the roadmap's own instruction for M39 was to measure the broker rather than reason about it. Its findings are in ROADMAP, M60 |
+| `exercise_m54.py` | Whether M54's broker-failure refusal actually works against a **real** SDK failure, using deliberately invalid credentials. Its tests use fakes that raise on command, which proves the handler catches an exception and not that the real failure is the shape it expects. Writes to a scratch directory, never the live one. Findings in ROADMAP, M61 |
+
+`exercise_m54.py` is worth re-running whenever the Alpaca adapter changes: it is
+the only thing that has ever exercised that rail end to end, and it costs
+nothing — no market, no capital, no rule change.
+
 ## One correction worth knowing about
 
 `swing_net_of_costs.py` charges **0.038R** a round trip. An earlier pass used

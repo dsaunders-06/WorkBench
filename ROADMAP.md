@@ -210,6 +210,85 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M61 - Testing the machinery deliberately, instead of waiting for luck
+
+8 August. A reframing more than a feature, and it resolves a tension this
+document has carried without naming.
+
+**The trial is doing two jobs that conflict.** Collecting edge evidence wants a
+frozen configuration and naturally occurring trades. Validating the machinery
+wants edge cases *provoked*, because they will not occur naturally in a book of
+ten megacaps. M39, M43, M44 and M54 are all blocked on "wait for an event that
+may never come".
+
+*"Where this is ultimately going"* already settles which of those matters. The
+edge numbers will not transfer to the ASX and should not be carried across
+without being re-earned; **what transfers is the machinery.** Protecting the
+edge baseline at the cost of not testing the machinery optimises the output that
+will be discarded, at the expense of the one that will not - and on a paper
+account, at no financial risk whatever.
+
+So rules may be varied to make a test possible, and the variation is then
+evaluated on its merits. What still constrains us is not money but **the
+record**: the ability of a later reader to tell a real defect from a test
+artifact.
+
+### M54, exercised against a real broker failure at last
+
+Deployed 6 August, and until today it had **never once run** - it fires only
+when Alpaca actually errors, and Alpaca had not. Its tests use fakes that raise
+on command, which proves the handler catches an exception and not that the real
+SDK's real failure is the shape the handler expects.
+
+Driven through a real `TradingClient` with deliberately invalid credentials
+against the real endpoint. All three promises hold:
+
+```
+broker.account() raised APIError: {"message": "unauthorized."}
+  no exception escaped
+  1 rejected order: MNST buy qty=0
+  journal on disk: outcome='rejected' reason='account unavailable: APIError'
+```
+
+**Caveat, recorded rather than glossed.** The 6 August outage was an HTTP 500
+and this produced a 401. Both surface as `APIError` and the guard catches
+`Exception`, so the structure holds for either - but this proves the SDK's error
+shape is handled, not that a 500 is identical. It needs no market, no capital
+and no rule change, and it should be re-run whenever the adapter changes.
+
+### `entry_allow_list` - and why the existing one could not be used
+
+Observing a corporate action means holding the affected name, which means
+widening the position and risk caps - at which point the strategy is free to
+open anything else in the same session. This narrows that to the symbol under
+test, changing nothing about how anything is sized.
+
+**`symbol_allow_list` already existed and is the wrong tool.** It gates
+`submit_order` *and* `submit_exit_order`, so pointing it at one symbol would
+have made every other held position unsellable through the app - a gate
+silently suppressing the only route to selling, which is exactly what M56c was.
+Found by reading the two call sites before wiring it, not by a failing test.
+The new list gates entries only, and a test asserts that an exit and a de-lever
+trim on an unlisted held symbol both still pass.
+
+Empty by default, and `entry_allow_list_set()` returns **None rather than an
+empty set** - the two mean opposite things downstream, and a default that
+refused every entry in the book would be the worst possible failure.
+
+A test asserts the Runtime actually reads it. That question - *when something is
+added, what reads it?* - has now had to be asked of the minimum hold, the
+expertise level and the whole M37 diagnostic set, and in each case the answer
+was "nothing".
+
+### The caps themselves need no code
+
+`max_concurrent_positions` and `max_aggregate_risk_at_stop_pct` are already
+settings. The two rails are co-binding by construction, which works in our
+favour: at 5.02% against a 5.00% cap the risk rail refuses everything regardless
+of free slots, so raising positions to 11 and the cap to roughly 5.5% admits
+about one small position and then binds again on its own. A self-limiting lever
+rather than an open door.
+
 ## M59 - A protective stop that moved was invisible
 
 8 August, found while measuring for M39 and independent of it. No corporate
