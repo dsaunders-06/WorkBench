@@ -54,6 +54,9 @@ Both talk to the paper account. Neither places, cancels or modifies an order.
 |---|---|
 | `probe_alpaca_splits.py` | What Alpaca actually reports about a split — `old_rate`/`new_rate`, the date fields, whether the symbol filter works server-side, and how often `target_symbol` is missing. Written because the roadmap's own instruction for M39 was to measure the broker rather than reason about it. Its findings are in ROADMAP, M60 |
 | `exercise_m54.py` | Whether M54's broker-failure refusal actually works against a **real** SDK failure, using deliberately invalid credentials. Its tests use fakes that raise on command, which proves the handler catches an exception and not that the real failure is the shape it expects. Writes to a scratch directory, never the live one. Findings in ROADMAP, M61 |
+| `probe_feed_entitlement.py` | Whether SIP is genuinely paid for, or just the free tier's historical access. Only a request for RECENT data separates the two — a successful query for last week's bars proves nothing |
+| `probe_market_data.py` | What running on IEX rather than the consolidated tape costs in ATR, and therefore in position size. Uses the application's own `compute_atr`, so it measures what the app would do rather than a reimplementation. Findings in `docs/MARKET_DATA_FINDINGS.md` |
+| `capture_split_state.py` | One symbol's position and resting orders before and after a corporate action, so the two can be diffed. Nothing recovers the pre-split state after the fact |
 
 `exercise_m54.py` is worth re-running whenever the Alpaca adapter changes: it is
 the only thing that has ever exercised that rail end to end, and it costs

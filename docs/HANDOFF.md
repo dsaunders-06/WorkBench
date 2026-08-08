@@ -130,12 +130,28 @@ started that requires deploying a build before Tuesday.
 * **M43 halts** — needs its own producer, and that producer needs a websocket.
   See above. Sequence it with the market-data decision.
 
-### The market-data decision — now the highest-leverage open question
+### The market-data question — measured 8 August, see `docs/MARKET_DATA_FINDINGS.md`
 
-It gates **both** M43 and M32. yfinance is delayed ~15 minutes, unofficial, and
-documented as not a contractual feed. The question is what Alpaca's own feed
-offers versus IBKR's versus staying put, what each costs, and what the ASX
-destination actually requires — since **Alpaca cannot reach the ASX at all.**
+**Two things stated earlier in this document's life were wrong, and are
+corrected there.** This system does *not* run on yfinance — it runs on Alpaca
+IEX. And M43 and M32 are *not* both gated on one market-data decision; only M43
+touches it, and M32 is an IBKR question because Alpaca cannot reach the ASX
+under any subscription.
+
+The finding that matters: **IEX sees a median 4.3% of consolidated volume and a
+3.5% narrower daily range, and daily bars are requested on the same feed as live
+ticks.** ATR is therefore ~3.9% understated, and since ATR sets the stop distance
+which sets the share count, **every position is a median 4% larger than intended
+— 16% on CSCO.** Per-trade risk is internally consistent; the stops are simply
+too tight for the real volatility, so they are hit more often than the design
+assumes. For a trial measuring whether swing has an edge, that is a systematic
+bias produced by the feed rather than the strategy.
+
+SIP *historical* data is free on this account. The fix is to request daily bars
+on `sip` while leaving live ticks on `iex`. **It is inside the freeze** — it
+changes position size — and it resets the two-week baseline. **Decide it after
+Tuesday, not before**; nothing should change sizing between now and the split
+measurement.
 
 ### Group 4 — the interface
 
@@ -274,18 +290,36 @@ reader must be able to tell a real defect from a test artifact.
 
 WHAT IS BLOCKED ON WHAT
   M39 detection/adjustment  — Tuesday's captures
-  M43 halts                 — needs a websocket. get_asset() reports
-                              status=active even for a halted symbol; the real
-                              feed is subscribe_trading_statuses on
-                              StockDataStream, which this app does not consume.
-                              So M43 is now gated on the MARKET-DATA DECISION,
-                              which until now was only M32's problem.
+  M43 halts                 — needs a WEBSOCKET consumer. get_asset() reports
+                              status=active even for a halted symbol, because
+                              that is LISTING status; halts live on
+                              subscribe_trading_statuses on StockDataStream,
+                              which this app does not consume. It polls, for a
+                              documented reason that holds for prices and not
+                              for events.
   M44, M51 analysis half    — September closed trades
-  M32 ASX                   — the market-data decision
+  M32 ASX                   — an IBKR question. Alpaca cannot reach the ASX
+                              under ANY subscription, so no Alpaca decision
+                              advances it.
 
-  THE MARKET-DATA DECISION is therefore the highest-leverage open question:
-  it gates both M43 and M32. yfinance is delayed ~15 min, unofficial, and
-  documented as not a contractual feed. Alpaca cannot reach the ASX at all.
+MARKET DATA — MEASURED, see docs/MARKET_DATA_FINDINGS.md
+This app runs on ALPACA IEX, not yfinance (an earlier handoff said otherwise
+and was wrong). Free tier: real-time is IEX only, but SIP HISTORICAL is free.
+
+  IEX sees a median 4.3% of consolidated volume and a 3.5% narrower daily
+  range. Daily bars are requested on the SAME feed as live ticks, so ATR is
+  ~3.9% understated - and ATR sets the stop distance, which sets the share
+  count. EVERY POSITION IS A MEDIAN 4% LARGER THAN INTENDED, 16% on CSCO.
+
+  Not a per-trade risk breach - the arithmetic is internally consistent. The
+  stops are too TIGHT for the real volatility, so they are hit more often than
+  the design assumes. For a trial measuring edge, that is a bias produced by
+  the feed rather than by the strategy, and September would carry it.
+
+  The fix is free: request daily bars on `sip`, leave live ticks on `iex`. But
+  it CHANGES POSITION SIZE, so it is inside the freeze and resets the two-week
+  baseline. DECIDE IT AFTER TUESDAY - nothing should change sizing between now
+  and the split measurement.
 
 GROUP 4, THE INTERFACE — steps 1-3, 4 and 4.6 done
 Remaining: Screener, Strategy Workbench, AI Advisor. Order Blotter
