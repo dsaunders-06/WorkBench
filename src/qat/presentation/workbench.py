@@ -21,6 +21,7 @@ import logging
 
 import pandas as pd
 import pyqtgraph as pg
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
@@ -47,6 +48,7 @@ from qat.domain.backtester.vectorized_engine import VectorizedBacktester
 from qat.domain.backtester.walk_forward import run_walk_forward
 from qat.presentation import theme
 from qat.presentation.runtime import Runtime
+from qat.presentation.ui_level import UiLevel
 from qat.presentation.widgets import KpiTile
 
 logger = logging.getLogger(__name__)
@@ -72,9 +74,33 @@ class WorkbenchScreen(QWidget):
     def __init__(self, runtime: Runtime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.runtime = runtime
+        self.level = UiLevel.from_settings(runtime.settings)
         self._last_result: BacktestResult | None = None
 
         layout = QVBoxLayout(self)
+
+        # What Guided sees instead of the tools. §4.5 says "not shown", and an
+        # emptied screen is not that - M45's rule is that an absent control is
+        # one level away AND THE LEVEL SELECTOR SAYS SO, which a blank tab
+        # fails. The Risk Console faced the identical instruction at M67 and
+        # kept its tab, so the tab stays here too.
+        self.guided_notice = QLabel(
+            "<b>Strategy Workbench — research, not operation.</b><br>"
+            "This screen backtests a strategy against history and decides whether to deploy "
+            "it. Reading a backtest correctly is most of the work: the figures it produces "
+            "look equally confident whether they rest on two hundred trades or on one.<br><br>"
+            "It becomes available at the <b>Standard</b> level, and the walk-forward tests "
+            "and the deploy control at <b>Professional</b>. Change the level in Settings."
+        )
+        self.guided_notice.setWordWrap(True)
+        self.guided_notice.setStyleSheet(theme.text(theme.ACCENT, size=theme.BODY))
+        # Pinned to the top. With every other widget hidden the label is the
+        # only thing left for the layout to stretch, and a QLabel centres its
+        # text vertically - so rendering it showed the notice floating in the
+        # middle of an otherwise empty screen, which reads as a rendering fault
+        # rather than as a deliberate message.
+        self.guided_notice.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self.guided_notice)
 
         controls = QHBoxLayout()
         self.strategy_picker = QComboBox()
@@ -94,12 +120,26 @@ class WorkbenchScreen(QWidget):
         controls.addWidget(self.symbol_picker)
         controls.addWidget(self.run_button)
         controls.addWidget(self.deploy_button)
-        layout.addLayout(controls)
+        controls.addStretch(1)
+        self.controls_widget = QWidget()
+        self.controls_widget.setLayout(controls)
+        layout.addWidget(self.controls_widget)
 
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("color: #d9534f;")
+        # theme.DANGER, not #d9534f. The design system's own migration note
+        # says '#d9534f (3 uses) -> DANGER'; this was one of the sites it did
+        # not reach, and 24 more like it survive elsewhere (M74).
+        self.status_label.setStyleSheet(theme.text(theme.DANGER))
         layout.addWidget(self.status_label)
+
+        # The plain-language summary §4.5 lists for Standard and that never
+        # existed. Placed above the charts because it is what the charts are
+        # for, and a reader who stops after one line should stop after this one.
+        self.headline_label = QLabel("")
+        self.headline_label.setWordWrap(True)
+        self.headline_label.setStyleSheet(theme.text(theme.ACCENT, size=theme.BODY, bold=True))
+        layout.addWidget(self.headline_label)
 
         self.equity_plot = pg.PlotWidget(title="Equity vs Benchmark")
         # Bar index, not dates (M55). `result.equity_curve` IS indexed by
@@ -136,12 +176,55 @@ class WorkbenchScreen(QWidget):
         self.mc_caption.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
         layout.addWidget(self.mc_caption)
 
-        layout.addWidget(self._build_walk_forward_group())
+        self.walk_forward_group = self._build_walk_forward_group()
+        layout.addWidget(self.walk_forward_group)
 
-        layout.addWidget(QLabel("AI Robustness Note"))
+        self.ai_note_header = QLabel("AI Robustness Note")
+        layout.addWidget(self.ai_note_header)
         self.ai_note_label = QLabel("(run a backtest to get an AI note)")
         self.ai_note_label.setWordWrap(True)
         layout.addWidget(self.ai_note_label)
+
+        self._apply_level()
+
+    def _apply_level(self) -> None:
+        """Three levels, three outcomes.
+
+        Guided gets the notice and none of the tools: §4.5 is explicit that
+        backtesting is not a beginner task, and a half-understood backtest is
+        worse here than no backtest, because the deploy control is on the same
+        screen.
+
+        Standard gets the backtest, the charts, the summary and the AI note.
+        **Professional additionally gets walk-forward and the deploy control** -
+        walk-forward because per-window statistics are the evidence base for
+        deploying, and deploy because it is the one control on this screen that
+        changes what the account does.
+
+        Hidden, never disabled (M45). The deploy button's own `setEnabled` is a
+        different thing entirely and is left alone - it says "this strategy is
+        already live", which is state rather than level, and the brief's "do not
+        touch the deploy gate" is exactly that logic.
+        """
+        shows_tools = self.level.shows_advanced()
+        self.guided_notice.setVisible(not shows_tools)
+        for widget in (
+            self.controls_widget,
+            self.status_label,
+            self.headline_label,
+            self.equity_plot,
+            self.mc_plot,
+            self.mc_caption,
+            self.ai_note_header,
+            self.ai_note_label,
+        ):
+            widget.setVisible(shows_tools)
+        for tile in self._metric_tiles.values():
+            tile.setVisible(shows_tools)
+
+        self.walk_forward_group.setVisible(self.level.prefers_density())
+        # The one control here that changes what the account does.
+        self.deploy_button.setVisible(self.level.prefers_density())
 
     def _build_walk_forward_group(self) -> QGroupBox:
         """Out-of-sample evaluation across rolling windows (spec M19).
@@ -365,10 +448,12 @@ class WorkbenchScreen(QWidget):
         for index, (name, value) in enumerate(sorted(result.metrics.items())):
             text = f"{value:.2%}" if name in _PERCENT_METRICS else f"{value:.3f}"
             tile = KpiTile(name, text)
+            tile.setVisible(self.level.shows_advanced())
             self._metric_tiles[name] = tile
             self.metrics_grid.addWidget(tile, index // _METRICS_PER_ROW, index % _METRICS_PER_ROW)
 
         self.status_label.setText("  ".join(result.warnings))
+        self.headline_label.setText(_backtest_headline(result))
 
     def _render_monte_carlo(self, paths: pd.DataFrame, trade_count: int) -> None:
         quantiles = paths.quantile([0.05, 0.50, 0.95], axis=1)
@@ -437,6 +522,88 @@ def _monte_carlo_caption(trade_count: int) -> str:
             " outcomes."
         )
     return caption
+
+
+def _backtest_headline(result: BacktestResult) -> str:
+    """What the backtest above actually says, in a sentence (M74).
+
+    §4.5 lists a "plain-language summary" in Standard's column and there was
+    never one. What Standard got was `result.metrics` rendered as KPI tiles in
+    ALPHABETICAL order - alpha, beta, calmar, cagr, information_ratio - with
+    nothing to say which of them decides anything, and a reader who cannot rank
+    nine metrics is left to assume the first one matters.
+
+    Built on the same three judgements as `_walk_forward_headline`, for the same
+    reasons:
+
+    * **Trade count leads the caveats, not the returns.** ROADMAP measured that
+      swing changes exposure 7 times in 300 bars. A Sharpe computed over one
+      trade is a property of that trade. M69 gave the cone and the windows this
+      caveat; the backtest they are both derived from never had it.
+    * **Against the benchmark, not in isolation.** A 12% CAGR is a triumph or a
+      failure depending entirely on what buying the index did over the same
+      bars, and the chart plots both while the tiles report only one.
+    * **The drawdown is stated as what it would have felt like**, because
+      max_drawdown as a percentage is the number people agree to in advance and
+      do not sit through.
+
+    It self-suppresses nothing: unlike a caveat, a summary that vanishes when
+    the result is healthy leaves the reader to work out whether silence means
+    good or means broken.
+    """
+    metrics = result.metrics
+    trades = len(result.trades)
+    if trades == 0:
+        return (
+            "No trades were taken. Every figure below is computed from an equity curve that "
+            "never moved, so none of them describes the strategy - only that it found no "
+            "setup in this history."
+        )
+
+    sharpe = metrics.get("sharpe", 0.0)
+    cagr = metrics.get("cagr", 0.0)
+    drawdown = abs(metrics.get("max_drawdown", 0.0))
+    # A figure that ROUNDS to zero is described as flat rather than printed.
+    # Rendering it found "Grew -0.0% a year", which reads as a broken template
+    # rather than as a small number, and "gave up 0.0%" for an alpha that was
+    # not distinguishable from none.
+    negligible = 0.0005
+    if abs(cagr) < negligible:
+        moved = "was flat"
+    else:
+        moved = f"{'grew' if cagr > 0 else 'lost'} {abs(cagr):.1%} a year"
+    fell = (
+        f"worst peak-to-trough fall {drawdown:.1%}"
+        if drawdown >= negligible
+        else "with no material drawdown"
+    )
+    parts = [f"{trades} trade(s). It {moved}, {fell}, at a Sharpe of {sharpe:.2f}."]
+
+    alpha = metrics.get("alpha")
+    if alpha is not None and abs(alpha) >= negligible:
+        parts.append(
+            f"Against the benchmark it {'added' if alpha > 0 else 'gave up'} "
+            f"{abs(alpha):.1%} a year."
+        )
+
+    if sharpe <= 0:
+        parts.append("It lost money per unit of risk taken - the strategy did not work here.")
+    elif drawdown >= 0.20:
+        parts.append(
+            f"A {drawdown:.0%} drawdown is the part to weigh: that is what holding it would "
+            "have felt like, not the annual figure."
+        )
+
+    # The caveat M69 gave the cone and the windows, on the result they are both
+    # computed from. Stated as the count this run produced rather than as a
+    # standing warning, and it therefore disappears when the strategy trades
+    # enough - which is what stops it becoming boilerplate.
+    if trades <= _MIN_TRADES_FOR_A_CONE:
+        parts.append(
+            f"But {trades} trade(s) is too few to conclude anything: these figures describe "
+            "that handful of trades, not the strategy."
+        )
+    return " ".join(parts)
 
 
 def _walk_forward_headline(result: WalkForwardResult) -> str:

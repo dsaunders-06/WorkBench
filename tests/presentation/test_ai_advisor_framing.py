@@ -67,7 +67,11 @@ def test_the_screen_states_that_it_cannot_act(qtbot):
 
 def test_the_framing_says_it_is_not_advice(qtbot):
     """The app is a paper trial today and the screen names real securities."""
-    assert "not financial advice" in _screen(qtbot).framing_label.text().lower()
+    # Bound, not chained: a screen left as a temporary is collected and Qt
+    # deletes the C++ label out from under the assertion.
+    screen = _screen(qtbot)
+
+    assert "not financial advice" in screen.framing_label.text().lower()
 
 
 @pytest.mark.parametrize("level", ["guided", "standard", "professional"])
@@ -91,7 +95,8 @@ def test_the_framing_is_styled_from_the_design_system(qtbot):
 
 
 def test_the_framing_is_the_same_words_at_every_level(qtbot):
-    wordings = {_screen(qtbot, level).framing_label.text() for level in ("guided", "professional")}
+    screens = [_screen(qtbot, level) for level in ("guided", "professional")]
+    wordings = {screen.framing_label.text() for screen in screens}
 
     assert len(wordings) == 1
 

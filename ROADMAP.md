@@ -210,6 +210,82 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M74 - The Workbench had no level, and no summary to give one
+
+8 August. Step 4.5, the half M69 did not cover.
+
+**It consumed no level at all** - absent from the `UiLevel` consumers entirely -
+so every operator saw the walk-forward panel and the **deploy control**,
+including the level §4.5 says should not see the screen. Deploy is the one
+control here that changes what the account does, and it is now Professional
+only. The deploy GATE is untouched, as the brief asks: the button's
+`setEnabled` state says "this strategy is already live", which is state rather
+than level, and a test pins it.
+
+Guided is *"not shown. Backtesting a strategy is not a beginner task"*, and an
+emptied screen is not that - M45's rule is that an absent control is one level
+away **and the level selector says so**. The Risk Console met the identical
+instruction at M67 by keeping its tab and hiding its contents, so the tab stays
+and a notice takes the place of the tools. Following the precedent rather than
+the literal wording, because `main_window` has no level awareness at all and
+giving it some would change navigation for every screen at once.
+
+**The plain-language summary §4.5 lists for Standard was never written.** What
+Standard got was `result.metrics` as KPI tiles in **alphabetical order** - alpha,
+beta, cagr, calmar, information_ratio - with nothing to say which of them decides
+anything. Rendering it makes the point better than describing it does: `alpha`
+leads twelve tiles.
+
+It leads with the trade count, for the reason M69 gave the cone and the windows
+their caveats - **and the caveat existed on both tools derived from the backtest
+and not on the backtest itself.** The demo backtest produces exactly one trade,
+so it fires on the first render rather than in theory.
+
+**Rendering found two things the suite passed through**, which is now the third
+time running. "Grew -0.0% a year" and "gave up 0.0% a year" - a template reading
+as broken rather than as a small number, and a direction asserted from a figure
+that does not support one; both now say "was flat" and stay silent. And the
+Guided notice floated vertically centred in an empty screen, because a QLabel
+left alone in a layout stretches and centres its text.
+
+19 tests. Verified by keying walk-forward and deploy on `shows_advanced()` - the
+M58a mistake - and confirming three tests fail, the deploy one among them.
+
+## M75 - The design system was declared done and is half-done
+
+8 August, found while doing M74 and deliberately not finished.
+
+§5 step 1 - *"67 inline stylesheets become one central sheet"* - is recorded as
+done. **25 raw-hex colour sites survive across seven of the eight presentation
+files**, and they are `theme.py`'s own primitives written out longhand:
+
+| Literal | What it already is |
+|---|---|
+| `#b71c1c` | `DANGER` |
+| `#1b5e20` | `SUCCESS` |
+| `#b45309` | `WARNING` |
+| `#7f1d1d` | `DANGER_STRONG` |
+| `#1e3a5f` | `ACCENT` |
+
+`settings.py` lines 672 and 721 hand-write the exact string
+`theme.callout("warning")` returns, character for character.
+
+**That explains M73's puzzle.** `theme.callout` had zero consumers not because
+nothing needed it, but because the call sites that need it still contain the
+literal it was extracted from. The module was created and eleven files import
+it; the old values were never removed from most of them. A restyle would
+therefore change some screens and not others, which is worse than not having
+extracted it.
+
+Left for its own pass because finishing it means editing the **Order Blotter**,
+which §5 sequences deliberately last - most safety-critical, and to be touched
+when the design system is proven. M74 migrated the one site in `workbench.py`
+(`#d9534f`, which theme's own migration note claims to have consolidated).
+
+Mechanical, and there is no rush: it changes a handful of sites by a shade and
+nothing else. Do it when the Blotter's turn comes, in one pass, with the screens
+rendered before and after.
+
 ## M73 - The AI Advisor's "do not touch" framing did not exist
 
 8 August. Step 4.9, audited rather than accepted - the brief calls this "the
