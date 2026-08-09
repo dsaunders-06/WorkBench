@@ -201,12 +201,22 @@ inside a session carries it until the next startup.
   no false positives.
 - **Repo:** clean, pushed. `git log --oneline -1` gives the tip; the handoff commit is always at or near it.
 - **HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN `src/`, and that is real.**
-  `git diff 49482c2..HEAD -- src/` covers M64, M65, M67, M68, M69, M70, M72 and
-  M73 — the Regime Monitor, the entry-price reconciliation and its live half,
-  both halves of the Risk Console, the Workbench caveats, the Screener and the
-  AI Advisor. All presentation or record-correction; **none of it changes a
-  trading decision, and Monday needs none of it.** Do not deploy before the
-  split test.
+  `git diff 49482c2..HEAD -- src/` covers **14 milestones across 15 commits** —
+  M64, M65, M67, M68, M69, M70, M72, M73, M74, M75, M76, M77, M78, M79. Three of
+  those commits do not carry their number in the subject line (M64, M67 and
+  M68), so counting by `git log | grep M[0-9]` under-reports by three; an
+  earlier version of this line said eight, and before that five.
+
+  All presentation or record-correction; **none of it changes a trading
+  decision, and Monday needs none of it.** Do not deploy before the split test.
+
+  **One operational consequence to know before deploying.** The level model now
+  gates real controls: the Workbench's **deploy button** is Professional-only
+  (M74), and the Blotter's **bulk sign-off** is Standard and above, with Guided
+  restricted to one order at a time (M77). Checked rather than assumed — the
+  live config has `QAT_UI_LEVEL=professional`, so **nothing is lost on deploy**.
+  The default is `standard`, so a config reset would take the deploy button with
+  it.
 - **Account:** equity ~$101,245. Ten positions — AMAT 7, AMD 7, CRWD 16, CSCO 44,
   GS 7, JNJ 19, MS 41, UNP 17, VRTX 19, WFC 58 — all protected, all carrying a
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
@@ -409,10 +419,22 @@ Repo clean and pushed - `git log --oneline -1` for the tip.
 
   HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN src/, and unlike earlier handoffs
   that is a real difference, not documentation. `git diff 49482c2..HEAD -- src/`
-  covers M64, M65, M67, M68 and M69 - the Regime Monitor, the entry-price
-  reconciliation, both halves of the Risk Console, and the Workbench caveats.
+  covers 14 MILESTONES ACROSS 15 COMMITS - M64, M65, M67, M68, M69, M70, M72,
+  M73, M74, M75, M76, M77, M78, M79. Three of those commits do not carry their
+  number in the subject (M64, M67, M68), so counting with `git log | grep
+  M[0-9]` under-reports by three.
+
   All presentation or record-correction; NONE of it changes a trading decision,
   and MONDAY NEEDS NONE OF IT. Do not deploy before the split test.
+
+  BEFORE DEPLOYING, know that the level model now gates real controls: the
+  Workbench DEPLOY BUTTON is Professional-only (M74) and the Blotter's BULK
+  SIGN-OFF is Standard and above, Guided being one order at a time (M77).
+  Checked: the live config is QAT_UI_LEVEL=professional, so nothing is lost.
+  The DEFAULT is "standard", so a config reset takes the deploy button with it.
+
+  AND BACK UP open_position_entries.json FIRST. The first launch of a build
+  containing M65 rewrites it for eight positions.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
 VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,690 tests
