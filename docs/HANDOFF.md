@@ -666,10 +666,11 @@ Group 4 is outstanding.
   fails on a hex inside a string literal, because that is the only thing that
   stops the next screen re-introducing one.
 
-  READ §4.x AS INTENT AND CHECK ITS PARTICULARS FIRST. The brief has now been
-  wrong in detail FIVE times - M63 on the Balances premise, M64 on the macro
-  panel, M67 on the level, and M73 on both of §4.9's claims at once. Checking
-  it against the code is also what found M72, which §4.8 does not mention.
+  READ §4.x AS INTENT AND CHECK ITS PARTICULARS FIRST. UI_UX_APPROACH.md was
+  drafted against build M38 and its per-screen particulars were never
+  re-measured. EVERY OCCURRENCE IS IN THE REGISTER IN ROADMAP.md - "The two
+  patterns, and every occurrence of each". COUNT THE ROWS THERE; this line
+  used to assert a number and was one of five copies that drifted apart.
 
   Three rules the finished screens established:
    - THREE SETTINGS MUST PRODUCE THREE OUTCOMES. The Balances design reached

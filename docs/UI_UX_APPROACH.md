@@ -1,6 +1,27 @@
 # UI/UX approach plan
 
-**Drafted 4 August 2026, against build M38.**
+**Drafted 4 August 2026, against build M38. §4.x re-read against M79 on
+8 August — see below.**
+
+> ## ⚠️ How to read this document
+>
+> **§4.x is a statement of INTENT, not a specification.** Its per-screen
+> particulars were measured against build M38 and were never re-measured while
+> forty milestones landed on top of them. **Eight of its claims described
+> something that was not there** — the full list is the register in
+> `ROADMAP.md` ("The two patterns, and every occurrence of each"). Count the
+> rows there; this document deliberately no longer states a number, because
+> the number was restated in five places and drifted in all of them.
+>
+> **What held up is the reasoning, not the detail.** §2 (what must not be
+> touched), §3 (the expertise model and its two rules), §3a (every chart states
+> what it is showing) and §5's sequencing were right every time they were
+> tested — including §5's insistence that Performance be built *before* there
+> is something to read, which a later handoff contradicted and lost.
+>
+> So: read §4.x for what a screen is FOR. Check its particulars against the
+> code before building, every time. That habit found more defects than the
+> brief did.
 
 Goal, in the operator's words: a classic and simple feel, an adjustable
 experience that accommodates the user's expertise, room for customisation, and
@@ -404,13 +425,12 @@ pattern.
 > had no consumers until M72. Finish it in one pass when the Blotter's turn
 > comes, with the screens rendered before and after.
 >
-> **Read §4.x as intent and check its particulars first.** The brief has now
-> been wrong in detail FIVE times: M63 on the Balances premise ("most of them
-> dashes"; ten of eleven report a figure), M64 on the macro panel, M67 on the
-> level, and M73 on both of §4.9's claims at once - the advisory-only framing it
-> said not to touch did not exist, and the screen it called "fine" was feeding
-> the model a fabricated zero. Checking the brief against the code is what found
-> M72's provenance gap as well, which §4.8 does not mention at all.
+> **Read §4.x as intent and check its particulars first.** Every occurrence is
+> listed in the register in `ROADMAP.md` - "The two patterns, and every
+> occurrence of each". **Count the rows there rather than repeating a number
+> here**: this line used to assert one, and it was one of five copies that
+> drifted apart. Checking the brief against the code is also what found M72's
+> provenance gap, which §4.8 does not mention at all.
 >
 > **Two things every remaining screen should copy.** Render it and look at it -
 > that found M63's orphaned grid row, its off-scale font, and M72's stranded

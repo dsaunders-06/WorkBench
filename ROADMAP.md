@@ -210,6 +210,92 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M80 - The pattern-counting was itself the pattern
+
+8 August. Asked how to resolve the two recurring patterns, and found a third
+underneath them.
+
+**A count maintained by hand in five documents drifts in all five.** "The brief
+has been wrong in detail" was recorded as *third*, *fifth* and *sixth* in three
+ROADMAP entries, as *FIVE times* in the handoff and in `UI_UX_APPROACH.md`, and
+stated as *six* in conversation. The real figure is eight claims across seven
+milestones. Identical to the deploy-gap figure quoted as five, eight, nine and
+twelve before anyone actually counted it, and to the orphan-property count
+guessed at three and then five before a rule was written down.
+
+Three fixes, one per pattern, and only one of them has teeth:
+
+* **The register below** replaces every asserted count. One row per occurrence;
+  the number is read off the rows. The handoff and `UI_UX_APPROACH.md` now point
+  here instead of restating it.
+* **`test_computed_values_have_readers`** turns "ask what reads it" from a habit
+  into a check. It watches the three record modules where the pattern has
+  actually bitten, and fails on a `@property` nothing in `src/` reads.
+  **It finds exactly one thing: `ClosedTrade.is_win`.**
+* **`UI_UX_APPROACH.md` is dated at its head**, and §4.x is marked as intent
+  rather than specification. A document's claims about a codebase cannot be
+  tested mechanically, so the honest fix is to stop it being read as a spec.
+
+**Getting the rule right mattered more than getting a number.** The guard's
+first version demanded a reader *outside* the defining module and immediately
+flagged four values that are not waste at all - `gross_r_multiple` and
+`pnl_pct` are written into the `closed_trades.csv` row, `refused` and
+`approval_rate` feed `RefusalSummary.headline()`. Too strict earns an allowlist
+full of things that are fine, and an allowlist full of things that are fine
+stops being read - which is precisely how M75's colour guard came to assert
+something untrue.
+
+## The two patterns, and every occurrence of each
+
+**This is the register. Count the rows; do not restate the number.**
+
+It exists because the number was restated. "The brief has been wrong in detail"
+appeared as *third*, *fifth* and *sixth* in three different entries here, as
+*FIVE times* in the handoff and in `UI_UX_APPROACH.md`, and as *six* in
+conversation - five hand-maintained copies of one fact, every one free to drift,
+and they did. The same defect as the deploy-gap figure quoted as five, eight,
+nine and twelve before anyone counted it.
+
+### Pattern 1 - §4.x described something that was not there
+
+`UI_UX_APPROACH.md` says at its head: *"Drafted 4 August 2026, against build
+M38."* It was accurate when written and was never re-measured. **The particulars
+are the stale part; the principles are not** - §2 (what must not be touched), §3
+(the expertise model) and §3a (chart axes) held up on every screen.
+
+| # | Milestone | §  | What the brief said | What was there |
+|---|---|---|---|---|
+| 1 | M63 | 4.1 | Balances is "most of them dashes" | Ten of eleven reported a figure |
+| 2 | M64 | 4.6 | The macro panel, as described | Not as described |
+| 3 | M67 | 4.7 | The level | Wrong |
+| 4 | M73 | 4.9 | "Do not touch the advisory-only framing" | The framing existed only in a docstring |
+| 5 | M73 | 4.9 | "Enhance: little" | It was feeding the model a fabricated zero |
+| 6 | M74 | 4.5 | Standard gets a "plain-language summary" | Never written |
+| 7 | M77 | 4.2 | "Do not touch the reason text on a rejection" | No reason was displayed at all |
+| 8 | M79 | 4.4 | Professional gets the M37 diagnostics | The columns did not exist |
+
+**Eight claims across seven milestones.** Every one found by checking the brief
+against the code before building - which is why that habit is worth more than
+the brief is.
+
+### Pattern 2 - something computed, and read by nothing
+
+| # | Value | Produced | First read |
+|---|---|---|---|
+| 1 | `shows_advanced()` | M45 | M63 |
+| 2 | `theme.callout` | M45 | M72 |
+| 3 | `is_synthetic` | M18 | M72 - the LLM had it from M40, the operator did not |
+| 4 | `refusals.rail_of` | M51 | M77 |
+| 5 | the journal `reason` | always | M77 |
+| 6 | the M37 diagnostics | M37 | M79 |
+| 7 | `ClosedTrade.is_win` | M28 | **still nothing** - see M80 |
+
+**This one now has a test.** `test_computed_values_have_readers` is the only
+part of either pattern that does not depend on somebody remembering to look.
+Pattern 1 cannot be tested the same way - a document's claims about a codebase
+are not mechanically checkable - so what replaces it is narrower and duller:
+**the brief is dated, and §4.x is marked as intent rather than specification.**
+
 ## M79 - Performance, the screen the answer gets read from
 
 8 August. Step 4.4, and the last screen in Group 4.
