@@ -84,9 +84,21 @@ positions on deploy.
 
 Verify with `scripts/analysis/verify_gating_figures.py`.
 
+## ⚙️ Before quoting any figure below, run this
+
+    .\.venv\Scripts\python.exe scripts/handoff_state.py
+
+It derives the deploy gap, the milestone list and the test count from the
+repository, and **names any test count in this file that has gone stale**. Every
+current-state number here is a hand-maintained copy, and this session lost that
+argument three times: the deploy gap was quoted as five, eight, nine and twelve;
+"the brief has been wrong in detail" as third, fifth, sixth and FIVE; the test
+count sat at 1,690 in three paragraphs while the suite had moved on. Counting is
+not the fix - deriving is.
+
 ## What landed after the handoff was written — M70, M72–M79
 
-All four checks clean, **1,690 tests**. Repo clean and **pushed**. None of it is
+All four checks clean, **1,710 tests** (1,709 pass; 1 is the declared orphan in M80's guard). Repo clean and **pushed**. None of it is
 deployed, and none of it should be before Tuesday.
 
 **M70 — the residual half of M65, and the half startup could not heal.**
@@ -222,7 +234,7 @@ inside a session carries it until the next startup.
   stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
   is refusing new entries. That is the rails working.
 - **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,690 tests**; ruff, black, mypy, bandit clean.
+- **1,710 tests** (1,709 pass; 1 is the declared orphan in M80's guard); ruff, black, mypy, bandit clean.
 
 ## What landed on 8 August
 
@@ -437,7 +449,7 @@ Repo clean and pushed - `git log --oneline -1` for the tip.
   containing M65 rewrites it for eight positions.
 
 Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,690 tests
+VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,710 tests
 pass; ruff, black, mypy, bandit clean.
 
 LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
