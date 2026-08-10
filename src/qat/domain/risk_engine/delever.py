@@ -148,7 +148,19 @@ class DeleverSweep:
             (
                 f"trimming every position by {fraction:.1%}"
                 if self.settings.delever_sweep_enabled
-                else "sweep is disabled, so this will only unwind as positions close"
+                # "will only unwind as positions close" was false, and
+                # measurably so (M82). The figure is risk / EQUITY, so it moves
+                # whenever either does: overnight on 10 August it changed ten
+                # times across 5.11-5.14% while every one of eleven positions
+                # stayed open and closed_trades.csv was untouched. It also
+                # moved the WRONG way - 5.12% to 5.14% as equity fell from
+                # $102,161 to $101,798 - so the old wording implied a figure
+                # that sits still until you act, when it drifts against you as
+                # the book loses value.
+                else (
+                    "sweep is disabled, so nothing will be sold to correct it. It falls as "
+                    "positions close or as equity rises, and rises as equity falls"
+                )
             ),
         )
         if not self.settings.delever_sweep_enabled:

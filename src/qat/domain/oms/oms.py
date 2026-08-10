@@ -711,11 +711,18 @@ class OMS:
         # routine; adoption silently consuming the entire risk-at-stop budget
         # is not, and the INFO line said only that it had happened.
         logger.warning(
+            # "%d carries a stop" read as "11 carries a stop" on 10 August, and
+            # left the reader to subtract for the number that actually matters -
+            # how many are NAKED, which is what consumes the risk budget at full
+            # value. Both figures are stated now (M82).
             "Adopted %d pre-existing broker position(s) as the reconciliation baseline: %s. "
-            "%d carries a stop resting at the broker, which is what its risk is measured to.",
+            "%d of %d carry a stop resting at the broker, which is what their risk is measured "
+            "to; %d carry none and count their full value against the aggregate cap.",
             len(adopted),
             ", ".join(f"{sym} {qty:g}" for sym, qty in sorted(adopted.items())),
             len(self._position_stops),
+            len(adopted),
+            len(naked),
         )
         quarantined = [a.symbol for a in self.anomalies.active() if a.symbol in adopted]
         if quarantined:

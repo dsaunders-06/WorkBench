@@ -210,6 +210,35 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M82 - Two more messages that asserted something checkable and false
+
+11 August. Found by asking the question M81 should have prompted: **if three
+messages were wrong, how many others are?** Answered empirically - take every
+distinct message the live run emitted and test its claims against the record it
+describes, rather than reading code for suspicious wording.
+
+**"sweep is disabled, so this will only unwind as positions close"** - the most
+repeated line of the night, **112 times**, and false.
+
+The figure is risk / EQUITY, so it moves whenever either does. Overnight on
+10 August it **changed ten times** across 5.11-5.14% while all eleven positions
+stayed open and `closed_trades.csv` was untouched. And it moved the wrong way:
+**5.12% -> 5.14% as equity fell from $102,161 to $101,798**. The wording implied
+a figure that sits still until the operator acts, when in fact it drifts against
+them as the book loses value - which is the opposite of the reassurance it
+reads as at 3am.
+
+**"11 carries a stop resting at the broker"** - ungrammatical, and it gave the
+protected count when the number that consumes the cap at full value is the naked
+one. The operator was left subtracting. Now: "11 of 11 carry a stop ...; 0 carry
+none and count their full value against the aggregate cap."
+
+**The test for the first one had to be rewritten.** A source scan for the
+removed phrase failed, because the comment explaining the removal quotes it -
+the identical false positive the M78 colour guard was built to avoid, committed
+again within the hour. It now asserts against the EMITTED line from a real
+sweep.
+
 ## M81 - The startup warning about MNST was the opposite of the truth
 
 11 August, found in the overnight watch. **Fixed in the tree, not deployed** -
