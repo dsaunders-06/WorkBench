@@ -210,6 +210,51 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M81 - The startup warning about MNST was the opposite of the truth
+
+11 August, found in the overnight watch. **Verified, not fixed** - the fix
+cannot deploy until the split test completes.
+
+Monday's startup produced two statements that cannot both be true:
+
+    No entry record for MNST, so no lot could be restored - if these close, the
+    exit is absorbed but produces no closed trade and no P&L
+
+    BROKER-SIDE FILL absorbed: buy 8 MNST at 91.18 - a resting protective order
+    executed, and this is now a closed trade
+
+**The second is wrong twice over** - a BUY is not a protective order executing,
+and nothing was written to `closed_trades.csv` (verified: 504 bytes, unchanged
+since 6 August). The message is hard-coded for the sell case M34 was written
+for, and a position opened at the broker while the app was down arrives through
+the same path and gets confidently wrong narration.
+
+**But the first statement is the one that matters, because it is also false.**
+The replay publishes `OrderFilledEvent(side="buy")`; `trade_ledger` is
+registered BEFORE `signal_bridge` in the orchestrator's start order and is
+therefore already subscribed; and `TradeLedger._on_fill` opens a lot for any
+buy. **MNST has a lot.** The warning an operator would act on says it does not.
+
+The lot is thin, because the absorb path has nothing else to give it:
+
+| | |
+|---|---|
+| price | **91.18375** - correct, the broker's own fill price |
+| stop_price | **None** - so no risk-per-share, so no R-multiple |
+| strategy | **None** - the outcome is attributed to nothing and counts towards no promotion gate |
+
+So tonight's liquidation will record a closed trade with a right entry price, a
+blank R and no strategy - which is better than the warning's "no closed trade
+and no P&L", and worse than a trade the evidence can use.
+
+**A note on how this was confirmed.** The first run of the test failed and said
+no lot was opened, which would have made the warning correct. That was a
+fixture artefact: the absorb watermark defaults to NOW on a fresh data dir, so
+the fill was filtered out before any logic under test ran. In production the
+watermark was Saturday's persisted value and the log records the absorb
+happening. One of the five tests was also passing vacuously for the same
+reason - it now asserts something was actually absorbed first.
+
 ## MNST split test - what Monday measured
 
 10 August, the day before the ex-date. Three facts the test produced before the
