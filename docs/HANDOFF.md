@@ -377,6 +377,16 @@ The destination, and much the largest. Behind the market-data decision.
 ## Standing constraints
 
 - **Read `%LOCALAPPDATA%\QuantAdvisoryTerminal` via PowerShell, never Bash.**
+  **Measured 10 August, and the consequence is worse than a wrong read.** The
+  Bash tool sees a sandboxed copy of that tree frozen at 27 July: same path,
+  `equity_curve.csv` 13,811 bytes / 301 rows / last written 27 Jul, against the
+  live 405,949 bytes / 8,757 rows. PowerShell launched *from* Bash inherits the
+  same blind view, so the sandbox covers the whole process tree.
+  **Anything that watches those files from a Bash shell - a monitor, a tail, a
+  background poll - reads a file that never changes and therefore never fires.
+  It does not error; it goes quiet, and quiet is indistinguishable from
+  healthy.** Overnight watching must be done by a scheduled prompt that wakes up
+  and uses the PowerShell tool, not by a Bash monitor.
 - Operator's terminal is **PowerShell 5.1** — `;` not `&&`, `@'...'@`
   here-strings with the closing `'@` at column 0.
 - **The project formats with `black`, not `ruff format`.** `invoke lint` shells
