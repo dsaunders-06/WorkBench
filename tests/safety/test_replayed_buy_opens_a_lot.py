@@ -175,3 +175,63 @@ async def test_the_quantity_is_not_double_counted(tmp_path):
     assert oms._filled_quantities["MNST"] == pytest.approx(8.0)
     assert await oms.check_reconciliation() is False
     assert oms.kill_switch.tripped is False
+
+
+# --- what the operator is told (M81) ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_an_absorbed_buy_is_not_called_a_protective_order(tmp_path, caplog):
+    """The message was hard-coded for the sell case M34 was written for, so a
+    position opened at the broker was announced as a stop firing."""
+    with caplog.at_level("WARNING"):
+        await _replayed(tmp_path)
+
+    absorbed = [
+        r.getMessage() for r in caplog.records if "BROKER-SIDE FILL absorbed" in r.getMessage()
+    ]
+    assert absorbed, "nothing absorbed - the test is vacuous"
+    assert "protective order executed" not in absorbed[0]
+    assert "now a closed trade" not in absorbed[0]
+    assert "OPENED at the broker" in absorbed[0]
+
+
+@pytest.mark.asyncio
+async def test_the_absorbed_buy_states_what_the_lot_is_missing(tmp_path, caplog):
+    """The operator's next question is what the trade will be worth as
+    evidence, and the answer is "less than it looks"."""
+    with caplog.at_level("WARNING"):
+        await _replayed(tmp_path)
+
+    absorbed = [
+        r.getMessage() for r in caplog.records if "BROKER-SIDE FILL absorbed" in r.getMessage()
+    ]
+    assert "no R-multiple" in absorbed[0]
+    assert "promotion evidence" in absorbed[0]
+
+
+@pytest.mark.asyncio
+async def test_a_sell_still_reads_as_a_protective_order_firing(tmp_path, caplog):
+    """The fix must not cost M34 its own wording - a stop firing at the broker
+    is still the case this path was built for."""
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = _BoughtWhileDownBroker()
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    await oms.adopt_broker_positions()
+    broker._broker_fills.clear()
+    broker.fill_resting_stop("MNST", price=72.68)
+    oms._last_fill_scan = datetime(2026, 8, 8, 9, 0, tzinfo=UTC)
+
+    with caplog.at_level("WARNING"):
+        await oms.absorb_broker_fills(record_only=True)
+
+    absorbed = [
+        r.getMessage() for r in caplog.records if "BROKER-SIDE FILL absorbed" in r.getMessage()
+    ]
+    assert absorbed, "nothing absorbed - the test is vacuous"
+    assert "protective order executed" in absorbed[0]
+    assert "now a closed trade" in absorbed[0]

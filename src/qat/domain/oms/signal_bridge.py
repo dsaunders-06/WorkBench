@@ -326,12 +326,26 @@ class SignalToOrderBridge:
         absorbed = await self.oms.absorb_broker_fills(record_only=True)
         replayed = sorted({fill.symbol for fill in absorbed})
         if replayed:
+            # Counted by side (M81). "These are recorded as closed trades now"
+            # was true only of sells, and this method replays buys too - a
+            # position opened at the broker while the app was down. Saying it
+            # of a buy is checkable against closed_trades.csv and wrong.
+            exits = sorted({f.symbol for f in absorbed if f.side == "sell"})
+            entries = sorted({f.symbol for f in absorbed if f.side == "buy"})
+            parts = []
+            if exits:
+                parts.append(f"{', '.join(exits)} closed a position and is now a closed trade")
+            if entries:
+                parts.append(
+                    f"{', '.join(entries)} OPENED a position at the broker and now has a lot "
+                    "with no stop and no strategy"
+                )
             logger.warning(
                 "Replayed %d execution(s) that happened while this application was not "
-                "running: %s. These are recorded as closed trades now; the position counts "
-                "were already correct, because startup reads them from the broker.",
+                "running: %s. The position counts were already correct, because startup reads "
+                "them from the broker.",
                 len(absorbed),
-                ", ".join(replayed),
+                "; ".join(parts),
             )
         return replayed
 
@@ -464,8 +478,17 @@ class SignalToOrderBridge:
             )
         if unknown:
             logger.warning(
-                "No entry record for %s, so no lot could be restored - if these close, the "
-                "exit is absorbed but produces no closed trade and no P&L",
+                # Says what it knows, not what it predicts (M81). This used to
+                # end "produces no closed trade and no P&L", which was a
+                # forecast, and `replay_missed_exits` falsified it seconds later
+                # in the same startup: a buy absorbed from the broker publishes
+                # OrderFilledEvent and the ledger opens a lot for it. The
+                # operator was told the exit would vanish; it will not.
+                "No entry record for %s, so no lot could be restored HERE. If the position was "
+                "opened at the broker rather than by this app, the replay below opens a thin "
+                "lot for it - carrying the price paid, but no stop and no strategy, so a trade "
+                "closed from it has no R-multiple and no attribution. Otherwise its exit is "
+                "absorbed and records no closed trade at all.",
                 ", ".join(sorted(unknown)),
             )
         if quarantined:

@@ -1292,13 +1292,28 @@ class OMS:
             )
             absorbed.append(fill)
             logger.warning(
-                "BROKER-SIDE FILL absorbed: %s %g %s at %.2f (order %s) - a resting "
-                "protective order executed, and this is now a closed trade%s",
+                "BROKER-SIDE FILL absorbed: %s %g %s at %.2f (order %s) - %s%s",
                 fill.side,
                 fill.quantity,
                 fill.symbol,
                 fill.price,
                 fill.order_id,
+                # Branched on side (M81). This was hard-coded for the sell case
+                # M34 was written for, so a position opened AT THE BROKER while
+                # the app was down - which arrives through the same path -
+                # was announced as "a resting protective order executed, and
+                # this is now a closed trade". Both clauses were false, and the
+                # second was falsifiable against closed_trades.csv.
+                (
+                    "a resting protective order executed, and this is now a closed trade"
+                    if fill.side == "sell"
+                    else (
+                        "a position was OPENED at the broker that this application did not "
+                        "send. It opens a lot carrying the price paid, but no stop and no "
+                        "strategy are known for it, so a trade closed from it will have no "
+                        "R-multiple and will count towards no strategy's promotion evidence"
+                    )
+                ),
                 (
                     ". It executed while this application was not running, so it is recorded "
                     "but not re-counted"

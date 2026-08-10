@@ -212,8 +212,12 @@ it.
 
 ## M81 - The startup warning about MNST was the opposite of the truth
 
-11 August, found in the overnight watch. **Verified, not fixed** - the fix
-cannot deploy until the split test completes.
+11 August, found in the overnight watch. **Fixed in the tree, not deployed** -
+nothing reaches the account until the split test completes. An earlier version
+of this entry said "verified, not fixed", which confused *cannot deploy* with
+*nothing to do*: all three messages are reporting, the freeze explicitly permits
+reporting, and a warning that states the opposite of the truth is the
+fix-immediately class the standing rule names first.
 
 Monday's startup produced two statements that cannot both be true:
 
@@ -246,6 +250,23 @@ The lot is thin, because the absorb path has nothing else to give it:
 So tonight's liquidation will record a closed trade with a right entry price, a
 blank R and no strategy - which is better than the warning's "no closed trade
 and no P&L", and worse than a trade the evidence can use.
+
+### What was corrected
+
+Three messages, all of them checkable against the record they describe:
+
+* **The absorb line now branches on side.** A sell still reads as a protective
+  order firing - M34's own case, and a test pins that it still does. A buy now
+  says a position was opened at the broker, and names what the lot is missing.
+* **The replay summary counts by side** instead of asserting "these are recorded
+  as closed trades now", which was true only of sells.
+* **`restore_open_lots` states what it knows rather than forecasting.** It said
+  the exit "produces no closed trade and no P&L"; `replay_missed_exits`
+  falsified that seconds later in the same startup. It now says no lot could be
+  restored HERE, and what the replay will do instead.
+
+Eight tests, three of which assert the wording an operator reads - because the
+defect was never in the arithmetic.
 
 **A note on how this was confirmed.** The first run of the test failed and said
 no lot was opened, which would have made the warning correct. That was a
