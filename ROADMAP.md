@@ -210,6 +210,33 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M83 - Performance showed two trade counts that disagree, and explained neither
+
+11 August. The same sweep as M82, applied to the screens instead of the log.
+
+The Metrics tab counts **every** closed trade - `build_summary` takes
+`ledger.closed_trades()` whole. The promotion table counts only the trades a
+strategy owns, because `ledger.strategies()` drops a falsy one:
+
+    return sorted({trade.strategy for trade in self._closed if trade.strategy})
+
+Both are correct. They disagree, and nothing on the screen said so.
+
+**Guaranteed to bite tonight.** M81 established that a position opened at the
+broker rather than by this app gets a lot with `strategy=None`. MNST is exactly
+that, so when it is liquidated the screen will read **Trades: 2** in Metrics
+above a promotion table summing to **1** - and an operator has no way to tell
+that from a miscount, on the screen whose entire purpose is deciding whether
+the system works.
+
+The note names the gap and its cause, and **hides itself when the counts
+agree** - a note that is always on screen stops being read, which is the M69
+rule applied to a discrepancy rather than to a caveat.
+
+Worth stating plainly, because it is the more interesting half: **the trade is
+real P&L that no promotion gate can read.** It moves the equity curve and
+changes nothing about whether a strategy is eligible.
+
 ## M82 - Two more messages that asserted something checkable and false
 
 11 August. Found by asking the question M81 should have prompted: **if three

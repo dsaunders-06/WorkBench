@@ -189,3 +189,39 @@ def test_the_verdict_names_what_is_blocking(qtbot, tmp_path):
 
     assert "swing" in verdict
     assert "Waiting on:" in verdict or "clears the bar" in verdict
+
+
+# --- the two counts that can disagree (M83) -----------------------------------
+
+
+def _record(ledger, **kw):
+    ledger._closed.append(_trade(**kw))
+
+
+@pytest.mark.asyncio
+async def test_a_trade_with_no_strategy_is_explained_rather_than_silently_dropped(qtbot, tmp_path):
+    """Metrics counts every closed trade; the promotion table counts only the
+    ones a strategy owns. Both are right and they disagree - and after M81 a
+    position opened at the broker guarantees it happens."""
+    screen = _screen(qtbot, "standard", tmp_path)
+    _record(screen.runtime.trade_ledger, strategy="swing")
+    _record(screen.runtime.trade_ledger, symbol="MNST", strategy=None)
+
+    screen.refresh()
+
+    assert screen.unattributed_note.isVisibleTo(screen)
+    text = screen.unattributed_note.text()
+    assert text.startswith("1 closed trade(s)")
+    assert "no promotion gate can read" in text
+
+
+@pytest.mark.asyncio
+async def test_the_note_stays_hidden_when_the_counts_agree(qtbot, tmp_path):
+    """A note that is always on screen stops being read - the M69 rule."""
+    screen = _screen(qtbot, "standard", tmp_path)
+    _record(screen.runtime.trade_ledger, strategy="swing")
+
+    screen.refresh()
+
+    assert not screen.unattributed_note.isVisibleTo(screen)
+    assert screen.unattributed_note.text() == ""

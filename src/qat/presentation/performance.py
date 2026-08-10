@@ -208,6 +208,15 @@ class PerformanceScreen(QWidget):
         self.promotion_table = QTableWidget(0, len(_PROMOTION_COLUMNS))
         self.promotion_table.setHorizontalHeaderLabels(list(_PROMOTION_COLUMNS))
         promotion_layout.addWidget(self.promotion_table)
+
+        # Why this table's trade count can be lower than the one in Metrics.
+        # Hidden when they agree - a note that is always on screen stops being
+        # read, which is the M69 rule.
+        self.unattributed_note = QLabel("")
+        self.unattributed_note.setWordWrap(True)
+        self.unattributed_note.setStyleSheet(theme.callout("warning"))
+        self.unattributed_note.setVisible(False)
+        promotion_layout.addWidget(self.unattributed_note)
         layout.addWidget(promotion_box)
 
         self.tabs = tabs = QTabWidget()
@@ -362,6 +371,27 @@ class PerformanceScreen(QWidget):
             {name: ledger.closed_trades(name) for name in ledger.strategies()},
             self.runtime.settings,
         )
+        # The Metrics tab counts every closed trade; this table counts only the
+        # ones a strategy owns, because `strategies()` drops a falsy one. Both
+        # are right and they disagree, and nothing said so (M83).
+        #
+        # Not hypothetical: a position opened AT THE BROKER rather than by this
+        # app gets a lot with no strategy (M81), so its trade lands in Metrics
+        # and never in this table. An operator reading "2 trades" above a table
+        # summing to 1 has no way to tell that from a miscount.
+        attributed = sum(card.stats.trade_count for card in cards)
+        unattributed = len(ledger.closed_trades()) - attributed
+        self.unattributed_note.setText(
+            ""
+            if unattributed <= 0
+            else (
+                f"{unattributed} closed trade(s) belong to no strategy and are counted in "
+                "Metrics and Closed trades but NOT in this table - a position opened at the "
+                "broker rather than by this app carries no strategy, so its outcome is real "
+                "P&L that no promotion gate can read."
+            )
+        )
+        self.unattributed_note.setVisible(bool(unattributed > 0))
         self.verdicts.setText(
             "<br><br>".join(_verdict(card) for card in cards)
             or "No strategy has produced a closed trade yet."
