@@ -210,6 +210,37 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## MNST split test - what Monday measured
+
+10 August, the day before the ex-date. Three facts the test produced before the
+split even landed, recorded here because two of them change M39's design.
+
+**Alpaca returns the same announcement more than once, and the count changes.**
+Saturday's captures returned ONE `stock_split` record for MNST. Monday's return
+**two, byte-identical**, on the day that is also the `payable_date`. **M39's
+detector must dedupe on (symbol, ex_date)** rather than counting rows or
+assuming one announcement per action - and it cannot treat a changing count as
+a changing corporate action.
+
+**The order id survived the weekend.** The buy queued on Saturday
+(`35010615-…`) is the same id that filled on Monday, so an id captured before an
+event is a usable key across it. Whether that holds through the split itself is
+tomorrow's measurement, and it is the one M39's adjustment turns on.
+
+**The first real entry-slippage number this trial has produced.** Sized against
+$90.85 (Friday's close), filled at **$91.1838** - **+36.7 bps**, on a liquid
+megacap, at the open. Placed by hand so the app never recorded it, which is the
+only reason it is visible: pre-M70 the app would have stored $90.85 as the entry
+and reported slippage of exactly zero. **M44 is booked to answer "is the flat
+5bps assumption right" in September** - one observation is not an answer, but
+36.7 bps against an assumed 5 is the first evidence that the question is worth
+the milestone.
+
+Risk-at-stop moved 5.02% -> 5.12%, which reconciles exactly: MNST adds
+8 x ($91.1838 - $72.68) = $148.03, and equity rising to $102,161 dilutes the
+existing figure to 4.975%. The de-lever sweep is disabled, so the over-cap
+reading cannot force a sale.
+
 ## M80 - The pattern-counting was itself the pattern
 
 8 August. Asked how to resolve the two recurring patterns, and found a third
