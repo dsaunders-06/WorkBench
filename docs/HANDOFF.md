@@ -32,31 +32,60 @@ the event lands at the 23:30 AEST open.**
 | Monday night | Session ran clean. No halt, no errors. Split **not** applied at Monday's close |
 | **Tuesday 21:54** | **Alpaca has halved the PRICE to ~$46.30 but not the quantity or the basis** — the corporate action is half-applied |
 
-## The decision taken, and why it matters
+## THE RESULT — it happened, and it cost real money
 
-At 21:54 the position reads qty 8, avg_entry $91.1838, current $46.30. **The
-$72.68 stop is now far ABOVE the market**, so it should execute within seconds
-of the open.
+**The stop was never adjusted. It fired at the open and liquidated the
+position.** Order `34ffd4cd` went `new` → `filled`, still qty 8, still $72.68 —
+not cancelled, not re-priced, not re-quantified. It executed in three partials:
+1 @ $46.34, 3 @ $46.16, 4 @ $45.79.
 
-The operator was given the choice and chose **let it run**. The reasoning: the
-record can be corrected by hand afterwards, and the measurement cannot be
-recreated without waiting for SFBS on 21 August.
+**The share side never arrived.** Quantity went **8 → 0**, never 8 → 16.
+`avg_entry_price` stayed stale at $91.1838. So there was no divergence, no
+kill-switch trip, and **M60's declare-then-quarantine was never exercised** —
+the accepted cost of letting it run.
 
-**Expect, therefore, that this is what happens:**
+### The loss is REAL. An earlier version of this file said otherwise
 
-* the stop fires at the open and sells 8 at ~$46.30;
-* a closed trade lands in `closed_trades.csv` showing roughly **−$360, about
-  −50%** — **that figure is a split artefact, not a loss.** The basis was never
-  adjusted. It must be corrected by hand, as CVS was, with a `.bak` taken first;
-* the quantity may go to zero before it ever doubles, in which case **the
-  divergence never happens, the kill-switch never trips, and the M60
-  declare-then-quarantine exercise is not exercised.** That is a real possible
-  outcome of letting it run, and it was accepted.
+This section predicted "a split artefact, not a loss" needing correction.
+**That was wrong**, and it was wrong because it assumed rather than checked.
 
-If instead the quantity doubles to 16 first, the session halts — **that is M60
-working, not a fault** — and the steps are: capture `post-split` BEFORE touching
-anything, then declare the anomaly in the Risk Console (`MNST`, "2-for-1 split,
-ex 11 August"), then confirm the session resumes.
+Verified against `/v2/account/activities`:
+
+    buys   5 @ 91.20 + 2 @ 91.20 + 1 @ 91.07  =  $729.47 out
+    sells  1 @ 46.34 + 3 @ 46.16 + 4 @ 45.79  =  $367.98 in
+    gross  -$361.49    costs $13.74    net  -$375.23
+
+**No SPLIT, no CSD, no share delivery of any kind.** Equity moved
+101,754.81 → 101,387.14, consistently. The account genuinely paid for 8 shares
+at pre-split prices and sold 8 at post-split prices. **The recorded P&L is
+correct and must not be "corrected".**
+
+Which makes the finding much more serious than a bookkeeping error:
+
+> **An unadjusted stop through a split does not merely misreport. It loses
+> about half the position's value, for real** — −51.4% on a position that
+> should have been roughly flat.
+
+**Caveat, load-bearing:** this is a PAPER account. Alpaca paper's
+corporate-action handling may be incomplete in ways a live account is not. The
+loss is real *in this account*; whether live Alpaca would have delivered the
+shares is unknown. **Design M39 for the behaviour measured, not the preferred
+one.**
+
+### What IS wrong in the record — two fields, not the money
+
+| Field | Recorded | Correct | Why |
+|---|---|---|---|
+| `exit_reason` | `target` | **`stop`** | Order 34ffd4cd was a stop; there was no target leg |
+| `strategy` | `swing` | **blank** | Hand-placed at the broker. Leaving it credits swing's promotion evidence with a trade it did not make |
+
+`exit_price 45.9975` is the volume-weighted average of the three partials and is
+right. `stop_price` and `r_multiple` are blank because the lot carried no stop.
+
+**File:** `%LOCALAPPDATA%\QuantAdvisoryTerminal\data\closed_trades.csv`
+**Close the app first** — the ledger holds it open in append mode. Back up as
+`closed_trades.csv.bak-<yyyyMMdd-HHmmss>`, the convention the CVS correction
+used.
 
 ## What the captures must answer
 
@@ -253,19 +282,42 @@ It derives the deploy gap, the milestone list and the test count, and names
 any stale test count in the handoff. Four hand-maintained counts were wrong
 in three days. Counting is not the fix - deriving is.
 
-THE THING WITH A CLOCK - the MNST split landed Tuesday 11 August
-The position was 8 MNST bought Monday at 91.1838 with a hand-placed sell stop
-at 72.68. By Tuesday evening Alpaca had HALVED THE PRICE to ~46.30 and NOT the
-quantity or the basis - the action was half-applied - which left the stop far
-ABOVE the market and due to fire at the open.
+THE SPLIT TEST IS DONE - and it cost real money
+8 MNST bought Monday at 91.1838 with a hand-placed sell stop at 72.68. Alpaca
+halved the PRICE to ~46 and NEVER the shares. The stop was not adjusted, not
+re-priced, not re-quantified - it fired at the open and liquidated the position
+in three partials (1@46.34, 3@46.16, 4@45.79).
 
-  The operator chose to LET IT RUN. Expect a closed trade around -360 / -50%
-  in closed_trades.csv. THAT FIGURE IS A SPLIT ARTEFACT, NOT A LOSS - the
-  basis was never adjusted. Correct it by hand, as CVS was, .bak first.
+  THE -375.23 IN closed_trades.csv IS A REAL LOSS, NOT AN ARTEFACT. An earlier
+  handoff and a morning brief both said artefact; both were wrong, and wrong
+  because they assumed instead of checking. Verified against
+  /v2/account/activities: 729.47 out, 367.98 in, NO SPLIT / CSD / share
+  delivery of any kind, equity moved 101,754.81 -> 101,387.14 consistently.
+  DO NOT "correct" the money.
 
-  It may also mean the quantity went to zero before it ever doubled, so the
-  divergence never happened, the kill-switch never tripped, and M60's
-  declare-then-quarantine was not exercised. That was accepted knowingly.
+  WHAT IS WRONG IS TWO FIELDS: exit_reason says "target" and it was a STOP;
+  strategy says "swing" and it was hand-placed, so it is crediting swing's
+  promotion evidence with a trade it did not make. Close the app first, back
+  up as closed_trades.csv.bak-<yyyyMMdd-HHmmss>, then edit those two.
+
+  Quantity went 8 -> 0, never 8 -> 16. So NO divergence, NO kill-switch trip,
+  and M60's declare-then-quarantine was NEVER EXERCISED. Accepted knowingly.
+
+  THE FINDING: an unadjusted stop through a split does not merely misreport -
+  IT LOSES ABOUT HALF THE POSITION, FOR REAL. -51.4% on a position that should
+  have been roughly flat. CAVEAT: paper account, and Alpaca paper's corporate
+  action handling may be incomplete in ways a live account is not. Design M39
+  for the behaviour MEASURED, not the preferred one.
+
+  ALSO SETTLED: a split can arrive IN HALVES, price first and shares later or
+  never, so a detector keyed on quantity alone is blind to exactly the window
+  where the stop is lethal. ACCOUNT ACTIVITIES ARE USELESS FOR DETECTION -
+  zero SPLIT rows through a real split. Announcements duplicate and the count
+  changes, so dedupe on (symbol, ex_date). Order ids survive across days.
+
+  STILL UNMEASURED: what happens when the position SURVIVES to the share
+  adjustment. Never reached. SFBS 2-for-1 on 21 August is the next chance -
+  widen the stop beforehand or the same thing happens again.
 
   THE PRE-SPLIT BASELINE IS scripts/analysis/split-captures/
   MNST-pre-split-20260810-134022.json. Compare the post-split capture against

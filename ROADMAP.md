@@ -615,6 +615,98 @@ watermark was Saturday's persisted value and the log records the absorb
 happening. One of the five tests was also passing vacuously for the same
 reason - it now asserts something was actually absorbed first.
 
+## MNST split test - THE RESULT, 11 August
+
+The first deliberate machinery test this project ran. It answered the question
+it was built for, and the answer is worse than the design anticipated.
+
+### What Alpaca did
+
+**Nothing to the resting stop.** Order `34ffd4cd`, pre-split and post-split:
+
+| | pre | post |
+|---|---|---|
+| status | `new` | **`filled`** |
+| qty | 8.0 | **8.0** - never doubled |
+| stop_price | 72.68 | **72.68** - never re-priced |
+
+Not cancelled, not adjusted, not re-quantified. The price halved to ~$46 while
+the stop sat at $72.68, so it was ~$26 above the market from the moment the
+action was applied, and it executed at the open in three partials - 1 @ 46.34,
+3 @ 46.16, 4 @ 45.79.
+
+**The share side never arrived.** Quantity went **8 -> 0**, never 8 -> 16.
+`avg_entry_price` stayed stale at $91.1838 to the end. Alpaca applied the split
+to PRICE only; the stop closed the position before anything else landed.
+
+**No SPLIT activity, at all.** Queried directly against
+`/v2/account/activities`: `SPLIT: 0`, `CSD: 0`, `DIV: 0`. Every movement since
+10 August is three buy fills, three sell fills and a one-cent fee. **A detector
+cannot use account activities** - the announcements endpoint is the only source.
+
+**The application never saw a divergence.** Tracked 8 against broker 8, then
+both to zero. No kill-switch trip, no halt, and **M60's declare-then-quarantine
+was never exercised** - the accepted cost of letting it run.
+
+### The loss is REAL, and this entry corrects a claim that said otherwise
+
+The morning brief of 12 August said the -$375.24 in `closed_trades.csv` was "a
+split artefact, not a loss" needing correction. **That was wrong.**
+
+Verified against the broker rather than assumed:
+
+    buys   5 @ 91.20 + 2 @ 91.20 + 1 @ 91.07  =  $729.47 out
+    sells  1 @ 46.34 + 3 @ 46.16 + 4 @ 45.79  =  $367.98 in
+    gross  -$361.49   costs $13.74   net  -$375.23
+
+No share delivery, no adjustment entry, and equity moved 101,754.81 ->
+101,387.14 consistently. **The account genuinely paid for 8 shares at pre-split
+prices and sold 8 shares at post-split prices.** The recorded P&L is correct.
+
+That makes the finding far more serious than a bookkeeping error:
+
+> **An unadjusted stop through a split does not merely misreport. It loses
+> approximately half the position's value, for real.** -51.4% on a position
+> that should have been roughly flat.
+
+**Caveat, and it is load-bearing:** this is a PAPER account, and Alpaca paper's
+corporate-action handling may be incomplete in ways a live account would not be.
+The loss is real *in this account*. Whether live Alpaca would have delivered the
+shares is unknown and must not be assumed either way - **M39 should be designed
+for the behaviour measured, not the behaviour preferred.**
+
+### What is actually wrong in the record
+
+Only two fields, not the money:
+
+| Field | Recorded | Correct | Why |
+|---|---|---|---|
+| `exit_reason` | `target` | `stop` | Order 34ffd4cd was a stop; there was no target leg |
+| `strategy` | `swing` | blank | Hand-placed at the broker. Leaving it credits swing's promotion evidence with a trade it did not make |
+
+`exit_price 45.9975` is the volume-weighted average of the three partials and is
+right. `stop_price` and `r_multiple` are blank because the lot carried no stop -
+also right.
+
+### What M39 can be designed from now
+
+**Settled:**
+
+* An unadjusted stop **fires at the open and liquidates the position**, at a
+  real cost. Adjustment is not cosmetic.
+* **A split can arrive in halves** - price first, shares later or never. A
+  detector keyed on quantity alone is blind to exactly the window where the
+  stop is lethal.
+* **Account activities are useless for detection** - zero SPLIT rows through a
+  real split.
+* Announcements duplicate and the count changes: dedupe on `(symbol, ex_date)`.
+* Order ids survive across days.
+
+**Still unmeasured:** what happens to a held quantity and a resting stop when
+the position SURVIVES to the share adjustment. That state was never reached.
+**SFBS 2-for-1 on 21 August** is the next chance - and the stop must be widened
+beforehand, or the same thing happens again.
+
 ## MNST split test - what Monday measured
 
 10 August, the day before the ex-date. Three facts the test produced before the
