@@ -162,6 +162,24 @@ found underneath it, and both are now fixed.** Full detail in `ROADMAP.md` M86.
 `strategy=swing` for all nine with transmit timestamps matching `opened_at` to
 the second.
 
+## The Balances broker row clips its fifth label — found by rendering, 12 August
+
+**"Day trades (5d)" renders as "Da"** on the Dashboard, cut off at the right edge
+of the Balances card — **and still clipped with the window maximised at 3086px**,
+so it is not a small-window artefact. Its value shows the `—` that legitimately
+means "the broker did not report it"; the defect is the label.
+
+`balances_panel.py:271` puts five cells in one row where the primary grid wraps at
+four, and the comment says why: five cells wrapped at four *orphan the last one
+onto a row of its own*. That reasoning is sound and it fixed the orphan — it just
+traded a wrapped row for a clipped one. The cells lay out at natural widths that
+sum past the card.
+
+**Pre-existing, not a regression from the deploy** — `c0938dc` (8 August) is an
+ancestor of the deployed `49482c2`, so it shipped in the M63+M62 build too. It had
+simply never been rendered and looked at. Every test passes through it, which is
+the whole argument for screenshotting.
+
 ## M71 — the same root cause as M70, on the way OUT
 
 App-transmitted sells announce at the reference price too, so the ClosedTrade's
@@ -173,8 +191,10 @@ transmitted sell** — do that before designing it.
 
 # What has landed since 8 August
 
-**18 milestones across 19 commits, none deployed.** Run `handoff_state.py` for
-the current list rather than trusting this paragraph.
+**All 18 were DEPLOYED on 12 August as `M86 (7812c22)`, and the deploy gap is
+now zero.** Run `handoff_state.py` rather than trusting this paragraph — its
+`DEPLOYED` constant is the one figure it cannot derive, and the milestone label
+beside it now reads out of `version.py` at that commit rather than being typed.
 
 ## Record correctness
 
@@ -214,24 +234,49 @@ activation no longer costs the evidence. Had either been activated before
 
 ---
 
-# Deploying, when the test is done
+# The 12 August deploy — DONE, and what it verified
 
-**18 milestones ahead of the deployed `M63+M62 (49482c2)`.** Three commits do
-not carry their number in the subject (M64, M67, M68), so counting with
-`git log | grep M[0-9]` under-reports by three — use `handoff_state.py`.
+`M86 (7812c22)`, signed and timestamped, expanded over `C:\QuantAdvisoryTerminal`
+and hash-verified as `086A46AC…40233A`. Running as PID 28072 from 09:20 AEST.
+Outgoing build for rollback: `9E964E92…3E6628` (8 August), with the whole data
+directory copied to `data-backup-20260812-091345-PRE-M86-DEPLOY`.
 
-**Before deploying:**
+**What the first launch confirmed, in the log rather than by assumption:**
 
-* **Back up `open_position_entries.json`.** The first launch of a build
-  containing M65 rewrites it for eight positions.
-* **Know that the level model now gates real controls.** The Workbench deploy
-  button is Professional-only (M74) and Blotter bulk sign-off is Standard-and-
-  above (M77). Live config is `QAT_UI_LEVEL=professional`, so nothing is lost —
-  but the default is `standard`, and a config reset takes the deploy button.
-* A deploy needs the app closed, uses `Expand-Archive -Force` over
-  `C:\QuantAdvisoryTerminal`, is verified by hash and **then launched**. A hash
-  proves the right bytes landed, never that they run — M56a passed its hash
-  check and could not start.
+* **Adopted 10, not 11** — MNST is gone — and **10 of 10 carry a resting stop, 0
+  carry none.**
+* **M65 corrected exactly eight entry prices**, the eight predicted: AMAT 540.55,
+  AMD 510.267, CRWD 187.4, GS 1054.75, JNJ 256.5, MS 213.7, VRTX 487.99,
+  WFC 85.95. **The strategy fields survived that rewrite** — still 10 named, 0
+  null — which is the interaction worth checking, since M65 rewrites the same
+  file M86 had just corrected.
+* **M86 was silent**, which is the correct behaviour: the record was already
+  healed, so there was nothing to resolve. Had it announced nine corrections,
+  something had re-nulled them.
+* **M82's fix is visibly working.** The aggregate-risk warning now reads "nothing
+  will be sold to correct it. It falls as positions close or as equity rises, and
+  rises as equity falls" in place of the false "this will only unwind as positions
+  close".
+* No ERROR or CRITICAL. Session correctly stood down — US after close.
+
+**The aggregate cap is breached at 5.01% against the 5.00% cap, so new entries
+are refused — and this PREDATES the deploy.** Measured in the pre-deploy log at
+07:54, 07:59, 08:04 and 08:09. M65 raised seven of eight entry prices, which
+widens entry-to-stop and therefore raises risk-at-stop, so this was worth ruling
+out: it did not tip the cap. **The deploy changed no trading behaviour.**
+
+**For the next deploy**, the three things that mattered:
+
+* **Back up `open_position_entries.json`** — a first launch containing M65
+  rewrites it, as it just did.
+* **The level model gates real controls.** Workbench deploy is Professional-only
+  (M74), Blotter bulk sign-off is Standard-and-above (M77). Live config is
+  `QAT_UI_LEVEL=professional`, but the default is `standard` and a config reset
+  takes the deploy button.
+* App closed, `Expand-Archive -Force`, verify by hash, **then launch**. A hash
+  proves the right bytes landed, never that they run — M56a passed its hash check
+  and could not start. **The permission classifier refuses the expand step**, so
+  it has to be run by the operator.
 
 ---
 
@@ -373,24 +418,29 @@ ALSO FOUND, NOT FIXED
        FREEZE, needs a recorded lift. Designed in docs/superpowers/specs/.
   M71  the same root cause as M70 on app-transmitted SELLS, so the exit price
        is wrong too. Needs a record rewrite. Read from code, NOT verified.
+  UI   "Day trades (5d)" renders as "Da" on the Dashboard - clipped at the right
+       edge of the Balances card, STILL CLIPPED MAXIMISED AT 3086px. Five cells
+       in a row where the grid wraps at four (balances_panel.py:271). The fix
+       for an orphaned row traded it for a clipped one. PRE-EXISTING, shipped in
+       M63+M62 too. Found by SCREENSHOTTING; every test passes through it.
 
-STATE
-Deployed build M63+M62 (49482c2). HEAD is 18 MILESTONES AHEAD and none of it
-is deployed. Repo clean and pushed. Ten positions held, all protected. TWO
-closed trades (CVS -482.18 -1.68R; MNST -375.23, unattributed). Group 4 (the
-interface) is COMPLETE. M84 and M85 are two new strategies - DESIGNED, NOT
-BUILT, NOT ACTIVATED, selectable via default_strategies() but absent from
-QAT_DEPLOYED_STRATEGIES.
+STATE - DEPLOYED, 12 August
+Deployed build is now M86 (7812c22) and THE DEPLOY GAP IS ZERO. Running as
+PID 28072 since 09:20 AEST. Repo clean and pushed. Ten positions held, 10 of 10
+protected, Adopted 10 not 11. TWO closed trades (CVS -482.18 -1.68R;
+MNST -375.23, unattributed - and it stays unattributed, that one is correct).
+Group 4 (the interface) is COMPLETE and now actually running. M84 and M85 are
+two new strategies - DESIGNED, NOT BUILT, NOT ACTIVATED, selectable via
+default_strategies() but absent from QAT_DEPLOYED_STRATEGIES.
 
-BEFORE DEPLOYING
-  Back up open_position_entries.json - the first launch of a build containing
-  M65 rewrites it for eight positions.
-  The level model now gates real controls: Workbench deploy is Professional
-  only, Blotter bulk sign-off is Standard and above. Live config is
-  professional so nothing is lost, but the DEFAULT is standard.
-  App closed, Expand-Archive -Force, verify by hash, THEN LAUNCH. A hash
-  proves the right bytes landed, never that they run.
-  Expect Adopted 10 now, not 11 - MNST is gone.
+  The aggregate cap is BREACHED at 5.01% vs the 5.00% cap, so NEW ENTRIES ARE
+  REFUSED. This PREDATES the deploy - measured in the pre-deploy log at 07:54
+  through 08:09 - so the deploy changed no trading behaviour. It unwinds as
+  positions close or as equity rises. Related to M66, which is why the figure
+  is measured at entry prices in the first place.
+
+  Rollback if needed: outgoing exe 9E964E92...3E6628, and the whole data dir is
+  at data-backup-20260812-091345-PRE-M86-DEPLOY.
 
 CONSTRAINTS
   READ %LOCALAPPDATA% VIA POWERSHELL, NEVER BASH. The Bash tool sees a

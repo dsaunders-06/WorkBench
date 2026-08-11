@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DEPLOYED = "49482c2"
+DEPLOYED = "7812c22"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
@@ -37,6 +37,18 @@ def _git(*args: str) -> str:
     return subprocess.run(  # nosec B603 B607 - fixed argv, no shell
         ["git", *args], cwd=REPO, capture_output=True, text=True, check=False
     ).stdout.strip()
+
+
+def deployed_milestone() -> str:
+    """The deployed build's own milestone label, read out of that commit.
+
+    Was written next to `DEPLOYED` by hand as "(M63+M62)" - a second figure to
+    keep in step with the first, in the one script whose whole purpose is that
+    nothing here is hand-maintained. `version.py` at that commit already knows.
+    """
+    source = _git("show", f"{DEPLOYED}:src/qat/version.py")
+    found = re.search(r'^MILESTONE = "([^"]+)"', source, re.MULTILINE)
+    return found.group(1) if found else "unknown"
 
 
 def milestones_since_deploy() -> tuple[list[str], int]:
@@ -97,7 +109,7 @@ def main() -> None:
     print(f"  vs origin       {_git('status', '-sb').splitlines()[0]}")
     print()
     print("Deploy gap")
-    print(f"  deployed build  {DEPLOYED} (M63+M62)")
+    print(f"  deployed build  {DEPLOYED} ({deployed_milestone()})")
     print(f"  milestones      {len(milestones)} across {commits} commits")
     print(f"  which           {', '.join('M' + m for m in milestones)}")
     print()
