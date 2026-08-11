@@ -272,33 +272,34 @@ three days. The ones that are now derived have stopped being wrong.
 Continuing work on QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money is involved.
 
-Read docs/HANDOFF.md first, then docs/MNST_SPLIT_TEST.md, then the standing
-rule at the top of ROADMAP.md and the section "How Alpaca actually represents
-orders".
+Read docs/HANDOFF.md first, then the standing rule at the top of ROADMAP.md,
+then the sections "MNST split test - THE RESULT" and "How Alpaca actually
+represents orders".
 
 BEFORE QUOTING ANY CURRENT-STATE FIGURE, RUN:
   .\.venv\Scripts\python.exe scripts/handoff_state.py
-It derives the deploy gap, the milestone list and the test count, and names
-any stale test count in the handoff. Four hand-maintained counts were wrong
-in three days. Counting is not the fix - deriving is.
+It derives the deploy gap, the milestone list and the test count, and names any
+stale test count in the handoff. FOUR hand-maintained counts were wrong in
+three days. Counting is not the fix - deriving is.
 
-THE SPLIT TEST IS DONE - and it cost real money
+THE SPLIT TEST IS DONE. IT COST REAL MONEY.
 8 MNST bought Monday at 91.1838 with a hand-placed sell stop at 72.68. Alpaca
-halved the PRICE to ~46 and NEVER the shares. The stop was not adjusted, not
-re-priced, not re-quantified - it fired at the open and liquidated the position
-in three partials (1@46.34, 3@46.16, 4@45.79).
+halved the PRICE to ~46 and NEVER delivered the shares. The stop was not
+adjusted, not re-priced, not re-quantified - it fired at the open and
+liquidated the position in three partials (1@46.34, 3@46.16, 4@45.79).
 
-  THE -375.23 IN closed_trades.csv IS A REAL LOSS, NOT AN ARTEFACT. An earlier
-  handoff and a morning brief both said artefact; both were wrong, and wrong
-  because they assumed instead of checking. Verified against
-  /v2/account/activities: 729.47 out, 367.98 in, NO SPLIT / CSD / share
-  delivery of any kind, equity moved 101,754.81 -> 101,387.14 consistently.
-  DO NOT "correct" the money.
+  THE -375.23 IS A REAL LOSS, NOT AN ARTEFACT. An earlier handoff and a
+  morning brief both called it an artefact; both were wrong, and wrong because
+  they assumed instead of checking. Verified against /v2/account/activities:
+  729.47 out, 367.98 in, NO SPLIT / CSD / share delivery of any kind, equity
+  moved 101,754.81 -> 101,387.14 consistently.
 
-  WHAT IS WRONG IS TWO FIELDS: exit_reason says "target" and it was a STOP;
-  strategy says "swing" and it was hand-placed, so it is crediting swing's
-  promotion evidence with a trade it did not make. Close the app first, back
-  up as closed_trades.csv.bak-<yyyyMMdd-HHmmss>, then edit those two.
+  THE RECORD IS NOW CORRECTED AND VERIFIED. exit_reason target -> stop, and
+  strategy swing -> blank. Checked through the app's own loader: 2 trades
+  parse, MNST has strategy=None, and strategies() returns ['swing'] only, so
+  MNST is correctly out of the promotion gate. The money was NOT touched.
+  Backups: closed_trades.csv.bak-20260806-084823 (the CVS correction) and
+  closed_trades.csv.bak-20260812-084430-POST-correction.
 
   Quantity went 8 -> 0, never 8 -> 16. So NO divergence, NO kill-switch trip,
   and M60's declare-then-quarantine was NEVER EXERCISED. Accepted knowingly.
@@ -306,8 +307,8 @@ in three partials (1@46.34, 3@46.16, 4@45.79).
   THE FINDING: an unadjusted stop through a split does not merely misreport -
   IT LOSES ABOUT HALF THE POSITION, FOR REAL. -51.4% on a position that should
   have been roughly flat. CAVEAT: paper account, and Alpaca paper's corporate
-  action handling may be incomplete in ways a live account is not. Design M39
-  for the behaviour MEASURED, not the preferred one.
+  action handling may be incomplete in ways a live one is not. DESIGN M39 FOR
+  THE BEHAVIOUR MEASURED, NOT THE ONE PREFERRED.
 
   ALSO SETTLED: a split can arrive IN HALVES, price first and shares later or
   never, so a detector keyed on quantity alone is blind to exactly the window
@@ -317,58 +318,49 @@ in three partials (1@46.34, 3@46.16, 4@45.79).
 
   STILL UNMEASURED: what happens when the position SURVIVES to the share
   adjustment. Never reached. SFBS 2-for-1 on 21 August is the next chance -
-  widen the stop beforehand or the same thing happens again.
+  WIDEN THE STOP BEFOREHAND or the same thing happens again.
 
-  THE PRE-SPLIT BASELINE IS scripts/analysis/split-captures/
-  MNST-pre-split-20260810-134022.json. Compare the post-split capture against
-  it and answer, in order: what happened to stop order 34ffd4cd; did quantity
-  double and was avg_entry halved or left stale; did a SPLIT activity appear;
-  what did the app do.
-
-  ALREADY LEARNED: Alpaca returns the same announcement more than once and the
-  count changes, so M39 must dedupe on (symbol, ex_date). An order id survives
-  across days. And A SPLIT CAN BE APPLIED IN HALVES - price first, quantity
-  later - so a detector keyed on quantity alone is blind to exactly the window
-  where an unadjusted stop is lethal.
-
-START HERE IN THE MORNING - every entry record has strategy: null
-open_position_entries.json carries "strategy": null for ALL ELEVEN positions,
-AMD included, not just the hand-bought MNST. If that is what it looks like,
-every closed trade from a currently-held position is UNATTRIBUTED and counts
-towards no promotion gate - and the trial exists to accumulate 30 attributed
-trades per strategy. CVS closed with strategy=swing, so it worked once. NOT
-YET INVESTIGATED.
+START HERE - every entry record has strategy: null
+open_position_entries.json carries "strategy": null for ALL TEN remaining
+positions, AMD included. If that is what it looks like, every closed trade
+from a currently-held position is UNATTRIBUTED and counts towards no promotion
+gate - and the trial exists to accumulate 30 ATTRIBUTED trades per strategy.
+CVS closed with strategy=swing, so it worked once. NOT YET INVESTIGATED. This
+is the first thing to pick up.
 
 ALSO FOUND, NOT FIXED
-  M66  the aggregate risk cap that gates every entry is measured against
-       ENTRY prices - nothing in the trading path passes current ones. Inside
-       the freeze, needs a recorded lift. Designed in docs/superpowers/specs/.
+  M66  the aggregate risk cap that gates every entry is measured against ENTRY
+       prices - nothing in the trading path passes current ones. INSIDE THE
+       FREEZE, needs a recorded lift. Designed in docs/superpowers/specs/.
   M71  the same root cause as M70 on app-transmitted SELLS, so the exit price
        is wrong too. Needs a record rewrite. Read from code, NOT verified.
 
 STATE
 Deployed build M63+M62 (49482c2). HEAD is 17 MILESTONES AHEAD and none of it
-is deployed. Repo clean and pushed. Group 4 (the interface) is COMPLETE.
-M84 and M85 are two new strategies - DESIGNED, NOT BUILT, NOT ACTIVATED,
-selectable via default_strategies() but absent from QAT_DEPLOYED_STRATEGIES.
+is deployed. Repo clean and pushed. Ten positions held, all protected. TWO
+closed trades (CVS -482.18 -1.68R; MNST -375.23, unattributed). Group 4 (the
+interface) is COMPLETE. M84 and M85 are two new strategies - DESIGNED, NOT
+BUILT, NOT ACTIVATED, selectable via default_strategies() but absent from
+QAT_DEPLOYED_STRATEGIES.
 
 BEFORE DEPLOYING
-  Back up open_position_entries.json - the first launch of a build with M65
-  rewrites it for eight positions.
+  Back up open_position_entries.json - the first launch of a build containing
+  M65 rewrites it for eight positions.
   The level model now gates real controls: Workbench deploy is Professional
   only, Blotter bulk sign-off is Standard and above. Live config is
   professional so nothing is lost, but the DEFAULT is standard.
   App closed, Expand-Archive -Force, verify by hash, THEN LAUNCH. A hash
   proves the right bytes landed, never that they run.
+  Expect Adopted 10 now, not 11 - MNST is gone.
 
 CONSTRAINTS
   READ %LOCALAPPDATA% VIA POWERSHELL, NEVER BASH. The Bash tool sees a
-  sandboxed copy frozen at 27 July, and PowerShell launched FROM Bash
-  inherits it, so the Monitor tool is blind too. A watcher armed there reads
-  a file that never changes - it does not error, it goes quiet, and quiet
-  looks exactly like healthy. Overnight watching must be a SCHEDULED PROMPT
-  using the PowerShell tool. Bash IS correct for the venv python and Alpaca
-  API calls - the sandbox is filesystem-only.
+  sandboxed copy frozen at 27 July, and PowerShell launched FROM Bash inherits
+  it, so the Monitor tool is blind too. A watcher armed there reads a file
+  that never changes - it does not error, it goes quiet, and quiet looks
+  exactly like healthy. Overnight watching must be a SCHEDULED PROMPT using
+  the PowerShell tool. Bash IS correct for the venv python and Alpaca API
+  calls - the sandbox is filesystem-only.
   PowerShell 5.1 - use ; not && and @'...'@ here-strings, closing '@ col 0.
   Formats with black, not ruff format. Run ruff check ., black --check .,
   mypy src, bandit -r src via the venv python.
@@ -381,14 +373,15 @@ CONSTRAINTS
 
 THE HABITS THAT FOUND EVERYTHING
   CHECK THE BRIEF AGAINST THE CODE. §4.x described something that was not
-  there EIGHT TIMES across seven milestones - the register in ROADMAP.md
-  lists each one. Count the rows there; do not restate the number.
+  there EIGHT TIMES across seven milestones - the register in ROADMAP.md lists
+  each one. Count the rows there; do not restate the number.
   RENDER IT, do not trust the suite. Screenshotting found an orphaned grid
   row, an off-scale font, stranded labels, "Grew -0.0% a year", a notice
   floating in an empty screen and a truncated column. Every test passed.
   ASK WHAT READS IT. Six values were computed and displayed nowhere. That one
   now has a test.
-  TEST THE CLAIM, NOT THE ARITHMETIC. Every defect found on 11 August was in
-  a sentence that predicted or explained, never in a number.
-  DERIVE, DO NOT REMEMBER.
+  TEST THE CLAIM, NOT THE ARITHMETIC. Every defect found on 11 August was in a
+  sentence that predicted or explained, never in a number.
+  DERIVE, DO NOT REMEMBER. And CHECK BEFORE ASSERTING - the "artefact" claim
+  above was reasoned rather than measured, and it was wrong.
 ```
