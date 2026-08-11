@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import logging
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -63,6 +65,48 @@ def flag(value: bool | None, true_text: str, false_text: str) -> str:
     return true_text if value else false_text
 
 
+class _ElidingLabel(QLabel):
+    """A label that shortens with an ellipsis rather than being cut off (M87).
+
+    The deployed M86 build rendered "Day trades (5d)" as **"Da"** on the
+    Dashboard - hard-cut at the right edge of the card, mid-word, with no
+    indication that anything was missing. "Da" does not read as an abbreviation;
+    it reads as a different label.
+
+    Elision is the difference between a label the operator can see is
+    abbreviated and one that silently means something else. The full text stays
+    in the tooltip and in `full_text`, so nothing is actually lost - and the
+    widget stops demanding the width of its longest label, which is what let one
+    cell push another off the edge in the first place.
+    """
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.full_text = text
+        # Or the label's own minimum keeps the column as wide as the text, and
+        # eliding would never be reached.
+        self.setMinimumWidth(0)
+
+    def setText(self, text: str) -> None:  # noqa: N802 - Qt's spelling
+        self.full_text = text
+        self._apply_elision()
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt's spelling
+        super().resizeEvent(event)
+        self._apply_elision()
+
+    def _apply_elision(self) -> None:
+        elided = self.fontMetrics().elidedText(
+            self.full_text, Qt.TextElideMode.ElideRight, self.width()
+        )
+        QLabel.setText(self, elided)
+        # Set unconditionally, not only when elided: a tooltip that appears and
+        # disappears with the window width is a worse contract than one that is
+        # always there.
+        if not self.toolTip():
+            self.setToolTip(self.full_text)
+
+
 class _Cell(QFrame):
     """One label/value pair, so the grid reads as a balance sheet.
 
@@ -83,13 +127,16 @@ class _Cell(QFrame):
         layout.setContentsMargins(4, 2, 4, 2)
         layout.setSpacing(0)
         self.label_text = label
-        self._label = QLabel(label)
+        self._label = _ElidingLabel(label)
         self._label.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
         self._value = QLabel(NOT_REPORTED)
         self._value.setStyleSheet("font-size: 15px; font-weight: bold;")
         if tooltip:
             self.setToolTip(tooltip)
-            self._label.setToolTip(tooltip)
+            # The label's own tooltip leads with the full label, because the
+            # label is the part that may be elided (M87) - an operator reading
+            # "Day tra…" needs to know the word before the explanation of it.
+            self._label.setToolTip(f"{label} - {tooltip}")
         layout.addWidget(self._label)
         layout.addWidget(self._value)
         self.caption = QLabel(caption)
@@ -105,6 +152,18 @@ class _Cell(QFrame):
         if colour:
             style += f" color: {colour};"
         self._value.setStyleSheet(style)
+
+    def rendered_label(self) -> str:
+        """What the label ACTUALLY shows at the current width, elision included.
+
+        Separate from `label_text`, which is the full text and never elides.
+        Anything asking what the operator can read has to ask this one - the
+        distinction is the whole point of M87.
+        """
+        return self._label.text()
+
+    def label_tooltip(self) -> str:
+        return self._label.toolTip()
 
 
 class BalancesPanel(QFrame):
@@ -198,6 +257,12 @@ class BalancesPanel(QFrame):
         grid.setHorizontalSpacing(14)
         for index, cell in enumerate(primary):
             grid.addWidget(cell, index // 4, index % 4)
+        # Divided evenly rather than sized by whichever cell demands most (M87).
+        # Without this the columns take their content's width and the rightmost
+        # one - "Spendable here", by this panel's own docstring the most
+        # important figure on it - is the one that runs out of room.
+        for column in range(4):
+            grid.setColumnStretch(column, 1)
         outer.addLayout(grid)
 
         self.captions = [cell.caption for cell in primary]
@@ -268,8 +333,16 @@ class BalancesPanel(QFrame):
         # four orphan the last one onto a row of its own, which reads as a new
         # section rather than the tail of this one - and a compact single row
         # is itself part of saying "secondary".
+        #
+        # That reasoning was right about the orphan and wrong about the width
+        # (M87). Sized by content, five columns demanded ~3775px of a 3086px
+        # window on a 125%-scaled display, and "Day trades (5d)" rendered as
+        # "Da" against the card's right edge. Even division plus an eliding
+        # label means the fifth cell shrinks with the rest instead of being
+        # pushed out, at any width and any dpi.
         for index, cell in enumerate(demoted):
             body_grid.addWidget(cell, 0, index)
+            body_grid.setColumnStretch(index, 1)
         # The level sets the STARTING state only; the toggle is never locked.
         self.broker_body.setVisible(self.level.prefers_density())
         group_layout.addWidget(self.broker_body)
