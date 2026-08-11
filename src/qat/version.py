@@ -36,7 +36,10 @@ from datetime import UTC, datetime
 # M39-M44 were enumerated as future gaps on 4 August, before M45-M50 existed, so
 # M40 shipping after M50 is not a regression. "M40" alone would read to an
 # operator as the application having gone backwards.
-MILESTONE = "M63+M62"
+# Head milestone rather than a span: 18 ship in this build, but "M64-M86" would
+# read as all of them having landed, and M66 and M71 are found-not-fixed while
+# M84 and M85 are designed and not built. The commit beside this is the truth.
+MILESTONE = "M86"
 
 _UNKNOWN = "unknown"
 
