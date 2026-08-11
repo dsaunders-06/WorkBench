@@ -210,6 +210,135 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M85 - Volume-profile strategy  **[DESIGNED, NOT BUILT, NOT ACTIVATED]**
+
+11 August. Second strategy milestone, same shape as M84: selectable via
+`default_strategies()`, absent from `QAT_DEPLOYED_STRATEGIES`, so it changes no
+trading decision until deliberately activated.
+
+Volume profile over a 30-day lookback to find POC, VAH and VAL; a candlestick
+trigger at the value-area boundary; signal into the existing risk path.
+
+### The finding that decides whether this can work at all
+
+**IEX sees a median 4.3% of consolidated volume - 2.7% on AMD, 5.1% on JNJ.**
+
+For M84 the feed problem was a 3.5% narrow range, which scales an indicator.
+Here it is different in kind. **A volume profile is nothing but volume.** Built
+on IEX bars it would locate the POC and value area of *IEX's own order flow* -
+roughly one twentieth of the market, and not a random twentieth, since IEX's
+participants and their price sensitivity are not the market's.
+
+It is also **unequal between symbols**: at 2.7% on AMD against 5.1% on JNJ the
+profile is roughly twice as well sampled on one holding as on another, and
+nothing on screen would show that.
+
+**So this strategy REQUIRES `sip` daily bars.** Not as calibration, as
+correctness - it is the difference between "where value formed" and "where IEX
+happened to trade". SIP historical is free on this account. Without it the
+strategy should abstain rather than emit a signal from a 4% sample, which is
+the `unavailable()` pattern every fundamentals strategy already follows.
+
+### Section 1 as briefed should not be built
+
+The brief asks for `fetch_daily_bars(symbol, days=30)`. **A strategy must not
+fetch anything.** `SymbolContext.bars` already arrives with `ts, open, high,
+low, close, volume`, ascending, up to `max_history` (250) deep - far more than a
+30-day lookback needs. Writing a fetch would:
+
+* put network I/O inside `on_features`, which runs per feature snapshot;
+* duplicate `history.get_daily_bars`, which exists and is cached;
+* bypass the source abstraction that makes strategies testable on hand-built
+  frames with no market.
+
+The data requirement is therefore **a settings question - which feed the daily
+bars come from - not a strategy one.**
+
+### Section 2 - the calculation, and the assumption inside it
+
+Bins at fixed increments (0.50 under 100, 2.00 above). Then, per the brief,
+"distribute its total volume across all price bins it touched during the day".
+
+**That is an assumption, not a measurement, and must be recorded as one.** A
+daily bar says a symbol traded 4m shares between 90 and 95; it does not say
+where. Spreading it uniformly assumes volume was flat across the range, when
+real volume clusters. On a wide-range day it smears volume into prices that
+barely traded, and the POC it produces is an artefact of the smear.
+
+It is the standard approximation and it is defensible - but a POC derived this
+way is a **model output**, and it must never be presented beside a measured
+figure without saying which is which. That is M69's and M72's rule.
+
+### Section 3 - the trigger, shared with M84
+
+Value-area context plus a bullish pattern: Bullish Engulfing or Hammer within
+0.5% of VAL.
+
+**Both patterns are already specified in M84.** They must be ONE module -
+`data/patterns.py` - not detected twice with two definitions that drift.
+Whichever milestone is built first builds the detectors; the second imports
+them. Either order is fine; building both independently is not.
+
+### Section 4 - already true, and needing no work
+
+The brief asks that sizing use 2.5x ATR and cap risk at 1% of equity "exactly
+as it does for other strategies". **Confirmed against config rather than
+assumed**: `atr_stop_multiple` defaults to **2.5** and `per_trade_risk_pct` to
+**0.01**. A signal returned from `on_features` already traverses every rail
+(enumerated in `evaluation/refusals.py` - more than eleven of them), and the
+`Strategy` protocol forbids sizing or ordering. **Section 4 requires no code.**
+
+### One overlap worth naming
+
+`MeanReversionStrategy` already exists. Value-area reversion IS mean reversion
+with a better-anchored mean. Not a blocker, but if both are ever deployed
+together their signals will correlate - and the correlated-cluster rail measures
+POSITIONS rather than strategies, so two strategies agreeing would present as
+one conviction rather than two.
+
+### Build order
+
+`sip` daily bars first, because the strategy is not worth writing against a 4%
+sample. Then the shared pattern module (with M84), then the profile arithmetic -
+pure, and testable on hand-built frames - then the strategy that composes them.
+
+    def calculate_volume_profile(bars, bin_size) -> Profile:
+        # bins across [min(low), max(high)]; each day's volume spread over the
+        # bins its range touches. The spread is the ASSUMPTION - see above.
+        # POC = bin with the most accumulated volume
+        # VA  = widen from POC, richest bin first, until >= 70% of total
+        # returns Profile(poc, vah, val, bins, total_volume, is_modelled=True)
+
+    def detect_pattern(bars) -> Pattern | None:
+        # shared with M84. Bullish Engulfing: prior red body engulfed by a
+        # green body. Hammer: lower wick >= 2x body, close in the top third.
+        # returns Pattern(name, strength, invalidation_price)
+
+    class VolumeProfileStrategy:
+        name = "volume_profile"
+
+        def suitable_regimes(self) -> set[Regime]: ...
+
+        def on_features(self, snapshot) -> list[SignalEvent]:
+            bars = snapshot.context.bars          # NOT fetched - already here
+            profile = calculate_volume_profile(bars.tail(30), bin_size_for(price))
+            if not _within(bars.close.iloc[-1], profile.val, pct=0.005):
+                return []
+            pattern = detect_pattern(bars)
+            if pattern is None:
+                return []
+            return [SignalEvent(
+                symbol=..., side="buy", conviction=pattern.strength,
+                strategy=self.name,
+                meta={"stop_price": pattern.invalidation_price,
+                      "poc": profile.poc, "val": profile.val, "vah": profile.vah,
+                      "pattern": pattern.name, "reason": "Value Area Reversion"},
+            )]
+
+`meta` carries the profile levels for the same reason M84 carries
+`trend_state`: "was the POC anywhere near where it actually traded" is
+answerable afterwards only if the level is recorded at entry.
+
 ## M84 - Price-action / candlestick strategy  **[DESIGNED, NOT BUILT, NOT ACTIVATED]**
 
 11 August. Requested as a standalone milestone: a strategy that reads
