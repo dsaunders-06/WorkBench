@@ -210,6 +210,93 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M86 - Attribution was inferred from a config value, not stored
+
+12 August. The held-over `strategy: null` question, and the answer inverts the
+alarm that was written about it.
+
+### What the alarm said, and what was measured
+
+The 11 August handoff said `open_position_entries.json` carried
+`"strategy": null` for **all ten** held positions, AMD included, and therefore
+that "every closed trade from a currently-held position is UNATTRIBUTED and
+counts towards no promotion gate". Both halves are wrong.
+
+**It is nine, not ten.** VRTX carries `"strategy": "swing"`.
+
+**Nothing was unattributed.** Run through the app's own restore path over a copy
+of the live record - `scripts/analysis/probe_entry_strategy_attribution.py` -
+all ten lots restore as `swing`, the closed trade lands attributed with an
+R-multiple, and `strategies()` returns `['swing']`. M49 anticipated exactly this:
+`restore_open_lots` passes `entry.strategy or self._sole_deployed_strategy()`.
+CVS proves it end to end - it appears in
+`open_position_entries.json.bak-pre-m33b` with no strategy field at all, and
+closed as `swing`.
+
+**Root cause of the nulls.** M49 (`094ef3b`) landed 5 August 00:11 UTC and added
+the field. The nine null records were written 31 July and 4 August, before it
+existed; VRTX opened 5 August 14:16 UTC, after. Nothing backfills them, and
+nothing can: `_load_entries` maps null to None, `_on_fill` uses `setdefault`, and
+both price-correcting writers use `replace(entry, price=...)`, which preserves
+strategy. A pure pre-M49 legacy, not an ongoing corruption.
+
+### The defect that IS there, and it had a clock on it
+
+Attribution for nine of ten held positions was **inferred at every launch from a
+mutable config value rather than stored.** `_sole_deployed_strategy` returns None
+as soon as a second strategy is deployed - correctly, because with two running,
+which opened a given position is genuinely unknown and guessing would put a
+fabricated attribution into a per-strategy promotion decision.
+
+So **activating M84 or M85 would have retroactively unattributed nine held
+positions.** Measured, not reasoned - the same probe with
+`deployed_strategies="swing,price_action"` returned `strategies() -> []`.
+`closed_trades(strategy=...)` matches exactly, so a None counts towards no gate.
+With a ten-day minimum hold those nine were going to still be held when
+activation was considered. A configuration change that never mentions those
+symbols would have removed nine positions' worth of the evidence the trial
+exists to collect.
+
+**`_sole_deployed_strategy` had no test at all** - the single mechanism the whole
+book's attribution rested on.
+
+### The fix
+
+`reconcile_entry_strategies` writes the resolved strategy into the record while
+there is still exactly one candidate, at the point in startup where M65 heals the
+price and for the same reason: the lot is built from the record, so healing it
+afterwards heals nothing until the next launch. It never overwrites a strategy
+already recorded, and when it cannot resolve one it names the exposed symbols
+rather than failing quietly.
+
+This records what was already decided rather than deciding anything - it credits
+the strategy the fallback would have credited a moment later - so it is inside
+the freeze on the M37 footing.
+
+**Swing is a fact here, not a guess.** `decision_journal.csv` carries
+`strategy=swing` for all nine with `signed_off` transmit timestamps matching each
+record's `opened_at` to the second: JNJ `2026-07-31T15:08:21+00:00`, MS
+`2026-08-04T14:01:24+00:00`. They were opened autonomously by swing; the record
+had nowhere to say so.
+
+**The live record was corrected on 12 August**, because the healing build is not
+deployed. `scripts/analysis/correct_entry_strategies.py --apply`, app closed,
+backup `open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill`.
+A text substitution rather than a JSON round-trip, deliberately: re-serialising
+reformats every float, and `stop_price` values like 240.5880357142857 are the
+denominator of every R-multiple the gate reads. The script verifies every
+non-strategy field is unchanged on the parsed objects and refuses to run unless
+the nine symbols are exactly the nine expected. Verified after: 0 null, 10 named,
+and the two-strategy case now returns `['swing']` instead of `[]`.
+
+### The habit that found it
+
+**Check before asserting.** The alarm was reasoned - null field, therefore lost
+attribution - and the reasoning skipped the fallback that M49 put there for
+exactly this case. The same failure as the "split artefact" claim four sections
+down. Reading the file said "ten nulls, all unattributed"; running the code said
+"nine nulls, none unattributed, and here is the date it stops being true".
+
 ## M85 - Volume-profile strategy  **[DESIGNED, NOT BUILT, NOT ACTIVATED]**
 
 11 August. Second strategy milestone, same shape as M84: selectable via

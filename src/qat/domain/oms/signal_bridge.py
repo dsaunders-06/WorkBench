@@ -242,6 +242,10 @@ class SignalToOrderBridge:
         # Before restore_open_lots, or the ledger is rebuilt from the price the
         # order was SIZED against rather than the one it filled at (M65).
         await self.reconcile_entry_prices()
+        # Before restore_open_lots for the same reason, and while there is still
+        # one deployed strategy to resolve: after a second is deployed the
+        # attribution on a pre-M49 record is gone for good (M86).
+        await self.reconcile_entry_strategies()
         await self.restore_open_lots()
         await self.replay_missed_exits()
         await self.rearm_protective_stops()
@@ -416,6 +420,76 @@ class SignalToOrderBridge:
                 ),
             )
         return corrected
+
+    async def reconcile_entry_strategies(self) -> list[str]:
+        """Writes down which strategy opened a position, while it is still
+        knowable (M86).
+
+        `restore_open_lots` has always resolved a missing strategy through
+        `entry.strategy or self._sole_deployed_strategy()`, so nine of the ten
+        live positions - every record written before M49 added the field on
+        5 August - restore attributed to swing without the record ever saying
+        so. Nothing is lost today. What is wrong is that the answer is INFERRED
+        from a config value at every launch instead of being stored at the one
+        moment it can be trusted.
+
+        `_sole_deployed_strategy` returns None as soon as a second strategy is
+        deployed, and it is right to: with two running, which opened a given
+        position is genuinely unknown. But that means deploying M84 or M85
+        retroactively unattributes every position still held on a pre-M49
+        record - `closed_trades(strategy=...)` matches exactly, so a None counts
+        towards no promotion gate. With a ten-day minimum hold, that is nine positions'
+        worth of the evidence the trial exists to collect, removed by a
+        configuration change that never mentions them.
+
+        So the resolution is persisted while there is still exactly one
+        candidate. This records what was already decided rather than deciding
+        anything - the strategy credited is the one the fallback would have
+        credited a moment later, and `decision_journal.csv` names swing on all
+        nine with transmit timestamps matching `opened_at` to the second.
+
+        Runs BEFORE `restore_open_lots`, for the reason M65's price
+        reconciliation does: the lot is built from the record, so a record
+        healed afterwards heals nothing until the next launch.
+
+        Never overwrites a strategy already recorded. A position opened after
+        M49 carries its own attribution, and replacing that with an inference
+        would be rewriting history rather than recovering it.
+        """
+        if not self._entries:
+            return []
+        unattributed = sorted(symbol for symbol, e in self._entries.items() if not e.strategy)
+        if not unattributed:
+            return []
+
+        resolved = self._sole_deployed_strategy()
+        if resolved is None:
+            # The state where attribution silently disappears, so it is stated
+            # rather than discovered. Named symbols, because "some positions"
+            # is not something an operator can act on.
+            logger.warning(
+                "No strategy is recorded for %s, and with %d strategies deployed there is no "
+                "way to resolve one - so these restore UNATTRIBUTED and count towards no "
+                "promotion gate. The record predates M49. Deploying a second strategy while "
+                "these are held is what costs the attribution; it cannot be recovered "
+                "afterwards.",
+                ", ".join(unattributed),
+                len(self.settings.deployed_strategies_tuple),
+            )
+            return []
+
+        for symbol in unattributed:
+            self._entries[symbol] = replace(self._entries[symbol], strategy=resolved)
+        self._save_entries()
+        logger.info(
+            "Recorded '%s' as the strategy that opened %s. The record predates M49 and named "
+            "none, and until now the attribution was re-derived at every launch from there "
+            "being exactly one deployed strategy - which a second one would have silently "
+            "taken away.",
+            resolved,
+            ", ".join(unattributed),
+        )
+        return unattributed
 
     async def restore_open_lots(self) -> list[str]:
         """Gives the trade ledger back the entry lots it forgot (M49).

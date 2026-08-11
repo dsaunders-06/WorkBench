@@ -132,18 +132,33 @@ Smaller than it looks — `Position.current_price` is the consolidated tape and 
 already in every `positions()` response. Verify with
 `scripts/analysis/verify_gating_figures.py`.
 
-## Held over from 11 August — every entry record has `strategy: null`
+## ~~Held over — every entry record has `strategy: null`~~ SETTLED, see M86
 
-`open_position_entries.json` carries `"strategy": null` for **all eleven
-positions**, AMD included, not only the hand-bought MNST. If that is what it
-looks like, `restore_open_lots` gives every restored lot a null strategy, so
-**every closed trade from a currently-held position is unattributed and counts
-towards no promotion gate** — and the trial's whole purpose is accumulating 30
-attributed trades per strategy.
+**Investigated 12 August. The alarm was wrong; a different and dated defect was
+found underneath it, and both are now fixed.** Full detail in `ROADMAP.md` M86.
 
-CVS closed with `strategy=swing`, so it worked at some point. **Not yet
-investigated.** Too big to rush before an event, and it changes nothing about
-tonight. Start here in the morning.
+* **Nine, not ten.** VRTX carried `"strategy": "swing"`.
+* **Nothing was unattributed.** `restore_open_lots` passes `entry.strategy or
+  self._sole_deployed_strategy()`, and with swing the only deployed strategy all
+  ten restored as `swing`. Measured through the app's own path, not read off the
+  file. CVS is the end-to-end proof — no strategy field at all in
+  `open_position_entries.json.bak-pre-m33b`, closed as `swing`.
+* **Cause:** M49 added the field on 5 August; those nine records were written
+  31 July and 4 August. Pre-M49 legacy, not ongoing corruption.
+* **The real defect:** attribution was *inferred from a config value at every
+  launch*, not stored. `_sole_deployed_strategy` returns None the moment a second
+  strategy is deployed, so **activating M84 or M85 would have retroactively
+  unattributed nine held positions** — measured, `strategies() -> []`. And it had
+  **no test at all**.
+* **Fixed both ways:** `reconcile_entry_strategies` heals the record at startup
+  (M86, undeployed), and the live record was corrected on 12 August for the build
+  that is running. Backup
+  `open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill`.
+  Now 0 null, 10 named, and the two-strategy case returns `['swing']`.
+
+**Swing was a fact, not a guess** — `decision_journal.csv` records
+`strategy=swing` for all nine with transmit timestamps matching `opened_at` to
+the second.
 
 ## M71 — the same root cause as M70, on the way OUT
 
@@ -187,6 +202,13 @@ into a check; `UI_UX_APPROACH.md` is dated and §4.x marked as intent.
 changes a trading decision. **Activating either is a separate act needing a
 recorded lift.** Shared prerequisites: SIP daily bars, and one pattern module
 (both specify Bullish Engulfing and Hammer — build once, not twice).
+
+**One prerequisite is now cleared rather than outstanding.** Deploying a second
+strategy used to retroactively unattribute every held position on a pre-M49
+entry record — nine of ten, silently, because `_sole_deployed_strategy` stops
+resolving as soon as there are two candidates. M86 stored the attribution, so
+activation no longer costs the evidence. Had either been activated before
+12 August, nine positions' worth of promotion evidence would have gone.
 
 ---
 
@@ -320,13 +342,28 @@ liquidated the position in three partials (1@46.34, 3@46.16, 4@45.79).
   adjustment. Never reached. SFBS 2-for-1 on 21 August is the next chance -
   WIDEN THE STOP BEFOREHAND or the same thing happens again.
 
-START HERE - every entry record has strategy: null
-open_position_entries.json carries "strategy": null for ALL TEN remaining
-positions, AMD included. If that is what it looks like, every closed trade
-from a currently-held position is UNATTRIBUTED and counts towards no promotion
-gate - and the trial exists to accumulate 30 ATTRIBUTED trades per strategy.
-CVS closed with strategy=swing, so it worked once. NOT YET INVESTIGATED. This
-is the first thing to pick up.
+SETTLED 12 AUGUST - the strategy: null alarm was WRONG (M86)
+It was NINE, not ten - VRTX carried swing. And nothing was unattributed:
+restore_open_lots passes `entry.strategy or _sole_deployed_strategy()`, so with
+swing the only deployed strategy all ten restored as swing, attributed, with an
+R-multiple. Measured through the app's own path, not read off the file. CVS is
+the proof - no strategy field at all in the pre-m33b backup, closed as swing.
+The nulls were pre-M49 legacy: M49 added the field 5 Aug 00:11 UTC, those nine
+records were written 31 Jul and 4 Aug.
+
+  THE REAL DEFECT, WHICH HAD A CLOCK: attribution was INFERRED from a config
+  value at every launch, not stored. _sole_deployed_strategy returns None the
+  moment a SECOND strategy is deployed - so ACTIVATING M84 OR M85 WOULD HAVE
+  RETROACTIVELY UNATTRIBUTED NINE HELD POSITIONS. Measured: strategies() -> [].
+  It had NO TEST AT ALL. Both halves now fixed - M86 heals the record at
+  startup, and the LIVE RECORD WAS CORRECTED for the deployed build. Backup
+  open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill.
+  Now 0 null, 10 named, two-strategy case returns ['swing'] not [].
+  Swing was a FACT not a guess - decision_journal.csv records strategy=swing
+  for all nine with transmit timestamps matching opened_at to the second.
+
+  SO THE M84/M85 ACTIVATION HAZARD IS CLEARED. It was never in the strategies
+  themselves - it was in the record they would have silently emptied.
 
 ALSO FOUND, NOT FIXED
   M66  the aggregate risk cap that gates every entry is measured against ENTRY
