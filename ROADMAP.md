@@ -304,6 +304,58 @@ per-strategy autonomy gate, regime-at-entry on every closed trade, and a
 scorecard row of its own. It starts at zero trades and will read `not-eligible`,
 which is correct rather than a fault.
 
+### Decided 11 August, not left open
+
+The three concerns above were put to the operator and **the approach was
+agreed**. They are decisions now, not options, and a later reader should treat a
+departure from them as a change requiring its own reason:
+
+| Decision | Why it was taken |
+|---|---|
+| The per-symbol state is **`TrendState`** (TRENDING / RANGING / NEUTRAL), never `Regime` | `Regime` is the market-wide HMM state that gates which strategies may run at all, and the Regime Monitor reports it. Two things called "regime" on one screen is how an operator comes to believe the strategy is contradicting the monitor |
+| **ADX is computed on `sip` daily bars**, whatever the rest of the app uses | The thresholds are absolute. On IEX - measured 3.5% narrow - a fixed line at 20/25 is crossed at a different rate, so the filter choosing the rule-set would be calibrated against a biased input. SIP historical is free on this account |
+| **`compute_adx` lives in `data/features.py`**, not in the strategy | Where `compute_trend` and `compute_atr` already are. An indicator buried in a strategy cannot be tested, reused, or found |
+| **The stop comes from the pattern, not the ATR** | Proposed through `meta["stop_price"]`, which the bridge already prefers over the sizer's. A pattern stop is tighter, so it buys MORE size for the same 1% risk - deliberate, and the thing to watch |
+| **Selectable via `default_strategies()`, absent from `QAT_DEPLOYED_STRATEGIES`** | Selectable, backtestable and deployable-by-choice while changing no trading decision |
+
+### Build order
+
+**`compute_adx` and its tests first, before any strategy code.** It is what
+everything else rests on, and it is the piece the SIP decision actually bites -
+building the strategy around an indicator whose calibration is unsettled means
+rebuilding the strategy when it settles. Tests on hand-built OHLC frames, no
+market required, the same way the pattern detectors will be tested.
+
+Then the pattern detectors, then the classifier, then the strategy that composes
+them. The class shape, against the real protocol:
+
+    class CandlestickStrategy:
+        name = "candlestick"
+
+        def suitable_regimes(self) -> set[Regime]:
+            # The MARKET regime - not TrendState. The existing gate, unchanged.
+            return {Regime.BULL, Regime.SIDEWAYS, Regime.LOW_VOL, Regime.RECOVERY}
+
+        def on_features(self, snapshot: FeatureSnapshot) -> list[SignalEvent]:
+            bars = snapshot.context.bars
+            if len(bars) < _MIN_BARS:              # ADX warm-up + 30-day S/R
+                return []
+            state = classify_trend(compute_adx(bars, period=14).iloc[-1])
+            if state is TrendState.NEUTRAL:        # the 20-25 dead band
+                return []
+            ...                                    # continuation or reversal
+            return [SignalEvent(
+                symbol=..., side=..., conviction=pattern.strength,
+                strategy=self.name,
+                meta={"stop_price": pattern.invalidation_price,
+                      "trend_state": state.value, "pattern": pattern.name},
+            )]
+
+The `meta` keys matter: `stop_price` is the one the bridge reads, and
+`trend_state` / `pattern` are what make a closed trade answerable afterwards -
+"which state were the losers taken in" is the M37 question, and it cannot be
+asked later if it is not carried now.
+
 ### Sequencing
 
 Behind the MNST split test and outside the current deploy. Building it changes
