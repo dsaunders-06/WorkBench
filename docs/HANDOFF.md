@@ -1,4 +1,4 @@
-# Handoff — 11 August 2026, evening
+# Handoff — 12 August 2026, morning
 
 Paste the block at the bottom into a new context window. Everything above it is
 the detail that block points at.
@@ -17,10 +17,12 @@ FIVE; the test count sat at 1,690 in three paragraphs while the suite moved on.
 
 ---
 
-# ⚠️ THE THING WITH A CLOCK — the MNST split, happening now
+# ⚠️ THE MNST split — DONE, and it cost real money
 
-**Ex-date is Tuesday 11 August. The app is running, the position is held, and
-the event lands at the 23:30 AEST open.**
+**Ex-date was Tuesday 11 August. The event landed at the 23:30 AEST open, the
+stop fired, and the position is gone.** The next one with a clock on it is
+**SFBS 2-for-1 on 21 August** — not held, so running that test means buying it,
+and the stop must be widened beforehand or the same thing happens again.
 
 ## What has already been measured
 
@@ -171,7 +173,7 @@ transmitted sell** — do that before designing it.
 
 # What has landed since 8 August
 
-**17 milestones across 18 commits, none deployed.** Run `handoff_state.py` for
+**18 milestones across 19 commits, none deployed.** Run `handoff_state.py` for
 the current list rather than trusting this paragraph.
 
 ## Record correctness
@@ -214,7 +216,7 @@ activation no longer costs the evidence. Had either been activated before
 
 # Deploying, when the test is done
 
-**17 milestones ahead of the deployed `M63+M62 (49482c2)`.** Three commits do
+**18 milestones ahead of the deployed `M63+M62 (49482c2)`.** Three commits do
 not carry their number in the subject (M64, M67, M68), so counting with
 `git log | grep M[0-9]` under-reports by three — use `handoff_state.py`.
 
@@ -373,7 +375,7 @@ ALSO FOUND, NOT FIXED
        is wrong too. Needs a record rewrite. Read from code, NOT verified.
 
 STATE
-Deployed build M63+M62 (49482c2). HEAD is 17 MILESTONES AHEAD and none of it
+Deployed build M63+M62 (49482c2). HEAD is 18 MILESTONES AHEAD and none of it
 is deployed. Repo clean and pushed. Ten positions held, all protected. TWO
 closed trades (CVS -482.18 -1.68R; MNST -375.23, unattributed). Group 4 (the
 interface) is COMPLETE. M84 and M85 are two new strategies - DESIGNED, NOT
