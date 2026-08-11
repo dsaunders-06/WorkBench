@@ -210,6 +210,108 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M84 - Price-action / candlestick strategy  **[DESIGNED, NOT BUILT, NOT ACTIVATED]**
+
+11 August. Requested as a standalone milestone: a strategy that reads
+candlestick patterns and switches rule-set by trend state - continuation
+patterns in a trend, reversal patterns in a range.
+
+**Selectable, not activated. That requirement costs nothing, because the
+distinction already exists:**
+
+| | |
+|---|---|
+| `default_strategies()` in `runtime.py` | what the operator can SELECT - Workbench picker, Settings list, backtests |
+| `QAT_DEPLOYED_STRATEGIES` | what actually TRADES |
+
+Adding a strategy to the first list and not the second makes it fully
+selectable, backtestable and deployable-by-choice while changing **no trading
+decision** - which is what keeps this inside the validation freeze. **Activating
+it later is a different act and needs a recorded lift**, because it changes
+which trades happen.
+
+### Three things to settle before any code
+
+**1. It is a second thing called "regime", and that will be confused.** The app
+already has `Regime` - a MARKET-WIDE HMM state (bull/bear/sideways/high_vol/
+low_vol/recession/recovery) that gates which strategies may trade at all, and
+which the Regime Monitor screen reports. ADX measures **one symbol's trend
+strength**. They are different axes and both would be live at once.
+
+Naming it `TrendState` (TRENDING / RANGING / NEUTRAL) keeps `suitable_regimes()`
+meaning what it already means. The precedence is then explicit: the market
+regime decides whether this strategy runs, and TrendState decides which rule-set
+it applies. Getting this wrong produces a strategy that appears to disagree with
+the Regime Monitor on screen.
+
+**2. ADX would be computed on a feed measured to understate range.**
+`MARKET_DATA_FINDINGS.md`: IEX sees a median 4.3% of consolidated volume and a
+**3.5% narrower daily range**, and daily bars come from the same feed as live
+ticks. ADX is built from directional movement and true range, and the proposed
+thresholds - 25 and 20 - are **absolute**. A systematically narrower range does
+not merely scale ADX; it shifts how often it crosses a fixed line, so the filter
+that decides which rule-set applies would be calibrated against a biased input.
+
+SIP historical is already free on this account. **This strategy should request
+daily bars on `sip` regardless of what the rest of the app does**, or its
+thresholds must be calibrated on SIP and the divergence recorded.
+
+**3. ADX does not exist yet.** `qat/data/features.py` has no ADX. It is new
+indicator code and belongs in the feature layer with the others, not inside the
+strategy - `compute_trend` and `compute_atr` set that precedent.
+
+### Component 1 - TrendState (per symbol, daily)
+
+`compute_adx(bars, period=14)` in `data/features.py`, returning the Wilder ADX.
+Classifier: `>25 TRENDING`, `<20 RANGING`, else `NEUTRAL` and no trade. The dead
+band is the point - it is what stops the strategy flipping rule-sets on noise.
+
+### Component 2 - patterns, chosen by state
+
+| State | Location test | Pattern | Reading |
+|---|---|---|---|
+| TRENDING | price pulls back to the 20-day EMA | Hammer, Morning Star | sellers exhausted, trend resumes |
+| RANGING | at 30-day low / 30-day high | Bullish Engulfing at support, Shooting Star at resistance | reversion to the mean |
+
+Pattern detection is pure OHLC arithmetic on the daily frame and belongs beside
+the other detectors, testable on hand-built bars with no market.
+
+### Component 3 - integration is thinner than it looks
+
+The `Strategy` protocol already forbids what would otherwise need designing:
+strategies emit `SignalEvent` and **never size a position or place an order**.
+So there is nothing to wire into the risk path - a signal returned from
+`on_features` traverses every rail already, and the rails are enumerated in
+`evaluation/refusals.py` (rather more than eleven of them: position limit,
+aggregate risk-at-stop, per-order notional, cash floor, cost-to-risk,
+correlation cluster, sector and single-name concentration, gap budget, ES limit,
+whole-share, kill-switch, session phase, market hours, allow list, staleness,
+and the broker's own refusal).
+
+**The one real decision is the stop.** `SwingStrategy` proposes its ATR stop
+through `meta={"stop_price": ..., "target_price": ..., "atr": ...}` and the
+bridge prefers a strategy's stop over the sizer's. A candlestick entry has a
+natural stop the ATR does not know about - **below the pattern's low** - and
+that distance, not the ATR, should set the share count. Proposing a stop tighter
+than the ATR stop makes positions LARGER for the same 1% risk, which is the
+whole point and also the thing to watch: a tight stop on a noisy symbol buys
+size and a higher stop-out rate.
+
+### What it inherits by being a strategy
+
+Per-strategy promotion evidence (30 closed trades before eligibility), the
+per-strategy autonomy gate, regime-at-entry on every closed trade, and a
+scorecard row of its own. It starts at zero trades and will read `not-eligible`,
+which is correct rather than a fault.
+
+### Sequencing
+
+Behind the MNST split test and outside the current deploy. Building it changes
+nothing while it stays out of `QAT_DEPLOYED_STRATEGIES`; **activation is the
+gated act**, and wants a Workbench backtest and a walk-forward run first - with
+M69's caveat in view, since a pattern strategy that trades rarely produces
+exactly the thin sample that panel now warns about.
+
 ## M83 - Performance showed two trade counts that disagree, and explained neither
 
 11 August. The same sweep as M82, applied to the screens instead of the log.
