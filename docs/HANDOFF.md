@@ -1,427 +1,239 @@
-# Handoff — 8 August 2026
+# Handoff — 11 August 2026, evening
 
 Paste the block at the bottom into a new context window. Everything above it is
 the detail that block points at.
 
----
-
-## ⚠️ The one thing with a clock
-
-**MNST splits 2-for-1 with an ex-date of Tuesday 11 August, and a buy order for
-8 shares is queued at Alpaca waiting for Monday's open.**
-
-This is the first deliberate machinery test this project has run. Its purpose is
-one measurement that cannot be reasoned about: **what Alpaca does to a held
-quantity, and to a resting protective order, when a stock splits.** M39's
-adjustment cannot be designed without it, and this paper account has processed
-**zero** corporate actions in its life.
-
-**The procedure is written, printed and standalone: `docs/MNST_SPLIT_TEST.md`.**
-It assumes no memory of the conversation that produced it. Read that, not this.
-
-**Order re-confirmed at 11:36 UTC on 8 August:** one live order, `buy market
-qty=8.0, status=accepted, tif=gtc`, no position yet — which is correct, it fills
-at Monday's open. The split announcement is unchanged: `old_rate=1.0,
-new_rate=2.0, ex_date=2026-08-11`.
-
-Alpaca returned `503 service temporary unavailable` for several minutes earlier
-that evening. **The outage left the order untouched**, which is worth knowing:
-a broker being unreachable is not the same as a broker having lost something.
-Step 3 of the sheet re-checks the fill on Monday regardless.
-
-Three things from it that must not be lost:
-
-* **The app must NOT be running when the order fills.** It does not track MNST,
-  so it will not absorb the fill, and the first reconciliation poll reads it as
-  an unexplained divergence and halts the session. Start the app ~15 minutes
-  *after* the open instead.
-* **The stop is placed on Monday, not attached to the buy.** Alpaca's ticket
-  refuses a stop below the market on a *buy* order — that field is a
-  stop-*entry*. Step 4a of the sheet.
-* **Expect the position to be liquidated on Tuesday, and that is the result.**
-  Post-split MNST trades near $45.43 while the stop rests at $72.68 — above the
-  market, so an unadjusted stop triggers at the open. That is the M39 hazard,
-  watched rather than reasoned about.
-
-Tuesday's session **will halt** when the split lands, until the anomaly is
-declared in the Risk Console. That is M60 working, and it is the first live
-exercise of it.
-
-## ⚠️ Found 8 August, not yet fixed — M66
-
-**The aggregate risk-at-stop that gates every new entry is measured against
-ENTRY prices, not current ones.** The app reports 5.02%; measured against
-current prices it is **5.87%**, against a 5.00% cap.
-
-`PortfolioGovernor.snapshot` does `prices.get(symbol) or pos.avg_price`, and
-`avg_price` is the broker's `avg_entry_price`. The `prices` argument is plumbed
-through `snapshot`, `evaluate` and `delever_fraction` — and **nothing in the
-trading path ever passes it.** `RiskEngine` and `DeleverSweep` both omit it;
-only `adopted.py`, a display path, supplies it. So this is not a stood-down
-artefact: every entry decision this system has ever made used entry prices.
-
-**A winning book understates its risk**, because a position that has gained has
-further to fall to its stop. The bias grows with profit and is backwards from
-prudent.
-
-It changes which trades happen and how large they are, so it is **inside the
-freeze** and needs a recorded lift. **Do not deploy before Tuesday.**
-
-**Designed, not built** —
-`docs/superpowers/specs/2026-08-08-risk-at-stop-current-prices-design.md`. It is
-smaller than it looks: **Alpaca's `Position.current_price` is the consolidated
-tape** (10 of 10 matched SIP, 0 matched IEX), so the price is already in every
-`positions()` response, free on this tier, and free of the IEX bias. One extra
-fallback tier in `snapshot` plus an optional field on `Position`; no caller
-changes.
-
-An earlier version of this section said the fix was coupled to the market-data
-decision. It is not.
-
-Checked rather than assumed: `QAT_DELEVER_SWEEP_ENABLED=false`, so the stricter
-figure cannot force a sale. With the sweep enabled it would have trimmed all ten
-positions on deploy.
-
-Verify with `scripts/analysis/verify_gating_figures.py`.
-
-## ⚙️ Before quoting any figure below, run this
+## ⚙️ Before quoting any figure in here, run this
 
     .\.venv\Scripts\python.exe scripts/handoff_state.py
 
 It derives the deploy gap, the milestone list and the test count from the
 repository, and **names any test count in this file that has gone stale**. Every
-current-state number here is a hand-maintained copy, and this session lost that
-argument three times: the deploy gap was quoted as five, eight, nine and twelve;
-"the brief has been wrong in detail" as third, fifth, sixth and FIVE; the test
-count sat at 1,690 in three paragraphs while the suite had moved on. Counting is
-not the fix - deriving is.
+current-state number here is a hand-maintained copy, and this project lost that
+argument four times in three days: the deploy gap was quoted as five, eight,
+nine and twelve; "the brief has been wrong in detail" as third, fifth, sixth and
+FIVE; the test count sat at 1,690 in three paragraphs while the suite moved on.
+**Counting is not the fix — deriving is.**
 
-## What landed after the handoff was written — M70, M72–M79
+---
 
-All four checks clean, **1,710 tests** (1,709 pass; 1 is the declared orphan in M80's guard). Repo clean and **pushed**. None of it is
-deployed, and none of it should be before Tuesday.
+# ⚠️ THE THING WITH A CLOCK — the MNST split, happening now
 
-**M70 — the residual half of M65, and the half startup could not heal.**
-`_announce_fill` publishes at `transmitted` as well as `filled`, and at transmit
-there is no fill price, so it published the price the order was *sized* against.
-`reconcile_entry_prices` heals that at the next startup; **a position opened and
-closed inside one session never reaches a next startup**, and its ClosedTrade is
-already written against a basis the account never paid. The true price was
-already arriving every poll in `recent_fills` and being discarded because the
-order was ours. `EntryPriceCorrectedEvent` now carries it to the entry record
-and the open lot — deliberately not a second `OrderFilledEvent`, which would
-double the position and re-create M46.
+**Ex-date is Tuesday 11 August. The app is running, the position is held, and
+the event lands at the 23:30 AEST open.**
 
-Two things it turned up:
-
-* **`entry_slippage` was zero by construction** on every entry this app has ever
-  opened, because the lot's `price` and its `reference_price` came from the same
-  announcement. **M44 is scheduled to measure the cost model with that
-  instrument in September** and would have read "no slippage, ever".
-* **A partial entry would have been corrected once and never again.**
-  `_fill_query_floor` reaches back past remembered fills because an order still
-  filling keeps its FIRST execution's stamp — but past `_absorbed_fills` only,
-  and an order this app sent is never absorbed. `_own_partial_fill_stamps`
-  closes it.
-
-**M71 — recorded, NOT fixed.** The same root cause on app-transmitted *sells*
-makes the ClosedTrade's **exit** price wrong too. Left separate because
-correcting it means rewriting a record already on disk. **Read from the code,
-not yet verified against a live transmitted sell** — do that before designing it.
-
-**M72 — the Screener never said whether its figures were real.** `is_synthetic`
-has ridden on every snapshot since M18, and `available_figures()` passes it to
-the LLM, so the AI Advisor knew the provenance and the operator did not. The
-default `fundamentals_source` is `"mock"`, and the resolver degrades to the same
-seeded source when the vendor cannot be built. Checked before claiming it: the
-live install runs yfinance with no fallback warnings, so **the hazard is latent,
-not active.** Presets added, level-aware; "saved custom screens" deliberately
-deferred as configuration nothing would read.
-
-**M73 — §4.9 was wrong on both claims.** The advisory-only framing it says not
-to touch existed only in a docstring, while the screen printed `[BUY,
-confidence=80%]` in bold — inside an application that trades unattended. And it
-fed the model `var_95: 0.0` when no risk check had run, eleven lines above a
-prompt that promises "fields the vendor could not answer are omitted rather than
-zeroed". Both fixed.
-
-**M74 — the Workbench consumed no level**, so every operator saw the walk-forward
-panel and the **deploy control**, the one control on that screen that changes
-what the account does. Now Professional only; the deploy *gate* is untouched.
-Guided gets a notice rather than an emptied screen. And the plain-language
-summary §4.5 lists for Standard was never written — Standard got twelve KPI tiles
-in **alphabetical order**, `alpha` first, with nothing to say which of them
-decides anything.
-
-**M76 — ticker dropdowns sort alphabetically**, on whichever screen they appear.
-Sorted *at the dropdown*, never in `runtime.watchlist`: the Risk Console indexes
-that tuple positionally against its correlation matrix, so sorting it in place
-would move a rail's data rather than a control's labels.
-
-**M77 — the Blotter could not say why an order was refused.** Eleven columns and
-no reason field; `Order` carries no reason attribute and `OMS._record` writes it
-to the decision journal instead. §4.2 says *"do not touch the reason text on a
-rejection"* — **there was none to touch.** And `refusals.rail_of` has turned
-§4.2's own example into plain language since M51, read by the reporter and the
-Risk Console but never by the screen where an operator meets a refused order.
-Guided now reads *"Position limit — the book was full — says nothing about the
-trade."* Keyboard sign-off, which §4.2 lists for Professional, was **decided
-against and recorded as such.**
-
-**M75 — DONE.** `theme.callout` had zero consumers until M72, and the reason was
-structural: the call sites that needed it still held the literal it was
-extracted from. **§5 step 1 was recorded as done and was half-done** — 22 live
-raw-hex sites across five presentation modules, all theme primitives written
-longhand, `settings.py` hand-writing the `callout("warning")` string twice.
-
-Now finished, and **guarded**: a test walks every module in `qat.presentation`
-except `theme.py` and fails on a six-digit hex inside a *string literal*
-(`tokenize`, so a comment discussing a colour is not an offence). Without that,
-the next hand-written `#b71c1c` arrives with the next screen — which is exactly
-how 22 accumulated after step 1 was declared complete.
-
-**Every colour is byte-identical**, proved by diffing normalised declarations
-rather than eyeballing. Eleven sites move padding to the 4px rhythm's 8px
-(banners 6→8, kill-switch 10→8); nothing else moves.
-
-That was the **fifth** instance of the `shows_advanced()` pattern; M77 made six.
-Ask what reads it.
-
-## M65 — found and FIXED 8 August, not yet deployed
-
-The entry record held the price we asked for, not the price we paid: 8 of 10
-positions differed, AMD by 141 bps, and `restore_open_lots` used it as the lot's
-cost basis — so P&L and every R-multiple denominator were wrong by that drift.
-
-**Fixed** by `SignalToOrderBridge.reconcile_entry_prices()`, which asks the
-broker at startup, *before* the ledger is rebuilt. It heals the eight records
-already on disk. A quarantined position is never corrected, because a split
-changes `avg_entry_price` legitimately.
-
-**⚠️ The first launch of a build containing this rewrites
-`open_position_entries.json` for eight positions. Back that file up first**, as
-`closed_trades.csv` was before the CVS correction.
-
-Not deployed. See ROADMAP M65 for what it does *not* fix — `_announce_fill`
-still publishes the reference price at `transmitted`, so a lot created live
-inside a session carries it until the next startup.
-
-## Where things stand
-
-- **Deployed:** `M63+M62 (49482c2)`, hash-verified, **launched and confirmed
-  running** on 8 August, and alive through a full reconciliation poll cycle with
-  no false positives.
-- **Repo:** clean, pushed. `git log --oneline -1` gives the tip; the handoff commit is always at or near it.
-- **HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN `src/`, and that is real.**
-  `git diff 49482c2..HEAD -- src/` covers **14 milestones across 15 commits** —
-  M64, M65, M67, M68, M69, M70, M72, M73, M74, M75, M76, M77, M78, M79. Three of
-  those commits do not carry their number in the subject line (M64, M67 and
-  M68), so counting by `git log | grep M[0-9]` under-reports by three; an
-  earlier version of this line said eight, and before that five.
-
-  All presentation or record-correction; **none of it changes a trading
-  decision, and Monday needs none of it.** Do not deploy before the split test.
-
-  **One operational consequence to know before deploying.** The level model now
-  gates real controls: the Workbench's **deploy button** is Professional-only
-  (M74), and the Blotter's **bulk sign-off** is Standard and above, with Guided
-  restricted to one order at a time (M77). Checked rather than assumed — the
-  live config has `QAT_UI_LEVEL=professional`, so **nothing is lost on deploy**.
-  The default is `standard`, so a config reset would take the deploy button with
-  it.
-- **Account:** equity ~$101,245. Ten positions — AMAT 7, AMD 7, CRWD 16, CSCO 44,
-  GS 7, JNJ 19, MS 41, UNP 17, VRTX 19, WFC 58 — all protected, all carrying a
-  stop resting at the broker. Risk-at-stop 5.02% against a 5.00% cap, so the book
-  is refusing new entries. That is the rails working.
-- **Closed trades: one.** CVS, −$482.18, −1.68R.
-- **1,710 tests** (1,709 pass; 1 is the declared orphan in M80's guard); ruff, black, mypy, bandit clean.
-
-## What landed on 8 August
+## What has already been measured
 
 | | |
 |---|---|
-| **M59** | A protective stop whose **level** moved was invisible. `verify_position_stops` compared presence, so a stop still resting at a different price passed. `_position_stops` is the denominator of every risk-at-stop figure, and the book sits at 5.02% against a 5.00% cap — a wrong denominator on one symbol refuses entries in every other |
-| **M60** | The position-anomaly seam. Reconciliation can be told a difference is explained; a position can be quarantined from the write path. Serves M39 and M43 both |
-| **M61** | Deliberate machinery testing, as a posture. M54 exercised against a real broker failure for the first time since it shipped; `entry_allow_list` added |
-| **M62** | A broker JSON payload fragmented one cause into 113 report rows. Guard plus a row cap |
-| **M63** | Dashboard balances: two groups, level-aware |
-| **M64** | Regime Monitor: says which strategies the regime permits, and found a concurrency race doing it |
-| **M65** | The entry record held the price we asked, not the price we paid. **Found and fixed** |
-| **M66** | The risk cap that gates every entry uses ENTRY prices. **Found, designed, not built** |
-| **M67** | The Risk Console now answers "why was I refused", closing a forward reference M64 created hours earlier |
-| **M68** | Its correlation table was measuring intraday ticks where the rail measures 60 daily bars |
-| **M69** | Walk-forward *and* the Monte Carlo cone stated no caveat, on the screen that holds the deploy gate |
+| Buy | 8 MNST filled Monday at **$91.1838** (total $729.47) against a $90.85 reference — **+36.7 bps of real entry slippage** |
+| Stop | Placed by hand Monday, **sell stop 8 @ $72.68 GTC**, order `34ffd4cd…` |
+| Pre-split baseline | `scripts/analysis/split-captures/MNST-pre-split-20260810-134022.json` — **the irreplaceable artefact** |
+| Monday night | Session ran clean. No halt, no errors. Split **not** applied at Monday's close |
+| **Tuesday 21:54** | **Alpaca has halved the PRICE to ~$46.30 but not the quantity or the basis** — the corporate action is half-applied |
 
-## The reframing that changed how we work
+## The decision taken, and why it matters
 
-**Recorded because it reverses a previously implicit priority.** The trial has
-been trying to do two jobs that conflict:
+At 21:54 the position reads qty 8, avg_entry $91.1838, current $46.30. **The
+$72.68 stop is now far ABOVE the market**, so it should execute within seconds
+of the open.
 
-* **Collect edge evidence** — wants a frozen configuration and natural trades.
-* **Validate the machinery** — wants edge cases *provoked*, because they do not
-  occur naturally in a book of ten megacaps.
+The operator was given the choice and chose **let it run**. The reasoning: the
+record can be corrected by hand afterwards, and the measurement cannot be
+recreated without waiting for SFBS on 21 August.
 
-ROADMAP's *"Where this is ultimately going"* already settles which matters: the
-edge numbers will not transfer to the ASX and must be re-earned; **the machinery
-is what transfers.** On a paper account with no money at risk, protecting the
-edge baseline at the cost of not testing the machinery optimises the output that
-gets discarded.
+**Expect, therefore, that this is what happens:**
 
-So rules may be varied to make a test possible, and the variation is then judged
-on its merits. **What still constrains us is the record, not money** — a later
-reader must be able to tell a real defect from a test artifact.
+* the stop fires at the open and sells 8 at ~$46.30;
+* a closed trade lands in `closed_trades.csv` showing roughly **−$360, about
+  −50%** — **that figure is a split artefact, not a loss.** The basis was never
+  adjusted. It must be corrected by hand, as CVS was, with a `.bak` taken first;
+* the quantity may go to zero before it ever doubles, in which case **the
+  divergence never happens, the kill-switch never trips, and the M60
+  declare-then-quarantine exercise is not exercised.** That is a real possible
+  outcome of letting it run, and it was accepted.
 
-M39, M43, M44 and M54 were all blocked on "wait for an event that may never
-come". M54 is now done. MNST is M39's.
+If instead the quantity doubles to 16 first, the session halts — **that is M60
+working, not a fault** — and the steps are: capture `post-split` BEFORE touching
+anything, then declare the anomaly in the Risk Console (`MNST`, "2-for-1 split,
+ex 11 August"), then confirm the session resumes.
 
-## What the measurements found
+## What the captures must answer
 
-**Alpaca's split representation, measured 8 August** (`scripts/analysis/probe_alpaca_splits.py`):
-forward split is `old_rate=1.0, new_rate=4.0`, ratio `new/old`; reverse inverts.
-Records carry `ex_date`, `record_date`, `payable_date`, `target_symbol`. The
-request takes a **server-side `symbol` filter**. Two traps: `target_symbol` is
-absent on ~10% of records, and `payable_date` can precede `ex_date` — key on
-`ex_date`.
+Compare `pre-split` against `post-split`, in order of how much each matters:
 
-**CRWD is why automatic detection was deferred.** It split 4-for-1 on 2 July; we
-bought on 31 July, post-split, and the position is correct. But a detector
-matching symbol and ratio over a recent window would call our 16 shares
-split-explained **today**, and be wrong. The false positive is in the book. Any
-detector must gate on `ex_date` falling after the position was opened.
+1. **What happened to the resting stop `34ffd4cd`** — cancelled, left at $72.68,
+   re-priced to ~$36.34, re-quantified to 16, or executed. **This decides M39's
+   design and is the whole reason for the exercise.**
+2. Did quantity double 8 → 16, and is `avg_entry_price` halved to ~$45.59 or
+   left stale at $91.18?
+3. Did a `SPLIT` account activity appear? That endpoint has returned zero rows
+   for this account's entire life.
+4. What the application did — divergence, halt, declare-then-quarantine.
 
-**`TradingClient` wraps no account-activities method** in alpaca-py 0.43.5. The
-REST endpoint answers directly.
+## Already learned, before the event
 
-**Halts are not detectable through the REST API.** `get_asset()` reports
-`status=active, tradable=True` even for a halted symbol — that is *listing*
-status. The real feed is `subscribe_trading_statuses` on `StockDataStream`, **a
-websocket this application does not consume.** So **M43 is now gated on the
-market-data decision**, which until now was only M32's problem.
+* **Alpaca returns the same announcement more than once and the count changes** —
+  one record Saturday, two byte-identical ones Monday, which was the
+  `payable_date`. **M39's detector must dedupe on (symbol, ex_date)** and must
+  not read a changing count as a changing action.
+* **An order id survives across days** — the buy queued Saturday is the id that
+  filled Monday. Whether it survives the split itself is what tonight answers.
+* **A split can be applied in halves.** Price first, quantity later. Any
+  detector that keys on quantity alone will be blind to the window in between —
+  which is exactly the window where an unadjusted stop is lethal.
 
-## The next block of work
+---
 
-### Immediate — the MNST test
+# ⚠️ Found and NOT fixed
 
-Monday and Tuesday. See `docs/MNST_SPLIT_TEST.md`. Nothing else should be
-started that requires deploying a build before Tuesday.
+## M66 — the risk cap that gates every entry uses ENTRY prices
 
-### Group 1 — external changes to a held position
+**Inside the freeze. Do not build without a recorded lift.**
 
-**M60 built the shared half and it is deployed.** What remains:
+`PortfolioGovernor.snapshot` does `prices.get(symbol) or pos.avg_price`, and
+nothing in the trading path ever passes `prices` — `RiskEngine` and
+`DeleverSweep` both omit it; only `adopted.py`, a display, supplies it. So
+**every entry decision this system has ever made used entry prices.** A winning
+book understates its risk, and the bias grows with profit.
 
-* **M39 detection and adjustment**, which waits on Tuesday's captures. The
-  adjustment is where the four-way atomicity risk lives — tracked quantity,
-  entry record, resting protection, ledger basis. **A partial adjustment is
-  worse than none**; M60's quarantine is what gives it somewhere safe to fail.
-* **M43 halts** — needs its own producer, and that producer needs a websocket.
-  See above. Sequence it with the market-data decision.
+Designed:
+`docs/superpowers/specs/2026-08-08-risk-at-stop-current-prices-design.md`.
+Smaller than it looks — `Position.current_price` is the consolidated tape and is
+already in every `positions()` response. Verify with
+`scripts/analysis/verify_gating_figures.py`.
 
-### The market-data question — measured 8 August, see `docs/MARKET_DATA_FINDINGS.md`
+## Held over from 11 August — every entry record has `strategy: null`
 
-**Two things stated earlier in this document's life were wrong, and are
-corrected there.** This system does *not* run on yfinance — it runs on Alpaca
-IEX. And M43 and M32 are *not* both gated on one market-data decision; only M43
-touches it, and M32 is an IBKR question because Alpaca cannot reach the ASX
-under any subscription.
+`open_position_entries.json` carries `"strategy": null` for **all eleven
+positions**, AMD included, not only the hand-bought MNST. If that is what it
+looks like, `restore_open_lots` gives every restored lot a null strategy, so
+**every closed trade from a currently-held position is unattributed and counts
+towards no promotion gate** — and the trial's whole purpose is accumulating 30
+attributed trades per strategy.
 
-The finding that matters: **IEX sees a median 4.3% of consolidated volume and a
-3.5% narrower daily range, and daily bars are requested on the same feed as live
-ticks.** ATR is therefore ~3.9% understated, and since ATR sets the stop distance
-which sets the share count, **every position is a median 4% larger than intended
-— 16% on CSCO.** Per-trade risk is internally consistent; the stops are simply
-too tight for the real volatility, so they are hit more often than the design
-assumes. For a trial measuring whether swing has an edge, that is a systematic
-bias produced by the feed rather than the strategy.
+CVS closed with `strategy=swing`, so it worked at some point. **Not yet
+investigated.** Too big to rush before an event, and it changes nothing about
+tonight. Start here in the morning.
 
-SIP *historical* data is free on this account. The fix is to request daily bars
-on `sip` while leaving live ticks on `iex`. **It is inside the freeze** — it
-changes position size — and it resets the two-week baseline. **Decide it after
-Tuesday, not before**; nothing should change sizing between now and the split
-measurement.
+## M71 — the same root cause as M70, on the way OUT
 
-### Group 4 — the interface
+App-transmitted sells announce at the reference price too, so the ClosedTrade's
+**exit** price is wrong. Separate from M70 because correcting it means rewriting
+a record already on disk. **Read from the code, not yet verified against a live
+transmitted sell** — do that before designing it.
 
-Steps 1–3 done. **Step 4 (Dashboard), 4.5 (Workbench walk-forward caveat), 4.6
-(Regime Monitor) and 4.7 (Risk Console, both halves) now done.** Remaining:
-Screener (§4.8), the rest of the Workbench, AI Advisor (§4.9 calls that one "the
-simplest screen, and fine"). **Order Blotter deliberately last** — most
-safety-critical, and should be touched when the design system is proven.
-**Performance (step 5) waits for September.**
+---
 
-M69 covers **both** tools on that screen — the walk-forward panel and the Monte
-Carlo cone beside it, which resamples the same too-short trade sequence.
+# What has landed since 8 August
 
-**The brief has now been wrong in detail three times** — M63 on the Balances
-premise ("most of them dashes"; ten of eleven report a figure), M64 on the macro
-panel, M67 on the level. Read §4.x as a statement of intent and check its
-particulars against the code and the account before implementing them.
+**17 milestones across 18 commits, none deployed.** Run `handoff_state.py` for
+the current list rather than trusting this paragraph.
 
-Two things the last two screens established, worth carrying:
+## Record correctness
 
-* **Three settings must produce three outcomes.** The Balances design reached
-  review rendering Guided and Standard identically, because `explains()` is true
-  for both. That is M58a in miniature. `prefers_density()` now exists, and
-  `shows_advanced()` finally has consumers.
-* **Render it, do not trust the suite.** Screenshotting found an orphaned grid
-  row and an off-scale font that every test passed through.
+| | |
+|---|---|
+| **M70** | The half of M65 that startup could not heal. A position opened and closed inside one session never reaches the next startup, and its ClosedTrade is already written against a basis never paid. Turned up that **`entry_slippage` was zero by construction** on every entry ever opened — the instrument M44 is booked to measure the cost model with in September |
+| **M81** | The startup warning about MNST was the **opposite of the truth**. `restore_open_lots` said no lot could be restored; the replay opened one seconds later in the same startup |
+| **M82** | Two more messages checkably false. **"this will only unwind as positions close"** — 112 times in one night — when the figure changed ten times with every position open, and moved the *wrong way* as equity fell |
+| **M83** | Performance showed two trade counts that disagree and explained neither |
 
-### Group 2 — waits for September
+## The interface — Group 4 complete
 
-M44 (is the flat 5bps slippage assumption right — `entry_slippage` answers it)
-and M51's analysis half. Nothing to do until there are closed trades.
+M63 Dashboard · M64 Regime Monitor · M67/M68 Risk Console · M69 Workbench
+caveats · M72 Screener · M73 AI Advisor · M74 Workbench levels · M75/M78 design
+system · M76 dropdowns · M77 Blotter · M79 Performance.
 
-### Group 3 — M32 ASX
+## Process
 
-The destination, and much the largest. Behind the market-data decision.
+**M80** — the pattern-counting was itself the pattern. A register replaces every
+asserted count; `test_computed_values_have_readers` turns "ask what reads it"
+into a check; `UI_UX_APPROACH.md` is dated and §4.x marked as intent.
 
-## Standing constraints
+## Designed, not built, NOT activated
 
-- **Read `%LOCALAPPDATA%\QuantAdvisoryTerminal` via PowerShell, never Bash.**
-  **Measured 10 August, and the consequence is worse than a wrong read.** The
-  Bash tool sees a sandboxed copy of that tree frozen at 27 July: same path,
-  `equity_curve.csv` 13,811 bytes / 301 rows / last written 27 Jul, against the
-  live 405,949 bytes / 8,757 rows. PowerShell launched *from* Bash inherits the
-  same blind view, so the sandbox covers the whole process tree.
-  **Anything that watches those files from a Bash shell - a monitor, a tail, a
-  background poll - reads a file that never changes and therefore never fires.
-  It does not error; it goes quiet, and quiet is indistinguishable from
-  healthy.** Overnight watching must be done by a scheduled prompt that wakes up
-  and uses the PowerShell tool, not by a Bash monitor.
-- Operator's terminal is **PowerShell 5.1** — `;` not `&&`, `@'...'@`
-  here-strings with the closing `'@` at column 0.
-- **The project formats with `black`, not `ruff format`.** `invoke lint` shells
-  out to a ruff that is not on PATH — run the four via the venv python:
-  `ruff check .`, `black --check .`, `mypy src`, `bandit -r src`.
-- **Every test that builds an OMS must pass its own `data_dir`.** `conftest` sets
-  `QAT_DATA_DIR` session-wide, and the anomaly store persists there — one
-  declared anomaly would leak a quarantine into every later test.
-- **A deploy needs the app closed** and uses `Expand-Archive -Force` over
-  `C:\QuantAdvisoryTerminal`; renaming the install directory is blocked by
-  policy. The zip is made by hand. Verify by hash, then **launch it** and confirm
-  the startup lines.
-- **Convention:** plan → approval → implement → verify → commit → build. Build
-  and sign freely; **always ask before deploying**, then pre-flight in daylight.
-- **Validation freeze:** nothing lands that changes which trades happen or how
-  large they are. Lifted deliberately for M56c, M57 and M58b, each recorded with
-  its reason. M59–M64 are all fix-immediately, reporting or presentation.
+**M84** price-action / candlestick · **M85** volume-profile. Both selectable via
+`default_strategies()`, both absent from `QAT_DEPLOYED_STRATEGIES`, so neither
+changes a trading decision. **Activating either is a separate act needing a
+recorded lift.** Shared prerequisites: SIP daily bars, and one pattern module
+(both specify Bullish Engulfing and Hammer — build once, not twice).
 
-## The habits that found everything
+---
 
-**Check the brief against reality.** The Dashboard brief said the Balances panel
-was "most of them dashes"; the live account reports ten of eleven. The
-prescribed fix would have collapsed one cell and achieved nothing.
+# Deploying, when the test is done
 
-**A failing test is not automatically a bad fixture.** M64's race surfaced as one
-failure in eighteen and looked exactly like a test that forgot to drive an
-engine. It was `asyncio.gather` dispatching handlers concurrently.
+**17 milestones ahead of the deployed `M63+M62 (49482c2)`.** Three commits do
+not carry their number in the subject (M64, M67, M68), so counting with
+`git log | grep M[0-9]` under-reports by three — use `handoff_state.py`.
 
-**Verify a fix is needed before making it.** The report narrative had failed
-every day for a week — and M56b had already fixed it. Today's code over 6 August's
-rows gives 3 keys where the report written that day had 113.
+**Before deploying:**
 
-**Ask what reads it.** `shows_advanced()` had zero consumers from M45 until
-8 August. The minimum hold, the expertise level and the M37 diagnostics were all
-the same pattern: configuration that persists, displays, and changes nothing.
+* **Back up `open_position_entries.json`.** The first launch of a build
+  containing M65 rewrites it for eight positions.
+* **Know that the level model now gates real controls.** The Workbench deploy
+  button is Professional-only (M74) and Blotter bulk sign-off is Standard-and-
+  above (M77). Live config is `QAT_UI_LEVEL=professional`, so nothing is lost —
+  but the default is `standard`, and a config reset takes the deploy button.
+* A deploy needs the app closed, uses `Expand-Archive -Force` over
+  `C:\QuantAdvisoryTerminal`, is verified by hash and **then launched**. A hash
+  proves the right bytes landed, never that they run — M56a passed its hash
+  check and could not start.
+
+---
+
+# Standing constraints
+
+* **Read `%LOCALAPPDATA%\QuantAdvisoryTerminal` via PowerShell, never Bash.**
+  **Measured 10 August:** the Bash tool sees a sandboxed copy frozen at 27 July —
+  `equity_curve.csv` at 13,811 bytes and 301 rows against the live 405,949 and
+  8,757. PowerShell launched *from* Bash inherits the same blind view, so the
+  sandbox covers the whole process tree, and **the Monitor tool cannot see the
+  live account either.** Anything watching those files from a Bash shell reads a
+  file that never changes: it does not error, it goes quiet, and quiet is
+  indistinguishable from healthy. **Overnight watching must be a scheduled
+  prompt that wakes and uses the PowerShell tool.** The Bash tool IS correct for
+  the venv python and for Alpaca API calls — the sandbox is filesystem-only.
+* Operator's terminal is PowerShell 5.1 — `;` not `&&`, `@'...'@` here-strings
+  with the closing `'@` at column 0.
+* **Formats with `black`, not `ruff format`.** `invoke lint` shells out to a ruff
+  that is not on PATH — run the four via the venv python: `ruff check .`,
+  `black --check .`, `mypy src`, `bandit -r src`.
+* **Every test that builds an OMS must pass its own `data_dir`.** `conftest` sets
+  `QAT_DATA_DIR` session-wide and the anomaly store persists there, so one
+  declared anomaly leaks a quarantine into every later test.
+* **Validation freeze:** nothing lands that changes which trades happen or how
+  large they are. Reporting, logging and analysis are explicitly permitted, and
+  **a defect that corrupts the record is fix-immediately.**
+* Convention: plan → approval → implement → verify → commit → build. Build and
+  sign freely; **always ask before deploying.**
+
+---
+
+# The habits that found everything
+
+**Check the brief against the code before building.** §4.x described something
+that was not there **eight times across seven milestones** — the register in
+`ROADMAP.md` lists every one. It is also how M72 and M83 were found, which the
+brief does not mention at all.
+
+**Render it, do not trust the suite.** Screenshotting found M63's orphaned grid
+row and off-scale font, M72's stranded filter labels, M74's "Grew -0.0% a year"
+and a notice floating in an empty screen, M77's truncated Reason column. Every
+test passed through all of them.
+
+**Ask what reads it.** `shows_advanced()` had no consumers from M45 until M63,
+`theme.callout` none until M72, `is_synthetic` reached the language model but
+never the operator until M72, `refusals.rail_of` the reporter but never the
+Blotter until M77, the M37 diagnostics nothing until M79. **This one now has a
+test.**
+
+**Test the claim, not the arithmetic.** Every defect found on 11 August was in a
+sentence that predicted or explained — never in a number. Testing the numbers
+would have missed all of them.
+
+**Derive, do not remember.** Four separate counts were asserted and wrong in
+three days. The ones that are now derived have stopped being wrong.
 
 ---
 
@@ -429,324 +241,102 @@ the same pattern: configuration that persists, displays, and changes nothing.
 
 ```
 Continuing work on QAT (Quant Advisory Terminal) at C:\Claude Programming.
-Paper account throughout — no real money is involved.
+Paper account throughout - no real money is involved.
 
 Read docs/HANDOFF.md first, then docs/MNST_SPLIT_TEST.md, then the standing
 rule at the top of ROADMAP.md and the section "How Alpaca actually represents
 orders".
 
+BEFORE QUOTING ANY CURRENT-STATE FIGURE, RUN:
+  .\.venv\Scripts\python.exe scripts/handoff_state.py
+It derives the deploy gap, the milestone list and the test count, and names
+any stale test count in the handoff. Four hand-maintained counts were wrong
+in three days. Counting is not the fix - deriving is.
+
+THE THING WITH A CLOCK - the MNST split landed Tuesday 11 August
+The position was 8 MNST bought Monday at 91.1838 with a hand-placed sell stop
+at 72.68. By Tuesday evening Alpaca had HALVED THE PRICE to ~46.30 and NOT the
+quantity or the basis - the action was half-applied - which left the stop far
+ABOVE the market and due to fire at the open.
+
+  The operator chose to LET IT RUN. Expect a closed trade around -360 / -50%
+  in closed_trades.csv. THAT FIGURE IS A SPLIT ARTEFACT, NOT A LOSS - the
+  basis was never adjusted. Correct it by hand, as CVS was, .bak first.
+
+  It may also mean the quantity went to zero before it ever doubled, so the
+  divergence never happened, the kill-switch never tripped, and M60's
+  declare-then-quarantine was not exercised. That was accepted knowingly.
+
+  THE PRE-SPLIT BASELINE IS scripts/analysis/split-captures/
+  MNST-pre-split-20260810-134022.json. Compare the post-split capture against
+  it and answer, in order: what happened to stop order 34ffd4cd; did quantity
+  double and was avg_entry halved or left stale; did a SPLIT activity appear;
+  what did the app do.
+
+  ALREADY LEARNED: Alpaca returns the same announcement more than once and the
+  count changes, so M39 must dedupe on (symbol, ex_date). An order id survives
+  across days. And A SPLIT CAN BE APPLIED IN HALVES - price first, quantity
+  later - so a detector keyed on quantity alone is blind to exactly the window
+  where an unadjusted stop is lethal.
+
+START HERE IN THE MORNING - every entry record has strategy: null
+open_position_entries.json carries "strategy": null for ALL ELEVEN positions,
+AMD included, not just the hand-bought MNST. If that is what it looks like,
+every closed trade from a currently-held position is UNATTRIBUTED and counts
+towards no promotion gate - and the trial exists to accumulate 30 attributed
+trades per strategy. CVS closed with strategy=swing, so it worked once. NOT
+YET INVESTIGATED.
+
+ALSO FOUND, NOT FIXED
+  M66  the aggregate risk cap that gates every entry is measured against
+       ENTRY prices - nothing in the trading path passes current ones. Inside
+       the freeze, needs a recorded lift. Designed in docs/superpowers/specs/.
+  M71  the same root cause as M70 on app-transmitted SELLS, so the exit price
+       is wrong too. Needs a record rewrite. Read from code, NOT verified.
+
 STATE
-Deployed build M63+M62 (49482c2), verified by hash and confirmed to start.
-Repo clean and pushed - `git log --oneline -1` for the tip.
+Deployed build M63+M62 (49482c2). HEAD is 17 MILESTONES AHEAD and none of it
+is deployed. Repo clean and pushed. Group 4 (the interface) is COMPLETE.
+M84 and M85 are two new strategies - DESIGNED, NOT BUILT, NOT ACTIVATED,
+selectable via default_strategies() but absent from QAT_DEPLOYED_STRATEGIES.
 
-  HEAD IS WELL AHEAD OF THE DEPLOYED BUILD IN src/, and unlike earlier handoffs
-  that is a real difference, not documentation. `git diff 49482c2..HEAD -- src/`
-  covers 14 MILESTONES ACROSS 15 COMMITS - M64, M65, M67, M68, M69, M70, M72,
-  M73, M74, M75, M76, M77, M78, M79. Three of those commits do not carry their
-  number in the subject (M64, M67, M68), so counting with `git log | grep
-  M[0-9]` under-reports by three.
-
-  All presentation or record-correction; NONE of it changes a trading decision,
-  and MONDAY NEEDS NONE OF IT. Do not deploy before the split test.
-
-  BEFORE DEPLOYING, know that the level model now gates real controls: the
-  Workbench DEPLOY BUTTON is Professional-only (M74) and the Blotter's BULK
-  SIGN-OFF is Standard and above, Guided being one order at a time (M77).
-  Checked: the live config is QAT_UI_LEVEL=professional, so nothing is lost.
-  The DEFAULT is "standard", so a config reset takes the deploy button with it.
-
-  AND BACK UP open_position_entries.json FIRST. The first launch of a build
-  containing M65 rewrites it for eight positions.
-
-Equity ~$101,245, ten positions — AMAT, AMD, CRWD, CSCO, GS, JNJ, MS, UNP,
-VRTX, WFC — all protected. One closed trade (CVS, −$482, −1.68R). 1,710 tests
-pass; ruff, black, mypy, bandit clean.
-
-LANDED AFTER THIS BLOCK WAS FIRST WRITTEN — M70, M72, M73, none deployed
-  M70  the residual half of M65, and the half startup could NOT heal. A lot
-       opened and closed inside one session never reaches the next startup, so
-       reconcile_entry_prices could not reach it and its ClosedTrade was
-       already written against a basis the account never paid. The true price
-       was arriving every poll in recent_fills and being discarded because the
-       order was ours. Two things it turned up: entry_slippage was ZERO BY
-       CONSTRUCTION on every entry ever opened, and M44 is scheduled to
-       measure the cost model with that instrument in September; and a partial
-       entry would have been corrected once and never again, because
-       _fill_query_floor reaches back past _absorbed_fills only and an order
-       this app sent is never absorbed.
-  M71  RECORDED, NOT FIXED. Same root cause on app-transmitted SELLS makes the
-       ClosedTrade's EXIT price wrong. Separate because fixing it means
-       rewriting a record already on disk. Read from the code, NOT yet
-       verified against a live transmitted sell - do that first.
-  M72  the Screener never said whether its figures were real. is_synthetic has
-       ridden on every snapshot since M18 and available_figures() passes it to
-       the LLM, so the AI Advisor knew the provenance and the operator did
-       not. Latent, not active: the live install runs yfinance with no
-       fallback warnings. Presets added, level-aware; saved custom screens
-       deferred deliberately.
-  M74  the Workbench consumed NO level, so every operator saw the walk-forward
-       panel and the DEPLOY CONTROL - the one control on that screen that
-       changes what the account does. Now Professional only; the deploy GATE
-       itself is untouched. Guided gets a notice rather than an emptied
-       screen. And the plain-language summary §4.5 lists for Standard was
-       never written - Standard got twelve KPI tiles in ALPHABETICAL order,
-       alpha first, with nothing to say which of them decides anything.
-  M75  RECORDED, NOT FIXED. The design system is half-migrated - see below.
-       M77 took two of its 25 sites (the Blotter's mode banner); 23 remain.
-  M76  ticker dropdowns sort alphabetically, on whichever screen they appear.
-       Sorted AT THE DROPDOWN, never in runtime.watchlist - the Risk Console
-       indexes that tuple positionally against its correlation matrix.
-  M77  the Blotter could not say WHY an order was refused. Eleven columns and
-       no reason field; Order carries no reason attribute and OMS._record
-       writes it to the decision journal instead. §4.2 says "do not touch the
-       reason text on a rejection" - there was none to touch. And
-       refusals.rail_of has turned §4.2's own example into plain language
-       since M51, read by the reporter and the Risk Console but never by the
-       screen where an operator meets a refused order. Guided now reads
-       "Position limit - the book was full - says nothing about the trade".
-  M73  §4.9 was wrong on BOTH claims. The advisory-only framing it says not to
-       touch existed only in a docstring, while the screen printed
-       [BUY, confidence=80%] in bold - inside an app that trades unattended.
-       And it fed the model var_95=0.0 when no risk check had run, eleven
-       lines above a prompt promising that unanswerable fields are "omitted
-       rather than zeroed".
-
-THE THING WITH A CLOCK
-MNST splits 2-for-1, ex-date Tuesday 11 August, and a buy for 8 shares is
-QUEUED at Alpaca for Monday's open. It is the first deliberate machinery test
-this project has run, and it exists for one measurement that cannot be
-reasoned about: what Alpaca does to a held quantity and to a resting stop
-through a split. M39's adjustment cannot be designed without it.
-
-  THE PROCEDURE IS docs/MNST_SPLIT_TEST.md. It is standalone and printed.
-  Follow that, not a reconstruction of it.
-
-  ORDER RE-CONFIRMED 11:36 UTC 8 August: one live order, buy market qty=8.0,
-  status=accepted, tif=gtc, no position yet - correct, it fills at the open.
-  Alpaca was returning 503 for several minutes earlier that evening and the
-  outage left the order untouched. Step 3 of the sheet re-checks the fill on
-  Monday regardless.
-
-  Three things from it that must not be lost:
-   - The app must NOT be running when the order fills. It does not track MNST,
-     will not absorb the fill, and the first reconciliation poll reads it as an
-     unexplained divergence and HALTS THE SESSION. Start the app ~15 minutes
-     after the open.
-   - The stop is placed on Monday as a separate sell order, not attached to
-     the buy. Alpaca refuses a stop below market on a BUY.
-   - Expect the position to be liquidated on Tuesday. Post-split MNST is near
-     $45.43 and the stop rests at $72.68, above the market. That is the M39
-     hazard and it is the RESULT, not a failure.
-
-  Tuesday's session will halt when the split lands until the anomaly is
-  declared in the Risk Console. That is M60 working, and its first live run.
-
-FOUND 8 AUGUST, NOT YET FIXED — M66, the more serious of the two
-The aggregate risk-at-stop that GATES EVERY NEW ENTRY is measured against ENTRY
-prices, not current ones. The app reports 5.02%; against current prices it is
-5.87%, on a 5.00% cap.
-
-  PortfolioGovernor.snapshot does `prices.get(symbol) or pos.avg_price`, and
-  avg_price is the broker's avg_entry_price. The `prices` argument is plumbed
-  through snapshot, evaluate and delever_fraction and NOTHING IN THE TRADING
-  PATH EVER PASSES IT - RiskEngine and DeleverSweep both omit it, and only
-  adopted.py (a display) supplies it. Not a stood-down artefact: every entry
-  decision this system has made used entry prices.
-
-  A WINNING BOOK UNDERSTATES ITS RISK, because a position that has gained has
-  further to fall to its stop. The bias grows with profit, backwards from
-  prudent. Same pattern as shows_advanced() before M63: a parameter plumbed
-  everywhere and supplied by nothing.
-
-  Inside the freeze - it changes which trades happen and how large. Interacts
-  with the market-data finding: whichever prices get passed should come from
-  the same feed decision or the fix bakes in the IEX bias. NOT BEFORE TUESDAY.
-  Verify with scripts/analysis/verify_gating_figures.py.
-
-M65 — FOUND AND FIXED 8 AUGUST, NOT DEPLOYED
-Fixed by SignalToOrderBridge.reconcile_entry_prices(), which asks the broker at
-startup BEFORE restore_open_lots rebuilds the ledger, and heals the eight
-records already on disk. Quarantined positions are never corrected, because a
-split changes avg_entry_price legitimately.
-
-  THE FIRST LAUNCH OF A BUILD CONTAINING THIS REWRITES
-  open_position_entries.json FOR EIGHT POSITIONS. Back that file up first, as
-  closed_trades.csv was before the CVS correction.
-
-  What it does NOT fix: _announce_fill still publishes the reference price at
-  "transmitted", so a lot created live inside a session carries it until the
-  next startup reconciles. See ROADMAP M65.
-
-  What it was: _announce_fill publishes when status is "filled" OR
-  "transmitted" and takes filled_price or reference_price. At transmit there is
-  no fill price, so it published the REFERENCE, and _on_fill stored it with
-  setdefault so the real fill could never replace it. 8 of 10 positions
-  differed, AMD by 141 bps. restore_open_lots uses entry.price as the lot's
-  cost basis, so P&L and the R-MULTIPLE DENOMINATOR were both wrong by that
-  drift - AMD's true risk per share is 7.3% larger than recorded - and both
-  feed the promotion gate and the September burst.
-
-  Invisible because CVS, the only closed trade, drifted 1.4 bps and is right by
-  luck. "A defect that corrupts the record is worse than one that stops the
-  session."
-
-WHAT LANDED 8 AUGUST
-  M59  a protective stop whose LEVEL moved was invisible
-  M60  the position-anomaly seam — reconciliation can be told a difference is
-       explained, and a position quarantined from the write path
-  M61  deliberate machinery testing as a posture; M54 exercised against a real
-       broker failure at last; entry_allow_list added
-  M62  a broker JSON payload fragmented one cause into 113 report rows
-  M63  Dashboard balances, two groups, level-aware
-  M64  Regime Monitor says which strategies the regime permits — and found an
-       asyncio.gather race doing it
-  M65  the entry record held the price we ASKED, not the price we PAID — found
-       and FIXED, and it heals the eight wrong records already on disk
-  M66  the risk cap gating every entry uses ENTRY prices — found and DESIGNED,
-       not built, because it is inside the freeze
-  M67  the Risk Console now answers "why was I refused", closing a forward
-       reference M64 created hours earlier
-  M68  its correlation table measured intraday ticks where the rail measures 60
-       daily bars, so a binding pair could not appear on it at all
-  M69  the walk-forward panel AND the Monte Carlo cone beside it stated no
-       caveat, on the screen that holds the DEPLOY GATE. Slicing manufactures
-       an entry per window, and the cone resamples the same too-short trade
-       sequence, so for a continuously-held strategy both describe the method
-       as much as the strategy. Both now name the count they were built from,
-       and self-suppress when it is healthy
-
-THE REFRAMING THAT CHANGED HOW WE WORK
-The trial does two conflicting jobs: collect edge evidence (wants a frozen
-configuration) and validate machinery (wants edge cases provoked). ROADMAP
-already settles which matters — the edge numbers will not transfer to the ASX
-and must be re-earned; the machinery is what transfers. So on a paper account
-rules MAY be varied to make a test possible, and the variation judged on its
-merits afterwards. What still constrains us is THE RECORD, not money: a later
-reader must be able to tell a real defect from a test artifact.
-
-WHAT IS BLOCKED ON WHAT
-  M39 detection/adjustment  — Tuesday's captures
-  M43 halts                 — needs a WEBSOCKET consumer. get_asset() reports
-                              status=active even for a halted symbol, because
-                              that is LISTING status; halts live on
-                              subscribe_trading_statuses on StockDataStream,
-                              which this app does not consume. It polls, for a
-                              documented reason that holds for prices and not
-                              for events.
-  M44, M51 analysis half    — September closed trades
-  M32 ASX                   — an IBKR question. Alpaca cannot reach the ASX
-                              under ANY subscription, so no Alpaca decision
-                              advances it.
-
-MARKET DATA — MEASURED, see docs/MARKET_DATA_FINDINGS.md
-This app runs on ALPACA IEX, not yfinance (an earlier handoff said otherwise
-and was wrong). Free tier: real-time is IEX only, but SIP HISTORICAL is free.
-
-  IEX sees a median 4.3% of consolidated volume and a 3.5% narrower daily
-  range. Daily bars are requested on the SAME feed as live ticks, so ATR is
-  ~3.9% understated - and ATR sets the stop distance, which sets the share
-  count. EVERY POSITION IS A MEDIAN 4% LARGER THAN INTENDED, 16% on CSCO.
-
-  Not a per-trade risk breach - the arithmetic is internally consistent. The
-  stops are too TIGHT for the real volatility, so they are hit more often than
-  the design assumes. For a trial measuring edge, that is a bias produced by
-  the feed rather than by the strategy, and September would carry it.
-
-  The fix is free: request daily bars on `sip`, leave live ticks on `iex`. But
-  it CHANGES POSITION SIZE, so it is inside the freeze and resets the two-week
-  baseline. DECIDE IT AFTER TUESDAY - nothing should change sizing between now
-  and the split measurement.
-
-GROUP 4, THE INTERFACE — COMPLETE
-Dashboard, Workbench, Regime Monitor, Risk Console, Screener, AI Advisor, the
-Order Blotter (M77), step 1 (M75, M78) and Performance (M79). Nothing in
-Group 4 is outstanding.
-
-  PERFORMANCE WAS BUILT NOW, NOT IN SEPTEMBER, and this handoff previously
-  said the opposite. §5 step 5 says "worth being good before there is
-  something to read", and §7 warns against the interface changing "underneath
-  the reading" - September is when the reading STARTS. Its Professional level
-  now carries the M37 diagnostics, which had never been displayed anywhere.
-
-  WATCH THE SLIPPAGE COLUMN when trades start closing. Until M70 it was zero
-  BY CONSTRUCTION, so a run of exact zeroes is that defect's fingerprint
-  rather than a frictionless fill - and it persists for every trade opened
-  before M70 reaches the account.
-
-  M77 also DECIDED AGAINST keyboard sign-off, which §4.2 lists for
-  Professional - recorded as decided rather than skipped. §4.2's own "do not
-  touch" line protects sign-off and reject as DISTINCT, DELIBERATE actions,
-  and an accelerator makes it less deliberate on the one screen where a
-  mis-key reaches the broker.
-
-  M75 finished step 1, which had been RECORDED AS DONE AND WAS HALF-DONE: 22
-  live raw-hex sites across five presentation modules, every one a theme.py
-  primitive written longhand, and settings.py hand-writing the exact string
-  theme.callout("warning") returns - which is why callout had ZERO consumers
-  until M72. Every colour is byte-identical; eleven sites move padding to the
-  4px rhythm. It is now GUARDED by a test that walks qat.presentation and
-  fails on a hex inside a string literal, because that is the only thing that
-  stops the next screen re-introducing one.
-
-  READ §4.x AS INTENT AND CHECK ITS PARTICULARS FIRST. UI_UX_APPROACH.md was
-  drafted against build M38 and its per-screen particulars were never
-  re-measured. EVERY OCCURRENCE IS IN THE REGISTER IN ROADMAP.md - "The two
-  patterns, and every occurrence of each". COUNT THE ROWS THERE; this line
-  used to assert a number and was one of five copies that drifted apart.
-
-  Three rules the finished screens established:
-   - THREE SETTINGS MUST PRODUCE THREE OUTCOMES. The Balances design reached
-     review rendering Guided and Standard identically because explains() is
-     true for both. M72 asserts the non-collapse as its own test.
-   - RENDER IT rather than trusting the suite. That found M63's orphaned grid
-     row and off-scale font, and M72's stranded filter labels - every test
-     passed through all three.
-   - ASK WHAT READS IT. shows_advanced() had no consumers from M45 until M63,
-     theme.callout had none until M72, and is_synthetic reached the language
-     model but never the operator until M72. Four instances now.
+BEFORE DEPLOYING
+  Back up open_position_entries.json - the first launch of a build with M65
+  rewrites it for eight positions.
+  The level model now gates real controls: Workbench deploy is Professional
+  only, Blotter bulk sign-off is Standard and above. Live config is
+  professional so nothing is lost, but the DEFAULT is standard.
+  App closed, Expand-Archive -Force, verify by hash, THEN LAUNCH. A hash
+  proves the right bytes landed, never that they run.
 
 CONSTRAINTS
-  Read %LOCALAPPDATA%\QuantAdvisoryTerminal via PowerShell ONLY, never Bash.
-  PowerShell 5.1 — use ; not && and @'...'@ here-strings, closing '@ at col 0.
+  READ %LOCALAPPDATA% VIA POWERSHELL, NEVER BASH. The Bash tool sees a
+  sandboxed copy frozen at 27 July, and PowerShell launched FROM Bash
+  inherits it, so the Monitor tool is blind too. A watcher armed there reads
+  a file that never changes - it does not error, it goes quiet, and quiet
+  looks exactly like healthy. Overnight watching must be a SCHEDULED PROMPT
+  using the PowerShell tool. Bash IS correct for the venv python and Alpaca
+  API calls - the sandbox is filesystem-only.
+  PowerShell 5.1 - use ; not && and @'...'@ here-strings, closing '@ col 0.
   Formats with black, not ruff format. Run ruff check ., black --check .,
-  mypy src, bandit -r src via the venv python — `invoke lint` uses a ruff that
-  is not on PATH.
-  EVERY TEST THAT BUILDS AN OMS MUST PASS ITS OWN data_dir — conftest sets
-  QAT_DATA_DIR session-wide and the anomaly store persists there, so one
-  declared anomaly leaks a quarantine into every later test.
-  A deploy needs the app closed, uses Expand-Archive -Force, is verified by
-  hash and THEN LAUNCHED. A hash proves the right bytes landed, never that
-  they run — M56a passed its hash check and could not start.
-  Plan → approval → implement → verify → commit → build. Build and sign
-  freely; ALWAYS ask before deploying, then pre-flight in daylight.
-
-AT THE OPEN — the startup lines that must appear
-  Build: M63+M62 (49482c2, ...)
-  Broker-fill watermark restored to ...
-  Restored 1 closed trade(s) from closed_trades.csv
-  Restored N open lot(s) to the trade ledger
-  Adopted N ... N carries a stop resting at the broker
-  REGIME ... shortly after the engine starts
-Their ABSENCE is the signal, not their content. On the MNST nights adoption
-should read ELEVEN, not ten.
-
-  & "C:\Claude Programming\.venv\Scripts\python.exe" "C:\Claude Programming\scripts\watch_session.py"
-
-EXPECT A QUIET SESSION
-Risk-at-stop is 5.02% against a 5.00% cap and the ten-position limit is full,
-so few or no new entries will be permitted — that is the rails working. A log
-that goes quiet is indistinguishable from an app that has died, so check that
-equity_curve.csv is still growing before concluding "nothing happened". The
-M56a crash produced exactly that signature.
+  mypy src, bandit -r src via the venv python.
+  EVERY TEST THAT BUILDS AN OMS MUST PASS ITS OWN data_dir.
+  Freeze: nothing lands that changes which trades happen or how large.
+  Reporting and logging are explicitly permitted, and a defect that corrupts
+  the record is FIX-IMMEDIATELY.
+  Plan -> approval -> implement -> verify -> commit -> build. ALWAYS ask
+  before deploying.
 
 THE HABITS THAT FOUND EVERYTHING
-Check the brief against reality — the Dashboard brief said the Balances panel
-was "most of them dashes"; the account reports ten of eleven, and the
-prescribed fix would have achieved nothing. A failing test is not
-automatically a bad fixture — M64's race surfaced as one failure in eighteen
-and looked exactly like a test that forgot to drive an engine. Verify a fix is
-NEEDED before making it — the report narrative had failed daily for a week and
-M56b had already fixed it. And ask what reads it: shows_advanced() had zero
-consumers from M45 until 8 August, which is the same pattern as the minimum
-hold, the expertise level and the M37 diagnostics.
+  CHECK THE BRIEF AGAINST THE CODE. §4.x described something that was not
+  there EIGHT TIMES across seven milestones - the register in ROADMAP.md
+  lists each one. Count the rows there; do not restate the number.
+  RENDER IT, do not trust the suite. Screenshotting found an orphaned grid
+  row, an off-scale font, stranded labels, "Grew -0.0% a year", a notice
+  floating in an empty screen and a truncated column. Every test passed.
+  ASK WHAT READS IT. Six values were computed and displayed nowhere. That one
+  now has a test.
+  TEST THE CLAIM, NOT THE ARITHMETIC. Every defect found on 11 August was in
+  a sentence that predicted or explained, never in a number.
+  DERIVE, DO NOT REMEMBER.
 ```
