@@ -187,6 +187,17 @@ class DashboardScreen(QWidget):
         if monitor is None:
             self.corporate_action_banner.setVisible(False)
             return
+        blind = monitor.unreadable_symbols()
+        if blind:
+            # The banner has to appear for this too. A silent Dashboard while the
+            # detector cannot see is indistinguishable from a quiet book.
+            self.corporate_action_banner.setText(
+                f"CORPORATE ACTIONS COULD NOT BE READ for {', '.join(blind)}. The split "
+                f"detector is blind on these - that is not the same as nothing being pending. "
+                f"Check the log."
+            )
+            self.corporate_action_banner.setVisible(True)
+            return
         pending = monitor.pending_actions()
         if not pending:
             self.corporate_action_banner.setVisible(False)

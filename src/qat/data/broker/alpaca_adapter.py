@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 from qat.config import Settings
@@ -80,6 +80,11 @@ _DEEP_SCAN_LIMIT = 500
 # accumulate. The cap exists so a pathological account cannot turn one sweep
 # into an unbounded walk, not because it is expected to bind.
 _DEEP_SCAN_MAX_PAGES = 5
+
+# Alpaca rejects a corporate-announcements query spanning more than this:
+#   ValidationError: Value error, The date range is limited to 90 days.
+# Measured against the live account on 12 August, by breaking it.
+_ANNOUNCEMENT_MAX_RANGE_DAYS = 90
 
 
 class AlpacaCredentialsMissingError(RuntimeError):
@@ -203,38 +208,60 @@ class AlpacaAdapter:
         Records missing a rate or an ex-date are skipped rather than guessed at.
         `ex_date` is the field everything downstream keys on, and a record
         without one cannot be acted on safely.
+
+        **Requested in windows of at most 90 days**, because Alpaca refuses a
+        wider range outright:
+
+            ValidationError: Value error, The date range is limited to 90 days.
+
+        Enforced here rather than by the caller choosing a small enough window.
+        The cap is Alpaca's constraint, so this is where it belongs - and the
+        caller getting it wrong is not hypothetical: widening the monitor's
+        lookback to 90 days made its total range 135, every query failed, and the
+        failure was a warning the monitor swallows by design, so the detector
+        went silently blind on all ten held symbols.
         """
         from alpaca.trading.enums import CorporateActionType
         from alpaca.trading.requests import GetCorporateAnnouncementsRequest
 
-        request = GetCorporateAnnouncementsRequest(
-            ca_types=[CorporateActionType.SPLIT],
-            since=since,
-            until=until,
-            symbol=symbol,
-        )
-        raw = await asyncio.to_thread(self._client.get_corporate_announcements, request)
         fetched_at = datetime.now(UTC)
         found: list[Announcement] = []
-        for record in raw or []:
-            old_rate = _as_float(getattr(record, "old_rate", None))
-            new_rate = _as_float(getattr(record, "new_rate", None))
-            ex_date = _as_date(getattr(record, "ex_date", None))
-            if not old_rate or not new_rate or ex_date is None:
-                logger.debug(
-                    "Skipping a %s announcement with no usable rate or ex-date: %r", symbol, record
-                )
-                continue
-            found.append(
-                Announcement(
-                    symbol=symbol,
-                    ex_date=ex_date,
-                    ratio=new_rate / old_rate,
-                    action_id=str(getattr(record, "id", "") or ""),
-                    payable_date=_as_date(getattr(record, "payable_date", None)),
-                    fetched_at=fetched_at,
-                )
+        seen: set[tuple[str, date]] = set()
+        for window_since, window_until in _announcement_windows(since, until):
+            request = GetCorporateAnnouncementsRequest(
+                ca_types=[CorporateActionType.SPLIT],
+                since=window_since,
+                until=window_until,
+                symbol=symbol,
             )
+            raw = await asyncio.to_thread(self._client.get_corporate_announcements, request)
+            for record in raw or []:
+                old_rate = _as_float(getattr(record, "old_rate", None))
+                new_rate = _as_float(getattr(record, "new_rate", None))
+                ex_date = _as_date(getattr(record, "ex_date", None))
+                if not old_rate or not new_rate or ex_date is None:
+                    logger.debug(
+                        "Skipping a %s announcement with no usable rate or ex-date: %r",
+                        symbol,
+                        record,
+                    )
+                    continue
+                # Deduped across windows on (symbol, ex_date), the same key the
+                # store uses: adjacent windows can both return a record whose
+                # dates straddle the boundary.
+                if (symbol, ex_date) in seen:
+                    continue
+                seen.add((symbol, ex_date))
+                found.append(
+                    Announcement(
+                        symbol=symbol,
+                        ex_date=ex_date,
+                        ratio=new_rate / old_rate,
+                        action_id=str(getattr(record, "id", "") or ""),
+                        payable_date=_as_date(getattr(record, "payable_date", None)),
+                        fetched_at=fetched_at,
+                    )
+                )
         return found
 
     async def resting_stops(self) -> dict[str, float]:
@@ -613,6 +640,25 @@ class AlpacaAdapter:
             "AlpacaAdapter provides execution and account state only; historical bars come "
             "from the configured MarketDataSource"
         )
+
+
+def _announcement_windows(since: date, until: date) -> list[tuple[date, date]]:
+    """Split a date range into pieces Alpaca will accept.
+
+    Inclusive of both ends, so a 90-day cap means `until - since` may be at most
+    89 days within one window. Returns one window for any range that already
+    fits, which is the ordinary case.
+    """
+    if until < since:
+        return []
+    span = _ANNOUNCEMENT_MAX_RANGE_DAYS - 1
+    windows: list[tuple[date, date]] = []
+    cursor = since
+    while cursor <= until:
+        end = min(cursor + timedelta(days=span), until)
+        windows.append((cursor, end))
+        cursor = end + timedelta(days=1)
+    return windows
 
 
 def _as_float(value: object) -> float:

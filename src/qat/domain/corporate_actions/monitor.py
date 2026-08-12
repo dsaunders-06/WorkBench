@@ -84,6 +84,13 @@ class CorporateActionMonitor:
         # by the date the suite happens to run.
         self.next_session = next_session or self._next_session_date
         self._pending: dict[str, PendingAction] = {}
+        # Symbols whose announcement query FAILED on the last pass. Tracked
+        # because "nothing is pending" and "I could not find out" are
+        # different facts, and a screen that reports the first when the second
+        # is true is asserting something false - which is what happened when
+        # a 135-day range broke every query and the Risk Console went on
+        # saying "none pending on held positions".
+        self._unreadable: set[str] = set()
         self._task: asyncio.Task[None] | None = None
 
     # --- the public face ------------------------------------------------------
@@ -95,6 +102,17 @@ class CorporateActionMonitor:
 
     def pending_actions(self) -> list[PendingAction]:
         return sorted(self._pending.values(), key=lambda a: (a.ex_date, a.symbol))
+
+    def unreadable_symbols(self) -> list[str]:
+        """Held symbols whose announcements could not be read on the last pass.
+
+        Non-empty means the detector is partly or wholly BLIND, and no screen may
+        report "none pending" while it is. The distinction matters because the
+        failure mode is quiet by design: the query failure is swallowed so one
+        bad sweep cannot end the session, and the fallback store is empty on a
+        first run.
+        """
+        return sorted(self._unreadable)
 
     # --- the engine -----------------------------------------------------------
 
@@ -315,6 +333,7 @@ class CorporateActionMonitor:
         exception here is logged and swallowed rather than allowed to end the
         pass - whatever was remembered on an earlier pass still applies.
         """
+        self._unreadable = set()
         today = datetime.now(UTC).date()
         since = today - timedelta(days=_LOOKBACK_DAYS)
         until = today + timedelta(days=_LOOKAHEAD_DAYS)
@@ -329,6 +348,7 @@ class CorporateActionMonitor:
                     type(exc).__name__,
                     exc,
                 )
+                self._unreadable.add(symbol)
                 continue
             for announcement in self.store.remember(found):
                 logger.warning(

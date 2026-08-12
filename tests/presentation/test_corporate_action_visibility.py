@@ -45,8 +45,9 @@ def _action(state: str = "shadowed", adjusted: float | None = 36.34) -> PendingA
 
 
 class _StubMonitor:
-    def __init__(self, actions: list[PendingAction]) -> None:
+    def __init__(self, actions: list[PendingAction], blind: list[str] | None = None) -> None:
         self._actions = actions
+        self._blind = blind or []
 
     def pending_actions(self) -> list[PendingAction]:
         return self._actions
@@ -54,12 +55,21 @@ class _StubMonitor:
     def pending_action(self, symbol: str) -> PendingAction | None:
         return next((a for a in self._actions if a.symbol == symbol), None)
 
+    def unreadable_symbols(self) -> list[str]:
+        return self._blind
 
-def _runtime(mode: str = "shadow", actions: list[PendingAction] | None = None) -> Runtime:
+
+def _runtime(
+    mode: str = "shadow",
+    actions: list[PendingAction] | None = None,
+    blind: list[str] | None = None,
+) -> Runtime:
     runtime = Runtime.build_demo(
         settings=Settings(_env_file=None, corporate_action_mode=mode, ui_level="professional")
     )
-    runtime.corporate_action_monitor = _StubMonitor(actions if actions is not None else [_action()])
+    runtime.corporate_action_monitor = _StubMonitor(
+        actions if actions is not None else [_action()], blind=blind
+    )
     return runtime
 
 
@@ -285,3 +295,43 @@ def test_every_text_area_on_this_screen_is_height_bounded(qtbot):
             f"{name} has no usable height bound, so an empty one will stretch to fill "
             f"the screen and read as a rendering fault"
         )
+
+
+# --- "could not find out" is not "nothing pending" (M39) ----------------------
+#
+# Found by deploying. A 135-day query range broke every announcement query -
+# Alpaca caps the range at 90 days - and because the monitor swallows that
+# failure by design and falls back to an empty store, the Risk Console went on
+# reporting "none pending on held positions". That statement was false, and
+# false in the direction that reassures.
+
+
+def test_the_risk_console_will_not_claim_none_pending_while_blind(qtbot):
+    screen = RiskConsoleScreen(_runtime(actions=[], blind=["AMAT", "CRWD"]))
+    qtbot.addWidget(screen)
+
+    text = screen.corporate_action_label.text()
+
+    assert "none pending" not in text
+    assert "COULD NOT BE READ" in text
+    assert "AMAT" in text and "CRWD" in text
+
+
+async def test_the_dashboard_banner_appears_when_the_detector_is_blind(qtbot):
+    """A silent Dashboard while the detector cannot see is indistinguishable
+    from a quiet book, which is the whole problem."""
+    screen = DashboardScreen(_runtime(actions=[], blind=["AMAT"]))
+    qtbot.addWidget(screen)
+
+    await screen._refresh()
+
+    assert screen.corporate_action_banner.isVisibleTo(screen)
+    assert "COULD NOT BE READ" in screen.corporate_action_banner.text()
+
+
+def test_a_readable_and_empty_book_still_says_none_pending(qtbot):
+    """The guard must not turn every quiet day into an alarm."""
+    screen = RiskConsoleScreen(_runtime(actions=[], blind=[]))
+    qtbot.addWidget(screen)
+
+    assert "none pending" in screen.corporate_action_label.text()

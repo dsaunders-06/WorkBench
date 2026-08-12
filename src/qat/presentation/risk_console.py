@@ -191,6 +191,18 @@ class RiskConsoleScreen(QWidget):
         """
         monitor = getattr(self.runtime, "corporate_action_monitor", None)
         pending = monitor.pending_actions() if monitor is not None else []
+        # "Could not find out" before "nothing pending", because reporting the
+        # second while the first is true is a checkably false statement - and it
+        # was one: a 135-day query range broke every announcement query while
+        # this label went on saying none were pending.
+        blind = monitor.unreadable_symbols() if monitor is not None else []
+        if blind:
+            self.corporate_action_label.setText(
+                f"Corporate actions: COULD NOT BE READ for {', '.join(blind)} - the detector "
+                f"is blind on these, which is not the same as nothing being pending. See the "
+                f"log for why the query failed."
+            )
+            return
         if not pending:
             self.corporate_action_label.setText(
                 "Corporate actions: none pending on held positions."

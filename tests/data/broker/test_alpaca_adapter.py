@@ -743,3 +743,79 @@ async def test_no_announcements_is_an_empty_list():
     adapter, _client = _adapter()
 
     assert await adapter.announcements("AMD", date(2026, 8, 1), date(2026, 9, 1)) == []
+
+
+# --- the 90-day cap on announcement queries (M39) -----------------------------
+#
+# Alpaca refuses a wider range outright:
+#   ValidationError: Value error, The date range is limited to 90 days.
+#
+# Found by breaking it against the live account: widening the monitor's lookback
+# to 90 days made its total range 135, every query failed, and because the
+# monitor swallows that failure by design and falls back to a persisted store,
+# the detector went SILENTLY BLIND on all ten held symbols. The cap is enforced
+# in the adapter now, where the constraint actually lives, so a caller widening
+# a window cannot reintroduce it.
+
+
+def test_a_range_inside_the_cap_is_one_request():
+    from qat.data.broker.alpaca_adapter import _announcement_windows
+
+    windows = _announcement_windows(date(2026, 8, 7), date(2026, 9, 26))
+
+    assert windows == [(date(2026, 8, 7), date(2026, 9, 26))]
+
+
+def test_a_range_over_the_cap_is_split_and_every_piece_fits():
+    from qat.data.broker.alpaca_adapter import _announcement_windows
+
+    windows = _announcement_windows(date(2026, 5, 14), date(2026, 9, 26))
+
+    assert len(windows) == 2
+    for start, end in windows:
+        assert (end - start).days + 1 <= 90
+
+
+def test_the_windows_are_contiguous_and_cover_the_whole_range():
+    """A gap between windows is a split that is never seen at all, which is worse
+    than the error this replaces - the error at least said something."""
+    from qat.data.broker.alpaca_adapter import _announcement_windows
+
+    since, until = date(2026, 1, 1), date(2026, 12, 31)
+    windows = _announcement_windows(since, until)
+
+    assert windows[0][0] == since
+    assert windows[-1][1] == until
+    for (_, earlier_end), (later_start, _) in zip(windows, windows[1:], strict=False):
+        assert (later_start - earlier_end).days == 1
+
+
+def test_an_inverted_range_asks_nothing():
+    from qat.data.broker.alpaca_adapter import _announcement_windows
+
+    assert _announcement_windows(date(2026, 9, 1), date(2026, 8, 1)) == []
+
+
+async def test_the_adapter_issues_one_request_per_window():
+    """The behaviour that actually broke: a 135-day range must reach Alpaca as
+    two acceptable queries rather than one it rejects."""
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement()]
+
+    await adapter.announcements("SFBS", date(2026, 5, 14), date(2026, 9, 26))
+
+    assert len(client.announcement_filters) == 2
+    for request in client.announcement_filters:
+        span = (request.until - request.since).days + 1
+        assert span <= 90, f"a request spanned {span} days, which Alpaca refuses"
+
+
+async def test_a_record_returned_by_two_windows_is_reported_once():
+    """The fake returns the same record for every window, which is the worst
+    case: without deduping, a straddling announcement becomes two actions."""
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement()]
+
+    found = await adapter.announcements("SFBS", date(2026, 5, 14), date(2026, 9, 26))
+
+    assert len(found) == 1

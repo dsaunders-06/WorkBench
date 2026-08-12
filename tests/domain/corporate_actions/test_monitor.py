@@ -266,3 +266,43 @@ async def test_the_ex_date_gate_alone_holds_once_the_window_stops_helping(tmp_pa
         "the announcement was never fetched, so this test would be proving the window "
         "rather than the gate - which is the thing it exists to distinguish"
     )
+
+
+# --- blindness is a state, not silence (M39) ------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_failed_query_is_reported_as_unreadable(tmp_path):
+    """The monitor swallows a query failure so one bad sweep cannot end the
+    session. That is right, and it is why the failure has to be VISIBLE as a
+    state - otherwise "nothing pending" and "could not find out" are the same
+    answer, and a broken query reads as a quiet book."""
+    broker, monitor, _oms = _monitor(tmp_path)
+    broker.raise_on_announcements = True
+
+    await monitor.refresh()
+
+    assert monitor.unreadable_symbols() == ["MNST"]
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_query_clears_the_unreadable_state(tmp_path):
+    """Otherwise one transient failure would leave the screens warning forever,
+    and a warning that never clears stops being read."""
+    broker, monitor, _oms = _monitor(tmp_path)
+    broker.raise_on_announcements = True
+    await monitor.refresh()
+
+    broker.raise_on_announcements = False
+    await monitor.refresh()
+
+    assert monitor.unreadable_symbols() == []
+
+
+@pytest.mark.asyncio
+async def test_a_successful_pass_reports_nothing_unreadable(tmp_path):
+    _broker, monitor, _oms = _monitor(tmp_path)
+
+    await monitor.refresh()
+
+    assert monitor.unreadable_symbols() == []
