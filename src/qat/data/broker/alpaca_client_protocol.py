@@ -31,3 +31,8 @@ class AlpacaClientProtocol(Protocol):
     # Used to verify that protective stops are actually resting (M31b), rather
     # than trusting the app's own record of what it attached.
     def get_orders(self, filter: Any = None) -> Any: ...  # noqa: A002 - alpaca-py's name
+
+    # Corporate actions (M39). The announcements endpoint is the ONLY usable
+    # detection source: queried through a real split, account activities
+    # returned SPLIT: 0, CSD: 0, DIV: 0.
+    def get_corporate_announcements(self, filter: Any = None) -> Any: ...  # noqa: A002

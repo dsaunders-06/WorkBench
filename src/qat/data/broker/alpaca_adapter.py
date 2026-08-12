@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Any, cast
 
 from qat.config import Settings
@@ -39,6 +39,7 @@ from qat.data.broker.adapter import (
     Position,
 )
 from qat.data.broker.alpaca_client_protocol import AlpacaClientProtocol
+from qat.domain.corporate_actions.announcements import Announcement
 from qat.security import get_secret
 
 logger = logging.getLogger(__name__)
@@ -179,6 +180,61 @@ class AlpacaAdapter:
             )
             for pos in raw
         ]
+
+    async def announcements(self, symbol: str, since: date, until: date) -> list[Announcement]:
+        """Corporate actions Alpaca has published for one symbol (M39).
+
+        **Per-symbol, filtered server-side.** `GetCorporateAnnouncementsRequest`
+        accepts a `symbol`, which is what makes this affordable - unfiltered the
+        endpoint returns roughly 1,600 records a year. It is also the only
+        reliable shape: `target_symbol` is absent on about 10% of records (32 of
+        291 reverse and 8 of 63 forward splits in an 88-day sample), so a
+        market-wide scan cannot attribute an announcement to a holding.
+
+        **Splits only.** M39 adjusts splits and nothing else; a spin-off or a
+        merger has no single ratio to apply, and this account has never
+        processed one.
+
+        A forward split is `old_rate=1.0, new_rate=4.0`, so the ratio is
+        `new/old`. A reverse split inverts it - `old_rate=1000.0, new_rate=1.0`
+        is a real observed shape and gives 0.001.
+
+        Records missing a rate or an ex-date are skipped rather than guessed at.
+        `ex_date` is the field everything downstream keys on, and a record
+        without one cannot be acted on safely.
+        """
+        from alpaca.trading.enums import CorporateActionType
+        from alpaca.trading.requests import GetCorporateAnnouncementsRequest
+
+        request = GetCorporateAnnouncementsRequest(
+            ca_types=[CorporateActionType.SPLIT],
+            since=since,
+            until=until,
+            symbol=symbol,
+        )
+        raw = await asyncio.to_thread(self._client.get_corporate_announcements, request)
+        fetched_at = datetime.now(UTC)
+        found: list[Announcement] = []
+        for record in raw or []:
+            old_rate = _as_float(getattr(record, "old_rate", None))
+            new_rate = _as_float(getattr(record, "new_rate", None))
+            ex_date = _as_date(getattr(record, "ex_date", None))
+            if not old_rate or not new_rate or ex_date is None:
+                logger.debug(
+                    "Skipping a %s announcement with no usable rate or ex-date: %r", symbol, record
+                )
+                continue
+            found.append(
+                Announcement(
+                    symbol=symbol,
+                    ex_date=ex_date,
+                    ratio=new_rate / old_rate,
+                    action_id=str(getattr(record, "id", "") or ""),
+                    payable_date=_as_date(getattr(record, "payable_date", None)),
+                    fetched_at=fetched_at,
+                )
+            )
+        return found
 
     async def resting_stops(self) -> dict[str, float]:
         """Stop orders actually working at the broker, by symbol (M31b).
@@ -555,6 +611,25 @@ def _as_float(value: object) -> float:
         return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0.0
+
+
+def _as_date(value: object) -> date | None:
+    """A date field off an alpaca model, which may be a date, a datetime, an ISO
+    string, or absent (M39).
+
+    None on anything unparseable rather than a guess. Every consumer of this
+    keys on `ex_date`, and a fabricated one would move a stop on the wrong day.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
 
 
 def _optional_float(value: object) -> float | None:

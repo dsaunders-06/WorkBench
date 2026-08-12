@@ -9,7 +9,7 @@ real Alpaca round-trip works - see the README for how to check that yourself.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
@@ -53,6 +53,14 @@ class FakeClient:
         # resting_stops bounds its query by the symbols actually held (M47),
         # so what the account holds is now part of the fixture.
         self.positions: list[object] = [FakePosition()]
+        # Corporate announcements (M39), with the filters recorded so a test can
+        # assert the query is bounded per-symbol rather than market-wide.
+        self.announcements: list[object] = []
+        self.announcement_filters: list[object] = []
+
+    def get_corporate_announcements(self, filter: object = None) -> list[object]:  # noqa: A002
+        self.announcement_filters.append(filter)
+        return self.announcements
 
     def get_account(self) -> FakeAccount:
         return FakeAccount()
@@ -635,3 +643,103 @@ async def test_the_deep_scan_stops_rather_than_walking_forever(monkeypatch, capl
     with caplog.at_level("WARNING"):
         assert await adapter.resting_stops() == {}
     assert "Gave up scanning AAPL" in caplog.text
+
+
+# --- corporate announcements (M39) --------------------------------------------
+#
+# The only usable detection source: queried through a real split, account
+# activities returned SPLIT: 0, CSD: 0, DIV: 0. The ratio arithmetic here is the
+# lethal part, so it is tested against the shapes actually observed.
+
+
+class FakeAnnouncement:
+    def __init__(
+        self,
+        old_rate: object = "1",
+        new_rate: object = "2",
+        ex_date: object = "2026-08-21",
+        payable_date: object = "2026-08-20",
+        announcement_id: str = "ca-1",
+    ) -> None:
+        self.old_rate = old_rate
+        self.new_rate = new_rate
+        self.ex_date = ex_date
+        self.payable_date = payable_date
+        self.id = announcement_id
+
+
+async def test_a_forward_split_ratio_is_new_over_old():
+    """old_rate=1, new_rate=2 is a 2-for-1, so the ratio is 2.0."""
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement(old_rate="1", new_rate="2")]
+
+    found = await adapter.announcements("SFBS", date(2026, 8, 1), date(2026, 9, 1))
+
+    assert [a.ratio for a in found] == [2.0]
+    assert found[0].ex_date == date(2026, 8, 21)
+
+
+async def test_a_reverse_split_inverts_the_ratio():
+    """old_rate=1000, new_rate=1 is a real observed shape and gives 0.001. An
+    earlier draft of the detector bounded the ratio at 0.01 and would have
+    thrown this away."""
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement(old_rate="1000", new_rate="1")]
+
+    found = await adapter.announcements("SFBS", date(2026, 8, 1), date(2026, 9, 1))
+
+    assert found[0].ratio == pytest.approx(0.001)
+
+
+async def test_the_query_is_bounded_by_symbol():
+    """target_symbol is absent on ~10% of records, so a market-wide scan cannot
+    attribute an announcement. The symbol filter is the design."""
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement()]
+
+    await adapter.announcements("SFBS", date(2026, 8, 1), date(2026, 9, 1))
+
+    assert getattr(client.announcement_filters[0], "symbol", None) == "SFBS"
+
+
+async def test_a_record_with_no_ex_date_is_skipped():
+    """ex_date is what everything downstream keys on. A fabricated one would
+    move a stop on the wrong day."""
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement(ex_date=None)]
+
+    assert await adapter.announcements("SFBS", date(2026, 8, 1), date(2026, 9, 1)) == []
+
+
+async def test_a_record_with_no_rates_is_skipped():
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement(old_rate=None, new_rate=None)]
+
+    assert await adapter.announcements("SFBS", date(2026, 8, 1), date(2026, 9, 1)) == []
+
+
+async def test_a_payable_date_before_the_ex_date_is_kept_as_is():
+    """CRWD's are 1 and 2 July. It is carried for the record; nothing keys on
+    it."""
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement(ex_date="2026-07-02", payable_date="2026-07-01")]
+
+    found = await adapter.announcements("CRWD", date(2026, 7, 1), date(2026, 8, 1))
+
+    assert found[0].ex_date == date(2026, 7, 2)
+    assert found[0].payable_date == date(2026, 7, 1)
+
+
+async def test_a_datetime_ex_date_is_narrowed_to_a_date():
+    adapter, client = _adapter()
+    client.announcements = [FakeAnnouncement(ex_date=datetime(2026, 8, 21, 13, 30, tzinfo=UTC))]
+
+    found = await adapter.announcements("SFBS", date(2026, 8, 1), date(2026, 9, 1))
+
+    assert found[0].ex_date == date(2026, 8, 21)
+
+
+async def test_no_announcements_is_an_empty_list():
+    adapter, _client = _adapter()
+
+    assert await adapter.announcements("AMD", date(2026, 8, 1), date(2026, 9, 1)) == []

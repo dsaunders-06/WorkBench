@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Literal, Protocol
 
+from qat.domain.corporate_actions.announcements import Announcement
+
 OrderStatus = Literal["new", "pending_signoff", "transmitted", "filled", "cancelled", "rejected"]
 
 
@@ -227,3 +229,11 @@ class BrokerAdapter(Protocol):
     # answer return an empty tuple, which reads as "unknown" rather than
     # "none" - see OMS.verify_position_stops.
     async def resting_stops(self) -> dict[str, float]: ...
+
+    # Optional (M39): corporate actions the broker has published for one symbol.
+    # Per-symbol rather than market-wide because `target_symbol` is absent on
+    # roughly 10% of records, so a scan cannot reliably attribute an
+    # announcement. Adapters that cannot answer return an empty list, which
+    # reads as "nothing known" - and the detector's persisted store is what
+    # stops a failed query on ex-date morning meaning "no split is coming".
+    async def announcements(self, symbol: str, since: date, until: date) -> list[Announcement]: ...

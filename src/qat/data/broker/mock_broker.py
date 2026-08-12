@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import random
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 from qat.data.broker.adapter import (
     AccountBalances,
@@ -17,6 +17,7 @@ from qat.data.broker.adapter import (
     Order,
     Position,
 )
+from qat.domain.corporate_actions.announcements import Announcement
 
 _STARTING_CASH = 100_000.0
 _SYNTHETIC_BASE_PRICE = 100.0
@@ -30,7 +31,24 @@ class MockBroker:
         self._resting_stops: dict[str, float | None] = {}
         self._resting_targets: dict[str, float | None] = {}
         self._broker_fills: list[BrokerFill] = []
+        # Empty by default and only ever filled by `queue_announcement` (M39). A
+        # mock that invented corporate actions from its price series would make
+        # every other test in the suite non-deterministic.
+        self._announcements: list[Announcement] = []
         self._cash = _STARTING_CASH
+
+    def queue_announcement(self, announcement: Announcement) -> None:
+        """Test seam. A corporate action cannot be derived from a price series,
+        so it is placed here explicitly."""
+        self._announcements.append(announcement)
+
+    async def announcements(self, symbol: str, since: date, until: date) -> list[Announcement]:
+        """Bounded on `ex_date`, which is the date the detector keys on. Bounding
+        on `payable_date` would be wrong for the same reason keying on it is:
+        CRWD's precedes its ex-date."""
+        return [
+            a for a in self._announcements if a.symbol == symbol and since <= a.ex_date <= until
+        ]
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
         price = self._synthetic_price(symbol)
