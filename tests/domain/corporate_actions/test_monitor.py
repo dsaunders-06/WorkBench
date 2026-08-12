@@ -219,3 +219,50 @@ async def test_a_new_announcement_is_announced_once_not_every_sweep(tmp_path, ca
 
     assert first == 1
     assert second == 1
+
+
+# --- the query window is a safety parameter (M39) ------------------------------
+
+
+def test_the_lookback_survives_an_outage_across_a_split():
+    """An ex-date older than the lookback is never FETCHED, so its stale stop is
+    never adjusted - the MNST failure with nothing to detect it.
+
+    A probe against the live account on 12 August showed the original 5 days
+    excluded CRWD's 2 July split by the WINDOW rather than by the ex-date gate,
+    which means an application down across a split for more than five days came
+    back blind to it. The bound is asserted rather than the constant, so a later
+    change that tightens it has to argue with this sentence.
+    """
+    from qat.domain.corporate_actions.monitor import _LOOKBACK_DAYS
+
+    assert _LOOKBACK_DAYS >= 60, (
+        "the lookback must cover a plausible outage across a split - below this, a "
+        "position comes back with a stale stop and nothing fetches the announcement "
+        "that would adjust it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_ex_date_gate_alone_holds_once_the_window_stops_helping(tmp_path):
+    """Now load-bearing, so it gets its own statement at monitor level.
+
+    With a 90-day lookback CRWD's 2 July announcement IS fetched, where the old
+    5-day window excluded it before the gate was ever consulted. The gate is the
+    only thing left preventing a correctly-sized position from having a correct
+    stop divided by four.
+    """
+    _broker, monitor, _oms = _monitor(
+        tmp_path,
+        # A CRWD-shaped case on the held symbol: the split predates the purchase.
+        announcements=[_split(ex_date=date(2026, 7, 2), ratio=4.0)],
+        next_session=date(2026, 8, 13),
+    )
+
+    found = await monitor.refresh()
+
+    assert found == []
+    assert monitor.store.for_symbol("MNST") != [], (
+        "the announcement was never fetched, so this test would be proving the window "
+        "rather than the gate - which is the thing it exists to distinguish"
+    )

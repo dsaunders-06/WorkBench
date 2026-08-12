@@ -237,3 +237,51 @@ def test_the_notes_always_say_entries_are_refused(qtbot, mode):
     qtbot.addWidget(screen)
 
     assert "refused" in screen._corporate_action_notes()[0]
+
+
+# --- where it sits, and how much room the neighbours take (M39, R1) -----------
+#
+# Both found by rendering the deployed build, and neither would have shown up in
+# any logic test.
+
+
+def test_the_corporate_action_line_is_above_the_quarantine_section(qtbot):
+    """R1 is about the state not being lost, and burying it under two buttons and
+    a text area is a way of losing it. It belongs with the refusals block,
+    because a pending split is one of the answers to the question that block
+    asks."""
+    screen = RiskConsoleScreen(_runtime())
+    qtbot.addWidget(screen)
+    layout = screen.layout()
+    assert layout is not None
+
+    def index_of(widget) -> int:
+        return next(i for i in range(layout.count()) if layout.itemAt(i).widget() is widget)
+
+    quarantine_header = next(
+        layout.itemAt(i).widget()
+        for i in range(layout.count())
+        if isinstance(layout.itemAt(i).widget(), type(screen.anomaly_caption))
+        and layout.itemAt(i).widget().text() == "Quarantined positions"
+    )
+
+    assert index_of(screen.corporate_action_label) < index_of(quarantine_header)
+
+
+def test_every_text_area_on_this_screen_is_height_bounded(qtbot):
+    """The quarantine list was the only one without a cap, so with nothing
+    quarantined - the normal case - it was the widget the layout stretched, and
+    one line of good news sat in a box spanning most of the screen.
+
+    Asserted across all of them rather than just the one that bit, because the
+    next unbounded text area added here would do exactly the same thing.
+    """
+    screen = RiskConsoleScreen(_runtime())
+    qtbot.addWidget(screen)
+
+    for name in ("refusal_detail", "audit_log", "anomaly_list"):
+        area = getattr(screen, name)
+        assert 0 < area.maximumHeight() < 400, (
+            f"{name} has no usable height bound, so an empty one will stretch to fill "
+            f"the screen and read as a rendering fault"
+        )

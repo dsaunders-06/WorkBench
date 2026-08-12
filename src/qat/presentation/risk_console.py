@@ -98,6 +98,17 @@ class RiskConsoleScreen(QWidget):
         self.audit_log.setVisible(self.level.prefers_density())
         layout.addWidget(self.audit_log)
 
+        # Pending corporate actions, directly under the refusals block because a
+        # pending split is one of the answers to the question that block asks
+        # (M39, R1). It was below the quarantine controls, which put the most
+        # time-critical fact on this screen underneath two buttons and a text
+        # area - found by rendering the deployed build.
+        self.corporate_action_label = QLabel("")
+        self.corporate_action_label.setWordWrap(True)
+        self.corporate_action_label.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        layout.addWidget(self.corporate_action_label)
+        self._refresh_corporate_actions()
+
         layout.addWidget(QLabel("Quarantined positions"))
         self.anomaly_caption = QLabel(
             "A declared anomaly explains a difference so the session is not halted. It does "
@@ -108,6 +119,12 @@ class RiskConsoleScreen(QWidget):
         layout.addWidget(self.anomaly_caption)
         self.anomaly_list = QPlainTextEdit()
         self.anomaly_list.setReadOnly(True)
+        # Bounded like every other text area on this screen. It was the only one
+        # without a cap, so with nothing quarantined - the normal case - it was
+        # the widget the layout stretched, and "No quarantined positions." sat in
+        # the middle of an empty box spanning most of the screen. That reads as a
+        # rendering fault rather than as good news, which is the M74 complaint.
+        self.anomaly_list.setMaximumHeight(110)
         layout.addWidget(self.anomaly_list)
 
         anomaly_row = QHBoxLayout()
@@ -119,15 +136,6 @@ class RiskConsoleScreen(QWidget):
         anomaly_row.addWidget(self.clear_anomaly_button)
         layout.addLayout(anomaly_row)
         self._refresh_anomalies()
-
-        # Pending corporate actions, with the detail the Dashboard banner has no
-        # room for (M39, R1). This is the screen that answers "why was I
-        # refused", and a pending split is now one of the answers.
-        self.corporate_action_label = QLabel("")
-        self.corporate_action_label.setWordWrap(True)
-        self.corporate_action_label.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
-        layout.addWidget(self.corporate_action_label)
-        self._refresh_corporate_actions()
 
         # Which pairs actually BIND, from the rail rather than from this
         # screen's own arithmetic. The matrix below correlates ~60 intraday

@@ -30,10 +30,24 @@ logger = logging.getLogger(__name__)
 
 DECLARED_BY = "corporate-action-monitor"
 
-# How far either side of today to ask about. Backwards a little because an
-# ex-date that has just passed still leaves a stale stop needing adjustment;
-# forwards far enough that a split is known about well before it lands.
-_LOOKBACK_DAYS = 5
+# How far either side of today to ask about.
+#
+# **The lookback is a SAFETY parameter, not a performance one.** An ex-date more
+# than this far in the past is never fetched, so its stale stop is never
+# adjusted - which is the MNST failure with nothing to detect it. It was 5 days,
+# and a probe against the live account on 12 August showed what that means in
+# practice: CRWD's 2 July split was excluded by the WINDOW rather than by the
+# ex-date gate, so an application down across a split for more than five days
+# would come back blind to it.
+#
+# 90 days costs nothing to widen - the query is bounded per SYMBOL, and Alpaca
+# returns a handful of records for one symbol over a quarter either way. What it
+# does change is that the ex-date gate in `SplitDetector` is now the ONLY thing
+# keeping a correctly-sized position like CRWD from being adjusted a second
+# time, where before the window happened to exclude it too. That gate is tested
+# at both unit and monitor level, deliberately, because it is now load-bearing
+# rather than a second line of defence.
+_LOOKBACK_DAYS = 90
 _LOOKAHEAD_DAYS = 45
 
 # Share counts are whole numbers at every broker this app talks to, so this is
