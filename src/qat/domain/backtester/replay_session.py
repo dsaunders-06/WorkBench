@@ -36,7 +36,7 @@ from datetime import UTC, datetime
 import pandas as pd
 
 from qat.config import Settings
-from qat.data.bars import Bar, floor_to_interval
+from qat.data.bars import BAR_COLUMNS, Bar, floor_to_interval
 from qat.data.broker.simulated_broker import SimulatedBroker
 from qat.data.fundamentals import MockFundamentalsSource
 from qat.domain.autonomy.executor import AutonomousExecutor
@@ -64,9 +64,11 @@ class ReplaySession:
         bars: dict[str, pd.DataFrame],
         strategies: Sequence[object],
         settings: Settings,
+        warm_bars: int = 60,
     ) -> None:
         self.bars = bars
         self.settings = settings
+        self.warm_bars = warm_bars
         self.bus = EventBus()
         self.kill_switch = KillSwitch()
         self.cost_model = CostModel.from_settings(settings)
@@ -105,6 +107,39 @@ class ReplaySession:
             settings=settings,
             retry_interval_seconds=_INERT_RETRY_SECONDS,
         )
+        self._warm_start()
+
+    def _warm_start(self) -> None:
+        """Seed both buffers with a prefix, and start the clock after it.
+
+        Without this the first ~50 replayed days are blind - a 50-EMA needs 50
+        bars - so the front of every measured period is systematically quiet
+        and the quiet is an artefact of the instrument rather than the market.
+
+        `seed` refuses once any bar exists, which is why the prefix cannot
+        simply be primed like any other day: seeded history must sit strictly
+        before anything live, and that rule is the aggregator's, not this
+        module's.
+        """
+        if self.warm_bars <= 0:
+            return
+        start = min(self.warm_bars, len(self.broker.session_dates) - 1)
+        as_of = self.broker.session_dates[start].to_pydatetime()
+        for symbol, frame in self.bars.items():
+            prefix = frame.iloc[:start]
+            if prefix.empty:
+                continue
+            seeded = prefix.reset_index()
+            seeded = seeded.rename(columns={seeded.columns[0]: "ts"})
+            if "volume" not in seeded.columns:
+                seeded["volume"] = 0.0
+            seeded = seeded[list(BAR_COLUMNS)]
+            self.engine.bars.seed(symbol, seeded, now=as_of)
+            self.bridge.bars.seed(symbol, seeded, now=as_of)
+        # The replayed period begins where the warm prefix ends. A day that has
+        # been seeded must not also be primed, or it is counted twice - and a
+        # duplicated day silently doubles its weight in every rolling window.
+        self.broker._index = start
 
     def _simulated_now(self) -> datetime:
         """Mid-session on the day being replayed.

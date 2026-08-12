@@ -99,3 +99,19 @@ async def test_a_signal_becomes_an_order_at_the_broker(tmp_path):
     submitted = list(session.broker._orders.values())
     assert submitted, "the production path produced no order at all"
     assert all(o.symbol == "AAA" for o in submitted)
+
+
+@pytest.mark.asyncio
+async def test_the_buffers_are_warm_before_the_first_replayed_day(tmp_path):
+    """Without a warm start the first ~50 days are blind, so the front of every
+    measured window is systematically quiet - an artefact of the instrument
+    rather than anything the market did."""
+    session = ReplaySession(
+        bars={"AAA": _trending_bars()},
+        strategies=[SwingStrategy()],
+        settings=_settings(tmp_path),
+        warm_bars=60,
+    )
+
+    assert len(session.engine.bars.frame("AAA")) >= 60, "seeded before day one"
+    assert len(session.bridge.bars.frame("AAA")) >= 60
