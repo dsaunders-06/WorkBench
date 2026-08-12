@@ -91,6 +91,7 @@ class SimulatedBroker:
         if self._index + 1 >= len(self.session_dates):
             return False
         self._index += 1
+        self._fill_pending_entries()
         return True
 
     def _bar(self, symbol: str) -> pd.Series | None:
@@ -197,7 +198,63 @@ class SimulatedBroker:
     # --- writes -------------------------------------------------------------
 
     async def place_order(self, order: Order) -> Order:
-        raise NotImplementedError("Task 2")
+        """Queued, never filled here. A market order placed against a closed
+        bar reaches the market at the next open, and the app's own sizing was
+        computed from that closed bar - so filling now would hand the strategy
+        a price it could not have traded at."""
+        self._orders[order.order_id] = order
+        if order.is_protective_stop:
+            order.status = "transmitted"
+            self._resting_stops[order.symbol] = order.stop_price
+            if order.take_profit_price is not None:
+                self._resting_targets[order.symbol] = order.take_profit_price
+            return order
+        order.status = "transmitted"
+        self._pending.append(order)
+        return order
+
+    def _fill_pending_entries(self) -> None:
+        still_pending: list[Order] = []
+        for order in self._pending:
+            bar = self._bar(order.symbol)
+            if bar is None or bar.name != self.current_date:
+                # No bar for this symbol today - the order waits rather than
+                # filling at a stale price from an earlier session.
+                still_pending.append(order)
+                continue
+            fill_price = self._slipped(float(bar["open"]), order.side)
+            order.status = "filled"
+            order.filled_price = fill_price
+            self._apply_fill(order, fill_price)
+            if order.is_bracket and order.side == "buy":
+                self._resting_stops[order.symbol] = order.stop_price
+                self._resting_targets[order.symbol] = order.take_profit_price
+            elif order.side == "sell":
+                self._resting_stops.pop(order.symbol, None)
+                self._resting_targets.pop(order.symbol, None)
+        self._pending = still_pending
+
+    def _slipped(self, price: float, side: str) -> float:
+        """Slippage always moves the fill AGAINST the order."""
+        drift = price * (self.cost_model.slippage_bps / 10_000.0)
+        return price + drift if side == "buy" else price - drift
+
+    def _apply_fill(self, order: Order, fill_price: float) -> None:
+        signed_qty = order.quantity if order.side == "buy" else -order.quantity
+        self._cash -= signed_qty * fill_price
+        existing = self._positions.get(order.symbol)
+        if existing is None:
+            self._positions[order.symbol] = Position(
+                symbol=order.symbol, quantity=signed_qty, avg_price=fill_price
+            )
+            return
+        new_qty = existing.quantity + signed_qty
+        if abs(new_qty) < 1e-9:
+            self._positions.pop(order.symbol, None)
+            return
+        self._positions[order.symbol] = Position(
+            symbol=order.symbol, quantity=new_qty, avg_price=fill_price
+        )
 
     async def modify_order(self, order_id: str, **changes: object) -> Order:
         order = self._orders[order_id]
