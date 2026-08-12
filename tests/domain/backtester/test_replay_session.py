@@ -113,5 +113,10 @@ async def test_the_buffers_are_warm_before_the_first_replayed_day(tmp_path):
         warm_bars=60,
     )
 
+    # Awaited directly rather than through run(): the assertion is that the
+    # buffers are full BEFORE the first replayed day, and a completed run would
+    # satisfy the same counts from replayed bars alone.
+    await session._warm_start()
+
     assert len(session.engine.bars.frame("AAA")) >= 60, "seeded before day one"
     assert len(session.bridge.bars.frame("AAA")) >= 60

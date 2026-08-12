@@ -36,20 +36,24 @@ from datetime import UTC, datetime
 import pandas as pd
 
 from qat.config import Settings
-from qat.data.bars import BAR_COLUMNS, Bar, floor_to_interval
+from qat.data.bars import Bar, floor_to_interval
 from qat.data.broker.simulated_broker import SimulatedBroker
 from qat.data.fundamentals import MockFundamentalsSource
+from qat.data.macro_fred import MacroObservation
 from qat.domain.autonomy.executor import AutonomousExecutor
 from qat.domain.autonomy.gate import AutonomyGate
 from qat.domain.backtester.costs import CostModel
+from qat.domain.backtester.replay_sources import ReplayHistorySource, ReplayMacroSource
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal
 from qat.domain.events import MarketDataEvent
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
+from qat.domain.regime_engine.engine import RegimeEngine
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 from qat.domain.strategies.engine import StrategyEngine
+from qat.domain.warm_start import WarmStart
 
 _DAILY_SECONDS = 86_400.0
 # The executor's retry loop is wall-clock driven and has no meaning in a replay
@@ -65,10 +69,14 @@ class ReplaySession:
         strategies: Sequence[object],
         settings: Settings,
         warm_bars: int = 60,
+        macro: dict[str, list[MacroObservation]] | None = None,
+        benchmark: str = "SPY",
     ) -> None:
         self.bars = bars
         self.settings = settings
         self.warm_bars = warm_bars
+        self._macro = macro or {}
+        self.benchmark = benchmark
         self.bus = EventBus()
         self.kill_switch = KillSwitch()
         self.cost_model = CostModel.from_settings(settings)
@@ -103,6 +111,12 @@ class ReplaySession:
             # to measure whether rails help.
             clock=self._simulated_now,
         )
+        self.regime_engine = RegimeEngine(
+            self.bus,
+            benchmark_symbol=benchmark,
+            breadth_symbols=tuple(bars),
+            bar_interval_seconds=_DAILY_SECONDS,
+        )
         self.journal = DecisionJournal(settings.data_dir)
         self.executor = AutonomousExecutor(
             self.bus,
@@ -112,38 +126,40 @@ class ReplaySession:
             settings=settings,
             retry_interval_seconds=_INERT_RETRY_SECONDS,
         )
-        self._warm_start()
 
-    def _warm_start(self) -> None:
-        """Seed both buffers with a prefix, and start the clock after it.
+    async def _warm_start(self) -> None:
+        """Seed every buffer AND the regime engine, through the production path.
 
-        Without this the first ~50 replayed days are blind - a 50-EMA needs 50
-        bars - so the front of every measured period is systematically quiet
-        and the quiet is an artefact of the instrument rather than the market.
+        `WarmStart` is what the live application runs, and it already seeds the
+        aggregators plus the regime engine from two ports. A second warm path
+        here would be the duplication this whole harness exists to avoid, and
+        would drift from the live one the first time either changed.
 
-        `seed` refuses once any bar exists, which is why the prefix cannot
-        simply be primed like any other day: seeded history must sit strictly
-        before anything live, and that rule is the aggregator's, not this
-        module's.
+        The regime engine's own seed is point-in-time correct: it pairs each
+        bar with `macro.as_of(series, ts)` rather than one constant reading,
+        which is both look-ahead-safe and the reason its covariance matrix is
+        not singular. `min_fit_bars` is 60 DAILY bars - roughly three months,
+        the window over which VIX and credit spreads genuinely move - so a warm
+        prefix shorter than that leaves the regime defaulted rather than
+        measured.
         """
         if self.warm_bars <= 0:
             return
         start = min(self.warm_bars, len(self.broker.session_dates) - 1)
-        as_of = self.broker.session_dates[start].to_pydatetime()
-        for symbol, frame in self.bars.items():
-            prefix = frame.iloc[:start]
-            if prefix.empty:
-                continue
-            seeded = prefix.reset_index()
-            seeded = seeded.rename(columns={seeded.columns[0]: "ts"})
-            if "volume" not in seeded.columns:
-                seeded["volume"] = 0.0
-            seeded = seeded[list(BAR_COLUMNS)]
-            self.engine.bars.seed(symbol, seeded, now=as_of)
-            self.bridge.bars.seed(symbol, seeded, now=as_of)
-        # The replayed period begins where the warm prefix ends. A day that has
-        # been seeded must not also be primed, or it is counted twice - and a
-        # duplicated day silently doubles its weight in every rolling window.
+        warm = WarmStart(
+            ReplayHistorySource(self.bars, until_index=start),
+            ReplayMacroSource(self._macro, until=self.broker.session_dates[start].to_pydatetime()),
+            symbols=tuple(self.bars),
+            benchmark_symbol=self.benchmark,
+            aggregators=(self.engine.bars, self.bridge.bars),
+            regime_engine=self.regime_engine,
+            macro_series=tuple(self._macro),
+            n_bars=start,
+        )
+        await warm.seed()
+        # The replayed period begins where the warm prefix ends. A day both
+        # seeded and primed is counted twice, and a duplicated day silently
+        # doubles its weight in every rolling window computed from it.
         self.broker._index = start
 
     def _simulated_now(self) -> datetime:
@@ -172,6 +188,8 @@ class ReplaySession:
         )
 
     async def run(self) -> None:
+        await self._warm_start()
+        await self.regime_engine.start()
         await self.engine.start()
         await self.bridge.start()
         await self.executor.start()
@@ -184,6 +202,7 @@ class ReplaySession:
             await self.executor.stop()
             await self.bridge.stop()
             await self.engine.stop()
+            await self.regime_engine.stop()
 
     async def _one_day(self) -> None:
         today = self.broker.current_date
