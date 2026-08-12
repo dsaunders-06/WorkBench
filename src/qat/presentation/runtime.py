@@ -203,6 +203,17 @@ def resolve_market_data_source(settings: Settings) -> MarketDataSource:
     return SyntheticMarketDataSource(seed=1, interval_seconds=1.0)
 
 
+class BrokerNotAvailableError(RuntimeError):
+    """A broker was configured that cannot be built, where substituting a
+    different one would be worse than not starting.
+
+    Deliberately NOT raised for the alpaca path: a missing key there is a
+    configuration problem and degrading to MockBroker with a warning keeps the
+    operator in the application (spec M12). It IS raised for a broker that was
+    never wired at all, because the fallback is indistinguishable from success.
+    """
+
+
 def resolve_broker(settings: Settings) -> BrokerAdapter:
     """Builds the configured broker, falling back to MockBroker with a logged
     warning rather than failing to start (spec M12).
@@ -227,11 +238,17 @@ def resolve_broker(settings: Settings) -> BrokerAdapter:
             logger.warning("Could not build the Alpaca broker (%s) - using MockBroker", exc)
             return MockBroker(seed=1)
     if settings.broker == "ibkr":
-        logger.warning(
-            "broker=ibkr is configured but IBAdapter needs a running Gateway/TWS and is not "
-            "auto-wired here - using MockBroker"
+        from qat.data.broker.capabilities import KNOWN_ADAPTERS, inspect_adapter
+
+        absent = sorted(inspect_adapter(KNOWN_ADAPTERS()["ibkr"]).missing_optional)
+        raise BrokerNotAvailableError(
+            "broker=ibkr is configured, but IBAdapter is not auto-wired here: it needs a "
+            "running Gateway/TWS session, and it does not implement "
+            f"{', '.join(absent) if absent else 'the full protocol yet'}. "
+            "Returning MockBroker would mean trading against a simulator while believing "
+            "the destination broker was connected. Set broker=mock deliberately if that is "
+            "what you want."
         )
-        return MockBroker(seed=1)
     return MockBroker(seed=1)
 
 
