@@ -461,13 +461,15 @@ ALSO FOUND, NOT FIXED
 STATE - 12 August, afternoon
 Deployed build is M86 (7812c22). HEAD is 5480452 and the DEPLOY GAP IS 2
 milestones across 13 commits - M39 and M87 - all of it BUILT, SIGNED AND ZIPPED
-but NOT YET INSTALLED. Repo clean and pushed. 1,952 tests collected.
+but NOT YET INSTALLED. Repo clean and pushed.
 
-  STAGED AND WAITING: dist\QuantAdvisoryTerminal-M39b.zip
-  new exe  A70A22E1...B6A48FE      outgoing  8E030C66...20157C7
-  Expand-Archive -Force over C:\QuantAdvisoryTerminal, verify by hash, LAUNCH.
-  The permission classifier REFUSES the expand step, so the operator runs it.
-  Data already backed up: data-backup-20260812-133956-PRE-M39-DEPLOY.
+  THE INSTALLED BUILD (A70A22E1) HAS A BROKEN ANNOUNCEMENTS QUERY. Its lookback
+  made the range 135 days and Alpaca caps it at 90, so every query fails and the
+  DETECTOR IS BLIND - and the build says "none pending" while it is. Fixed in
+  HEAD by splitting the range in the adapter. RE-DEPLOY BEFORE TRUSTING M39.
+  Run handoff_state.py for the current gap; the staged zip is named in the deploy
+  section above. The permission classifier REFUSES the expand step, so the
+  operator runs it. Data backup: data-backup-20260812-133956-PRE-M39-DEPLOY.
 
 Ten positions held, 10 of 10 protected, Adopted 10 not 11. TWO closed trades
 (CVS -482.18 -1.68R; MNST -375.23, unattributed - and it STAYS unattributed,
