@@ -129,5 +129,15 @@ def KNOWN_ADAPTERS() -> dict[str, type]:  # noqa: N802 - a registry, named as on
     from qat.data.broker.alpaca_adapter import AlpacaAdapter
     from qat.data.broker.ib_adapter import IBAdapter
     from qat.data.broker.mock_broker import MockBroker
+    from qat.data.broker.simulated_broker import SimulatedBroker
 
-    return {"alpaca": AlpacaAdapter, "ibkr": IBAdapter, "mock": MockBroker}
+    # `simulated` is not selectable as `broker=` in config - it needs bars and a
+    # clock, which no resolver can supply. It is registered because the audit is
+    # the point: a harness missing a capability the live path depends on must
+    # fail a test rather than quietly measure a book it never verified.
+    return {
+        "alpaca": AlpacaAdapter,
+        "ibkr": IBAdapter,
+        "mock": MockBroker,
+        "simulated": SimulatedBroker,
+    }
