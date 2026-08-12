@@ -56,3 +56,36 @@ async def test_several_symbols_share_one_book(tmp_path):
     orders = {o.symbol for o in session.broker._orders.values()}
     assert orders, "the production path produced no order across three symbols"
     assert held <= {"AAA", "BBB", "CCC"}
+
+
+@pytest.mark.asyncio
+async def test_the_position_limit_refuses_an_entry_and_says_so(tmp_path):
+    """The first rail observation the harness can make, and the point of step 3.
+
+    With the limit at one, a second symbol's valid setup must be refused BY THE
+    GOVERNOR, and the refusal must be visible in the journal rather than
+    inferred from silence. Until this works, no ablation means anything - the
+    difference between a rail on and a rail off cannot be read from a run that
+    cannot show the rail acting.
+    """
+    bars = {
+        "AAA": _bars_with_pullback_at(120),
+        "BBB": _bars_with_pullback_at(124),  # while AAA is still held
+    }
+    settings = _settings(tmp_path).model_copy(update={"max_concurrent_positions": 1})
+    session = ReplaySession(bars=bars, strategies=[SwingStrategy()], settings=settings)
+
+    await session.run()
+
+    entered = sorted(o.symbol for o in session.broker._orders.values())
+    assert entered == ["AAA"], f"only the first setup should reach the broker, got {entered}"
+
+    # risk_decisions.csv, not decision_journal.csv. The journal records the
+    # SIGN-OFF path - what was transmitted and why it was allowed. Which rail
+    # bound, and against what inputs, is a different question and has its own
+    # ledger. A test looking in the journal would find silence and call it a
+    # refusal, which is the failure this whole harness exists to avoid.
+    decisions = (tmp_path / "risk_decisions.csv").read_text(encoding="utf-8")
+    assert (
+        "already at the 1-position limit" in decisions
+    ), "the governor's refusal must be recorded by name, not inferred from an absence"
