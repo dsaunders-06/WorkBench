@@ -46,7 +46,7 @@ from qat.domain.backtester.costs import CostModel
 from qat.domain.backtester.replay_sources import ReplayHistorySource, ReplayMacroSource
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal
-from qat.domain.events import MarketDataEvent
+from qat.domain.events import MacroEvent, MarketDataEvent
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
 from qat.domain.regime_engine.engine import RegimeEngine
@@ -60,6 +60,22 @@ _DAILY_SECONDS = 86_400.0
 # that crosses a decade in seconds. Pushed out of the way rather than disabled,
 # so the production object is used exactly as it ships.
 _INERT_RETRY_SECONDS = 86_400.0
+
+
+def _as_of(observations: list[MacroObservation], when: datetime) -> float | None:
+    """The reading current on `when`, carried forward rather than interpolated.
+
+    MacroHistory's rule, applied to the live half of the replay so both halves
+    agree: a series publishing on Friday is genuinely the market's best
+    information all weekend, where an interpolated value is a number nobody
+    could have seen.
+    """
+    latest: float | None = None
+    for observation in observations:
+        if observation.ts > when:
+            break
+        latest = observation.value
+    return latest
 
 
 class ReplaySession:
@@ -206,6 +222,14 @@ class ReplaySession:
 
     async def _one_day(self) -> None:
         today = self.broker.current_date
+        # Macro first, and every day. Seeding fills the matrix to the boundary;
+        # after that the FRED columns freeze unless they keep arriving, and a
+        # constant column across a decade is the singular covariance that made
+        # the fit return NaN on 28 July - the same failure by a slower route.
+        for series, observations in self._macro.items():
+            value = _as_of(observations, today.to_pydatetime())
+            if value is not None:
+                await self.bus.publish(MacroEvent(series=series, value=value))
         for symbol, frame in self.bars.items():
             if today not in frame.index:
                 continue
