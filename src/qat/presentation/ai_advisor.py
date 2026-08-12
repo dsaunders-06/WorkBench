@@ -152,6 +152,32 @@ class AiAdvisorScreen(QWidget):
             return {}
         return snapshot.available_figures()
 
+    def _corporate_action_notes(self) -> list[str]:
+        """Pending corporate actions, into the context the model reasons from
+        (M39, R2).
+
+        The reason this is not optional: the model is asked about positions, and
+        a pending split means a share count and a per-share price are both about
+        to change. Advice about a position whose shape is about to move, given
+        without knowing that, is confidently wrong - and `is_synthetic` is the
+        precedent for a fact reaching the model late rather than never.
+        """
+        monitor = getattr(self.runtime, "corporate_action_monitor", None)
+        pending = monitor.pending_actions() if monitor is not None else []
+        if not pending:
+            return []
+        mode = self.runtime.settings.corporate_action_mode
+        return [
+            f"CORPORATE ACTION PENDING: {a.describe()}. The resting stop is "
+            + (
+                f"adjusted to {a.adjusted_stop:.2f}."
+                if a.state == "applied" and a.adjusted_stop is not None
+                else f"NOT adjusted (mode={mode})."
+            )
+            + " New entries in this symbol are refused."
+            for a in pending
+        ]
+
     def _risk_metrics(self) -> dict[str, float]:
         """The portfolio risk figures that actually exist (M73).
 
@@ -187,6 +213,8 @@ class AiAdvisorScreen(QWidget):
             risk_metrics = self._risk_metrics()
 
             fundamentals = await self._fundamentals_for(symbol)
+            notes = [f"User question: {question}"]
+            notes.extend(self._corporate_action_notes())
             context = AdvisoryContext(
                 symbol=symbol,
                 regime_label=self._regime_label,
@@ -195,7 +223,7 @@ class AiAdvisorScreen(QWidget):
                 risk_metrics=risk_metrics,
                 candidate_signal={},
                 fundamentals=fundamentals,
-                fetched_notes=[f"User question: {question}"],
+                fetched_notes=notes,
             )
             recommendation = await self.runtime.ai_service.get_regime_narrative(context)
             flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"

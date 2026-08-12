@@ -52,6 +52,8 @@ _WATCHED = (
     "domain/performance/trades.py",
     "data/fundamentals.py",
     "domain/evaluation/refusals.py",
+    # M39: PendingAction computes symbol, ratio and ex_date.
+    "domain/corporate_actions/detector.py",
 )
 
 # Computed, and read by nothing. Each needs a reason, and each is a standing

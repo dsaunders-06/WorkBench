@@ -502,6 +502,13 @@ class Runtime:
             settings=settings,
             journal=decision_journal,
         )
+        # The daily report is what gets read when nobody watched the session,
+        # which is exactly when a pending split most needs saying (M39, R1). A
+        # callable, so the report states what is pending when it is WRITTEN
+        # rather than what was pending when this was constructed.
+        performance_reporter.pending_actions = lambda: tuple(
+            action.describe() for action in corporate_action_monitor.pending_actions()
+        )
 
         def _scorecard_for(strategy: str) -> StrategyScorecard | None:
             """Evidence lookup for the autonomy gate (M16). Computed on demand

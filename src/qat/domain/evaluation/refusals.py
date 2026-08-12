@@ -94,6 +94,14 @@ _PATTERNS: tuple[tuple[str, RefusalFamily, str], ...] = (
     ("account unavailable", RefusalFamily.STATE, "Account unreadable"),
     ("risk evaluation failed", RefusalFamily.STATE, "Risk evaluation failed"),
     ("stale", RefusalFamily.STATE, "Stale market data"),
+    # Both are conditions of the POSITION rather than of the candidate, so STATE.
+    #
+    # "corporate action pending" is M39's. "position anomaly" is M60's and was
+    # never added - so every quarantine refusal has been rendering on the Blotter
+    # as "not recognised - see the note below" since 8 August, which is precisely
+    # the failure this module exists to prevent, committed against this module.
+    ("corporate action pending", RefusalFamily.STATE, "Corporate action pending"),
+    ("position anomaly", RefusalFamily.STATE, "Position quarantined"),
     ("broker refused", RefusalFamily.EXECUTION, "Broker refused the order"),
     ("oms rejected at sign-off", RefusalFamily.EXECUTION, "OMS rejected at sign-off"),
     ("insufficient qty", RefusalFamily.EXECUTION, "Broker: insufficient quantity"),

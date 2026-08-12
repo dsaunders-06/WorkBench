@@ -275,7 +275,32 @@ class WorkbenchScreen(QWidget):
         self.wf_table.setMaximumHeight(200)
         outer.addWidget(self.wf_table)
 
+        # A pending corporate action on the symbol under test (M39, R1). This
+        # screen's whole job is deciding whether to deploy on the strength of a
+        # backtest, and a split changes the live position's share count while
+        # leaving the split-adjusted history it was tested on untouched - so the
+        # result is not wrong, it is about a position that is about to change
+        # shape. Said out loud rather than left for the operator to remember.
+        self.corporate_action_caveat = QLabel("")
+        self.corporate_action_caveat.setWordWrap(True)
+        self.corporate_action_caveat.setStyleSheet(theme.text(theme.WARNING, size=theme.CAPTION))
+        self.corporate_action_caveat.setVisible(False)
+        outer.addWidget(self.corporate_action_caveat)
+
         return group
+
+    def _refresh_corporate_action_caveat(self, symbol: str) -> None:
+        monitor = getattr(self.runtime, "corporate_action_monitor", None)
+        action = monitor.pending_action(symbol) if monitor is not None else None
+        if action is None:
+            self.corporate_action_caveat.setVisible(False)
+            return
+        self.corporate_action_caveat.setText(
+            f"{action.describe()} is pending on {symbol}. The history below is already "
+            f"split-adjusted, but the HELD position is not - and an entry in this symbol is "
+            f"refused until the action has passed."
+        )
+        self.corporate_action_caveat.setVisible(True)
 
     def _on_walk_forward_clicked(self) -> None:
         asyncio.ensure_future(self._run_walk_forward())
@@ -291,6 +316,7 @@ class WorkbenchScreen(QWidget):
             symbol = self.symbol_picker.currentText()
             if strategy is None or not symbol:
                 return
+            self._refresh_corporate_action_caveat(symbol)
 
             in_bars = self.wf_in_sample_input.value()
             out_bars = self.wf_out_sample_input.value()

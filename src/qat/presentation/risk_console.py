@@ -120,6 +120,15 @@ class RiskConsoleScreen(QWidget):
         layout.addLayout(anomaly_row)
         self._refresh_anomalies()
 
+        # Pending corporate actions, with the detail the Dashboard banner has no
+        # room for (M39, R1). This is the screen that answers "why was I
+        # refused", and a pending split is now one of the answers.
+        self.corporate_action_label = QLabel("")
+        self.corporate_action_label.setWordWrap(True)
+        self.corporate_action_label.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        layout.addWidget(self.corporate_action_label)
+        self._refresh_corporate_actions()
+
         # Which pairs actually BIND, from the rail rather than from this
         # screen's own arithmetic. The matrix below correlates ~60 intraday
         # tick samples - about the last hour - while the cluster cap correlates
@@ -163,6 +172,39 @@ class RiskConsoleScreen(QWidget):
         self._refresh_anomalies()
         self.refresh_refusals()
         self.refresh_binding_pairs()
+
+    def _refresh_corporate_actions(self) -> None:
+        """Symbol, ratio, ex-date, current stop, adjusted stop, and the mode.
+
+        The mode is not decoration. In shadow nothing has been placed, and an
+        operator reading "adjusted to 36.34" and believing the broker holds that
+        order would be misled in the direction that costs money - the same
+        failure as reading M60's "declared" as "fixed".
+        """
+        monitor = getattr(self.runtime, "corporate_action_monitor", None)
+        pending = monitor.pending_actions() if monitor is not None else []
+        if not pending:
+            self.corporate_action_label.setText(
+                "Corporate actions: none pending on held positions."
+            )
+            return
+        mode = self.runtime.settings.corporate_action_mode
+        rows = []
+        for action in pending:
+            adjusted = (
+                f"{action.adjusted_stop:.2f}"
+                if action.adjusted_stop is not None
+                else "not computed"
+            )
+            state = action.refusal or (
+                "placed" if action.state == "applied" else "NOT placed (shadow)"
+            )
+            rows.append(
+                f"{action.describe()}: stop {action.current_stop:.2f} -> {adjusted}, {state}"
+            )
+        self.corporate_action_label.setText(
+            f"CORPORATE ACTIONS PENDING (mode: {mode}) - " + "; ".join(rows)
+        )
 
     def refresh_binding_pairs(self) -> None:
         """Pairs at or above the cluster threshold, asked of the governor.

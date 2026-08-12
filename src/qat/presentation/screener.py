@@ -443,6 +443,26 @@ class ScreenerScreen(QWidget):
         finally:
             self.run_button.setEnabled(True)
 
+    def _corporate_action_caveat(self, rows: list[ScreenResult]) -> str:
+        """Screened symbols whose entry would be refused right now (M39, R1).
+
+        A candidate is normally not held, so this is usually empty. When it is
+        not, the row is not actionable however good its figures look: the OMS
+        refuses an entry while an action is pending, because the share count and
+        the per-share price are both about to move. A screen that shows a
+        tradeable-looking row it cannot trade is the M72 complaint again.
+        """
+        monitor = getattr(self.runtime, "corporate_action_monitor", None)
+        if monitor is None:
+            return ""
+        blocked = sorted({r.symbol for r in rows if monitor.pending_action(r.symbol) is not None})
+        if not blocked:
+            return ""
+        return (
+            f"  NOT ENTERABLE - corporate action pending on {', '.join(blocked)}, "
+            f"so an entry in these is refused."
+        )
+
     def _render_results(self, rows: list[ScreenResult]) -> None:
         self.results_table.setRowCount(len(rows))
         for row_index, result in enumerate(rows):
@@ -461,6 +481,9 @@ class ScreenerScreen(QWidget):
             for col_index, value in enumerate(values):
                 self.results_table.setItem(row_index, col_index, QTableWidgetItem(value))
         self.results_table.resizeColumnsToContents()
+        caveat = self._corporate_action_caveat(rows)
+        if caveat:
+            self.status_label.setText(self.status_label.text() + caveat)
 
 
 def _set_or_widest(spin: QDoubleSpinBox, value: float | None, *, widest: str) -> None:

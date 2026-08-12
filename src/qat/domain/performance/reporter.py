@@ -65,9 +65,14 @@ class PerformanceReporter:
         narrator: Callable[[PerformanceReport], object] | None = None,
         check_interval_seconds: float = 300.0,
         clock: Callable[[], datetime] | None = None,
+        pending_actions: Callable[[], tuple[str, ...]] | None = None,
     ) -> None:
         self.ledger = ledger
         self.equity_curve = equity_curve
+        # A callable, so the report reads the CURRENT pending actions at the
+        # moment it is written rather than whatever was true when this was
+        # constructed - the reporter outlives many sweeps (M39).
+        self.pending_actions = pending_actions
         self.settings = settings or Settings()
         directory = Path(data_dir or self.settings.data_dir)
         self.daily_writer = ReportWriter(directory, DAILY_REPORT_FILENAME)
@@ -206,6 +211,7 @@ class PerformanceReporter:
             open_lots=self.ledger.open_lots(),
             refusals=refusals,
             approvals=approvals,
+            pending_actions=self.pending_actions() if self.pending_actions else (),
         )
 
         # The narrative is optional and its failure is not the report's

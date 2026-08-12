@@ -65,6 +65,19 @@ class DashboardScreen(QWidget):
         self.adopted_panel = AdoptedPositionsPanel(level=UiLevel.from_settings(runtime.settings))
         layout.addWidget(self.adopted_panel)
 
+        # Directly under the adoption banner, because a pending corporate action
+        # is the same class of fact: something is true about a held position that
+        # the ordinary figures on this screen do not show (M39, R1). Hidden when
+        # there is nothing pending - a permanent empty notice is what M74 was
+        # partly for.
+        self.corporate_action_banner = QLabel("")
+        self.corporate_action_banner.setWordWrap(True)
+        self.corporate_action_banner.setStyleSheet(
+            f"background-color: {theme.WARNING}; color: white; font-weight: bold; padding: 6px;"
+        )
+        self.corporate_action_banner.setVisible(False)
+        layout.addWidget(self.corporate_action_banner)
+
         self.regime_header = QLabel("Regime: (waiting for data...)")
         self.regime_header.setStyleSheet("font-size: 15px; font-weight: bold;")
         layout.addWidget(self.regime_header)
@@ -161,6 +174,35 @@ class DashboardScreen(QWidget):
             logger.exception("Dashboard refresh failed")
             self.regime_header.setText(f"Dashboard refresh failed: {exc}")
 
+    def _refresh_corporate_actions(self) -> None:
+        """The pending-action banner (M39, R1).
+
+        Says the MODE as well as the action, because "detected" and "adjusted"
+        are different facts and shadow mode does only the first. An operator
+        reading "split pending" and assuming the stop has been moved is the
+        failure this wording exists to prevent - the same shape as M60's
+        "declared" being read as "fixed".
+        """
+        monitor = getattr(self.runtime, "corporate_action_monitor", None)
+        if monitor is None:
+            self.corporate_action_banner.setVisible(False)
+            return
+        pending = monitor.pending_actions()
+        if not pending:
+            self.corporate_action_banner.setVisible(False)
+            return
+        acting = self.runtime.settings.corporate_action_mode == "act"
+        verb = (
+            "the resting stop has been adjusted"
+            if acting
+            else "SHADOW MODE - nothing has been adjusted"
+        )
+        self.corporate_action_banner.setText(
+            f"CORPORATE ACTION PENDING: {'; '.join(a.describe() for a in pending)} - {verb}. "
+            f"New entries in these symbols are refused until it has passed."
+        )
+        self.corporate_action_banner.setVisible(True)
+
     def _seed_equity_history(self) -> None:
         """Start from what was already recorded, not from an empty axis (M56).
 
@@ -190,6 +232,7 @@ class DashboardScreen(QWidget):
         # of a two-hundred-per-minute budget on repainting.
         snapshot = await self.runtime.account_poller.snapshot()
         self.balances_panel.update_from(snapshot)
+        self._refresh_corporate_actions()
 
         positions = list(snapshot.positions)
         equity = snapshot.balances.equity

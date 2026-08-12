@@ -120,9 +120,16 @@ class BlotterScreen(QWidget):
             self.status_filter.addItem(label)
         self.status_filter.currentIndexChanged.connect(self._on_filter_changed)
         self.count_label = QLabel("")
+        # A pending corporate action explains a class of refusal an operator is
+        # about to read in the table below, so it belongs on this screen rather
+        # than only on the Dashboard (M39, R1).
+        self.corporate_action_note = QLabel("")
+        self.corporate_action_note.setStyleSheet(theme.text(theme.WARNING, size=theme.CAPTION))
+        self.corporate_action_note.setVisible(False)
         filter_row.addWidget(QLabel("Show:"))
         filter_row.addWidget(self.status_filter)
         filter_row.addWidget(self.count_label)
+        filter_row.addWidget(self.corporate_action_note)
         filter_row.addStretch(1)
         layout.addLayout(filter_row)
 
@@ -183,6 +190,22 @@ class BlotterScreen(QWidget):
         if statuses is not None:
             orders = [order for order in orders if order.status in statuses]
         return orders
+
+    def _refresh_corporate_action_note(self) -> None:
+        """Names the symbols whose entries are being refused for a split.
+
+        Without it the table shows a refusal whose cause is a fact about the
+        WORLD rather than about the order, and M77's whole point is that a
+        refused order the operator cannot explain is not evidence.
+        """
+        monitor = getattr(self.runtime, "corporate_action_monitor", None)
+        pending = monitor.pending_actions() if monitor is not None else []
+        if not pending:
+            self.corporate_action_note.setVisible(False)
+            return
+        symbols = ", ".join(sorted({a.symbol for a in pending}))
+        self.corporate_action_note.setText(f"corporate action pending: {symbols}")
+        self.corporate_action_note.setVisible(True)
 
     def _refresh_reasons(self, orders: list[Order]) -> None:
         """Learns the journalled reason for any visible order we cannot explain.
@@ -279,6 +302,7 @@ class BlotterScreen(QWidget):
         shown = len(capped)
         suffix = f" (showing first {shown})" if shown < len(visible) else ""
         self.count_label.setText(f"{len(visible)} of {total} orders{suffix}")
+        self._refresh_corporate_action_note()
         self._on_selection_changed()
 
     def _render(self, orders: list[Order]) -> None:

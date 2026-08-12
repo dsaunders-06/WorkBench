@@ -92,6 +92,12 @@ class PerformanceReport:
     opened: tuple[OpenPosition, ...] = ()
     held: tuple[OpenPosition, ...] = ()
     narrative: str | None = None
+    # Corporate actions pending at the end of the period (M39, R1). Descriptions
+    # rather than records, so this module needs no import from the
+    # corporate-actions package and the report reads the same words the screens
+    # do. The daily report is what gets read when nobody watched the session,
+    # which is exactly when a pending split most needs saying.
+    pending_actions: tuple[str, ...] = ()
 
     @property
     def committed_today(self) -> float:
@@ -144,6 +150,23 @@ class PerformanceReport:
         lines.append("")
         return lines
 
+    def _corporate_action_lines(self) -> list[str]:
+        """Pending corporate actions, or nothing at all.
+
+        Absent rather than "none pending" when there are none: a heading over
+        nothing is the M60 lesson about the Guided level, and this report already
+        runs long enough that a permanently empty section would be scrolled past
+        along with the one that matters.
+        """
+        if not self.pending_actions:
+            return []
+        return [
+            "### Corporate actions pending",
+            "",
+            *(f"- {description}" for description in self.pending_actions),
+            "",
+        ]
+
     def to_markdown(self) -> str:
         lines = [
             f"## {self.period_label}",
@@ -175,6 +198,7 @@ class PerformanceReport:
         # built from closed trades, so without it a day with six entries and
         # no exits reads exactly like a day when nothing happened.
         lines.extend(self._position_lines())
+        lines.extend(self._corporate_action_lines())
 
         if self.summary is not None:
             lines.extend(["### Metrics", ""])
@@ -257,6 +281,7 @@ def build_report(
     narrative: str | None = None,
     refusals: RefusalSummary | None = None,
     approvals: ApprovalSummary | None = None,
+    pending_actions: tuple[str, ...] = (),
 ) -> PerformanceReport:
     lots = open_lots or []
     held = tuple(
@@ -295,6 +320,7 @@ def build_report(
         blocked_counts=blocked_counts or {},
         refusals=refusals,
         approvals=approvals,
+        pending_actions=pending_actions,
         # Computed here rather than passed in, because unlike the two above it
         # needs nothing this function does not already hold - and a section
         # that has to be remembered at every call site is a section that will
