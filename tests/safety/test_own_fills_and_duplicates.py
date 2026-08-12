@@ -21,7 +21,7 @@ Both causes are here.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 import pytest
@@ -136,6 +136,17 @@ async def test_a_genuinely_foreign_fill_is_still_absorbed():
     oms = _oms(broker)
     order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
     await oms.sign_off(order.order_id, "operator")
+
+    # The watermark is stamped `now()` when the OMS is built with no state file,
+    # and `recent_fills` filters STRICTLY greater. Everything above can finish
+    # inside one clock tick - measured here at ~1ms, with 20,000 now() calls
+    # yielding 10 distinct values - and then `filled_at == since` and the fill
+    # this test exists to see is dropped. That is the CI failure of 12 August
+    # (run 31561345567), which passed on every other run and never locally.
+    # Moving the watermark is right where loosening the filter to `>=` would be
+    # wrong: a simulator that answers more fully than the broker hides bugs
+    # rather than reproducing them, which is this file's whole premise.
+    oms._last_fill_scan -= timedelta(milliseconds=1)
 
     broker.fill_resting_stop("MS", price=196.93)
     absorbed = await oms.absorb_broker_fills()
