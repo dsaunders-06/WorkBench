@@ -107,9 +107,85 @@ exists, a log line is the only thing between a port typo and real orders.** The
 warning becomes a refusal before any IBKR credential enters configuration.
 
 **Then W1.1** — measure what IBKR actually returns for those four methods,
-against a paper account, read-only. The capability matrix is the checklist. And
-**W2**, the portfolio-level replay harness, which is the asset that survives the
-move and can start now because it needs no broker.
+against a paper account, read-only. The capability matrix is the checklist.
+
+---
+
+# 🔬 W2 — THE RESEARCH HARNESS IS FIVE STEPS IN
+
+**Spec:** `docs/superpowers/specs/2026-08-12-research-harness-design.md`.
+Plans for each step are in `docs/superpowers/plans/2026-08-12-*.md`.
+
+**What it is.** `ReplaySession` drives historical bars through the REAL
+`StrategyEngine`, `SignalToOrderBridge`, `OMS`, regime engine and autonomy path
+into a `SimulatedBroker`. **Nothing re-implements a strategy, a rail or a fill.**
+It exists because no instrument in this repository measures the deployed
+system: the vectorized engine has no stop, target or time stop and exits only
+on signal flips; the replay scripts hand-copy the rules from `swing.py`; and no
+portfolio simulation existed at all, so the governor was exercised by nothing
+but live trading. And it answers the one question live trading NEVER can — *do
+the rails help* — because the same October cannot be held twice with a cap on
+and off.
+
+## The fill-model decisions every future number depends on
+
+| | |
+|---|---|
+| **The stop wins any bar touching both levels** | A daily bar cannot say which came first, so expectancy is a FLOOR, not an estimate |
+| **A gap through the stop fills at the OPEN** | The MNST lesson in the simulator. A fake that filled politely at the trigger would hide the loss shape this account paid $375.23 to learn |
+| **A gap through the target fills at the TARGET** | The same rule pointed the other way. Deliberately conservative; recorded as revisitable |
+| **Entries fill at the NEXT bar's open** | Acting on the close that generated the signal is look-ahead in its most ordinary form |
+| **A stop can fire on the bar its entry filled** | The entry was at the open, so the rest of that bar follows it |
+
+## Two production seams were added, and why each was unavoidable
+
+* **`BarAggregator.prime_bar`** — the live path builds bars FROM TICKS, and one
+  tick a day gives `high == low == close`, so ATR collapses to zero and every
+  stop distance with it. Priming installs the true OHLC as the forming bar; the
+  ordinary `MarketDataEvent` that follows folds in harmlessly.
+* **`SignalToOrderBridge(clock=...)`** — the minimum hold and the weekly churn
+  cap compared against `datetime.now(UTC)` and went **silently inert** in a
+  replay. Both default to the wall clock, so live behaviour is unchanged.
+
+**The lesson generalises and is the thing to carry into step 6:** every
+wall-clock read in the trading path is a place a replay silently produces
+nothing. Two found so far; the autonomy gate was a third, fixed by injecting
+the simulated clock it already accepted.
+
+## Where it got to
+
+Steps 1–4 are **built, green and pushed**: the broker, the session loop, the
+portfolio with the governor live, and the regime engine classifying rather than
+defaulting. The harness has been watched refusing a trade by name —
+`already at the 1-position limit` in `risk_decisions.csv` — which is the
+precondition for any ablation meaning anything, and the question M51 has been
+unable to ask since 5 August.
+
+**Step 5 (G1) is built except its last mile.** The window is frozen and hashed
+in `scripts/analysis/g1/`; the comparator is written and tested. **What remains
+is data:** fetch SIP daily bars for the 40 symbols plus warm-up, replay
+31 July – 12 August from the frozen opening book, and point the comparator at
+both sides. **No research number counts until G1 passes.**
+
+Step 6 — the ablation switch and the run manifest — comes after.
+
+## Two findings about the live record itself
+
+* **The Bash sandbox is PER-FILE, not blanket.** Same directory, same minute:
+  Bash sees `equity_curve.csv` at 301 rows dated 27 July while PowerShell sees
+  9,971 — but **both see `risk_decisions.csv` identically.** So a spot-check on
+  the wrong file CONFIRMS Bash is fine, and the next read is nine thousand rows
+  short with nothing to say so. The standing constraint is right and understates
+  the danger.
+* **A test row reached the live record.** `Settings(_env_file=None).data_dir`
+  resolves to the LIVE data directory. `conftest` sets `QAT_DATA_DIR` so tests
+  are safe; **scratchpad scripts run outside pytest and are not.** Two W2 probes
+  built a `RiskEngine` without an explicit `data_dir`, so `AuditLog` wrote one
+  approval for symbol `AAA` at 12 August 08:53:32 UTC. One row in 2,931, for a
+  symbol that does not exist, changing no conclusion — **left in place
+  deliberately**, because the mechanism matters more than the row and a record
+  with a documented blemish beats one somebody edited. **Any script run outside
+  pytest must pass its own `data_dir`.**
 
 ---
 
@@ -616,11 +692,48 @@ docs/superpowers/specs/2026-08-12-asx-transferable-validation-design.md
   MAKE IT A REFUSAL BEFORE ANY IBKR CREDENTIAL ENTERS CONFIGURATION.
 
   THEN W1.1 - measure what IBKR actually returns for those four, paper account,
-  read-only, capability matrix as the checklist. AND W2, the portfolio-level
-  replay harness: no portfolio simulation exists anywhere, the vectorized
-  engine has no stop/target/time-stop and exits only on signal flips, and the
-  replay scripts hand-copy the rules from swing.py. It needs no broker, so it
-  can start now.
+  read-only, capability matrix as the checklist.
+
+W2 - THE RESEARCH HARNESS IS FIVE STEPS IN, and it is the asset that survives
+the move. ReplaySession drives historical bars through the REAL StrategyEngine,
+SignalToOrderBridge, OMS, regime engine and autonomy path into SimulatedBroker.
+NOTHING re-implements a strategy, a rail or a fill. Spec:
+docs/superpowers/specs/2026-08-12-research-harness-design.md
+
+  FILL MODEL, and every future number rests on it: the STOP wins any bar
+  touching both levels, so expectancy is a FLOOR not an estimate. A gap through
+  the stop fills at the OPEN, not the trigger - the MNST lesson in the
+  simulator. A gap through the target fills at the TARGET, not the better open.
+  Entries fill at the NEXT bar's open. A stop can fire on the bar its entry
+  filled.
+
+  TWO PRODUCTION SEAMS, both unavoidable. prime_bar, because the live path
+  builds bars FROM TICKS and one tick a day gives high==low==close, collapsing
+  ATR and every stop distance with it. And SignalToOrderBridge(clock=...),
+  because the minimum hold and the weekly churn cap compared against
+  datetime.now(UTC) and went SILENTLY INERT in a replay. Both default to live
+  behaviour. THE LESSON GENERALISES: every wall-clock read in the trading path
+  is a place a replay silently produces nothing.
+
+  STEPS 1-4 BUILT, GREEN, PUSHED. The harness has been WATCHED refusing a trade
+  by name in risk_decisions.csv, which is the precondition for any ablation
+  meaning anything and the question M51 could not ask since 5 August.
+
+  STEP 5 (G1) IS BUILT EXCEPT ITS LAST MILE. Window frozen and hashed in
+  scripts/analysis/g1/, comparator written and tested. What remains is DATA:
+  fetch SIP daily bars for the 40 symbols plus warm-up, replay 31 Jul - 12 Aug
+  from the frozen opening book, compare. NO RESEARCH NUMBER COUNTS UNTIL G1
+  PASSES. Step 6 is the ablation switch and the manifest.
+
+  TWO FINDINGS ABOUT THE LIVE RECORD. The Bash sandbox is PER-FILE, not
+  blanket - Bash sees equity_curve.csv at 301 rows dated 27 July while
+  PowerShell sees 9,971, but BOTH see risk_decisions.csv identically, so a
+  spot-check on the wrong file CONFIRMS Bash is fine and the next read is nine
+  thousand rows short. And a test row reached the live record: Settings with no
+  data_dir resolves to the LIVE directory, conftest protects tests but
+  scratchpad scripts run outside pytest, so two W2 probes wrote one AAA
+  approval on 12 Aug. Left in place deliberately. ANY SCRIPT RUN OUTSIDE PYTEST
+  MUST PASS ITS OWN data_dir.
 
 OUTSTANDING, IN THE ORDER I WOULD TAKE THEM
   M66  the aggregate risk cap that gates every entry is measured against ENTRY
