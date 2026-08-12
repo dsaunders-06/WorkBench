@@ -37,7 +37,7 @@ import pandas as pd
 
 from qat.config import Settings
 from qat.data.bars import Bar, floor_to_interval
-from qat.data.broker.simulated_broker import SimulatedBroker
+from qat.data.broker.simulated_broker import OpeningPosition, SimulatedBroker
 from qat.data.fundamentals import MockFundamentalsSource
 from qat.data.macro_fred import MacroObservation
 from qat.domain.autonomy.executor import AutonomousExecutor
@@ -87,6 +87,7 @@ class ReplaySession:
         warm_bars: int = 60,
         macro: dict[str, list[MacroObservation]] | None = None,
         benchmark: str = "SPY",
+        opening_positions: dict[str, OpeningPosition] | None = None,
     ) -> None:
         self.bars = bars
         self.settings = settings
@@ -97,6 +98,12 @@ class ReplaySession:
         self.kill_switch = KillSwitch()
         self.cost_model = CostModel.from_settings(settings)
         self.broker = SimulatedBroker(bars=bars, cost_model=self.cost_model)
+        if opening_positions:
+            # Before anything else reads the book: the governor's position count
+            # and its aggregate risk-at-stop are both computed from what is
+            # held, so a book adopted after the first evaluation would leave the
+            # window's first decisions made against an empty account.
+            self.broker.adopt_opening_book(opening_positions)
         self.oms = OMS(
             self.broker,
             RiskEngine(self.bus, self.kill_switch, settings=settings),

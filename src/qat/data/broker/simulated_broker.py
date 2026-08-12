@@ -22,6 +22,7 @@ quietly worse than reality.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 import pandas as pd
@@ -38,6 +39,27 @@ from qat.domain.backtester.costs import CostModel
 from qat.domain.corporate_actions.announcements import Announcement
 
 _REQUIRED_COLUMNS = ("open", "high", "low", "close")
+
+
+@dataclass(frozen=True, slots=True)
+class OpeningPosition:
+    """A holding that existed BEFORE the replayed window began (W2).
+
+    G1 replays a window of the live record, and the record's dominant refusal
+    is `already at the 10-position limit (10 held or pending)` - 2,511 of 2,886
+    rows. That rail is a consequence of the book the window OPENED with, not of
+    anything the window itself decided, so a replay starting flat cannot
+    reproduce it.
+
+    `stop_price` is optional and means what it says. A position restored
+    without its stop counts its FULL value against the aggregate cap, so
+    inventing protection that was not there would understate risk exactly where
+    the live book was most exposed.
+    """
+
+    quantity: float
+    avg_price: float
+    stop_price: float | None = None
 
 
 class SimulatedBroker:
@@ -74,6 +96,21 @@ class SimulatedBroker:
         self._resting_targets: dict[str, float | None] = {}
         self._broker_fills: list[BrokerFill] = []
         self._announcements: list[Announcement] = []
+
+    def adopt_opening_book(self, positions: dict[str, OpeningPosition]) -> None:
+        """Install holdings that predate the window, as the broker would report
+        them to `adopt_broker_positions` on a live restart.
+
+        Placed directly rather than filled, because these were not bought
+        during the replay: giving them fills would put trades into the record
+        that never happened in the window being reproduced.
+        """
+        for symbol, opening in positions.items():
+            self._positions[symbol] = Position(
+                symbol=symbol, quantity=opening.quantity, avg_price=opening.avg_price
+            )
+            if opening.stop_price is not None:
+                self._resting_stops[symbol] = opening.stop_price
 
     # --- the clock ----------------------------------------------------------
 
