@@ -210,6 +210,57 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M88 - The absorb watermark skipped the pass it was taken during  **[FIXED 12 August]**
+
+Found while diagnosing a CI failure that turned out to be unrelated - a tick
+race in `test_a_genuinely_foreign_fill_is_still_absorbed`, fixed in `7337a27`.
+The same reading of the watermark showed a real one underneath it.
+
+`absorb_broker_fills` queried from `_fill_query_floor()` and then set
+`_last_fill_scan = datetime.now(UTC)` **after** the pass - after the loop,
+after the ledger writes, and after `_resync_tracked_quantities()` on the
+`record_only` branch, which is a second broker round trip. **A fill executing
+between the query and that stamp was in neither answer**: not in the query that
+had already returned, and below the floor the next query started from.
+
+Measured against `MockBroker`: the next pass absorbed **nothing**, and the fill
+sat permanently below the watermark.
+
+**Not always permanent, which is worse.** `_fill_query_floor` reaches back past
+`_absorbed_fills` and `_own_partial_fill_stamps`, so an app with an outstanding
+partial drags the floor behind the missed fill and re-reads it by luck. With
+nothing outstanding - the normal case - it is gone.
+
+**Why nothing caught it.** Against `MockBroker` the pass takes 0.000 ms, so the
+window is empty unless a test opens one deliberately. Against Alpaca it is a
+network round trip plus processing, every sweep. The consequence is the M34
+class arriving by a different route: a protective order fires and never becomes
+a closed trade, silently, in the evidence the trial exists to collect.
+
+**The fix is to stamp the watermark at the instant the pass BEGAN.** The comment
+arguing for the old code - *"advanced and persisted only after the pass, so a
+crash mid-loop replays rather than skips"* - is right about crashes and is
+strengthened rather than weakened: an earlier watermark replays strictly more.
+Re-reading was already free by design, as `_fill_query_floor` says of itself.
+
+**The test had to be corrected before it could fail.** It first stamped the late
+fill at `now() + 1ms`, to dodge the tick-equality flake of `7337a27` - and
+passed against the unfixed code, because with a 0.000 ms pass that offset put
+the fill PAST the end-of-pass watermark, where even the buggy code sees it.
+**A zero-width window cannot be landed in.** The fake now sleeps either side of
+firing the stop, which is what opens this window in production: a network round
+trip. Recorded because the instinct that produced the wrong test - *make the
+timestamps unambiguous* - was the right instinct pointed in the wrong direction.
+
+**Two tests, because the fix carries its own risk.** One pins the window closed.
+The other pins the risk the fix introduces - every pass now re-reads what the
+last one absorbed, and M46 was a fill counted twice tripping the kill-switch, so
+"the dedupe handles it" got shown rather than asserted.
+
+**Bearing on the ASX work:** `recent_fills` is one of the four `BrokerAdapter`
+methods `IBAdapter` does not implement, so this is behaviour W1.1 must measure
+IBKR against rather than assume.
+
 ## The ASX became the near-term destination, not the eventual one  **[DECIDED 12 AUGUST]**
 
 The 6 August entry above records the ASX as where this is ultimately going. **On
