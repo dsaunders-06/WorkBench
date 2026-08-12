@@ -1,0 +1,220 @@
+"""A BrokerAdapter backed by historical bars and a simulated clock (W2).
+
+The point of this class is that the production trading path can be replayed
+over history WITHOUT a second copy of the rules. `MockBroker` invents prices
+from a seeded RNG and fills instantly; this one serves real bars, fills on the
+next bar's open, and executes protective orders against a bar's high and low.
+
+The guard with no equivalent in any real adapter is `get_historical`: a
+simulator holds the whole series in memory and must refuse to answer beyond the
+simulated date. Nothing else prevents the strategy being handed bars that had
+not happened yet, and the resulting backtest would look entirely plausible.
+
+Bars arrive NORMALISED - lowercase open/high/low/close on a DatetimeIndex.
+Accepting either capitalisation would be accepting the wrong one silently.
+
+Slippage moves the fill price; commission does not appear here. Commission
+reaches the record through the ledger and the cost model, exactly as it does
+with a real broker, and charging it in both places would make every backtest
+quietly worse than reality.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, date, datetime
+
+import pandas as pd
+
+from qat.data.broker.adapter import (
+    AccountBalances,
+    AccountSummary,
+    BrokerFill,
+    Order,
+    Position,
+    RestingStopOrder,
+)
+from qat.domain.backtester.costs import CostModel
+from qat.domain.corporate_actions.announcements import Announcement
+
+_REQUIRED_COLUMNS = ("open", "high", "low", "close")
+
+
+class SimulatedBroker:
+    name = "simulated-broker"
+
+    def __init__(
+        self,
+        bars: dict[str, pd.DataFrame],
+        cost_model: CostModel,
+        starting_cash: float = 100_000.0,
+    ) -> None:
+        for symbol, frame in bars.items():
+            missing = [c for c in _REQUIRED_COLUMNS if c not in frame.columns]
+            if missing:
+                raise ValueError(
+                    f"{symbol} bars are missing {missing}. SimulatedBroker requires normalised "
+                    "lowercase open/high/low/close - normalising is the caller's job, because a "
+                    "fake that accepts either shape accepts the wrong one silently."
+                )
+        self._bars = bars
+        self.cost_model = cost_model
+        self._cash = starting_cash
+
+        every_date: set[pd.Timestamp] = set()
+        for frame in bars.values():
+            every_date.update(frame.index)
+        self.session_dates: list[pd.Timestamp] = sorted(every_date)
+        self._index = 0
+
+        self._orders: dict[str, Order] = {}
+        self._pending: list[Order] = []
+        self._positions: dict[str, Position] = {}
+        self._resting_stops: dict[str, float | None] = {}
+        self._resting_targets: dict[str, float | None] = {}
+        self._broker_fills: list[BrokerFill] = []
+        self._announcements: list[Announcement] = []
+
+    # --- the clock ----------------------------------------------------------
+
+    @property
+    def current_date(self) -> pd.Timestamp:
+        return self.session_dates[self._index]
+
+    def advance(self) -> bool:
+        """Move to the next trading day. False when the series is exhausted.
+
+        The ONLY thing that causes a fill. A test that expects an order to have
+        filled without advancing is expecting a broker that trades on a bar
+        that has not happened.
+        """
+        if self._index + 1 >= len(self.session_dates):
+            return False
+        self._index += 1
+        return True
+
+    def _bar(self, symbol: str) -> pd.Series | None:
+        frame = self._bars.get(symbol)
+        if frame is None:
+            return None
+        row = frame[frame.index <= self.current_date]
+        if row.empty:
+            return None
+        return row.iloc[-1]
+
+    def _now(self) -> datetime:
+        return self.current_date.to_pydatetime().replace(tzinfo=UTC)
+
+    # --- reads --------------------------------------------------------------
+
+    async def get_market_data(self, symbol: str) -> dict[str, float]:
+        bar = self._bar(symbol)
+        if bar is None:
+            return {}
+        price = float(bar["close"])
+        return {"bid": price, "ask": price, "last": price}
+
+    async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
+        """Bars up to AND INCLUDING the simulated date, never beyond it."""
+        frame = self._bars.get(symbol)
+        if frame is None:
+            return []
+        visible = frame[frame.index <= self.current_date]
+        if visible.empty:
+            return []
+        window = visible.iloc[-bars:] if bars > 0 else visible
+        return [
+            {
+                "open": float(row["open"]),
+                "high": float(row["high"]),
+                "low": float(row["low"]),
+                "close": float(row["close"]),
+            }
+            for _, row in window.iterrows()
+        ]
+
+    async def positions(self) -> list[Position]:
+        return list(self._positions.values())
+
+    async def account(self) -> AccountSummary:
+        market_value = 0.0
+        for position in self._positions.values():
+            bar = self._bar(position.symbol)
+            if bar is not None:
+                market_value += position.quantity * float(bar["close"])
+        net_liq = self._cash + market_value
+        return AccountSummary(net_liquidation=net_liq, cash=self._cash, buying_power=self._cash)
+
+    async def balances(self) -> AccountBalances:
+        summary = await self.account()
+        return AccountBalances(
+            equity=summary.net_liquidation,
+            cash=summary.cash,
+            buying_power=summary.buying_power,
+            long_market_value=summary.net_liquidation - summary.cash,
+            short_market_value=0.0,
+            currency="USD",
+            status="SIMULATED",
+        )
+
+    async def resting_stops(self) -> dict[str, float]:
+        return {s: v for s, v in self._resting_stops.items() if v is not None}
+
+    async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:
+        orders: dict[str, RestingStopOrder] = {}
+        for symbol, stop in self._resting_stops.items():
+            if stop is None:
+                continue
+            position = self._positions.get(symbol)
+            orders[symbol] = RestingStopOrder(
+                symbol=symbol,
+                order_id=f"resting-stop-{symbol}",
+                stop_price=stop,
+                quantity=abs(position.quantity) if position else 0.0,
+            )
+        return orders
+
+    async def recent_fills(
+        self, since: datetime, symbols: list[str] | None = None
+    ) -> list[BrokerFill]:
+        wanted = set(symbols) if symbols is not None else None
+        return [
+            f
+            for f in self._broker_fills
+            if f.filled_at > since and (wanted is None or f.symbol in wanted)
+        ]
+
+    async def announcements(self, symbol: str, since: date, until: date) -> list[Announcement]:
+        return [
+            a for a in self._announcements if a.symbol == symbol and since <= a.ex_date <= until
+        ]
+
+    def queue_announcement(self, announcement: Announcement) -> None:
+        """Test seam, as MockBroker's is. A corporate action cannot be derived
+        from a price series."""
+        self._announcements.append(announcement)
+
+    # --- writes -------------------------------------------------------------
+
+    async def place_order(self, order: Order) -> Order:
+        raise NotImplementedError("Task 2")
+
+    async def modify_order(self, order_id: str, **changes: object) -> Order:
+        order = self._orders[order_id]
+        for key, value in changes.items():
+            setattr(order, key, value)
+        if order.is_protective_stop and order.stop_price is not None:
+            self._resting_stops[order.symbol] = order.stop_price
+        return order
+
+    async def cancel_order(self, order_id: str) -> Order:
+        order = self._orders[order_id]
+        order.status = "cancelled"
+        self._pending = [p for p in self._pending if p.order_id != order_id]
+        if order.is_protective_stop:
+            self._resting_stops.pop(order.symbol, None)
+        return order
+
+
+def new_simulated_order_id() -> str:
+    return uuid.uuid4().hex
