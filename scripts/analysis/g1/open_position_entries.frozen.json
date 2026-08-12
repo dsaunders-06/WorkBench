@@ -1,0 +1,72 @@
+{
+  "JNJ": {
+    "opened_at": "2026-08-01T01:08:21+10:00",
+    "price": 256.5,
+    "stop_price": 240.5880357142857,
+    "target_price": 288.11,
+    "strategy": "swing"
+  },
+  "WFC": {
+    "opened_at": "2026-08-01T00:57:19+10:00",
+    "price": 85.95,
+    "stop_price": 80.7042857142857,
+    "target_price": 96.41,
+    "strategy": "swing"
+  },
+  "CSCO": {
+    "opened_at": "2026-08-01T00:19:18+10:00",
+    "price": 114.38,
+    "stop_price": 105.55857142857143,
+    "target_price": 132.02,
+    "strategy": "swing"
+  },
+  "CRWD": {
+    "opened_at": "2026-08-01T01:05:22+10:00",
+    "price": 187.4,
+    "stop_price": 163.3192857142857,
+    "target_price": 235.2,
+    "strategy": "swing"
+  },
+  "UNP": {
+    "opened_at": "2026-08-01T00:28:13+10:00",
+    "price": 290.645,
+    "stop_price": 272.6155357142857,
+    "target_price": 326.7,
+    "strategy": "swing"
+  },
+  "MS": {
+    "opened_at": "2026-08-04T14:01:24.222006+00:00",
+    "price": 213.7,
+    "stop_price": 196.92714285714285,
+    "target_price": 247.15571428571425,
+    "strategy": "swing"
+  },
+  "AMAT": {
+    "opened_at": "2026-08-04T14:01:24.912680+00:00",
+    "price": 540.55,
+    "stop_price": 445.0410714285714,
+    "target_price": 734.5678571428571,
+    "strategy": "swing"
+  },
+  "AMD": {
+    "opened_at": "2026-08-04T14:01:25.595076+00:00",
+    "price": 510.267143,
+    "stop_price": 405.54928571428576,
+    "target_price": 698.3814285714286,
+    "strategy": "swing"
+  },
+  "GS": {
+    "opened_at": "2026-08-04T14:01:26.386889+00:00",
+    "price": 1054.75,
+    "stop_price": 954.8366071428571,
+    "target_price": 1238.0767857142857,
+    "strategy": "swing"
+  },
+  "VRTX": {
+    "opened_at": "2026-08-05T14:16:09.183962+00:00",
+    "price": 487.99,
+    "stop_price": 456.2678571428571,
+    "target_price": 549.0642857142857,
+    "strategy": "swing"
+  }
+}
