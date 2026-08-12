@@ -168,6 +168,7 @@ def write_body(doc: Any, figures: FigureSet) -> None:
     _session_record(doc)
     _metrics_panel(doc)
     _settings(doc, figures)
+    _interface_level(doc)
     _storage_location(doc)
     _safety(doc)
     _glossary(doc)
@@ -295,7 +296,7 @@ def _introduction(doc: Any) -> None:
                 "Stable storage location",
                 "Settings and records live in one per-user directory instead of beside "
                 "whatever folder the application was launched from, and are migrated "
-                "there on first run (Section 11.9).",
+                "there on first run (Section 11.10).",
             ),
             (
                 "Balances panel",
@@ -326,7 +327,7 @@ def _introduction(doc: Any) -> None:
             ),
             (
                 "Signed executable",
-                "The packaged build is now Authenticode-signed and timestamped " "(Section 12.4).",
+                "The packaged build is now Authenticode-signed and timestamped " "(Section 12.6).",
             ),
         ),
     )
@@ -367,7 +368,7 @@ def _introduction(doc: Any) -> None:
                 "One per-user directory - %LOCALAPPDATA%\\QuantAdvisoryTerminal - holding a "
                 ".env of non-secret settings and a data folder of records. API keys are never "
                 "in either: they live only in the Windows Credential Manager. The Settings "
-                "screen names the directory. See Section 11.9.",
+                "screen names the directory. See Section 11.10.",
             ),
         ),
     )
@@ -1928,8 +1929,49 @@ def _settings(doc: Any, figures: FigureSet) -> None:
     )
 
 
+def _interface_level(doc: Any) -> None:
+    doc.add_heading("11.9 Interface Level", level=2)
+    doc.add_paragraph(
+        "QAT_UI_LEVEL chooses how much of the interface is shown. It is not a cosmetic "
+        "preference: two of the levels withhold controls, so changing it changes what you can "
+        "do, not only what you can see."
+    )
+    _table(
+        doc,
+        ("Level", "What it shows, and what it withholds"),
+        (
+            (
+                "Guided",
+                "Every figure carries a plain-English caption. The Strategy Workbench is "
+                "absent entirely, and so are the advanced diagnostics - a screen that is "
+                "absent is one level away, and this selector is what says so.",
+            ),
+            (
+                "Standard",
+                "The default. Captions are still shown. The Workbench appears, and the "
+                "Blotter's bulk sign-off becomes available. The Workbench's DEPLOY control "
+                "is still withheld.",
+            ),
+            (
+                "Professional",
+                "Captions are dropped in favour of density, the correlation matrix and the "
+                "audit log appear, and the Workbench's deploy control becomes available.",
+            ),
+        ),
+    )
+    _callout(
+        doc,
+        "Resetting configuration can remove a control you were using",
+        "The default is Standard, and the deploy control is Professional-only. So a "
+        "configuration reset on a machine that was set to Professional silently takes that "
+        "button away. If a control you used yesterday is missing, check this setting before "
+        "anything else.",
+        danger=True,
+    )
+
+
 def _storage_location(doc: Any) -> None:
-    doc.add_heading("11.9 Where Settings and Records Are Stored", level=2)
+    doc.add_heading("11.10 Where Settings and Records Are Stored", level=2)
     doc.add_paragraph(
         "Everything the application owns lives in one per-user directory, named at the "
         "bottom of the Settings screen so it is never a guess:"
@@ -2123,7 +2165,129 @@ def _safety(doc: Any) -> None:
         "Performance screen regularly."
     )
 
-    doc.add_heading("12.4 Distribution and Code Signing", level=2)
+    doc.add_heading("12.4 When Something Outside the Application Changes a Position", level=2)
+    doc.add_paragraph(
+        "The application tracks what it believes it holds and compares that against the "
+        "broker on a timer. A difference it cannot account for trips the kill-switch, which "
+        "is the correct response: a view of the account that cannot be trusted is not a "
+        "basis for trading."
+    )
+    doc.add_paragraph(
+        "Some differences have a cause, though, and halting the session for a known cause is "
+        "its own kind of failure - an operator who is trained to dismiss the one signal "
+        'meaning "my view of the account is wrong" will dismiss the real one too. So a '
+        "difference can be DECLARED explained from the Risk Console, and the position is then "
+        "quarantined instead of halting the session."
+    )
+    _callout(
+        doc,
+        "Declaring is containment, not repair",
+        "A quarantine stops the ordinary path acting on a position. It does NOT correct the "
+        "quantity, the entry record, the resting protection or the trade ledger - all four are "
+        'still manual. The Risk Console says so permanently, because reading "declared" as '
+        '"fixed" is the one mistake this mechanism could invite.',
+        danger=True,
+    )
+    _table(
+        doc,
+        ("While a position is quarantined", "What happens"),
+        (
+            ("A new entry in that symbol", "Refused."),
+            (
+                "A de-lever trim",
+                "Refused - a trim sized against a wrong quantity is the trim " "doing the damage.",
+            ),
+            (
+                "An ordinary exit",
+                "ALLOWED, and re-sized from the broker rather than from the tracked "
+                "quantity. Selling 16 of 64 shares would leave three quarters of a position "
+                "nobody intended to keep.",
+            ),
+            (
+                "Re-arming lost protection",
+                "Refused. The recorded stop predates whatever caused the quarantine.",
+            ),
+            (
+                "An exit when the broker cannot be read",
+                "Refused, as a rejected order carrying a reason. Selling a quantity already "
+                "known to be untrustworthy is worse than not selling.",
+            ),
+        ),
+    )
+    doc.add_paragraph(
+        "An explanation is bound to the quantity the broker reported when it was declared. A "
+        "difference declared at 16 shares becoming 64 does not explain a later 64 becoming "
+        "128 - the position stops being explained while remaining quarantined, because it is "
+        "no less suspect for having moved again."
+    )
+
+    doc.add_heading("12.5 Corporate Actions", level=2)
+    doc.add_paragraph(
+        "A share split changes the share count and the per-share price of a position you "
+        "already hold. The resting protective stop does not change with it, and that is not "
+        "a reporting problem."
+    )
+    _callout(
+        doc,
+        "What an unadjusted stop through a split actually costs",
+        "Measured on this account on 11 August 2026. A 2-for-1 split on a held position: the "
+        "broker halved the price to about $46 and never delivered the extra shares. The "
+        "resting stop stayed at $72.68, roughly $26 above the market, and it executed at the "
+        "open in three partials. The position closed for a real net loss of $375.23 - down "
+        "51.4% on a position that should have been roughly flat.",
+        danger=True,
+    )
+    doc.add_paragraph(
+        "The application therefore reads the broker's corporate-action announcements for "
+        "every symbol it holds, and re-prices the resting stop before the ex-date open. Two "
+        "things about how it does that are worth knowing."
+    )
+    _table(
+        doc,
+        ("Rule", "Why"),
+        (
+            (
+                "Only the stop is adjusted",
+                "The share count and the recorded entry price are left alone until the "
+                "broker actually reports the new shares. In the case measured above the "
+                "shares never arrived, and halving the recorded entry price would have made "
+                "a real loss look like a rounding artefact.",
+            ),
+            (
+                "An adjustment that would tighten the stop is refused",
+                "The new stop must sit below the market and no closer to it, in percentage "
+                "terms, than the old one was. A wrong ratio can then leave a stop too far "
+                "away, which costs more if the position runs against you - but it can never "
+                "liquidate the position on contact.",
+            ),
+            (
+                "A split announced before you bought is ignored",
+                "A position opened after a split is already sized correctly. Adjusting it "
+                "again would divide a correct stop by the ratio a second time.",
+            ),
+            (
+                "New entries in that symbol are refused while it is pending",
+                "The price and share count a size would be computed from are about to " "change.",
+            ),
+        ),
+    )
+    _callout(
+        doc,
+        "It ships in shadow mode",
+        "QAT_CORPORATE_ACTION_MODE defaults to shadow: the split is detected, the adjustment "
+        "is calculated, and the exact change it WOULD make is written to the log - but no "
+        "order is touched. Read those log lines before setting it to act. Splits only; other "
+        "corporate actions are logged and not adjusted.",
+    )
+    doc.add_paragraph(
+        "The Dashboard shows a banner whenever an action is pending on a held position, and "
+        "it says which mode is in force. The Risk Console shows the current stop, the "
+        "adjusted stop, and whether the change was placed or only calculated. Both wordings "
+        'are deliberate: "adjusted" and "would be adjusted" are different facts, and only '
+        "one of them means the broker is holding a different order."
+    )
+
+    doc.add_heading("12.6 Distribution and Code Signing", level=2)
     doc.add_paragraph(
         "The packaged Windows build is Authenticode-signed with a timestamped signature, so "
         "Windows can verify its publisher and the signature remains valid after the signing "
@@ -2498,7 +2662,7 @@ def _config_reference(doc: Any) -> None:
             (
                 "QAT_HOME",
                 "(per-user)",
-                "Relocates settings and records wholesale (Section 11.9).",
+                "Relocates settings and records wholesale (Section 11.10).",
             ),
             (
                 "QAT_ACCOUNT_POLL_SECONDS",
@@ -2576,6 +2740,192 @@ def _config_reference(doc: Any) -> None:
                 "6.60",
                 "Fixed minimum charge per transaction, applied in backtests and live cost "
                 "estimates alike.",
+            ),
+            # --- the interface's own level ---------------------------------
+            (
+                "QAT_UI_LEVEL",
+                "standard",
+                "guided, standard or professional. Not cosmetic: the Workbench's deploy "
+                "button is professional-only and the Blotter's bulk sign-off is standard "
+                "and above, so a reset to the default REMOVES controls that were there "
+                "before. Section 11.9 covers what each level shows.",
+            ),
+            # --- corporate actions -----------------------------------------
+            (
+                "QAT_CORPORATE_ACTION_MODE",
+                "shadow",
+                "shadow or act. In shadow a split is detected and the adjustment it WOULD "
+                "make is written to the log, and no order is touched. In act the resting "
+                "stop is re-priced before the ex-date open. See Section 12.5 - an "
+                "unadjusted stop through a split cost this account $375.23.",
+            ),
+            # --- the churn rails, which decide when a position may leave ----
+            (
+                "QAT_ENFORCE_MIN_HOLDING_PERIOD",
+                "true",
+                "Whether MIN_HOLDING_TRADING_DAYS binds at all. Only signal-driven exits "
+                "are held back; a resting stop, the de-lever sweep and the kill-switch "
+                "take other paths and are never delayed.",
+            ),
+            (
+                "QAT_MIN_HOLDING_LOSS_ESCAPE_R",
+                "0.50",
+                "How far down, in R, a position may be before the minimum hold stops "
+                "applying. Without this the rail would sit through a broken thesis to "
+                "save a commission.",
+            ),
+            (
+                "QAT_ENFORCE_TIME_STOP",
+                "true",
+                "Whether TIME_STOP_TRADING_DAYS binds at all.",
+            ),
+            (
+                "QAT_MAX_ENTRIES_PER_WEEK",
+                "10",
+                "Turnover budget. Ten positions turned over weekly costs about 6.2% of a "
+                "$100k account in commission before a single losing trade.",
+            ),
+            (
+                "QAT_ENTRY_ALLOW_LIST",
+                "(empty)",
+                "Symbols that may be newly ENTERED. Empty means no restriction. Distinct "
+                "from the symbol allow list, which governs holding as well.",
+            ),
+            (
+                "QAT_ALLOW_SHORT_SELLING",
+                "false",
+                "Long-only by default: a sell signal in a symbol not held is dropped "
+                "rather than opening a short.",
+            ),
+            # --- sizing ------------------------------------------------------
+            (
+                "QAT_ATR_STOP_MULTIPLE",
+                "2.5",
+                "ATR multiples below entry for the stop a strategy did not propose one "
+                "for. The stop distance sets the position size, so this scales every "
+                "trade.",
+            ),
+            (
+                "QAT_KELLY_FRACTION",
+                "0.25",
+                "The fraction of the Kelly criterion sizing uses. Full Kelly is far too "
+                "aggressive for a real book.",
+            ),
+            (
+                "QAT_REGIME_ELIGIBILITY_MASS",
+                "0.50",
+                "Combined probability a strategy's suitable regimes must carry before it "
+                "may trade. Gates on the distribution rather than on the single most "
+                "likely label.",
+            ),
+            # --- the cost rails ---------------------------------------------
+            (
+                "QAT_MAX_COST_TO_RISK_PCT",
+                "0.10",
+                "Round-trip cost as a share of the dollars at risk, above which a trade "
+                "is refused for being too small to carry its fees. Measured against risk "
+                "rather than notional, because every order has a stop.",
+            ),
+            (
+                "QAT_COMMISSION_BPS",
+                "1.0",
+                "Modelled commission. Applies in paper too - see APPLY_COSTS_IN_PAPER.",
+            ),
+            (
+                "QAT_SLIPPAGE_BPS",
+                "5.0",
+                "Modelled slippage, flat regardless of size, spread or time of day. Every "
+                "closed trade records what the gap actually was, so the assumption can be "
+                "checked rather than trusted.",
+            ),
+            (
+                "QAT_APPLY_COSTS_IN_PAPER",
+                "true",
+                "Alpaca paper charges nothing, so without this a commission-free strategy "
+                "could be measured and promoted onto a broker with a minimum charge, "
+                "where the same trades lose money.",
+            ),
+            # --- event risk ---------------------------------------------------
+            (
+                "QAT_ENFORCE_EARNINGS_EVENT_RISK",
+                "true",
+                "Whether the earnings rail binds. A scheduled print is not a draw from "
+                "the usual distribution.",
+            ),
+            (
+                "QAT_EARNINGS_BLACKOUT_DAYS",
+                "5",
+                "Trading days either side of a print within which a trade is sized down.",
+            ),
+            (
+                "QAT_EARNINGS_EVENT_SIZE_SCALAR",
+                "0.50",
+                "What a trade inside the blackout window is sized at.",
+            ),
+            (
+                "QAT_DATA_STALENESS_SECONDS",
+                "900",
+                "How old a symbol's last print may be before that symbol is dropped from "
+                "signal generation. It never halts the account - only the stale symbol "
+                "stops being traded.",
+            ),
+            # --- the de-lever sweep -----------------------------------------
+            (
+                "QAT_DELEVER_SWEEP_ENABLED",
+                "false",
+                "Whether the sweep may TRIM positions on its own. Off by default: "
+                "unwinding on its own judgement is a larger authority than refusing to "
+                "add, and it is not granted implicitly.",
+            ),
+            (
+                "QAT_DELEVER_TARGET_FRACTION_OF_CAP",
+                "0.90",
+                "What the sweep trims back to. Landing exactly on the cap re-triggers it "
+                "on the next tick.",
+            ),
+            (
+                "QAT_PORTFOLIO_ES_LIMIT_PCT",
+                "0.06",
+                "Expected-shortfall limit for the whole book.",
+            ),
+            # --- the promotion gate, which the trial exists to satisfy -------
+            (
+                "QAT_PROMOTION_MIN_TRADES",
+                "30",
+                "Closed trades a strategy needs, PER STRATEGY, before its evidence counts. "
+                "A trade with no strategy attribution counts towards nothing.",
+            ),
+            (
+                "QAT_PROMOTION_MIN_AVERAGE_R",
+                "0.20",
+                "Average R a strategy must achieve to stay promoted.",
+            ),
+            (
+                "QAT_PROMOTION_MIN_WIN_RATE",
+                "0.40",
+                "Win rate a strategy must achieve to stay promoted.",
+            ),
+            (
+                "QAT_PROMOTION_MAX_LOSS_TO_AVG_WIN",
+                "3.0",
+                "How large the worst single loss may be against the average win.",
+            ),
+            # --- autonomy's own thresholds ----------------------------------
+            (
+                "QAT_AUTONOMOUS_PAUSE_BUYS_BELOW_DAY_PNL_PCT",
+                "-0.04",
+                "Day P&L at or below which unattended BUYS stop. Exits are never paused.",
+            ),
+            (
+                "QAT_AUTONOMOUS_HALVE_SIZE_BELOW_DAY_PNL_PCT",
+                "-0.02",
+                "Day P&L at or below which an unattended buy is halved rather than " "blocked.",
+            ),
+            (
+                "QAT_AUTONOMOUS_PRICE_DRIFT_LIMIT_PCT",
+                "0.03",
+                "How far price may move from the level an order was sized against before "
+                "sign-off refuses it as stale.",
             ),
         ),
     )
