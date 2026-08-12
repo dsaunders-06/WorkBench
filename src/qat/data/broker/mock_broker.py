@@ -16,6 +16,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    RestingStopOrder,
 )
 from qat.domain.corporate_actions.announcements import Announcement
 
@@ -143,6 +144,26 @@ class MockBroker:
 
     async def resting_stops(self) -> dict[str, float]:
         return {s: v for s, v in self._resting_stops.items() if v is not None}
+
+    async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:
+        """The same stops, with the id and quantity needed to modify one (M39).
+
+        The simulator has no separate protective-order record, so the id is
+        synthesised per symbol and the quantity comes from the position it
+        protects - which is what a real bracket leg carries.
+        """
+        orders: dict[str, RestingStopOrder] = {}
+        for symbol, stop in self._resting_stops.items():
+            if stop is None:
+                continue
+            position = self._positions.get(symbol)
+            orders[symbol] = RestingStopOrder(
+                symbol=symbol,
+                order_id=f"resting-stop-{symbol}",
+                stop_price=stop,
+                quantity=abs(position.quantity) if position else 0.0,
+            )
+        return orders
 
     def resting_stop(self, symbol: str) -> float | None:
         """The protective stop currently resting at the broker, if any."""

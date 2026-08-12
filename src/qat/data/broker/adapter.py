@@ -90,6 +90,23 @@ class BrokerFill:
     filled_at: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class RestingStopOrder:
+    """A protective stop working at the broker, with enough to CHANGE it (M39).
+
+    `resting_stops()` answers "is this position protected, and at what level",
+    which is all M31b needed, and it throws the order id away. Re-pricing a stop
+    through a split needs the id, and covering a doubled share count needs the
+    quantity - so the richer answer gets its own accessor rather than widening
+    the one every protection check already depends on.
+    """
+
+    symbol: str
+    order_id: str
+    stop_price: float
+    quantity: float
+
+
 @dataclass(slots=True)
 class Position:
     symbol: str
@@ -237,3 +254,9 @@ class BrokerAdapter(Protocol):
     # reads as "nothing known" - and the detector's persisted store is what
     # stops a failed query on ex-date morning meaning "no split is coming".
     async def announcements(self, symbol: str, since: date, until: date) -> list[Announcement]: ...
+
+    # The same protective legs `resting_stops` finds, carrying the order id and
+    # quantity needed to MODIFY one (M39). Separate rather than a widening of
+    # `resting_stops`, which every protection check depends on and needs
+    # neither field.
+    async def resting_stop_orders(self) -> dict[str, RestingStopOrder]: ...

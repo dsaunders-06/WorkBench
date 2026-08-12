@@ -37,6 +37,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    RestingStopOrder,
 )
 from qat.data.broker.alpaca_client_protocol import AlpacaClientProtocol
 from qat.domain.corporate_actions.announcements import Announcement
@@ -273,6 +274,17 @@ class AlpacaAdapter:
         found" always means we went and looked rather than that the page ran
         out.
         """
+        return {
+            symbol: order.stop_price for symbol, order in (await self.resting_stop_orders()).items()
+        }
+
+    async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:
+        """The same scan, keeping the order id and quantity (M39).
+
+        This is now the primary: `resting_stops` derives from it. One scan
+        rather than two, because two could disagree about what counts as
+        protection - and "protected" is the answer the re-arm acts on.
+        """
         held = [str(pos.symbol) for pos in await self.positions() if abs(float(pos.quantity)) > 0]
         if not held:
             # Nothing held, nothing to protect, and no reason to ask. The
@@ -314,8 +326,8 @@ class AlpacaAdapter:
         symbols: list[str],
         limit: int,
         until: datetime | None = None,
-    ) -> dict[str, float]:
-        return _protective_from(await self._order_page(symbols, limit, until))
+    ) -> dict[str, RestingStopOrder]:
+        return _protective_orders_from(await self._order_page(symbols, limit, until))
 
     async def _all_recent_orders(self) -> list[Any]:
         """The unbounded-by-symbol fallback, for a caller that names no symbols.
@@ -337,7 +349,7 @@ class AlpacaAdapter:
         )
         return list(await asyncio.to_thread(self._client.get_orders, filter=request))
 
-    async def _deep_scan(self, symbol: str) -> dict[str, float]:
+    async def _deep_scan(self, symbol: str) -> dict[str, RestingStopOrder]:
         """Looks harder at one symbol before letting it read as unprotected.
 
         Reached only when the broad scan found no live protection for a held
@@ -355,7 +367,7 @@ class AlpacaAdapter:
         until: datetime | None = None
         for _ in range(_DEEP_SCAN_MAX_PAGES):
             page = await self._order_page([symbol], limit=_DEEP_SCAN_LIMIT, until=until)
-            found = _protective_from(page)
+            found = _protective_orders_from(page)
             if found:
                 return found
             stamps = [
@@ -718,7 +730,16 @@ def _protective_from(orders: list[Any]) -> dict[str, float]:
     naked position instead of merely proposing a duplicate that the OMS guard
     and the broker both refuse.
     """
-    resting: dict[str, float] = {}
+    return {symbol: order.stop_price for symbol, order in _protective_orders_from(orders).items()}
+
+
+def _protective_orders_from(orders: list[Any]) -> dict[str, RestingStopOrder]:
+    """The same legs, keeping the order id and quantity (M39).
+
+    One definition of "live protective leg", shared with `_protective_from`, so
+    the two accessors can never disagree about what counts as protection.
+    """
+    resting: dict[str, RestingStopOrder] = {}
     for order in orders:
         for candidate in _with_legs(order):
             side = str(getattr(candidate, "side", "")).lower()
@@ -731,7 +752,13 @@ def _protective_from(orders: list[Any]) -> dict[str, float]:
                 continue
             if not _is_live(getattr(candidate, "status", "")):
                 continue
-            resting[str(getattr(candidate, "symbol", ""))] = float(stop)
+            symbol = str(getattr(candidate, "symbol", ""))
+            resting[symbol] = RestingStopOrder(
+                symbol=symbol,
+                order_id=str(getattr(candidate, "id", "") or ""),
+                stop_price=float(stop),
+                quantity=_as_float(getattr(candidate, "qty", None)),
+            )
     return resting
 
 
