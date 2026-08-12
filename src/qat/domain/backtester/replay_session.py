@@ -97,6 +97,11 @@ class ReplaySession:
             self.oms,
             settings=settings,
             bar_interval_seconds=_DAILY_SECONDS,
+            # The same callable the autonomy gate reads. Without it the minimum
+            # hold and the weekly churn cap compare a simulated entry against
+            # the wall clock and stop binding, silently - in the harness built
+            # to measure whether rails help.
+            clock=self._simulated_now,
         )
         self.journal = DecisionJournal(settings.data_dir)
         self.executor = AutonomousExecutor(
