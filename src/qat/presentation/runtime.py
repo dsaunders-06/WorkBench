@@ -52,6 +52,7 @@ from qat.domain.autonomy import (
     EquityMonitor,
 )
 from qat.domain.bus import EventBus
+from qat.domain.corporate_actions.monitor import CorporateActionMonitor
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.reconciliation import ReconciliationMonitor
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
@@ -377,6 +378,7 @@ class Runtime:
     # Optional so every existing construction, including the tests, is
     # unaffected. Only the adoption banner reads it.
     signal_bridge: SignalToOrderBridge | None = None
+    corporate_action_monitor: CorporateActionMonitor | None = None
 
     def opened_position_symbols(self) -> set[str]:
         """Symbols this app opened itself, from its own entry record (M33e).
@@ -454,6 +456,21 @@ class Runtime:
             # by the bell rather than filling one symbol at a time (M57c).
             warm_symbols=watchlist,
         )
+
+        # Corporate actions (M39). Built after the bridge because it reads the
+        # bridge's recorded open dates - the gate that stops CRWD, whose 2 July
+        # split predates its 31 July purchase, being adjusted as though the
+        # split were still coming. Ships in shadow mode, so registering it
+        # changes no behaviour until the mode is deliberately promoted.
+        corporate_action_monitor = CorporateActionMonitor(
+            oms=oms,
+            settings=settings,
+            entries_source=signal_bridge.entry_open_dates,
+        )
+        # Given to the bridge after construction rather than before, because the
+        # two need each other: the monitor reads the bridge's open dates, and
+        # the re-arm asks the monitor whether a stop is about to be adjusted.
+        signal_bridge.corporate_actions = corporate_action_monitor
 
         # Autonomy (spec M13). All four pieces are constructed regardless of
         # execution_mode so the UI can always show the journal and the rails,
@@ -642,6 +659,10 @@ class Runtime:
             # The executor subscribes before the bridge can publish, so no
             # pending order can slip past it during startup.
             autonomous_executor,
+            # Before the bridge: its first act is to re-arm protection, and it
+            # must be able to ask whether a split is pending before it restores
+            # a pre-split stop.
+            corporate_action_monitor,
             signal_bridge,
             regime_engine,
             # Last: the orchestrator has started the feed by now, so this
@@ -672,6 +693,7 @@ class Runtime:
             strategy_engine=strategy_engine,
             available_strategies=available_strategies,
             signal_bridge=signal_bridge,
+            corporate_action_monitor=corporate_action_monitor,
             regime_engine=regime_engine,
             ai_service=ai_service,
             watchlist=watchlist,

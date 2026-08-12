@@ -38,6 +38,11 @@ _LOOKAHEAD_DAYS = 45
 
 
 class CorporateActionMonitor:
+    # Every engine the orchestrator starts is identified by this, and it is what
+    # the startup log line names. Absent, registration raises on the first
+    # caller that iterates the engine list.
+    name = "corporate-action-monitor"
+
     def __init__(
         self,
         oms: object,

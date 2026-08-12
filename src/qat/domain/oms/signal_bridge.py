@@ -69,6 +69,18 @@ _ENTRIES_FILENAME = "open_position_entries.json"
 _ENTRY_PRICE_TOLERANCE = 1e-4
 
 
+class _CorporateActions(Protocol):
+    """The slice of the corporate-action monitor this bridge needs (M39).
+
+    One question: is an adjustment pending on this symbol. Narrow for the same
+    reason `_LotStore` is - the bridge should not be able to reach for the
+    monitor's store, detector or adjuster, and a Protocol says so in the types
+    rather than in a comment.
+    """
+
+    def pending_action(self, symbol: str) -> object | None: ...
+
+
 class _LotStore(Protocol):
     """The slice of the trade ledger this bridge needs to rebuild entry lots.
 
@@ -189,10 +201,15 @@ class SignalToOrderBridge:
         trade_ledger: ClosedTradeSource | None = None,
         earnings_calendar: EarningsCalendar | None = None,
         warm_symbols: tuple[str, ...] = (),
+        corporate_actions: _CorporateActions | None = None,
     ) -> None:
         self.bus = bus
         self.oms = oms
         self.settings = settings or Settings()
+        # The corporate-action monitor, when one is running (M39). Optional
+        # so every existing test and a mock run behave exactly as before:
+        # absent, nothing is ever pending and the re-arm is unchanged.
+        self.corporate_actions: _CorporateActions | None = corporate_actions
         # Optional by design (M57). Absent, every candidate reports an unknown
         # distance and the event-risk rail abstains - which is the behaviour
         # this bridge had before the rail existed.
@@ -642,6 +659,22 @@ class SignalToOrderBridge:
                 series[symbol] = returns
         return series
 
+    def entry_open_dates(self) -> dict[str, datetime]:
+        """When each held position was opened, for the corporate-action monitor.
+
+        Handed over as a plain mapping rather than by letting another subsystem
+        reach into `_entries`. The monitor needs it for one thing: the gate that
+        stops CRWD - whose 2 July split predates its 31 July purchase - being
+        adjusted as though the split were still coming (M39).
+        """
+        return {symbol: entry.opened_at for symbol, entry in self._entries.items()}
+
+    def _corporate_action_pending(self, symbol: str) -> bool:
+        monitor = self.corporate_actions
+        if monitor is None:
+            return False
+        return monitor.pending_action(symbol) is not None
+
     def opened_symbols(self) -> set[str]:
         """Positions this app opened, from the persisted entry record.
 
@@ -678,9 +711,16 @@ class SignalToOrderBridge:
         proposed: list[str] = []
         unknown: list[str] = []
         quarantined: list[str] = []
+        deferred: list[str] = []
         for symbol, quantity in naked:
             if self.oms.anomalies.is_quarantined(symbol):
                 quarantined.append(symbol)
+                continue
+            if self._corporate_action_pending(symbol):
+                # The recorded entry stop is the PRE-action level, and re-arming
+                # from it after a 2-for-1 rests a sell-stop at roughly twice the
+                # new price - which is the order that liquidated MNST (M39).
+                deferred.append(symbol)
                 continue
             entry = self._entries.get(symbol)
             if entry is None or entry.stop_price is None:
@@ -697,6 +737,14 @@ class SignalToOrderBridge:
                 "They are pending sign-off and rest at the broker once approved.",
                 len(proposed),
                 ", ".join(sorted(proposed)),
+            )
+        if deferred:
+            logger.warning(
+                "Protection NOT re-armed on %s: a split is pending, and the recorded entry "
+                "stop is the pre-split level. Re-arming from it would rest a sell-stop at "
+                "roughly the pre-split price, which is the order that liquidated MNST. The "
+                "corporate-action monitor adjusts the resting stop instead.",
+                ", ".join(sorted(deferred)),
             )
         if unknown:
             logger.error(
