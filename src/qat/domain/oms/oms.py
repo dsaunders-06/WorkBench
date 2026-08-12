@@ -1279,6 +1279,12 @@ class OMS:
         source = getattr(self.broker, "recent_fills", None)
         if source is None:
             return []
+        # Taken BEFORE the query, and it is the value the watermark becomes
+        # (M88). A stamp taken after the pass excludes everything that executed
+        # during it: the query has already been answered, and the next floor
+        # starts above the execution. Protective fills are the only exits this
+        # system has, so one lost that way is a closed trade that never exists.
+        scan_started = datetime.now(UTC)
         try:
             fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
         except Exception:
@@ -1383,8 +1389,12 @@ class OMS:
 
         # Advanced and persisted only after the pass, so a crash mid-loop
         # replays rather than skips - and `_absorbed_fills` is what makes a
-        # replay safe to repeat.
-        self._last_fill_scan = datetime.now(UTC)
+        # replay safe to repeat. The VALUE is the instant the pass began rather
+        # than the instant it ended (M88): an end stamp replays nothing and
+        # skips whatever executed while the pass ran. A begin stamp replays
+        # strictly more, which is the same property the crash argument relies
+        # on, so this strengthens that reasoning rather than weakening it.
+        self._last_fill_scan = scan_started
         self._save_fill_state()
         return absorbed
 

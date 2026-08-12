@@ -16,6 +16,7 @@ Two things followed from that, and both bite on the first day a stop fires:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import tempfile
@@ -598,3 +599,61 @@ async def test_a_broker_that_cannot_report_fills_behaves_exactly_as_before():
     oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
 
     assert await oms.absorb_broker_fills() == []
+
+
+class _FillsDuringTheQuery(MockBroker):
+    """A protective order that executes WHILE the absorb pass is running.
+
+    Real brokers do this constantly - the query is a network round trip and
+    the market does not pause for it. The fake fires the stop as a side effect
+    of answering, which places the execution after the query was taken and
+    before the watermark advances: exactly the window M88 closes.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(seed=1)
+        self.fired = False
+
+    async def recent_fills(self, since, symbols=None):
+        answer = await super().recent_fills(since, symbols)
+        if not self.fired:
+            self.fired = True
+            # The sleeps ARE the fidelity here, not a workaround. Against
+            # MockBroker a pass takes 0.000 ms, so the window this test exists
+            # for has no width and no stamp can land inside it; in production
+            # the width is a network round trip. Sleeping either side puts the
+            # execution strictly after the pass began and strictly before it
+            # ended, which is the only place the defect lives.
+            #
+            # Both gaps must also clear the clock's granularity - measured at
+            # ~1ms here, with 20,000 now() calls yielding 10 distinct values.
+            # An offset added to the stamp instead would push the fill PAST the
+            # end-of-pass watermark, where even the unfixed code can see it.
+            await asyncio.sleep(0.005)
+            self.fill_resting_stop("AAA", price=95.0)
+            await asyncio.sleep(0.005)
+        return answer
+
+
+@pytest.mark.asyncio
+async def test_a_fill_landing_during_the_pass_is_not_lost():
+    """M88. The watermark used to be stamped after the pass, so an execution
+    that happened during it fell below the next query's floor and was never
+    read again - a protective order firing, and no closed trade for it."""
+    bus = EventBus()
+    settings = Settings(_env_file=None)
+    switch = KillSwitch()
+    broker = _FillsDuringTheQuery()
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
+    order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
+    await oms.sign_off(order.order_id, "operator")
+    await oms.adopt_broker_positions()
+
+    first = await oms.absorb_broker_fills()
+    assert broker.fired, "the fake must have fired the stop during the first pass"
+    assert [f.side for f in first] == [], "the stop fired AFTER this query was answered"
+
+    second = await oms.absorb_broker_fills()
+
+    assert [f.symbol for f in second] == ["AAA"]
+    assert second[0].side == "sell"
