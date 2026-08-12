@@ -1,4 +1,4 @@
-# Handoff — 12 August 2026, afternoon
+# Handoff — 12 August 2026, end of day
 
 Paste the block at the bottom into a new context window. Everything above it is
 the detail that block points at.
@@ -17,12 +17,25 @@ FIVE; the test count sat at 1,690 in three paragraphs while the suite moved on.
 
 ---
 
+# Where this stands, in one paragraph
+
+**M39 is built and deployed, and it changes nothing until promoted.** The split
+that motivated it cost $375.23 on 11 August; the machinery that would have
+prevented it now runs in shadow mode, has been watched rejecting the one false
+positive in the live book, and will not touch an order until
+`QAT_CORPORATE_ACTION_MODE=act`. The deploy gap is zero. The binding constraint
+on the trial is not the software any more — it is throughput: **2 closed trades
+in 12 days against 30 needed per strategy, and the cap is breached so the number
+is currently zero.** The 20 August review is the decision that matters.
+
+---
+
 # ⚠️ THE MNST split — DONE, and it cost real money
 
 **Ex-date was Tuesday 11 August. The event landed at the 23:30 AEST open, the
 stop fired, and the position is gone.** The next one with a clock on it is
-**SFBS 2-for-1 on 21 August** — not held, so running that test means buying it,
-and the stop must be widened beforehand or the same thing happens again.
+**SFBS 2-for-1 on 21 August** — not held, and it **cannot be bought** while both
+rails bind, so Phase 2 stays unmeasured unless a position closes first.
 
 ## What has already been measured
 
@@ -245,49 +258,80 @@ activation no longer costs the evidence. Had either been activated before
 
 ---
 
-# The 12 August deploy — DONE, and what it verified
+# The 12 August deploys — THREE of them, and what each one taught
 
-`M86 (7812c22)`, signed and timestamped, expanded over `C:\QuantAdvisoryTerminal`
-and hash-verified as `086A46AC…40233A`. Running as PID 28072 from 09:20 AEST.
-Outgoing build for rollback: `9E964E92…3E6628` (8 August), with the whole data
-directory copied to `data-backup-20260812-091345-PRE-M86-DEPLOY`.
+Three builds shipped on 12 August. The second was broken and the third fixed it,
+which is the part worth reading.
 
-**What the first launch confirmed, in the log rather than by assumption:**
+**1. `M86 (7812c22)`, 09:20.** The 18-milestone backlog. Confirmed in the log:
+Adopted 10 not 11, 10 of 10 carrying a resting stop, M65 correcting exactly the
+eight entry prices predicted, **the strategy fields surviving that rewrite**
+(still 10 named, 0 null — the interaction worth checking, since M65 rewrites the
+same file M86 had just corrected), and M86 itself correctly silent. M82's fix
+visibly working: the aggregate-risk warning now says "nothing will be sold to
+correct it" in place of the false "this will only unwind as positions close".
 
-* **Adopted 10, not 11** — MNST is gone — and **10 of 10 carry a resting stop, 0
-  carry none.**
-* **M65 corrected exactly eight entry prices**, the eight predicted: AMAT 540.55,
-  AMD 510.267, CRWD 187.4, GS 1054.75, JNJ 256.5, MS 213.7, VRTX 487.99,
-  WFC 85.95. **The strategy fields survived that rewrite** — still 10 named, 0
-  null — which is the interaction worth checking, since M65 rewrites the same
-  file M86 had just corrected.
-* **M86 was silent**, which is the correct behaviour: the record was already
-  healed, so there was nothing to resolve. Had it announced nine corrections,
-  something had re-nulled them.
-* **M82's fix is visibly working.** The aggregate-risk warning now reads "nothing
-  will be sold to correct it. It falls as positions close or as equity rises, and
-  rises as equity falls" in place of the false "this will only unwind as positions
-  close".
-* No ERROR or CRITICAL. Session correctly stood down — US after close.
+**2. `M39+M87 (5480452)`, 15:28. BROKEN, and the failure is the lesson.**
+Widening the announcement lookback to 90 days made the total range 135, and
+Alpaca refuses it outright:
+
+    ValidationError: Value error, The date range is limited to 90 days.
+
+Every query failed on all ten held symbols. **A probe existed for exactly this
+path and was not re-run after the constant changed.**
+
+**Worse than the broken query: the Risk Console went on saying "Corporate
+actions: none pending on held positions."** That was false, and false in the
+direction that reassures — the truth was UNKNOWN, not none. The monitor swallows
+a query failure by design so one bad sweep cannot end the session, and with an
+empty fallback store that makes blindness indistinguishable from a quiet book.
+
+**3. `M39+M87 (67677bc)`, 15:43. The current build.** Hash-verified
+`94C33499…6BF0528`. The 90-day cap is enforced in the ADAPTER now, where the
+constraint lives, by splitting any range into windows and deduping across them —
+so a caller widening a window cannot reintroduce it. And blindness is a reported
+STATE rather than a silence: the monitor names the symbols it could not read,
+both screens say so instead of claiming nothing is pending, and it clears on
+recovery.
+
+## What the third launch proved, which no test could
+
+    CORPORATE ACTION first seen: CRWD ex-date 2026-07-02 ratio 4
+
+**The announcement was fetched — and then nothing happened.** No `SHADOW:` line,
+no `ADJUSTED:` line. That is the ex-date gate rejecting it, against real data, in
+production.
+
+It matters because CRWD is held, 16 shares, correctly sized post-split, with a
+correct resting OCO at 163.32. Had the gate not held, the monitor would have
+divided that stop by four to ~40.83 and — in `act` mode — placed an order that
+liquidates the position at the next open. Until the lookback widened, the WINDOW
+happened to exclude CRWD and the gate was never consulted; it is now the only
+defence, and it has been observed doing the job. That is the M60 concern — *"the
+piece that can be wrong in the dangerous direction"* — settled by observation.
 
 **The aggregate cap is breached at 5.01% against the 5.00% cap, so new entries
-are refused — and this PREDATES the deploy.** Measured in the pre-deploy log at
-07:54, 07:59, 08:04 and 08:09. M65 raised seven of eight entry prices, which
-widens entry-to-stop and therefore raises risk-at-stop, so this was worth ruling
-out: it did not tip the cap. **The deploy changed no trading behaviour.**
+are refused, and this predates every deploy today.** Measured in the pre-deploy
+log at 07:54 through 08:09. M65 raised seven of eight entry prices, which widens
+entry-to-stop and therefore raises risk-at-stop, so it was worth ruling out: it
+did not tip the cap. **No deploy today changed any trading behaviour.**
 
-**For the next deploy**, the three things that mattered:
+## For the next deploy
 
-* **Back up `open_position_entries.json`** — a first launch containing M65
-  rewrites it, as it just did.
+* **Back up `open_position_entries.json`** and the data directory. Today's:
+  `data-backup-20260812-133956-PRE-M39-DEPLOY`.
 * **The level model gates real controls.** Workbench deploy is Professional-only
   (M74), Blotter bulk sign-off is Standard-and-above (M77). Live config is
   `QAT_UI_LEVEL=professional`, but the default is `standard` and a config reset
-  takes the deploy button.
+  takes the deploy button. Manual section 11.9 now documents this.
 * App closed, `Expand-Archive -Force`, verify by hash, **then launch**. A hash
   proves the right bytes landed, never that they run — M56a passed its hash check
   and could not start. **The permission classifier refuses the expand step**, so
-  it has to be run by the operator.
+  the operator runs it.
+* **Delete superseded zips.** A stale one staged beside the current one is a
+  wrong build waiting to be installed.
+* **Update `DEPLOYED` in `scripts/handoff_state.py`** — it is the one figure the
+  tool cannot derive, and everything else derives from it.
 
 ---
 
@@ -423,88 +467,82 @@ records were written 31 Jul and 4 Aug.
   SO THE M84/M85 ACTIVATION HAZARD IS CLEARED. It was never in the strategies
   themselves - it was in the record they would have silently emptied.
 
-M39 IS BUILT - and it ships in SHADOW, so it changes nothing yet
+M39 IS BUILT AND DEPLOYED - and it ships in SHADOW, so it changes nothing
 Splits only. Detection is ANNOUNCEMENT-DRIVEN because a quantity-triggered
 detector would never have fired on MNST: Alpaca halved the PRICE and never
 delivered the shares, so quantity went 8 -> 0. Phase 1 re-prices the resting
 stop before the ex-date open and touches NOTHING else - halving the basis would
 have shown MNST as roughly flat when the loss was real. Phase 2 acts only on an
 OBSERVED quantity change and deliberately does NOT rewrite the ledger, because
-that path has zero observations.
+that path has ZERO OBSERVATIONS and still does.
 
   NO FREEZE LIFT WAS NEEDED. Phase 1 is the standing rule's own fix-immediately
   category - "protective orders not resting, or not being repaired" - and a
   sell-stop at 72.68 against a 46 market is a liquidation order, not protection.
   Refusing entries on a pending action refuses strictly MORE, which is M60's
-  precedent. Shadow default makes the first ship a no-op.
+  precedent. Shadow default makes it a no-op until deliberately promoted.
 
-  TO PROMOTE IT: QAT_CORPORATE_ACTION_MODE=act. Read the shadow log first - it
-  states the exact adjustment it would make on every sweep.
+  TO PROMOTE IT: QAT_CORPORATE_ACTION_MODE=act. Read the shadow log first.
 
-  THE GATE THAT MATTERS: CRWD split 4-for-1 ex-date 2 July and we bought on
-  31 July, so it is already correctly sized. A detector matching symbol+ratio
-  would divide a correct stop by four and liquidate it. ex_date must be strictly
-  AFTER the position was opened. That false positive is in the live book and it
-  has a test.
+  THE GATE HELD IN PRODUCTION, which is the result that matters. The log says
+  "CORPORATE ACTION first seen: CRWD ex-date 2026-07-02 ratio 4" and then does
+  NOTHING - no SHADOW line, no ADJUSTED line. CRWD is held, 16 shares, correctly
+  sized post-split with a correct OCO at 163.32. Without the ex_date gate the
+  monitor would divide that stop by four to ~40.83 and, in act mode, liquidate
+  the position at the next open. The gate is now the ONLY defence - the lookback
+  used to exclude CRWD before the gate was consulted - and it has been WATCHED
+  doing the job. Re-run scripts/analysis/probe_live_announcements.py to recheck.
 
-  SEVEN READERS, two tests enforcing them. M80's readers guard was NOT enough -
-  it asserts "read somewhere in src/", and is_synthetic had a reader from M40
-  (the language model) while the operator waited until M72.
+  TWO DEFECTS FOUND BY DEPLOYING, both invisible to 1,964 passing tests.
+  Widening the lookback to 90 made the range 135 and Alpaca caps it at 90, so
+  every query failed - and a probe for exactly that path had not been re-run
+  after the constant changed. WORSE: the Risk Console kept saying "none pending
+  on held positions" while blind. The cap is now enforced in the ADAPTER, and
+  blindness is a REPORTED STATE rather than a silence.
 
-ALSO FOUND, NOT FIXED
+OUTSTANDING, IN THE ORDER I WOULD TAKE THEM
   M66  the aggregate risk cap that gates every entry is measured against ENTRY
-       prices - nothing in the trading path passes current ones. INSIDE THE
-       FREEZE, needs a recorded lift. Designed in docs/superpowers/specs/.
-  M71  the same root cause as M70 on app-transmitted SELLS, so the exit price
-       is wrong too. Needs a record rewrite. Read from code, NOT verified.
+       prices, so a winning book UNDERSTATES its risk and the bias grows with
+       profit. The one item genuinely behind the freeze, and fixing it makes the
+       measured figure HIGHER - so it tightens an already-breached cap. Pair it
+       with the 20 August cap review rather than doing it alone. Designed in
+       docs/superpowers/specs/2026-08-08-risk-at-stop-current-prices-design.md.
+  M71  app-transmitted SELLS announce at the reference price, so the recorded
+       EXIT price is wrong too. Read from code, NEVER VERIFIED - it needs one
+       live transmitted sell to confirm, and both closed trades so far were
+       broker-side stops. Do not design it until one has been observed.
+  M43  trading halts. M60 built the flagging half; this needs its own detector,
+       and a halt has no ratio to match so it is a different question from M39.
+  M44  execution quality. Waits on real closed-trade slippage data, and M70
+       found entry_slippage was zero by construction, so the instrument itself
+       only started working recently.
+  UI   the Balances panel cannot go below 1056px and overflows in a narrower
+       container. Eliding the labels did not lower it - the bold money values
+       set the floor, and eliding a money figure misleads where eliding a label
+       merely abbreviates. Not hit at any real window size today.
 
-STATE - 12 August, afternoon
-Deployed build is M86 (7812c22). HEAD is 5480452 and the DEPLOY GAP IS 2
-milestones across 13 commits - M39 and M87 - all of it BUILT, SIGNED AND ZIPPED
-but NOT YET INSTALLED. Repo clean and pushed.
+STATE - 12 August, end of day
+Deployed build is M39+M87 (67677bc) and THE DEPLOY GAP IS ZERO. Repo clean and
+pushed. Ten positions held, 10 of 10 protected, Adopted 10 not 11. TWO closed
+trades (CVS -482.18 -1.68R; MNST -375.23, unattributed - and it STAYS
+unattributed, that one is correct). Group 4 COMPLETE. M84 and M85 remain
+DESIGNED, NOT BUILT, NOT ACTIVATED - and M86 cleared the hazard that made
+activating them destroy nine positions' worth of attribution.
 
-  THE INSTALLED BUILD (A70A22E1) HAS A BROKEN ANNOUNCEMENTS QUERY. Its lookback
-  made the range 135 days and Alpaca caps it at 90, so every query fails and the
-  DETECTOR IS BLIND - and the build says "none pending" while it is. Fixed in
-  HEAD by splitting the range in the adapter. RE-DEPLOY BEFORE TRUSTING M39.
-  Run handoff_state.py for the current gap; the staged zip is named in the deploy
-  section above. The permission classifier REFUSES the expand step, so the
-  operator runs it. Data backup: data-backup-20260812-133956-PRE-M39-DEPLOY.
+  THE AGGREGATE CAP IS BREACHED at 5.01% vs the 5.00% cap, so NEW ENTRIES ARE
+  REFUSED and SFBS on 21 August CANNOT BE BOUGHT. It predates every deploy
+  today. This is THE constraint on the trial: with 2 closed trades in 12 days
+  and 30 needed PER STRATEGY, the gate is 1.5 to 6 months away, and right now
+  throughput is zero. Related to M66. The 20 August review of the co-binding
+  10-position / 5% pair is the decision that actually governs the timeline.
 
-Ten positions held, 10 of 10 protected, Adopted 10 not 11. TWO closed trades
-(CVS -482.18 -1.68R; MNST -375.23, unattributed - and it STAYS unattributed,
-that one is correct). Group 4 (the interface) is COMPLETE and running. M84 and
-M85 are DESIGNED, NOT BUILT, NOT ACTIVATED.
-
-  VERIFIED ON SCREEN, not just in tests: the M86 build launched, the balances
-  label reads "Day trades (5d)" in full (M87 fixed it), no corporate-action
-  banner appears, and the Risk Console reads "none pending on held positions".
-  The corporate-action-monitor engine starts. Two closed trades restored,
-  10 entry dates restored, 10 lots restored, no ERROR anywhere.
-
-  THE ANNOUNCEMENTS PATH IS PROVEN LIVE. The monitor logs nothing on a
-  successful empty query, so working and silently-broken look identical. A probe
-  against the live account with a control settles it: CRWD returns ex 2026-07-02
-  ratio 4, payable 2026-07-01. Zero announcements on the ten held symbols is the
-  TRUE answer. Re-run scripts/analysis/probe_live_announcements.py to recheck.
-
-  THE LOOKBACK IS A SAFETY PARAMETER, now 90 days, was 5. An ex-date older than
-  it is never FETCHED, so its stale stop is never adjusted - the MNST failure
-  with nothing to detect it. That means the ex_date gate is now the ONLY thing
-  keeping CRWD from being adjusted twice, where the window used to exclude it as
-  well. Tested at unit AND monitor level for exactly that reason.
-
-  The aggregate cap is BREACHED at 5.01% vs the 5.00% cap, so NEW ENTRIES ARE
-  REFUSED, and SFBS on 21 August therefore CANNOT BE BOUGHT. This predates every
-  deploy today. Related to M66. Shadow mode is what makes the unmeasured Phase 2
-  tolerable - the machinery accumulates judgement without needing the event.
-
-  THE MANUAL IS CURRENT AGAIN. It was last rebuilt 5 August for M49, and 53 of
-  91 settings appeared nowhere in it while "quarantine" and "corporate action"
-  appeared ZERO times. 29 settings added, three new sections (11.9 interface
-  level, 12.4 quarantine, 12.5 corporate actions). Two guards now stop it
-  rotting: every setting documented or excused with a reason, and every
-  "Section N.M" must name a heading that exists.
+  THE MANUAL IS CURRENT. It was last rebuilt 5 August for M49, and 53 of 91
+  settings appeared nowhere while "quarantine" and "corporate action" appeared
+  ZERO times. 29 settings added, three sections written (11.9 interface level,
+  12.4 quarantine, 12.5 corporate actions). Two guards stop it rotting: every
+  setting documented or excused with a reason, and every "Section N.M" must name
+  a heading that exists - added after renumbering silently broke FOUR existing
+  cross-references.
 
 CONSTRAINTS
   READ %LOCALAPPDATA% VIA POWERSHELL, NEVER BASH. The Bash tool sees a
