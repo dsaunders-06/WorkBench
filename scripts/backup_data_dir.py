@@ -1,7 +1,21 @@
 """Back up the live data directory before a deploy.
 
-    .\\.venv\\Scripts\\python.exe scripts/backup_data_dir.py --label PRE-M88-DEPLOY
-    .\\.venv\\Scripts\\python.exe scripts/backup_data_dir.py --label PRE-M88-DEPLOY --apply
+**RUN THIS THROUGH THE POWERSHELL TOOL, NEVER THROUGH BASH.** Measured on
+13 August: run from Bash, this script copied 20 files, printed success, and
+wrote NOTHING to the real filesystem - the whole operation landed in a
+sandboxed overlay of `%LOCALAPPDATA%` that only Bash can see. The deploy nearly
+proceeded on a backup that did not exist, with the trial's entire evidence base
+unprotected.
+
+The sandbox is per-FILE and applies to writes as well as reads, so a script
+cannot detect it from the inside: from within the overlay the copy is there.
+**Verify the backup from PowerShell afterwards** - file count, and a hash of
+`closed_trades.csv` against the live one. That check is the only thing that
+distinguishes a backup from a convincing report of one.
+
+    Set-Location "C:\\Claude Programming"
+    & ".\\.venv\\Scripts\\python.exe" scripts\\backup_data_dir.py --label PRE-M88-DEPLOY
+    & ".\\.venv\\Scripts\\python.exe" scripts\\backup_data_dir.py --label PRE-M88-DEPLOY --apply
 
 **Dry run by default.** It prints what it would copy and stops; `--apply` is
 the only thing that writes. Every deploy so far has made this backup by hand,
