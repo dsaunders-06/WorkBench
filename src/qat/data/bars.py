@@ -163,6 +163,46 @@ class BarAggregator:
         self._trim()
         return len(self._completed)
 
+    def prime_bar(self, bar: Bar) -> None:
+        """Install an already-true OHLC bar as the FORMING bar (W2).
+
+        The research harness has daily bars and no ticks, and this application
+        builds bars FROM ticks. One tick per day would give high == low ==
+        close, ATR would collapse to the tick-to-tick delta this module's tests
+        already guard against, and ATR sets the stop distance which sets the
+        position size - so every figure would be wrong and nothing would raise.
+
+        Priming installs the real range, and the ordinary MarketDataEvent that
+        follows folds in harmlessly: a daily close sits inside the day's range,
+        so max(high, close) and min(low, close) change nothing. Evaluation then
+        runs through the production path unmodified, which is the whole point -
+        a harness that fed the strategy differently would be measuring a
+        different system.
+
+        Guarded as `seed` is. An older bar landing after a newer one silently
+        corrupts every rolling window computed from this buffer, and a bar off
+        its boundary is a bar filed under the wrong day.
+        """
+        boundary = floor_to_interval(bar.ts, self.interval_seconds)
+        if bar.ts != boundary:
+            raise ValueError(
+                f"prime_bar needs a bar on an interval boundary; {bar.ts} floors to {boundary}"
+            )
+        if self._forming is not None:
+            if bar.ts <= self._forming.ts:
+                raise RuntimeError(
+                    "prime_bar must move forward: seeded and primed history cannot be "
+                    "interleaved out of order"
+                )
+            self._completed.append(self._forming)
+            self._trim()
+        elif self._completed and bar.ts <= self._completed[-1].ts:
+            raise RuntimeError(
+                "prime_bar must move forward: seeded and primed history cannot be "
+                "interleaved out of order"
+            )
+        self._forming = bar
+
     def add_tick(self, ts: datetime, price: float, volume: float = 0.0) -> Bar | None:
         """Feeds one tick. Returns the bar that just *closed*, if any.
 
@@ -263,6 +303,9 @@ class MultiSymbolAggregator:
 
     def seed(self, symbol: str, frame: pd.DataFrame, now: datetime | None = None) -> int:
         return self.for_symbol(symbol).seed(frame, now=now)
+
+    def prime_bar(self, symbol: str, bar: Bar) -> None:
+        self.for_symbol(symbol).prime_bar(bar)
 
     def for_symbol(self, symbol: str) -> BarAggregator:
         aggregator = self._by_symbol.get(symbol)

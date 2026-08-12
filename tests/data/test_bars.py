@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from qat.data.bars import BarAggregator, MultiSymbolAggregator, floor_to_interval
+from qat.data.bars import Bar, BarAggregator, MultiSymbolAggregator, floor_to_interval
 from qat.data.features import compute_atr
 
 BASE = datetime(2026, 7, 23, 14, 0, 0, tzinfo=UTC)
@@ -223,3 +223,81 @@ def test_symbols_are_aggregated_independently():
 
 def test_an_unseen_symbol_yields_an_empty_frame_rather_than_raising():
     assert MultiSymbolAggregator().frame("NOPE").empty
+
+
+# --- prime_bar: the research harness has bars and no ticks (W2) ---------------
+
+
+def _daily(ts: datetime, o: float, h: float, low: float, c: float) -> Bar:
+    return Bar(ts=ts, open=o, high=h, low=low, close=c, volume=1000.0)
+
+
+def _day(n: int) -> datetime:
+    """A daily boundary. Anchored to the epoch, as floor_to_interval is."""
+    return floor_to_interval(datetime(2026, 1, 5 + n, 12, 0, tzinfo=UTC), 86_400.0)
+
+
+def test_prime_bar_installs_the_true_ohlc_as_the_forming_bar():
+    agg = BarAggregator(interval_seconds=86_400.0)
+
+    agg.prime_bar(_daily(_day(0), 100.0, 110.0, 90.0, 105.0))
+
+    assert agg.forming is not None
+    assert (agg.forming.high, agg.forming.low) == (110.0, 90.0)
+
+
+def test_a_tick_at_the_close_folds_in_without_flattening_the_bar():
+    """The whole reason this seam works. A daily close sits inside the day's
+    range, so max(high, close) and min(low, close) are no-ops."""
+    agg = BarAggregator(interval_seconds=86_400.0)
+    agg.prime_bar(_daily(_day(0), 100.0, 110.0, 90.0, 105.0))
+
+    agg.add_tick(_day(0) + timedelta(hours=1), 105.0)
+
+    assert agg.forming is not None
+    assert (agg.forming.high, agg.forming.low, agg.forming.close) == (110.0, 90.0, 105.0)
+
+
+def test_priming_the_next_day_closes_the_previous_bar():
+    agg = BarAggregator(interval_seconds=86_400.0)
+    agg.prime_bar(_daily(_day(0), 100.0, 110.0, 90.0, 105.0))
+
+    agg.prime_bar(_daily(_day(1), 105.0, 115.0, 104.0, 112.0))
+
+    completed = agg.completed_bars()
+    assert [b.high for b in completed] == [110.0]
+    assert agg.forming is not None
+    assert agg.forming.high == 115.0
+
+
+def test_priming_out_of_order_raises_rather_than_corrupting_the_window():
+    """The same rule seed() enforces: an older bar after a newer one silently
+    corrupts every rolling window computed from the buffer."""
+    agg = BarAggregator(interval_seconds=86_400.0)
+    agg.prime_bar(_daily(_day(1), 105.0, 115.0, 104.0, 112.0))
+
+    with pytest.raises(RuntimeError):
+        agg.prime_bar(_daily(_day(0), 100.0, 110.0, 90.0, 105.0))
+
+
+def test_priming_a_bar_that_is_not_on_a_boundary_raises():
+    """A bar filed under the wrong boundary is a bar filed under the wrong
+    day, which is the hazard as_utc exists to prevent."""
+    agg = BarAggregator(interval_seconds=86_400.0)
+    off_boundary = _daily(_day(0) + timedelta(hours=3), 100.0, 110.0, 90.0, 105.0)
+
+    with pytest.raises(ValueError):
+        agg.prime_bar(off_boundary)
+
+
+def test_primed_bars_keep_a_real_atr_where_single_ticks_would_not():
+    """The reason the seam exists at all, asserted rather than asserted about."""
+    agg = MultiSymbolAggregator(interval_seconds=86_400.0)
+    for n in range(20):
+        base = 100.0 + n
+        agg.prime_bar("AAA", _daily(_day(n), base, base + 3.0, base - 3.0, base + 1.0))
+
+    atr = compute_atr(
+        agg.frame("AAA")["high"], agg.frame("AAA")["low"], agg.frame("AAA")["close"], 14
+    )
+    assert float(atr.iloc[-1]) > 1.0, "a flattened bar would give an ATR near zero"
