@@ -36,7 +36,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -202,9 +202,18 @@ class SignalToOrderBridge:
         earnings_calendar: EarningsCalendar | None = None,
         warm_symbols: tuple[str, ...] = (),
         corporate_actions: _CorporateActions | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.bus = bus
         self.oms = oms
+        # Injectable for the same reason AutonomyGate's is (W2): a rail that
+        # compares against the wall clock cannot bind in a replay, and the two
+        # that do - the minimum hold and the weekly churn cap - stop binding
+        # SILENTLY, with no error and no log. Defaults to the wall clock, so
+        # live behaviour is unchanged and no existing caller need know it
+        # exists. The stamping side already uses `event.ts`, so this closes the
+        # only half that was reading a different clock from the one it wrote.
+        self._clock = clock
         self.settings = settings or Settings()
         # The corporate-action monitor, when one is running (M39). Optional
         # so every existing test and a mock run behave exactly as before:
@@ -1014,7 +1023,7 @@ class SignalToOrderBridge:
         if entry is None:
             return False  # unknown entry: never trap a position we cannot date
 
-        held_days = _trading_days_between(entry.opened_at, datetime.now(UTC))
+        held_days = _trading_days_between(entry.opened_at, self._now())
         if held_days >= self.settings.min_holding_trading_days:
             return False
 
@@ -1058,6 +1067,10 @@ class SignalToOrderBridge:
             positions = await self.oms.broker.positions()
             await self._submit_short(symbol, bars, price, positions)
 
+    def _now(self) -> datetime:
+        """The clock the time-based rails read. See `__init__`."""
+        return self._clock() if self._clock is not None else datetime.now(UTC)
+
     def _entries_this_week(self, now: datetime) -> int:
         cutoff = now - timedelta(days=7)
         self._entry_times = [ts for ts in self._entry_times if ts >= cutoff]
@@ -1070,7 +1083,7 @@ class SignalToOrderBridge:
         # costs 6.2% of a $100k account in commission before a single losing
         # trade; this bounds the rate at which that can happen. Entries only -
         # a budget that blocked exits would be a rail against de-risking.
-        taken = self._entries_this_week(datetime.now(UTC))
+        taken = self._entries_this_week(self._now())
         if taken >= self.settings.max_entries_per_week:
             logger.info(
                 "Turnover budget reached: %d entries in the last seven days, limit %d - "
