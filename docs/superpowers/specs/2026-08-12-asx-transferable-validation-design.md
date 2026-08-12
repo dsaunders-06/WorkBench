@@ -172,6 +172,30 @@ An inventory, not a fix list:
 * halts are announcement-driven, which changes the shape of M43 rather than the
   need for it.
 
+### W1.4 — live-account safety review
+
+**Triggered by the operator opening an IBKR account, and required before any
+IBKR credentials exist in configuration.**
+
+Until now every configuration mistake in this system has cost paper money. A
+live account ends that permanently, and one guard is already asymmetric —
+`ib_adapter.py:74`:
+
+    trading_mode=live, not confirmed  ->  raises LiveTradingNotConfirmedError
+    trading_mode=paper, live port     ->  logger.warning, then CONNECTS
+
+`_LIVE_PORTS = {4001, 7496}`. A config claiming paper while pointed at a live
+Gateway connects, and every downstream decision keyed on `is_live` reads False
+while real orders are reachable. **Inert today** — `broker=ibkr` resolves to
+`MockBroker` and no account exists behind it. The moment both change, a log line
+is the only thing between a port typo and live orders, in a system whose own
+history says a warning nobody reads is indistinguishable from silence.
+
+* the port warning becomes a **refusal**;
+* every consumer of `is_live` re-checked now that the flag guards real money
+  rather than a paper account;
+* `read_only=True` as the default posture for all spike probing.
+
 ### W1 deliverable
 
 One document: per subsystem, **transfers / needs re-measuring / needs rebuild**,
