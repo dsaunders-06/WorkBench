@@ -657,3 +657,26 @@ async def test_a_fill_landing_during_the_pass_is_not_lost():
 
     assert [f.symbol for f in second] == ["AAA"]
     assert second[0].side == "sell"
+
+
+@pytest.mark.asyncio
+async def test_the_earlier_watermark_does_not_absorb_the_same_fill_twice():
+    """M88's risk, pinned. Starting the next query from the instant the last
+    pass BEGAN means every fill that pass absorbed is read again. M46 was a
+    fill counted twice tripping the kill-switch on arithmetic, so 'the dedupe
+    handles it' is a claim that has to be shown rather than asserted."""
+    bus = EventBus()
+    broker, oms = await _opened_position(bus)
+    tracked_before = oms._filled_quantities.get("AAA", 0.0)
+
+    broker.fill_resting_stop("AAA", price=95.0)
+    first = await oms.absorb_broker_fills()
+    assert [f.symbol for f in first] == ["AAA"], "the fill must be absorbed once"
+    tracked_after = oms._filled_quantities.get("AAA", 0.0)
+
+    second = await oms.absorb_broker_fills()
+
+    assert second == [], "the same execution must not be absorbed a second time"
+    assert oms._filled_quantities.get("AAA", 0.0) == tracked_after
+    assert tracked_after < tracked_before, "the stop did reduce the position"
+    assert oms.kill_switch.tripped is False
