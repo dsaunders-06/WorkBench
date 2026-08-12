@@ -210,6 +210,117 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M39 - Corporate actions: detection and adjustment  **[BUILT, SHIPS IN SHADOW]**
+
+12 August. The other half of Group 1. M60 built the containment; this is the
+detection and the adjustment, and it is designed against what the MNST split
+actually did rather than what the original entry below predicted.
+
+**The original brief was wrong in a way that decides the design.** It predicts
+the broker's share count doubling and reconciliation tripping the kill-switch.
+What happened was that Alpaca halved the PRICE and never delivered the shares -
+quantity went 8 to 0, never 8 to 16 - so **a quantity-triggered detector would
+never have fired at all.** Detection is therefore announcement-driven and
+proactive, before the ex-date open.
+
+Spec: `docs/superpowers/specs/2026-08-12-corporate-actions-design.md`.
+Plan: `docs/superpowers/plans/2026-08-12-corporate-actions.md`.
+
+### What it does
+
+Splits only, forward and reverse. Other action types are logged, never adjusted:
+their maths is not one ratio and this account has zero observations of any.
+
+**Phase 1, before the ex-date open: re-price the resting stop, and nothing else.**
+`new_stop = current_stop / ratio`, behind two guards. The stop must sit below the
+market, or it is a market order wearing a stop's clothing - the MNST failure
+exactly. And relative distance may not shrink, because tightening is the
+direction that liquidates. The MNST numbers are asserted to PASS the invariant -
+20.3% before, 21.5% after - since a guard that refused the correct adjustment
+would be worse than no guard.
+
+**Quantity and entry basis are not touched.** Halving the basis to $45.59 on the
+announcement would have shown MNST as roughly flat when the −$375.23 was real and
+verified against `/v2/account/activities`. It would have manufactured exactly the
+"split artefact, not a loss" claim that two earlier documents made.
+
+**Phase 2, only on an observed quantity change an announced ratio explains:**
+tracked quantity adjusted, the resting stop's quantity raised to cover the whole
+holding, and the ledger basis correction computed, named and **not applied.**
+Zero observations of that path, so the record rewrite stays manual as the CVS and
+MNST corrections were.
+
+### The gate that decides whether it can work at all
+
+**CRWD split 4-for-1 with ex-date 2 July and we bought 16 on 31 July.** The
+position is already sized post-split with a correct resting OCO. A detector
+matching symbol and ratio over a recent window divides a correct stop by four and
+liquidates at the next open. That false positive is in the live book, and it is
+why M60 deferred automatic detection. Every candidate needs an `ex_date` strictly
+after the position was opened, and a position whose open date is unknown is
+skipped rather than guessed at.
+
+### Shadow by default
+
+`QAT_CORPORATE_ACTION_MODE` is `shadow` unless promoted. Shadow runs the query,
+the gating, the ratio and the invariant, and logs what it WOULD place while
+calling `modify_order` zero times. **So the first deployment changes nothing**,
+and the detector's judgement can be watched against real announcements - CRWD
+included - without spending a position slot or any risk budget.
+
+### Under the freeze
+
+**No lift was required, and this is why.** Phase 1 is the standing rule's own
+fix-immediately category, *"protective orders not resting, or not being
+repaired"* - a sell-stop at $72.68 against a $46 market is not protection, it is
+a liquidation order. Refusing new entries on a pending action refuses strictly
+MORE, which is the argument M60 was accepted under. No strategy parameter, cap,
+threshold or weight changes. Shadow default makes the first ship a no-op.
+
+### The visibility contract, which was an explicit requirement
+
+Seven readers: Dashboard banner, Risk Console detail, Blotter note, Workbench and
+Screener caveats, the AI Advisor's context, and a daily-report section. **Two
+tests enforce it, not one.** M80's `test_computed_values_have_readers` asserts a
+property is read *somewhere* in `src/`, and that is a weaker claim than "read by
+the Blotter" - `is_synthetic` had a reader from M40, the language model, and the
+operator did not see it until M72. So a named-module scan proves the wiring and a
+rendering test proves it reaches a widget.
+
+The mode is stated wherever the adjustment is, and three tests assert the wording:
+an operator reading "adjusted to 36.34" while believing the broker holds that
+order would be misled in the direction that costs money, which is reading M60's
+"declared" as "fixed" all over again.
+
+### Found on the way
+
+**Neither "corporate action pending" nor "position anomaly" was in the refusal
+vocabulary**, so every M60 quarantine refusal has been rendering on the Blotter as
+"not recognised - see the note below" since 8 August. That is precisely the
+failure `refusals.py` exists to prevent, committed against `refusals.py`. Both
+added.
+
+**`resting_stops()` threw the order id away**, so there was nothing to call
+`modify_order` on. `resting_stop_orders()` is now the primary and `resting_stops`
+derives from it - one scan rather than two, because two could disagree about what
+counts as protection, and "protected" is the answer the re-arm acts on.
+
+**Three defects in the spec, caught by self-review and by reading the code.** A
+`0.01` lower bound on the ratio would have refused a genuine 1-for-1000 reverse
+split, the shape the ROADMAP records as real. The never-tighten invariant said
+"the original relative distance" without saying relative to which price. And it
+leaned on a `next_session_date` function that does not exist - `next_open` does,
+and already resolves in market time, which matters when the operator is in AEST
+and the open lands at 23:30 local.
+
+### Still unmeasured
+
+**What happens when a position survives to the share adjustment.** Phase 2 has
+never run against a real event. SFBS 2-for-1 on 21 August is the next candidate
+and **cannot currently be bought** - both rails bind, at 10 of 10 positions and
+5.01% against the 5.00% cap. Shadow mode is what makes that tolerable: the
+machinery accumulates evidence about its own judgement without needing the event.
+
 ## M86 - Attribution was inferred from a config value, not stored
 
 12 August. The held-over `strategy: null` question, and the answer inverts the

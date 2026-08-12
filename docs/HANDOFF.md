@@ -412,6 +412,34 @@ records were written 31 Jul and 4 Aug.
   SO THE M84/M85 ACTIVATION HAZARD IS CLEARED. It was never in the strategies
   themselves - it was in the record they would have silently emptied.
 
+M39 IS BUILT - and it ships in SHADOW, so it changes nothing yet
+Splits only. Detection is ANNOUNCEMENT-DRIVEN because a quantity-triggered
+detector would never have fired on MNST: Alpaca halved the PRICE and never
+delivered the shares, so quantity went 8 -> 0. Phase 1 re-prices the resting
+stop before the ex-date open and touches NOTHING else - halving the basis would
+have shown MNST as roughly flat when the loss was real. Phase 2 acts only on an
+OBSERVED quantity change and deliberately does NOT rewrite the ledger, because
+that path has zero observations.
+
+  NO FREEZE LIFT WAS NEEDED. Phase 1 is the standing rule's own fix-immediately
+  category - "protective orders not resting, or not being repaired" - and a
+  sell-stop at 72.68 against a 46 market is a liquidation order, not protection.
+  Refusing entries on a pending action refuses strictly MORE, which is M60's
+  precedent. Shadow default makes the first ship a no-op.
+
+  TO PROMOTE IT: QAT_CORPORATE_ACTION_MODE=act. Read the shadow log first - it
+  states the exact adjustment it would make on every sweep.
+
+  THE GATE THAT MATTERS: CRWD split 4-for-1 ex-date 2 July and we bought on
+  31 July, so it is already correctly sized. A detector matching symbol+ratio
+  would divide a correct stop by four and liquidate it. ex_date must be strictly
+  AFTER the position was opened. That false positive is in the live book and it
+  has a test.
+
+  SEVEN READERS, two tests enforcing them. M80's readers guard was NOT enough -
+  it asserts "read somewhere in src/", and is_synthetic had a reader from M40
+  (the language model) while the operator waited until M72.
+
 ALSO FOUND, NOT FIXED
   M66  the aggregate risk cap that gates every entry is measured against ENTRY
        prices - nothing in the trading path passes current ones. INSIDE THE
