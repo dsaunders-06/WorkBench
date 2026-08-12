@@ -91,7 +91,10 @@ class SimulatedBroker:
         if self._index + 1 >= len(self.session_dates):
             return False
         self._index += 1
+        # Entries first: an order filling at today's open exists for the rest of
+        # today, so its protective legs are live on this bar.
         self._fill_pending_entries()
+        self._fill_protective_orders()
         return True
 
     def _bar(self, symbol: str) -> pd.Series | None:
@@ -233,6 +236,55 @@ class SimulatedBroker:
                 self._resting_stops.pop(order.symbol, None)
                 self._resting_targets.pop(order.symbol, None)
         self._pending = still_pending
+
+    def _fill_protective_orders(self) -> None:
+        """Resting legs against today's bar.
+
+        The stop is evaluated FIRST and wins any bar that touches both levels.
+        A daily bar cannot say which came first, and assuming the unfavourable
+        one makes every expectancy figure a floor rather than an estimate.
+        """
+        for symbol in list(self._positions):
+            position = self._positions.get(symbol)
+            if position is None or position.quantity <= 0:
+                continue
+            bar = self._bar(symbol)
+            if bar is None or bar.name != self.current_date:
+                continue
+            stop = self._resting_stops.get(symbol)
+            target = self._resting_targets.get(symbol)
+            low, high, open_ = float(bar["low"]), float(bar["high"]), float(bar["open"])
+
+            if stop is not None and low <= stop:
+                # A bar that OPENS through the stop fills at the open, which is
+                # worse. Filling at the trigger would hide the loss shape a
+                # split and a gap both produce.
+                self._execute_protective(symbol, open_ if open_ <= stop else stop)
+                continue
+            if target is not None and high >= target:
+                # The target, never the better gapped-up open - the same
+                # never-flatter rule pointed the other way.
+                self._execute_protective(symbol, target)
+
+    def _execute_protective(self, symbol: str, price: float) -> None:
+        position = self._positions.get(symbol)
+        if position is None or position.quantity <= 0:
+            return
+        quantity = position.quantity
+        self._broker_fills.append(
+            BrokerFill(
+                order_id=f"sim-{uuid.uuid4().hex[:8]}",
+                symbol=symbol,
+                side="sell",
+                quantity=quantity,
+                price=price,
+                filled_at=self._now(),
+            )
+        )
+        self._positions.pop(symbol, None)
+        self._resting_stops.pop(symbol, None)
+        self._resting_targets.pop(symbol, None)
+        self._cash += quantity * price
 
     def _slipped(self, price: float, side: str) -> float:
         """Slippage always moves the fill AGAINST the order."""

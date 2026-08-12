@@ -6,6 +6,8 @@ adapter: a simulator can see the future, and must refuse to.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pandas as pd
 import pytest
 
@@ -139,3 +141,93 @@ async def test_a_bracket_entry_leaves_its_protective_legs_resting_once_filled():
     broker.advance()
 
     assert await broker.resting_stops() == {"AAA": 95.0}
+
+
+def _ohlc(rows: list[tuple[float, float, float, float]]) -> pd.DataFrame:
+    """Explicit open/high/low/close per bar, for the ambiguous cases."""
+    index = pd.date_range("2026-01-05", periods=len(rows), freq="B")
+    return pd.DataFrame(
+        {
+            "open": [r[0] for r in rows],
+            "high": [r[1] for r in rows],
+            "low": [r[2] for r in rows],
+            "close": [r[3] for r in rows],
+        },
+        index=index,
+    )
+
+
+async def _entered(bars: pd.DataFrame, stop: float, target: float) -> SimulatedBroker:
+    broker = SimulatedBroker(
+        bars={"AAA": bars}, cost_model=CostModel(commission_bps=0.0, slippage_bps=0.0)
+    )
+    await broker.place_order(_buy(stop_price=stop, take_profit_price=target))
+    broker.advance()  # fills at bar 1's open, legs go resting
+    return broker
+
+
+@pytest.mark.asyncio
+async def test_a_stop_fills_when_the_low_touches_it():
+    bars = _ohlc([(100, 101, 99, 100), (100, 101, 99, 100), (100, 101, 94, 95)])
+    broker = await _entered(bars, stop=95.0, target=115.0)
+
+    broker.advance()
+
+    assert await broker.positions() == []
+    fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert [(f.symbol, f.side, f.price) for f in fills] == [("AAA", "sell", 95.0)]
+
+
+@pytest.mark.asyncio
+async def test_a_bar_that_touches_both_levels_is_recorded_as_the_STOP():
+    """The decision that makes every expectancy figure a floor. The bar cannot
+    say which came first, so the unfavourable one is assumed."""
+    bars = _ohlc([(100, 101, 99, 100), (100, 101, 99, 100), (100, 120, 94, 100)])
+    broker = await _entered(bars, stop=95.0, target=115.0)
+
+    broker.advance()
+
+    fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert [f.price for f in fills] == [95.0], "the target was touched too, and loses"
+
+
+@pytest.mark.asyncio
+async def test_a_gap_through_the_stop_fills_at_the_OPEN_not_the_stop():
+    """The MNST lesson in the simulator. A bar opening below the stop does not
+    fill politely at the trigger."""
+    bars = _ohlc([(100, 101, 99, 100), (100, 101, 99, 100), (80, 82, 78, 80)])
+    broker = await _entered(bars, stop=95.0, target=115.0)
+
+    broker.advance()
+
+    fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert [f.price for f in fills] == [80.0], "the open, which is worse than the stop"
+
+
+@pytest.mark.asyncio
+async def test_a_gap_through_the_target_fills_at_the_TARGET_not_the_better_open():
+    """The same rule pointed the other way: never flatter."""
+    bars = _ohlc([(100, 101, 99, 100), (100, 101, 99, 100), (130, 132, 128, 130)])
+    broker = await _entered(bars, stop=95.0, target=115.0)
+
+    broker.advance()
+
+    fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert [f.price for f in fills] == [115.0], "the target, not the 130 open"
+
+
+@pytest.mark.asyncio
+async def test_a_stop_can_fire_on_the_bar_the_entry_filled():
+    """The entry filled at the open, so the rest of that bar follows it. A stop
+    that could not fire on entry day would be optimistic about gap days."""
+    bars = _ohlc([(100, 101, 99, 100), (100, 101, 90, 92)])
+    broker = SimulatedBroker(
+        bars={"AAA": bars}, cost_model=CostModel(commission_bps=0.0, slippage_bps=0.0)
+    )
+    await broker.place_order(_buy(stop_price=95.0, take_profit_price=115.0))
+
+    broker.advance()
+
+    assert await broker.positions() == []
+    fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
+    assert [f.price for f in fills] == [95.0]
