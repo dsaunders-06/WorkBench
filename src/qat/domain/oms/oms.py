@@ -126,6 +126,7 @@ class OMS:
         bus: EventBus | None = None,
         journal: DecisionJournal | None = None,
         settings: Settings | None = None,
+        corporate_actions: object | None = None,
     ) -> None:
         self.broker = broker
         # Every order decision is journalled, in every execution mode (M20).
@@ -201,6 +202,9 @@ class OMS:
         # from the broker at every launch and would otherwise launder the very
         # divergence this records.
         self.anomalies = PositionAnomalyStore(settings.data_dir if settings is not None else None)
+        # The corporate-action monitor, when one is running (M39). Optional,
+        # so an OMS built without it refuses exactly what it refused before.
+        self.corporate_actions = corporate_actions
         # Explained divergences are logged once per session, not once per poll.
         self._explained_logged: set[str] = set()
 
@@ -227,6 +231,22 @@ class OMS:
         anomaly = self.anomalies.get(candidate.symbol)
         if anomaly is not None:
             return self._new_rejected_order(candidate, 0.0, f"position anomaly - {anomaly.reason}")
+
+        # Beside the anomaly check for the same reason (M39): a pending split
+        # means the share count and the per-share price are both about to
+        # change, so an entry sized now is sized against a number with a known
+        # expiry. Refusing MORE than before is what keeps this inside the
+        # freeze - the argument M60 was accepted under. Entries only; the exit
+        # path below says nothing about pending actions, because a rail whose
+        # effect is "the account may not de-risk" is a broken rail.
+        pending = self._pending_action(candidate.symbol)
+        if pending is not None:
+            return self._new_rejected_order(
+                candidate,
+                0.0,
+                f"corporate action pending - {pending} changes the size basis, so an entry "
+                f"now would be sized against a price and share count about to move",
+            )
 
         if self.kill_switch.tripped:
             return self._new_rejected_order(candidate, 0.0, "kill-switch tripped")
@@ -1567,6 +1587,22 @@ class OMS:
         a retry loop here would hide a broker outage rather than record it.
         """
         return self._new_rejected_order_for(symbol, side, 0.0, reason, strategy=strategy)
+
+    def _pending_action(self, symbol: str) -> str | None:
+        """A one-line description of a pending corporate action, or None (M39).
+
+        Returns the DESCRIPTION rather than the record, so this module needs no
+        import from the corporate-actions package and the refusal reason reads
+        the same wherever it is shown.
+        """
+        monitor = self.corporate_actions
+        if monitor is None:
+            return None
+        action = monitor.pending_action(symbol)  # type: ignore[attr-defined]
+        if action is None:
+            return None
+        describe = getattr(action, "describe", None)
+        return describe() if callable(describe) else str(action)
 
     def _new_rejected_order(
         self, candidate: OrderCandidate, quantity: float, reason: str = "rejected"

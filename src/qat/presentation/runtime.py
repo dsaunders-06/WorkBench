@@ -471,6 +471,10 @@ class Runtime:
         # two need each other: the monitor reads the bridge's open dates, and
         # the re-arm asks the monitor whether a stop is about to be adjusted.
         signal_bridge.corporate_actions = corporate_action_monitor
+        # And to the OMS, which refuses a new entry while an action is pending:
+        # the share count and per-share price are both about to change, so a
+        # size computed now has a known expiry (R2).
+        oms.corporate_actions = corporate_action_monitor
 
         # Autonomy (spec M13). All four pieces are constructed regardless of
         # execution_mode so the UI can always show the journal and the rails,
