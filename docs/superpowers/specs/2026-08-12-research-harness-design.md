@@ -166,6 +166,49 @@ afterwards would be unfalsifiable.
   harness must be trusted before it is used to change anything, and the freeze
   owns those decisions regardless.
 
+## How bars reach the strategy — settled 12 August, and it needs a seam
+
+**The live path builds bars from TICKS.** `MarketDataEvent` carries
+`symbol, price, volume, ts`, and both `StrategyEngine` and
+`SignalToOrderBridge` keep their own `MultiSymbolAggregator` fed from that
+stream. The harness has daily OHLC bars and no ticks.
+
+**One event per day at the close is silently fatal.** A single tick gives
+`high == low == close`, `compute_atr` returns ~zero, and ATR sets the stop
+distance which sets position size which the 1% and aggregate caps gate on.
+Every figure would be wrong and nothing would error.
+
+**`seed()` cannot be reused per-day.** It refuses once any bar exists —
+*"seeded history cannot be interleaved with live bars"* — and that rule is
+correct.
+
+**Rejected: four synthetic ticks per day (open, high, low, close).** It
+reconstructs the true bar with no production change, and buys nothing: the
+mid-day evaluations it creates cannot produce mid-day fills, because
+`SimulatedBroker` only fills on `advance()`. What it does buy is an arbitrary
+choice of whether the high or the low tick comes first, which silently biases
+which signals fire — non-determinism inside the instrument built to settle
+arguments.
+
+**Adopted: `prime_bar(symbol, bar)`.** Set the FORMING bar to the true daily
+OHLC, closing the previous day's forming bar into `_completed` first. Then
+publish an ordinary `MarketDataEvent` at that day's close. `add_tick` folds it
+in **harmlessly** — `max(high, close)` and `min(low, close)` are no-ops because
+the close sits inside the day's range, and `close = price` sets it to what it
+already is. Evaluation then runs through the production path unmodified, on a
+frame whose latest bar is the true daily bar.
+
+**A first attempt at this was `append_completed`, and it was wrong.** It would
+have populated both buffers and never caused the strategy to evaluate, because
+evaluation is triggered by the event and not by the bar. Recorded because the
+mistake is instructive: the seam had to match how the live path is DRIVEN, not
+merely what it stores.
+
+**The cost, stated plainly:** a production change made for the harness's
+benefit. It is additive, and it carries the same ordering guard `seed()` has —
+refuse a bar that is not strictly after the last, and refuse to prime over a
+forming bar from the same boundary.
+
 ## Build order
 
 1. `SimulatedBroker` against the `BrokerAdapter` protocol, registered in
