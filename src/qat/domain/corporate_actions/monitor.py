@@ -21,8 +21,8 @@ from datetime import UTC, date, datetime, timedelta
 from qat.config import Settings
 from qat.data.broker.adapter import RestingStopOrder
 from qat.domain import market_calendar as mc
-from qat.domain.corporate_actions.adjuster import StopAdjuster
-from qat.domain.corporate_actions.announcements import AnnouncementStore
+from qat.domain.corporate_actions.adjuster import ACT, StopAdjuster
+from qat.domain.corporate_actions.announcements import Announcement, AnnouncementStore
 from qat.domain.corporate_actions.detector import PendingAction, SplitDetector
 from qat.domain.oms.anomaly import PositionAnomalyStore
 
@@ -35,6 +35,11 @@ DECLARED_BY = "corporate-action-monitor"
 # forwards far enough that a split is known about well before it lands.
 _LOOKBACK_DAYS = 5
 _LOOKAHEAD_DAYS = 45
+
+# Share counts are whole numbers at every broker this app talks to, so this is
+# a float-comparison guard rather than a real tolerance - the same reasoning
+# PositionAnomalyStore uses for the same comparison.
+_QUANTITY_TOLERANCE = 1e-6
 
 
 class CorporateActionMonitor:
@@ -155,6 +160,137 @@ class CorporateActionMonitor:
 
         self._pending = assessed
         return self.pending_actions()
+
+    async def reconcile_observed(self, tracked: dict[str, float]) -> list[str]:
+        """Phase 2: the shares have actually arrived (M39).
+
+        **Deliberately incomplete, and the spec says why.** This path has ZERO
+        observations - MNST's stop closed the position before the share side
+        landed, so quantity went 8 to 0 and never 8 to 16. Everything here is
+        derived from the announcement's arithmetic rather than from something
+        watched, which is why the ledger correction is stated and not applied.
+
+        What it does do is protect the whole holding. Eight shares of protection
+        against sixteen held leaves half the position naked, and that is a
+        certainty rather than an inference.
+
+        A quantity change the ratio does NOT explain is left alone, so
+        reconciliation halts on it exactly as it should. Declaring it explained
+        would grant a genuine divergence immunity, which is the failure M60's
+        quantity binding exists to stop.
+        """
+        broker = self.oms.broker  # type: ignore[attr-defined]
+        try:
+            positions = await broker.positions()
+            stops = await broker.resting_stop_orders()
+        except Exception:
+            logger.exception("Could not read the book to reconcile an observed quantity change")
+            return []
+
+        acted: list[str] = []
+        for position in positions:
+            symbol = str(position.symbol)
+            before = tracked.get(symbol)
+            if before is None or before <= 0:
+                continue
+            after = abs(float(position.quantity))
+            if abs(after - before) <= _QUANTITY_TOLERANCE:
+                continue  # the ordinary case, every sweep
+            announcement = self._explains_change(symbol, before, after)
+            if announcement is None:
+                logger.warning(
+                    "%s went from %g to %g and NO announced ratio explains it. Nothing is "
+                    "declared, so reconciliation will halt on it - which is the correct "
+                    "outcome for a change this application cannot account for.",
+                    symbol,
+                    before,
+                    after,
+                )
+                continue
+            self.anomalies.declare(
+                symbol=symbol,
+                reason=(
+                    f"{announcement.ratio:g}-for-1 split delivered: {before:g} -> {after:g} "
+                    f"shares, ex-date {announcement.ex_date}"
+                ),
+                declared_by=DECLARED_BY,
+                tracked_quantity=before,
+                broker_quantity=after,
+            )
+            await self._cover_whole_holding(broker, symbol, after, stops)
+            self._state_basis_correction(symbol, position, announcement.ratio)
+            acted.append(symbol)
+        return acted
+
+    def _explains_change(self, symbol: str, before: float, after: float) -> Announcement | None:
+        """The announcement whose ratio accounts for this change, if any."""
+        for announcement in self.store.for_symbol(symbol):
+            expected = before * announcement.ratio
+            if abs(after - expected) <= _QUANTITY_TOLERANCE:
+                return announcement
+        return None
+
+    async def _cover_whole_holding(
+        self, broker: object, symbol: str, quantity: float, stops: dict[str, RestingStopOrder]
+    ) -> None:
+        resting = stops.get(symbol)
+        if resting is None:
+            logger.error(
+                "%s now holds %g shares with NO resting stop to extend - the position is "
+                "unprotected and this needs a human.",
+                symbol,
+                quantity,
+            )
+            return
+        if abs(resting.quantity - quantity) <= _QUANTITY_TOLERANCE:
+            return
+        if self.settings.corporate_action_mode != ACT:
+            logger.warning(
+                "SHADOW: %s protective stop covers %g of %g shares held - it WOULD be raised "
+                "to %g. Nothing was placed.",
+                symbol,
+                resting.quantity,
+                quantity,
+                quantity,
+            )
+            return
+        try:
+            await broker.modify_order(resting.order_id, quantity=quantity)  # type: ignore[attr-defined]
+        except Exception:
+            logger.exception(
+                "Could not extend %s protective stop from %g to %g shares - part of the "
+                "position is unprotected and this needs a human.",
+                symbol,
+                resting.quantity,
+                quantity,
+            )
+            return
+        logger.warning(
+            "%s protective stop extended from %g to %g shares to cover the delivered count.",
+            symbol,
+            resting.quantity,
+            quantity,
+        )
+
+    def _state_basis_correction(self, symbol: str, position: object, ratio: float) -> None:
+        """Says what the ledger correction is, and that it has NOT been made.
+
+        The boundary this milestone draws. Rewriting a cost basis on a path
+        nobody has ever watched run is how a record gets quietly corrupted, and
+        a corrupted record is worse than a stopped session because a stopped
+        session is obvious. The CVS and MNST corrections were both made by hand
+        against a script that verified every other field; this stays the same.
+        """
+        basis = float(getattr(position, "avg_price", 0.0) or 0.0)
+        logger.warning(
+            "%s LEDGER BASIS still needs correcting by hand: the entry basis divides by %g, "
+            "and the broker now reports %.4f. This has NOT been applied - Phase 2 has never "
+            "been observed running, so the record rewrite stays manual as the CVS and MNST "
+            "corrections were.",
+            symbol,
+            ratio,
+            basis,
+        )
 
     # --- the pieces -----------------------------------------------------------
 
