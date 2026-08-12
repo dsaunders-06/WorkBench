@@ -14,7 +14,13 @@ from ib_async.order import OrderStatus, Trade
 
 from qat.config import Settings
 from qat.data.broker.adapter import Order
-from qat.data.broker.ib_adapter import IBAdapter, LiveTradingNotConfirmedError, ReadOnlyModeError
+from qat.data.broker.ib_adapter import (
+    _LIVE_PORTS,
+    IBAdapter,
+    LivePortInPaperModeError,
+    LiveTradingNotConfirmedError,
+    ReadOnlyModeError,
+)
 from qat.domain.bus import EventBus
 from qat.domain.events import KillSwitchEvent
 
@@ -247,10 +253,42 @@ async def test_heartbeat_loop_triggers_reconnect_when_unhealthy():
     await adapter.disconnect()
 
 
-def test_paper_mode_with_live_looking_port_only_warns_not_raises():
+@pytest.mark.parametrize("live_port", sorted(_LIVE_PORTS))
+def test_paper_mode_with_a_live_port_refuses_to_construct(live_port: int):
+    """W1.4. This used to warn and then connect, which is the one direction
+    that cannot be allowed to be a log line: `is_live` is `trading_mode ==
+    "live"` and nothing else, so a paper claim against a live Gateway leaves
+    the autonomy gate, promotion-evidence enforcement, the cost model and the
+    mode banner all reading 'paper' while real orders are reachable."""
     client = FakeIBClient()
     bus = EventBus()
-    settings = Settings(_env_file=None, trading_mode="paper", ibkr_port=7496)
+    settings = Settings(_env_file=None, trading_mode="paper", ibkr_port=live_port)
 
-    adapter = IBAdapter(client, bus, settings=settings)
+    with pytest.raises(LivePortInPaperModeError):
+        IBAdapter(client, bus, settings=settings)
+
+
+def test_the_port_refusal_says_which_ports_are_the_paper_ones():
+    """An operator who has just been refused needs the fix in the message, not
+    a trip to the source - the same argument M39's wording tests make."""
+    client = FakeIBClient()
+    bus = EventBus()
+    settings = Settings(_env_file=None, trading_mode="paper", ibkr_port=4001)
+
+    with pytest.raises(LivePortInPaperModeError) as raised:
+        IBAdapter(client, bus, settings=settings)
+    message = str(raised.value)
+    assert "4002" in message
+    assert "7497" in message
+
+
+def test_live_mode_against_a_paper_port_still_constructs():
+    """The asymmetry is deliberate. Claiming live while reaching a paper
+    Gateway is the SAFE direction - costs are applied, autonomy is gated and
+    the banner says DANGER - so it is not refused."""
+    client = FakeIBClient()
+    bus = EventBus()
+    settings = Settings(_env_file=None, trading_mode="live", ibkr_port=4002)
+
+    adapter = IBAdapter(client, bus, settings=settings, live_trading_confirmed=True)
     assert adapter is not None

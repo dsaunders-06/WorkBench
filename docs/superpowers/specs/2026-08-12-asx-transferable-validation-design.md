@@ -194,10 +194,36 @@ while real orders are reachable. **Inert today** — `broker=ibkr` resolves to
 is the only thing between a port typo and live orders, in a system whose own
 history says a warning nobody reads is indistinguishable from silence.
 
-* the port warning becomes a **refusal**;
-* every consumer of `is_live` re-checked now that the flag guards real money
-  rather than a paper account;
-* `read_only=True` as the default posture for all spike probing.
+**DONE 12 August.** `LivePortInPaperModeError`, and the warning is now a refusal.
+
+**The `is_live` audit is what makes the refusal load-bearing.**
+`Settings.is_live` is `trading_mode == "live"` **and nothing else** — a claim
+about configuration, never a check against what the socket reached. Thirteen
+call sites trust it:
+
+| Reads `is_live` | What it decides |
+|---|---|
+| `gate.py:111`, `config.py:600` | whether autonomy may run unattended |
+| `config.py:407` | whether promotion evidence is enforced |
+| `engine.py:340`, `trades.py:444` | whether costs are applied |
+| `blotter.py:113`, `main_window.py:66` | whether the operator sees DANGER or PAPER |
+| `alpaca_adapter.py:109,114`, `ib_adapter.py:74` | live-trading confirmation |
+
+A paper claim against a live Gateway left **all of them reading 'paper' while
+real orders were reachable.** No single one of those is the defect; the defect
+was that one log line stood in front of all thirteen.
+
+**Deliberately one-directional.** `trading_mode=live` against a paper port is
+still allowed: costs are applied, autonomy is gated, the banner says DANGER, and
+the account underneath is a simulator. That is the safe mismatch, and refusing
+it would buy nothing.
+
+**Not done, and deliberately: `read_only` stays defaulted to `False`.** The
+spec originally said make it the default posture. Changing a constructor default
+would be a behaviour change to a path nothing can currently reach, and it would
+let a future caller inherit safety it never asked for. **The requirement moves
+to W1.1 instead: every probe constructs `IBAdapter(..., read_only=True)`
+explicitly**, which is checkable in review in a way a default is not.
 
 ### W1 deliverable
 

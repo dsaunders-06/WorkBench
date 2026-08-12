@@ -44,6 +44,7 @@ from qat.domain.events import KillSwitchEvent
 logger = logging.getLogger(__name__)
 
 _LIVE_PORTS = {4001, 7496}
+_PAPER_PORTS = {4002: "Gateway", 7497: "TWS"}
 
 
 class ReadOnlyModeError(Exception):
@@ -53,6 +54,24 @@ class ReadOnlyModeError(Exception):
 class LiveTradingNotConfirmedError(Exception):
     """Raised when trading_mode='live' but live_trading_confirmed was not
     explicitly passed True."""
+
+
+class LivePortInPaperModeError(Exception):
+    """Raised when trading_mode='paper' but ibkr_port reaches a LIVE session.
+
+    W1.4. This was a warning until 12 August, and a warning is not enough,
+    because `Settings.is_live` is `trading_mode == "live"` and nothing else -
+    it is a claim about configuration, never a check against what the socket
+    actually reached. Thirteen call sites trust that claim, including the
+    autonomy gate, promotion-evidence enforcement, the cost model and the
+    mode banner. A paper claim against a live Gateway leaves every one of them
+    reading 'paper' while real orders are reachable.
+
+    Deliberately one-directional. The reverse - trading_mode='live' against a
+    paper port - is the SAFE mismatch and is allowed: costs are applied,
+    autonomy is gated, the banner says DANGER, and the account underneath is
+    a simulator.
+    """
 
 
 class IBAdapter:
@@ -78,9 +97,13 @@ class IBAdapter:
                 "will connect."
             )
         if not settings.is_live and settings.ibkr_port in _LIVE_PORTS:
-            logger.warning(
-                "trading_mode is 'paper' but ibkr_port=%s looks like a live port - check config",
-                settings.ibkr_port,
+            paper = ", ".join(f"{port} (paper {name})" for port, name in _PAPER_PORTS.items())
+            raise LivePortInPaperModeError(
+                f"trading_mode is 'paper' but ibkr_port={settings.ibkr_port} reaches a LIVE "
+                "IBKR session. Connecting would put real orders within reach while every "
+                "is_live consumer in this application - the autonomy gate, promotion-evidence "
+                f"enforcement, the cost model and the mode banner - reads 'paper'. Use {paper}, "
+                "or set trading_mode=live deliberately and confirm it."
             )
 
         self.ib_client = ib_client
