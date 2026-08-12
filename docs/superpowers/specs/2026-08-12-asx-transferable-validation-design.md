@@ -66,6 +66,56 @@ that were most expensive to get right, and it is measurement work before it is
 coding work.** That is the scope of W1, and it is why W1 is measurement rather
 than building.
 
+### The absence is silent, which is what makes it expensive
+
+Checked rather than assumed, after the claim above was challenged. **Those four
+methods are optional by design, not missing by omission.** The protocol
+documents a fallback for each — *"Adapters that cannot answer return an empty
+tuple, which reads as 'unknown' rather than 'none'"* — and the callers honour it:
+`getattr(self.broker, "resting_stops", None)`, with `verify_position_stops`
+returning early because *"an adapter without the capability must not be read as
+'no stops rest anywhere', which would drop every stop the app holds."*
+
+Nothing crashes. Nothing corrupts. **Which is worse, not better:** on IBKR as it
+stands, M31b's protection verification, M34/M48's fill absorption and M39's
+corporate-action detection all become no-ops, silently, as a *supported*
+configuration. The app would report perfect health while verifying nothing.
+
+That is the shape of the defect fixed on 12 August — blindness indistinguishable
+from a quiet book — and it means the cost is not "write four methods". It is
+that the whole protective layer degrades quietly when they are absent, and
+nothing currently says so.
+
+### Two hazards found by the same check
+
+* **`broker=ibkr` never reaches `IBAdapter`.** `runtime.py` logs a warning and
+  returns `MockBroker(seed=1)`. Configuring the destination broker today yields
+  **seeded fabricated data and one log line.** Harmless while nobody sets it;
+  lethal on the morning of the cutover. It sits in the same resolver whose
+  neighbouring docstring records `MockMacroSource` feeding `random.uniform(-1, 5)`
+  to the regime engine for twenty-five milestones with nothing saying so.
+* **No conformance test exists.** `tests/data/broker/test_ib_adapter.py` tests
+  what `IBAdapter` does; **nothing in `tests/` asserts that any adapter satisfies
+  `BrokerAdapter`.** The capability gap is invisible to all 1,964 tests — the
+  same sentence as the two M39 defects that only deploying found.
+
+## W1.0 — the static capability audit, before any IBKR contact
+
+**Because "four methods" is a reading, and this project's rule is derive, do not
+remember.** The spike answers what each method costs; it cannot answer whether
+four is the right number. This does.
+
+* a **capability matrix** — every adapter (Alpaca, IB, Mock, and the Simulated
+  one W2 adds) against every `BrokerAdapter` method;
+* a **test that fails when an adapter lacks a capability the live path depends
+  on** — M80's *ask what reads it*, pointed at the broker port;
+* the **resolver fixed** so `broker=ibkr` cannot silently resolve to a mock.
+
+An hour or two, no trading behaviour touched, and its output becomes the
+checklist W1.1 measures against — so it makes the spike cheaper as well as
+sounder. **It de-risks the ASX call more than the broker probing does**, because
+it replaces an estimate with a derived list.
+
 ## W1 — the ASX feasibility spike
 
 **Purpose: produce the costed inventory the operator's call gets made against.**
