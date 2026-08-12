@@ -340,6 +340,20 @@ class Settings(BaseSettings):
     # between self-healing and self-diagnosing.
     protection_sweep_seconds: float = Field(default=300.0, gt=0)
 
+    # What the corporate-action monitor is allowed to DO (M39).
+    #
+    # "shadow" runs everything - the announcements query, the ex-date gating,
+    # the ratio, the never-tighten invariant - and logs the adjustment it WOULD
+    # place, modifying no order. "act" places it.
+    #
+    # Shadow is the default, and that is what makes the first deployment of M39
+    # a no-op by construction: it changes no trading decision until somebody
+    # deliberately promotes it. The shadow period is also the only way to watch
+    # the detector's judgement against real announcements - including the CRWD
+    # false positive already in the book - without spending a position slot or
+    # any risk budget on a machinery test.
+    corporate_action_mode: Literal["shadow", "act"] = "shadow"
+
     # How old a symbol's last PRINT may be before that symbol is excluded from
     # signal generation (M28a). Never halts the account.
     #
