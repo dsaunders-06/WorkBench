@@ -1,4 +1,4 @@
-# Handoff — 12 August 2026, morning
+# Handoff — 12 August 2026, afternoon
 
 Paste the block at the bottom into a new context window. Everything above it is
 the detail that block points at.
@@ -162,7 +162,7 @@ found underneath it, and both are now fixed.** Full detail in `ROADMAP.md` M86.
 `strategy=swing` for all nine with transmit timestamps matching `opened_at` to
 the second.
 
-## The Balances broker row clips its fifth label — found by rendering, 12 August
+## ~~The Balances broker row clips its fifth label~~ — FIXED (M87), verified on screen
 
 **"Day trades (5d)" renders as "Da"** on the Dashboard, cut off at the right edge
 of the Balances card — **and still clipped with the window maximised at 3086px**,
@@ -180,6 +180,16 @@ ancestor of the deployed `49482c2`, so it shipped in the M63+M62 build too. It h
 simply never been rendered and looked at. Every test passes through it, which is
 the whole argument for screenshotting.
 
+**Fixed in M87 and confirmed on screen in the M86 build**, which is the only
+evidence that counts here: the overflow was not reproducible offscreen (the
+display runs at 125% scaling, the test platform at 96 DPI) and an offscreen
+render produces tofu, so no test could prove it. The label now reads in full.
+Labels elide with an ellipsis and keep their text in a tooltip, and both grids
+divide their width evenly. **A floor remains** — the panel cannot go below
+1056px, and narrower than that it still overflows, because the bold money values
+set that minimum and eliding a money figure would mislead where eliding a label
+merely abbreviates.
+
 ## M71 — the same root cause as M70, on the way OUT
 
 App-transmitted sells announce at the reference price too, so the ClosedTrade's
@@ -191,10 +201,11 @@ transmitted sell** — do that before designing it.
 
 # What has landed since 8 August
 
-**All 18 were DEPLOYED on 12 August as `M86 (7812c22)`, and the deploy gap is
-now zero.** Run `handoff_state.py` rather than trusting this paragraph — its
-`DEPLOYED` constant is the one figure it cannot derive, and the milestone label
-beside it now reads out of `version.py` at that commit rather than being typed.
+**Those 18 were deployed on 12 August as `M86 (7812c22)`. Since then M39 and M87
+have landed and are NOT installed** — built, signed, zipped and staged. Run
+`handoff_state.py` rather than trusting this paragraph: its `DEPLOYED` constant
+is the one figure it cannot derive, and the milestone label beside it reads out
+of `version.py` at that commit rather than being typed.
 
 ## Record correctness
 
@@ -446,29 +457,52 @@ ALSO FOUND, NOT FIXED
        FREEZE, needs a recorded lift. Designed in docs/superpowers/specs/.
   M71  the same root cause as M70 on app-transmitted SELLS, so the exit price
        is wrong too. Needs a record rewrite. Read from code, NOT verified.
-  UI   "Day trades (5d)" renders as "Da" on the Dashboard - clipped at the right
-       edge of the Balances card, STILL CLIPPED MAXIMISED AT 3086px. Five cells
-       in a row where the grid wraps at four (balances_panel.py:271). The fix
-       for an orphaned row traded it for a clipped one. PRE-EXISTING, shipped in
-       M63+M62 too. Found by SCREENSHOTTING; every test passes through it.
 
-STATE - DEPLOYED, 12 August
-Deployed build is now M86 (7812c22) and THE DEPLOY GAP IS ZERO. Running as
-PID 28072 since 09:20 AEST. Repo clean and pushed. Ten positions held, 10 of 10
-protected, Adopted 10 not 11. TWO closed trades (CVS -482.18 -1.68R;
-MNST -375.23, unattributed - and it stays unattributed, that one is correct).
-Group 4 (the interface) is COMPLETE and now actually running. M84 and M85 are
-two new strategies - DESIGNED, NOT BUILT, NOT ACTIVATED, selectable via
-default_strategies() but absent from QAT_DEPLOYED_STRATEGIES.
+STATE - 12 August, afternoon
+Deployed build is M86 (7812c22). HEAD is 5480452 and the DEPLOY GAP IS 2
+milestones across 13 commits - M39 and M87 - all of it BUILT, SIGNED AND ZIPPED
+but NOT YET INSTALLED. Repo clean and pushed. 1,952 tests collected.
+
+  STAGED AND WAITING: dist\QuantAdvisoryTerminal-M39b.zip
+  new exe  A70A22E1...B6A48FE      outgoing  8E030C66...20157C7
+  Expand-Archive -Force over C:\QuantAdvisoryTerminal, verify by hash, LAUNCH.
+  The permission classifier REFUSES the expand step, so the operator runs it.
+  Data already backed up: data-backup-20260812-133956-PRE-M39-DEPLOY.
+
+Ten positions held, 10 of 10 protected, Adopted 10 not 11. TWO closed trades
+(CVS -482.18 -1.68R; MNST -375.23, unattributed - and it STAYS unattributed,
+that one is correct). Group 4 (the interface) is COMPLETE and running. M84 and
+M85 are DESIGNED, NOT BUILT, NOT ACTIVATED.
+
+  VERIFIED ON SCREEN, not just in tests: the M86 build launched, the balances
+  label reads "Day trades (5d)" in full (M87 fixed it), no corporate-action
+  banner appears, and the Risk Console reads "none pending on held positions".
+  The corporate-action-monitor engine starts. Two closed trades restored,
+  10 entry dates restored, 10 lots restored, no ERROR anywhere.
+
+  THE ANNOUNCEMENTS PATH IS PROVEN LIVE. The monitor logs nothing on a
+  successful empty query, so working and silently-broken look identical. A probe
+  against the live account with a control settles it: CRWD returns ex 2026-07-02
+  ratio 4, payable 2026-07-01. Zero announcements on the ten held symbols is the
+  TRUE answer. Re-run scripts/analysis/probe_live_announcements.py to recheck.
+
+  THE LOOKBACK IS A SAFETY PARAMETER, now 90 days, was 5. An ex-date older than
+  it is never FETCHED, so its stale stop is never adjusted - the MNST failure
+  with nothing to detect it. That means the ex_date gate is now the ONLY thing
+  keeping CRWD from being adjusted twice, where the window used to exclude it as
+  well. Tested at unit AND monitor level for exactly that reason.
 
   The aggregate cap is BREACHED at 5.01% vs the 5.00% cap, so NEW ENTRIES ARE
-  REFUSED. This PREDATES the deploy - measured in the pre-deploy log at 07:54
-  through 08:09 - so the deploy changed no trading behaviour. It unwinds as
-  positions close or as equity rises. Related to M66, which is why the figure
-  is measured at entry prices in the first place.
+  REFUSED, and SFBS on 21 August therefore CANNOT BE BOUGHT. This predates every
+  deploy today. Related to M66. Shadow mode is what makes the unmeasured Phase 2
+  tolerable - the machinery accumulates judgement without needing the event.
 
-  Rollback if needed: outgoing exe 9E964E92...3E6628, and the whole data dir is
-  at data-backup-20260812-091345-PRE-M86-DEPLOY.
+  THE MANUAL IS CURRENT AGAIN. It was last rebuilt 5 August for M49, and 53 of
+  91 settings appeared nowhere in it while "quarantine" and "corporate action"
+  appeared ZERO times. 29 settings added, three new sections (11.9 interface
+  level, 12.4 quarantine, 12.5 corporate actions). Two guards now stop it
+  rotting: every setting documented or excused with a reason, and every
+  "Section N.M" must name a heading that exists.
 
 CONSTRAINTS
   READ %LOCALAPPDATA% VIA POWERSHELL, NEVER BASH. The Bash tool sees a
