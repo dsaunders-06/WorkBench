@@ -105,8 +105,11 @@ nothing currently says so.
 remember.** The spike answers what each method costs; it cannot answer whether
 four is the right number. This does.
 
-* a **capability matrix** — every adapter (Alpaca, IB, Mock, and the Simulated
-  one W2 adds) against every `BrokerAdapter` method;
+* a **capability matrix**, derived on demand rather than recorded —
+  `scripts/broker_capabilities.py` prints every adapter against every
+  `BrokerAdapter` method, and prints what each gap costs. **Run it rather than
+  quoting the figure below**, which is true on 12 August and has no way of
+  staying true;
 * a **test that fails when an adapter lacks a capability the live path depends
   on** — M80's *ask what reads it*, pointed at the broker port;
 * the **resolver fixed** so `broker=ibkr` cannot silently resolve to a mock.
