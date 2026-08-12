@@ -40,7 +40,10 @@ from datetime import UTC, datetime
 # enumerated as a future gap on 4 August, so "M39" alone would read to an
 # operator as the application having gone backwards from M86. Two milestones
 # ship here and both are named.
-MILESTONE = "M39+M87"
+#
+# M88 ships alone: it is the next number in sequence and reads forwards from
+# M87 without ambiguity, so it needs no compounding.
+MILESTONE = "M88"
 
 _UNKNOWN = "unknown"
 
