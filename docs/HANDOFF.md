@@ -34,6 +34,37 @@ different question.
 
 ---
 
+# 📌 TOMORROW, 13 AUGUST — DEPLOY M88
+
+**The deploy gap is no longer zero, and this is the first undeployed change all
+day that is not tests, documents or an unreachable branch.** Deferred
+deliberately on the evening of 12 August, not forgotten.
+
+    Deploy gap
+      milestones      1 across 4 commits
+      which           M88
+
+**What is undeployed:** `absorb_broker_fills` took its watermark *after* the
+pass, so a protective fill executing while the pass ran fell below the next
+query's floor and was never read again — a stop firing, and no closed trade for
+it. The installed build still has that window open. Every sweep of tonight's
+session runs with it.
+
+**Before deploying, run the derivation rather than trusting this block:**
+
+    .\.venv\Scripts\python.exe scripts/handoff_state.py
+
+**The deploy checklist that already exists is in "For the next deploy" below** —
+back up `open_position_entries.json` and the data directory, close the app,
+`Expand-Archive -Force`, verify by hash, launch, and **update `DEPLOYED` in
+`scripts/handoff_state.py`**. The permission classifier refuses the expand step,
+so the operator runs it. **Always ask before deploying.**
+
+**Do it in the morning, after the overnight session has ended** — the app must
+be closed, and ten positions are held.
+
+---
+
 # ⚠️ THE ASX MOVED FORWARD — 12 August
 
 **Read `docs/superpowers/specs/2026-08-12-asx-transferable-validation-design.md`
@@ -613,10 +644,13 @@ OUTSTANDING, IN THE ORDER I WOULD TAKE THEM
        merely abbreviates. Not hit at any real window size today.
 
 STATE - 12 August, end of day
-Deployed build is M39+M87 (67677bc). THE DEPLOY GAP IS ZERO MILESTONES across
-two commits - W1.0 added tests, a reporting script and a raise on a branch
-nothing can currently reach, so there is NOTHING TO DEPLOY. Repo clean and
-pushed. Ten positions held, 10 of 10 protected, Adopted 10 not 11. TWO closed
+Deployed build is M39+M87 (67677bc). THE DEPLOY GAP IS NO LONGER ZERO: M88 is
+built, tested, pushed and NOT INSTALLED, and the operator deferred the deploy
+to the MORNING OF 13 AUGUST deliberately. Until it lands, every sweep of
+tonight's session can lose a protective fill that executes while the absorb
+pass is running - a stop firing, and no closed trade for it. Ask before
+deploying, back up the data dir first, and update DEPLOYED in handoff_state.py
+after. Repo clean and pushed. Ten positions held, 10 of 10 protected, Adopted 10 not 11. TWO closed
 trades (CVS -482.18 -1.68R; MNST -375.23, unattributed - and it STAYS
 unattributed, that one is correct). Group 4 COMPLETE. M84 and M85 remain
 DESIGNED, NOT BUILT, NOT ACTIVATED - and M86 cleared the hazard that made
