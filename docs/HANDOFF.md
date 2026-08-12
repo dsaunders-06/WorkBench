@@ -23,10 +23,62 @@ FIVE; the test count sat at 1,690 in three paragraphs while the suite moved on.
 that motivated it cost $375.23 on 11 August; the machinery that would have
 prevented it now runs in shadow mode, has been watched rejecting the one false
 positive in the live book, and will not touch an order until
-`QAT_CORPORATE_ACTION_MODE=act`. The deploy gap is zero. The binding constraint
-on the trial is not the software any more — it is throughput: **2 closed trades
-in 12 days against 30 needed per strategy, and the cap is breached so the number
-is currently zero.** The 20 August review is the decision that matters.
+`QAT_CORPORATE_ACTION_MODE=act`. The deploy gap is zero. **Then the ground
+moved:** the operator brought the ASX forward from eventual destination to
+near-term one, which reframes the trial rather than pausing it. Throughput was
+never going to prove an edge — 2 closed trades in 12 days against 30 per
+strategy, with the cap breached so the number is zero — and now it does not have
+to. **The binding constraint stopped being evidence and became
+instrumentation.** The 20 August review still matters, but it is deciding a
+different question.
+
+---
+
+# ⚠️ THE ASX MOVED FORWARD — 12 August
+
+**Read `docs/superpowers/specs/2026-08-12-asx-transferable-validation-design.md`
+before planning anything.** The operator's position: if the ASX move becomes a
+strong proposition it will be called early, because six to twelve months of
+validation are better spent in the destination market than the staging one.
+
+**The rule that follows:** between now and the call, everything built is either
+market-agnostic or cheap to abandon. Transferable — the machinery, the research
+harness, the data ports, the evidence framework, M39/M43/M60. **Not
+transferable — US expectancy figures**, which stop being a deliverable and
+become validation of the instrument.
+
+**W1.0 is DONE and pushed** (`bed0b79`, `15b705b`, `1162142`). Three findings,
+each from checking a claim rather than repeating it:
+
+* **`IBAdapter` implements 8 of `BrokerAdapter`'s 12 methods.** Absent:
+  `recent_fills`, `resting_stops`, `resting_stop_orders`, `announcements` —
+  fill absorption, protective-order integrity, corporate-action detection.
+  **They are optional BY DESIGN**, every caller guards with `getattr`, so an
+  adapter lacking them neither crashes nor corrupts — it silently stops
+  verifying, absorbing and detecting. **Run
+  `scripts/broker_capabilities.py`**, do not quote a count from here.
+* **`resolve_broker` returned `MockBroker(seed=1)` for `broker=ibkr`** after
+  attempting nothing, in a function whose docstring says quietly trading against
+  a simulator while believing you are connected to a real account *"would be
+  worse than either"*. It refuses now.
+* **ROADMAP was wrong that `ibkr` is "unimplemented beyond the seam."**
+  `ib_adapter.py` is 223 lines with a client protocol, translate module,
+  heartbeat and backoff, and `costs.py` already carries ASX cost profiles with a
+  docstring saying *live trading starts on ASX*. **The move is not starting from
+  zero.**
+
+**NEXT, and it has a clock: W1.4.** The operator is opening a live IBKR account
+to reach the paper API — the TWS API via **IB Gateway**, which is what
+`ib_async` speaks. `ib_adapter.py:74` RAISES when `trading_mode` is live and
+unconfirmed but only WARNS when `trading_mode` is paper and `ibkr_port` is a
+live port (4001/7496), then connects. Inert today. **On the morning that account
+exists, a log line is the only thing between a port typo and real orders.** The
+warning becomes a refusal before any IBKR credential enters configuration.
+
+**Then W1.1** — measure what IBKR actually returns for those four methods,
+against a paper account, read-only. The capability matrix is the checklist. And
+**W2**, the portfolio-level replay harness, which is the asset that survives the
+move and can start now because it needs no broker.
 
 ---
 
@@ -493,12 +545,51 @@ that path has ZERO OBSERVATIONS and still does.
   used to exclude CRWD before the gate was consulted - and it has been WATCHED
   doing the job. Re-run scripts/analysis/probe_live_announcements.py to recheck.
 
-  TWO DEFECTS FOUND BY DEPLOYING, both invisible to 1,964 passing tests.
+  TWO DEFECTS FOUND BY DEPLOYING, both invisible to a fully passing suite.
   Widening the lookback to 90 made the range 135 and Alpaca caps it at 90, so
   every query failed - and a probe for exactly that path had not been re-run
   after the constant changed. WORSE: the Risk Console kept saying "none pending
   on held positions" while blind. The cap is now enforced in the ADAPTER, and
   blindness is a REPORTED STATE rather than a silence.
+
+THE ASX MOVED FORWARD - 12 August, and it reframes everything below
+The operator will call the ASX move EARLY if it becomes a strong proposition:
+six to twelve months of validation are better spent in the destination market
+than the staging one. Spec:
+docs/superpowers/specs/2026-08-12-asx-transferable-validation-design.md
+
+  THE RULE: between now and the call, everything built is either
+  market-agnostic or cheap to abandon. Transferable - the machinery, the
+  research harness, the data ports, the evidence framework, M39/M43/M60. NOT
+  transferable - US expectancy figures, which stop being a deliverable and
+  become validation of the instrument.
+
+  W1.0 IS DONE AND PUSHED. IBAdapter implements 8 of BrokerAdapter's 12
+  methods; absent are recent_fills, resting_stops, resting_stop_orders and
+  announcements - fill absorption, protective-order integrity, corporate-action
+  detection. THEY ARE OPTIONAL BY DESIGN and every caller guards with getattr,
+  so an adapter lacking them neither crashes nor corrupts - it silently stops
+  verifying, absorbing and detecting, with a full suite passing. RUN
+  scripts/broker_capabilities.py, do not quote a count. resolve_broker used to
+  return MockBroker(seed=1) for broker=ibkr after attempting NOTHING; it
+  refuses now. And ROADMAP was WRONG that ibkr is "unimplemented beyond the
+  seam" - ib_adapter.py is 223 lines and costs.py already carries ASX cost
+  profiles saying live trading starts on ASX.
+
+  NEXT, WITH A CLOCK: W1.4. The operator is opening a LIVE IBKR account to
+  reach the paper API - TWS API via IB GATEWAY, which is what ib_async speaks,
+  ports 4002 paper / 4001 live. ib_adapter.py:74 RAISES when trading_mode is
+  live and unconfirmed but only WARNS when trading_mode is paper and ibkr_port
+  is a LIVE port, then connects. Inert today. On the morning that account
+  exists, a log line is the only thing between a port typo and real orders.
+  MAKE IT A REFUSAL BEFORE ANY IBKR CREDENTIAL ENTERS CONFIGURATION.
+
+  THEN W1.1 - measure what IBKR actually returns for those four, paper account,
+  read-only, capability matrix as the checklist. AND W2, the portfolio-level
+  replay harness: no portfolio simulation exists anywhere, the vectorized
+  engine has no stop/target/time-stop and exits only on signal flips, and the
+  replay scripts hand-copy the rules from swing.py. It needs no broker, so it
+  can start now.
 
 OUTSTANDING, IN THE ORDER I WOULD TAKE THEM
   M66  the aggregate risk cap that gates every entry is measured against ENTRY
@@ -522,7 +613,9 @@ OUTSTANDING, IN THE ORDER I WOULD TAKE THEM
        merely abbreviates. Not hit at any real window size today.
 
 STATE - 12 August, end of day
-Deployed build is M39+M87 (67677bc) and THE DEPLOY GAP IS ZERO. Repo clean and
+Deployed build is M39+M87 (67677bc). THE DEPLOY GAP IS ZERO MILESTONES across
+two commits - W1.0 added tests, a reporting script and a raise on a branch
+nothing can currently reach, so there is NOTHING TO DEPLOY. Repo clean and
 pushed. Ten positions held, 10 of 10 protected, Adopted 10 not 11. TWO closed
 trades (CVS -482.18 -1.68R; MNST -375.23, unattributed - and it STAYS
 unattributed, that one is correct). Group 4 COMPLETE. M84 and M85 remain
@@ -530,11 +623,20 @@ DESIGNED, NOT BUILT, NOT ACTIVATED - and M86 cleared the hazard that made
 activating them destroy nine positions' worth of attribution.
 
   THE AGGREGATE CAP IS BREACHED at 5.01% vs the 5.00% cap, so NEW ENTRIES ARE
-  REFUSED and SFBS on 21 August CANNOT BE BOUGHT. It predates every deploy
-  today. This is THE constraint on the trial: with 2 closed trades in 12 days
-  and 30 needed PER STRATEGY, the gate is 1.5 to 6 months away, and right now
-  throughput is zero. Related to M66. The 20 August review of the co-binding
-  10-position / 5% pair is the decision that actually governs the timeline.
+  REFUSED. It predates every deploy today. With 2 closed trades in 12 days and
+  30 needed PER STRATEGY, throughput was never going to prove an edge - and
+  under the ASX reframing it no longer has to. Live paper answers the
+  OPERATIONAL questions at the sample size it can reach; the edge question
+  moves to the W2 harness.
+
+  SO THE 20 AUGUST REVIEW DECIDES A DIFFERENT QUESTION. Widening the co-binding
+  10-position / 5% pair buys throughput, and throughput buys US closed trades,
+  which are now MACHINERY evidence rather than EDGE evidence. DECIDED: the
+  rails HOLD, and ONE SLOT IS FREED DELIBERATELY for SFBS 2-for-1 on 21 August -
+  the only dated chance to observe a split where the position SURVIVES to the
+  share adjustment, which M39 Phase 2 has never seen. WIDEN THE STOP
+  BEFOREHAND. M66 lands AFTER that event, not before: it raises the measured
+  figure on an already-breached cap and would take back the slot.
 
   THE MANUAL IS CURRENT. It was last rebuilt 5 August for M49, and 53 of 91
   settings appeared nowhere while "quarantine" and "corporate action" appeared

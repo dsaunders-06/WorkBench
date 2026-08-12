@@ -210,6 +210,77 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## The ASX became the near-term destination, not the eventual one  **[DECIDED 12 AUGUST]**
+
+The 6 August entry above records the ASX as where this is ultimately going. **On
+12 August the operator moved it forward:** if the move becomes a strong
+proposition it will be called early, because the preference is to spend six to
+twelve months validating in the destination market rather than in the staging
+one.
+
+That reframes work already in flight rather than adding to it. ROADMAP has said
+since 6 August that the trial's edge numbers do not transfer and that what
+genuinely validates is the MACHINERY. **That was a caveat. It is now the design
+constraint:** between here and the call, everything built is either
+market-agnostic or cheap to abandon.
+
+Design: `docs/superpowers/specs/2026-08-12-asx-transferable-validation-design.md`.
+
+**What this changes about the current trial.** Nothing operationally - the
+session runs on. What changes is what it is FOR. The promotion gate's 30 closed
+trades per strategy was being asked to prove both that the machinery holds and
+that the edge exists; at 2 closed trades in 12 days with the aggregate cap
+breached, it cannot do the second this decade. Under the new framing live paper
+answers the operational questions at the sample size it can actually reach, and
+the edge question moves to a portfolio-level replay harness that does not exist
+yet. **The binding constraint stopped being evidence and became instrumentation.**
+
+**The 20 August review inherits a different question.** Widening the co-binding
+10-position / 5% pair was always about buying throughput. Throughput buys US
+closed trades, and US closed trades are now machinery evidence rather than edge
+evidence - so the rails hold, one slot is freed deliberately for **SFBS on
+21 August**, and M66 lands AFTER that event rather than before it, because M66
+raises the measured figure on an already-breached cap and would take back the
+slot.
+
+### W1.0 - the broker port could not say what it cannot do  **[DONE, 12 August]**
+
+Found while costing the move, by checking a claim rather than repeating it.
+
+**`IBAdapter` implements 8 of `BrokerAdapter`'s 12 methods.** The four absent
+are `recent_fills`, `resting_stops`, `resting_stop_orders` and `announcements` -
+fill absorption, protective-order integrity and corporate-action detection.
+Every lesson from M31d, M33d, M47, M48, M60 and M39 lives behind those four
+names.
+
+**They are optional BY DESIGN, and that is the finding.** The Protocol documents
+a fallback for each and every caller guards with `getattr`, so an adapter
+lacking them neither crashes nor corrupts. It simply stops verifying, stops
+absorbing and stops detecting - with no error, no log line, and a full suite
+passing. **`scripts/broker_capabilities.py` prints the matrix and what each gap
+costs**; run it rather than quoting the figures here.
+
+Reading that output sharpened it: **IBAdapter DOES implement `balances`**, the
+one optional whose absence is merely a display degradation. The gap is not
+random.
+
+**Two hazards found by the same check.** `resolve_broker` returned
+`MockBroker(seed=1)` for `broker=ibkr` after logging a warning and **attempting
+nothing** - so configuring the destination broker yielded seeded fabricated
+data, in a function whose own docstring says quietly trading against a simulator
+while believing you are connected to a real account *"would be worse than
+either"*. It refuses now. And **no test anywhere asserted that any adapter
+satisfies `BrokerAdapter`**; the method list is derived from the Protocol now, so
+a method added and classified nowhere fails a test instead of going unaudited.
+
+**Still open, and it is W1.4.** `ib_adapter.py:74` RAISES when `trading_mode` is
+live and unconfirmed, but only WARNS when `trading_mode` is paper and
+`ibkr_port` is a live port (4001/7496) - then connects. Inert while nothing
+resolves to IBKR. **The operator is opening a live IBKR account to reach the
+paper API**, and on that morning a log line is the only thing between a port
+typo and real orders. The warning becomes a refusal before any IBKR credential
+enters configuration.
+
 ## M39 - Corporate actions: detection and adjustment  **[BUILT, SHIPS IN SHADOW]**
 
 12 August. The other half of Group 1. M60 built the containment; this is the
