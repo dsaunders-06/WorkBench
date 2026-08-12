@@ -25,6 +25,12 @@ expectancy figures. They become validation of the instrument rather than
 evidence about the strategy, and this design says so everywhere they appear so
 that nobody later defends a number this document already discounted.
 
+**There is a third category, found on 12 August by asking whether FRED is
+US-only: the code transfers and the INPUTS do not.** The regime engine is the
+case in point, and it is not the only candidate — anything reading a market-wide
+series should be checked against this test rather than assumed market-agnostic
+because its module has no country in the name.
+
 ## Two findings from scoping, which move the estimate
 
 Taken by reading the tree on 12 August, before any of the work below was
@@ -174,6 +180,39 @@ An inventory, not a fix list:
   Alpaca-shaped API;
 * halts are announcement-driven, which changes the shape of M43 rather than the
   need for it.
+
+### W1.3a — the regime engine's inputs are all US, and none of them are optional
+
+**Measured, not assumed.** `config.py` requests exactly five series:
+
+    DGS3MO   DGS10   T10Y3M   VIXCLS   BAA10Y
+
+3-month and 10-year Treasury constant maturities, the 10y–3m Treasury spread,
+the CBOE VIX, and Moody's Baa over the 10-year. **Every one is US.**
+
+FRED is not a US-only database — it carries OECD, IMF and BIS series including
+Australian ones. But the two features carrying most of this engine's signal have
+no FRED-hosted Australian equivalent: **Australia's volatility index is an
+S&P/ASX product (XVI), and Australian government yield curves come from the
+RBA's own tables.** An Australian credit spread in comparable form is not there
+at all. *Verify against FRED's current catalogue rather than this paragraph —
+it changes.*
+
+So the regime engine must be **re-sourced**, not ported: a different provider, a
+different format, and possibly a different instrument standing in for VIX.
+
+**This raises the value of putting the regime gate in W2's first version rather
+than lowering it.** M51 has asked since 5 August whether the regime scalar adds
+value or merely reduces exposure and adds variance. That question now carries a
+price: **if the ablation says it adds variance, the ASX port does not rebuild
+it, and a workstream disappears.** If it says the gate earns its keep, the data
+gets re-sourced knowing why. Only a harness containing the regime engine can
+answer it either way.
+
+**One sub-question to record, not to decide:** an ASX regime engine might
+legitimately keep reading US inputs. VIX is a global risk proxy and the ASX is
+substantially beta to US risk sentiment, so *which market's macro should gate
+ASX trades* is empirical — and answerable in the same harness.
 
 ### W1.4 — live-account safety review
 
