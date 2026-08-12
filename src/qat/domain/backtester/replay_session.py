@@ -31,6 +31,7 @@ for one symbol and lies about ten is worse than one that only claims one.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
 
 import pandas as pd
 
@@ -99,10 +100,35 @@ class ReplaySession:
         self.executor = AutonomousExecutor(
             self.bus,
             self.oms,
-            AutonomyGate(settings, self.kill_switch),
+            AutonomyGate(settings, self.kill_switch, clock=self._simulated_now),
             self.journal,
             settings=settings,
             retry_interval_seconds=_INERT_RETRY_SECONDS,
+        )
+
+    def _simulated_now(self) -> datetime:
+        """Mid-session on the day being replayed.
+
+        The autonomy gate refuses outside market hours, and against the WALL
+        clock a replay refuses every order it ever produces. Measured before
+        this existed: the strategy emitted a correct buy, the bridge sized it,
+        the order reached `pending_signoff`, and the journal recorded
+        `blocked - US market is closed (before open)`. One row, and the run
+        would otherwise have reported an honest-looking zero trades.
+
+        The gate takes an injectable clock for precisely this reason - its own
+        docstring says a market-hours gate read against the wall clock "passes
+        or fails by time of day". The replay's clock is the simulated date.
+
+        15:00 UTC is inside the US session (13:30-20:00) on the day whose close
+        produced the signal. The exact instant does not matter to any decision:
+        the fill happens at the NEXT bar's open regardless, which is the rule
+        the fill model already commits to.
+        """
+        return (
+            self.broker.current_date.to_pydatetime()
+            .replace(hour=15, minute=0, second=0, microsecond=0)
+            .astimezone(UTC)
         )
 
     async def run(self) -> None:

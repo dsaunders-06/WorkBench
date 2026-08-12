@@ -15,11 +15,22 @@ from qat.domain.strategies.swing import SwingStrategy
 
 
 def _trending_bars(days: int = 160) -> pd.DataFrame:
-    """A clean uptrend with a late pullback, so swing's thesis can fire."""
+    """An uptrend containing exactly one pullback-and-reclaim.
+
+    The dip depth is COMPUTED, not tuned. Swing needs `prior_close <=
+    prior_fast` then `last_close > last_fast`, and an EMA20 lags a +0.5/day
+    trend by about (20-1)/2 * 0.5 = 4.75 - so a shallower dip never reaches the
+    average and the thesis cannot fire however long the series runs. A first
+    version of this fixture dipped 5 and left the close at 173.50 against a
+    fast EMA of 173.27, still above it, and the strategy was right to be
+    silent. Ten clears the lag without inventing a crash.
+
+    Placed ten bars from the end so there is room for the entry to fill and the
+    position to live, rather than resting on the final bar.
+    """
     index = pd.date_range("2026-01-05", periods=days, freq="B", tz="UTC")
     closes = [100.0 + i * 0.5 for i in range(days)]
-    closes[-3] -= 5.0  # the pullback below the fast EMA
-    closes[-2] -= 4.0
+    closes[days - 10] -= 10.0
     return pd.DataFrame(
         {
             "open": closes,
@@ -71,3 +82,20 @@ async def test_the_session_advances_the_broker_to_the_end_of_the_series(tmp_path
     await session.run()
 
     assert session.broker.current_date == bars.index[-1]
+
+
+@pytest.mark.asyncio
+async def test_a_signal_becomes_an_order_at_the_broker(tmp_path):
+    """The claim the harness rests on: the production path, driven by history,
+    produces an order without a single rule being re-implemented."""
+    session = ReplaySession(
+        bars={"AAA": _trending_bars()},
+        strategies=[SwingStrategy()],
+        settings=_settings(tmp_path),
+    )
+
+    await session.run()
+
+    submitted = list(session.broker._orders.values())
+    assert submitted, "the production path produced no order at all"
+    assert all(o.symbol == "AAA" for o in submitted)
