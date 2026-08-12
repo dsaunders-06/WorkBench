@@ -111,8 +111,23 @@ other, which is the entire point of building this rather than borrowing one.
 
 ## G1 — the acceptance gate
 
-**Replay a dated window and compare against `decision_journal.csv`: for each
+**Replay a dated window and compare against `risk_decisions.csv`: for each
 candidate, the same accept or refuse, and the SAME BINDING RAIL.**
+
+**Corrected 12 August, by building step 3 and looking.** This section first
+named `decision_journal.csv`. That is the wrong file: the journal records the
+**sign-off path** — what was transmitted and why it was permitted — while
+*which rail bound, and against what inputs*, has its own ledger. Measured, with
+the position limit set to one:
+
+    risk_decisions.csv
+      AAA  approved=True   reason=approved
+      BBB  approved=False  reason="already at the 1-position limit (1 held or pending)"
+
+A G1 that read the journal would have found **silence where a refusal was** and
+scored it as agreement. Both files are still worth comparing — the journal for
+what reached the broker, `risk_decisions.csv` for the rail — but the binding
+rail is the diagnostic, and it lives in the second.
 
 Chosen over the alternatives deliberately:
 
