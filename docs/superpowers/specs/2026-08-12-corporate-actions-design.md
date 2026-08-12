@@ -263,10 +263,26 @@ Required readers, each with its own test:
 | Daily report | Its own section |
 | Decision journal | Every entry or exit decision on the symbol records the pending action |
 
-**The enforcement mechanism is M80's existing
-`test_computed_values_have_readers`**, extended so `pending_action` is required
-to have a reader in each place above. That is what makes R1 a check rather than
-an intention, and it is the direct answer to the five-times-repeated defect.
+**Enforcement takes two tests, not one.** The first draft of this spec said
+M80's existing `test_computed_values_have_readers` could be extended to cover
+this. Read rather than assumed, it cannot: that test walks `@property`
+definitions in three watched modules and asserts something *anywhere in `src/`*
+reads each one. "Read by something" is a much weaker claim than "read by the
+Blotter", and R1 is the stronger claim.
+
+So:
+
+1. **The generic guard** gains `domain/corporate_actions/detector.py` in its
+   `_WATCHED` tuple, so any computed property added there is covered by the
+   existing rule.
+2. **A new explicit test** asserts that each module in the R1 table above
+   references the monitor's API. That one fails if a screen is added later
+   without wiring the state in, which the generic guard would not catch.
+
+The distinction matters because the five-times-repeated defect was never "no
+reader at all". `is_synthetic` had a reader from M40 — the language model. What
+it lacked was the *operator*, for two milestones. A guard that accepts any
+reader would have passed it.
 
 ## R2 — decision input
 
