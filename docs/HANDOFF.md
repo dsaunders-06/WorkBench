@@ -1,4 +1,4 @@
-# Handoff — 12 August 2026, end of day
+# Handoff — 13 August 2026, end of day
 
 Paste the block at the bottom into a new context window. Everything above it is
 the detail that block points at.
@@ -19,49 +19,175 @@ FIVE; the test count sat at 1,690 in three paragraphs while the suite moved on.
 
 # Where this stands, in one paragraph
 
-**M39 is built and deployed, and it changes nothing until promoted.** The split
-that motivated it cost $375.23 on 11 August; the machinery that would have
-prevented it now runs in shadow mode, has been watched rejecting the one false
-positive in the live book, and will not touch an order until
-`QAT_CORPORATE_ACTION_MODE=act`. The deploy gap is zero. **Then the ground
-moved:** the operator brought the ASX forward from eventual destination to
-near-term one, which reframes the trial rather than pausing it. Throughput was
-never going to prove an edge — 2 closed trades in 12 days against 30 per
-strategy, with the cap breached so the number is zero — and now it does not have
-to. **The binding constraint stopped being evidence and became
-instrumentation.** The 20 August review still matters, but it is deciding a
-different question.
+**M88 is deployed and running, the deploy gap is zero, and the overnight
+session ran clean end to end.** The ASX moved from eventual destination to
+near-term one on 12 August, which reframed the trial rather than pausing it:
+throughput was never going to prove an edge — 2 closed trades in 12 days
+against 30 per strategy, cap breached so the number is zero — and under the new
+framing it does not have to. **The binding constraint stopped being evidence
+and became instrumentation.** The research harness is five steps of six built,
+and **G1 has now run and did not pass** — for a reason that is a fidelity limit
+rather than a defect, accepted deliberately with its costs named. The 20 August
+review still matters and now has its first concrete data point.
 
 ---
 
-# 📌 TOMORROW, 13 AUGUST — DEPLOY M88
+# 🌙 SESSION DEBRIEF — overnight 12–13 August
 
-**The deploy gap is no longer zero, and this is the first undeployed change all
-day that is not tests, documents or an unreachable branch.** Deferred
-deliberately on the evening of 12 August, not forgotten.
+**Ran clean end to end.** Started 23:30:17, stood down 06:00:18. No
+intervention, no code change, nothing that threatened the test.
 
-    Deploy gap
-      milestones      1 across 4 commits
-      which           M88
+| | |
+|---|---|
+| Build during the session | `M39+M87 (67677bc)` — M88 was still undeployed |
+| ERROR / CRITICAL | 0 |
+| MARKET DATA DOWN | 0 |
+| Kill-switch / reconciliation mismatch | 0 |
+| POSITION UNPROTECTED | 0 |
+| Broker-side fills | 0 — so M88's open absorb window cost nothing |
+| Closed trades | 0, `closed_trades.csv` unchanged |
 
-**What is undeployed:** `absorb_broker_fills` took its watermark *after* the
-pass, so a protective fill executing while the pass ran fell below the next
-query's floor and was never read again — a stop firing, and no closed trade for
-it. The installed build still has that window open. Every sweep of tonight's
-session runs with it.
+**The regime classified at the bell**, four seconds after open: `low_vol`,
+exposure scalar 1.00, on VIX 15.46 and curve 0.81. Mass was
+`low_vol 0.39 · sideways 0.22 · bear 0.20` — 0.61 inside swing's suitable set,
+so swing was eligible at full size all night. The sideways-default warning did
+not recur after the open.
 
-**Before deploying, run the derivation rather than trusting this block:**
+## The one event, and it matters for 20 August
 
-    .\.venv\Scripts\python.exe scripts/handoff_state.py
+**AXP fired swing's entry condition and was refused 108 times by the position
+limit**, 04:09 to 05:59, first refusal at $341.90.
 
-**The deploy checklist that already exists is in "For the next deploy" below** —
-back up `open_position_entries.json` and the data directory, close the app,
-`Expand-Archive -Force`, verify by hash, launch, and **update `DEPLOYED` in
-`scripts/handoff_state.py`**. The permission classifier refuses the expand step,
-so the operator runs it. **Always ask before deploying.**
+The machinery working exactly as designed: a real setup, correctly identified,
+correctly refused because the book is at 10 of 10. The decision journal deduped
+108 evaluations to a single `rejected` row (M31b behaving properly).
 
-**Do it in the morning, after the overnight session has ended** — the app must
-be closed, and ten positions are held.
+**It is also the first concrete evidence of what the 10-position cap costs** — a
+valid swing setup arrived and could not be taken. One night, one symbol, not
+enough to argue from, but exactly the observation the 20 August review needs.
+
+## Minor, noted not escalated
+
+41 staleness exclusions and 41 recoveries, every one cleared. The 23:30:22 burst
+was symbols that had not printed since the previous close; the rest were thin
+symbols crossing the 15-minute threshold mid-session (`DE`, `REGN` twice, `NOC`)
+and returning within seconds. Macro polled hourly with all five FRED series live
+throughout.
+
+---
+
+# 🚀 M88 DEPLOYED — 13 August 19:58
+
+    Build: M88 (45980a5, built 2026-08-12 20:41 UTC, packaged)
+    10 of 10 positions carry a stop - 2 closed trades and 10 lots restored
+    CRWD announcement restored and correctly inert - 0 ERROR since launch
+    Deploy gap: 0
+
+**The absorb window is closed in the running build for the first time.**
+Tonight is the first session M88 has ever run — the previous night was
+completely inert, zero broker-side fills, so the changed fill-absorption path is
+still unexercised in production. **If a stop or target fires tonight, that is
+its first real test**, and it is the thing to have eyes on rather than the quiet.
+
+**The deploy nearly proceeded on a backup that did not exist.** See the sandbox
+finding below — it is the most important operational lesson of the last two days.
+
+---
+
+# 🔬 G1 RAN, AND DID NOT PASS
+
+    symbol-days: exact 6 - partial 2 - disjoint 12 - live-only 38 - harness-only 8
+
+    rail                            agreed  live only  harness only   rate
+    Position limit                       0         37             0     0%
+    Aggregate risk-at-stop cap           2          2            19     9%
+    Approved                             6         14             1    29%
+    Cost-to-risk (trade too small)       0          1             0     0%
+
+**The dominant failure is structural, not a bug.** Live evaluates every 60
+seconds against a FORMING bar and filled its book on day one — 32 approvals on
+31 July. The replay evaluates once per CLOSED bar, approved 7 across the whole
+window, and never reached ten positions, so the rail that dominates the live
+record never bound.
+
+**Operator's decision, 13 August: accept the limit and narrow the claim.** The
+harness measures **daily-cadence decisions**. Rails needing a full book are
+tested by construction. Full reasoning and the three revisit triggers are in
+`docs/superpowers/specs/2026-08-12-research-harness-design.md` — the one most
+likely to bite is that **step 6 cannot ablate the position limit or the
+aggregate cap naturally**, and those are the two that dominate the live record.
+
+**Found on the way — the fourth wall-clock dependency, and the worst.**
+`RiskDecision.ts` defaulted to `datetime.now(UTC)`, so every replayed decision
+was stamped with the day the REPLAY RAN. The first run scored 0% on everything
+for that reason alone: the rows existed, the rails were right, and only the date
+was a lie. `RiskEngine` now takes an injectable clock.
+
+---
+
+# 👁️ SESSION WATCH — the protocol, and the one thing that went wrong
+
+Run when the operator starts the app and `scripts/watch_session.py` before the
+23:30 AEST open. **Report only what threatens the test's continuation. Fix a
+blocker once and no more — no fix loops. Note minor issues without escalating.
+Brief after the 06:00 close: events, not a transcript.**
+
+## Reading the data — not optional
+
+**Use PowerShell for anything under `%LOCALAPPDATA%`. NEVER Bash**, and never
+PowerShell launched from Bash. The log is
+`%LOCALAPPDATA%\QuantAdvisoryTerminal\data\logs\qat.log`, one JSON object per
+line. `([datetime]$o.ts)` is a DateTime, not a string — format it, do not
+`.Substring` it.
+
+**`-match` is case-insensitive in PowerShell.** "excluded from signals" matches
+a `SIGNAL` pattern, which inflated a signal count to 42 when the true figure was
+0. Use `-cmatch` where case carries meaning.
+
+## ⚠️ qat.log is NOT a complete view of decision activity
+
+**The single correction from the first night.** Hourly checks reported "0
+signals, 0 refusals" all night. That was accurate about `qat.log` and blind to
+what mattered: `risk_decisions.csv` held **108 decisions**, every one a
+position-limit refusal on AXP. It surfaced only because the file had grown 37 KB.
+
+**Read the audit trail alongside the log, at every check:**
+
+    Import-Csv "$env:LOCALAPPDATA\QuantAdvisoryTerminal\data\risk_decisions.csv" |
+      Where-Object { $_.timestamp -ge '<session start ISO>' }
+
+## Cadence that worked
+
+Pre-open verify, the four-minute checklist at the bell, **hourly** through the
+night, tightening before the close for the brief.
+
+**The four minutes at 23:30:**
+
+1. `Trading session started - US is open`
+2. `REGIME ... -> <label> (exposure scalar ...)` within seconds. **Its absence is
+   the most consequential thing that can silently go wrong** — every strategy
+   then gates on the sideways DEFAULT rather than on a measurement
+3. Any `MARKET DATA DOWN` or repeated macro fetch failures
+4. `N carries a stop resting at the broker` — N must equal the position count
+
+## What healthy looks like, so the configuration is not reported as a fault
+
+* **Zero new entries is EXPECTED.** The aggregate cap is breached at 5.01%
+  against 5.00% and the book is 10 of 10, so entries are refused by design.
+* **A burst of staleness warnings at the bell** is symbols that have not printed
+  since the previous close. They clear as each trades.
+* **`CORPORATE ACTION first seen: CRWD`** is M39 in shadow mode. It touches no
+  order; the ex-date gate rejects it.
+
+## Scope of a fix
+
+The standing rule's own fix-immediately list only: app crashing or hanging, feed
+dead or symbols dropped, orders rejected by a bug rather than by a rule, the
+kill-switch tripping on a non-discrepancy, protection not resting or not
+repaired, the ledgers not being written, the daily report failing. **Nothing
+that changes which trades happen or how large** — a test rescued by changing the
+thing under test is not a test. And a fix cannot reach the running session
+anyway: deploying needs the app closed and the operator's own hands.
 
 ---
 
@@ -161,22 +287,54 @@ defaulting. The harness has been watched refusing a trade by name —
 precondition for any ablation meaning anything, and the question M51 has been
 unable to ask since 5 August.
 
-**Step 5 (G1) is built except its last mile.** The window is frozen and hashed
-in `scripts/analysis/g1/`; the comparator is written and tested. **What remains
-is data:** fetch SIP daily bars for the 40 symbols plus warm-up, replay
-31 July – 12 August from the frozen opening book, and point the comparator at
-both sides. **No research number counts until G1 passes.**
+**Step 5 (G1) is complete and has RUN — see the G1 section above for the
+verdict.** The window and its bars are frozen and cached in
+`scripts/analysis/g1/`, the comparator is tested on synthetic rows, and
+`run_g1.py` executes the whole gate. It did not pass, the reason is a fidelity
+limit rather than a defect, and the limit was accepted deliberately on
+13 August with its costs named.
 
-Step 6 — the ablation switch and the run manifest — comes after.
+**Two corrections that run_g1.py records in its own docstrings**, because both
+were wrong in the plan and right only after measuring: the window opens with an
+**empty book** (the first row is CSCO approved at 2026-07-31T13:30:10, and the
+book is built inside the window), and the gate uses **IEX rather than SIP**,
+because the live book computed these decisions from IEX and replaying SIP would
+score feed differences as logic differences. SIP remains right for research runs.
+
+Step 6 — the ablation switch and the run manifest — comes next, shaped by the
+accepted limit.
+
+## ⚠️ THE SANDBOX FINDING — read this before touching the live data directory
+
+**The Bash sandbox is PER-FILE, and it covers WRITES as well as reads.** This is
+the most important operational lesson of the last two days and it nearly cost
+the trial's entire evidence base.
+
+**Reads.** Same directory, same minute: Bash sees `equity_curve.csv` at 301 rows
+dated 27 July while PowerShell sees 9,971 — but **both see `risk_decisions.csv`
+identically.** So a spot-check on the wrong file CONFIRMS Bash is fine, and the
+next read is nine thousand rows short with nothing to say so. I made exactly
+that spot-check and was about to build the G1 extractor on it.
+
+**Writes, and this is the near-miss.** The pre-deploy backup script, run from
+Bash on 13 August, copied 20 files, **printed success, and wrote nothing to the
+real filesystem.** The whole operation landed in an overlay only Bash can see.
+The M88 deploy came within one step of overwriting the install with the closed
+trades, entry records, decision journal and risk decisions unprotected.
+
+**A script cannot detect this from the inside** — within the overlay the copy
+genuinely appears to be there. So the guard has to be external:
+
+* run anything that touches `%LOCALAPPDATA%` **through the PowerShell tool**;
+* **verify from PowerShell afterwards** — file count, and a hash of
+  `closed_trades.csv` against the live one. That check is the only thing that
+  distinguishes a backup from a convincing report of one.
+
+`scripts/backup_data_dir.py` carries this warning in its own docstring, is dry
+run by default, and refuses while the app is running.
 
 ## Two findings about the live record itself
 
-* **The Bash sandbox is PER-FILE, not blanket.** Same directory, same minute:
-  Bash sees `equity_curve.csv` at 301 rows dated 27 July while PowerShell sees
-  9,971 — but **both see `risk_decisions.csv` identically.** So a spot-check on
-  the wrong file CONFIRMS Bash is fine, and the next read is nine thousand rows
-  short with nothing to say so. The standing constraint is right and understates
-  the danger.
 * **A test row reached the live record.** `Settings(_env_file=None).data_dir`
   resolves to the LIVE data directory. `conftest` sets `QAT_DATA_DIR` so tests
   are safe; **scratchpad scripts run outside pytest and are not.** Two W2 probes
@@ -186,6 +344,9 @@ Step 6 — the ablation switch and the run manifest — comes after.
   deliberately**, because the mechanism matters more than the row and a record
   with a documented blemish beats one somebody edited. **Any script run outside
   pytest must pass its own `data_dir`.**
+* **`WES.AX` — one row, 6 August, an ASX ticker refused by the position limit in
+  a US book.** Predates this work, provenance unknown. Excluded from G1 by name,
+  left in the record.
 
 ---
 
@@ -555,273 +716,140 @@ three days. The ones that are now derived have stopped being wrong.
 Continuing work on QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money is involved.
 
-Read docs/HANDOFF.md first, then the standing rule at the top of ROADMAP.md,
-then the sections "MNST split test - THE RESULT" and "How Alpaca actually
-represents orders".
+Read docs/HANDOFF.md first, then the standing rule at the top of ROADMAP.md.
 
 BEFORE QUOTING ANY CURRENT-STATE FIGURE, RUN:
   .\.venv\Scripts\python.exe scripts/handoff_state.py
-It derives the deploy gap, the milestone list and the test count, and names any
-stale test count in the handoff. FOUR hand-maintained counts were wrong in
-three days. Counting is not the fix - deriving is.
+It derives the deploy gap, the milestone list and the test count. FOUR
+hand-maintained counts were wrong in three days. Counting is not the fix -
+deriving is.
 
-THE SPLIT TEST IS DONE. IT COST REAL MONEY.
-8 MNST bought Monday at 91.1838 with a hand-placed sell stop at 72.68. Alpaca
-halved the PRICE to ~46 and NEVER delivered the shares. The stop was not
-adjusted, not re-priced, not re-quantified - it fired at the open and
-liquidated the position in three partials (1@46.34, 3@46.16, 4@45.79).
+READ THE LIVE DATA THROUGH POWERSHELL, NEVER BASH - AND VERIFY WRITES
+The Bash sandbox is PER-FILE and covers WRITES as well as reads. Bash sees
+equity_curve.csv at 301 rows dated 27 July while PowerShell sees 9,971 - but
+BOTH see risk_decisions.csv identically, so a spot-check on the wrong file
+CONFIRMS Bash is fine and the next read is nine thousand rows short.
 
-  THE -375.23 IS A REAL LOSS, NOT AN ARTEFACT. An earlier handoff and a
-  morning brief both called it an artefact; both were wrong, and wrong because
-  they assumed instead of checking. Verified against /v2/account/activities:
-  729.47 out, 367.98 in, NO SPLIT / CSD / share delivery of any kind, equity
-  moved 101,754.81 -> 101,387.14 consistently.
+  THE NEAR-MISS: the pre-deploy backup script, run from Bash on 13 August,
+  copied 20 files, PRINTED SUCCESS, and wrote NOTHING to the real filesystem.
+  The M88 deploy came one step from overwriting the install with the closed
+  trades, entry records, decision journal and risk decisions unprotected.
+  A script CANNOT detect this from inside - within the overlay the copy is
+  there. Run it through PowerShell, then VERIFY from PowerShell: file count
+  and a hash of closed_trades.csv against the live one.
 
-  THE RECORD IS NOW CORRECTED AND VERIFIED. exit_reason target -> stop, and
-  strategy swing -> blank. Checked through the app's own loader: 2 trades
-  parse, MNST has strategy=None, and strategies() returns ['swing'] only, so
-  MNST is correctly out of the promotion gate. The money was NOT touched.
-  Backups: closed_trades.csv.bak-20260806-084823 (the CVS correction) and
-  closed_trades.csv.bak-20260812-084430-POST-correction.
+  Also: Settings(_env_file=None).data_dir resolves to the LIVE data directory.
+  conftest protects tests; scratchpad scripts run outside pytest and do not.
+  ANY SCRIPT RUN OUTSIDE PYTEST MUST PASS ITS OWN data_dir.
 
-  Quantity went 8 -> 0, never 8 -> 16. So NO divergence, NO kill-switch trip,
-  and M60's declare-then-quarantine was NEVER EXERCISED. Accepted knowingly.
+WHERE THIS STANDS
+M88 is deployed and running (45980a5), deploy gap ZERO, and the absorb window
+is closed in the live build for the first time. The ASX moved from eventual
+destination to NEAR-TERM one on 12 August, which reframes the trial rather
+than pausing it: US closed trades are MACHINERY evidence, not EDGE evidence,
+because the edge numbers do not transfer. The binding constraint stopped being
+evidence and became INSTRUMENTATION.
 
-  THE FINDING: an unadjusted stop through a split does not merely misreport -
-  IT LOSES ABOUT HALF THE POSITION, FOR REAL. -51.4% on a position that should
-  have been roughly flat. CAVEAT: paper account, and Alpaca paper's corporate
-  action handling may be incomplete in ways a live one is not. DESIGN M39 FOR
-  THE BEHAVIOUR MEASURED, NOT THE ONE PREFERRED.
-
-  ALSO SETTLED: a split can arrive IN HALVES, price first and shares later or
-  never, so a detector keyed on quantity alone is blind to exactly the window
-  where the stop is lethal. ACCOUNT ACTIVITIES ARE USELESS FOR DETECTION -
-  zero SPLIT rows through a real split. Announcements duplicate and the count
-  changes, so dedupe on (symbol, ex_date). Order ids survive across days.
-
-  STILL UNMEASURED: what happens when the position SURVIVES to the share
-  adjustment. Never reached. SFBS 2-for-1 on 21 August is the next chance -
-  WIDEN THE STOP BEFOREHAND or the same thing happens again.
-
-SETTLED 12 AUGUST - the strategy: null alarm was WRONG (M86)
-It was NINE, not ten - VRTX carried swing. And nothing was unattributed:
-restore_open_lots passes `entry.strategy or _sole_deployed_strategy()`, so with
-swing the only deployed strategy all ten restored as swing, attributed, with an
-R-multiple. Measured through the app's own path, not read off the file. CVS is
-the proof - no strategy field at all in the pre-m33b backup, closed as swing.
-The nulls were pre-M49 legacy: M49 added the field 5 Aug 00:11 UTC, those nine
-records were written 31 Jul and 4 Aug.
-
-  THE REAL DEFECT, WHICH HAD A CLOCK: attribution was INFERRED from a config
-  value at every launch, not stored. _sole_deployed_strategy returns None the
-  moment a SECOND strategy is deployed - so ACTIVATING M84 OR M85 WOULD HAVE
-  RETROACTIVELY UNATTRIBUTED NINE HELD POSITIONS. Measured: strategies() -> [].
-  It had NO TEST AT ALL. Both halves now fixed - M86 heals the record at
-  startup, and the LIVE RECORD WAS CORRECTED for the deployed build. Backup
-  open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill.
-  Now 0 null, 10 named, two-strategy case returns ['swing'] not [].
-  Swing was a FACT not a guess - decision_journal.csv records strategy=swing
-  for all nine with transmit timestamps matching opened_at to the second.
-
-  SO THE M84/M85 ACTIVATION HAZARD IS CLEARED. It was never in the strategies
-  themselves - it was in the record they would have silently emptied.
-
-M39 IS BUILT AND DEPLOYED - and it ships in SHADOW, so it changes nothing
-Splits only. Detection is ANNOUNCEMENT-DRIVEN because a quantity-triggered
-detector would never have fired on MNST: Alpaca halved the PRICE and never
-delivered the shares, so quantity went 8 -> 0. Phase 1 re-prices the resting
-stop before the ex-date open and touches NOTHING else - halving the basis would
-have shown MNST as roughly flat when the loss was real. Phase 2 acts only on an
-OBSERVED quantity change and deliberately does NOT rewrite the ledger, because
-that path has ZERO OBSERVATIONS and still does.
-
-  NO FREEZE LIFT WAS NEEDED. Phase 1 is the standing rule's own fix-immediately
-  category - "protective orders not resting, or not being repaired" - and a
-  sell-stop at 72.68 against a 46 market is a liquidation order, not protection.
-  Refusing entries on a pending action refuses strictly MORE, which is M60's
-  precedent. Shadow default makes it a no-op until deliberately promoted.
-
-  TO PROMOTE IT: QAT_CORPORATE_ACTION_MODE=act. Read the shadow log first.
-
-  THE GATE HELD IN PRODUCTION, which is the result that matters. The log says
-  "CORPORATE ACTION first seen: CRWD ex-date 2026-07-02 ratio 4" and then does
-  NOTHING - no SHADOW line, no ADJUSTED line. CRWD is held, 16 shares, correctly
-  sized post-split with a correct OCO at 163.32. Without the ex_date gate the
-  monitor would divide that stop by four to ~40.83 and, in act mode, liquidate
-  the position at the next open. The gate is now the ONLY defence - the lookback
-  used to exclude CRWD before the gate was consulted - and it has been WATCHED
-  doing the job. Re-run scripts/analysis/probe_live_announcements.py to recheck.
-
-  TWO DEFECTS FOUND BY DEPLOYING, both invisible to a fully passing suite.
-  Widening the lookback to 90 made the range 135 and Alpaca caps it at 90, so
-  every query failed - and a probe for exactly that path had not been re-run
-  after the constant changed. WORSE: the Risk Console kept saying "none pending
-  on held positions" while blind. The cap is now enforced in the ADAPTER, and
-  blindness is a REPORTED STATE rather than a silence.
-
-THE ASX MOVED FORWARD - 12 August, and it reframes everything below
-The operator will call the ASX move EARLY if it becomes a strong proposition:
-six to twelve months of validation are better spent in the destination market
-than the staging one. Spec:
-docs/superpowers/specs/2026-08-12-asx-transferable-validation-design.md
-
-  THE RULE: between now and the call, everything built is either
-  market-agnostic or cheap to abandon. Transferable - the machinery, the
-  research harness, the data ports, the evidence framework, M39/M43/M60. NOT
-  transferable - US expectancy figures, which stop being a deliverable and
-  become validation of the instrument.
-
-  W1.0 IS DONE AND PUSHED. IBAdapter implements 8 of BrokerAdapter's 12
-  methods; absent are recent_fills, resting_stops, resting_stop_orders and
-  announcements - fill absorption, protective-order integrity, corporate-action
-  detection. THEY ARE OPTIONAL BY DESIGN and every caller guards with getattr,
-  so an adapter lacking them neither crashes nor corrupts - it silently stops
-  verifying, absorbing and detecting, with a full suite passing. RUN
-  scripts/broker_capabilities.py, do not quote a count. resolve_broker used to
-  return MockBroker(seed=1) for broker=ibkr after attempting NOTHING; it
-  refuses now. And ROADMAP was WRONG that ibkr is "unimplemented beyond the
-  seam" - ib_adapter.py is 223 lines and costs.py already carries ASX cost
-  profiles saying live trading starts on ASX.
-
-  NEXT, WITH A CLOCK: W1.4. The operator is opening a LIVE IBKR account to
-  reach the paper API - TWS API via IB GATEWAY, which is what ib_async speaks,
-  ports 4002 paper / 4001 live. ib_adapter.py:74 RAISES when trading_mode is
-  live and unconfirmed but only WARNS when trading_mode is paper and ibkr_port
-  is a LIVE port, then connects. Inert today. On the morning that account
-  exists, a log line is the only thing between a port typo and real orders.
-  MAKE IT A REFUSAL BEFORE ANY IBKR CREDENTIAL ENTERS CONFIGURATION.
-
-  THEN W1.1 - measure what IBKR actually returns for those four, paper account,
-  read-only, capability matrix as the checklist.
-
-W2 - THE RESEARCH HARNESS IS FIVE STEPS IN, and it is the asset that survives
-the move. ReplaySession drives historical bars through the REAL StrategyEngine,
+THE RESEARCH HARNESS (W2) IS FIVE STEPS OF SIX
+ReplaySession drives historical bars through the REAL StrategyEngine,
 SignalToOrderBridge, OMS, regime engine and autonomy path into SimulatedBroker.
 NOTHING re-implements a strategy, a rail or a fill. Spec:
 docs/superpowers/specs/2026-08-12-research-harness-design.md
 
   FILL MODEL, and every future number rests on it: the STOP wins any bar
   touching both levels, so expectancy is a FLOOR not an estimate. A gap through
-  the stop fills at the OPEN, not the trigger - the MNST lesson in the
-  simulator. A gap through the target fills at the TARGET, not the better open.
+  the stop fills at the OPEN; a gap through the target fills at the TARGET.
   Entries fill at the NEXT bar's open. A stop can fire on the bar its entry
   filled.
 
-  TWO PRODUCTION SEAMS, both unavoidable. prime_bar, because the live path
-  builds bars FROM TICKS and one tick a day gives high==low==close, collapsing
-  ATR and every stop distance with it. And SignalToOrderBridge(clock=...),
-  because the minimum hold and the weekly churn cap compared against
-  datetime.now(UTC) and went SILENTLY INERT in a replay. Both default to live
-  behaviour. THE LESSON GENERALISES: every wall-clock read in the trading path
-  is a place a replay silently produces nothing.
+  THREE PRODUCTION SEAMS, each defaulting to live behaviour: prime_bar (the
+  live path builds bars FROM TICKS, and one tick a day collapses ATR and every
+  stop distance with it), SignalToOrderBridge(clock=), and RiskEngine(clock=).
+  THE LESSON GENERALISES: every wall-clock read in the trading path is a place
+  a replay silently produces nothing - or worse, produces rows dated wrong.
 
-  STEPS 1-4 BUILT, GREEN, PUSHED. The harness has been WATCHED refusing a trade
-  by name in risk_decisions.csv, which is the precondition for any ablation
-  meaning anything and the question M51 could not ask since 5 August.
+  G1 RAN AND DID NOT PASS. exact 6, partial 2, disjoint 12, live-only 38,
+  harness-only 8. The harness never hit the position limit once against 37 live
+  symbol-days: live evaluates every 60s on a FORMING bar and filled its book on
+  day one, the replay evaluates once per CLOSED bar. OPERATOR ACCEPTED THIS
+  LIMIT on 13 August - the harness measures DAILY-CADENCE decisions, and rails
+  needing a full book are tested by construction. THE REVISIT TRIGGER: step 6
+  cannot ablate the position limit or the aggregate cap naturally, and those
+  are the two that dominate the live record.
 
-  STEP 5 (G1) IS BUILT EXCEPT ITS LAST MILE. Window frozen and hashed in
-  scripts/analysis/g1/, comparator written and tested. What remains is DATA:
-  fetch SIP daily bars for the 40 symbols plus warm-up, replay 31 Jul - 12 Aug
-  from the frozen opening book, compare. NO RESEARCH NUMBER COUNTS UNTIL G1
-  PASSES. Step 6 is the ablation switch and the manifest.
+  NEXT: step 6, the ablation switch and the run manifest, shaped by that limit.
 
-  TWO FINDINGS ABOUT THE LIVE RECORD. The Bash sandbox is PER-FILE, not
-  blanket - Bash sees equity_curve.csv at 301 rows dated 27 July while
-  PowerShell sees 9,971, but BOTH see risk_decisions.csv identically, so a
-  spot-check on the wrong file CONFIRMS Bash is fine and the next read is nine
-  thousand rows short. And a test row reached the live record: Settings with no
-  data_dir resolves to the LIVE directory, conftest protects tests but
-  scratchpad scripts run outside pytest, so two W2 probes wrote one AAA
-  approval on 12 Aug. Left in place deliberately. ANY SCRIPT RUN OUTSIDE PYTEST
-  MUST PASS ITS OWN data_dir.
+OVERNIGHT SESSION 12-13 AUGUST - CLEAN
+23:30:17 to 06:00:18. Zero errors, zero data-down, zero kill-switch, zero
+unprotected, zero broker-side fills, zero closed trades. Regime classified
+low_vol at the bell with exposure 1.00.
+
+  THE ONE EVENT: AXP fired swing's entry and was refused 108 TIMES by the
+  position limit, 04:09-05:59, first refusal at $341.90. The machinery working
+  as designed - and the FIRST CONCRETE EVIDENCE of what the 10-position cap
+  costs, which is exactly what the 20 August review needs.
+
+  THE MONITORING LESSON: qat.log is NOT a complete view of decision activity.
+  Hourly checks reported "0 signals, 0 refusals" all night and were blind -
+  risk_decisions.csv held 108 rows. READ THE AUDIT TRAIL ALONGSIDE THE LOG.
+
+SESSION WATCH PROTOCOL (see the full section in HANDOFF.md)
+Operator starts the app and scripts/watch_session.py before the 23:30 AEST
+open. Report only what threatens the test's continuation. Fix a blocker ONCE
+and no more - no fix loops. Note minor issues without escalating. Brief after
+the 06:00 close: events, not a transcript.
+
+  FOUR MINUTES AT THE BELL: session started; REGIME line within seconds (its
+  ABSENCE is the most consequential silent failure - everything then gates on
+  the sideways DEFAULT); no MARKET DATA DOWN; N carries a stop = position count.
+  Then hourly, tightening before the close.
+
+  EXPECTED, NOT A FAULT: zero new entries (cap breached at 5.01% vs 5.00%, book
+  10 of 10); a staleness burst at the bell; CORPORATE ACTION first seen: CRWD
+  (M39 shadow mode, touches no order).
+
+  PowerShell gotchas: ([datetime]$o.ts) is a DateTime, format it rather than
+  .Substring it. -match is CASE-INSENSITIVE, so "excluded from signals" matches
+  a SIGNAL pattern - use -cmatch where case matters.
 
 OUTSTANDING, IN THE ORDER I WOULD TAKE THEM
-  M66  the aggregate risk cap that gates every entry is measured against ENTRY
-       prices, so a winning book UNDERSTATES its risk and the bias grows with
-       profit. The one item genuinely behind the freeze, and fixing it makes the
-       measured figure HIGHER - so it tightens an already-breached cap. Pair it
-       with the 20 August cap review rather than doing it alone. Designed in
-       docs/superpowers/specs/2026-08-08-risk-at-stop-current-prices-design.md.
+  W2 step 6  the ablation switch and the run manifest. Regime is a rail like
+             any other now, which is what makes it ablatable.
+  M66  the aggregate risk cap gates every entry against ENTRY prices, so a
+       winning book UNDERSTATES its risk. Designed, inside the freeze, and it
+       tightens an already-breached cap. Pair it with the 20 August review.
+  W1.1 measure what IBKR returns for the four BrokerAdapter methods IBAdapter
+       does not implement - recent_fills, resting_stops, resting_stop_orders,
+       announcements. Blocked on the IBKR account. W1.4 (the port guard) MUST
+       land before any IBKR credential enters configuration.
   M71  app-transmitted SELLS announce at the reference price, so the recorded
-       EXIT price is wrong too. Read from code, NEVER VERIFIED - it needs one
-       live transmitted sell to confirm, and both closed trades so far were
-       broker-side stops. Do not design it until one has been observed.
-  M43  trading halts. M60 built the flagging half; this needs its own detector,
-       and a halt has no ratio to match so it is a different question from M39.
-  M44  execution quality. Waits on real closed-trade slippage data, and M70
-       found entry_slippage was zero by construction, so the instrument itself
-       only started working recently.
-  UI   the Balances panel cannot go below 1056px and overflows in a narrower
-       container. Eliding the labels did not lower it - the bold money values
-       set the floor, and eliding a money figure misleads where eliding a label
-       merely abbreviates. Not hit at any real window size today.
-
-STATE - 12 August, end of day
-Deployed build is M39+M87 (67677bc). THE DEPLOY GAP IS NO LONGER ZERO: M88 is
-built, tested, pushed and NOT INSTALLED, and the operator deferred the deploy
-to the MORNING OF 13 AUGUST deliberately. Until it lands, every sweep of
-tonight's session can lose a protective fill that executes while the absorb
-pass is running - a stop firing, and no closed trade for it. Ask before
-deploying, back up the data dir first, and update DEPLOYED in handoff_state.py
-after. Repo clean and pushed. Ten positions held, 10 of 10 protected, Adopted 10 not 11. TWO closed
-trades (CVS -482.18 -1.68R; MNST -375.23, unattributed - and it STAYS
-unattributed, that one is correct). Group 4 COMPLETE. M84 and M85 remain
-DESIGNED, NOT BUILT, NOT ACTIVATED - and M86 cleared the hazard that made
-activating them destroy nine positions' worth of attribution.
-
-  THE AGGREGATE CAP IS BREACHED at 5.01% vs the 5.00% cap, so NEW ENTRIES ARE
-  REFUSED. It predates every deploy today. With 2 closed trades in 12 days and
-  30 needed PER STRATEGY, throughput was never going to prove an edge - and
-  under the ASX reframing it no longer has to. Live paper answers the
-  OPERATIONAL questions at the sample size it can reach; the edge question
-  moves to the W2 harness.
-
-  SO THE 20 AUGUST REVIEW DECIDES A DIFFERENT QUESTION. Widening the co-binding
-  10-position / 5% pair buys throughput, and throughput buys US closed trades,
-  which are now MACHINERY evidence rather than EDGE evidence. DECIDED: the
-  rails HOLD, and ONE SLOT IS FREED DELIBERATELY for SFBS 2-for-1 on 21 August -
-  the only dated chance to observe a split where the position SURVIVES to the
-  share adjustment, which M39 Phase 2 has never seen. WIDEN THE STOP
-  BEFOREHAND. M66 lands AFTER that event, not before: it raises the measured
-  figure on an already-breached cap and would take back the slot.
-
-  THE MANUAL IS CURRENT. It was last rebuilt 5 August for M49, and 53 of 91
-  settings appeared nowhere while "quarantine" and "corporate action" appeared
-  ZERO times. 29 settings added, three sections written (11.9 interface level,
-  12.4 quarantine, 12.5 corporate actions). Two guards stop it rotting: every
-  setting documented or excused with a reason, and every "Section N.M" must name
-  a heading that exists - added after renumbering silently broke FOUR existing
-  cross-references.
+       EXIT price is wrong. NEVER VERIFIED against a live transmitted sell -
+       do not design it until one has been observed.
+  M43  trading halts. M60 built the flagging half; a halt has no ratio to
+       match, so detection is a different question from M39's.
 
 CONSTRAINTS
-  READ %LOCALAPPDATA% VIA POWERSHELL, NEVER BASH. The Bash tool sees a
-  sandboxed copy frozen at 27 July, and PowerShell launched FROM Bash inherits
-  it, so the Monitor tool is blind too. A watcher armed there reads a file
-  that never changes - it does not error, it goes quiet, and quiet looks
-  exactly like healthy. Overnight watching must be a SCHEDULED PROMPT using
-  the PowerShell tool. Bash IS correct for the venv python and Alpaca API
-  calls - the sandbox is filesystem-only.
   PowerShell 5.1 - use ; not && and @'...'@ here-strings, closing '@ col 0.
   Formats with black, not ruff format. Run ruff check ., black --check .,
   mypy src, bandit -r src via the venv python.
   EVERY TEST THAT BUILDS AN OMS MUST PASS ITS OWN data_dir.
   Freeze: nothing lands that changes which trades happen or how large.
-  Reporting and logging are explicitly permitted, and a defect that corrupts
-  the record is FIX-IMMEDIATELY.
+  Reporting and logging are permitted; a defect that corrupts the record is
+  FIX-IMMEDIATELY.
   Plan -> approval -> implement -> verify -> commit -> build. ALWAYS ask
-  before deploying.
+  before deploying. The permission classifier refuses the Expand-Archive step,
+  so the operator runs it.
 
 THE HABITS THAT FOUND EVERYTHING
   CHECK THE BRIEF AGAINST THE CODE. §4.x described something that was not
-  there EIGHT TIMES across seven milestones - the register in ROADMAP.md lists
-  each one. Count the rows there; do not restate the number.
+  there EIGHT TIMES across seven milestones. It is also how the "four missing
+  IBAdapter methods" claim became a derivation instead of a reading.
   RENDER IT, do not trust the suite. Screenshotting found an orphaned grid
-  row, an off-scale font, stranded labels, "Grew -0.0% a year", a notice
-  floating in an empty screen and a truncated column. Every test passed.
-  ASK WHAT READS IT. Six values were computed and displayed nowhere. That one
-  now has a test.
+  row, an off-scale font, stranded labels and a truncated column - every test
+  passed through all of them.
+  ASK WHAT READS IT. Six values were computed and displayed nowhere.
   TEST THE CLAIM, NOT THE ARITHMETIC. Every defect found on 11 August was in a
   sentence that predicted or explained, never in a number.
-  DERIVE, DO NOT REMEMBER. And CHECK BEFORE ASSERTING - the "artefact" claim
-  above was reasoned rather than measured, and it was wrong.
+  DERIVE, DO NOT REMEMBER. And CHECK BEFORE ASSERTING - the backup that
+  "succeeded" on 13 August had written nothing at all.
 ```
