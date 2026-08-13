@@ -151,6 +151,49 @@ differently from production.
 actually happened is not measuring this system, and every number it produced
 afterwards would be unfalsifiable.
 
+### G1's first result, and the claim it narrows — 13 August
+
+**It ran, and it did not pass.**
+
+    symbol-days: exact 6 · partial 2 · disjoint 12 · live-only 38 · harness-only 8
+
+    rail                            agreed  live only  harness only   rate
+    Position limit                       0         37             0     0%
+    Aggregate risk-at-stop cap           2          2            19     9%
+    Approved                             6         14             1    29%
+    Cost-to-risk (trade too small)       0          1             0     0%
+
+**The dominant failure is structural.** Live evaluates every 60 seconds against
+a FORMING bar and filled its book on day one — 32 approvals on 31 July. The
+replay evaluates once per CLOSED bar, approved 7 across the window, and never
+reached ten positions, so the rail that dominates the live record never bound.
+
+**Decided by the operator, 13 August: accept the limit, and narrow the claim.**
+The harness measures strategy and rails on **daily-cadence decisions**. It does
+not reproduce intraday entry cadence and is not asked to. G1's bar becomes
+*the rails it can exercise agree*, and rails that need a full book are tested
+**by construction** — as `test_the_position_limit_refuses_an_entry_and_says_so`
+already does with the limit set to one.
+
+**What this costs, named so the revisit has a trigger rather than a mood:**
+
+* **Entry timing and fill rate are out of reach.** Any question about when or
+  how often an entry lands cannot be asked of this instrument.
+* **Turnover and evidence-rate estimates will understate live.** The harness
+  enters less often than the live book does, so "how long to 30 closed trades"
+  derived here is not the live answer.
+* **Step 6's ablation is compromised for exactly two rails — and they are the
+  two that matter most.** The position limit and the aggregate cap are what
+  bind in the live record, and the harness cannot reach either naturally.
+  Ablating a rail that never binds measures nothing. They can be forced by
+  construction, but a forced book is a synthetic setup rather than the observed
+  one, and a difference measured against it is weaker evidence.
+
+**Revisit when any of those bites**, and the third is the likely one: if step 6
+cannot say whether the position limit or the aggregate cap earns its place,
+this decision is what stands in the way, and closing the gap means intraday
+evaluation — minute bars and a materially heavier harness.
+
 ## Stated on every run, not buried in a footnote
 
 * **Survivorship.** The universe is a static 100-name megacap snapshot,
