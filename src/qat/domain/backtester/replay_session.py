@@ -106,7 +106,14 @@ class ReplaySession:
             self.broker.adopt_opening_book(opening_positions)
         self.oms = OMS(
             self.broker,
-            RiskEngine(self.bus, self.kill_switch, settings=settings),
+            RiskEngine(
+                self.bus,
+                self.kill_switch,
+                settings=settings,
+                # Or every audited decision is stamped with the day the replay
+                # RAN rather than the day it simulated (W2 G1).
+                clock=self._simulated_now,
+            ),
             self.kill_switch,
             bus=self.bus,
         )

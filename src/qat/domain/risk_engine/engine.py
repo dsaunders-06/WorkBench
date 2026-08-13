@@ -11,8 +11,9 @@ exposure by RegimeEvent.exposure_scalar").
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any, Literal
 
 import pandas as pd
@@ -91,8 +92,17 @@ class RiskEngine:
         audit_log: AuditLog | None = None,
         governor: PortfolioGovernor | None = None,
         cost_model: CostModel | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.bus = bus
+        # Injectable for the same reason AutonomyGate's and the bridge's are,
+        # and this one is the worst of the three (W2 G1). RiskDecision.ts
+        # defaults to datetime.now(UTC), so a replay stamps every decision with
+        # the day the REPLAY RAN rather than the day it simulated - the rows
+        # exist, the rails are right, and only the date is a lie, which is the
+        # shape of error that survives review. Defaults to the wall clock, so
+        # live behaviour is unchanged.
+        self._clock = clock
         self.settings = settings or Settings()
         self.kill_switch = kill_switch
         self.sizer = sizer or KellyVolTargetSizer(settings=self.settings)
@@ -103,6 +113,10 @@ class RiskEngine:
         # that inject their own AuditLog keep whatever behaviour they chose.
         self.audit_log = audit_log or AuditLog(self.settings.data_dir)
         self.regime_scalar = 1.0
+
+    def _now(self) -> datetime:
+        """The clock every audited decision is stamped with. See `__init__`."""
+        return self._clock() if self._clock is not None else datetime.now(UTC)
 
     async def start(self) -> None:
         self.bus.subscribe(RegimeEvent, self._on_regime)
@@ -319,6 +333,7 @@ class RiskEngine:
                 )
 
         decision = RiskDecision(
+            ts=self._now(),
             symbol=candidate.symbol,
             approved=True,
             final_shares=scaled_shares,
@@ -366,6 +381,7 @@ class RiskEngine:
             return self._reject(symbol, "Exit quantity must be positive", inputs)
 
         decision = RiskDecision(
+            ts=self._now(),
             symbol=symbol,
             approved=True,
             final_shares=quantity,
@@ -377,7 +393,12 @@ class RiskEngine:
 
     def _reject(self, symbol: str, reason: str, inputs: dict[str, Any]) -> RiskDecision:
         decision = RiskDecision(
-            symbol=symbol, approved=False, final_shares=0.0, reason=reason, inputs=inputs
+            ts=self._now(),
+            symbol=symbol,
+            approved=False,
+            final_shares=0.0,
+            reason=reason,
+            inputs=inputs,
         )
         self.audit_log.record(decision)
         return decision
