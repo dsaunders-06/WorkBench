@@ -28,15 +28,56 @@ The narrowing removes the position limit from the scoreboard. **It does not
 rescue the result:** the two rails the harness genuinely exercised score 9% and
 29%.
 
-And the aggregate cap's 19 harness-only bindings are not an independent second
-failure — they are the first failure one rail down. `ROADMAP.md` records the
-two as co-binding by construction: per-position risk averages 0.49% of equity,
-so ten positions fill a 5% budget almost exactly. Live filled its book on day
-one and refused on the position limit thereafter. The harness never filled its
-book, kept approving, and its aggregate risk accumulated until *that* cap bound
-instead. Same cadence difference, different rail catching it.
-
 The one uncontaminated rail — cost-to-risk — was exercised once, by live only.
+
+### Corrected 13 August, after re-scoring: there are at least two mechanisms
+
+An earlier version of this section explained the aggregate cap's 19
+harness-only bindings as the position-limit failure one rail down — live
+refusing on capacity while the harness, its book never full, accumulated risk
+until the cap caught it. **That explanation was asserted, not measured, and
+re-scoring found a second and larger mechanism underneath it.**
+
+**The regime rail is dead in the harness.** Across all 28 harness decisions in
+the G1 window, `regime_scalar` is **1.0 on every one**. Live varied it —
+0.4 · 0.5 · 0.7 · 1.0 — as a real measurement moving with the market. Cause:
+`ReplaySession.run()` starts the regime engine, strategy engine, bridge and
+executor, but **never starts the `RiskEngine`**, and `RiskEngine.start()` is
+what subscribes to `RegimeEvent`. The scalar stays at its constructor default
+forever.
+
+Measured consequence on SPY, 31 July — the two sides agree on everything except
+the scalar:
+
+| | live | harness |
+|---|---|---|
+| price | 745.07 | 746.79 |
+| stop distance | 19.53 | 20.91 |
+| stop source | strategy | strategy |
+| equity | 100,660 | 100,000 |
+| **regime scalar** | **0.4** | **1.0** |
+| cost-to-risk | 13.8% → **refused** | 7.3% → **approved** |
+
+A harness sizing up to 2.5× larger than live consumes a 5% aggregate
+risk-at-stop budget in four positions rather than ten, which is a direct and
+sufficient account of harness-only cap bindings without invoking the position
+limit at all.
+
+**Both mechanisms are real and neither is established as dominant.** The
+cadence difference is visible on 31 July as four single-row live approvals
+(AMD, C, CVS, MU — live approving seconds after the bell on the prior day's
+frame, where the harness evaluates that day's closed bar). The dead regime
+subscription is visible everywhere. Live also ran at scalar 1.0 for whole
+sessions — 594 rows on 5 August, 299 on 11 August — and those days still score
+zero exact, so the scalar cannot be the whole story either.
+
+**What changes for this design:** the regime gate is the rail M51's oldest
+question is about, and the original harness spec says *"Regime is a rail here,
+not a fixture — that is what makes M51's oldest question answerable."* **It is
+currently a fixture, pinned at 1.0.** Ablating it today would compare 1.0
+against 1.0 and report no difference. The manifest's `exercised` field is what
+would have caught that, which is the argument for the field — but the
+subscription has to be fixed before any regime ablation means anything.
 
 **What follows for step 6.** An ablation measures the difference between two
 *harness* runs. That difference is real and measurable. Reading it as *what
@@ -87,6 +128,29 @@ help* is M51's question and the reason the harness exists.
 ---
 
 ## What gets built
+
+### 0. Start the `RiskEngine`
+
+One line, and it is the prerequisite for everything else here.
+`ReplaySession.run()` starts four engines and omits the fifth, so the risk
+engine never subscribes to `RegimeEvent` and the regime rail is inert. Add
+`await self.oms.risk_engine.start()` beside the others, and its `stop()` in the
+`finally` block.
+
+**Then re-run G1**, because every figure in the window was produced by a
+harness sizing against a scalar the live book never used. The current verdict
+is not a measurement of cadence alone.
+
+**The general lesson, and it is a new one.** The harness's three known seams
+were all about a *clock* — `prime_bar`, `SignalToOrderBridge(clock=)`,
+`RiskEngine(clock=)`. This is a different family: a production object correctly
+constructed, correctly wired, and **never started**, so a subscription the live
+app has is one the harness silently lacks. Nothing errors. The rail simply
+holds its default forever, and the default is the permissive value.
+
+Worth a test of its own shape: *every Engine the live runtime starts is started
+by the harness too*, derived from the runtime's own registration list rather
+than from a hand-written one.
 
 ### 1. The outcome: `TradeLedger` and a daily absorb sweep
 
