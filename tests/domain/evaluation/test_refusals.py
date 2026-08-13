@@ -8,6 +8,8 @@ strings.
 
 from __future__ import annotations
 
+import pytest
+
 from qat.domain.evaluation.refusals import (
     RefusalFamily,
     classify,
@@ -61,6 +63,88 @@ def test_an_unknown_rail_is_flagged_not_absorbed():
     """A rail added later must not vanish into the largest bucket - that would
     be this module committing the failure it exists to prevent."""
     assert classify("some brand new rail nobody has written yet") is RefusalFamily.UNCLASSIFIED
+
+
+# Every refusal string the rails can emit, taken from the source: governor.py's
+# `reject`, engine.py's `_reject`, portfolio_risk.py's `_result(False, ...)` and
+# oms.py's `_new_rejected_order`. The numbers vary per instance; the wording
+# does not.
+#
+# THIS INVENTORY IS THE POINT OF THE TEST. The module has now failed the same
+# way three times - "position anomaly" was unclassified for four days, the
+# aggregate cap's headroom message split one rail across two report rows, and
+# `"es limit"` never matched "Portfolio ES ... exceeds limit ..." at all because
+# the character before " limit" is the "s" of "exceeds". Each was found by
+# accident. Asserting the reason strings one at a time is what stops the next
+# one needing an accident.
+_EVERY_REFUSAL = [
+    ("already at the 10-position limit (10 held or pending)", "Position limit"),
+    ("aggregate risk-at-stop 5.01% is at or above the 5.00% cap", "Aggregate risk-at-stop cap"),
+    (
+        "remaining aggregate risk headroom ($12.40) does not cover one share at $34.11 of risk",
+        "Aggregate risk-at-stop cap",
+    ),
+    ("equity is not positive", "Equity not positive"),
+    ("proposed size is not positive", "Proposed size not positive"),
+    ("candidate has no measurable risk per share", "No risk per share"),
+    (
+        "AMD already holds $18,240, at or above the 15% single-name cap",
+        "Single-name concentration cap",
+    ),
+    (
+        "Technology already holds $31,000, at or above the 30% sector cap",
+        "Sector concentration cap",
+    ),
+    (
+        "3 holding(s) correlated at or above 0.70 (AMAT, AMD, MU) already hold $30,100, "
+        "at or above the 30% cluster cap",
+        "Correlated-cluster cap",
+    ),
+    (
+        "a 6.0% overnight gap across $83,000 already held would cost more than the 5.0% gap budget",
+        "Gap-risk budget",
+    ),
+    ("Kill-switch active: Broker reconciliation mismatch", "Kill-switch active"),
+    ("Sizing produced zero shares (no edge or no ATR)", "Sizer produced no shares"),
+    (
+        "Insufficient cash: $1,200.00 available less $1,000.00 reserve affords "
+        "no shares at $746.79",
+        "Cash floor",
+    ),
+    (_COST_RAIL, "Cost-to-risk (trade too small)"),
+    ("Exit quantity must be positive", "Exit quantity not positive"),
+    ("Portfolio ES 3.50% exceeds limit 3.00%", "Portfolio ES limit"),
+    ("Single-name concentration 16.00% exceeds limit 15.00%", "Single-name concentration cap"),
+    ("Sector concentration 31.00% exceeds limit 30.00%", "Sector concentration cap"),
+    ("symbol not on the allow list", "Symbol not on the allow list"),
+    ("position anomaly - quantity diverged", "Position quarantined"),
+    ("kill-switch tripped", "Kill-switch active"),
+    ("notional above the per-order cap", "Per-order notional cap"),
+    ("corporate action pending - SFBS 2-for-1", "Corporate action pending"),
+]
+
+
+@pytest.mark.parametrize(("reason", "rail"), _EVERY_REFUSAL)
+def test_every_rail_message_classifies(reason: str, rail: str):
+    """No refusal the system can emit falls to UNCLASSIFIED, and each names its
+    rail. Parametrised so a failure names the message rather than reporting that
+    one of twenty-three is wrong."""
+    assert classify(reason) is not RefusalFamily.UNCLASSIFIED
+    assert rail_of(reason) == rail
+
+
+def test_the_aggregate_cap_is_one_rail_across_both_its_messages():
+    """The governor refuses this cap in two places - already breached, and not
+    enough headroom for one share. Two rows in a report would read as two rails,
+    and an operator deciding whether to widen a cap would see half its count."""
+    breached = "aggregate risk-at-stop 5.01% is at or above the 5.00% cap"
+    no_headroom = "remaining aggregate risk headroom ($12.40) does not cover one share at $34.11"
+
+    assert rail_of(breached) == rail_of(no_headroom)
+
+    summary = summarise_refusals([_row(breached), _row(no_headroom), _row(breached)])
+
+    assert summary.by_reason == {"Aggregate risk-at-stop cap": 3}
 
 
 def test_one_rail_is_one_row_whatever_the_numbers():

@@ -76,6 +76,13 @@ _MEANINGS = {
 _PATTERNS: tuple[tuple[str, RefusalFamily, str], ...] = (
     ("position limit", RefusalFamily.CAPACITY, "Position limit"),
     ("aggregate risk-at-stop", RefusalFamily.CAPACITY, "Aggregate risk-at-stop cap"),
+    # ONE RAIL, TWO MESSAGES. `governor.evaluate` refuses the aggregate cap in
+    # two places - once when the cap is already breached, and once when the
+    # headroom left will not cover a single share - and only the first was
+    # matched. Measured 13 August: three refusals in a G1 replay landed in
+    # UNCLASSIFIED and rendered as a pseudo-rail named "remaining aggregate risk
+    # headroom", splitting one rail across two rows of the same report.
+    ("aggregate risk headroom", RefusalFamily.CAPACITY, "Aggregate risk-at-stop cap"),
     ("notional above the per-order cap", RefusalFamily.CAPACITY, "Per-order notional cap"),
     ("cash", RefusalFamily.CAPACITY, "Cash floor"),
     ("too small to carry its", RefusalFamily.CANDIDATE, "Cost-to-risk (trade too small)"),
@@ -85,8 +92,24 @@ _PATTERNS: tuple[tuple[str, RefusalFamily, str], ...] = (
     ("single-name", RefusalFamily.CANDIDATE, "Single-name concentration cap"),
     ("concentration", RefusalFamily.CANDIDATE, "Concentration cap"),
     ("gap", RefusalFamily.CANDIDATE, "Gap-risk budget"),
-    ("es limit", RefusalFamily.CANDIDATE, "Portfolio ES limit"),
+    # WAS `"es limit"`, WHICH NEVER MATCHED ANYTHING. PortfolioRiskChecker emits
+    # "Portfolio ES 3.50% exceeds limit 3.00%", and the substring before
+    # " limit" there is "exceed*s*" - so the pattern written to catch this rail
+    # could not catch it, and every portfolio-ES refusal has been unclassified
+    # since the module was written. Nothing surfaced it because the rail has
+    # never fired in production: the governor trims concentration before the
+    # checker refuses it, which is exactly M30's design.
+    ("portfolio es", RefusalFamily.CANDIDATE, "Portfolio ES limit"),
     ("below one whole share", RefusalFamily.CANDIDATE, "Sized below one whole share"),
+    ("sizing produced zero shares", RefusalFamily.CANDIDATE, "Sizer produced no shares"),
+    # The governor's and the risk engine's degenerate guards. None should fire
+    # in normal operation, which is precisely why they need names: a rail that
+    # fires only when something is wrong is the one whose count must not be
+    # swept into a catch-all.
+    ("candidate has no measurable risk per share", RefusalFamily.CANDIDATE, "No risk per share"),
+    ("proposed size is not positive", RefusalFamily.CANDIDATE, "Proposed size not positive"),
+    ("exit quantity must be positive", RefusalFamily.CANDIDATE, "Exit quantity not positive"),
+    ("equity is not positive", RefusalFamily.STATE, "Equity not positive"),
     ("kill-switch", RefusalFamily.STATE, "Kill-switch active"),
     ("session phase", RefusalFamily.STATE, "Session phase not eligible"),
     ("market is closed", RefusalFamily.STATE, "Market closed"),
