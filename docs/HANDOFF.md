@@ -534,11 +534,13 @@ transmitted sell** — do that before designing it.
 
 # What has landed since 8 August
 
-**Those 18 were deployed on 12 August as `M86 (7812c22)`. Since then M39 and M87
-have landed and are NOT installed** — built, signed, zipped and staged. Run
-`handoff_state.py` rather than trusting this paragraph: its `DEPLOYED` constant
-is the one figure it cannot derive, and the milestone label beside it reads out
-of `version.py` at that commit rather than being typed.
+**Those 18 were deployed on 12 August as `M86 (7812c22)`. M39, M87 and M88 have
+landed since and are ALL installed** — the running build is `M88 (45980a5)` and
+the deploy gap is zero. Run `handoff_state.py` rather than trusting this
+paragraph: its `DEPLOYED` constant is the one figure it cannot derive, and the
+milestone label beside it reads out of `version.py` at that commit rather than
+being typed. **This sentence has already been stale once** — it still said M39
+and M87 were staged and uninstalled a day after M88 shipped them.
 
 ## Record correctness
 
