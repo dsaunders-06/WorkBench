@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DEPLOYED = "67677bc"
+DEPLOYED = "45980a5"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
