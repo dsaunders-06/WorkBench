@@ -63,13 +63,16 @@ risk-at-stop budget in four positions rather than ten, which is a direct and
 sufficient account of harness-only cap bindings without invoking the position
 limit at all.
 
-**Both mechanisms are real and neither is established as dominant.** The
-cadence difference is visible on 31 July as four single-row live approvals
-(AMD, C, CVS, MU — live approving seconds after the bell on the prior day's
-frame, where the harness evaluates that day's closed bar). The dead regime
-subscription is visible everywhere. Live also ran at scalar 1.0 for whole
-sessions — 594 rows on 5 August, 299 on 11 August — and those days still score
-zero exact, so the scalar cannot be the whole story either.
+**Settled by fixing it: cadence dominates, and the scalar was not the cause.**
+Starting the risk engine and re-running left the verdict bit-for-bit identical.
+Both mechanisms were real; only one was load-bearing.
+
+The cadence difference is visible on 31 July as four single-row live approvals —
+AMD, C, CVS, MU — where live approved seconds after the bell on the prior day's
+frame and the harness, evaluating that day's closed bar, produced no decision
+at all. It was already the better-supported reading: live ran at scalar 1.0 for
+whole sessions (594 rows on 5 August, 299 on 11 August) and those days still
+scored zero exact, so the scalar could never have been the whole story.
 
 **What changes for this design:** the regime gate is the rail M51's oldest
 question is about, and the original harness spec says *"Regime is a rail here,
@@ -137,9 +140,36 @@ engine never subscribes to `RegimeEvent` and the regime rail is inert. Add
 `await self.oms.risk_engine.start()` beside the others, and its `stop()` in the
 `finally` block.
 
-**Then re-run G1**, because every figure in the window was produced by a
-harness sizing against a scalar the live book never used. The current verdict
-is not a measurement of cadence alone.
+**Done, and re-run, 13 August.** The scalar now moves: 0.7 across the window,
+1.0 for the first few decisions of day one.
+
+**The verdict did not change.** exact 6 · partial 2 · disjoint 12 · live-only 38
+· harness-only 8 — identical, and 31 July identical too, SPY still disjoint.
+
+That is worth more than a passing note, because **this section predicted the
+opposite**: *"every figure in the window was produced by a harness sizing
+against a scalar the live book never used, so the current verdict is not a
+measurement of cadence alone."* Measured, it was. The dead subscription was a
+real defect and not the explanation for the disagreement, and the 13 August
+cadence account survives a test it could have failed.
+
+Two things the re-run surfaced instead, both bearing on the regime ablation:
+
+* **The harness classifies 0.7 for the entire window; live moved 0.4 · 0.7 ·
+  1.0 · 1.0 · 1.0.** Daily-bar classification through `HysteresisGate` and a
+  20-bar refit interval is far stickier than live reclassifying intraday on a
+  forming bar. The rail is alive but nearly constant, so an ablation against it
+  measures one regime label rather than a varying one — a fidelity limit of the
+  same family as the accepted cadence limit, and it must appear in the
+  manifest beside `exercised`.
+* **The regime updates only when the benchmark's bar is published.** `_one_day`
+  iterates `self.bars`, and the regime engine reclassifies on SPY's
+  `MarketDataEvent`, so every symbol iterated before SPY that day is evaluated
+  against the PREVIOUS day's regime. It is why SPY itself was still at 1.0 on
+  31 July and still disjoint. Live has no such split - the regime is current
+  before any symbol is evaluated. Publishing the benchmark first would close
+  it; recorded here rather than fixed, because it changes which trades the
+  harness takes and belongs in a plan rather than in a footnote.
 
 **The general lesson, and it is a new one.** The harness's three known seams
 were all about a *clock* — `prime_bar`, `SignalToOrderBridge(clock=)`,

@@ -219,6 +219,21 @@ class ReplaySession:
 
     async def run(self) -> None:
         await self._warm_start()
+        # FIRST, and before the regime engine can publish anything. `start` is
+        # the only place RiskEngine subscribes to RegimeEvent, and without it
+        # `regime_scalar` holds its constructor default of 1.0 for the whole
+        # replay - measured across the G1 window on 13 August: 1.0 on all 28
+        # harness decisions while live varied 0.4/0.5/0.7/1.0. The harness was
+        # therefore sizing up to 2.5x larger than the book it was being
+        # compared against, and SPY on 31 July crossed the cost-to-risk limit
+        # on that difference alone (13.8% live, 7.3% harness).
+        #
+        # A DIFFERENT FAMILY of defect from the three clock seams: the object
+        # was correctly constructed and correctly wired, and simply never
+        # started, so a subscription the live app has is one the harness
+        # silently lacked. Nothing errors - the rail holds the permissive
+        # default, which is the direction that hides the failure.
+        await self.oms.risk_engine.start()
         await self.regime_engine.start()
         await self.engine.start()
         await self.bridge.start()
@@ -233,6 +248,7 @@ class ReplaySession:
             await self.bridge.stop()
             await self.engine.stop()
             await self.regime_engine.stop()
+            await self.oms.risk_engine.stop()
 
     async def _one_day(self) -> None:
         today = self.broker.current_date
