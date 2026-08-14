@@ -79,9 +79,14 @@ class HMMRegimeModel:
             model.fit(feature_matrix)
         finally:
             hmmlearn_logger.removeFilter(warning_filter)
+        # Assigned immediately after `model.fit`, before `_characterize_states`
+        # below: that call reads `self._model`, so it must already be set for
+        # it to run at all, but if it raises after that, the observability
+        # counter must not be left describing the PREVIOUS fit while
+        # `is_fitted` already reports the new one.
+        self._decreasing_loglik_warnings = warning_filter.count
         self._model = model
         self._state_signatures = self._characterize_states(feature_matrix)
-        self._decreasing_loglik_warnings = warning_filter.count
 
     def predict_proba(self, feature_matrix: np.ndarray) -> np.ndarray:
         if self._model is None:
