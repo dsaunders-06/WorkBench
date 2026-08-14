@@ -156,6 +156,41 @@ position-limit refusal on AXP. It surfaced only because the file had grown 37 KB
     Import-Csv "$env:LOCALAPPDATA\QuantAdvisoryTerminal\data\risk_decisions.csv" |
       Where-Object { $_.timestamp -ge '<session start ISO>' }
 
+## Run `scripts\session_check.ps1` — one command, at every cadence
+
+    & "C:\Claude Programming\scripts\session_check.ps1"
+
+**Invoke it exactly like that, with no arguments.** It reports the current or
+most recent session — derived from the log rather than passed in — so the same
+command serves the pre-open verify, the bell, the hourly checks, the pre-close
+tighten and the morning brief. It covers the four checks, errors either side of
+the bell, staleness in and out, the audit trail grouped by symbol, the ledgers
+with a `closed_trades` hash, and session equity bounded at stand-down.
+
+**Why one fixed string, and why it may not grow a parameter.** Claude Code
+stores PowerShell permissions as EXACT COMMAND STRINGS. A command whose text
+varies between runs — an hourly check with the hour in its filter — can never be
+allowlisted, and the operator is offered *"approve once"*, every time, because a
+durable rule would never match the next command. That is what made the 13 August
+scheduled-task attempt unworkable, and it was invisible until the operator asked
+why approving once was the only option. It is allowlisted in
+`.claude/settings.local.json` and confirmed to run without prompting. **If a
+future check needs a different window, widen what the script REPORTS rather than
+what the caller passes.**
+
+Pure PowerShell, deliberately not Python: a script that cannot import `qat`
+cannot instantiate a `RiskEngine` without a `data_dir`, which is how a probe
+wrote a row for symbol `AAA` into the live record on 12 August. It reads and
+never writes.
+
+**Running it against a real session found three faults reading it would not
+have** — the same argument as screenshotting the UI. Scoping the four checks to
+the session made *"N carries a stop"* unable to pass at all, because adoption
+happens at LAUNCH, two hours before the bell; errors between launch and the bell
+were dropped entirely, hiding a macro failure at 23:05 against a 23:30 open; and
+session equity was unbounded at the end, so the night's P&L quietly rewrote
+itself on every re-run as post-market marks arrived.
+
 ## Cadence that worked
 
 Pre-open verify, the four-minute checklist at the bell, **hourly** through the
@@ -666,9 +701,18 @@ did not tip the cap. **No deploy today changed any trading behaviour.**
   sandbox covers the whole process tree, and **the Monitor tool cannot see the
   live account either.** Anything watching those files from a Bash shell reads a
   file that never changes: it does not error, it goes quiet, and quiet is
-  indistinguishable from healthy. **Overnight watching must be a scheduled
-  prompt that wakes and uses the PowerShell tool.** The Bash tool IS correct for
-  the venv python and for Alpaca API calls — the sandbox is filesystem-only.
+  indistinguishable from healthy. The Bash tool IS correct for the venv python
+  and for Alpaca API calls — the sandbox is filesystem-only.
+* **Overnight watching is `scripts\session_check.ps1`, not a scheduled prompt.**
+  This bullet used to prescribe a scheduled prompt that wakes and uses the
+  PowerShell tool. **Measured on 13–14 August: that does not work**, for two
+  independent reasons. Scheduled tasks compose a different command each run, so
+  no permission rule can match and the operator is prompted every time with
+  *"approve once"* as the only option. And a scheduled task's OUTPUT never
+  reaches the session that created it — the 06:13 brief ran (`lastRunAt`
+  confirms it) and its report was never seen. **A scheduler that fires into
+  silence looks exactly like a quiet night**, which is the failure this whole
+  protocol exists to prevent.
 * Operator's terminal is PowerShell 5.1 — `;` not `&&`, `@'...'@` here-strings
   with the closing `'@` at column 0.
 * **Formats with `black`, not `ruff format`.** `invoke lint` shells out to a ruff
