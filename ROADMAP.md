@@ -219,6 +219,44 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M89 - A stop-out was recorded as a target  **[FIXED 14 August]**
+
+Found while wiring the research harness, which is the only reason it was found
+at all: the harness produced a stop-out on demand, where production has managed
+two closed trades in eighteen days.
+
+`absorb_broker_fills` pops `_position_stops` the moment a fill flattens a
+position - *"whatever was protecting it went with it at the broker"* - and
+`_protective_exit_reason` then read that same dict to decide which OCO leg had
+fired. The level was already gone, so the comparison could not match and the
+exit recorded as `target`. **A winner and a loser under the same reason makes
+the exit distribution unreadable, and that distribution is the trial's whole
+output.**
+
+The stop level is passed in now. A parameter makes the ordering impossible to
+get wrong; a lookup made it impossible to get right.
+
+**The claim is narrower than it first looked, and the live record is what
+narrowed it.** The first version of this said every stop-out was affected;
+`closed_trades.csv` shows both trades reading `stop`. The pop sits inside
+`if not record_only`, so the startup replay path - how a stop that fired while
+the app was down arrives - keeps the level and records correctly. Only a full
+exit during a RUNNING session corrupts, which is a stop doing its job on a night
+somebody is watching, and has not happened yet in this trial.
+
+**Shipped with it:** seven of the twenty-three refusal messages the rails can
+emit were unclassified, including `"Portfolio ES ... exceeds limit ..."` whose
+pattern `"es limit"` never matched it at all - the characters before `" limit"`
+are the `ds` of *exceeds*, so that rail has been unclassified since the module
+was written and nothing surfaced it because the governor trims concentration
+before the checker refuses it. The Blotter and the daily report attribute those
+rails correctly now. A parametrised inventory of all twenty-three messages, taken
+from the source rather than invented, is what stops the next one needing an
+accident - this module had failed the same way three times.
+
+**No trading decision changes.** The OMS also gained an injectable clock, which
+defaults to the wall clock and is inert in live.
+
 ## M88 - The absorb watermark skipped the pass it was taken during  **[FIXED 12 August]**
 
 Found while diagnosing a CI failure that turned out to be unrelated - a tick

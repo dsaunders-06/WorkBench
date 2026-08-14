@@ -43,7 +43,13 @@ from datetime import UTC, datetime
 #
 # M88 ships alone: it is the next number in sequence and reads forwards from
 # M87 without ambiguity, so it needs no compounding.
-MILESTONE = "M88"
+#
+# M89 ships alone for the same reason. It is a RECORD-CORRECTNESS build and
+# changes no trading decision: a stop-out was being recorded as `target`, and
+# seven of the twenty-three refusal messages the rails can emit were classified
+# as "not recognised" on the Blotter and in the daily report. The OMS gained an
+# injectable clock, which defaults to the wall clock and is inert in live.
+MILESTONE = "M89"
 
 _UNKNOWN = "unknown"
 
