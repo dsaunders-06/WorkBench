@@ -35,10 +35,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
 import tempfile
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -49,6 +47,7 @@ sys.path.insert(0, str(_REPO / "src"))
 from qat.config import Settings  # noqa: E402
 from qat.data.macro_fred import MacroObservation  # noqa: E402
 from qat.domain.backtester.ablation import RAILS, REGIME_RAIL, ablated_settings  # noqa: E402
+from qat.domain.backtester.macro_cache import DEFAULT_MACRO_CACHE, frozen_macro  # noqa: E402
 from qat.domain.backtester.manifest import build_manifest  # noqa: E402
 from qat.domain.backtester.replay_session import ReplaySession  # noqa: E402
 from qat.domain.backtester.run_comparison import compare_runs  # noqa: E402
@@ -59,14 +58,6 @@ from qat.presentation.runtime import resolve_macro_source  # noqa: E402
 # A research run that fetched its own bars could differ from the gate for a
 # reason that has nothing to do with the rail under test.
 BARS_CACHE = _REPO / "scripts" / "analysis" / "g1" / "bars"
-# Cached beside the bars, and for the same reason. WITHOUT MACRO THE REGIME
-# ENGINE CANNOT FIT AT ALL: vix_level, yield_curve_slope and credit_spread stay
-# constant, a constant column makes the covariance matrix singular, and the run
-# reports "REGIME ENGINE NOT CLASSIFYING (HMM fit failed)". Measured - the first
-# version of this script omitted macro entirely, so every strategy ran on the
-# default regime in BOTH arms and a regime ablation would have compared one
-# inert rail against another while looking like it worked.
-MACRO_CACHE = _REPO / "scripts" / "analysis" / "g1" / "macro.json"
 BENCHMARK = "SPY"
 WARM_BARS = 120
 
@@ -81,42 +72,6 @@ def _cached_bars() -> dict[str, pd.DataFrame]:
         # stem is the symbol unchanged.
         out[path.stem] = frame[["open", "high", "low", "close", "volume"]]
     return out
-
-
-async def _macro() -> dict[str, list[MacroObservation]]:
-    """FRED history, fetched once and then frozen on disk.
-
-    Frozen for the reason the bars are: a research run whose inputs can move
-    between executions cannot be compared with the one before it, and an
-    ablation is nothing but a comparison of two runs.
-    """
-    if MACRO_CACHE.exists():
-        raw = json.loads(MACRO_CACHE.read_text(encoding="utf-8"))
-        return {
-            series: [
-                MacroObservation(
-                    series=series, ts=datetime.fromisoformat(row["ts"]), value=row["value"]
-                )
-                for row in rows
-            ]
-            for series, rows in raw.items()
-        }
-
-    settings = Settings()  # live config, for credentials only - nothing is written
-    source = resolve_macro_source(settings)
-    fetched: dict[str, list[MacroObservation]] = {}
-    for series in settings.fred_series:
-        fetched[series] = await source.fetch_series(series)
-    MACRO_CACHE.write_text(
-        json.dumps(
-            {
-                series: [{"ts": o.ts.isoformat(), "value": o.value} for o in observations]
-                for series, observations in fetched.items()
-            }
-        ),
-        encoding="utf-8",
-    )
-    return fetched
 
 
 async def _one(
@@ -174,7 +129,13 @@ async def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="ablation-"))
     bars = _cached_bars()
-    macro = await _macro()
+    macro = await frozen_macro(
+        DEFAULT_MACRO_CACHE,
+        # Live config for CREDENTIALS ONLY, and only on a cache miss - nothing
+        # is written to the live data directory and the cache is already there.
+        source=lambda: resolve_macro_source(Settings()),
+        series=Settings().fred_series,
+    )
     print(f"universe   : {len(bars)} symbols from the G1 cache")
     print(f"macro      : {len(macro)} series, {sum(len(v) for v in macro.values())} observations")
     print(f"warm bars  : {WARM_BARS}")
