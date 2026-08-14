@@ -297,6 +297,59 @@ this.
 
 ---
 
+# 🌏 ASX MACRO — DONE 14 August, and it changed the answer
+
+**Plan:** `docs/superpowers/plans/2026-08-14-asx-macro.md`. Nine commits,
+`c8efb94` → `bee937c`. Suite 2,092 → 2,121 passed. **Zero milestones — nothing
+here needs deploying.**
+
+`run_asx_replay.py` never passed `macro=`, so `vix_level`, `yield_curve_slope`
+and `credit_spread` were constant, the covariance was singular, the HMM could
+not fit, and every ASX figure ever quoted was produced at a permanent exposure
+scalar of 1.00. The frozen FRED loader that `run_ablation.py` owned privately
+now lives in `qat.domain.backtester.macro_cache` and both runners share it.
+
+**The result is the reason to care.** `regime_gate` went from unable to be
+exercised at all to `bound_count: 2`, and expectancy over the same 499 sessions
+went **+0.03R mean / +2.76R total / 48% win → −0.06R / −5.02R / 44%**. The
+positive number was never an edge measurement.
+
+## Three things found by RUNNING it, not by reading it
+
+* **A rail bound 15 times with no row in the manifest.** `Cash floor` refused 15
+  candidates. `build_manifest` iterated the twelve knobs in `ablation.RAILS`,
+  while `refusals._PATTERNS` recognises many more labels — so a rail the ledger
+  *watched bind* was absent entirely, which reads as "nothing else refused".
+  Now derived and reported as `unmodelled_refusals`, from the run's own
+  `risk_decisions.csv` through the existing `rail_of` — never a second list.
+* **A convergence signal that could never fire, shipped by the fix meant to
+  report one.** `hmmlearn`'s `monitor_.converged` returns True when
+  `iter == n_iter`, so *"reached the iteration cap without converging"* is
+  unrepresentable through it. **The instruction was wrong and the
+  implementation was faithful.** Worse, the symptom actually observed —
+  `Model is not converging` — comes from a *decreasing log-likelihood*, which
+  never touches `converged`. Same class as `refusals.py`'s `"es limit"` pattern
+  that never matched anything. Now counts hmmlearn's own warning: the real run
+  reports **4 refits**, and the manifest says so.
+* **`{}` meant two different things.** An empty `unmodelled_refusals` read
+  identically for "checked, nothing unmodelled" and "this manifest predates the
+  field". Now `dict | None`, matching `bound_count`'s own `int | None` idiom
+  twelve lines above it in the same file.
+
+## What is deliberately NOT done
+
+Australian macro series. The regime engine reads `settings.fred_series`, so
+swapping them is a change to what the deployed engine consumes — trading logic
+dressed as a research fix. It needs its own spec, and it is now the second
+question, after the ablation.
+
+Also open: `unmodelled_refusals` cannot separate "known rail the table does not
+model" from "reason we could not classify"; `run_comparison.py` never surfaces
+the field; and no test drives a real hmmlearn fit into emitting the warning —
+the seam is covered at the logger, not end to end.
+
+---
+
 # 🔬 W2 — THE RESEARCH HARNESS IS COMPLETE
 
 **Spec:** `docs/superpowers/specs/2026-08-12-research-harness-design.md` and
@@ -843,7 +896,9 @@ closed_trades.csv against the live one.
   PYTEST MUST PASS ITS OWN data_dir.
 
 WHERE THIS STANDS - 14 August
-M90 (a9aee6e) deployed and verified, deploy gap ZERO, app currently stopped.
+M90 (a9aee6e) deployed and verified, deploy gap ZERO MILESTONES, app stopped.
+The commits after it are research harness only - handoff_state.py derives the
+gap, and it reads 0 milestones across those commits. NOTHING NEEDS DEPLOYING.
 Two deploys landed today, each verified by BEHAVIOUR not by a banner:
   M89  a stop-out was recorded as `target`; 7 of 23 refusal messages were
        unclassified, including one whose pattern never matched anything.
@@ -861,12 +916,13 @@ ReplaySession drives historical bars through the REAL StrategyEngine, bridge,
 OMS, regime engine and autonomy path into SimulatedBroker. Nothing
 re-implements a strategy, a rail or a fill.
 
-  ON THE ASX, 95 symbols over 499 sessions:
-    268 candidates, 114 approved. 154 refusals - 120 capacity, 34 candidate.
-    Position limit 56 - Aggregate cap 49 - Cost-to-risk 22 - Gap risk 12
-    83 closed trades: 40 stops, 26 time stops, 17 targets
-    mean +0.03R, total +2.76R, 48% win
-  FOUR RAILS EXERCISED including the position limit and the aggregate cap -
+  ON THE ASX, 95 symbols over 499 sessions, WITH THE REGIME RAIL LIVE:
+    265 candidates, 109 approved. 156 refusals - 123 capacity, 33 candidate.
+    Position limit 56 - Aggregate cap 52 - Cost-to-risk 21 - Cash floor 15
+      - Gap risk 12
+    80 closed trades: 41 stops, 24 time stops, 15 targets
+    mean -0.06R, total -5.02R, 44% win
+  FIVE RAILS EXERCISED including the position limit and the aggregate cap -
   the two the spec said could not be ablated naturally. THE REVISIT TRIGGER IS
   ANSWERED: they were unreachable because of defects and a 40-session US
   window, not by construction.
@@ -878,10 +934,13 @@ re-implements a strategy, a rail or a fill.
         scripts\research\run_ablation.py --rail <name> | --list
         scripts\analysis\g1\run_g1.py [--score-only] [--day YYYY-MM-DD]
 
-  THE EXPECTANCY IS NOT A FINDING YET. The ASX script passes NO MACRO, so the
-  regime rail is inert - vix/curve/credit never move, the covariance is
-  singular, the HMM cannot fit. Fix that first; run_ablation.py already caches
-  FRED and shows how.
+  THE MACRO IS NOW WIRED AND THE SIGN FLIPPED. With the rail inert the same
+  window read +0.03R mean / +2.76R total / 48% win. Live, it is NEGATIVE. The
+  earlier figure was never an edge measurement - it was the book trading at
+  a permanent exposure scalar of 1.00 because the HMM could not fit.
+  STILL NOT A FINDING: one run, a deliberately pessimistic fill model that
+  makes expectancy a FLOOR, US macro describing an ASX book, and no ablation
+  yet separating what the rails cost from what the strategy earns.
 
 EIGHT WALL-CLOCK / MARKET ASSUMPTIONS FOUND SO FAR, each defaulting to live
 behaviour: prime_bar, SignalToOrderBridge(clock=), AutonomyGate(clock=),
@@ -916,20 +975,32 @@ task's OUTPUT never reaches the session that created it either.
   a staleness burst at the bell; CRWD corporate action in shadow mode.
 
 OUTSTANDING, IN ORDER
-  ASX macro  pass FRED to run_asx_replay.py so the regime rail is live. Then
-             an ablation on the position limit finally means something.
-  M71 sell   MONDAY 17 AUG, CSCO, through the app. Every position is under the
-             10-day minimum hold until then and the rail refuses silently
-             inside the bridge. CSCO is flattest (-0.10R), contributes least
-             risk, and fills cleanly. SELL ONE ONLY - M71 records the exit at
-             the REFERENCE price, so ten sells would blemish ten records to
-             learn what one teaches. Then fix M71 and sell more if wanted.
+  Ablation   run_ablation.py drives the US G1 universe, where NO rail can be
+             exercised. Point it at the ASX bars, where five now are, and the
+             position-limit ablation finally means something. This is the
+             first thing that was blocked on macro and no longer is.
+  Cash floor it refused 15 candidates and NO rail in the manifest table models
+             it - now reported under `unmodelled_refusals` rather than being
+             silently absent, but still not ablatable. min_cash_reserve is
+             gt=0 BY DESIGN (config.py:416) so it cannot be neutralised the
+             way the other rails are. Whether to relax that for research is
+             an operator decision, deliberately not taken.
+  M71 sell   CSCO, through the app. THE DATE IN THIS FILE WAS WRONG - the
+             minimum hold is 10 TRADING days, and CSCO, CRWD, JNJ, UNP and WFC
+             cleared it on Fri 14 Aug; MS/AMAT/AMD/GS clear Tue 18, VRTX Wed 19.
+             AND THERE IS NO OPERATOR-ORIGINATED SELL PATH: submit_exit_order
+             has exactly three callers - signal exit, time stop, delever sweep
+             - and the Blotter only signs off what the system already produced.
+             So this is a swing sell signal to WAIT FOR and observe, not an
+             action anyone can take. The time stop is 30 trading days, i.e.
+             around 12 September for the 1 Aug lots.
   W1.1       measure what IBKR returns for recent_fills, resting_stops,
              resting_stop_orders, announcements. GENUINELY BLOCKED on the
              account. scripts/broker_capabilities.py is the checklist.
   M43        trading halts.
 
-  DONE, not outstanding: W2 (all six steps), W1.4 (12 Aug), M66/M89/M90.
+  DONE, not outstanding: W2 (all six steps), W1.4 (12 Aug), M66/M89/M90,
+  ASX macro (14 Aug - see the section above).
   DROPPED: SFBS (not tradable), intraday US harness (aimed at the market
   being left), M71 design (until a sell is observed).
 
