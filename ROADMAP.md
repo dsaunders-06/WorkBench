@@ -87,11 +87,20 @@ Recorded because it is a decision, not a derivation: a later reader finding a
 10-position limit and a nearly-idle book should know it was chosen and left
 alone, not overlooked.
 
-**What this baseline is expected to produce.** Roughly ten closed trades a month
+**What this baseline was expected to produce.** Roughly ten closed trades a month
 at the observed turnover, dominated by stops and time stops rather than by the
 strategy's own exit signal — 29 entries produced zero signal exits over 1.19
 years. Two weeks is therefore a test of whether the machinery holds, not of
 whether the edge exists.
+
+**MEASURED 14 AUGUST, AND THE PREDICTION WAS WRONG BY NEARLY AN ORDER OF
+MAGNITUDE.** Two closed trades in eighteen days — about one and a half a month,
+not ten — and one of those carries no `r_multiple` and no strategy, so the
+promotion gate sees a single trade at r=-1.68. The forecast omitted the thing
+that actually governs throughput: the 10-position limit and the 5% cap are
+co-binding, so once the book fills the entry rate is not the turnover rate but
+the EXIT rate, and a ten-day minimum hold with a thirty-day time stop makes that
+small. The last sentence held up exactly — this was a test of the machinery.
 
 ## Operating cadence
 
@@ -289,10 +298,32 @@ yet. **The binding constraint stopped being evidence and became instrumentation.
 **The 20 August review inherits a different question.** Widening the co-binding
 10-position / 5% pair was always about buying throughput. Throughput buys US
 closed trades, and US closed trades are now machinery evidence rather than edge
-evidence - so the rails hold, one slot is freed deliberately for **SFBS on
-21 August**, and M66 lands AFTER that event rather than before it, because M66
-raises the measured figure on an already-breached cap and would take back the
-slot.
+evidence - so **the rails hold**. That is the decision, taken 12 August, and the
+review has no widening question left to put.
+
+**The SFBS half of this paragraph was wrong, and was corrected on 14 August.**
+It committed to freeing a position slot deliberately so the **SFBS 2-for-1 on
+21 August** could be observed, and sequenced M66 after that event so it would
+not take the slot back. **SFBS is not in the tradable universe** - it appears in
+docs and tests and nowhere in `src/`, so no free slot could ever have bought it.
+The plan stood recorded for two days and was never executable.
+
+Two consequences. The book sitting at 10 of 10 has cost nothing. And **M66 is
+released** - it has no event to land after, and is now the highest-value
+unblocked work, being a machinery defect that transfers to the ASX.
+
+**Adding SFBS to the universe is declined.** It is a freeze lift changing which
+trades happen, spent on a US corporate action, to instrument what CRWD already
+demonstrated in production on 12 August - the ex-date gate refusing a live
+announcement, observed rather than tested.
+
+**And the review cannot be waited on for evidence, because the evidence is in.**
+Derived 14 August: `promotion_min_trades` is 30; there are 2 closed trades in
+18 days and one carries no `r_multiple` and no strategy, so swing's gate sees
+ONE, at r=-1.68. 45 approvals out of 4,369 decisions. The prediction above of
+*"roughly ten closed trades a month"* is out by nearly an order of magnitude.
+**The question is no longer whether to widen but what the US phase is FOR**, and
+the answer this document already gives is: the machinery.
 
 ### W1.0 - the broker port could not say what it cannot do  **[DONE, 12 August]**
 

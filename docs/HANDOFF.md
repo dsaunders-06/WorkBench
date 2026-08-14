@@ -19,16 +19,28 @@ FIVE; the test count sat at 1,690 in three paragraphs while the suite moved on.
 
 # Where this stands, in one paragraph
 
-**M88 is deployed and running, the deploy gap is zero, and the overnight
-session ran clean end to end.** The ASX moved from eventual destination to
-near-term one on 12 August, which reframed the trial rather than pausing it:
-throughput was never going to prove an edge — 2 closed trades in 12 days
-against 30 per strategy, cap breached so the number is zero — and under the new
-framing it does not have to. **The binding constraint stopped being evidence
-and became instrumentation.** The research harness is five steps of six built,
-and **G1 has now run and did not pass** — for a reason that is a fidelity limit
-rather than a defect, accepted deliberately with its costs named. The 20 August
-review still matters and now has its first concrete data point.
+**M88 is deployed and running, the deploy gap is zero, two overnight sessions
+ran clean, and W2 is complete.** The ASX moved from eventual destination to
+near-term one on 12 August, which reframed the trial rather than pausing it: the
+US phase's deliverable is MACHINERY evidence, and the edge question moved to the
+research harness.
+
+**The 20 August review has nothing left to decide, and 14 August is when that
+became clear.** Its one question was whether to widen the co-binding
+10-position / 5% pair, and ROADMAP answered it on 12 August — *the rails hold*,
+because throughput only ever bought US closed trades and those stopped being
+edge evidence. The dated action attached to it, freeing a slot for SFBS on
+21 August, **cannot execute at all**: SFBS is not in the tradable universe. So
+M66 is released, and the review's remaining content is a judgement about what
+the US trial is for rather than a measurement waiting on more nights.
+
+**The trial cannot reach its own gate, and the arithmetic is not close.**
+Derived 14 August from the live record: `promotion_min_trades` is 30; there are
+**2 closed trades in 18 days**, and MNST carries no `r_multiple` and no strategy,
+so swing's gate sees **one** — CVS at **r = −1.68**. 45 approvals out of 4,369
+decisions, a 1.03% approval rate. ROADMAP predicted *"roughly ten closed trades
+a month"*; the actual rate is about one and a half, of which one counts. Thirty
+trades is a year and a half away at that rate, against a near-term ASX move.
 
 ---
 
@@ -259,23 +271,38 @@ each from checking a claim rather than repeating it:
   docstring saying *live trading starts on ASX*. **The move is not starting from
   zero.**
 
-**NEXT, and it has a clock: W1.4.** The operator is opening a live IBKR account
-to reach the paper API — the TWS API via **IB Gateway**, which is what
-`ib_async` speaks. `ib_adapter.py:74` RAISES when `trading_mode` is live and
-unconfirmed but only WARNS when `trading_mode` is paper and `ibkr_port` is a
-live port (4001/7496), then connects. Inert today. **On the morning that account
-exists, a log line is the only thing between a port typo and real orders.** The
-warning becomes a refusal before any IBKR credential enters configuration.
+**W1.4 IS DONE — landed 12 August. This section said otherwise until 14 August.**
+`ib_adapter.py` now raises `LivePortInPaperModeError` when `trading_mode` is
+paper and `ibkr_port` reaches a live session (4001/7496), and the exception's
+own docstring dates the change: *"This was a warning until 12 August, and a
+warning is not enough."* The guard is deliberately one-directional — live mode
+against a paper port is the SAFE mismatch and is allowed.
 
-**Then W1.1** — measure what IBKR actually returns for those four methods,
-against a paper account, read-only. The capability matrix is the checklist.
+**Nothing now stands between the IBKR account and a safe first connection.** It
+was described here as the next thing needing to be built, and a session acting
+on that would have rebuilt something already in the code. Read
+`ib_adapter.py` rather than this paragraph.
+
+**W1.1 is the real critical path, and it is genuinely blocked** — measure what
+IBKR returns for `recent_fills`, `resting_stops`, `resting_stop_orders` and
+`announcements`, against a paper account, read-only. Needs the TWS API via **IB
+Gateway**, which is what `ib_async` speaks. `scripts/broker_capabilities.py` is
+the checklist and is ready the day the account exists. No local work shortens
+this.
 
 ---
 
-# 🔬 W2 — THE RESEARCH HARNESS IS FIVE STEPS IN
+# 🔬 W2 — THE RESEARCH HARNESS IS COMPLETE
 
-**Spec:** `docs/superpowers/specs/2026-08-12-research-harness-design.md`.
-Plans for each step are in `docs/superpowers/plans/2026-08-12-*.md`.
+**Spec:** `docs/superpowers/specs/2026-08-12-research-harness-design.md` and
+`2026-08-13-ablation-switch-and-run-manifest-design.md`. Plans are in
+`docs/superpowers/plans/2026-08-12-*.md` and `2026-08-13-*.md`.
+
+**All six steps shipped, 14 August.** Step 6 added the ablation switch, the run
+manifest and the comparison — and its first result is that **no rail can be
+exercised on the US window**: ten risk decisions in a whole run over 38 symbols,
+ten approvals, zero refusals, so every ablation correctly reports NOT EXERCISED.
+Run it with `scripts\research\run_ablation.py --rail <name>`, or `--list`.
 
 **What it is.** `ReplaySession` drives historical bars through the REAL
 `StrategyEngine`, `SignalToOrderBridge`, `OMS`, regime engine and autonomy path
@@ -388,9 +415,23 @@ run by default, and refuses while the app is running.
 # ⚠️ THE MNST split — DONE, and it cost real money
 
 **Ex-date was Tuesday 11 August. The event landed at the 23:30 AEST open, the
-stop fired, and the position is gone.** The next one with a clock on it is
-**SFBS 2-for-1 on 21 August** — not held, and it **cannot be bought** while both
-rails bind, so Phase 2 stays unmeasured unless a position closes first.
+stop fired, and the position is gone.**
+
+**SFBS ON 21 AUGUST IS VOID, and the plan built on it with it.** ROADMAP
+committed to freeing a position slot deliberately so the 2-for-1 could be
+observed. **SFBS is not in the tradable universe** — it appears in docs and
+tests and nowhere in `src/`, so the app cannot buy it with a free slot or
+without one. Checked 14 August; the plan had been recorded for two days.
+
+Two things follow. The book sitting at 10 of 10 has cost nothing, because the
+slot could not have been used. And **M66's sequencing is released** — it was
+placed after the SFBS event so it would not take back the freed slot, and there
+is no event.
+
+**Adding SFBS to the universe is not recommended.** It is a freeze lift that
+changes which trades happen, spent on a US corporate action, to instrument what
+CRWD already demonstrated in production on 12 August: the ex-date gate refusing
+a live announcement, observed rather than tested.
 
 ## What has already been measured
 
@@ -488,7 +529,11 @@ Compare `pre-split` against `post-split`, in order of how much each matters:
 
 ## M66 — the risk cap that gates every entry uses ENTRY prices
 
-**Inside the freeze. Do not build without a recorded lift.**
+**Inside the freeze. Do not build without a recorded lift — but nothing else
+blocks it now, and it is the highest-value unblocked work.** Its "land after the
+SFBS event" sequencing was released on 14 August when SFBS turned out not to be
+tradable. It is a MACHINERY defect, so unlike the edge numbers it transfers to
+the ASX.
 
 `PortfolioGovernor.snapshot` does `prices.get(symbol) or pos.avg_price`, and
 nothing in the trading path ever passes `prices` — `RiskEngine` and
@@ -789,14 +834,25 @@ CONFIRMS Bash is fine and the next read is nine thousand rows short.
   ANY SCRIPT RUN OUTSIDE PYTEST MUST PASS ITS OWN data_dir.
 
 WHERE THIS STANDS
-M88 is deployed and running (45980a5), deploy gap ZERO, and the absorb window
-is closed in the live build for the first time. The ASX moved from eventual
-destination to NEAR-TERM one on 12 August, which reframes the trial rather
-than pausing it: US closed trades are MACHINERY evidence, not EDGE evidence,
-because the edge numbers do not transfer. The binding constraint stopped being
-evidence and became INSTRUMENTATION.
+M88 is deployed and running (45980a5), deploy gap ZERO. The ASX moved from
+eventual destination to NEAR-TERM one on 12 August: US closed trades are
+MACHINERY evidence, not EDGE evidence, because the edge numbers do not
+transfer.
 
-THE RESEARCH HARNESS (W2) IS FIVE STEPS OF SIX
+THE 20 AUGUST REVIEW HAS NOTHING LEFT TO DECIDE. Its one question - widen the
+co-binding 10-position / 5% pair - was answered on 12 August: THE RAILS HOLD,
+because throughput only ever bought US closed trades. Its one dated action,
+freeing a slot for SFBS on 21 August, CANNOT EXECUTE: SFBS is not in the
+tradable universe, in docs and tests and nowhere in src/. M66 is released.
+
+THE TRIAL CANNOT REACH ITS OWN GATE. promotion_min_trades is 30. There are 2
+closed trades in 18 days and MNST has no r_multiple and no strategy, so swing's
+gate sees ONE - CVS at r=-1.68. 45 approvals of 4,369 decisions. ROADMAP
+predicted "roughly ten closed trades a month"; the rate is about one and a
+half. Thirty is a year and a half away. DO NOT CITE THE PROMOTION GATE AS
+PENDING - decide what the US phase is FOR instead.
+
+THE RESEARCH HARNESS (W2) IS COMPLETE
 ReplaySession drives historical bars through the REAL StrategyEngine,
 SignalToOrderBridge, OMS, regime engine and autonomy path into SimulatedBroker.
 NOTHING re-implements a strategy, a rail or a fill. Spec:
@@ -808,22 +864,35 @@ docs/superpowers/specs/2026-08-12-research-harness-design.md
   Entries fill at the NEXT bar's open. A stop can fire on the bar its entry
   filled.
 
-  THREE PRODUCTION SEAMS, each defaulting to live behaviour: prime_bar (the
-  live path builds bars FROM TICKS, and one tick a day collapses ATR and every
-  stop distance with it), SignalToOrderBridge(clock=), and RiskEngine(clock=).
-  THE LESSON GENERALISES: every wall-clock read in the trading path is a place
-  a replay silently produces nothing - or worse, produces rows dated wrong.
+  SIX WALL-CLOCK SEAMS NOW, each defaulting to live behaviour: prime_bar,
+  SignalToOrderBridge(clock=), RiskEngine(clock=), and on 14 August OMS(clock=)
+  plus TWO MORE inside absorb_broker_fills - it re-stamped the watermark with
+  datetime.now(UTC), so the FIRST sweep jumped a replay's watermark to the real
+  present and 99 sweeps returned nothing against a stop that had demonstrably
+  fired. THE LESSON KEEPS GENERALISING: every wall-clock read in the trading
+  path is a place a replay silently produces nothing.
+
+  AND A NEW FAMILY: an object correctly constructed, correctly wired, and NEVER
+  STARTED. ReplaySession omitted risk_engine.start, which is the only place it
+  subscribes to RegimeEvent, so the scalar held 1.0 all window while live varied
+  0.4/0.5/0.7/1.0 and the harness sized up to 2.5x larger. Nothing errored.
+  Fixed, and the fix CHANGED THE VERDICT NOT AT ALL - the cadence account
+  survived a test it could have failed.
 
   G1 RAN AND DID NOT PASS. exact 6, partial 2, disjoint 12, live-only 38,
-  harness-only 8. The harness never hit the position limit once against 37 live
-  symbol-days: live evaluates every 60s on a FORMING bar and filled its book on
-  day one, the replay evaluates once per CLOSED bar. OPERATOR ACCEPTED THIS
-  LIMIT on 13 August - the harness measures DAILY-CADENCE decisions, and rails
-  needing a full book are tested by construction. THE REVISIT TRIGGER: step 6
-  cannot ablate the position limit or the aggregate cap naturally, and those
-  are the two that dominate the live record.
+  harness-only 8. OPERATOR ACCEPTED THE LIMIT on 13 August. Re-scored on the
+  EMPTY-BOOK DAY, 31 July, the one session both sides start level: exact 6 of
+  11, harness-only ZERO, 55% against the window's 29% - and every one of the
+  window's exact agreements is on that day. Corroborates the narrowing without
+  rescuing the gate.
 
-  NEXT: step 6, the ablation switch and the run manifest, shaped by that limit.
+  W2 IS COMPLETE. Step 6 shipped the ablation switch, the run manifest and the
+  comparison. ITS FIRST RESULT IS THAT NO RAIL CAN BE EXERCISED: against the
+  38-symbol universe the baseline makes TEN risk decisions in the whole run,
+  ten approvals and zero refusals, so every ablation correctly reports NOT
+  EXERCISED. Without the manifest and the guard this would have read as "no
+  difference" on every rail, and the conclusion available would have been that
+  the rails are free.
 
 OVERNIGHT SESSION 12-13 AUGUST - CLEAN
 23:30:17 to 06:00:18. Zero errors, zero data-down, zero kill-switch, zero
@@ -845,6 +914,17 @@ open. Report only what threatens the test's continuation. Fix a blocker ONCE
 and no more - no fix loops. Note minor issues without escalating. Brief after
 the 06:00 close: events, not a transcript.
 
+  RUN THIS, AT EVERY CADENCE - one fixed string, no arguments:
+    & "C:\Claude Programming\scripts\session_check.ps1"
+  It derives the current or most recent session from the log, so the same
+  command serves the pre-open verify, the bell, the hourly checks and the
+  morning brief. Allowlisted once in .claude/settings.local.json and confirmed
+  to run without prompting. DO NOT GIVE IT A PARAMETER: permissions are stored
+  as EXACT COMMAND STRINGS, so a varying command can never be allowlisted and
+  offers "approve once" forever. That is what made the 13 August scheduled-task
+  attempt unworkable - along with the fact that a scheduled task's OUTPUT never
+  reaches the session that created it.
+
   FOUR MINUTES AT THE BELL: session started; REGIME line within seconds (its
   ABSENCE is the most consequential silent failure - everything then gates on
   the sideways DEFAULT); no MARKET DATA DOWN; N carries a stop = position count.
@@ -859,20 +939,38 @@ the 06:00 close: events, not a transcript.
   a SIGNAL pattern - use -cmatch where case matters.
 
 OUTSTANDING, IN THE ORDER I WOULD TAKE THEM
-  W2 step 6  the ablation switch and the run manifest. Regime is a rail like
-             any other now, which is what makes it ablatable.
   M66  the aggregate risk cap gates every entry against ENTRY prices, so a
-       winning book UNDERSTATES its risk. Designed, inside the freeze, and it
-       tightens an already-breached cap. Pair it with the 20 August review.
+       winning book UNDERSTATES its risk and the bias grows with profit.
+       Designed; inside the freeze so it needs a recorded lift; nothing else
+       blocks it since SFBS turned out not to be tradable. MACHINERY, so it
+       transfers to the ASX. THE HIGHEST-VALUE UNBLOCKED WORK.
+  ASX  point the harness at the destination. It is the asset that survives the
+       move and the pieces largely exist - HistoricalBarSource is a port,
+       costs.py already carries ASX profiles. Needs an ASX universe, a daily
+       bar source and a calendar. A DESIGN task, not a build one. The rails may
+       bind on ASX data where they do not on the US window; if they do not, the
+       manifest's NOT EXERCISED guard says so honestly.
   W1.1 measure what IBKR returns for the four BrokerAdapter methods IBAdapter
        does not implement - recent_fills, resting_stops, resting_stop_orders,
-       announcements. Blocked on the IBKR account. W1.4 (the port guard) MUST
-       land before any IBKR credential enters configuration.
-  M71  app-transmitted SELLS announce at the reference price, so the recorded
-       EXIT price is wrong. NEVER VERIFIED against a live transmitted sell -
-       do not design it until one has been observed.
+       announcements. GENUINELY BLOCKED on the IBKR account, and the real
+       critical path. scripts/broker_capabilities.py is the checklist.
   M43  trading halts. M60 built the flagging half; a halt has no ratio to
        match, so detection is a different question from M39's.
+
+  DONE, NOT OUTSTANDING - this list said otherwise until 14 August:
+  W2 step 6  COMPLETE. Ablation switch, run manifest, comparison, runner.
+  W1.4       COMPLETE, landed 12 August. ib_adapter.py raises
+             LivePortInPaperModeError. Read the code, not the brief.
+
+  DROPPED, with the reason:
+  SFBS  not in the tradable universe. Do not lift the freeze to add it.
+  M71   needs a live app-transmitted sell to have been observed, and at ~1
+        attributable trade in 18 days one may never be. Moves to the ASX phase
+        rather than sitting here looking actionable.
+  intraday harness  stopped 14 August. Measured first: evaluating on the
+        morning frame moved exact 6->7 and disjoint 12->9, and left the
+        position limit at 0 agreed / 37 live-only. Real but not sufficient,
+        and aimed at the market being left.
 
 CONSTRAINTS
   PowerShell 5.1 - use ; not && and @'...'@ here-strings, closing '@ col 0.
