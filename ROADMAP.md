@@ -1,6 +1,50 @@
 # Development stack after M27
 
-## Standing rule during the validation phase
+## ⚠️ THE VALIDATION FREEZE ENDED ON 14 AUGUST 2026
+
+**Read this before the rule below it, which is now history rather than
+instruction.** A dead rule left unmarked is obeyed, and this project has already
+lost a day to documents that described work as pending when it had shipped.
+
+**Why it ended, and it is not because it became inconvenient.** The freeze
+existed to keep a result interpretable — *"a result then belongs to no single
+version of the system"*. That reasoning only holds while there is a result to
+protect. There is not:
+
+* `promotion_min_trades` is **30**. Swing's gate sees **ONE** — CVS at r=−1.68.
+  Two closed trades in eighteen days, one of them unattributable.
+* At the observed rate the gate is a year and a half away, against an ASX move
+  that became near-term on 12 August.
+* US edge numbers **do not transfer** to the ASX in any case. What the US phase
+  still produces is machinery evidence, and machinery defects are exactly what
+  the freeze was blocking.
+
+**M66 was the last item behind it** and shipped on 14 August under a recorded
+lift, having sat designed-but-unbuilt since 8 August while the cap it corrects
+understated the book's risk by 27%.
+
+### What replaces it — this is the operative rule now
+
+**Everything built is either market-agnostic or cheap to abandon.** Stated on
+12 August as the ASX design constraint and now the governing one. The question
+is no longer *would this change a trading decision* but *would this survive the
+move* — and a US-only change that will be thrown away is the thing to refuse,
+whatever it does to a decision.
+
+**Everything below this section still stands**, and none of it depended on the
+freeze:
+
+* **Fix immediately** — the list is unchanged. *A defect that corrupts the
+  record is worse than one that stops the session, because a stopped session is
+  obvious and a corrupted record is not.*
+* **Plan → approval → implement → verify → commit → build.** Always ask before
+  deploying.
+* **Check the brief against the code.** The freeze ending removes a constraint,
+  not the discipline that found every defect this month.
+
+---
+
+## Standing rule during the validation phase  **[ENDED 14 August — see above]**
 
 **From 3 August 2026, nothing lands that changes a trading decision.**
 

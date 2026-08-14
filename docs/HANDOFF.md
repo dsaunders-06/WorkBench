@@ -766,9 +766,15 @@ did not tip the cap. **No deploy today changed any trading behaviour.**
 * **Every test that builds an OMS must pass its own `data_dir`.** `conftest` sets
   `QAT_DATA_DIR` session-wide and the anomaly store persists there, so one
   declared anomaly leaks a quarantine into every later test.
-* **Validation freeze:** nothing lands that changes which trades happen or how
-  large they are. Reporting, logging and analysis are explicitly permitted, and
-  **a defect that corrupts the record is fix-immediately.**
+* **The validation freeze ENDED on 14 August** — see the top of `ROADMAP.md`. It
+  existed to keep a result interpretable, and there is no result to protect:
+  the gate needs 30 closed trades and swing's sees ONE. M66 was the last item
+  behind it. **The operative rule now is the ASX one: everything built is either
+  market-agnostic or cheap to abandon.** The question stopped being *would this
+  change a trading decision* and became *would this survive the move*.
+* **A defect that corrupts the record is still fix-immediately**, and the whole
+  fix-immediately list is unchanged. The freeze ending removed a constraint, not
+  the discipline.
 * Convention: plan → approval → implement → verify → commit → build. Build and
   sign freely; **always ask before deploying.**
 
@@ -977,9 +983,12 @@ CONSTRAINTS
   Formats with black, not ruff format. Run ruff check ., black --check .,
   mypy src, bandit -r src via the venv python.
   EVERY TEST THAT BUILDS AN OMS MUST PASS ITS OWN data_dir.
-  Freeze: nothing lands that changes which trades happen or how large.
-  Reporting and logging are permitted; a defect that corrupts the record is
-  FIX-IMMEDIATELY.
+  THE VALIDATION FREEZE ENDED 14 AUGUST - see the top of ROADMAP.md. It kept a
+  result interpretable and there is no result: the gate needs 30 closed trades
+  and swing's sees ONE. The operative rule is now the ASX one - EVERYTHING BUILT
+  IS EITHER MARKET-AGNOSTIC OR CHEAP TO ABANDON. The question is no longer
+  "would this change a trading decision" but "would this survive the move".
+  A defect that corrupts the record is STILL FIX-IMMEDIATELY.
   Plan -> approval -> implement -> verify -> commit -> build. ALWAYS ask
   before deploying. The permission classifier refuses the Expand-Archive step,
   so the operator runs it.
