@@ -35,6 +35,9 @@ Nothing here builds ASX support; it wires up what exists.
     automatically by `Settings.market="ASX"`
   * yfinance serves `.AX` tickers, so this needs no IBKR account and is not
     blocked on W1.1
+  * frozen FRED history via `macro_cache`, SHARED with the ablation - without
+    it the regime engine cannot fit and the rail is inert while the run still
+    reports numbers
 
 ## Bars are cached and then frozen
 
@@ -65,10 +68,16 @@ sys.path.insert(0, str(_REPO / "src"))
 from qat.config import Settings  # noqa: E402
 from qat.data.history import resolve_history_source  # noqa: E402
 from qat.data.universe import MARKET_BENCHMARKS, MARKET_WATCHLISTS  # noqa: E402
+from qat.domain.backtester.macro_cache import (  # noqa: E402
+    DEFAULT_MACRO_CACHE,
+    frozen_macro,
+    macro_coverage,
+)
 from qat.domain.backtester.manifest import build_manifest  # noqa: E402
 from qat.domain.backtester.replay_session import ReplaySession  # noqa: E402
 from qat.domain.evaluation.refusals import load_risk_decisions, summarise_refusals  # noqa: E402
 from qat.domain.strategies.swing import SwingStrategy  # noqa: E402
+from qat.presentation.runtime import resolve_macro_source  # noqa: E402
 
 BARS_CACHE = _REPO / "scripts" / "research" / "asx_bars"
 BENCHMARK = MARKET_BENCHMARKS["ASX"]
@@ -77,6 +86,18 @@ BENCHMARK = MARKET_BENCHMARKS["ASX"]
 # sessions cannot reach a ten-position limit.
 BAR_COUNT = 500
 WARM_BARS = 250
+
+# What this run may not be quoted as saying, beyond the six every run states.
+# Recorded in the manifest rather than in a paragraph somebody has to remember.
+ASX_LIMITATIONS = (
+    "The macro series are US - VIXCLS, DGS3MO, DGS10, T10Y3M, BAA10Y. The regime "
+    "engine therefore classifies an ASX book from US volatility, the US curve and "
+    "US credit. That is what the DEPLOYED engine would do on this market, so the "
+    "run is honest about the machinery; it is not evidence that those series "
+    "describe the ASX.",
+    "The ASX universe is a static 2026 megacap snapshot fetched from yfinance, and "
+    "delisted names are absent from it entirely.",
+)
 
 
 def _symbols() -> list[str]:
@@ -204,6 +225,39 @@ async def main(argv: list[str] | None = None) -> int:
     print(f"output     : {root}")
     print()
 
+    # Live config, for CREDENTIALS ONLY - read, never written, and never used
+    # as a data_dir. NOT the `settings` built further down, which is the
+    # replay's own and points at the scratch `--out` directory.
+    live_config = Settings()
+    macro = await frozen_macro(
+        DEFAULT_MACRO_CACHE,
+        # `source` is a FACTORY, so FRED is only resolved on a cache miss.
+        # `series` is an ordinary argument and IS read now - which is safe,
+        # because `fred_series` is a static default that touches no secret and
+        # no network.
+        source=lambda: resolve_macro_source(live_config),
+        series=live_config.fred_series,
+    )
+    # THE GUARD THAT MAKES THIS WORTH DOING. Passing macro that does not reach
+    # back to the first replayed session leaves the affected series constant,
+    # and a constant column is the singular covariance that makes the HMM fail
+    # to fit - which the run reports as REGIME ENGINE NOT CLASSIFYING while
+    # producing a complete and entirely plausible set of numbers with the
+    # regime rail inert. That is precisely the silent zero this harness exists
+    # to refuse.
+    first_session = min(s.min() for s in spans).to_pydatetime()
+    coverage = macro_coverage(macro, first_session)
+    print(f"macro      : {len(macro)} series, {sum(len(v) for v in macro.values())} observations")
+    for name, count in sorted(coverage.items()):
+        print(f"             {name:<10}{count:>7} observations on or before the first session")
+    bare = sorted(name for name, count in coverage.items() if count == 0)
+    if bare:
+        print()
+        print(f"*** {', '.join(bare)} has no observation before the replay starts ***")
+        print("    Those features would be CONSTANT and the regime engine could not fit.")
+        return 1
+    print()
+
     settings = Settings(
         _env_file=None,
         data_dir=str(root),  # NEVER the live directory
@@ -216,6 +270,7 @@ async def main(argv: list[str] | None = None) -> int:
         bars=bars,
         strategies=[SwingStrategy()],
         settings=settings,
+        macro=macro,
         benchmark=BENCHMARK,
         warm_bars=WARM_BARS,
         evaluate_at=args.evaluate_at,
@@ -224,7 +279,11 @@ async def main(argv: list[str] | None = None) -> int:
     await session.run()
 
     manifest = build_manifest(
-        data_dir=root, disabled=[], universe=sorted(bars), starting_equity=100_000.0
+        data_dir=root,
+        disabled=[],
+        universe=sorted(bars),
+        starting_equity=100_000.0,
+        extra_limitations=ASX_LIMITATIONS,
     )
     manifest.write(root / "manifest.json")
 
