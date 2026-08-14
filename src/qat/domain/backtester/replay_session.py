@@ -11,7 +11,10 @@ One simulated day, and the order matters:
      buffer and so does the bridge;
   2. publish MarketDataEvent at that day's close, which is what actually
      triggers evaluation;
-  3. advance the broker, which fills yesterday's orders at today's open.
+  3. advance the broker, which fills yesterday's orders at today's open and
+     fires any stop or target the day's range touched;
+  4. absorb broker fills, which turns those protective executions into
+     ClosedTrade rows through the real M88 path.
 
 Step 3 is last because `advance` moves the broker's own clock: an order
 submitted on day D fills on the advance that opens D+1, which is the next-open
@@ -49,6 +52,7 @@ from qat.domain.decision_journal import DecisionJournal
 from qat.domain.events import MacroEvent, MarketDataEvent
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
+from qat.domain.performance.trades import TradeLedger
 from qat.domain.regime_engine.engine import RegimeEngine
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -116,7 +120,17 @@ class ReplaySession:
             ),
             self.kill_switch,
             bus=self.bus,
+            settings=settings,
+            # Or the fill watermark starts at the WALL clock, every simulated
+            # fill is older than that, and the absorb sweep in `run` records
+            # nothing while reporting success (W2 step 6).
+            clock=self._simulated_now,
         )
+        # The only source of realised outcomes. Without it the harness opens
+        # positions, watches stops fire, correctly drops the position count, and
+        # measures nothing - which leaves an ablation able to compare which
+        # rails BOUND but never whether the rails HELPED.
+        self.ledger = TradeLedger(self.bus, settings.data_dir, settings=settings)
         self.engine = StrategyEngine(
             self.bus,
             list(strategies),  # type: ignore[arg-type]
@@ -234,6 +248,9 @@ class ReplaySession:
         # silently lacked. Nothing errors - the rail holds the permissive
         # default, which is the direction that hides the failure.
         await self.oms.risk_engine.start()
+        # Before the executor, so no fill can be announced to a ledger that is
+        # not yet subscribed to OrderFilledEvent.
+        await self.ledger.start()
         await self.regime_engine.start()
         await self.engine.start()
         await self.bridge.start()
@@ -243,11 +260,20 @@ class ReplaySession:
                 await self._one_day()
                 if not self.broker.advance():
                     return
+                # AFTER the advance, which is what fires stops and targets.
+                # Sweeping before it would ask about a day on which nothing had
+                # happened yet. This is also what makes the M88 absorb path
+                # genuinely exercised rather than merely claimed to be.
+                #
+                # The final advance returns False and skips this by design: it
+                # moved no clock, so no new fill can exist.
+                await self.oms.absorb_broker_fills()
         finally:
             await self.executor.stop()
             await self.bridge.stop()
             await self.engine.stop()
             await self.regime_engine.stop()
+            await self.ledger.stop()
             await self.oms.risk_engine.stop()
 
     async def _one_day(self) -> None:

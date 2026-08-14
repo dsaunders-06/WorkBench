@@ -1111,7 +1111,13 @@ class OMS:
         exists for is the one nobody planned."""
         if self._fill_state_path is None:
             return
-        cutoff = datetime.now(UTC) - _ABSORBED_ID_RETENTION
+        # `_now` for the third time (W2 step 6). Against the wall clock a replay
+        # prunes every simulated fill older than 30 REAL days - which is all of
+        # them - and a forgotten id is one `_is_foreign_unrecorded` will absorb
+        # a second time. That direction DOUBLE-records a closed trade, where the
+        # watermark bug merely lost one, and a duplicate is what trips the
+        # kill-switch.
+        cutoff = self._now() - _ABSORBED_ID_RETENTION
         self._absorbed_fills = {
             order_id: seen
             for order_id, seen in self._absorbed_fills.items()
@@ -1309,7 +1315,14 @@ class OMS:
         # during it: the query has already been answered, and the next floor
         # starts above the execution. Protective fills are the only exits this
         # system has, so one lost that way is a closed trade that never exists.
-        scan_started = datetime.now(UTC)
+        #
+        # `_now`, not `datetime.now(UTC)` (W2 step 6). Injecting the clock into
+        # `_load_fill_state` alone was not enough: the FIRST sweep re-stamped
+        # the watermark with the wall clock, so a replay's watermark jumped from
+        # its simulated start to the real present, and every simulated fill was
+        # then behind it forever. Measured - 99 sweeps, every one returning
+        # nothing, against a stop that had demonstrably fired.
+        scan_started = self._now()
         try:
             fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
         except Exception:
@@ -1327,6 +1340,25 @@ class OMS:
             fill = self._unabsorbed_part(raw)
             if fill is None:
                 continue
+            # Read BEFORE the block below, which pops `_position_stops` the
+            # moment the fill flattens the position. `_protective_exit_reason`
+            # separates a stop from a target by comparing the fill price against
+            # the stop level, and it read that dict AFTER the pop - so the level
+            # was gone and the comparison could never match.
+            #
+            # SCOPE, measured against the live record rather than assumed: this
+            # fires only for an exit absorbed during a RUNNING session. The pop
+            # sits inside `if not record_only`, so the startup replay path -
+            # which is how a stop that fired while the app was down arrives -
+            # skips it and records correctly. Both closed trades in the live
+            # record read `stop`, which is what narrowed the claim: an earlier
+            # version of this comment said EVERY stop-out was affected, and
+            # closed_trades.csv falsified it.
+            #
+            # A partial fill never reaches the pop either, so the only case that
+            # corrupts is a full exit during a live session - which is precisely
+            # the case that produces a closed trade from a stop doing its job.
+            stop_at_fill = self._position_stops.get(fill.symbol)
             # The M50 trap, and the reason this is not simply "persist the
             # watermark". A fill from before the baseline was taken is ALREADY
             # in `_filled_quantities`, because adoption read it from the
@@ -1389,7 +1421,7 @@ class OMS:
                         price=fill.price,
                         strategy=None,
                         operator="broker (protective order)",
-                        exit_reason=self._protective_exit_reason(fill),
+                        exit_reason=self._protective_exit_reason(fill, stop_at_fill),
                         # When it FILLED, not when we noticed (M50). The ledger
                         # stamps closed_at from this, and a replayed exit can be
                         # days older than the pass that finds it - which would
@@ -1523,14 +1555,20 @@ class OMS:
             # Flat: whatever was protecting it went with it at the broker.
             self._position_stops.pop(symbol, None)
 
-    def _protective_exit_reason(self, fill: BrokerFill) -> str:
+    def _protective_exit_reason(self, fill: BrokerFill, stop: float | None) -> str:
         """Which leg of the OCO fired, decided by the level it landed on.
 
         A stop fills at or below its trigger and a target at or above its
         limit, so the two are separable by price - and this is the only
         distinction available, because neither order was sent from here.
+
+        The stop level is PASSED IN rather than read here, because the caller
+        pops it from `_position_stops` as soon as the fill flattens the
+        position. Reading it here returned None for every completed exit, so
+        this method answered `target` for every stop-out ever recorded. A
+        parameter makes the ordering impossible to get wrong again; a lookup
+        made it impossible to get right.
         """
-        stop = self._position_stops.get(fill.symbol)
         if stop is not None and fill.price <= stop * 1.02:
             return "stop"
         return "target"

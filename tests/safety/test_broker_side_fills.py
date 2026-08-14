@@ -104,6 +104,42 @@ async def test_a_broker_side_fill_becomes_a_closed_trade():
 
 
 @pytest.mark.asyncio
+async def test_a_stop_out_is_recorded_as_a_stop_and_not_as_a_target():
+    """Found 14 August, while wiring the research harness.
+
+    `absorb_broker_fills` pops `_position_stops` as soon as a fill flattens the
+    position - "whatever was protecting it went with it at the broker" - and
+    `_protective_exit_reason` then read that same dict to decide which OCO leg
+    fired. The level was gone by then, so the comparison could not match and the
+    exit was recorded as `target`.
+
+    SCOPE, narrowed by checking the live record rather than reasoning from the
+    code: only an exit absorbed during a RUNNING session is affected. The pop
+    sits inside `if not record_only`, so a stop that fired while the app was
+    down and is replayed at startup keeps its level and records correctly. Both
+    live closed trades read `stop`, which is what disproved the first version of
+    this docstring - it claimed every stop-out was affected.
+
+    That leaves the corrupting case as a full exit during a live session, which
+    is exactly a stop doing its job on a night somebody is watching. A winner
+    and a loser recorded under the same reason makes the exit distribution
+    unreadable, and this trial's whole output is that distribution.
+    """
+    bus = EventBus()
+    ledger = TradeLedger(bus, tempfile.mkdtemp())
+    broker, oms = await _opened_position(bus, ledger)
+
+    # Well below the stop the entry attached, so there is nothing ambiguous
+    # about which leg this is.
+    broker.fill_resting_stop("AAA", price=80.0)
+    await oms.check_reconciliation()
+
+    closed = ledger.closed_trades()
+    assert len(closed) == 1
+    assert closed[0].exit_reason == "stop"
+
+
+@pytest.mark.asyncio
 async def test_the_recorded_exit_price_is_the_real_fill_not_the_stop_level():
     """A stop fills at or below its trigger and a target at or above its
     limit, so using the level as a proxy would put a wrong number into every
