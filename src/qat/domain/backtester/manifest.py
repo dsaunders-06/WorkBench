@@ -39,12 +39,13 @@ swallowed query made blindness indistinguishable from a quiet book.
 ## A fourth gap: rails this table does not model at all
 
 The three observabilities above assume every refusal belongs to one of the
-twelve rails in `[*RAILS, REGIME_RAIL]`. It does not: `refusals._PATTERNS`
+rails in `[*RAILS, REGIME_RAIL]`. It does not: `refusals._PATTERNS`
 recognises materially more labels than that static list names, and any of
 them can write refusals into `risk_decisions.csv` while having no row in the
 table at all. Found by running the ASX replay, where the cash floor
-(`min_cash_reserve` - deliberately not ablatable, see `ablation.py`) refused
-15 candidates and left no trace anywhere in `manifest.json`.
+(`min_cash_reserve` - deliberately not ablatable, see its field in
+`config.py`, where `gt=0` is what makes it structural) refused 15 candidates
+and left no trace anywhere in `manifest.json`.
 
 `unmodelled_refusals` closes that gap by reporting, rather than by extending
 the static list: every `rail_of` label this run saw refuse that no rail in
@@ -155,9 +156,13 @@ class RunManifest:
     starting_equity: float
     fill_model: dict[str, object] = field(default_factory=lambda: dict(_FILL_MODEL))
     # Refusals `risk_decisions.csv` recorded for a `rail_of` label that no rail
-    # in `rails` claims - see the module docstring. Empty, never absent: a run
-    # with nothing unmodelled says so rather than omitting the field.
-    unmodelled_refusals: dict[str, int] = field(default_factory=dict)
+    # in `rails` claims - see the module docstring. `None` draws the same
+    # distinction `RailRecord.bound_count` draws for an UNOBSERVABLE rail:
+    # "this manifest cannot say" rather than zero. `{}` is checked and clean -
+    # a run with nothing unmodelled says so rather than omitting the field.
+    # `build_manifest` always sets a real dict, possibly empty; only a
+    # manifest written before this field existed reads back as `None`.
+    unmodelled_refusals: dict[str, int] | None = field(default=None)
     stated_limitations: tuple[str, ...] = _STATED_LIMITATIONS
 
     def write(self, path: Path) -> None:
@@ -166,6 +171,7 @@ class RunManifest:
 
 def read_manifest(path: Path) -> RunManifest:
     raw = json.loads(path.read_text(encoding="utf-8"))
+    raw_unmodelled = raw.get("unmodelled_refusals")
     return RunManifest(
         created_at=raw["created_at"],
         code_commit=raw["code_commit"],
@@ -184,10 +190,12 @@ def read_manifest(path: Path) -> RunManifest:
         universe=tuple(raw["universe"]),
         starting_equity=float(raw["starting_equity"]),
         fill_model=raw["fill_model"],
-        # `.get(..., {})`, not `raw[...]`: a manifest written before this field
-        # existed must still load, and "nothing recorded" is the correct
-        # reading of its absence rather than a KeyError.
-        unmodelled_refusals=dict(raw.get("unmodelled_refusals", {})),
+        # `.get(...)`, not `raw[...]`: a manifest written before this field
+        # existed must still load. Its absence reads as `None` - "not
+        # recorded" - rather than `{}`, which would assert "checked and
+        # clean" about a manifest that never checked. Same idiom as
+        # `RailRecord.bound_count`.
+        unmodelled_refusals=dict(raw_unmodelled) if raw_unmodelled is not None else None,
         stated_limitations=tuple(raw["stated_limitations"]),
     )
 
@@ -238,7 +246,14 @@ def _refusal_counts(rows: list[dict[str, str]]) -> dict[str, int]:
     for row in rows:
         if str(row.get("approved", "")).strip().lower() == "true":
             continue
-        label = rail_of(row.get("reason", ""))
+        # Matching `refusals.summarise_refusals`, which also skips a blank
+        # reason, deliberately: this module's whole argument is that one fact
+        # should have one derivation, and the two must not visibly disagree
+        # about what counts as a refusal (finding 6).
+        reason = (row.get("reason") or "").strip()
+        if not reason:
+            continue
+        label = rail_of(reason)
         counts[label] = counts.get(label, 0) + 1
     return counts
 
@@ -281,6 +296,13 @@ def build_manifest(
     disabled_set = set(disabled)
 
     rails: dict[str, RailRecord] = {}
+    # Labels the loop below actually claimed, accumulated as it runs rather
+    # than read back from `_REFUSAL_LABELS.values()` afterwards. If a rail is
+    # ever removed from `RAILS` while its `_REFUSAL_LABELS` entry survives,
+    # this loop simply never visits it - so a set built from what the loop
+    # claimed excludes it too, correctly, where a set built from the static
+    # mapping would not (finding 2).
+    claimed_labels: set[str] = set()
     for name in [*RAILS, REGIME_RAIL]:
         if name in _UNOBSERVABLE:
             observability = Observability.UNOBSERVABLE
@@ -297,6 +319,8 @@ def build_manifest(
             label = _REFUSAL_LABELS[name]
             count = refusals.get(label, 0)
             exercised = count > 0
+        if label is not None:
+            claimed_labels.add(label)
         rails[name] = RailRecord(
             enabled=name not in disabled_set,
             observability=observability,
@@ -307,12 +331,12 @@ def build_manifest(
         )
 
     # Every label `rail_of` produced for a real refusal, minus the ones a rail
-    # in the table above already claims. `_REFUSAL_LABELS.values()` rather than
-    # a second list: those ARE the labels the table models, so anything else
-    # that refused - including UNCLASSIFIED, under whatever name
-    # `rail_of._leading_clause` gave it - belongs here.
-    modelled = set(_REFUSAL_LABELS.values())
-    unmodelled = {label: count for label, count in refusals.items() if label not in modelled}
+    # in the table above actually claimed - not `_REFUSAL_LABELS.values()`,
+    # which names what the static mapping COULD claim regardless of whether
+    # the loop above ever ran for it. Anything not claimed - including
+    # UNCLASSIFIED, under whatever name `rail_of._leading_clause` gave it -
+    # belongs here.
+    unmodelled = {label: count for label, count in refusals.items() if label not in claimed_labels}
 
     commit, dirty = _commit()
     return RunManifest(

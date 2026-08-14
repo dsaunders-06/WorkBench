@@ -181,6 +181,9 @@ def test_a_refusal_outside_the_modelled_rails_is_reported_as_unmodelled(tmp_path
 
 
 def test_unmodelled_refusals_is_empty_when_every_refusal_is_a_modelled_rail(tmp_path: Path):
+    """Checked and clean is `{}`, never `None` - only an absent field (a
+    manifest written before this field existed) reads as `None`. See
+    `test_a_manifest_missing_the_field_entirely_reads_as_none`."""
     _decisions(
         tmp_path,
         [{"reason": "already at the 10-position limit (10 held or pending)"}],
@@ -189,6 +192,7 @@ def test_unmodelled_refusals_is_empty_when_every_refusal_is_a_modelled_rail(tmp_
     manifest = _manifest(tmp_path)
 
     assert manifest.unmodelled_refusals == {}
+    assert manifest.unmodelled_refusals is not None
 
 
 def test_approvals_do_not_contribute_to_unmodelled_refusals(tmp_path: Path):
@@ -221,6 +225,69 @@ def test_unmodelled_refusals_round_trips(tmp_path: Path):
     again = read_manifest(tmp_path / "manifest.json")
 
     assert again.unmodelled_refusals == {"Cash floor": 15}
+
+
+def test_a_manifest_missing_the_field_entirely_reads_as_none(tmp_path: Path):
+    """An older manifest, written before `unmodelled_refusals` existed, has no
+    key at all. That must read as "not recorded" (`None`), never as "checked
+    and clean" (`{}`) - the same distinction `RailRecord.bound_count` draws
+    for a rail this ledger cannot see (finding 1)."""
+    _decisions(tmp_path, [])
+    manifest = _manifest(tmp_path)
+    manifest.write(tmp_path / "manifest.json")
+
+    raw = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    del raw["unmodelled_refusals"]
+    (tmp_path / "manifest.json").write_text(json.dumps(raw), encoding="utf-8")
+
+    again = read_manifest(tmp_path / "manifest.json")
+
+    assert again.unmodelled_refusals is None
+
+
+def test_a_refusal_whose_rail_is_absent_from_the_table_is_unmodelled(tmp_path: Path, monkeypatch):
+    """Pins finding 2: `unmodelled_refusals` must be computed from the labels
+    the rail loop actually claimed, not from `_REFUSAL_LABELS` statically -
+    else a rail removed from `ablation.RAILS` while its `_REFUSAL_LABELS`
+    entry survives would silently vanish from both the rail table AND
+    `unmodelled_refusals`, reintroducing the defect this field exists to
+    close.
+
+    `sector_cap` is in both `_REFUSAL_LABELS` and `RAILS` today, so producing
+    "modelled by label but absent from the table" from real inputs alone is
+    not possible without this monkeypatch - it is the only way to express the
+    situation, per the finding.
+    """
+    import qat.domain.backtester.manifest as manifest_module
+
+    reduced_rails = {
+        name: knobs for name, knobs in manifest_module.RAILS.items() if name != "sector_cap"
+    }
+    monkeypatch.setattr(manifest_module, "RAILS", reduced_rails)
+
+    _decisions(
+        tmp_path,
+        [{"reason": "sector concentration 30% exceeds the 25% cap"}],
+    )
+
+    manifest = _manifest(tmp_path)
+
+    assert manifest.unmodelled_refusals == {"Sector concentration cap": 1}
+    assert "sector_cap" not in manifest.rails
+
+
+def test_a_non_approved_row_with_a_blank_reason_is_not_counted(tmp_path: Path):
+    """Pins finding 6: `_refusal_counts` must skip a blank reason the same way
+    `refusals.summarise_refusals` does. Only one writer exists and it always
+    supplies a reason, so this is defensive - but before the fix, a
+    non-approved row with no reason surfaced as a manifest key of `""` via
+    `rail_of("")`, where the upstream summary would have dropped it silently.
+    Two derivations of "what is a refusal" must agree."""
+    _decisions(tmp_path, [{"reason": ""}])
+
+    manifest = _manifest(tmp_path)
+
+    assert manifest.unmodelled_refusals == {}
 
 
 def test_the_manifest_names_the_fill_model_and_the_limitations(tmp_path: Path):
