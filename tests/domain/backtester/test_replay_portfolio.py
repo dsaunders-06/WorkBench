@@ -77,8 +77,14 @@ async def test_the_position_limit_refuses_an_entry_and_says_so(tmp_path):
 
     await session.run()
 
-    entered = sorted(o.symbol for o in session.broker._orders.values())
-    assert entered == ["AAA"], f"only the first setup should reach the broker, got {entered}"
+    # ENTRIES, not every order. This counted all orders until 14 August and
+    # passed only because exits were broken: `_announce_fill` published no `ts`,
+    # so every entry was dated from the wall clock and the time stop could never
+    # fire. With exits working, AAA legitimately has two orders - the entry and
+    # its time-stop exit - and the question here has only ever been which
+    # symbols were ENTERED.
+    entered = sorted(o.symbol for o in session.broker._orders.values() if o.side == "buy")
+    assert entered == ["AAA"], f"only the first setup should be entered, got {entered}"
 
     # risk_decisions.csv, not decision_journal.csv. The journal records the
     # SIGN-OFF path - what was transmitted and why it was allowed. Which rail

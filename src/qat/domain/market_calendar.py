@@ -41,6 +41,19 @@ _REGULAR_HOURS: dict[Market, tuple[time, time]] = {
     "ASX": (time(10, 0), time(16, 0)),
 }
 
+
+def regular_hours(market: Market) -> tuple[time, time]:
+    """The market's ordinary open and close, in its OWN local time.
+
+    Public because a caller that needs to place itself inside a session cannot
+    otherwise do so without hardcoding one market's hours - which the research
+    harness did, using 15:00 UTC on the grounds that it sits inside the US
+    session. It does; the ASX trades 00:00-06:00 UTC, so every ASX order it
+    produced was refused for being out of hours.
+    """
+    return _REGULAR_HOURS[market]
+
+
 _EARLY_CLOSE_TIMES: dict[Market, time] = {
     "US": time(13, 0),
     "ASX": time(14, 10),

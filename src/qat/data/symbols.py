@@ -28,15 +28,46 @@ from __future__ import annotations
 _YFINANCE_CLASS_SEPARATOR = "-"
 _CANONICAL_CLASS_SEPARATOR = "."
 
+# EXCHANGE SUFFIXES, which the rule above explicitly does not cover and which
+# the translation used to mangle anyway. `.AX` is what Yahoo itself requires for
+# an ASX listing, so rewriting `BHP.AX` to `BHP-AX` is a 404 - and a 404 is not
+# where the damage stopped: `YFinanceHistorySource` falls back to SYNTHETIC bars
+# when a fetch returns nothing, so the caller got 500 fabricated daily bars with
+# a warning in the log and no exception. A research run on that would have
+# produced expectancy, rail bindings and an ablation verdict, all invented and
+# all plausible.
+#
+# Listed rather than inferred from shape. A single trailing letter is a class
+# share (`BRK.B`) and two is usually an exchange (`.AX`) - but `.L` is London
+# and would break the guess, so the markets this application actually supports
+# are named. `Market` is `Literal["US", "ASX"]`; when a third arrives it is
+# added here deliberately rather than by a heuristic that was right twice.
+_EXCHANGE_SUFFIXES = (".AX",)
+
+
+def _split_exchange(symbol: str) -> tuple[str, str]:
+    """`BHP.AX` -> `("BHP", ".AX")`, `BRK.B` -> `("BRK.B", "")`."""
+    upper = symbol.upper()
+    for suffix in _EXCHANGE_SUFFIXES:
+        if upper.endswith(suffix):
+            return symbol[: -len(suffix)], symbol[-len(suffix) :]
+    return symbol, ""
+
 
 def to_yfinance(symbol: str) -> str:
-    """Canonical (broker) form -> the form Yahoo Finance expects."""
-    return symbol.replace(_CANONICAL_CLASS_SEPARATOR, _YFINANCE_CLASS_SEPARATOR)
+    """Canonical (broker) form -> the form Yahoo Finance expects.
+
+    The exchange suffix is preserved: Yahoo wants `.AX` and translating it is
+    a lookup failure that degrades to synthetic prices rather than to an error.
+    """
+    base, exchange = _split_exchange(symbol)
+    return base.replace(_CANONICAL_CLASS_SEPARATOR, _YFINANCE_CLASS_SEPARATOR) + exchange
 
 
 def from_yfinance(symbol: str) -> str:
     """Yahoo form -> canonical. Used when reading vendor-shaped input back."""
-    return symbol.replace(_YFINANCE_CLASS_SEPARATOR, _CANONICAL_CLASS_SEPARATOR)
+    base, exchange = _split_exchange(symbol)
+    return base.replace(_YFINANCE_CLASS_SEPARATOR, _CANONICAL_CLASS_SEPARATOR) + exchange
 
 
 def canonical(symbol: str) -> str:

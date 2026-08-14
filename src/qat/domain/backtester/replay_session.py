@@ -29,6 +29,17 @@ is why the settings are read rather than assumed.
 
 Step 2 scope: ONE symbol, no portfolio, no regime. A session loop that works
 for one symbol and lies about ten is worse than one that only claims one.
+
+**PRECONDITION: the frames must be DATE-ALIGNED.** The warm start seeds by
+index POSITION - `ReplayHistorySource(bars, until_index=n)` - so position n has
+to be the same date for every symbol. A universe where one symbol's history
+starts a session earlier seeds that symbol past the replay boundary, and
+`prime_bar` then refuses to move backwards. Found on the first ASX run: all 95
+symbols carried 500 bars and only the benchmark covered the earliest one.
+
+The error is loud rather than silent, which is why this is documented rather
+than guarded here - but a caller assembling a universe from separate vendor
+calls should intersect the indexes before handing them over.
 """
 
 from __future__ import annotations
@@ -50,6 +61,7 @@ from qat.domain.backtester.replay_sources import ReplayHistorySource, ReplayMacr
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal
 from qat.domain.events import MacroEvent, MarketDataEvent
+from qat.domain.market_calendar import MARKET_TIMEZONES, regular_hours
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
 from qat.domain.performance.trades import TradeLedger
@@ -60,6 +72,19 @@ from qat.domain.strategies.engine import StrategyEngine
 from qat.domain.warm_start import WarmStart
 
 _DAILY_SECONDS = 86_400.0
+# How far into the session the simulated clock sits, as a fraction of it.
+#
+# NOT the midpoint, which is the obvious choice and the wrong one:
+# `SESSION_PHASES` puts 0.33-0.68 in the "Midday Lull", and that phase is
+# excluded from `AUTONOMOUS_ELIGIBLE_PHASES` for having the thinnest liquidity
+# of the day. A replay clocked at exactly mid-session therefore has every order
+# refused at sign-off, and produces no trades at all.
+#
+# 0.25 sits inside "Morning Trend" for both markets - 11:07 in New York and
+# 11:30 in Sydney - and is where the old hardcoded 15:00 UTC happened to fall
+# for the US, which is why that worked and why nothing noticed it was
+# US-specific.
+_SESSION_FRACTION = 0.25
 # The executor's retry loop is wall-clock driven and has no meaning in a replay
 # that crosses a decade in seconds. Pushed out of the way rather than disabled,
 # so the production object is used exactly as it ships.
@@ -250,16 +275,30 @@ class ReplaySession:
         docstring says a market-hours gate read against the wall clock "passes
         or fails by time of day". The replay's clock is the simulated date.
 
-        15:00 UTC is inside the US session (13:30-20:00) on the day whose close
-        produced the signal. The exact instant does not matter to any decision:
-        the fill happens at the NEXT bar's open regardless, which is the rule
-        the fill model already commits to.
+        MID-SESSION IN THE MARKET'S OWN TIMEZONE, which this used to get wrong
+        for every market but one. It returned a fixed 15:00 UTC, justified as
+        *"inside the US session (13:30-20:00)"* - and the ASX trades 10:00-16:00
+        SYDNEY, which is 00:00-06:00 UTC. 15:00 UTC is 01:00 the next day in
+        Sydney, so every ASX order was refused by the market-hours gate, and on
+        a Friday the gate reported a weekend.
+
+        Measured on the first ASX run: seven entries approved by the risk
+        engine, every one blocked at sign-off with *"ASX market is closed
+        (weekend)"*, none reaching the broker. They then sat in `pending_signoff`
+        counting as committed exposure, which drove the gap-risk budget to
+        refuse the other six hundred and eighty candidates. **A whole run of
+        rail measurements against a book that never existed.**
+
+        The exact instant still does not matter to any decision - the fill
+        happens at the NEXT bar's open regardless - but it has to be inside the
+        session, or nothing transacts at all.
         """
-        return (
-            self.broker.current_date.to_pydatetime()
-            .replace(hour=15, minute=0, second=0, microsecond=0)
-            .astimezone(UTC)
-        )
+        day = self.broker.current_date.date()
+        tz = MARKET_TIMEZONES[self.settings.market]
+        open_time, close_time = regular_hours(self.settings.market)
+        opens = datetime.combine(day, open_time, tzinfo=tz)
+        closes = datetime.combine(day, close_time, tzinfo=tz)
+        return (opens + (closes - opens) * _SESSION_FRACTION).astimezone(UTC)
 
     async def run(self) -> None:
         await self._warm_start()
@@ -299,6 +338,14 @@ class ReplaySession:
                 # The final advance returns False and skips this by design: it
                 # moved no clock, so no new fill can exist.
                 await self.oms.absorb_broker_fills()
+                # AFTER the advance, so an order the gate refused yesterday is
+                # reconsidered against TODAY. The executor's own retry loop is
+                # wall-clock driven and inert here by design, so without this a
+                # single blocked day loses the order permanently - measured, a
+                # time stop fired on Memorial Day 2024, the gate correctly
+                # refused to trade a US holiday, and nothing asked again for the
+                # remaining hundred sessions.
+                await self.executor.retry_pending()
         finally:
             await self.executor.stop()
             await self.bridge.stop()

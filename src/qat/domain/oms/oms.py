@@ -635,6 +635,24 @@ class OMS:
                 exit_reason=(
                     self._exit_reasons.pop(order.symbol, "signal") if order.side == "sell" else None
                 ),
+                # THE SEVENTH WALL-CLOCK DEPENDENCY, and it disabled three rails
+                # in every replay ever run (W2). Omitted, `ts` takes `Event`'s
+                # default of `datetime.now(UTC)` - correct in live, where the
+                # fill genuinely just happened, and wrong in a replay by however
+                # far the simulated clock is from today.
+                #
+                # `SignalToOrderBridge._on_fill` stamps `entry.opened_at` from
+                # this event, and `_trading_days_between(opened_at, now)`
+                # returns zero when `now` precedes it. So THE TIME STOP, THE
+                # MINIMUM HOLDING PERIOD AND THE WEEKLY CHURN CAP could never
+                # fire: the first ASX run opened seven positions in September
+                # 2025, held them across two hundred and fifty sessions, and
+                # closed nothing at all.
+                #
+                # `_now` is the wall clock unless a clock was injected, so live
+                # behaviour is unchanged. The absorb path below has always
+                # passed its own `ts` for the same reason (M50).
+                ts=self._now(),
             )
         )
 

@@ -68,6 +68,20 @@ def test_every_started_engine_is_also_stopped():
     assert not missing, f"ReplaySession.run does not stop: {', '.join(missing)}"
 
 
+def test_pending_orders_are_retried_every_simulated_day():
+    """The executor's own retry loop is wall-clock driven and inert in a replay,
+    so the session has to drive it. Without this a single blocked day loses the
+    order for good: a time stop fired on Memorial Day 2024, the gate correctly
+    refused to trade a US holiday, and nothing asked again."""
+    source = inspect.getsource(ReplaySession.run)
+
+    assert "await self.executor.retry_pending()" in source
+    assert source.index("self.broker.advance()") < source.index("retry_pending"), (
+        "the retry must follow the advance, or it reconsiders the order against the same "
+        "day that just refused it"
+    )
+
+
 def test_the_absorb_sweep_runs_after_the_advance():
     """Order matters and is easy to lose in a refactor. `advance` is what fires
     stops and targets, so sweeping before it asks about a day on which nothing

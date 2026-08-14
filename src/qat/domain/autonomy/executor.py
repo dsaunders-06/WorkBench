@@ -99,13 +99,33 @@ class AutonomousExecutor:
         """
         while True:
             await asyncio.sleep(self.retry_interval_seconds)
-            if not self.settings.autonomy_enabled:
-                continue
-            try:
-                for order in self.oms.pending_orders():
-                    await self._consider(order.order_id)
-            except Exception:  # noqa: BLE001 - a bad sweep must not end the loop
-                logger.exception("Retry of pending orders failed - will try again")
+            await self.retry_pending()
+
+    async def retry_pending(self) -> None:
+        """One pass over the orders still awaiting sign-off.
+
+        Extracted from the loop above so a caller with its own clock can drive
+        it (W2). A replay cannot use the timer: `retry_interval_seconds` is
+        wall-clock, and `ReplaySession` pushes it out of reach precisely because
+        a decade of simulated time passes in seconds.
+
+        WITHOUT THIS THE REPLAY LOSES EVERY BLOCKED ORDER. Measured: a time stop
+        fired correctly on 27 May 2024, the exit was created and audited, and
+        the autonomy gate refused it because that day was Memorial Day - a real
+        US market holiday, so the gate was right. Nothing ever asked again. The
+        order sat in `pending_signoff` for the remaining hundred sessions, the
+        position was never closed, and the run reported no closed trade at all.
+
+        Live retries every sixty seconds; a replay retries once per simulated
+        day, which is the same thing at the resolution it has.
+        """
+        if not self.settings.autonomy_enabled:
+            return
+        try:
+            for order in self.oms.pending_orders():
+                await self._consider(order.order_id)
+        except Exception:  # noqa: BLE001 - a bad sweep must not end the loop
+            logger.exception("Retry of pending orders failed - will try again")
 
     async def _on_pending(self, event: OrderPendingSignoffEvent) -> None:
         # Cheapest possible early exit. In recommend mode - the default - this
