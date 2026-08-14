@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 import pandas as pd
 import pytest
 
-from qat.data.broker.adapter import Order
+from qat.data.broker.adapter import BrokerFill, Order
 from qat.data.broker.simulated_broker import SimulatedBroker
 from qat.domain.backtester.costs import CostModel
 
@@ -166,6 +166,22 @@ async def _entered(bars: pd.DataFrame, stop: float, target: float) -> SimulatedB
     return broker
 
 
+def _protective(fills: list[BrokerFill]) -> list[BrokerFill]:
+    """The exits, which is what every fill-model assertion below is about.
+
+    `recent_fills` also reports the ENTRY now, because that is what the adapter
+    it stands in for does - `AlpacaAdapter` returns every filled order in the
+    window, its own included, and `OMS._correct_announced_price` is documented
+    as "the only place the price we actually PAID arrives for an order this app
+    sent". Reporting only protective legs left that path dead in the harness and
+    every replayed entry kept the price it was announced at.
+
+    These assertions are unchanged in substance: the sell price each one checks
+    is the same number it always checked.
+    """
+    return [f for f in fills if f.side == "sell"]
+
+
 @pytest.mark.asyncio
 async def test_a_stop_fills_when_the_low_touches_it():
     bars = _ohlc([(100, 101, 99, 100), (100, 101, 99, 100), (100, 101, 94, 95)])
@@ -175,7 +191,7 @@ async def test_a_stop_fills_when_the_low_touches_it():
 
     assert await broker.positions() == []
     fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
-    assert [(f.symbol, f.side, f.price) for f in fills] == [("AAA", "sell", 95.0)]
+    assert [(f.symbol, f.side, f.price) for f in _protective(fills)] == [("AAA", "sell", 95.0)]
 
 
 @pytest.mark.asyncio
@@ -188,7 +204,7 @@ async def test_a_bar_that_touches_both_levels_is_recorded_as_the_STOP():
     broker.advance()
 
     fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
-    assert [f.price for f in fills] == [95.0], "the target was touched too, and loses"
+    assert [f.price for f in _protective(fills)] == [95.0], "the target was touched too, and loses"
 
 
 @pytest.mark.asyncio
@@ -201,7 +217,7 @@ async def test_a_gap_through_the_stop_fills_at_the_OPEN_not_the_stop():
     broker.advance()
 
     fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
-    assert [f.price for f in fills] == [80.0], "the open, which is worse than the stop"
+    assert [f.price for f in _protective(fills)] == [80.0], "the open, which is worse than the stop"
 
 
 @pytest.mark.asyncio
@@ -213,7 +229,7 @@ async def test_a_gap_through_the_target_fills_at_the_TARGET_not_the_better_open(
     broker.advance()
 
     fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
-    assert [f.price for f in fills] == [115.0], "the target, not the 130 open"
+    assert [f.price for f in _protective(fills)] == [115.0], "the target, not the 130 open"
 
 
 @pytest.mark.asyncio
@@ -230,4 +246,53 @@ async def test_a_stop_can_fire_on_the_bar_the_entry_filled():
 
     assert await broker.positions() == []
     fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
-    assert [f.price for f in fills] == [95.0]
+    assert [f.price for f in _protective(fills)] == [95.0]
+
+
+@pytest.mark.asyncio
+async def test_the_entry_fill_is_reported_too_and_carries_the_price_paid():
+    """Pinned deliberately rather than left as a side effect.
+
+    `AlpacaAdapter.recent_fills` returns every filled order in its window, the
+    app's own included, and `OMS._correct_announced_price` depends on it: it is
+    the only place the price actually PAID arrives for an order this app sent
+    (M70). A simulator reporting only protective legs left that path dead, so a
+    replayed entry kept the price announced at sign-off - the signal bar's
+    close - rather than the next bar's open it was charged.
+    """
+    bars = _ohlc([(100, 101, 99, 100), (110, 111, 109, 110)])
+    broker = SimulatedBroker(
+        bars={"AAA": bars}, cost_model=CostModel(commission_bps=0.0, slippage_bps=0.0)
+    )
+    await broker.place_order(_buy(stop_price=95.0, take_profit_price=200.0))
+
+    broker.advance()
+
+    fills = await broker.recent_fills(since=datetime(2020, 1, 1, tzinfo=UTC))
+    buys = [f for f in fills if f.side == "buy"]
+    assert [(f.symbol, f.price) for f in buys] == [
+        ("AAA", 110.0)
+    ], "the NEXT bar's open, which is what the entry was charged"
+
+
+@pytest.mark.asyncio
+async def test_the_broker_does_not_mutate_the_caller_s_order():
+    """No real adapter can. Alpaca builds a fresh object from its JSON response
+    and the app learns about a fill by asking.
+
+    Sharing the object silently defeated M70: `_correct_announced_price` asks
+    whether what the broker charged differs from what was announced at sign-off,
+    reading `order.filled_price or order.reference_price` - and the fill price
+    wrote itself into that field before the comparison ran, so the difference
+    was always zero.
+    """
+    bars = _ohlc([(100, 101, 99, 100), (110, 111, 109, 110)])
+    broker = SimulatedBroker(
+        bars={"AAA": bars}, cost_model=CostModel(commission_bps=0.0, slippage_bps=0.0)
+    )
+    order = _buy(stop_price=95.0, take_profit_price=200.0)
+    await broker.place_order(order)
+
+    broker.advance()
+
+    assert order.filled_price is None, "the caller's order must not learn the fill by mutation"

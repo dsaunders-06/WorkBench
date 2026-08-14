@@ -22,7 +22,7 @@ quietly worse than reality.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 
 import pandas as pd
@@ -241,17 +241,33 @@ class SimulatedBroker:
         """Queued, never filled here. A market order placed against a closed
         bar reaches the market at the next open, and the app's own sizing was
         computed from that closed bar - so filling now would hand the strategy
-        a price it could not have traded at."""
-        self._orders[order.order_id] = order
-        if order.is_protective_stop:
-            order.status = "transmitted"
-            self._resting_stops[order.symbol] = order.stop_price
-            if order.take_profit_price is not None:
-                self._resting_targets[order.symbol] = order.take_profit_price
-            return order
-        order.status = "transmitted"
-        self._pending.append(order)
-        return order
+        a price it could not have traded at.
+
+        THE BROKER KEEPS ITS OWN COPY, and returns another. It used to store and
+        return the caller's object, so a later `filled_price` set here mutated
+        the OMS's order too - and no real adapter can do that, because Alpaca
+        builds a fresh object out of its JSON response and the app learns about
+        a fill by asking.
+
+        That sharing silently defeated M70. `_correct_announced_price` asks
+        whether what the broker charged differs from what was ANNOUNCED at
+        sign-off, and the announced price it reads is `order.filled_price or
+        order.reference_price`. With one shared object the fill price wrote
+        itself into that field before the comparison ran, the difference was
+        always zero, and every replayed entry kept the signal bar's close.
+        """
+        stored = replace(order)
+        self._orders[order.order_id] = stored
+        if stored.is_protective_stop:
+            stored.status = "transmitted"
+            self._resting_stops[stored.symbol] = stored.stop_price
+            if stored.take_profit_price is not None:
+                self._resting_targets[stored.symbol] = stored.take_profit_price
+            return replace(stored)
+        stored.status = "transmitted"
+        self._pending.append(stored)
+        # A snapshot of this instant, exactly as an adapter's response is.
+        return replace(stored)
 
     def _fill_pending_entries(self) -> None:
         still_pending: list[Order] = []
@@ -265,6 +281,29 @@ class SimulatedBroker:
             fill_price = self._slipped(float(bar["open"]), order.side)
             order.status = "filled"
             order.filled_price = fill_price
+            # Reported through `recent_fills` like any other execution, because
+            # that is what the adapter this stands in for does. `AlpacaAdapter`
+            # returns every filled order in the window, its own included - which
+            # is why `absorb_broker_fills` has a branch for a fill that is OURS
+            # and calls `_correct_announced_price` on it (M70).
+            #
+            # Recording only protective fills here left that branch dead in the
+            # harness, so every replayed entry kept the price it was ANNOUNCED
+            # at - the signal bar's close, published at sign-off before this
+            # order had filled - rather than the next bar's open the simulator
+            # actually charged. The fill model's central decision was invisible
+            # in every recorded trade, and expectancy was computed against a
+            # basis nobody paid.
+            self._broker_fills.append(
+                BrokerFill(
+                    order_id=order.order_id,
+                    symbol=order.symbol,
+                    side=order.side,
+                    quantity=order.quantity,
+                    price=fill_price,
+                    filled_at=self._now(),
+                )
+            )
             self._apply_fill(order, fill_price)
             if order.is_bracket and order.side == "buy":
                 self._resting_stops[order.symbol] = order.stop_price
