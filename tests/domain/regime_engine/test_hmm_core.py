@@ -64,3 +64,25 @@ def test_is_fitted_flag():
     assert model.is_fitted is False
     model.fit(_two_regime_matrix())
     assert model.is_fitted is True
+
+
+def test_converged_before_any_fit_is_false_not_an_exception():
+    """An observability accessor, not a gate - reading it early must never be
+    the thing that breaks a run, so "no fit has converged" reads as False
+    rather than raising the way `state_signatures` does before `fit()`."""
+    model = HMMRegimeModel(n_states=2)
+    assert model.converged is False
+
+
+def test_a_converged_fit_reports_converged_true():
+    """Covers the ordinary path only: `_two_regime_matrix` is well-separated
+    enough that hmmlearn's EM converges inside the default `n_iter=100`, which
+    this asserts on. It does not exercise the non-convergent branch - driving
+    that would mean fitting deliberately pathological data, which is slower
+    and flakier than the engine-level counter test that drives
+    `HMMRegimeModel.converged` directly."""
+    matrix = _two_regime_matrix()
+    model = HMMRegimeModel(n_states=2, random_state=1)
+    model.fit(matrix)
+
+    assert model.converged is True

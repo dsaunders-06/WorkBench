@@ -74,6 +74,11 @@ class RegimeEngine:
         self._benchmark_closes: list[float] = []
         self._breadth_latest: dict[str, float] = {}
         self._bars_since_fit = 0
+        # Refits that SUCCEEDED but hit `n_iter` without converging - recorded,
+        # not acted on. `_fit` still returns True and the classification is
+        # still used, exactly as today; this only lets a manifest say a run
+        # saw it happen.
+        self._non_convergent_fits = 0
         self._prev_yield_curve_slope = 0.0
         self._prev_sma_200 = 0.0
         self._last_label: str | None = None
@@ -83,6 +88,16 @@ class RegimeEngine:
         # that as "unchanged" would publish nothing for the one session this
         # exists to make visible.
         self._healthy: bool | None = None
+
+    @property
+    def non_convergent_fits(self) -> int:
+        """How many refits succeeded without `RegimeHMM.converged` being True.
+
+        A count, not a flag: a run's manifest needs to say whether this
+        happened once or throughout, the same reason `bound_count` carries a
+        number rather than a bool.
+        """
+        return self._non_convergent_fits
 
     async def start(self) -> None:
         logger.info(
@@ -345,6 +360,11 @@ class RegimeEngine:
                 ),
             )
             return False
+        if not self._hmm.converged:
+            # Still used exactly as today - see `non_convergent_fits`'s
+            # docstring. This does not change what is returned or what the
+            # engine does with the fit, only what gets counted.
+            self._non_convergent_fits += 1
         return True
 
     def _log_classification(

@@ -31,6 +31,10 @@ class HMMRegimeModel:
         self.n_iter = n_iter
         self._model: GaussianHMM | None = None
         self._state_signatures: dict[int, StateSignature] | None = None
+        # False, not unset: "no fit has converged" is a legitimate reading of
+        # "no fit has happened yet", and this is an observability accessor -
+        # reading it early must never raise the way `state_signatures` does.
+        self._converged = False
 
     def fit(self, feature_matrix: np.ndarray) -> None:
         if feature_matrix.shape[0] < self.n_states * 2:
@@ -47,6 +51,7 @@ class HMMRegimeModel:
         model.fit(feature_matrix)
         self._model = model
         self._state_signatures = self._characterize_states(feature_matrix)
+        self._converged = bool(model.monitor_.converged)
 
     def predict_proba(self, feature_matrix: np.ndarray) -> np.ndarray:
         if self._model is None:
@@ -63,6 +68,17 @@ class HMMRegimeModel:
     @property
     def is_fitted(self) -> bool:
         return self._model is not None
+
+    @property
+    def converged(self) -> bool:
+        """Whether the most recent `fit()` converged inside `n_iter`.
+
+        `hmmlearn` still returns a usable model when this is False - EM
+        stopped at the iteration cap rather than at a fixed point - and the
+        fit is used exactly as any other. This exists so a caller can RECORD
+        that, not so it can decide anything differently.
+        """
+        return self._converged
 
     def _characterize_states(self, feature_matrix: np.ndarray) -> dict[int, StateSignature]:
         model = self._model

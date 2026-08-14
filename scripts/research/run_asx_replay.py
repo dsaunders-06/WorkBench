@@ -111,6 +111,25 @@ def _asx_limitations(macro: dict[str, list[MacroObservation]]) -> tuple[str, str
     )
 
 
+def _convergence_limitation(non_convergent_fits: int) -> tuple[str, ...]:
+    """What `exercised: true` alone cannot say: the regime rail can classify
+    from a fit that hit `n_iter` rather than a fixed point. `hmmlearn` printed
+    "Model is not converging." during the first ASX run - the classification
+    was used exactly as the deployed engine would use it, and the manifest
+    said nothing about the fit's quality. Empty when every refit converged, so
+    a clean run adds nothing to the tuple `extra_limitations` appends.
+    """
+    if non_convergent_fits <= 0:
+        return ()
+    plural = "" if non_convergent_fits == 1 else "s"
+    return (
+        f"{non_convergent_fits} regime refit{plural} reached the iteration cap without "
+        "converging. The classification was still used, exactly as the deployed engine "
+        "would use it, so this describes the fit's quality and not a departure from live "
+        "behaviour.",
+    )
+
+
 def _symbols() -> list[str]:
     asx = MARKET_WATCHLISTS["ASX"]
     wanted = set(asx["megacap"]) | set(asx["curated"]) | {BENCHMARK}
@@ -297,7 +316,10 @@ async def main(argv: list[str] | None = None) -> int:
         disabled=[],
         universe=sorted(bars),
         starting_equity=100_000.0,
-        extra_limitations=_asx_limitations(macro),
+        extra_limitations=(
+            *_asx_limitations(macro),
+            *_convergence_limitation(session.regime_engine.non_convergent_fits),
+        ),
     )
     manifest.write(root / "manifest.json")
 
