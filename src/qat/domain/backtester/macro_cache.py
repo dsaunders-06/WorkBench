@@ -77,7 +77,13 @@ async def frozen_macro(
     source: Callable[[], MacroDataSource],
     series: Sequence[str],
 ) -> dict[str, list[MacroObservation]]:
-    """The cache if it exists, otherwise one fetch that is then frozen."""
+    """The cache if it exists, otherwise one fetch that is then frozen.
+
+    Raises:
+        ValueError: if the cache exists but lacks a requested series, or if a
+            fetch returns nothing for one. Both refuse rather than degrade -
+            see the comments at each, and note that neither writes.
+    """
     cached = read_macro_cache(path)
     if cached is not None:
         # A cache built for one set of series names can predate a caller asking
@@ -92,8 +98,10 @@ async def frozen_macro(
             raise ValueError(
                 f"{path} does not contain {', '.join(missing)}, which was requested. "
                 "This is a frozen research input and is never fetched to fill a gap - "
-                "either delete the cache and re-fetch it deliberately, or point at a "
-                "cache path that already covers every requested series."
+                "POINT AT A SEPARATE CACHE PATH for the new set of series. Deleting "
+                "this one and re-fetching would replace an input every ablation "
+                "already run rests on, and the replacement would load without "
+                "complaint and compare against them as though nothing had changed."
             )
         return cached
     resolved = source()
