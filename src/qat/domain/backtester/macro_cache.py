@@ -80,11 +80,40 @@ async def frozen_macro(
     """The cache if it exists, otherwise one fetch that is then frozen."""
     cached = read_macro_cache(path)
     if cached is not None:
+        # A cache built for one set of series names can predate a caller asking
+        # for a different set - the project's next step is adding Australian
+        # series, and today's cache keys happen to match `fred_series` only by
+        # coincidence. `macro_coverage` iterates the RETURNED dict, so a series
+        # requested but absent from the cache would otherwise produce no
+        # coverage entry, no complaint, and a constant column nothing here
+        # would ever mention.
+        missing = [name for name in series if name not in cached]
+        if missing:
+            raise ValueError(
+                f"{path} does not contain {', '.join(missing)}, which was requested. "
+                "This is a frozen research input and is never fetched to fill a gap - "
+                "either delete the cache and re-fetch it deliberately, or point at a "
+                "cache path that already covers every requested series."
+            )
         return cached
     resolved = source()
     fetched: dict[str, list[MacroObservation]] = {}
     for name in series:
         fetched[name] = await resolved.fetch_series(name)
+    # A silently fake research input is worse than no input - the same
+    # argument `run_asx_replay.py` makes for refusing synthetic bars. No key
+    # configured degrades `resolve_macro_source` to `MockMacroSource`, whose
+    # `fetch_series` still returns something (one fabricated observation), so
+    # this checks for EMPTY rather than for the mock: a rate-limited real fetch
+    # that comes back with nothing is exactly as dangerous to freeze.
+    empty = [name for name in series if not fetched[name]]
+    if empty:
+        raise ValueError(
+            f"Fetch for {', '.join(empty)} returned no observations. Refusing to "
+            f"freeze that into {path}: a research input that is silently fake or "
+            "empty is worse than no input, and path.exists() would protect the "
+            "gap forever once it is written."
+        )
     write_macro_cache(path, fetched)
     return fetched
 

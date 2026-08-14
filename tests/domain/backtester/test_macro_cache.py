@@ -107,3 +107,74 @@ def test_coverage_reports_zero_for_a_series_that_starts_later() -> None:
     coverage = macro_coverage(_observations(), datetime(2023, 6, 1, tzinfo=UTC))
 
     assert coverage == {"VIXCLS": 0, "DGS10": 0}
+
+
+@pytest.mark.asyncio
+async def test_a_cache_hit_missing_a_requested_series_raises(tmp_path: Path) -> None:
+    """The cache was written for one set of series names; a caller asking for a
+    series absent from it must be told, not handed a dict that silently omits
+    the series it asked for - `macro_coverage` would report no coverage entry
+    at all for it, and the constant-column failure would look like a clean run."""
+    path = tmp_path / "macro.json"
+    write_macro_cache(path, {"VIXCLS": _observations()["VIXCLS"]})
+    source = _RecordingSource({})
+
+    with pytest.raises(ValueError, match="AUXBOND"):
+        await frozen_macro(path, source=lambda: source, series=["VIXCLS", "AUXBOND"])
+
+    assert source.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_cache_hit_names_the_cache_path_in_the_error(tmp_path: Path) -> None:
+    path = tmp_path / "macro.json"
+    write_macro_cache(path, {"VIXCLS": _observations()["VIXCLS"]})
+    source = _RecordingSource({})
+
+    with pytest.raises(ValueError, match=r"macro\.json"):
+        await frozen_macro(path, source=lambda: source, series=["VIXCLS", "AUXBOND"])
+
+
+@pytest.mark.asyncio
+async def test_a_cache_hit_for_exactly_the_cached_series_still_returns_and_fetches_nothing(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "macro.json"
+    write_macro_cache(path, _observations())
+    source = _RecordingSource({})
+
+    macro = await frozen_macro(path, source=lambda: source, series=["VIXCLS", "DGS10"])
+
+    assert source.calls == []
+    assert sorted(macro) == ["DGS10", "VIXCLS"]
+
+
+@pytest.mark.asyncio
+async def test_a_cache_miss_where_a_series_comes_back_empty_raises_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """A silently fake research input is worse than none - the same argument
+    `run_asx_replay.py` makes for refusing synthetic bars. Converting a `.` FRED
+    reading, a rate limit, or a MockMacroSource fallback into one permanent
+    empty freeze must be refused loudly instead."""
+    path = tmp_path / "macro.json"
+    source = _RecordingSource({"VIXCLS": _observations()["VIXCLS"]})  # DGS10 comes back empty
+
+    with pytest.raises(ValueError, match="DGS10"):
+        await frozen_macro(path, source=lambda: source, series=["VIXCLS", "DGS10"])
+
+    assert not path.exists()
+
+
+@pytest.mark.asyncio
+async def test_a_cache_miss_where_every_series_has_data_still_writes_and_returns(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "macro.json"
+    source = _RecordingSource(_observations())
+
+    macro = await frozen_macro(path, source=lambda: source, series=["VIXCLS", "DGS10"])
+
+    assert source.calls == ["VIXCLS", "DGS10"]
+    assert macro["VIXCLS"][0].value == 13.2
+    assert path.exists()
