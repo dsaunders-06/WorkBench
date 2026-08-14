@@ -110,6 +110,23 @@ def test_coverage_reports_zero_for_a_series_that_starts_later() -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_cache_hit_returns_only_the_requested_series(tmp_path: Path) -> None:
+    """The missing-series guard above refuses when the cache lacks a series
+    the caller asked for; this closes the asymmetric case - a cache holding
+    MORE than was asked for used to return every key the file contains, and
+    `ReplaySession` derives `macro_series=tuple(self._macro)`, so an extra
+    cached series would feed the regime engine a series set the deployed
+    config never asked for."""
+    path = tmp_path / "macro.json"
+    write_macro_cache(path, _observations())  # VIXCLS and DGS10
+    source = _RecordingSource({})
+
+    macro = await frozen_macro(path, source=lambda: source, series=["VIXCLS"])
+
+    assert sorted(macro) == ["VIXCLS"]
+
+
+@pytest.mark.asyncio
 async def test_a_cache_hit_missing_a_requested_series_raises(tmp_path: Path) -> None:
     """The cache was written for one set of series names; a caller asking for a
     series absent from it must be told, not handed a dict that silently omits

@@ -103,7 +103,13 @@ async def frozen_macro(
                 "already run rests on, and the replacement would load without "
                 "complaint and compare against them as though nothing had changed."
             )
-        return cached
+        # Only what was requested, not every key the file contains. A cache
+        # can hold more series than one caller asks for - `run_ablation.py`
+        # and `run_asx_replay.py` share this file - and `ReplaySession`
+        # derives `macro_series=tuple(self._macro)` from whatever this
+        # returns, so an extra cached series would feed the regime engine a
+        # series set the deployed config never asked for.
+        return {name: cached[name] for name in series}
     resolved = source()
     fetched: dict[str, list[MacroObservation]] = {}
     for name in series:

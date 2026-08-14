@@ -99,6 +99,13 @@ def _asx_limitations(macro: dict[str, list[MacroObservation]]) -> tuple[str, str
     (the project's next step is adding Australian series) would otherwise leave
     this string naming series the run no longer used, which is exactly the kind
     of untrue provenance record `manifest.py` exists to prevent.
+
+    The second sentence deliberately does NOT repeat that the universe is a
+    static 2026 megacap snapshot - `manifest._STATED_LIMITATIONS[0]` already
+    says that on every run. Restating it here would be two wordings of one
+    caveat in a record whose purpose is precision, so this names only what the
+    standing one does not: the yfinance source and the absence of delisted
+    names.
     """
     return (
         f"The macro series are US - {', '.join(sorted(macro))}. The regime "
@@ -106,8 +113,8 @@ def _asx_limitations(macro: dict[str, list[MacroObservation]]) -> tuple[str, str
         "US credit. That is what the DEPLOYED engine would do on this market, so the "
         "run is honest about the machinery; it is not evidence that those series "
         "describe the ASX.",
-        "The ASX universe is a static 2026 megacap snapshot fetched from yfinance, and "
-        "delisted names are absent from it entirely.",
+        "The ASX universe is fetched from yfinance, and delisted names are absent "
+        "from it entirely.",
     )
 
 
