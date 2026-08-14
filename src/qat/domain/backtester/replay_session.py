@@ -93,6 +93,7 @@ class ReplaySession:
         benchmark: str = "SPY",
         opening_positions: dict[str, OpeningPosition] | None = None,
         start_regime: bool = True,
+        evaluate_at: str = "close",
     ) -> None:
         self.bars = bars
         self.settings = settings
@@ -108,6 +109,25 @@ class ReplaySession:
         # A parameter rather than the caller monkeypatching `regime_engine.start`
         # - which is what the plan proposed and what nothing could test.
         self.start_regime = start_regime
+        # WHEN the strategy sees the day, which is the cadence difference G1
+        # measured rather than the one it was blamed on.
+        #
+        # "close" - the day's true OHLC is primed and evaluation runs on it, so
+        #   the decision for day D uses bars through D COMPLETE.
+        # "open"  - one event carrying the day's OPEN, which rolls D-1 into the
+        #   completed history and leaves D as a one-print stub. The decision
+        #   then uses bars through D-1 plus that stub, WHICH IS EXACTLY WHAT
+        #   LIVE HAS AT 13:30:10 - its aggregator has one print of today and a
+        #   complete yesterday. The rest of the day is folded in afterwards
+        #   without an event, so the daily history stays true and no extra
+        #   evaluation is manufactured.
+        #
+        # The information sets differ by a full day, and that is a different
+        # thing from evaluation FREQUENCY: live's 32 approvals on 31 July were
+        # decisions about a frame the replay never evaluated against.
+        if evaluate_at not in ("close", "open"):
+            raise ValueError(f"evaluate_at must be 'close' or 'open', not {evaluate_at!r}")
+        self.evaluate_at = evaluate_at
         self.bus = EventBus()
         self.kill_switch = KillSwitch()
         self.cost_model = CostModel.from_settings(settings)
@@ -321,6 +341,9 @@ class ReplaySession:
                 close=row["close"],
                 volume=row.get("volume", 0.0),
             )
+            if self.evaluate_at == "open":
+                await self._open_cadence(symbol, bar)
+                continue
             # BOTH buffers. The engine keeps its own and so does the bridge, and
             # a bar primed into only one would leave the other sizing against a
             # history that never moved.
@@ -334,3 +357,34 @@ class ReplaySession:
                     ts=bar.ts,
                 )
             )
+
+    async def _open_cadence(self, symbol: str, bar: Bar) -> None:
+        """Evaluate on the morning's information set, then fold the day in.
+
+        One event carrying the OPEN. That rolls the previous day's forming bar
+        into the completed history and leaves today as a one-print stub, which
+        is precisely what the live aggregator holds seconds after the bell - and
+        the frame the live book's decisions were computed from.
+
+        `prime_bar` cannot be used for this. It refuses a bar on a boundary it
+        has already reached, and that guard is right: an older bar landing after
+        a newer one corrupts every rolling window computed from the buffer. So
+        the day is completed through `add_tick` instead.
+
+        NO EVENT IS PUBLISHED FOR THE REST OF THE DAY, and that is what makes
+        this different from the four-synthetic-ticks idea the design rejected.
+        That was rejected because mid-day ticks manufacture mid-day EVALUATIONS
+        whose order decides which signals fire - "an arbitrary choice of whether
+        the high or the low tick comes first". Evaluation is triggered by the
+        event, not by the bar, so folding the range in silently creates none.
+        Order cannot bias the result either: `add_tick` only takes `max` and
+        `min`, so the finished bar is the same whichever way round they arrive.
+        """
+        await self.bus.publish(
+            MarketDataEvent(symbol=symbol, price=bar.open, volume=0.0, ts=bar.ts)
+        )
+        for aggregator in (self.engine.bars, self.bridge.bars):
+            buffer = aggregator.for_symbol(symbol)
+            buffer.add_tick(bar.ts, bar.high)
+            buffer.add_tick(bar.ts, bar.low)
+            buffer.add_tick(bar.ts, bar.close, bar.volume)

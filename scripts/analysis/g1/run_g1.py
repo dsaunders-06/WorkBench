@@ -258,7 +258,7 @@ def _print_per_day(live: list[dict[str, str]], harness: list[dict[str, str]]) ->
         )
 
 
-async def _replay() -> list[dict[str, str]]:
+async def _replay(evaluate_at: str = "close") -> list[dict[str, str]]:
     settings_live = Settings()
     rows = _frozen_rows()
     symbols = sorted({r["symbol"] for r in rows} - EXCLUDED)
@@ -304,13 +304,19 @@ async def _replay() -> list[dict[str, str]]:
         benchmark=BENCHMARK,
         warm_bars=warm_bars,
         opening_positions=_opening_book(),
+        evaluate_at=evaluate_at,
     )
+    print(f"cadence          : evaluate at the {evaluate_at}")
     print(f"replaying {len(session.broker.session_dates)} sessions...")
     await session.run()
 
     harness_rows = _read_rows(scratch / "risk_decisions.csv")
-    _write_rows(HARNESS_DECISIONS, harness_rows)
-    print(f"harness decisions: {len(harness_rows)}  (stored in {HARNESS_DECISIONS.name})")
+    # Stored per cadence. One file would let an open-cadence run overwrite the
+    # close-cadence rows that `--score-only` reads, so a later re-score would
+    # silently report one configuration's decisions as the other's.
+    store = HARNESS_DECISIONS if evaluate_at == "close" else _HERE / "harness_decisions.open.csv"
+    _write_rows(store, harness_rows)
+    print(f"harness decisions: {len(harness_rows)}  (stored in {store.name})")
     return harness_rows
 
 
@@ -326,6 +332,16 @@ async def main(argv: list[str] | None = None) -> int:
         metavar="YYYY-MM-DD",
         help="scope the comparison to one session, e.g. the empty-book day 2026-07-31",
     )
+    parser.add_argument(
+        "--evaluate-at",
+        choices=("close", "open"),
+        default="close",
+        help=(
+            "when the strategy sees each day. 'open' reproduces the live frame - a "
+            "complete yesterday plus one print of today - which is what the live book "
+            "decided from at 13:30:10"
+        ),
+    )
     args = parser.parse_args(argv)
 
     live_rows = _frozen_rows()
@@ -339,7 +355,7 @@ async def main(argv: list[str] | None = None) -> int:
         print(f"frozen decisions : {len(live_rows)}")
         print(f"harness decisions: {len(harness_rows)}  (stored, not replayed)")
     else:
-        harness_rows = await _replay()
+        harness_rows = await _replay(args.evaluate_at)
 
     _print_per_day(live_rows, harness_rows)
 
@@ -355,10 +371,12 @@ async def main(argv: list[str] | None = None) -> int:
     verdict = compare(live_rows, harness_rows, exclude=EXCLUDED)
     _print_verdict(verdict, title)
 
-    if not args.day:
-        # Written only for the WHOLE window. A day-scoped verdict is a different
-        # measurement, and letting `--day` overwrite this file would leave the
-        # manifest quoting one session's agreement as the window's.
+    if not args.day and args.evaluate_at == "close":
+        # Written only for the WHOLE window, and only for the cadence the
+        # research runs use. A day-scoped verdict is a different measurement,
+        # and so is an open-cadence one - letting either overwrite this file
+        # would leave the manifest quoting one configuration's agreement as
+        # another's.
         _write_verdict(verdict)
         print()
         print(f"verdict written to {G1_VERDICT.name} - the manifest reads it, not a constant")
