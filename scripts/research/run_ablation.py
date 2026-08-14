@@ -129,12 +129,19 @@ async def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="ablation-"))
     bars = _cached_bars()
+    # Live config, for CREDENTIALS ONLY - read, never written, and never used
+    # as a data_dir. One instance, because two reads of the same config to fill
+    # two arguments of one call is a difference waiting to happen.
+    live_config = Settings()
     macro = await frozen_macro(
         DEFAULT_MACRO_CACHE,
-        # Live config for CREDENTIALS ONLY, and only on a cache miss - nothing
-        # is written to the live data directory and the cache is already there.
-        source=lambda: resolve_macro_source(Settings()),
-        series=Settings().fred_series,
+        # `source` is a FACTORY, so FRED is only resolved on a cache miss.
+        # `series` is an ordinary argument and IS read now - which is safe,
+        # because `fred_series` is a static default that touches no secret and
+        # no network. Said precisely because the first draft of this comment
+        # claimed the whole call was deferred, and half of it is not.
+        source=lambda: resolve_macro_source(live_config),
+        series=live_config.fred_series,
     )
     print(f"universe   : {len(bars)} symbols from the G1 cache")
     print(f"macro      : {len(macro)} series, {sum(len(v) for v in macro.values())} observations")
