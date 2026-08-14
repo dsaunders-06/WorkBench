@@ -526,45 +526,60 @@ async def test_health_is_published_on_change_not_on_every_bar():
     assert health[0].healthy is True
 
 
-# --- Non-convergent fits (recording, not deciding) -------------------------
+# --- Non-monotonic fits (recording, not deciding) ---------------------------
 #
-# `hmmlearn` printed "Model is not converging." during the ASX run. The fit
-# still produced a classification and was still used, exactly as today - this
-# only records that it happened, so a manifest built from the run can say so.
+# `hmmlearn` printed "Model is not converging." during the ASX run - the EM
+# log-likelihood decreased between iterations of a refit. The fit still
+# produced a classification and was still used, exactly as today - this only
+# records that it happened, so a manifest built from the run can say so.
+#
+# The previous counter here (`non_convergent_fits`) was built on
+# `HMMRegimeModel.converged`, which hmmlearn defines as True even when the
+# fit only exhausted `n_iter` - so it could essentially never fire. This
+# counts `HMMRegimeModel.decreasing_loglik_warnings` instead, which is driven
+# by the warning hmmlearn itself logs, not by that flag.
 
 
 def _fit_matrix() -> np.ndarray:
     return np.zeros((10, len(FEATURE_NAMES)))
 
 
-def test_non_convergent_fits_stays_zero_while_every_fit_converges():
+def test_non_monotonic_fits_stays_zero_when_no_fit_logs_the_warning():
     engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
-    engine._hmm.fit = lambda matrix: setattr(engine._hmm, "_converged", True)  # type: ignore[method-assign]
+    engine._hmm.fit = lambda matrix: setattr(  # type: ignore[method-assign]
+        engine._hmm, "_decreasing_loglik_warnings", 0
+    )
 
     assert engine._fit(_fit_matrix()) is True
     assert engine._fit(_fit_matrix()) is True
-    assert engine.non_convergent_fits == 0
+    assert engine.non_monotonic_fits == 0
 
 
-def test_non_convergent_fits_increments_once_per_refit_that_did_not_converge():
-    """A fake `RegimeHMM`, per the brief - real non-convergent data is slow to
-    construct and flaky to keep that way across hmmlearn versions."""
+def test_non_monotonic_fits_increments_once_per_refit_that_logged_the_warning():
+    """A fake `HMMRegimeModel`, per the brief - driving a real EM
+    log-likelihood decrease would mean fitting deliberately pathological
+    data, slower and flakier than exercising the engine's counting logic
+    directly. This is the test that proves the counter CAN reach a non-zero
+    value - the entire point of this correction."""
     engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
-    engine._hmm.fit = lambda matrix: setattr(engine._hmm, "_converged", False)  # type: ignore[method-assign]
+    engine._hmm.fit = lambda matrix: setattr(  # type: ignore[method-assign]
+        engine._hmm, "_decreasing_loglik_warnings", 2
+    )
 
     assert engine._fit(_fit_matrix()) is True, "still used, exactly as today"
-    assert engine.non_convergent_fits == 1
+    assert engine.non_monotonic_fits == 1
 
     assert engine._fit(_fit_matrix()) is True
-    assert engine.non_convergent_fits == 2
+    assert engine.non_monotonic_fits == 2
 
 
-def test_a_failed_fit_does_not_count_as_non_convergent():
-    """A fit that raises never reached `converged` at all - that is a
-    different failure, already reported by `_report_health`, and must not be
-    folded into a count that means "succeeded but was not confident"."""
+def test_a_failed_fit_does_not_count_as_non_monotonic():
+    """A fit that raises never reports `decreasing_loglik_warnings` at all -
+    that is a different failure, already reported by `_report_health`, and
+    must not be folded into a count that means "succeeded but the
+    log-likelihood dipped somewhere along the way"."""
     engine = RegimeEngine(EventBus(), benchmark_symbol="SPY")
     engine._hmm.fit = _explode  # type: ignore[method-assign]
 
     assert engine._fit(_fit_matrix()) is False
-    assert engine.non_convergent_fits == 0
+    assert engine.non_monotonic_fits == 0

@@ -9,6 +9,7 @@ variance ('high-vol bear')" - paper §11.1).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -16,6 +17,28 @@ from hmmlearn.hmm import GaussianHMM
 
 _LOG_RETURN_COL = 0
 _REALIZED_VOL_COL = 1
+
+_HMMLEARN_LOGGER_NAME = "hmmlearn.base"
+
+
+class _NonMonotonicFilter(logging.Filter):
+    """Counts hmmlearn's own "Model is not converging" warnings.
+
+    Counting the LIBRARY'S OWN WARNING rather than re-deriving the condition
+    from `monitor_`: the decrease it reports happens BETWEEN iterations, and
+    `ConvergenceMonitor.history` is a two-element window by the time `fit`
+    returns, so the intermediate steps are gone. The warning is the only
+    place the fact survives.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.count = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.getMessage().startswith("Model is not converging"):
+            self.count += 1
+        return True  # count it, never suppress it
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,10 +54,11 @@ class HMMRegimeModel:
         self.n_iter = n_iter
         self._model: GaussianHMM | None = None
         self._state_signatures: dict[int, StateSignature] | None = None
-        # False, not unset: "no fit has converged" is a legitimate reading of
-        # "no fit has happened yet", and this is an observability accessor -
-        # reading it early must never raise the way `state_signatures` does.
-        self._converged = False
+        # 0, not unset: "no fit has logged the warning" is a legitimate
+        # reading of "no fit has happened yet", and this is an observability
+        # accessor - reading it early must never raise the way
+        # `state_signatures` does.
+        self._decreasing_loglik_warnings = 0
 
     def fit(self, feature_matrix: np.ndarray) -> None:
         if feature_matrix.shape[0] < self.n_states * 2:
@@ -48,10 +72,16 @@ class HMMRegimeModel:
             random_state=self.random_state,
             n_iter=self.n_iter,
         )
-        model.fit(feature_matrix)
+        hmmlearn_logger = logging.getLogger(_HMMLEARN_LOGGER_NAME)
+        warning_filter = _NonMonotonicFilter()
+        hmmlearn_logger.addFilter(warning_filter)
+        try:
+            model.fit(feature_matrix)
+        finally:
+            hmmlearn_logger.removeFilter(warning_filter)
         self._model = model
         self._state_signatures = self._characterize_states(feature_matrix)
-        self._converged = bool(model.monitor_.converged)
+        self._decreasing_loglik_warnings = warning_filter.count
 
     def predict_proba(self, feature_matrix: np.ndarray) -> np.ndarray:
         if self._model is None:
@@ -70,15 +100,26 @@ class HMMRegimeModel:
         return self._model is not None
 
     @property
-    def converged(self) -> bool:
-        """Whether the most recent `fit()` converged inside `n_iter`.
+    def decreasing_loglik_warnings(self) -> int:
+        """How many times the most recent `fit()` logged hmmlearn's own
+        "Model is not converging" warning - the EM log-likelihood decreased
+        between two iterations of that fit.
 
-        `hmmlearn` still returns a usable model when this is False - EM
-        stopped at the iteration cap rather than at a fixed point - and the
+        This is NOT derived from `monitor_.converged`. hmmlearn counts
+        exhausting `n_iter` as converged - `ConvergenceMonitor.converged` is
+        `self.iter == self.n_iter or (...)`, so that flag cannot distinguish
+        a clean stop from simply running out of iterations, and a counter
+        built on it can never reliably fire. Counting the warning instead
+        measures a real, narrower fact - the log-likelihood went backward -
+        that `converged` never reports either way.
+
+        `hmmlearn` still returns a usable model when this is nonzero, and the
         fit is used exactly as any other. This exists so a caller can RECORD
         that, not so it can decide anything differently.
+
+        Safe to read before any fit: 0, same as `is_fitted` being False.
         """
-        return self._converged
+        return self._decreasing_loglik_warnings
 
     def _characterize_states(self, feature_matrix: np.ndarray) -> dict[int, StateSignature]:
         model = self._model

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import inspect
+import logging
+
 import numpy as np
 import pytest
 
-from qat.domain.regime_engine.hmm_core import HMMRegimeModel
+from qat.domain.regime_engine.hmm_core import HMMRegimeModel, _NonMonotonicFilter
 
 
 def _two_regime_matrix(n_per_regime: int = 40, seed: int = 0) -> np.ndarray:
@@ -66,23 +69,84 @@ def test_is_fitted_flag():
     assert model.is_fitted is True
 
 
-def test_converged_before_any_fit_is_false_not_an_exception():
+def test_decreasing_loglik_warnings_before_any_fit_is_zero_not_an_exception():
     """An observability accessor, not a gate - reading it early must never be
-    the thing that breaks a run, so "no fit has converged" reads as False
-    rather than raising the way `state_signatures` does before `fit()`."""
+    the thing that breaks a run, so "no fit has logged the warning" reads as
+    0 rather than raising the way `state_signatures` does before `fit()`."""
     model = HMMRegimeModel(n_states=2)
-    assert model.converged is False
+    assert model.decreasing_loglik_warnings == 0
 
 
-def test_a_converged_fit_reports_converged_true():
-    """Covers the ordinary path only: `_two_regime_matrix` is well-separated
-    enough that hmmlearn's EM converges inside the default `n_iter=100`, which
-    this asserts on. It does not exercise the non-convergent branch - driving
-    that would mean fitting deliberately pathological data, which is slower
-    and flakier than the engine-level counter test that drives
-    `HMMRegimeModel.converged` directly."""
-    matrix = _two_regime_matrix()
-    model = HMMRegimeModel(n_states=2, random_state=1)
-    model.fit(matrix)
+# --- _NonMonotonicFilter (counts hmmlearn's own warning) --------------------
+#
+# The previous accessor here was `HMMRegimeModel.converged`, built on
+# `monitor_.converged` - which hmmlearn defines as True when EITHER the fit
+# reached a fixed point OR it simply exhausted `n_iter`
+# (`self.iter == self.n_iter` is the first clause). That flag cannot tell
+# "converged cleanly" from "ran out of iterations", so it is gone. What
+# replaces it counts the warning hmmlearn itself logs when the EM
+# log-likelihood decreases between iterations - a real, narrower pathology
+# that `converged` never reported either way.
 
-    assert model.converged is True
+
+def test_non_monotonic_filter_counts_a_real_hmmlearn_warning():
+    """Real logger name (`hmmlearn.base`) and real message text, per the
+    brief: the coupling to hmmlearn's wording IS the risk being tested, and a
+    test that mocks it away would test nothing."""
+    warning_filter = _NonMonotonicFilter()
+    logger = logging.getLogger("hmmlearn.base")
+    logger.addFilter(warning_filter)
+    try:
+        logger.warning(
+            "Model is not converging.  Current: -123.4 is not greater than "
+            "-100.0. Delta is -23.4"
+        )
+    finally:
+        logger.removeFilter(warning_filter)
+
+    assert warning_filter.count == 1
+
+
+def test_non_monotonic_filter_suppresses_nothing(caplog):
+    """`filter()` always returns True - it counts, it never silences. A
+    caller's own logging configuration must still see the record."""
+    warning_filter = _NonMonotonicFilter()
+    logger = logging.getLogger("hmmlearn.base")
+    logger.addFilter(warning_filter)
+    try:
+        with caplog.at_level(logging.WARNING, logger="hmmlearn.base"):
+            logger.warning("Model is not converging.  Current: -1.0 is not greater than 0.0.")
+    finally:
+        logger.removeFilter(warning_filter)
+
+    assert "Model is not converging" in caplog.text
+
+
+def test_non_monotonic_filter_ignores_unrelated_records():
+    """Only hmmlearn's specific warning is counted - an unrelated log line
+    through the same logger must not inflate the count."""
+    warning_filter = _NonMonotonicFilter()
+    logger = logging.getLogger("hmmlearn.base")
+    logger.addFilter(warning_filter)
+    try:
+        logger.warning("Some unrelated hmmlearn message")
+    finally:
+        logger.removeFilter(warning_filter)
+
+    assert warning_filter.count == 0
+
+
+def test_hmmlearn_still_emits_the_warning_text_this_filter_matches():
+    """Cheap guard against hmmlearn silently changing its wording, which
+    would zero `decreasing_loglik_warnings` from then on without any test
+    here failing to say so - a future release could still reword the message
+    in a way this substring check would not catch mid-string. Verified
+    against hmmlearn 0.3.3 (`ConvergenceMonitor.report`,
+    `hmmlearn/base.py`), where the emitted text starts exactly with "Model is
+    not converging.". NOT covered: any hmmlearn version other than the one
+    installed when this test runs, and any rewording that keeps this exact
+    substring while changing behaviour around it."""
+    import hmmlearn.base as hmmlearn_base
+
+    source = inspect.getsource(hmmlearn_base)
+    assert "Model is not converging" in source

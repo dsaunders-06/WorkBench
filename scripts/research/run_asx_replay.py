@@ -118,22 +118,23 @@ def _asx_limitations(macro: dict[str, list[MacroObservation]]) -> tuple[str, str
     )
 
 
-def _convergence_limitation(non_convergent_fits: int) -> tuple[str, ...]:
+def _convergence_limitation(non_monotonic_fits: int) -> tuple[str, ...]:
     """What `exercised: true` alone cannot say: the regime rail can classify
-    from a fit that hit `n_iter` rather than a fixed point. `hmmlearn` printed
-    "Model is not converging." during the first ASX run - the classification
-    was used exactly as the deployed engine would use it, and the manifest
-    said nothing about the fit's quality. Empty when every refit converged, so
-    a clean run adds nothing to the tuple `extra_limitations` appends.
+    from a fit during which the EM log-likelihood decreased between
+    iterations. `hmmlearn` printed "Model is not converging." during the
+    first ASX run - the classification was used exactly as the deployed
+    engine would use it, and the manifest said nothing about the fit's
+    quality. Empty when no refit logged the warning, so a clean run adds
+    nothing to the tuple `extra_limitations` appends.
     """
-    if non_convergent_fits <= 0:
+    if non_monotonic_fits <= 0:
         return ()
-    plural = "" if non_convergent_fits == 1 else "s"
+    plural = "" if non_monotonic_fits == 1 else "s"
     return (
-        f"{non_convergent_fits} regime refit{plural} reached the iteration cap without "
-        "converging. The classification was still used, exactly as the deployed engine "
-        "would use it, so this describes the fit's quality and not a departure from live "
-        "behaviour.",
+        f"The EM log-likelihood decreased during {non_monotonic_fits} regime "
+        f"refit{plural}. The classification was still used, exactly as the deployed engine "
+        "would use it, so this describes the quality of the fit and not a departure from "
+        "live behaviour.",
     )
 
 
@@ -325,7 +326,7 @@ async def main(argv: list[str] | None = None) -> int:
         starting_equity=100_000.0,
         extra_limitations=(
             *_asx_limitations(macro),
-            *_convergence_limitation(session.regime_engine.non_convergent_fits),
+            *_convergence_limitation(session.regime_engine.non_monotonic_fits),
         ),
     )
     manifest.write(root / "manifest.json")

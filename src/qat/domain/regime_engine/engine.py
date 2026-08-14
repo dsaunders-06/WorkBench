@@ -74,11 +74,12 @@ class RegimeEngine:
         self._benchmark_closes: list[float] = []
         self._breadth_latest: dict[str, float] = {}
         self._bars_since_fit = 0
-        # Refits that SUCCEEDED but hit `n_iter` without converging - recorded,
-        # not acted on. `_fit` still returns True and the classification is
-        # still used, exactly as today; this only lets a manifest say a run
-        # saw it happen.
-        self._non_convergent_fits = 0
+        # Refits that SUCCEEDED but during which the EM log-likelihood
+        # decreased at least once (hmmlearn's own "Model is not converging"
+        # warning) - recorded, not acted on. `_fit` still returns True and
+        # the classification is still used, exactly as today; this only lets
+        # a manifest say a run saw it happen.
+        self._non_monotonic_fits = 0
         self._prev_yield_curve_slope = 0.0
         self._prev_sma_200 = 0.0
         self._last_label: str | None = None
@@ -90,14 +91,22 @@ class RegimeEngine:
         self._healthy: bool | None = None
 
     @property
-    def non_convergent_fits(self) -> int:
-        """How many refits succeeded without `RegimeHMM.converged` being True.
+    def non_monotonic_fits(self) -> int:
+        """How many refits succeeded but logged hmmlearn's "Model is not
+        converging" warning at least once - the EM log-likelihood decreased
+        between iterations of that fit.
+
+        Not built on `HMMRegimeModel.converged` (removed): hmmlearn counts
+        exhausting `n_iter` as converged, so that flag could not distinguish
+        a clean stop from running out of iterations and a counter built on
+        it could essentially never fire. This counts
+        `HMMRegimeModel.decreasing_loglik_warnings` instead.
 
         A count, not a flag: a run's manifest needs to say whether this
         happened once or throughout, the same reason `bound_count` carries a
         number rather than a bool.
         """
-        return self._non_convergent_fits
+        return self._non_monotonic_fits
 
     async def start(self) -> None:
         logger.info(
@@ -360,11 +369,11 @@ class RegimeEngine:
                 ),
             )
             return False
-        if not self._hmm.converged:
-            # Still used exactly as today - see `non_convergent_fits`'s
+        if self._hmm.decreasing_loglik_warnings > 0:
+            # Still used exactly as today - see `non_monotonic_fits`'s
             # docstring. This does not change what is returned or what the
             # engine does with the fit, only what gets counted.
-            self._non_convergent_fits += 1
+            self._non_monotonic_fits += 1
         return True
 
     def _log_classification(
