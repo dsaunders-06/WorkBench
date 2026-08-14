@@ -92,12 +92,22 @@ class ReplaySession:
         macro: dict[str, list[MacroObservation]] | None = None,
         benchmark: str = "SPY",
         opening_positions: dict[str, OpeningPosition] | None = None,
+        start_regime: bool = True,
     ) -> None:
         self.bars = bars
         self.settings = settings
         self.warm_bars = warm_bars
         self._macro = macro or {}
         self.benchmark = benchmark
+        # How the REGIME GATE is ablated, and the only rail that needs a seam
+        # here (W2 step 6). Every other rail is a Settings value that can be set
+        # beyond reach; this one arrives as `RegimeEvent.exposure_scalar`, so
+        # switching it off means the engine never publishes and
+        # `RiskEngine.regime_scalar` holds its 1.0 default.
+        #
+        # A parameter rather than the caller monkeypatching `regime_engine.start`
+        # - which is what the plan proposed and what nothing could test.
+        self.start_regime = start_regime
         self.bus = EventBus()
         self.kill_switch = KillSwitch()
         self.cost_model = CostModel.from_settings(settings)
@@ -251,7 +261,8 @@ class ReplaySession:
         # Before the executor, so no fill can be announced to a ledger that is
         # not yet subscribed to OrderFilledEvent.
         await self.ledger.start()
-        await self.regime_engine.start()
+        if self.start_regime:
+            await self.regime_engine.start()
         await self.engine.start()
         await self.bridge.start()
         await self.executor.start()
@@ -272,7 +283,8 @@ class ReplaySession:
             await self.executor.stop()
             await self.bridge.stop()
             await self.engine.stop()
-            await self.regime_engine.stop()
+            if self.start_regime:
+                await self.regime_engine.stop()
             await self.ledger.stop()
             await self.oms.risk_engine.stop()
 

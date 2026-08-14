@@ -137,6 +137,46 @@ async def _rails_that_bound(directory: Path, limit: int) -> set[str]:
 
 
 @pytest.mark.asyncio
+async def test_the_regime_gate_is_ablated_by_not_starting_the_engine(tmp_path: Path):
+    """The one rail with no Settings knob - it arrives as
+    RegimeEvent.exposure_scalar, so ablating it means the engine never
+    publishes and RiskEngine.regime_scalar holds its 1.0 default.
+
+    Asserted on the EVENT rather than on the scalar: a regime that classified
+    low_vol would also leave the scalar at 1.0, so "the scalar is 1.0" cannot
+    tell an ablated rail from a rail that happened to be neutral. Zero events
+    can.
+    """
+    from qat.domain.events import RegimeEvent
+
+    published: list[RegimeEvent] = []
+
+    async def count(event: RegimeEvent) -> None:
+        published.append(event)
+
+    settings = Settings(
+        _env_file=None,
+        data_dir=str(tmp_path),
+        execution_mode="auto",
+        deployed_strategies="swing",
+        autonomous_strategies="swing",
+    )
+    session = ReplaySession(
+        bars={"AAA": _dipping(100.0, dip_at=128)},
+        strategies=[SwingStrategy()],
+        settings=settings,
+        warm_bars=60,
+        start_regime=False,
+    )
+    session.bus.subscribe(RegimeEvent, count)
+
+    await session.run()
+
+    assert published == []
+    assert session.oms.risk_engine.regime_scalar == 1.0
+
+
+@pytest.mark.asyncio
 async def test_the_position_limit_binds_at_one_and_not_at_the_neutral_value(tmp_path: Path):
     """The mapping is EXERCISED, not asserted.
 
