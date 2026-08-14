@@ -1,7 +1,12 @@
-# Handoff — 13 August 2026, end of day
+# Handoff — 14 August 2026, end of day
 
 Paste the block at the bottom into a new context window. Everything above it is
 the detail that block points at.
+
+**Sections dated 13 August and earlier are history and are kept for their
+reasoning, not as current state.** Where the two disagree the paste block and
+`handoff_state.py` win — and on 14 August three of the four "next steps" in
+this file turned out to be already done, void, or misstated. Check the code.
 
 ## ⚙️ Before quoting any figure in here, run this
 
@@ -813,196 +818,137 @@ three days. The ones that are now derived have stopped being wrong.
 Continuing work on QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money is involved.
 
-Read docs/HANDOFF.md first, then the standing rule at the top of ROADMAP.md.
+Read docs/HANDOFF.md first, then the TOP of ROADMAP.md - the validation freeze
+ENDED on 14 August and the standing rule below it is history, not instruction.
 
 BEFORE QUOTING ANY CURRENT-STATE FIGURE, RUN:
   .\.venv\Scripts\python.exe scripts/handoff_state.py
-It derives the deploy gap, the milestone list and the test count. FOUR
-hand-maintained counts were wrong in three days. Counting is not the fix -
-deriving is.
+It derives the deploy gap, the milestone and the test count. FOUR
+hand-maintained counts were wrong in three days. Deriving is the fix.
 
-READ THE LIVE DATA THROUGH POWERSHELL, NEVER BASH - AND VERIFY WRITES
-The Bash sandbox is PER-FILE and covers WRITES as well as reads. Bash sees
-equity_curve.csv at 301 rows dated 27 July while PowerShell sees 9,971 - but
-BOTH see risk_decisions.csv identically, so a spot-check on the wrong file
-CONFIRMS Bash is fine and the next read is nine thousand rows short.
+AND CHECK THE BRIEF AGAINST THE CODE BEFORE ACTING ON IT. On 14 August three
+of the four "next steps" in this file turned out to be already done, void, or
+misstated: W1.4 had shipped two days earlier, SFBS was not in the tradable
+universe so the plan built on it could never run, and the 20 August review had
+no question left. Read the code, not the prose.
 
-  THE NEAR-MISS: the pre-deploy backup script, run from Bash on 13 August,
-  copied 20 files, PRINTED SUCCESS, and wrote NOTHING to the real filesystem.
-  The M88 deploy came one step from overwriting the install with the closed
-  trades, entry records, decision journal and risk decisions unprotected.
-  A script CANNOT detect this from inside - within the overlay the copy is
-  there. Run it through PowerShell, then VERIFY from PowerShell: file count
-  and a hash of closed_trades.csv against the live one.
+READ THE LIVE DATA THROUGH POWERSHELL, NEVER BASH
+The Bash sandbox is PER-FILE and covers WRITES as well as reads. A backup run
+from Bash on 13 August copied 20 files, PRINTED SUCCESS, and wrote nothing.
+Run it through PowerShell, then VERIFY EXTERNALLY - file count and a hash of
+closed_trades.csv against the live one.
 
-  Also: Settings(_env_file=None).data_dir resolves to the LIVE data directory.
-  conftest protects tests; scratchpad scripts run outside pytest and do not.
-  ANY SCRIPT RUN OUTSIDE PYTEST MUST PASS ITS OWN data_dir.
+  Settings(_env_file=None).data_dir is the LIVE data directory. conftest
+  protects tests; scripts run outside pytest do not. ANY SCRIPT RUN OUTSIDE
+  PYTEST MUST PASS ITS OWN data_dir.
 
-WHERE THIS STANDS
-M88 is deployed and running (45980a5), deploy gap ZERO. The ASX moved from
-eventual destination to NEAR-TERM one on 12 August: US closed trades are
-MACHINERY evidence, not EDGE evidence, because the edge numbers do not
-transfer.
+WHERE THIS STANDS - 14 August
+M90 (a9aee6e) deployed and verified, deploy gap ZERO, app currently stopped.
+Two deploys landed today, each verified by BEHAVIOUR not by a banner:
+  M89  a stop-out was recorded as `target`; 7 of 23 refusal messages were
+       unclassified, including one whose pattern never matched anything.
+  M90  M66 - the risk cap measured entry prices. The running app went
+       5.01% -> 6.34% on the same book, fifteen minutes apart. That is the fix.
 
-THE 20 AUGUST REVIEW HAS NOTHING LEFT TO DECIDE. Its one question - widen the
-co-binding 10-position / 5% pair - was answered on 12 August: THE RAILS HOLD,
-because throughput only ever bought US closed trades. Its one dated action,
-freeing a slot for SFBS on 21 August, CANNOT EXECUTE: SFBS is not in the
-tradable universe, in docs and tests and nowhere in src/. M66 is released.
+THE FREEZE IS OVER. It kept a result interpretable and there is no result:
+promotion_min_trades is 30 and swing's gate sees ONE, at r=-1.68. The operative
+rule is now the ASX one - EVERYTHING BUILT IS EITHER MARKET-AGNOSTIC OR CHEAP
+TO ABANDON. "Would this survive the move" replaced "would this change a trade".
+A defect that corrupts the record is STILL fix-immediately.
 
-THE TRIAL CANNOT REACH ITS OWN GATE. promotion_min_trades is 30. There are 2
-closed trades in 18 days and MNST has no r_multiple and no strategy, so swing's
-gate sees ONE - CVS at r=-1.68. 45 approvals of 4,369 decisions. ROADMAP
-predicted "roughly ten closed trades a month"; the rate is about one and a
-half. Thirty is a year and a half away. DO NOT CITE THE PROMOTION GATE AS
-PENDING - decide what the US phase is FOR instead.
+W2 IS COMPLETE, AND IT NOW MEASURES SOMETHING
+ReplaySession drives historical bars through the REAL StrategyEngine, bridge,
+OMS, regime engine and autonomy path into SimulatedBroker. Nothing
+re-implements a strategy, a rail or a fill.
 
-THE RESEARCH HARNESS (W2) IS COMPLETE
-ReplaySession drives historical bars through the REAL StrategyEngine,
-SignalToOrderBridge, OMS, regime engine and autonomy path into SimulatedBroker.
-NOTHING re-implements a strategy, a rail or a fill. Spec:
-docs/superpowers/specs/2026-08-12-research-harness-design.md
+  ON THE ASX, 95 symbols over 499 sessions:
+    268 candidates, 114 approved. 154 refusals - 120 capacity, 34 candidate.
+    Position limit 56 - Aggregate cap 49 - Cost-to-risk 22 - Gap risk 12
+    83 closed trades: 40 stops, 26 time stops, 17 targets
+    mean +0.03R, total +2.76R, 48% win
+  FOUR RAILS EXERCISED including the position limit and the aggregate cap -
+  the two the spec said could not be ablated naturally. THE REVISIT TRIGGER IS
+  ANSWERED: they were unreachable because of defects and a 40-session US
+  window, not by construction.
 
-  FILL MODEL, and every future number rests on it: the STOP wins any bar
-  touching both levels, so expectancy is a FLOOR not an estimate. A gap through
-  the stop fills at the OPEN; a gap through the target fills at the TARGET.
-  Entries fill at the NEXT bar's open. A stop can fire on the bar its entry
-  filled.
+  ON THE US G1 UNIVERSE: ten decisions in a whole run, all approvals, no rail
+  exercised. Every ablation correctly reports NOT EXERCISED.
 
-  SIX WALL-CLOCK SEAMS NOW, each defaulting to live behaviour: prime_bar,
-  SignalToOrderBridge(clock=), RiskEngine(clock=), and on 14 August OMS(clock=)
-  plus TWO MORE inside absorb_broker_fills - it re-stamped the watermark with
-  datetime.now(UTC), so the FIRST sweep jumped a replay's watermark to the real
-  present and 99 sweeps returned nothing against a stop that had demonstrably
-  fired. THE LESSON KEEPS GENERALISING: every wall-clock read in the trading
-  path is a place a replay silently produces nothing.
+  Run:  scripts\research\run_asx_replay.py [--fetch] [--evaluate-at open]
+        scripts\research\run_ablation.py --rail <name> | --list
+        scripts\analysis\g1\run_g1.py [--score-only] [--day YYYY-MM-DD]
 
-  AND A NEW FAMILY: an object correctly constructed, correctly wired, and NEVER
-  STARTED. ReplaySession omitted risk_engine.start, which is the only place it
-  subscribes to RegimeEvent, so the scalar held 1.0 all window while live varied
-  0.4/0.5/0.7/1.0 and the harness sized up to 2.5x larger. Nothing errored.
-  Fixed, and the fix CHANGED THE VERDICT NOT AT ALL - the cadence account
-  survived a test it could have failed.
+  THE EXPECTANCY IS NOT A FINDING YET. The ASX script passes NO MACRO, so the
+  regime rail is inert - vix/curve/credit never move, the covariance is
+  singular, the HMM cannot fit. Fix that first; run_ablation.py already caches
+  FRED and shows how.
 
-  G1 RAN AND DID NOT PASS. exact 6, partial 2, disjoint 12, live-only 38,
-  harness-only 8. OPERATOR ACCEPTED THE LIMIT on 13 August. Re-scored on the
-  EMPTY-BOOK DAY, 31 July, the one session both sides start level: exact 6 of
-  11, harness-only ZERO, 55% against the window's 29% - and every one of the
-  window's exact agreements is on that day. Corroborates the narrowing without
-  rescuing the gate.
+EIGHT WALL-CLOCK / MARKET ASSUMPTIONS FOUND SO FAR, each defaulting to live
+behaviour: prime_bar, SignalToOrderBridge(clock=), AutonomyGate(clock=),
+RiskEngine(clock=), OMS(clock=), the absorb watermark stamp, the absorbed-id
+retention cutoff, and _announce_fill's missing ts.
+  THE LAST ONE DISABLED THREE RAILS in every replay ever run - the bridge
+  stamps entry.opened_at from that event, so the time stop, the minimum hold
+  and the weekly churn cap could never fire.
+  AND A NINTH, NOT A CLOCK: _simulated_now returned 15:00 UTC "inside the US
+  session". The ASX trades 00:00-06:00 UTC, so every ASX order was refused
+  out-of-hours. Now 0.25 through the session in the market's own timezone -
+  NOT the midpoint, which lands in the Midday Lull that autonomous execution
+  excludes and refuses everything.
+  AND A FAMILY OF ITS OWN: an object constructed, wired, and NEVER STARTED.
+  ReplaySession omitted risk_engine.start, the only place it subscribes to
+  RegimeEvent. Nothing errored.
 
-  W2 IS COMPLETE. Step 6 shipped the ablation switch, the run manifest and the
-  comparison. ITS FIRST RESULT IS THAT NO RAIL CAN BE EXERCISED: against the
-  38-symbol universe the baseline makes TEN risk decisions in the whole run,
-  ten approvals and zero refusals, so every ablation correctly reports NOT
-  EXERCISED. Without the manifest and the guard this would have read as "no
-  difference" on every rail, and the conclusion available would have been that
-  the rails are free.
+TWO TESTS PASSED BECAUSE OF A DEFECT, both caught by checking:
+  the ts fixture ran past today, so a wall-clock stamp aged normally inside
+  the window; and the position-limit test counted all orders and expected one,
+  which only held while exits were broken.
 
-OVERNIGHT SESSION 12-13 AUGUST - CLEAN
-23:30:17 to 06:00:18. Zero errors, zero data-down, zero kill-switch, zero
-unprotected, zero broker-side fills, zero closed trades. Regime classified
-low_vol at the bell with exposure 1.00.
+SESSION WATCH - one fixed command, at every cadence:
+  & "C:\Claude Programming\scripts\session_check.ps1"
+NO ARGUMENTS, EVER. PowerShell permissions are stored as EXACT COMMAND
+STRINGS, so a varying command can never be allowlisted and offers "approve
+once" forever. That is what made scheduled tasks unworkable - and a scheduled
+task's OUTPUT never reaches the session that created it either.
+  qat.log is NOT a complete view: read risk_decisions.csv alongside it.
+  -match is CASE-INSENSITIVE, use -cmatch. ([datetime]$o.ts) is a DateTime.
+  EXPECTED, NOT A FAULT: zero new entries; ~6.34% aggregate risk under M90;
+  a staleness burst at the bell; CRWD corporate action in shadow mode.
 
-  THE ONE EVENT: AXP fired swing's entry and was refused 108 TIMES by the
-  position limit, 04:09-05:59, first refusal at $341.90. The machinery working
-  as designed - and the FIRST CONCRETE EVIDENCE of what the 10-position cap
-  costs, which is exactly what the 20 August review needs.
+OUTSTANDING, IN ORDER
+  ASX macro  pass FRED to run_asx_replay.py so the regime rail is live. Then
+             an ablation on the position limit finally means something.
+  M71 sell   MONDAY 17 AUG, CSCO, through the app. Every position is under the
+             10-day minimum hold until then and the rail refuses silently
+             inside the bridge. CSCO is flattest (-0.10R), contributes least
+             risk, and fills cleanly. SELL ONE ONLY - M71 records the exit at
+             the REFERENCE price, so ten sells would blemish ten records to
+             learn what one teaches. Then fix M71 and sell more if wanted.
+  W1.1       measure what IBKR returns for recent_fills, resting_stops,
+             resting_stop_orders, announcements. GENUINELY BLOCKED on the
+             account. scripts/broker_capabilities.py is the checklist.
+  M43        trading halts.
 
-  THE MONITORING LESSON: qat.log is NOT a complete view of decision activity.
-  Hourly checks reported "0 signals, 0 refusals" all night and were blind -
-  risk_decisions.csv held 108 rows. READ THE AUDIT TRAIL ALONGSIDE THE LOG.
-
-SESSION WATCH PROTOCOL (see the full section in HANDOFF.md)
-Operator starts the app and scripts/watch_session.py before the 23:30 AEST
-open. Report only what threatens the test's continuation. Fix a blocker ONCE
-and no more - no fix loops. Note minor issues without escalating. Brief after
-the 06:00 close: events, not a transcript.
-
-  RUN THIS, AT EVERY CADENCE - one fixed string, no arguments:
-    & "C:\Claude Programming\scripts\session_check.ps1"
-  It derives the current or most recent session from the log, so the same
-  command serves the pre-open verify, the bell, the hourly checks and the
-  morning brief. Allowlisted once in .claude/settings.local.json and confirmed
-  to run without prompting. DO NOT GIVE IT A PARAMETER: permissions are stored
-  as EXACT COMMAND STRINGS, so a varying command can never be allowlisted and
-  offers "approve once" forever. That is what made the 13 August scheduled-task
-  attempt unworkable - along with the fact that a scheduled task's OUTPUT never
-  reaches the session that created it.
-
-  FOUR MINUTES AT THE BELL: session started; REGIME line within seconds (its
-  ABSENCE is the most consequential silent failure - everything then gates on
-  the sideways DEFAULT); no MARKET DATA DOWN; N carries a stop = position count.
-  Then hourly, tightening before the close.
-
-  EXPECTED, NOT A FAULT: zero new entries (cap breached at 5.01% vs 5.00%, book
-  10 of 10); a staleness burst at the bell; CORPORATE ACTION first seen: CRWD
-  (M39 shadow mode, touches no order).
-
-  PowerShell gotchas: ([datetime]$o.ts) is a DateTime, format it rather than
-  .Substring it. -match is CASE-INSENSITIVE, so "excluded from signals" matches
-  a SIGNAL pattern - use -cmatch where case matters.
-
-OUTSTANDING, IN THE ORDER I WOULD TAKE THEM
-  M66  the aggregate risk cap gates every entry against ENTRY prices, so a
-       winning book UNDERSTATES its risk and the bias grows with profit.
-       Designed; inside the freeze so it needs a recorded lift; nothing else
-       blocks it since SFBS turned out not to be tradable. MACHINERY, so it
-       transfers to the ASX. THE HIGHEST-VALUE UNBLOCKED WORK.
-  ASX  point the harness at the destination. It is the asset that survives the
-       move and the pieces largely exist - HistoricalBarSource is a port,
-       costs.py already carries ASX profiles. Needs an ASX universe, a daily
-       bar source and a calendar. A DESIGN task, not a build one. The rails may
-       bind on ASX data where they do not on the US window; if they do not, the
-       manifest's NOT EXERCISED guard says so honestly.
-  W1.1 measure what IBKR returns for the four BrokerAdapter methods IBAdapter
-       does not implement - recent_fills, resting_stops, resting_stop_orders,
-       announcements. GENUINELY BLOCKED on the IBKR account, and the real
-       critical path. scripts/broker_capabilities.py is the checklist.
-  M43  trading halts. M60 built the flagging half; a halt has no ratio to
-       match, so detection is a different question from M39's.
-
-  DONE, NOT OUTSTANDING - this list said otherwise until 14 August:
-  W2 step 6  COMPLETE. Ablation switch, run manifest, comparison, runner.
-  W1.4       COMPLETE, landed 12 August. ib_adapter.py raises
-             LivePortInPaperModeError. Read the code, not the brief.
-
-  DROPPED, with the reason:
-  SFBS  not in the tradable universe. Do not lift the freeze to add it.
-  M71   needs a live app-transmitted sell to have been observed, and at ~1
-        attributable trade in 18 days one may never be. Moves to the ASX phase
-        rather than sitting here looking actionable.
-  intraday harness  stopped 14 August. Measured first: evaluating on the
-        morning frame moved exact 6->7 and disjoint 12->9, and left the
-        position limit at 0 agreed / 37 live-only. Real but not sufficient,
-        and aimed at the market being left.
+  DONE, not outstanding: W2 (all six steps), W1.4 (12 Aug), M66/M89/M90.
+  DROPPED: SFBS (not tradable), intraday US harness (aimed at the market
+  being left), M71 design (until a sell is observed).
 
 CONSTRAINTS
   PowerShell 5.1 - use ; not && and @'...'@ here-strings, closing '@ col 0.
   Formats with black, not ruff format. Run ruff check ., black --check .,
   mypy src, bandit -r src via the venv python.
   EVERY TEST THAT BUILDS AN OMS MUST PASS ITS OWN data_dir.
-  THE VALIDATION FREEZE ENDED 14 AUGUST - see the top of ROADMAP.md. It kept a
-  result interpretable and there is no result: the gate needs 30 closed trades
-  and swing's sees ONE. The operative rule is now the ASX one - EVERYTHING BUILT
-  IS EITHER MARKET-AGNOSTIC OR CHEAP TO ABANDON. The question is no longer
-  "would this change a trading decision" but "would this survive the move".
-  A defect that corrupts the record is STILL FIX-IMMEDIATELY.
   Plan -> approval -> implement -> verify -> commit -> build. ALWAYS ask
-  before deploying. The permission classifier refuses the Expand-Archive step,
-  so the operator runs it.
+  before deploying. The permission classifier refuses Expand-Archive and
+  Remove-Item under C:\Claude Programming, so the operator runs those.
 
 THE HABITS THAT FOUND EVERYTHING
-  CHECK THE BRIEF AGAINST THE CODE. §4.x described something that was not
-  there EIGHT TIMES across seven milestones. It is also how the "four missing
-  IBAdapter methods" claim became a derivation instead of a reading.
-  RENDER IT, do not trust the suite. Screenshotting found an orphaned grid
-  row, an off-scale font, stranded labels and a truncated column - every test
-  passed through all of them.
-  ASK WHAT READS IT. Six values were computed and displayed nowhere.
-  TEST THE CLAIM, NOT THE ARITHMETIC. Every defect found on 11 August was in a
-  sentence that predicted or explained, never in a number.
-  DERIVE, DO NOT REMEMBER. And CHECK BEFORE ASSERTING - the backup that
-  "succeeded" on 13 August had written nothing at all.
+  CHECK THE BRIEF AGAINST THE CODE. Three of four "next steps" were void.
+  VERIFY BY BEHAVIOUR, NOT BY BANNER. M90 was confirmed by 5.01% -> 6.34%.
+  RENDER IT. Reading the comparison output found unwrapped paragraphs every
+  test passed through.
+  PROVE A TEST FAILS FIRST. Two passed against unfixed code.
+  REFUSE SILENT FALLBACKS. yfinance returns SYNTHETIC bars on a 404 - one
+  command from reporting expectancy on invented prices.
+  DERIVE, DO NOT REMEMBER.
 ```
