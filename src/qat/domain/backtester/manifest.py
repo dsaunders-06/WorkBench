@@ -249,6 +249,7 @@ def build_manifest(
     disabled: Sequence[str],
     universe: Sequence[str],
     starting_equity: float,
+    extra_limitations: Sequence[str] = (),
 ) -> RunManifest:
     rows = load_risk_decisions(data_dir)
     refusals = _refusal_counts(rows)
@@ -289,4 +290,7 @@ def build_manifest(
         rails=rails,
         universe=tuple(universe),
         starting_equity=starting_equity,
+        # APPENDED, never replacing: the six module-level limitations hold for
+        # every run, and a caller adding one must not be able to drop them.
+        stated_limitations=(*_STATED_LIMITATIONS, *extra_limitations),
     )

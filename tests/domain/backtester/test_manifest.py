@@ -11,7 +11,12 @@ import csv
 import json
 from pathlib import Path
 
-from qat.domain.backtester.manifest import Observability, build_manifest, read_manifest
+from qat.domain.backtester.manifest import (
+    _STATED_LIMITATIONS,
+    Observability,
+    build_manifest,
+    read_manifest,
+)
 
 _FIELDS = ["timestamp", "symbol", "approved", "final_shares", "stop_price", "reason", "inputs"]
 
@@ -162,3 +167,26 @@ def test_the_manifest_names_the_fill_model_and_the_limitations(tmp_path: Path):
     assert any("survivorship" in limit.lower() for limit in manifest.stated_limitations)
     assert any("earnings" in limit.lower() for limit in manifest.stated_limitations)
     assert any("regime" in limit.lower() for limit in manifest.stated_limitations)
+
+
+def test_extra_limitations_are_appended_to_the_stated_ones(tmp_path: Path) -> None:
+    """A run knows things the module cannot - the ASX replay's macro is US, and
+    the manifest is where that is recorded rather than remembered."""
+    manifest = build_manifest(
+        data_dir=tmp_path,
+        disabled=[],
+        universe=["BHP.AX"],
+        starting_equity=100_000.0,
+        extra_limitations=("The macro series are US.",),
+    )
+
+    assert manifest.stated_limitations[-1] == "The macro series are US."
+    assert len(manifest.stated_limitations) == len(_STATED_LIMITATIONS) + 1
+
+
+def test_the_default_limitations_are_unchanged_when_none_are_added(tmp_path: Path) -> None:
+    manifest = build_manifest(
+        data_dir=tmp_path, disabled=[], universe=["BHP.AX"], starting_equity=100_000.0
+    )
+
+    assert manifest.stated_limitations == _STATED_LIMITATIONS
