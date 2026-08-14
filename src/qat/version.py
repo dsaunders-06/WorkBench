@@ -49,7 +49,16 @@ from datetime import UTC, datetime
 # seven of the twenty-three refusal messages the rails can emit were classified
 # as "not recognised" on the Blotter and in the daily report. The OMS gained an
 # injectable clock, which defaults to the wall clock and is inert in live.
-MILESTONE = "M89"
+# M90 is the first build since 3 August that CHANGES A TRADING-DECISION INPUT,
+# and it ships under a recorded freeze lift rather than despite the freeze. The
+# aggregate risk cap now measures positions on the broker's mark instead of the
+# price they were opened at.
+#
+# THE REPORTED FIGURE WILL JUMP, and that is the fix rather than a fault:
+# 5.01% -> about 6.34% on the book as it stands. Nothing is forced to sell -
+# QAT_DELEVER_SWEEP_ENABLED=false in the live config - and entries were already
+# refused at 5.01%, so no trade that would have happened now will not.
+MILESTONE = "M90"
 
 _UNKNOWN = "unknown"
 
