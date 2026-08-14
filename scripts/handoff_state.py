@@ -34,8 +34,13 @@ REPO = Path(__file__).resolve().parent.parent
 # makes every other number confidently wrong.
 #
 # Updated on deploy, verified against the running build's own log line:
-#   14:08:36 Build: M89 (75ae9b5, built 2026-08-14 03:59 UTC, packaged)
-DEPLOYED = "75ae9b5"
+#   14:35:31 Build: M90 (a9aee6e, built 2026-08-14 04:25 UTC, packaged)
+#
+# And M90 was verified by the number it exists to change, not just by its
+# banner - the same figure from the same application, fifteen minutes apart:
+#   14:23:51 Aggregate risk-at-stop 5.01%   (M89, entry prices)
+#   14:40:46 Aggregate risk-at-stop 6.34%   (M90, broker marks)
+DEPLOYED = "a9aee6e"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
