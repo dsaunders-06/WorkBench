@@ -1,0 +1,39 @@
+{
+  "created_at": "2026-08-14T00:50:41+00:00",
+  "days_considered": 66,
+  "exact_days": 6,
+  "partial_days": 2,
+  "disjoint_days": 12,
+  "live_only_days": 38,
+  "harness_only_days": 8,
+  "rails": {
+    "Position limit": {
+      "agreed": 0,
+      "live_only": 37,
+      "harness_only": 0,
+      "considered": 37,
+      "rate": 0.0
+    },
+    "Aggregate risk-at-stop cap": {
+      "agreed": 2,
+      "live_only": 2,
+      "harness_only": 19,
+      "considered": 23,
+      "rate": 0.08695652173913043
+    },
+    "Approved": {
+      "agreed": 6,
+      "live_only": 14,
+      "harness_only": 1,
+      "considered": 21,
+      "rate": 0.2857142857142857
+    },
+    "Cost-to-risk (trade too small)": {
+      "agreed": 0,
+      "live_only": 1,
+      "harness_only": 0,
+      "considered": 1,
+      "rate": 0.0
+    }
+  }
+}

@@ -58,6 +58,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import json
 import sys
 import tempfile
 from collections import Counter
@@ -84,6 +85,9 @@ BARS_CACHE = _HERE / "bars"
 # The harness's own decisions, kept so the gate can be re-scored without being
 # re-run. Written on every replay; read by --score-only.
 HARNESS_DECISIONS = _HERE / "harness_decisions.csv"
+# The gate's verdict, read by the run manifest so `live_agreement` is derived
+# rather than typed. Written only for the whole window - see `_write_verdict`.
+G1_VERDICT = _HERE / "g1_verdict.json"
 
 # AAA is a test fixture symbol a scratchpad probe wrote into the live record on
 # 12 August; WES.AX is an ASX ticker in a US book, provenance unknown, from
@@ -169,6 +173,47 @@ async def _bars(symbols: list[str], settings: Settings) -> dict[str, pd.DataFram
         frame = frame.set_index(pd.DatetimeIndex(frame["ts"])).drop(columns=["ts"])
         out[symbol] = frame[["open", "high", "low", "close", "volume"]]
     return out
+
+
+def _write_verdict(verdict: Verdict) -> None:
+    """The gate's result, on disk, keyed by the rail names `refusals.rail_of`
+    produces.
+
+    The run manifest reads this to say whether a rail's live agreement was ever
+    validated. The alternative is a constant somebody updates by hand, and four
+    hand-maintained counts in this project were wrong inside three days - the
+    deploy gap was quoted as five, eight, nine and twelve. Derive, do not
+    remember.
+
+    `days_considered` is carried because a rate means nothing without it: 0%
+    over one symbol-day and 0% over thirty-seven are different facts, and the
+    position limit is the second.
+    """
+    G1_VERDICT.write_text(
+        json.dumps(
+            {
+                "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "days_considered": verdict.days_considered,
+                "exact_days": verdict.exact_days,
+                "partial_days": verdict.partial_days,
+                "disjoint_days": verdict.disjoint_days,
+                "live_only_days": verdict.live_only_days,
+                "harness_only_days": verdict.harness_only_days,
+                "rails": {
+                    rail.rail: {
+                        "agreed": rail.agreed,
+                        "live_only": rail.live_only,
+                        "harness_only": rail.harness_only,
+                        "considered": rail.considered,
+                        "rate": rail.agreement_rate,
+                    }
+                    for rail in verdict.rails
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _print_verdict(verdict: Verdict, title: str) -> None:
@@ -307,7 +352,17 @@ async def main(argv: list[str] | None = None) -> int:
     else:
         title = "G1 VERDICT"
 
-    _print_verdict(compare(live_rows, harness_rows, exclude=EXCLUDED), title)
+    verdict = compare(live_rows, harness_rows, exclude=EXCLUDED)
+    _print_verdict(verdict, title)
+
+    if not args.day:
+        # Written only for the WHOLE window. A day-scoped verdict is a different
+        # measurement, and letting `--day` overwrite this file would leave the
+        # manifest quoting one session's agreement as the window's.
+        _write_verdict(verdict)
+        print()
+        print(f"verdict written to {G1_VERDICT.name} - the manifest reads it, not a constant")
+
     print()
     print(f"run at {datetime.now(UTC).isoformat(timespec='seconds')}")
     return 0
