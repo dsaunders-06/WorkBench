@@ -29,7 +29,13 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DEPLOYED = "45980a5"
+# The one figure this tool cannot derive, because only the operator knows what
+# is actually installed. Everything else derives FROM it, so a stale value here
+# makes every other number confidently wrong.
+#
+# Updated on deploy, verified against the running build's own log line:
+#   14:08:36 Build: M89 (75ae9b5, built 2026-08-14 03:59 UTC, packaged)
+DEPLOYED = "75ae9b5"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
