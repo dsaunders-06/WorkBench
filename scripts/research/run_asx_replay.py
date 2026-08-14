@@ -67,6 +67,7 @@ sys.path.insert(0, str(_REPO / "src"))
 
 from qat.config import Settings  # noqa: E402
 from qat.data.history import resolve_history_source  # noqa: E402
+from qat.data.macro_fred import MacroObservation  # noqa: E402
 from qat.data.universe import MARKET_BENCHMARKS, MARKET_WATCHLISTS  # noqa: E402
 from qat.domain.backtester.macro_cache import (  # noqa: E402
     DEFAULT_MACRO_CACHE,
@@ -87,17 +88,27 @@ BENCHMARK = MARKET_BENCHMARKS["ASX"]
 BAR_COUNT = 500
 WARM_BARS = 250
 
-# What this run may not be quoted as saying, beyond the six every run states.
-# Recorded in the manifest rather than in a paragraph somebody has to remember.
-ASX_LIMITATIONS = (
-    "The macro series are US - VIXCLS, DGS3MO, DGS10, T10Y3M, BAA10Y. The regime "
-    "engine therefore classifies an ASX book from US volatility, the US curve and "
-    "US credit. That is what the DEPLOYED engine would do on this market, so the "
-    "run is honest about the machinery; it is not evidence that those series "
-    "describe the ASX.",
-    "The ASX universe is a static 2026 megacap snapshot fetched from yfinance, and "
-    "delisted names are absent from it entirely.",
-)
+
+def _asx_limitations(macro: dict[str, list[MacroObservation]]) -> tuple[str, str]:
+    """What this run may not be quoted as saying, beyond the six every run
+    states. Recorded in the manifest rather than in a paragraph somebody has to
+    remember.
+
+    The series named in the first sentence come from the macro that was
+    actually loaded, not from a copy written down separately - a config change
+    (the project's next step is adding Australian series) would otherwise leave
+    this string naming series the run no longer used, which is exactly the kind
+    of untrue provenance record `manifest.py` exists to prevent.
+    """
+    return (
+        f"The macro series are US - {', '.join(sorted(macro))}. The regime "
+        "engine therefore classifies an ASX book from US volatility, the US curve and "
+        "US credit. That is what the DEPLOYED engine would do on this market, so the "
+        "run is honest about the machinery; it is not evidence that those series "
+        "describe the ASX.",
+        "The ASX universe is a static 2026 megacap snapshot fetched from yfinance, and "
+        "delisted names are absent from it entirely.",
+    )
 
 
 def _symbols() -> list[str]:
@@ -216,10 +227,13 @@ async def main(argv: list[str] | None = None) -> int:
     root = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="asx-"))
     root.mkdir(parents=True, exist_ok=True)
     spans = [f.index for f in bars.values()]
+    # Computed once: this same value guards macro coverage below, and printing
+    # one reduction while guarding on a second, separately computed one is a
+    # difference waiting to happen between the reported period and the date the
+    # guard actually checked.
+    first_session = min(s.min() for s in spans)
     print(f"universe   : {len(bars)} ASX symbols (benchmark {BENCHMARK})")
-    print(
-        f"period     : {min(s.min() for s in spans).date()} -> {max(s.max() for s in spans).date()}"
-    )
+    print(f"period     : {first_session.date()} -> {max(s.max() for s in spans).date()}")
     print(f"warm bars  : {WARM_BARS}")
     print(f"cadence    : evaluate at the {args.evaluate_at}")
     print(f"output     : {root}")
@@ -245,15 +259,15 @@ async def main(argv: list[str] | None = None) -> int:
     # producing a complete and entirely plausible set of numbers with the
     # regime rail inert. That is precisely the silent zero this harness exists
     # to refuse.
-    first_session = min(s.min() for s in spans).to_pydatetime()
-    coverage = macro_coverage(macro, first_session)
+    coverage = macro_coverage(macro, first_session.to_pydatetime())
     print(f"macro      : {len(macro)} series, {sum(len(v) for v in macro.values())} observations")
     for name, count in sorted(coverage.items()):
         print(f"             {name:<10}{count:>7} observations on or before the first session")
     bare = sorted(name for name, count in coverage.items() if count == 0)
     if bare:
         print()
-        print(f"*** {', '.join(bare)} has no observation before the replay starts ***")
+        verb = "has" if len(bare) == 1 else "have"
+        print(f"*** {', '.join(bare)} {verb} no observation before the replay starts ***")
         print("    Those features would be CONSTANT and the regime engine could not fit.")
         return 1
     print()
@@ -283,7 +297,7 @@ async def main(argv: list[str] | None = None) -> int:
         disabled=[],
         universe=sorted(bars),
         starting_equity=100_000.0,
-        extra_limitations=ASX_LIMITATIONS,
+        extra_limitations=_asx_limitations(macro),
     )
     manifest.write(root / "manifest.json")
 
