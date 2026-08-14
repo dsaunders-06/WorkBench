@@ -156,6 +156,73 @@ def test_it_round_trips(tmp_path: Path):
     assert again.code_commit
 
 
+def test_a_refusal_outside_the_modelled_rails_is_reported_as_unmodelled(tmp_path: Path):
+    """Found by running the ASX replay: the cash floor refused 15 candidates,
+    `rail_of` labels it `Cash floor`, and no ablatable rail claims that label -
+    `min_cash_reserve` is deliberately not in `RAILS` (config.py:416-421). A
+    rail the ledger saw bind must not vanish from the manifest entirely."""
+    _decisions(
+        tmp_path,
+        [
+            {
+                "reason": (
+                    "Insufficient cash: $500.00 available less $1,000.00 reserve "
+                    "affords no shares at $50.00"
+                )
+            }
+        ]
+        * 15,
+    )
+
+    manifest = _manifest(tmp_path)
+
+    assert manifest.unmodelled_refusals == {"Cash floor": 15}
+    assert "Cash floor" not in manifest.rails
+
+
+def test_unmodelled_refusals_is_empty_when_every_refusal_is_a_modelled_rail(tmp_path: Path):
+    _decisions(
+        tmp_path,
+        [{"reason": "already at the 10-position limit (10 held or pending)"}],
+    )
+
+    manifest = _manifest(tmp_path)
+
+    assert manifest.unmodelled_refusals == {}
+
+
+def test_approvals_do_not_contribute_to_unmodelled_refusals(tmp_path: Path):
+    _decisions(
+        tmp_path,
+        [{"approved": "True", "reason": "approved", "inputs": {"regime_scalar": 1.0}}],
+    )
+
+    manifest = _manifest(tmp_path)
+
+    assert manifest.unmodelled_refusals == {}
+
+
+def test_unmodelled_refusals_round_trips(tmp_path: Path):
+    _decisions(
+        tmp_path,
+        [
+            {
+                "reason": (
+                    "Insufficient cash: $500.00 available less $1,000.00 reserve "
+                    "affords no shares at $50.00"
+                )
+            }
+        ]
+        * 15,
+    )
+    manifest = _manifest(tmp_path)
+
+    manifest.write(tmp_path / "manifest.json")
+    again = read_manifest(tmp_path / "manifest.json")
+
+    assert again.unmodelled_refusals == {"Cash floor": 15}
+
+
 def test_the_manifest_names_the_fill_model_and_the_limitations(tmp_path: Path):
     """Stated on every run, not buried in a footnote."""
     _decisions(tmp_path, [])

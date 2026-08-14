@@ -35,6 +35,22 @@ The distinction is not pedantry. Reporting an unobservable rail as "not
 exercised" asserts it did not bind, when the truth is that this ledger cannot
 say - which is the corporate-actions failure of 12 August in miniature, where a
 swallowed query made blindness indistinguishable from a quiet book.
+
+## A fourth gap: rails this table does not model at all
+
+The three observabilities above assume every refusal belongs to one of the
+twelve rails in `[*RAILS, REGIME_RAIL]`. It does not: `refusals._PATTERNS`
+recognises materially more labels than that static list names, and any of
+them can write refusals into `risk_decisions.csv` while having no row in the
+table at all. Found by running the ASX replay, where the cash floor
+(`min_cash_reserve` - deliberately not ablatable, see `ablation.py`) refused
+15 candidates and left no trace anywhere in `manifest.json`.
+
+`unmodelled_refusals` closes that gap by reporting, rather than by extending
+the static list: every `rail_of` label this run saw refuse that no rail in
+the table claims. A rail this table does not model still binds, and silence
+about it reads as absence - the same failure the `Observability` argument
+exists to prevent, one level up.
 """
 
 from __future__ import annotations
@@ -138,6 +154,10 @@ class RunManifest:
     universe: tuple[str, ...]
     starting_equity: float
     fill_model: dict[str, object] = field(default_factory=lambda: dict(_FILL_MODEL))
+    # Refusals `risk_decisions.csv` recorded for a `rail_of` label that no rail
+    # in `rails` claims - see the module docstring. Empty, never absent: a run
+    # with nothing unmodelled says so rather than omitting the field.
+    unmodelled_refusals: dict[str, int] = field(default_factory=dict)
     stated_limitations: tuple[str, ...] = _STATED_LIMITATIONS
 
     def write(self, path: Path) -> None:
@@ -164,6 +184,10 @@ def read_manifest(path: Path) -> RunManifest:
         universe=tuple(raw["universe"]),
         starting_equity=float(raw["starting_equity"]),
         fill_model=raw["fill_model"],
+        # `.get(..., {})`, not `raw[...]`: a manifest written before this field
+        # existed must still load, and "nothing recorded" is the correct
+        # reading of its absence rather than a KeyError.
+        unmodelled_refusals=dict(raw.get("unmodelled_refusals", {})),
         stated_limitations=tuple(raw["stated_limitations"]),
     )
 
@@ -282,6 +306,14 @@ def build_manifest(
             caveat=IMPERFECT.get(name),
         )
 
+    # Every label `rail_of` produced for a real refusal, minus the ones a rail
+    # in the table above already claims. `_REFUSAL_LABELS.values()` rather than
+    # a second list: those ARE the labels the table models, so anything else
+    # that refused - including UNCLASSIFIED, under whatever name
+    # `rail_of._leading_clause` gave it - belongs here.
+    modelled = set(_REFUSAL_LABELS.values())
+    unmodelled = {label: count for label, count in refusals.items() if label not in modelled}
+
     commit, dirty = _commit()
     return RunManifest(
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
@@ -290,6 +322,7 @@ def build_manifest(
         rails=rails,
         universe=tuple(universe),
         starting_equity=starting_equity,
+        unmodelled_refusals=unmodelled,
         # APPENDED, never replacing: the six module-level limitations hold for
         # every run, and a caller adding one must not be able to drop them.
         stated_limitations=(*_STATED_LIMITATIONS, *extra_limitations),
