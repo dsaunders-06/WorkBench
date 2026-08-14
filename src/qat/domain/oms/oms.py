@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -127,8 +127,20 @@ class OMS:
         journal: DecisionJournal | None = None,
         settings: Settings | None = None,
         corporate_actions: object | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.broker = broker
+        # The fourth injectable clock in the trading path, and the fourth for
+        # the same reason (W2 step 6). `_load_fill_state` falls back to "now"
+        # when there is no state file, which is every replay given its own
+        # scratch data_dir: the harness then asks the broker for fills since the
+        # WALL clock, every simulated 2026 fill is older than that, and the
+        # absorb sweep records nothing while reporting success.
+        #
+        # Assigned before `_load_fill_state` runs below, or `_now` reads an
+        # attribute that does not exist yet. Defaults to the wall clock, so live
+        # behaviour is unchanged.
+        self._clock = clock
         # Every order decision is journalled, in every execution mode (M20).
         # Until then only the autonomous executor wrote here, so a
         # recommend-mode session - the default - left no record of why an
@@ -1052,17 +1064,30 @@ class OMS:
         await self._announce_pending(order)
         return order
 
+    def _now(self) -> datetime:
+        """The clock the fill watermark defaults to. See `__init__`.
+
+        Injectable because "now" is the wrong answer in a replay: a harness
+        replaying 2026 asks for fills since the wall clock, and every simulated
+        fill is older than that.
+        """
+        return self._clock() if self._clock is not None else datetime.now(UTC)
+
     def _load_fill_state(self) -> datetime:
         """The watermark the previous run reached, and what it had recorded.
 
-        No file, no settings, or an unreadable file all mean "start from now",
-        which is exactly the pre-M50 behaviour: nothing is replayed, and nothing
-        can be double-recorded either. Degrading to the old behaviour is the
-        right failure here, because the old behaviour was merely incomplete
+        No file, no settings, or an unreadable file all mean "start from the
+        clock", which is exactly the pre-M50 behaviour: nothing is replayed, and
+        nothing can be double-recorded either. Degrading to the old behaviour is
+        the right failure here, because the old behaviour was merely incomplete
         rather than wrong.
+
+        The clock is `_now`, not `datetime.now(UTC)` - see `_now`. Both fallback
+        paths use it, because a corrupt state file in a replay would otherwise
+        reintroduce the same silent zero by a slower route.
         """
         if self._fill_state_path is None:
-            return datetime.now(UTC)
+            return self._now()
         try:
             raw = json.loads(self._fill_state_path.read_text(encoding="utf-8"))
             watermark = datetime.fromisoformat(raw["watermark"])
@@ -1071,7 +1096,7 @@ class OMS:
                 for order_id, entry in (raw.get("absorbed") or {}).items()
             }
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
-            return datetime.now(UTC)
+            return self._now()
         self._absorbed_fills = absorbed
         logger.info(
             "Broker-fill watermark restored to %s - executions since then are replayed for "
