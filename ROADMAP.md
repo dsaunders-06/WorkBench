@@ -350,6 +350,44 @@ Two consequences. The book sitting at 10 of 10 has cost nothing. And **M66 is
 released** - it has no event to land after, and is now the highest-value
 unblocked work, being a machinery defect that transfers to the ASX.
 
+## FREEZE LIFT: M66 - granted and built, 14 August
+
+**The freeze is lifted for M66 alone.** It changes which trades are permitted,
+so it needed a deliberate, recorded lift, like M56c, M57 and M58b. This is that
+record.
+
+**Why the cost of lifting is now near zero.** The freeze protects a result's
+interpretability - *"a result then belongs to no single version of the system"*.
+There is no edge result left to contaminate: the promotion gate needs 30 closed
+trades and swing's gate sees ONE. What the US phase still produces is machinery
+evidence, and M66 is a machinery defect. The argument that kept it behind the
+freeze on 8 August was that it *"moves a number the two-week baseline was
+measured on"*; that baseline has since stopped being evidence of anything.
+
+**Blast radius, checked rather than assumed - twice.** The 8 August design
+verified the delever sweep was disabled. Re-verified 14 August against the LIVE
+`.env` rather than the default: `QAT_DELEVER_SWEEP_ENABLED=false`, and the
+running app restates it every five minutes - *"sweep is disabled, so nothing
+will be sold to correct it"*. **Nothing is forced to sell.** Entries are already
+refused at 5.01%, so the immediate behavioural change is nil.
+
+**What it corrects, measured on the live book the same day:**
+
+    reported by the app (entry prices)   5.01%
+    actually at risk (broker marks)      6.34%   $6,422.44 against $101,358.72
+    cap                                  5.00%
+
+**A 27% understatement, and wider than the 5.87% measured on 8 August because
+the book has gained since** - which is precisely the defect's signature. Risk
+per share is `price - stop`, so a position that has gained has further to fall;
+the error grows with profit and is backwards from prudent.
+
+Built as designed: `Position` carries an optional `current_price`, the Alpaca
+adapter maps the field already in the response it parses, and the governor gains
+one fallback tier - `prices.get(...) or pos.current_price or pos.avg_price`.
+No caller changed. A broker reporting no mark yields `None`, never zero, because
+zero would make every position measure as risk-free.
+
 **Adding SFBS to the universe is declined.** It is a freeze lift changing which
 trades happen, spent on a US corporate action, to instrument what CRWD already
 demonstrated in production on 12 August - the ex-date gate refusing a live
@@ -2861,13 +2899,16 @@ and each entry carries its own tag:**
 | **M39** corporate actions — waits on the MNST captures | **M40** fundamentals in the advisory context |
 | **M43** trading halts — needs a websocket consumer | **M41** earnings event risk |
 | **M44** execution quality — waits for September trades | **M42** partial fills |
-| **M66** risk-at-stop on entry prices — designed, **inside the freeze** | **M65** entry price recorded wrong — fixed, and finished by **M70** |
+| ~~**M66** risk-at-stop on entry prices~~ — **BUILT 14 August under a recorded freeze lift** | **M65** entry price recorded wrong — fixed, and finished by **M70** |
 
 The original framing said all of it was post-trial because every item changes
 which trades happen. That held when it was written and no longer does: M40, M41,
 M42 and M65 all turned out to be recording or context defects rather than
-sizing ones. **M66 is the one that genuinely still sits behind the freeze**, and
-it is the reason this section should be read before any recalibration window.
+sizing ones. **M66 was the one that genuinely sat behind the freeze** — and it
+was lifted deliberately on 14 August, once the freeze had nothing left to
+protect: the promotion gate needs 30 closed trades and swing's gate sees one, so
+there is no edge result an inconsistent baseline could spoil. See the recorded
+lift above.
 
 ### M39 - Corporate actions
 

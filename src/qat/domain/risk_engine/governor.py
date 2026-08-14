@@ -93,7 +93,23 @@ class PortfolioGovernor:
             if quantity <= 0:
                 continue
             held[pos.symbol] = held.get(pos.symbol, 0.0) + quantity
-            price = prices.get(pos.symbol) or pos.avg_price
+            # THREE TIERS, and the middle one is M66. `prices` is an explicit
+            # override and only `adopted.py`, a display, ever supplies it -
+            # nothing in the trading path did, so every entry decision and every
+            # de-lever check this system had made was measured against the price
+            # each position was OPENED at.
+            #
+            # Risk per share is `price - stop`, so a position that has gained has
+            # further to fall. A winning book therefore UNDERSTATED its risk and
+            # believed it had headroom it did not have, and the error grew with
+            # profit - backwards from prudent. Measured on the live book on
+            # 8 August: 5.87% at risk against 5.02% reported, already 17% over a
+            # 5.00% cap while reading as marginally over.
+            #
+            # `or` rather than a None check is deliberate and matches the tier
+            # above it: a mark of 0.0 is not a price, and falling through to the
+            # entry price is better than measuring a position as free.
+            price = prices.get(pos.symbol) or pos.current_price or pos.avg_price
             gross += quantity * price
             risk += quantity * self._per_share_risk(pos.symbol, price, stops)
 

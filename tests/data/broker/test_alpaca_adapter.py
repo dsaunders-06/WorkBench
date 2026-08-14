@@ -32,6 +32,10 @@ class FakePosition:
     symbol = "AAPL"
     qty = "10"
     avg_entry_price = "190.50"
+    # Alpaca returns numerics as strings, and this one is the CONSOLIDATED mark
+    # (M66) - deliberately different from avg_entry_price so a test cannot pass
+    # by reading the wrong field.
+    current_price = "212.75"
 
 
 class FakeAlpacaOrder:
@@ -108,6 +112,37 @@ async def test_positions_are_translated():
     assert positions[0].symbol == "AAPL"
     assert positions[0].quantity == 10.0
     assert positions[0].avg_price == 190.50
+
+
+async def test_the_current_mark_is_carried_so_the_risk_cap_can_use_it():
+    """M66. The aggregate risk cap measures `price - stop` per share, so it must
+    have the price the position is worth NOW - a gained position has further to
+    fall. Asserted against the mapping rather than trusted, because if this field
+    silently stopped populating the cap would fall back to entry prices and
+    understate a winning book exactly as it did before, with nothing raising."""
+    adapter, _client = _adapter()
+
+    positions = await adapter.positions()
+
+    assert positions[0].current_price == 212.75
+    assert positions[0].current_price != positions[0].avg_price
+
+
+async def test_a_broker_reporting_no_mark_yields_None_not_zero():
+    """`None` means "this adapter does not report a mark"; zero would make the
+    position measure as risk-free and silently empty the cap."""
+    adapter, client = _adapter()
+
+    class NoMark:
+        symbol = "AAPL"
+        qty = "10"
+        avg_entry_price = "190.50"
+
+    client.positions = [NoMark()]
+
+    positions = await adapter.positions()
+
+    assert positions[0].current_price is None
 
 
 async def test_place_order_submits_and_adopts_the_broker_order_id():

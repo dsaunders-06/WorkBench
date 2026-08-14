@@ -183,6 +183,11 @@ class AlpacaAdapter:
                 symbol=str(pos.symbol),
                 quantity=_as_float(getattr(pos, "qty", None)),
                 avg_price=_as_float(getattr(pos, "avg_entry_price", None)),
+                # M66. Already in the response this method parses, so the
+                # aggregate risk cap begins measuring what is at risk NOW rather
+                # than what was at risk on the day each position opened, with no
+                # extra request and therefore no new failure mode.
+                current_price=_optional_float(getattr(pos, "current_price", None)),
             )
             for pos in raw
         ]

@@ -112,6 +112,17 @@ class Position:
     symbol: str
     quantity: float
     avg_price: float
+    # The broker's own mark, when it reports one (M66).
+    #
+    # Optional and defaulted, so MockBroker, the IBKR seam and every existing
+    # test keep working untouched. `None` means "this adapter does not report a
+    # mark", which is a DIFFERENT CLAIM from "the mark is zero" - read as zero,
+    # every position would measure as risk-free.
+    #
+    # Alpaca's is the consolidated tape, measured against both feeds across ten
+    # held positions: matches SIP 10, matches IEX 0. So it carries none of the
+    # IEX range bias the application's own bars do, and costs no extra request.
+    current_price: float | None = None
 
 
 @dataclass(slots=True)
