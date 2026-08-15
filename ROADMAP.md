@@ -263,6 +263,53 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M91 - The positions table showed three columns and none of them helped  **[BUILT 15 August]**
+
+The Dashboard listed Symbol, Quantity and Avg Price. No mark, no P&L, no
+indication of when anything would be sold. Answering *"why did no sell fire
+last night"* took an hour of hand computation against `open_position_entries.json`,
+yfinance bars and `swing.py` - and every figure in that answer already existed
+somewhere in the running app.
+
+Nine columns now: `Symbol · Qty · Entry ($) · Last ($) · P&L · To exit · To stop
+· Risk · Status`.
+
+**Three decisions worth keeping.**
+
+* **A distance, not a forecast.** "0.63% from its exit trigger", never "sells in
+  three sessions". Tested against the real case: AMAT was three sessions from
+  its EMA crossover on flat price AND inside its minimum hold until 18 August at
+  0.35R against a 0.50R escape, so a projection would have been confidently
+  wrong in the direction that matters.
+* **The entry price is the APP's record**, never the broker's `avg_price`. Two
+  different facts that have disagreed - MNST's broker basis sat at $91.18
+  through a 2-for-1 split.
+* **The UI asks the strategy for its own exit distance** (`SwingStrategy.exit_distance`,
+  optional and discovered with `getattr`). A private copy of the EMA crossover in
+  the presentation layer is the duplication this codebase keeps being bitten by.
+  Per-position risk comes from the governor's existing loop for the same reason:
+  its three-tier price rule is M66/M90, and a second derivation would drift.
+
+**Two defects the review caught, both in the same family.** `_last_price` fell
+back to the broker's cost basis when no mark was reported, so on any broker
+without `current_price` the panel printed `0.0%` P&L in green - asserting every
+position flat while knowing nothing - and silently pinned the loss escape at
+zero. And a gate that could not be evaluated was reported as being in force.
+Both now resolve to an em dash or an explicit "unknown". **`None` and zero are
+different facts** is the rule this table is built on.
+
+**One defect only the screenshot caught**, which is the argument for rendering:
+the R figure was displayed unsigned, so `-6.2% (0.35R)` put a negative and a
+positive number in one cell describing one fact, and a 0.35R loss rendered
+identically to a 0.35R gain. The full suite passed through it. It is signed now,
+and pinned by a test that did not exist before.
+
+**Also restored:** extracting the minimum-hold rule into a shared predicate
+dropped the log line explaining why the hold stood aside. The blocked path kept
+its message and the escape path lost one, so a position exiting INSIDE its
+minimum hold - the rarer and more alarming direction - would have left nothing
+in `qat.log` saying why. Nothing failed, because nothing asserted on it.
+
 ## M89 - A stop-out was recorded as a target  **[FIXED 14 August]**
 
 Found while wiring the research harness, which is the only reason it was found

@@ -58,7 +58,7 @@ from datetime import UTC, datetime
 # 5.01% -> about 6.34% on the book as it stands. Nothing is forced to sell -
 # QAT_DELEVER_SWEEP_ENABLED=false in the live config - and entries were already
 # refused at 5.01%, so no trade that would have happened now will not.
-MILESTONE = "M90"
+MILESTONE = "M91"
 
 _UNKNOWN = "unknown"
 
