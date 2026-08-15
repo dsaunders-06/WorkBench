@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from qat.domain.display_dates import format_display_date
 from qat.domain.evaluation.refusals import load_risk_decisions, summarise_refusals
 from qat.domain.events import MarketDataEvent
 from qat.presentation import theme
@@ -313,7 +314,7 @@ class RiskConsoleScreen(QWidget):
             "\n".join(
                 f"{a.symbol}  tracked={a.tracked_quantity:g} broker={a.broker_quantity:g}  "
                 f"{a.reason}  (declared by {a.declared_by}, "
-                f"{a.declared_at:%Y-%m-%d %H:%M} UTC)"
+                f"{format_display_date(a.declared_at)} {a.declared_at:%H:%M} UTC)"
                 for a in active
             )
         )

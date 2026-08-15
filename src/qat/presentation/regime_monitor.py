@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat.domain.ai_advisory.schema import MacroAssessment
+from qat.domain.display_dates import format_display_date
 from qat.domain.events import MacroEvent, MarketDataEvent, RegimeEvent
 from qat.domain.macro_analysis import compute_macro_signal
 from qat.domain.regime import ALL_REGIMES
@@ -294,7 +295,10 @@ class RegimeMonitorScreen(QWidget):
 
         if event.label != self._current_label:
             self._current_label = event.label
-            self.history_list.insertItem(0, f"{event.ts:%Y-%m-%d %H:%M:%S} UTC  ->  {event.label}")
+            self.history_list.insertItem(
+                0,
+                f"{format_display_date(event.ts)} {event.ts:%H:%M:%S} UTC  ->  {event.label}",
+            )
             while self.history_list.count() > _MAX_HISTORY_ROWS:
                 self.history_list.takeItem(self.history_list.count() - 1)
 

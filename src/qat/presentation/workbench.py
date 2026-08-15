@@ -46,6 +46,7 @@ from qat.domain.backtester.signal_adapter import generate_signal_series
 from qat.domain.backtester.sizing import FixedFractionalSizer
 from qat.domain.backtester.vectorized_engine import VectorizedBacktester
 from qat.domain.backtester.walk_forward import run_walk_forward
+from qat.domain.display_dates import format_display_date
 from qat.presentation import theme
 from qat.presentation.runtime import Runtime
 from qat.presentation.ui_level import UiLevel
@@ -367,8 +368,8 @@ class WorkbenchScreen(QWidget):
         for row, window in enumerate(windows):
             metrics = window.out_sample_result.metrics
             values = (
-                f"{window.out_sample_start:%Y-%m-%d}",
-                f"{window.out_sample_end:%Y-%m-%d}",
+                format_display_date(window.out_sample_start),
+                format_display_date(window.out_sample_end),
                 f"{metrics.get('cagr', 0.0):.2%}",
                 f"{metrics.get('sharpe', 0.0):.2f}",
                 f"{metrics.get('max_drawdown', 0.0):.2%}",

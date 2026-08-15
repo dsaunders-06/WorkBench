@@ -28,6 +28,8 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from qat.domain.display_dates import format_display_date
+
 # Bump when a milestone ships. Its accuracy is not load-bearing - the commit
 # and the build time beside it are the ground truth, and a stale label is
 # visible precisely because they disagree with it.
@@ -141,7 +143,7 @@ def build_info() -> BuildInfo:
     return BuildInfo(
         milestone=MILESTONE,
         commit=_git_describe(),
-        built_at=datetime.now(UTC).strftime("%Y-%m-%d"),
+        built_at=format_display_date(datetime.now(UTC)),
         source="source checkout",
     )
 

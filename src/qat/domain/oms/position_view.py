@@ -37,6 +37,7 @@ import pandas as pd
 
 from qat.config import Settings
 from qat.data.broker.adapter import Position
+from qat.domain.display_dates import format_display_date
 from qat.domain.oms.signal_bridge import PositionEntry, _trading_days_between, minimum_hold_status
 from qat.domain.risk_engine.governor import ExposureSnapshot
 from qat.domain.strategies.base import Strategy
@@ -140,7 +141,7 @@ def _notes(
     if status.blocked:
         clears_on = _first_session_that_clears(entry.opened_at, settings.min_holding_trading_days)
         suffix = "" if status.escape_evaluated else " (escape unknown)"
-        notes.append(f"held until {clears_on:%Y-%m-%d}{suffix}")
+        notes.append(f"held until {format_display_date(clears_on)}{suffix}")
 
     if settings.enforce_time_stop:
         held_days = _trading_days_between(entry.opened_at, now)
@@ -150,7 +151,7 @@ def _notes(
         # column of otherwise forward-looking warnings.
         if 0 <= remaining <= _TIME_STOP_WARNING_WINDOW_TRADING_DAYS:
             fires_on = _first_session_that_clears(entry.opened_at, settings.time_stop_trading_days)
-            notes.append(f"time stop {fires_on:%Y-%m-%d}")
+            notes.append(f"time stop {format_display_date(fires_on)}")
 
     return tuple(notes)
 

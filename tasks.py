@@ -101,11 +101,13 @@ def _write_build_stamp(c) -> pathlib.Path:
     see that on the Settings screen instead of trusting a label.
     """
     sys.path.insert(0, str(pathlib.Path(__file__).parent / "src"))
+    from qat.domain.display_dates import format_display_date
     from qat.version import MILESTONE, stamp_module_source
 
     described = c.run("git describe --tags --always --dirty", hide=True, warn=True)
     commit = (described.stdout or "").strip() or "unknown"
-    built_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC)
+    built_at = f"{format_display_date(now)} {now:%H:%M} UTC"
 
     stamp = pathlib.Path("src/qat/_build_stamp.py")
     stamp.write_text(stamp_module_source(MILESTONE, commit, built_at), encoding="utf-8")

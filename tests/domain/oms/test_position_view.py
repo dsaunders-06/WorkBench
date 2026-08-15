@@ -290,7 +290,8 @@ def test_held_until_blocks_a_signal_exit_inside_the_minimum_hold():
         settings=settings,
         clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),  # 3 trading days in
     )
-    assert "held until 2026-08-10" in views[0].notes
+    assert "held until 10/08/2026" in views[0].notes
+    assert "held until 2026-08-10" not in views[0].notes
 
 
 def test_the_loss_escape_suppresses_the_minimum_hold_blocker():
@@ -343,7 +344,7 @@ def test_held_until_says_the_escape_is_unknown_with_no_broker_mark():
         settings=settings,
         clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
     )
-    assert "held until 2026-08-10 (escape unknown)" in views[0].notes
+    assert "held until 10/08/2026 (escape unknown)" in views[0].notes
 
 
 def test_held_until_has_no_unknown_suffix_when_there_is_no_stop_to_escape_from():
@@ -359,8 +360,8 @@ def test_held_until_has_no_unknown_suffix_when_there_is_no_stop_to_escape_from()
         settings=settings,
         clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
     )
-    assert "held until 2026-08-10" in views[0].notes
-    assert "held until 2026-08-10 (escape unknown)" not in views[0].notes
+    assert "held until 10/08/2026" in views[0].notes
+    assert "held until 10/08/2026 (escape unknown)" not in views[0].notes
 
 
 def test_time_stop_shows_only_within_five_trading_days():
@@ -371,7 +372,8 @@ def test_time_stop_shows_only_within_five_trading_days():
         settings=settings,
         clock=lambda: datetime(2026, 8, 11, tzinfo=UTC),  # 6 trading days in, 4 remain
     )
-    assert "time stop 2026-08-17" in views[0].notes
+    assert "time stop 17/08/2026" in views[0].notes
+    assert "time stop 2026-08-17" not in views[0].notes
 
 
 def test_time_stop_is_absent_when_more_than_five_trading_days_remain():

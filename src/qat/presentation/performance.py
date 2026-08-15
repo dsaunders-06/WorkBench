@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat.data import instruments
+from qat.domain.display_dates import format_display_date
 from qat.domain.performance.reports import (
     DAILY_REPORT_FILENAME,
     WEEKLY_REPORT_FILENAME,
@@ -430,7 +431,7 @@ class PerformanceScreen(QWidget):
         self.trades_table.setRowCount(len(trades))
         for row, trade in enumerate(trades):
             values: tuple[str, ...] = (
-                f"{trade.closed_at:%Y-%m-%d %H:%M}",
+                f"{format_display_date(trade.closed_at)} {trade.closed_at:%H:%M}",
                 trade.symbol,
                 instruments.name_for(trade.symbol),
                 trade.strategy or "-",
