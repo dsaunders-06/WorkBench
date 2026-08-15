@@ -40,7 +40,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, NamedTuple, Protocol, cast
 
 import pandas as pd
 
@@ -190,6 +190,86 @@ def _trading_days_between(start: datetime, end: datetime) -> int:
         if cursor.weekday() < 5:
             days += 1
     return days
+
+
+class _HoldEntry(Protocol):
+    """The three entry fields `minimum_hold_status` reads. Structural on
+    purpose (positions panel brief review, I3): both `_Entry` (private, the
+    bridge's own live record) and `PositionEntry` (public, the positions
+    panel's copy of it) already carry these fields with these names, so
+    either satisfies this without importing the other's type.
+
+    Declared as read-only properties rather than plain attributes: both
+    concrete types are frozen dataclasses, and a Protocol with plain
+    attributes describes a settable one, which a frozen dataclass is not."""
+
+    @property
+    def opened_at(self) -> datetime: ...
+
+    @property
+    def price(self) -> float: ...
+
+    @property
+    def stop_price(self) -> float | None: ...
+
+
+class MinimumHoldCheck(NamedTuple):
+    """`minimum_hold_status`'s answer (positions panel brief review, I3).
+
+    `blocked`: whether the minimum hold holds a signal-driven exit back
+    right now.
+
+    `escape_evaluated`: whether the loss escape could actually be checked.
+    False only when there is a stop capable of an escape but no price was
+    supplied to measure the loss against - `blocked` is conservatively True
+    in that case, and a caller that must not overstate what it knows (I2)
+    reports that distinction rather than asserting the gate is definitely
+    on. The bridge itself never sees False here, because it always has a
+    live tick price to pass; only a display reading a possibly-absent
+    broker mark can.
+    """
+
+    blocked: bool
+    escape_evaluated: bool
+
+
+def minimum_hold_status(
+    entry: _HoldEntry, price: float | None, now: datetime, settings: Settings
+) -> MinimumHoldCheck:
+    """Whether the minimum hold blocks a signal-driven exit right now - the
+    rule `_blocked_by_minimum_hold` enforces, extracted so a second caller
+    (the positions panel's `position_view.py`) can report the identical
+    decision instead of re-deriving it (positions panel brief review, I3:
+    the two had drifted apart in nothing but the fact that nothing pinned
+    them together).
+
+    Pure: no `self`, no logging, no `_hold_blocked` mutation - those are
+    `_blocked_by_minimum_hold`'s own bookkeeping around this decision, not
+    the decision itself.
+
+    `price` is what the loss escape measures the current loss against. The
+    bridge always has a live tick price; a display reading the broker's own
+    reported mark may have none at all - that is `escape_evaluated=False`,
+    not a reason to guess.
+    """
+    if not settings.enforce_min_holding_period:
+        return MinimumHoldCheck(blocked=False, escape_evaluated=True)
+
+    held_days = _trading_days_between(entry.opened_at, now)
+    if held_days >= settings.min_holding_trading_days:
+        return MinimumHoldCheck(blocked=False, escape_evaluated=True)
+
+    stop = entry.stop_price
+    if stop is None or stop >= entry.price:
+        # No possible escape route regardless of price - a known fact.
+        return MinimumHoldCheck(blocked=True, escape_evaluated=True)
+    if price is None:
+        return MinimumHoldCheck(blocked=True, escape_evaluated=False)
+
+    risk = entry.price - stop
+    loss_r = (entry.price - price) / risk
+    escaped = loss_r >= settings.min_holding_loss_escape_r
+    return MinimumHoldCheck(blocked=not escaped, escape_evaluated=True)
 
 
 _MIN_HISTORY_FOR_SIZING = 2
@@ -1057,44 +1137,30 @@ class SignalToOrderBridge:
         delever sweep and the kill-switch take other paths, so no protective
         exit can be delayed by this.
 
-        The loss escape is what makes the rail defensible: a minimum hold on
-        its own would sit through a broken thesis to save $12 of commission,
-        and once the position is down min_holding_loss_escape_r the commission
-        is small against the risk still on the table.
+        The rule itself - the minimum hold and the loss escape that makes it
+        defensible - is `minimum_hold_status` (positions panel brief review,
+        I3): a sitting-through-a-broken-thesis-to-save-$12-of-commission
+        decision that a second caller (the positions panel) also needs to
+        report, so it lives in one place, pure. This method is only the
+        bookkeeping around that decision: which entry is in play, the
+        once-only log, and `_hold_blocked` for anything that wants to read
+        which symbols are currently held back.
         """
-        if not self.settings.enforce_min_holding_period:
-            return False
         entry = self._entries.get(symbol)
         if entry is None:
             return False  # unknown entry: never trap a position we cannot date
 
-        held_days = _trading_days_between(entry.opened_at, self._now())
-        if held_days >= self.settings.min_holding_trading_days:
-            return False
-
-        if entry.stop_price is not None and entry.stop_price < entry.price:
-            risk = entry.price - entry.stop_price
-            loss_r = (entry.price - price) / risk
-            if loss_r >= self.settings.min_holding_loss_escape_r:
-                logger.info(
-                    "%s is %.2fR down after %d trading days - the minimum hold does not "
-                    "apply to a thesis this far wrong",
-                    symbol,
-                    loss_r,
-                    held_days,
-                )
-                return False
-
-        if symbol not in self._hold_blocked:
+        status = minimum_hold_status(entry, price, self._now(), self.settings)
+        if status.blocked and symbol not in self._hold_blocked:
             self._hold_blocked.add(symbol)
             logger.info(
                 "Signal exit on %s held back: %d of %d trading days, and not far enough "
                 "down to escape the minimum hold",
                 symbol,
-                held_days,
+                _trading_days_between(entry.opened_at, self._now()),
                 self.settings.min_holding_trading_days,
             )
-        return True
+        return status.blocked
 
     async def _handle_sell(self, symbol: str, held: float, price: float) -> None:
         if held > 0 and self._blocked_by_minimum_hold(symbol, price):

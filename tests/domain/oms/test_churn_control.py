@@ -23,7 +23,7 @@ from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.events import MarketDataEvent, OrderFilledEvent, SignalEvent
 from qat.domain.oms.oms import OMS
-from qat.domain.oms.signal_bridge import SignalToOrderBridge
+from qat.domain.oms.signal_bridge import SignalToOrderBridge, _Entry, minimum_hold_status
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -128,6 +128,63 @@ async def test_a_position_with_no_known_entry_is_never_trapped():
     bridge = _bridge(broker, min_holding_trading_days=10)
 
     assert bridge._blocked_by_minimum_hold("AAA", price=100.0) is False
+
+
+# --- minimum_hold_status: the pure rule extracted for position_view.py to ---
+# --- share rather than re-derive (I3, positions panel brief review) --------
+
+
+def test_minimum_hold_status_blocks_inside_the_window():
+    settings = Settings(_env_file=None, min_holding_trading_days=10)
+    entry = _Entry(opened_at=_NOW - timedelta(days=2), price=100.0, stop_price=95.0)
+
+    status = minimum_hold_status(entry, 100.0, _NOW, settings)
+
+    assert status.blocked is True
+    assert status.escape_evaluated is True
+
+
+def test_minimum_hold_status_matches_the_bridges_own_escape_arithmetic():
+    settings = Settings(_env_file=None, min_holding_trading_days=10, min_holding_loss_escape_r=0.5)
+    entry = _Entry(opened_at=_NOW - timedelta(days=2), price=100.0, stop_price=95.0)  # 1R = $5
+
+    # Down $3 = 0.6R, past the 0.5R escape.
+    assert minimum_hold_status(entry, 97.0, _NOW, settings).blocked is False
+    # Down $1 = 0.2R, not far enough.
+    assert minimum_hold_status(entry, 99.0, _NOW, settings).blocked is True
+
+
+def test_minimum_hold_status_escape_evaluated_is_false_with_no_price():
+    """The C1 case: no broker mark to measure the loss escape against - the
+    gate's state cannot be checked, which is a different fact from it being
+    definitely on. The bridge itself never hits this branch (it always has
+    a live tick price); only a display reading a possibly-absent mark can."""
+    settings = Settings(_env_file=None, min_holding_trading_days=10, min_holding_loss_escape_r=0.5)
+    entry = _Entry(opened_at=_NOW - timedelta(days=2), price=100.0, stop_price=95.0)
+
+    status = minimum_hold_status(entry, None, _NOW, settings)
+
+    assert status.blocked is True
+    assert status.escape_evaluated is False
+
+
+def test_minimum_hold_status_with_no_stop_is_definite_not_unknown():
+    """No stop means no possible escape route regardless of price - a known
+    fact, not an unknown one, even with no price supplied."""
+    settings = Settings(_env_file=None, min_holding_trading_days=10)
+    entry = _Entry(opened_at=_NOW - timedelta(days=2), price=100.0, stop_price=None)
+
+    status = minimum_hold_status(entry, None, _NOW, settings)
+
+    assert status.blocked is True
+    assert status.escape_evaluated is True
+
+
+def test_minimum_hold_status_off_when_the_rule_is_disabled():
+    settings = Settings(_env_file=None, enforce_min_holding_period=False)
+    entry = _Entry(opened_at=_NOW - timedelta(days=2), price=100.0, stop_price=95.0)
+
+    assert minimum_hold_status(entry, 100.0, _NOW, settings).blocked is False
 
 
 @pytest.mark.asyncio
