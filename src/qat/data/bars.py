@@ -317,5 +317,25 @@ class MultiSymbolAggregator:
     def frame(self, symbol: str, include_forming: bool = True) -> pd.DataFrame:
         return self.for_symbol(symbol).frame(include_forming=include_forming)
 
+    def frame_if_present(self, symbol: str, include_forming: bool = True) -> pd.DataFrame | None:
+        """The same frame `frame()` returns, without `for_symbol()`'s side
+        effect of creating and storing an aggregator for a symbol this
+        instance has never seen (positions panel brief review, M6).
+
+        `frame()` is right for a live tick pipeline, where seeing a symbol
+        for the first time is exactly when an aggregator should be created
+        for it. It is wrong for a read-only caller - a display asking what
+        bars already exist for a symbol it did not choose to start tracking
+        - which must not be able to mutate this aggregator's state merely by
+        looking.
+
+        `None` when the symbol has never been seen, distinguishing "nothing
+        recorded yet" from "an empty frame for a symbol we are tracking".
+        """
+        aggregator = self._by_symbol.get(symbol)
+        if aggregator is None:
+            return None
+        return aggregator.frame(include_forming=include_forming)
+
     def symbols(self) -> list[str]:
         return list(self._by_symbol)

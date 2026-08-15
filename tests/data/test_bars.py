@@ -225,6 +225,35 @@ def test_an_unseen_symbol_yields_an_empty_frame_rather_than_raising():
     assert MultiSymbolAggregator().frame("NOPE").empty
 
 
+def test_frame_creates_an_aggregator_for_an_unseen_symbol():
+    """The behaviour `frame_if_present` exists to NOT have: `frame()` calls
+    `for_symbol()`, which creates and stores an aggregator on first sight -
+    correct for the live tick pipeline this class was built for."""
+    multi = MultiSymbolAggregator()
+    multi.frame("NOPE")
+    assert "NOPE" in multi.symbols()
+
+
+def test_frame_if_present_does_not_create_an_aggregator_for_an_unseen_symbol():
+    """M6 (positions panel brief review): a read-only caller - a display
+    asking what bars exist for a symbol it did not choose to start tracking
+    - must not be able to mutate this aggregator's state merely by asking."""
+    multi = MultiSymbolAggregator()
+    assert multi.frame_if_present("NOPE") is None
+    assert "NOPE" not in multi.symbols()
+
+
+def test_frame_if_present_returns_the_same_frame_for_a_seen_symbol():
+    multi = MultiSymbolAggregator(interval_seconds=60)
+    multi.add_tick("AAPL", _at(0), 100.0)
+    multi.add_tick("AAPL", _at(10), 110.0)
+
+    frame = multi.frame_if_present("AAPL")
+
+    assert frame is not None
+    assert frame["high"].iloc[-1] == 110.0
+
+
 # --- prime_bar: the research harness has bars and no ticks (W2) ---------------
 
 
