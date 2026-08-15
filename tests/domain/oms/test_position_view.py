@@ -147,9 +147,19 @@ def test_last_price_prefers_the_brokers_live_mark_over_avg_price():
     assert views[0].last_price == 95.0
 
 
-def test_last_price_falls_back_to_avg_price_with_no_live_mark():
+def test_last_price_is_none_with_no_broker_mark():
+    """C1: MockBroker/SimulatedBroker construct positions with avg_price as
+    the fill/cost basis and no current_price at all - `avg_price` is a
+    different fact from a live mark, and must never stand in for one. A P&L
+    display's dangerous error is stating a number at all, not under-stating
+    one - the opposite of the governor's own risk tiering, which this
+    function must not mirror."""
     views = _build(positions=[Position(symbol="AAA", quantity=100.0, avg_price=91.18)])
-    assert views[0].last_price == 91.18
+    view = views[0]
+    assert view.last_price is None
+    assert view.pnl_pct is None
+    assert view.pnl_r is None
+    assert view.stop_distance is None
 
 
 # --- pnl_pct / pnl_r -----------------------------------------------------------
@@ -261,12 +271,13 @@ def test_exit_distance_is_none_with_no_entry_record_to_attribute_a_strategy():
     assert views[0].exit_distance is None
 
 
-# --- blockers ----------------------------------------------------------------
+# --- notes (positions panel brief review, M9: not all of these are reasons a
+# sell WON'T fire - "time stop <date>" is a reason one WILL) -----------------
 
 
 def test_no_stop_resting_is_first_and_alarming():
     views = _build(resting_stops={}, entries={"AAA": _entry(opened_at=_NOW)})
-    assert views[0].blockers[0] == "no stop resting"
+    assert views[0].notes[0] == "no stop resting"
 
 
 def test_held_until_blocks_a_signal_exit_inside_the_minimum_hold():
@@ -279,7 +290,7 @@ def test_held_until_blocks_a_signal_exit_inside_the_minimum_hold():
         settings=settings,
         clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),  # 3 trading days in
     )
-    assert "held until 2026-08-10" in views[0].blockers
+    assert "held until 2026-08-10" in views[0].notes
 
 
 def test_the_loss_escape_suppresses_the_minimum_hold_blocker():
@@ -296,7 +307,7 @@ def test_the_loss_escape_suppresses_the_minimum_hold_blocker():
         settings=settings,
         clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
     )
-    assert not any(b.startswith("held until") for b in views[0].blockers)
+    assert not any(b.startswith("held until") for b in views[0].notes)
 
 
 def test_a_near_miss_escape_does_not_suppress_the_blocker():
@@ -313,7 +324,43 @@ def test_a_near_miss_escape_does_not_suppress_the_blocker():
         settings=settings,
         clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
     )
-    assert any(b.startswith("held until") for b in views[0].blockers)
+    assert any(b.startswith("held until") for b in views[0].notes)
+
+
+def test_held_until_says_the_escape_is_unknown_with_no_broker_mark():
+    """I2: under the C1 fix, a broker reporting no mark makes `last_price`
+    None - and the loss escape cannot be evaluated at all without one. The
+    gate must say it could not check, not assert it is definitely on."""
+    settings = _settings(
+        min_holding_trading_days=5, min_holding_loss_escape_r=0.5, enforce_time_stop=False
+    )
+    views = _build(
+        # No current_price - the C1 no-mark case.
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+        entries={
+            "AAA": _entry(opened_at=datetime(2026, 8, 3, tzinfo=UTC), price=100.0, stop_price=90.0)
+        },
+        settings=settings,
+        clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    assert "held until 2026-08-10 (escape unknown)" in views[0].notes
+
+
+def test_held_until_has_no_unknown_suffix_when_there_is_no_stop_to_escape_from():
+    """No stop means no possible escape route regardless of price - that is a
+    known fact, not an unknown one, so no suffix belongs on it even with no
+    broker mark."""
+    settings = _settings(min_holding_trading_days=5, enforce_time_stop=False)
+    views = _build(
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0)],
+        entries={
+            "AAA": _entry(opened_at=datetime(2026, 8, 3, tzinfo=UTC), price=100.0, stop_price=None)
+        },
+        settings=settings,
+        clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    assert "held until 2026-08-10" in views[0].notes
+    assert "held until 2026-08-10 (escape unknown)" not in views[0].notes
 
 
 def test_time_stop_shows_only_within_five_trading_days():
@@ -324,7 +371,7 @@ def test_time_stop_shows_only_within_five_trading_days():
         settings=settings,
         clock=lambda: datetime(2026, 8, 11, tzinfo=UTC),  # 6 trading days in, 4 remain
     )
-    assert "time stop 2026-08-17" in views[0].blockers
+    assert "time stop 2026-08-17" in views[0].notes
 
 
 def test_time_stop_is_absent_when_more_than_five_trading_days_remain():
@@ -335,10 +382,26 @@ def test_time_stop_is_absent_when_more_than_five_trading_days_remain():
         settings=settings,
         clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),  # 3 trading days in, 7 remain
     )
-    assert not any(b.startswith("time stop") for b in views[0].blockers)
+    assert not any(b.startswith("time stop") for b in views[0].notes)
 
 
-def test_blockers_is_empty_when_nothing_blocks():
+def test_time_stop_is_absent_once_it_is_already_in_the_past():
+    """M3: a lot already past its time stop must not render a date in the
+    past in a column of forward-looking warnings. In practice the bridge's
+    own `_check_time_stop` would have exited this on the next tick; this
+    guards the display defensively regardless."""
+    settings = _settings(time_stop_trading_days=10, enforce_min_holding_period=False)
+    views = _build(
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0, current_price=100.0)],
+        entries={"AAA": _entry(opened_at=datetime(2026, 7, 1, tzinfo=UTC))},
+        settings=settings,
+        # Well past the 10-trading-day time stop.
+        clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    assert not any(b.startswith("time stop") for b in views[0].notes)
+
+
+def test_notes_is_empty_when_nothing_blocks():
     """Empty must be distinguishable from 'we could not tell' - it is a
     tuple either way, but it is reachable and means 'nothing is stopping
     this'."""
@@ -349,7 +412,7 @@ def test_blockers_is_empty_when_nothing_blocks():
         resting_stops={"AAA": 90.0},
         settings=settings,
     )
-    assert views[0].blockers == ()
+    assert views[0].notes == ()
 
 
 def test_a_flat_position_is_not_reported():

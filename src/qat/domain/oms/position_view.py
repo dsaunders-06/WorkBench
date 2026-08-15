@@ -1,6 +1,7 @@
 """Turns held positions into what an operator actually needs to see: what was
-paid, how it is tracking, how close it is to being sold, and what is stopping
-it (positions panel brief, piece 4).
+paid, how it is tracking, how close it is to being sold, and what is true
+about a sell right now - not all of which are reasons one won't fire
+(positions panel brief, piece 4; M9 of its review).
 
 Prompted by an hour of hand analysis that should have been a screen. The
 governor already loops every position applying the three-tier price rule
@@ -36,7 +37,7 @@ import pandas as pd
 
 from qat.config import Settings
 from qat.data.broker.adapter import Position
-from qat.domain.oms.signal_bridge import PositionEntry, _trading_days_between
+from qat.domain.oms.signal_bridge import PositionEntry, _trading_days_between, minimum_hold_status
 from qat.domain.risk_engine.governor import ExposureSnapshot
 from qat.domain.strategies.base import Strategy
 
@@ -77,10 +78,14 @@ class PositionView:
     equity: 1.0 means this position alone fills the whole cap, and the figure
     is allowed to exceed 1.0 - the measured book sums to about 1.27 of
     budget, which is correct and is why entries are refused."""
-    blockers: tuple[str, ...]
-    """Why a sell would not transmit right now, most alarming first. Empty
-    means nothing blocks - distinguishable from every individual field above
-    being unable to say anything at all."""
+    notes: tuple[str, ...]
+    """What is true about a sell right now, most alarming first - not all of
+    these are reasons one WON'T fire. "no stop resting" and "held until
+    <date>" are; "time stop <date>" is a warning that one WILL, once the
+    window closes (positions panel brief review, M9: `blockers` was the
+    wrong name for a field that also carries this). Empty means nothing is
+    flagged - distinguishable from every individual field above being
+    unable to say anything at all."""
 
 
 def _first_session_that_clears(opened_at: datetime, trading_days: int) -> date:
@@ -98,7 +103,7 @@ def _first_session_that_clears(opened_at: datetime, trading_days: int) -> date:
     return candidate.date()
 
 
-def _blockers(
+def _notes(
     *,
     symbol: str,
     entry: PositionEntry | None,
@@ -107,55 +112,60 @@ def _blockers(
     settings: Settings,
     now: datetime,
 ) -> tuple[str, ...]:
-    blockers: list[str] = []
+    notes: list[str] = []
 
     # First and alarming: an exit signal has nothing resting to protect this
     # position in the meantime, which is a different and more urgent fact
     # than any gate below.
     if symbol not in resting_stops:
-        blockers.append("no stop resting")
+        notes.append("no stop resting")
 
     if entry is None:
         # Nothing below is knowable without the app's own entry record - the
         # minimum hold and time stop are both measured from `opened_at`.
-        return tuple(blockers)
+        return tuple(notes)
 
-    held_days = _trading_days_between(entry.opened_at, now)
-
-    if settings.enforce_min_holding_period and held_days < settings.min_holding_trading_days:
-        # The loss escape - the same one `_blocked_by_minimum_hold` applies -
-        # is what keeps a minimum hold from sitting through a broken thesis
-        # to save a few dollars of commission. Reproduced here rather than
-        # called there because the bridge's version acts (submits an exit);
-        # this one only reports.
-        escaped = False
-        stop = entry.stop_price
-        if stop is not None and stop < entry.price and last_price is not None:
-            risk = entry.price - stop
-            loss_r = (entry.price - last_price) / risk
-            escaped = loss_r >= settings.min_holding_loss_escape_r
-        if not escaped:
-            clears_on = _first_session_that_clears(
-                entry.opened_at, settings.min_holding_trading_days
-            )
-            blockers.append(f"held until {clears_on:%Y-%m-%d}")
+    # The identical rule `_blocked_by_minimum_hold` enforces (positions panel
+    # brief review, I3) - asked, not re-derived, so the two cannot drift
+    # apart the way they had with nothing pinning them together. `price` is
+    # `last_price`, which under the C1 fix can genuinely be `None` (no
+    # broker mark) - `status.escape_evaluated` is what lets this say "we
+    # could not check" instead of asserting the gate is definitely on (I2).
+    status = minimum_hold_status(entry, last_price, now, settings)
+    if status.blocked:
+        clears_on = _first_session_that_clears(entry.opened_at, settings.min_holding_trading_days)
+        suffix = "" if status.escape_evaluated else " (escape unknown)"
+        notes.append(f"held until {clears_on:%Y-%m-%d}{suffix}")
 
     if settings.enforce_time_stop:
+        held_days = _trading_days_between(entry.opened_at, now)
         remaining = settings.time_stop_trading_days - held_days
-        if remaining <= _TIME_STOP_WARNING_WINDOW_TRADING_DAYS:
+        # Lower-bounded at 0 (M3, positions panel brief review): a lot
+        # already past its time stop must not render a date in the past in a
+        # column of otherwise forward-looking warnings.
+        if 0 <= remaining <= _TIME_STOP_WARNING_WINDOW_TRADING_DAYS:
             fires_on = _first_session_that_clears(entry.opened_at, settings.time_stop_trading_days)
-            blockers.append(f"time stop {fires_on:%Y-%m-%d}")
+            notes.append(f"time stop {fires_on:%Y-%m-%d}")
 
-    return tuple(blockers)
+    return tuple(notes)
 
 
 def _last_price(position: Position) -> float | None:
-    """The broker's live mark, falling back to the average cost when none is
-    reported (M66's tier 2/3, without the UI-only override tier 1 - nothing
-    on this panel's path ever supplies one)."""
-    if position.current_price is not None:
-        return position.current_price
-    return position.avg_price
+    """The broker's reported mark, and nothing else (C1 fix, positions panel
+    brief review).
+
+    `avg_price` is the cost basis, not a mark - `MockBroker` and
+    `SimulatedBroker` construct positions with `avg_price=fill_price` and no
+    `current_price` at all, which is the app's own default broker. Falling
+    back to it here printed a P&L of essentially 0.0% under a column headed
+    "Last", coloured as though it were a real, known number - the opposite
+    of M66/M90's three-tier price rule, which is a RISK figure where
+    under-measuring is the dangerous error. A P&L display's dangerous error
+    is stating a number at all, so this returns `None` when the broker
+    reports no mark, and lets everything derived from it (`pnl_pct`,
+    `pnl_r`, `stop_distance`, the loss escape) fall to `None` with it.
+    `risk_share` is unaffected - the governor keeps its own tiering."""
+    return position.current_price
 
 
 def build_position_views(
@@ -237,7 +247,7 @@ def build_position_views(
                 exit_distance=exit_distance,
                 stop_distance=stop_distance,
                 risk_share=risk_share,
-                blockers=_blockers(
+                notes=_notes(
                     symbol=symbol,
                     entry=entry,
                     resting_stops=resting_stops,
