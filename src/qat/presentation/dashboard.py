@@ -65,6 +65,21 @@ _POSITIONS_STATUS_COLUMN = 8
 # number, and reads better right-aligned against its neighbours.
 _POSITIONS_NUMERIC_COLUMNS = frozenset(range(1, _POSITIONS_STATUS_COLUMN))
 
+# Cells already carry tooltips (M87); the headers did not, and "To exit" and
+# "To stop" are the two most likely to be misread as each other or elided
+# first (positions panel brief review, M7).
+_POSITIONS_COLUMN_TOOLTIPS = {
+    "Symbol": "The traded symbol",
+    "Qty": "Quantity currently held",
+    "Entry": "This app's own entry price - not the broker's average cost",
+    "Last": "The broker's last reported mark; em dash when it reports none",
+    "P&L": "Unrealised P&L, as a percentage and in R (risk multiples) when the lot has a stop",
+    "To exit": "Distance from the strategy's signal-exit condition, as a fraction of its slow EMA",
+    "To stop": "Distance from the last price down to the resting stop",
+    "Risk": "This position's share of the aggregate risk-at-stop budget",
+    "Status": "What is true about a sell right now - not all of this is a reason one won't fire",
+}
+
 
 def _format_price(value: float | None) -> str:
     return f"{value:,.2f}" if value is not None else _EM_DASH
@@ -183,12 +198,19 @@ class DashboardScreen(QWidget):
         layout.addWidget(QLabel("Positions"))
         self.positions_table = QTableWidget(0, len(_POSITIONS_COLUMNS))
         self.positions_table.setHorizontalHeaderLabels(list(_POSITIONS_COLUMNS))
-        # Status carries the most variable-length text on the row - the
-        # blockers joined into a sentence - so it gets the Stretch treatment
-        # the Blotter's Reason column already has (M87): every other column
-        # keeps a sensible fixed width and Status takes whatever the window
-        # has left, rather than every column's minimum width summing past
-        # the panel and clipping the last one off the edge.
+        # Cells get a tooltip below; the headers need one too (M87 originally
+        # fixed only the cells) - "To exit" and "To stop" are the two most in
+        # need of disambiguating, and the first to elide.
+        for col, label in enumerate(_POSITIONS_COLUMNS):
+            header_item = self.positions_table.horizontalHeaderItem(col)
+            if header_item is not None:
+                header_item.setToolTip(_POSITIONS_COLUMN_TOOLTIPS[label])
+        # Status carries the most variable-length text on the row - the notes
+        # joined into a sentence - so it gets the Stretch treatment the
+        # Blotter's Reason column already has (M87): every other column keeps
+        # a sensible fixed width and Status takes whatever the window has
+        # left, rather than every column's minimum width summing past the
+        # panel and clipping the last one off the edge.
         self.positions_table.horizontalHeader().setSectionResizeMode(
             _POSITIONS_STATUS_COLUMN, QHeaderView.ResizeMode.Stretch
         )
@@ -353,11 +375,13 @@ class DashboardScreen(QWidget):
             )
         )
 
-        # One resting-stop read shared between the governor snapshot below and
-        # the view builder, rather than two - the account snapshot above is
-        # already the one-shared-read pattern this screen exists to follow
-        # (M21), and a second broker-adjacent call here would be the same
-        # mistake in miniature.
+        # A second `position_stops()` read, not a shared one - the adopted
+        # panel above already read one a few lines up (positions panel brief
+        # review, M1: an earlier version of this comment claimed otherwise).
+        # Harmless duplication: `position_stops()` is a synchronous local
+        # dict copy, never a broker call, so it is not the M21 pattern this
+        # screen otherwise follows for the actual broker round trip - the
+        # account snapshot at the top of `_refresh` is the one that matters.
         resting_stops = self.runtime.oms.position_stops()
         views = build_position_views(
             positions=positions,
@@ -384,14 +408,29 @@ class DashboardScreen(QWidget):
         self._populate_positions_table(views)
 
     def _bars_for(self, symbol: str) -> pd.DataFrame | None:
-        """The bars `PositionView.exit_distance` is computed from - the same
-        aggregator `SignalToOrderBridge` sizes stops from, so the panel and
-        the bridge can never be looking at two different bar feeds for the
-        same symbol."""
+        """The bars `PositionView.exit_distance` is computed from.
+
+        Not literally the aggregator the exit condition is judged against
+        (positions panel brief review, M2: an earlier version of this
+        docstring claimed that). `exit_distance` is a STRATEGY accessor, and
+        the signal that would actually fire comes from `on_features`
+        evaluating `StrategyEngine.bars` - a separate `MultiSymbolAggregator`
+        instance from this bridge's own `bars`. The two stay in step because
+        `runtime.py`'s `WarmStart` seeds both of them (and `FeatureEngine.bars`)
+        from one shared warm-start pass and then feeds all three the same
+        live event stream - not because reading this one is reading "the
+        same aggregator" the strategy engine does.
+
+        Read-only (M6): `frame_if_present` never creates an aggregator entry
+        for a symbol this bridge has not already seen the way `frame()`
+        would, so opening the dashboard cannot mutate `SignalToOrderBridge`
+        state - the same principle `position_entries()` already applies to
+        the entry record.
+        """
         bridge = self.runtime.signal_bridge
         if bridge is None:
             return None
-        return bridge.bars.frame(symbol)
+        return bridge.bars.frame_if_present(symbol)
 
     def _populate_positions_table(self, views: tuple[PositionView, ...]) -> None:
         table = self.positions_table
@@ -406,7 +445,7 @@ class DashboardScreen(QWidget):
                 _format_pct(view.exit_distance),
                 _format_pct(view.stop_distance),
                 _format_pct(view.risk_share, decimals=0),
-                ", ".join(view.blockers),
+                ", ".join(view.notes),
             )
             for col, text in enumerate(cells):
                 item = QTableWidgetItem(text)
@@ -422,7 +461,7 @@ class DashboardScreen(QWidget):
                 if col == _POSITIONS_PNL_COLUMN and view.pnl_pct is not None:
                     colour = theme.SUCCESS if view.pnl_pct >= 0 else theme.DANGER
                     item.setForeground(QColor(colour))
-                if col == _POSITIONS_STATUS_COLUMN and "no stop resting" in view.blockers:
+                if col == _POSITIONS_STATUS_COLUMN and "no stop resting" in view.notes:
                     # The alarming blocker, coloured the same as the adopted
                     # panel's own DANGER state - both say the same thing:
                     # unknown protection is treated as none.
