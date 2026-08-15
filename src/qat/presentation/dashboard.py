@@ -11,9 +11,11 @@ from datetime import UTC, datetime
 
 import pandas as pd
 import pyqtgraph as pg
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QPushButton,
     QTableWidget,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
 
 from qat.domain.events import RegimeEvent
 from qat.domain.oms.adopted import assess_adopted_positions
+from qat.domain.oms.position_view import PositionView, build_position_views
 from qat.presentation import theme
 from qat.presentation.adopted_panel import AdoptedPositionsPanel
 from qat.presentation.balances_panel import BalancesPanel
@@ -37,6 +40,55 @@ logger = logging.getLogger(__name__)
 _REFRESH_INTERVAL_MS = 2000
 _MAX_EQUITY_POINTS = 500
 _MIN_POINTS_FOR_SHARPE = 10
+
+# --- Positions table (positions panel brief) ----------------------------------
+#
+# Nine columns replacing the old Symbol/Quantity/Avg Price. `None` renders as
+# an em dash everywhere on this table, never as a number or a blank cell that
+# could be misread as zero (M81, M82: a display that states something false
+# is the defect class this project has been bitten by most).
+_EM_DASH = "—"
+_POSITIONS_COLUMNS = (
+    "Symbol",
+    "Qty",
+    "Entry",
+    "Last",
+    "P&L",
+    "To exit",
+    "To stop",
+    "Risk",
+    "Status",
+)
+_POSITIONS_PNL_COLUMN = 4
+_POSITIONS_STATUS_COLUMN = 8
+# Every column except Symbol (text) and Status (a joined sentence) carries a
+# number, and reads better right-aligned against its neighbours.
+_POSITIONS_NUMERIC_COLUMNS = frozenset(range(1, _POSITIONS_STATUS_COLUMN))
+
+
+def _format_price(value: float | None) -> str:
+    return f"{value:,.2f}" if value is not None else _EM_DASH
+
+
+def _format_pct(value: float | None, decimals: int = 2) -> str:
+    return f"{value:.{decimals}%}" if value is not None else _EM_DASH
+
+
+def _format_pnl(pnl_pct: float | None, pnl_r: float | None) -> str:
+    """ "-6.2% (0.35R)", or just the percentage when there is no R (no stop on
+    the lot to measure one against).
+
+    The R figure is shown unsigned: the percentage already carries the
+    direction, and an operator reading this says "down 0.35R", not
+    "-0.35R" - restating the sign a second time would only invite the two to
+    disagree if one were ever rounded differently from the other.
+    """
+    if pnl_pct is None:
+        return _EM_DASH
+    text = f"{pnl_pct:.1%}"
+    if pnl_r is None:
+        return text
+    return f"{text} ({abs(pnl_r):.2f}R)"
 
 
 class DashboardScreen(QWidget):
@@ -129,8 +181,17 @@ class DashboardScreen(QWidget):
         self._seed_equity_history()
 
         layout.addWidget(QLabel("Positions"))
-        self.positions_table = QTableWidget(0, 3)
-        self.positions_table.setHorizontalHeaderLabels(["Symbol", "Quantity", "Avg Price"])
+        self.positions_table = QTableWidget(0, len(_POSITIONS_COLUMNS))
+        self.positions_table.setHorizontalHeaderLabels(list(_POSITIONS_COLUMNS))
+        # Status carries the most variable-length text on the row - the
+        # blockers joined into a sentence - so it gets the Stretch treatment
+        # the Blotter's Reason column already has (M87): every other column
+        # keeps a sensible fixed width and Status takes whatever the window
+        # has left, rather than every column's minimum width summing past
+        # the panel and clipping the last one off the edge.
+        self.positions_table.horizontalHeader().setSectionResizeMode(
+            _POSITIONS_STATUS_COLUMN, QHeaderView.ResizeMode.Stretch
+        )
         layout.addWidget(self.positions_table)
 
         layout.addWidget(QLabel("AI Regime Note"))
@@ -292,11 +353,81 @@ class DashboardScreen(QWidget):
             )
         )
 
-        self.positions_table.setRowCount(len(positions))
-        for row, position in enumerate(positions):
-            self.positions_table.setItem(row, 0, QTableWidgetItem(position.symbol))
-            self.positions_table.setItem(row, 1, QTableWidgetItem(f"{position.quantity:g}"))
-            self.positions_table.setItem(row, 2, QTableWidgetItem(f"{position.avg_price:.2f}"))
+        # One resting-stop read shared between the governor snapshot below and
+        # the view builder, rather than two - the account snapshot above is
+        # already the one-shared-read pattern this screen exists to follow
+        # (M21), and a second broker-adjacent call here would be the same
+        # mistake in miniature.
+        resting_stops = self.runtime.oms.position_stops()
+        views = build_position_views(
+            positions=positions,
+            entries=(
+                self.runtime.signal_bridge.position_entries()
+                if self.runtime.signal_bridge is not None
+                else {}
+            ),
+            resting_stops=resting_stops,
+            # The SAME derivation the aggregate cap is gated on (piece 1 of
+            # the brief) - never recomputed here, or this panel could show a
+            # per-position risk figure that has quietly drifted from the one
+            # that refuses entries.
+            snapshot=self.runtime.risk_engine.governor.snapshot(positions, resting_stops, equity),
+            settings=self.runtime.settings,
+            bars_for=self._bars_for,
+            strategies=self.runtime.available_strategies,
+            # The true edge of the system: everything downstream of here
+            # (position_view.py) takes an injected clock, and this is where
+            # the wall clock actually gets read - the same boundary
+            # SignalToOrderBridge._now draws for the churn rails.
+            clock=lambda: datetime.now(UTC),
+        )
+        self._populate_positions_table(views)
+
+    def _bars_for(self, symbol: str) -> pd.DataFrame | None:
+        """The bars `PositionView.exit_distance` is computed from - the same
+        aggregator `SignalToOrderBridge` sizes stops from, so the panel and
+        the bridge can never be looking at two different bar feeds for the
+        same symbol."""
+        bridge = self.runtime.signal_bridge
+        if bridge is None:
+            return None
+        return bridge.bars.frame(symbol)
+
+    def _populate_positions_table(self, views: tuple[PositionView, ...]) -> None:
+        table = self.positions_table
+        table.setRowCount(len(views))
+        for row, view in enumerate(views):
+            cells = (
+                view.symbol,
+                f"{view.quantity:g}",
+                _format_price(view.entry_price),
+                _format_price(view.last_price),
+                _format_pnl(view.pnl_pct, view.pnl_r),
+                _format_pct(view.exit_distance),
+                _format_pct(view.stop_distance),
+                _format_pct(view.risk_share, decimals=0),
+                ", ".join(view.blockers),
+            )
+            for col, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                # Every cell, not only Status: the M87 fix is "elide with an
+                # ellipsis and keep the full text one hover away", and a
+                # narrow Entry or Risk column truncates exactly as easily as
+                # a narrow Reason column does.
+                item.setToolTip(text)
+                if col in _POSITIONS_NUMERIC_COLUMNS:
+                    item.setTextAlignment(
+                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+                    )
+                if col == _POSITIONS_PNL_COLUMN and view.pnl_pct is not None:
+                    colour = theme.SUCCESS if view.pnl_pct >= 0 else theme.DANGER
+                    item.setForeground(QColor(colour))
+                if col == _POSITIONS_STATUS_COLUMN and "no stop resting" in view.blockers:
+                    # The alarming blocker, coloured the same as the adopted
+                    # panel's own DANGER state - both say the same thing:
+                    # unknown protection is treated as none.
+                    item.setForeground(QColor(theme.DANGER))
+                table.setItem(row, col, item)
 
     async def _on_regime(self, event: RegimeEvent) -> None:
         self.regime_header.setText(f"Regime: {event.label} (scalar={event.exposure_scalar:.2f})")
