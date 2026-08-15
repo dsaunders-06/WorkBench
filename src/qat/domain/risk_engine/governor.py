@@ -50,6 +50,14 @@ class ExposureSnapshot:
     risk_at_stop_dollars: float
     gross_exposure_dollars: float
     equity: float
+    # Each position's own contribution to the total above, for the positions
+    # panel (piece 1 of the panel brief). Populated from exactly the same
+    # figure the loop below is already summing into risk_at_stop_dollars, so
+    # it cannot drift from the total that gates entries - a second
+    # derivation in the presentation layer would, the first time the
+    # three-tier price rule (M66/M90) changed. `default_factory` so every
+    # caller that built one before this field existed still constructs.
+    risk_by_symbol: dict[str, float] = field(default_factory=dict)
 
     @property
     def risk_at_stop_pct(self) -> float:
@@ -87,6 +95,7 @@ class PortfolioGovernor:
         held: dict[str, float] = {}
         risk = 0.0
         gross = 0.0
+        risk_by_symbol: dict[str, float] = {}
 
         for pos in positions:
             quantity = abs(pos.quantity)
@@ -111,7 +120,9 @@ class PortfolioGovernor:
             # entry price is better than measuring a position as free.
             price = prices.get(pos.symbol) or pos.current_price or pos.avg_price
             gross += quantity * price
-            risk += quantity * self._per_share_risk(pos.symbol, price, stops)
+            position_risk = quantity * self._per_share_risk(pos.symbol, price, stops)
+            risk += position_risk
+            risk_by_symbol[pos.symbol] = risk_by_symbol.get(pos.symbol, 0.0) + position_risk
 
         for order in pending_orders or []:
             # Only buys add exposure. A pending sell reduces it, and counting
@@ -125,16 +136,20 @@ class PortfolioGovernor:
             if order.symbol not in held:
                 held[order.symbol] = order.quantity
             gross += order.quantity * price
-            if order.stop_price and order.stop_price < price:
-                risk += order.quantity * (price - order.stop_price)
-            else:
-                risk += order.quantity * price
+            order_risk = (
+                order.quantity * (price - order.stop_price)
+                if order.stop_price and order.stop_price < price
+                else order.quantity * price
+            )
+            risk += order_risk
+            risk_by_symbol[order.symbol] = risk_by_symbol.get(order.symbol, 0.0) + order_risk
 
         return ExposureSnapshot(
             position_count=len(held),
             risk_at_stop_dollars=risk,
             gross_exposure_dollars=gross,
             equity=equity,
+            risk_by_symbol=risk_by_symbol,
         )
 
     def _correlated_holdings(

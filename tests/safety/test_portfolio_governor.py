@@ -18,7 +18,7 @@ from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
-from qat.domain.risk_engine.governor import PortfolioGovernor
+from qat.domain.risk_engine.governor import ExposureSnapshot, PortfolioGovernor
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
 EQUITY = 100_000.0
@@ -70,6 +70,37 @@ def test_risk_at_stop_is_the_sum_of_each_positions_risk():
     assert snap.risk_at_stop_dollars == pytest.approx(1500.0)
     assert snap.risk_at_stop_pct == pytest.approx(0.015)
     assert snap.position_count == 2
+
+
+def test_risk_by_symbol_sums_to_the_same_total_the_cap_is_gated_on():
+    """Per-position risk (for the positions panel) has to be the SAME figure
+    the aggregate cap already accumulates - a second derivation in a display
+    would drift from this one the first time the three-tier price rule
+    changed (M66/M90)."""
+    governor = PortfolioGovernor(_settings())
+    positions = [_position("A"), _position("B"), _position("C", quantity=50.0)]
+    stops = {"A": 95.0, "B": 90.0, "C": 80.0}
+
+    snap = governor.snapshot(positions, stops, EQUITY)
+
+    assert snap.risk_by_symbol == {
+        "A": pytest.approx(500.0),
+        "B": pytest.approx(1000.0),
+        "C": pytest.approx(1000.0),
+    }
+    assert sum(snap.risk_by_symbol.values()) == pytest.approx(snap.risk_at_stop_dollars)
+
+
+def test_an_existing_caller_omitting_risk_by_symbol_still_constructs():
+    """The new field must not break a caller that built ExposureSnapshot
+    before it existed."""
+    snap = ExposureSnapshot(
+        position_count=1,
+        risk_at_stop_dollars=500.0,
+        gross_exposure_dollars=10_000.0,
+        equity=EQUITY,
+    )
+    assert snap.risk_by_symbol == {}
 
 
 def test_a_position_with_no_known_stop_risks_its_whole_value():
