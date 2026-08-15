@@ -57,6 +57,15 @@ class ExposureSnapshot:
     # derivation in the presentation layer would, the first time the
     # three-tier price rule (M66/M90) changed. `default_factory` so every
     # caller that built one before this field existed still constructs.
+    #
+    # A pending BUY in a symbol already held blends into that same symbol's
+    # key (M8, positions panel brief review): the loop below sums a held
+    # position's risk and a pending order's risk into one `risk_by_symbol[
+    # symbol]` entry, so a panel reading this cannot tell how much of a
+    # symbol's figure is the filled position versus an order still awaiting
+    # sign-off. A judgement call the operator has not been asked about;
+    # left as-is - this mirrors `risk_at_stop_dollars` itself, which has
+    # always blended the two into one total.
     risk_by_symbol: dict[str, float] = field(default_factory=dict)
 
     @property

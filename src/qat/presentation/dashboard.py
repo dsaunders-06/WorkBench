@@ -398,6 +398,12 @@ class DashboardScreen(QWidget):
             snapshot=self.runtime.risk_engine.governor.snapshot(positions, resting_stops, equity),
             settings=self.runtime.settings,
             bars_for=self._bars_for,
+            # The AVAILABLE set, not `settings.deployed_strategies_tuple` (M4,
+            # positions panel brief review) - a position's `entry.strategy`
+            # can only be resolved against a strategy this dashboard can look
+            # up by name, and the available set is the superset that
+            # includes it. A judgement call the operator has not been asked
+            # about; left as-is.
             strategies=self.runtime.available_strategies,
             # The true edge of the system: everything downstream of here
             # (position_view.py) takes an injected clock, and this is where

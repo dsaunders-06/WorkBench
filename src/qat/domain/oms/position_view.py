@@ -96,6 +96,11 @@ def _first_session_that_clears(opened_at: datetime, trading_days: int) -> date:
     stepping one calendar day at a time and asking the same function whether
     enough trading days have passed yet cannot disagree with it about what a
     trading day is, because it never computes that independently.
+
+    O(n^2)-ish for a hold of n days: each of the up-to-n candidate days calls
+    `_trading_days_between`, itself an O(n) walk (M5, positions panel brief
+    review). Not worth optimising for the trading-day counts a churn rail
+    deals in - a judgement call the operator has not been asked about.
     """
     candidate = opened_at
     while _trading_days_between(opened_at, candidate) < trading_days:
