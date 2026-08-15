@@ -73,13 +73,51 @@ class SwingStrategy:
             "reward_risk": self.reward_risk,
         }
 
-    def on_features(self, snapshot: FeatureSnapshot) -> list[SignalEvent]:
-        bars = snapshot.context.bars
-        if len(bars) < max(self.slow_window, self.atr_window) + 2:
-            return []
+    def _min_bars(self) -> int:
+        """The window guard on_features and exit_distance both open with, in
+        one place so the two cannot quietly disagree on how many bars are
+        enough to judge the trend."""
+        return max(self.slow_window, self.atr_window) + 2
+
+    def _emas(self, bars: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+        """The fast/slow EMA pair, computed once here so on_features' exit
+        check and exit_distance read the same numbers rather than two
+        separately-written copies of the same formula drifting apart."""
         close = bars["close"]
         ema_fast = close.ewm(span=self.fast_window, adjust=False).mean()
         ema_slow = close.ewm(span=self.slow_window, adjust=False).mean()
+        return ema_fast, ema_slow
+
+    def exit_distance(self, bars: pd.DataFrame) -> float | None:
+        """How far this position is from the condition that would sell it.
+
+        A FRACTION of the slow EMA: 0.0063 means EMA20 sits 0.63% above EMA50
+        and the crossover that triggers on_features' sell is that far away.
+        Zero or negative means the exit condition is already met.
+
+        Read-only and derived from the same two EMAs on_features uses, in the
+        same file, so a change to the exit rule changes this with it. The UI
+        asks the strategy rather than keeping its own copy of the crossover -
+        the argument manifest.py makes for deriving rail counts through one
+        classifier rather than two.
+
+        None when there are too few bars to judge, which is the same guard
+        on_features opens with. None means "cannot say", never zero.
+        """
+        if len(bars) < self._min_bars():
+            return None
+        ema_fast, ema_slow = self._emas(bars)
+        slow = ema_slow.iloc[-1]
+        if slow == 0:
+            return None
+        return float((ema_fast.iloc[-1] - slow) / slow)
+
+    def on_features(self, snapshot: FeatureSnapshot) -> list[SignalEvent]:
+        bars = snapshot.context.bars
+        if len(bars) < self._min_bars():
+            return []
+        close = bars["close"]
+        ema_fast, ema_slow = self._emas(bars)
         in_uptrend = ema_fast.iloc[-1] > ema_slow.iloc[-1]
 
         # --- Exit first (M14) ------------------------------------------------

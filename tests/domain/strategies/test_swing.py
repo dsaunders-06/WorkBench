@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from _helpers import make_context, make_snapshot
+import pytest
+from _helpers import make_bars, make_context, make_snapshot
 
 from qat.domain.regime import Regime
 from qat.domain.strategies.base import FeatureSnapshot
@@ -120,3 +121,44 @@ def test_missing_position_data_reads_as_holding_nothing():
     snapshot = _snapshot(_rolled_over(), held=0.0)
     assert snapshot.held_quantity() == 0.0
     assert SwingStrategy().on_features(snapshot) == []
+
+
+# --- exit_distance (positions panel brief, piece 2) ---------------------------
+#
+# The read-only accessor the positions panel asks instead of keeping its own
+# copy of the crossover rule. Derived from the same two EMAs on_features uses,
+# on the same bars.
+
+
+def test_exit_distance_in_a_clear_uptrend_matches_a_hand_computed_ema_gap():
+    strategy = SwingStrategy(fast_window=20, slow_window=50, atr_window=14)
+    bars = make_bars(_uptrend())
+
+    distance = strategy.exit_distance(bars)
+
+    close = bars["close"]
+    ema_fast = close.ewm(span=20, adjust=False).mean()
+    ema_slow = close.ewm(span=50, adjust=False).mean()
+    expected = (ema_fast.iloc[-1] - ema_slow.iloc[-1]) / ema_slow.iloc[-1]
+
+    assert distance == pytest.approx(expected)
+    assert distance > 0
+
+
+def test_exit_distance_is_at_or_below_zero_once_the_trend_has_crossed_over():
+    strategy = SwingStrategy(fast_window=20, slow_window=50, atr_window=14)
+    bars = make_bars(_rolled_over())
+
+    distance = strategy.exit_distance(bars)
+
+    assert distance is not None
+    assert distance <= 0
+
+
+def test_exit_distance_is_none_with_too_few_bars_to_judge():
+    """Same guard on_features opens with - too few bars is 'cannot say', not
+    zero."""
+    strategy = SwingStrategy(fast_window=20, slow_window=50, atr_window=14)
+    bars = make_bars(_uptrend(n=10))
+
+    assert strategy.exit_distance(bars) is None
