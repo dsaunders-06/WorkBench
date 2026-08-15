@@ -117,6 +117,25 @@ class _Entry:
     strategy: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class PositionEntry:
+    """A read-only, public view of `_Entry`, for callers outside this module
+    (positions panel brief, piece 3).
+
+    `_Entry` stays private - the bridge already exposes narrower reads of it
+    (`entry_open_dates`, `opened_symbols`), and a caller that needs the whole
+    record gets its own copy of the fields rather than the private dataclass
+    itself, so nothing outside this module can come to depend on `_Entry`'s
+    shape.
+    """
+
+    opened_at: datetime
+    price: float
+    stop_price: float | None
+    target_price: float | None
+    strategy: str | None
+
+
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
     """Close-to-close returns indexed by TIMESTAMP, not bar number.
 
@@ -691,6 +710,32 @@ class SignalToOrderBridge:
         empty at launch, and launch is exactly when the adoption banner runs.
         """
         return set(self._entries)
+
+    def position_entries(self) -> dict[str, PositionEntry]:
+        """The full entry record for every held position, publicly (positions
+        panel brief, piece 3).
+
+        `entry_open_dates` and `opened_symbols` already read `_entries` for
+        one field each; this is the same shape for a caller - the positions
+        panel - that needs the app's entry price, stop, target and strategy
+        together, since that price is a different fact from the broker's own
+        `avg_price` and the two have disagreed (MNST's broker basis stayed at
+        $91.18 through a 2-for-1 split).
+
+        A fresh copy, not the live dict: a display must not be able to
+        mutate the bridge's own state, and `_Entry` is never handed out - the
+        caller gets `PositionEntry` instead.
+        """
+        return {
+            symbol: PositionEntry(
+                opened_at=entry.opened_at,
+                price=entry.price,
+                stop_price=entry.stop_price,
+                target_price=entry.target_price,
+                strategy=entry.strategy,
+            )
+            for symbol, entry in self._entries.items()
+        }
 
     async def rearm_protective_stops(self) -> list[str]:
         """Proposes a stop for every held position that has none (M31d).
