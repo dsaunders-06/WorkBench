@@ -112,6 +112,46 @@ async def test_the_hold_stops_applying_once_the_thesis_is_far_enough_wrong():
 
 
 @pytest.mark.asyncio
+async def test_the_escape_says_in_the_log_why_it_let_the_exit_through(caplog):
+    """An exit INSIDE the minimum hold is the surprising thing to find in the
+    record, and this line is the only place that explains it.
+
+    It existed, and the I3 extraction of `minimum_hold_status` dropped it: the
+    blocked path kept its message and the escape path lost one, silently. The
+    rule moved and its explanation did not move with it. Nothing failed,
+    because nothing asserted on it - which is why this test exists rather than
+    just the restored line.
+    """
+    broker = _Broker()
+    bridge = _bridge(broker, min_holding_trading_days=10, min_holding_loss_escape_r=0.5)
+    await _opened(bridge, days_ago=2, stop=95.0)  # 1R = $5
+
+    with caplog.at_level("INFO", logger="qat.domain.oms.signal_bridge"):
+        assert bridge._blocked_by_minimum_hold("AAA", price=97.0) is False  # 0.6R down
+
+    escape_lines = [r for r in caplog.records if "does not" in r.getMessage()]
+    assert len(escape_lines) == 1
+    # The R figure itself, not just that something was logged - the number is
+    # the whole reason an operator reads the line.
+    assert "0.60R" in escape_lines[0].getMessage()
+    assert "AAA" in escape_lines[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_clearing_the_hold_normally_does_not_claim_an_escape(caplog):
+    """A lot past its minimum hold is not "escaping" anything. `loss_r` is set
+    on no path but the escape, which is what keeps the two apart."""
+    broker = _Broker()
+    bridge = _bridge(broker, min_holding_trading_days=10, min_holding_loss_escape_r=0.5)
+    await _opened(bridge, days_ago=30, stop=95.0)
+
+    with caplog.at_level("INFO", logger="qat.domain.oms.signal_bridge"):
+        assert bridge._blocked_by_minimum_hold("AAA", price=97.0) is False
+
+    assert [r for r in caplog.records if "does not" in r.getMessage()] == []
+
+
+@pytest.mark.asyncio
 async def test_a_signal_exit_after_the_minimum_hold_goes_through():
     broker = _Broker()
     bridge = _bridge(broker, min_holding_trading_days=10)

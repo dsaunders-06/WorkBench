@@ -227,10 +227,20 @@ class MinimumHoldCheck(NamedTuple):
     on. The bridge itself never sees False here, because it always has a
     live tick price to pass; only a display reading a possibly-absent
     broker mark can.
+
+    `loss_r`: how far down the position is, in R, but ONLY when the loss
+    escape was actually reached and computed - None on every other path.
+    That makes it the precise marker for "this exit escaped the hold", which
+    is what the bridge logs. Restored after the I3 extraction dropped the
+    escape's own log line: the blocked path kept its message and the escape
+    path lost one, so a position exiting INSIDE its minimum hold - the rarer
+    and more consequential direction - would have left no explanation in
+    `qat.log` for why the rail let it through.
     """
 
     blocked: bool
     escape_evaluated: bool
+    loss_r: float | None = None
 
 
 def minimum_hold_status(
@@ -269,7 +279,7 @@ def minimum_hold_status(
     risk = entry.price - stop
     loss_r = (entry.price - price) / risk
     escaped = loss_r >= settings.min_holding_loss_escape_r
-    return MinimumHoldCheck(blocked=not escaped, escape_evaluated=True)
+    return MinimumHoldCheck(blocked=not escaped, escape_evaluated=True, loss_r=loss_r)
 
 
 _MIN_HISTORY_FOR_SIZING = 2
@@ -1151,6 +1161,19 @@ class SignalToOrderBridge:
             return False  # unknown entry: never trap a position we cannot date
 
         status = minimum_hold_status(entry, price, self._now(), self.settings)
+        if not status.blocked and status.loss_r is not None:
+            # The escape fired: this lot is inside its minimum hold and being
+            # let out anyway. `loss_r` is set on no other path, so it is the
+            # exact marker for that case. Logged because an exit inside the
+            # hold window is the surprising one to find in the record, and
+            # without this line nothing says why the rail stood aside.
+            logger.info(
+                "%s is %.2fR down after %d trading days - the minimum hold does not "
+                "apply to a thesis this far wrong",
+                symbol,
+                status.loss_r,
+                _trading_days_between(entry.opened_at, self._now()),
+            )
         if status.blocked and symbol not in self._hold_blocked:
             self._hold_blocked.add(symbol)
             logger.info(
