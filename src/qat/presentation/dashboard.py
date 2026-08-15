@@ -51,8 +51,11 @@ _EM_DASH = "—"
 _POSITIONS_COLUMNS = (
     "Symbol",
     "Qty",
-    "Entry",
-    "Last",
+    # The two money columns say so in the header. Every other numeric column
+    # here is a percentage or a multiple, so an unlabelled price is the one
+    # figure a reader has to infer the unit of.
+    "Entry ($)",
+    "Last ($)",
     "P&L",
     "To exit",
     "To stop",
@@ -71,8 +74,8 @@ _POSITIONS_NUMERIC_COLUMNS = frozenset(range(1, _POSITIONS_STATUS_COLUMN))
 _POSITIONS_COLUMN_TOOLTIPS = {
     "Symbol": "The traded symbol",
     "Qty": "Quantity currently held",
-    "Entry": "This app's own entry price - not the broker's average cost",
-    "Last": "The broker's last reported mark; em dash when it reports none",
+    "Entry ($)": "This app's own entry price - not the broker's average cost",
+    "Last ($)": "The broker's last reported mark; em dash when it reports none",
     "P&L": "Unrealised P&L, as a percentage and in R (risk multiples) when the lot has a stop",
     "To exit": "Distance from the strategy's signal-exit condition, as a fraction of its slow EMA",
     "To stop": "Distance from the last price down to the resting stop",
@@ -90,20 +93,28 @@ def _format_pct(value: float | None, decimals: int = 2) -> str:
 
 
 def _format_pnl(pnl_pct: float | None, pnl_r: float | None) -> str:
-    """ "-6.2% (0.35R)", or just the percentage when there is no R (no stop on
+    """ "-6.2% (-0.35R)", or just the percentage when there is no R (no stop on
     the lot to measure one against).
 
-    The R figure is shown unsigned: the percentage already carries the
-    direction, and an operator reading this says "down 0.35R", not
-    "-0.35R" - restating the sign a second time would only invite the two to
-    disagree if one were ever rounded differently from the other.
+    **The R carries its own sign**, which this did not always do. It was
+    written unsigned on the reasoning that the percentage already states the
+    direction - sound on paper, and wrong on screen: rendered, the cell put a
+    negative number beside a positive one describing the same fact, a 0.35R
+    LOSS was indistinguishable from a 0.35R gain, and a row near flat
+    ("0.8% (0.04R)") carried no directional cue at all. Caught by looking at
+    it, which is the only thing that catches this class.
+
+    The two signs cannot disagree, because both are computed from the same
+    `last - entry`: `pnl_pct` divides by the entry price and `pnl_r` by the
+    per-share risk, and neither denominator can be negative - a stop above
+    the entry price yields no R at all rather than a flipped one.
     """
     if pnl_pct is None:
         return _EM_DASH
     text = f"{pnl_pct:.1%}"
     if pnl_r is None:
         return text
-    return f"{text} ({abs(pnl_r):.2f}R)"
+    return f"{text} ({pnl_r:+.2f}R)"
 
 
 class DashboardScreen(QWidget):

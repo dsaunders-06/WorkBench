@@ -149,3 +149,61 @@ async def test_every_cell_carries_a_tooltip_with_its_full_text(qtbot, tmp_path):
         item = screen.positions_table.item(0, col)
         assert item is not None
         assert item.toolTip() == item.text()
+
+
+async def test_the_r_figure_carries_its_own_sign(qtbot, tmp_path):
+    """A 0.35R LOSS must not render identically to a 0.35R gain.
+
+    The R was written unsigned, reasoning that the percentage already states
+    the direction. Rendered, that put "-6.2%" beside "(0.35R)" in one cell -
+    two numbers with opposite signs describing the same fact - and left a
+    near-flat row ("0.8% (0.04R)") with no directional cue at all. Nothing in
+    the suite failed, because nothing asserted on it; it was caught by looking
+    at a screenshot, which is why this test exists.
+    """
+    positions = [
+        Position(symbol="LOSS", quantity=10.0, avg_price=100.0, current_price=96.5),
+        Position(symbol="GAIN", quantity=10.0, avg_price=100.0, current_price=112.0),
+    ]
+    runtime = _runtime(tmp_path, positions)
+    for symbol in ("LOSS", "GAIN"):
+        runtime.signal_bridge._entries[symbol] = _Entry(
+            opened_at=datetime(2020, 1, 1, tzinfo=UTC),
+            price=100.0,
+            stop_price=90.0,  # 1R = $10
+            target_price=None,
+            strategy="swing",
+        )
+        runtime.oms._position_stops[symbol] = 90.0
+    screen = DashboardScreen(runtime)
+    qtbot.addWidget(screen)
+
+    await screen._refresh()
+
+    rows = {
+        screen.positions_table.item(r, _SYMBOL_COL)
+        .text(): screen.positions_table.item(r, _PNL_COL)
+        .text()
+        for r in range(screen.positions_table.rowCount())
+    }
+    assert "(-0.35R)" in rows["LOSS"]
+    assert "(+1.20R)" in rows["GAIN"]
+
+
+async def test_the_money_columns_name_their_unit(qtbot, tmp_path):
+    """Every other numeric column is a percentage or a multiple, so the two
+    carrying dollars are the ones whose unit a reader would have to infer."""
+    runtime = _runtime(tmp_path, [])
+    screen = DashboardScreen(runtime)
+    qtbot.addWidget(screen)
+
+    headers = [
+        screen.positions_table.horizontalHeaderItem(c).text()
+        for c in range(screen.positions_table.columnCount())
+    ]
+    assert headers[_ENTRY_COL] == "Entry ($)"
+    assert headers[_LAST_COL] == "Last ($)"
+    # The header tooltips are keyed by label, so a renamed column silently
+    # losing its tooltip is the failure this catches.
+    for col in (_ENTRY_COL, _LAST_COL):
+        assert screen.positions_table.horizontalHeaderItem(col).toolTip() != ""
