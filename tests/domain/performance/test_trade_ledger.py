@@ -6,13 +6,14 @@ promotion gate concludes rests on these numbers being right.
 
 from __future__ import annotations
 
+import csv
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from qat.config import Settings
 from qat.domain.bus import EventBus
-from qat.domain.events import MarketDataEvent, OrderFilledEvent
+from qat.domain.events import ExitPriceCorrectedEvent, MarketDataEvent, OrderFilledEvent
 from qat.domain.performance.trades import EquityCurve, TradeLedger
 
 _BASE = datetime(2026, 7, 20, 14, 0, tzinfo=UTC)
@@ -490,3 +491,113 @@ async def test_costs_can_be_switched_off_for_a_pure_price_measurement(tmp_path):
 
     assert trade.costs == 0.0
     assert trade.net_pnl == trade.gross_pnl
+
+
+# --- M71: amending an app-transmitted sell after the true fill arrives ------
+#
+# The OMS-level end-to-end path - `_correct_announced_price` publishing
+# `ExitPriceCorrectedEvent` for a sell - is covered in
+# tests/safety/test_live_exit_price_correction.py. These test the ledger's
+# amendment in isolation: matching on order_id, re-apportioning cost, and the
+# backup discipline.
+
+
+def test_a_row_without_order_id_still_loads(tmp_path):
+    """Every closed_trades.csv written before M71 lacks this column - the two
+    rows in the live record among them - and a restart that discarded its
+    whole trade history over a missing amendment target would be the M33
+    mistake again."""
+    (tmp_path / "closed_trades.csv").write_text(
+        "opened_at,closed_at,symbol,strategy,quantity,entry_price,exit_price,stop_price\n"
+        "2026-08-01T00:00:00+00:00,2026-08-05T00:00:00+00:00,CVS,swing,47,105.475,95.597,99.355\n",
+        encoding="utf-8",
+    )
+
+    trades = TradeLedger(EventBus(), tmp_path).closed_trades()
+
+    assert len(trades) == 1
+    assert trades[0].order_id is None
+
+
+@pytest.mark.asyncio
+async def test_one_sell_closing_two_lots_amends_both_rows(tmp_path):
+    """The exit-price twin of test_one_sell_closing_several_lots_splits_its_cost.
+    One sell can close several lots, producing several ClosedTrade rows from
+    one order - every row carrying that order id must be amended, not just
+    the first."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 100, 100.0, stop=95.0)
+    await _fill(ledger, "buy", 100, 105.0, stop=99.0, day=1)
+    await _fill(ledger, "sell", 200, 110.0, day=2)
+
+    trades = ledger.closed_trades()
+    assert len(trades) == 2
+    order_id = trades[0].order_id
+    assert order_id is not None
+    assert trades[1].order_id == order_id
+
+    await ledger._on_exit_price_corrected(
+        ExitPriceCorrectedEvent(order_id=order_id, symbol="AAA", price=112.0, announced_price=110.0)
+    )
+
+    amended = ledger.closed_trades()
+    assert [t.exit_price for t in amended] == [pytest.approx(112.0), pytest.approx(112.0)]
+    # Re-apportioned on quantity, not doubled onto each row - the same basis
+    # _close_against_lots split the original exit cost on.
+    assert sum(t.exit_cost for t in amended) == pytest.approx(ledger._fill_cost(200, 112.0))
+
+    rows = list(csv.DictReader((tmp_path / "closed_trades.csv").open(encoding="utf-8")))
+    assert len(rows) == 2
+    assert all(float(row["exit_price"]) == pytest.approx(112.0) for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_an_unmatched_order_id_amends_nothing(tmp_path):
+    """Amend nothing you are not sure of. A correction applied to the wrong
+    trade is worse than no correction."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 10, 110.0, day=1)
+    before = ledger.closed_trades()[0]
+
+    await ledger._on_exit_price_corrected(
+        ExitPriceCorrectedEvent(
+            order_id="no-such-order", symbol="AAA", price=999.0, announced_price=110.0
+        )
+    )
+
+    after = ledger.closed_trades()[0]
+    assert after.exit_price == pytest.approx(before.exit_price)
+    assert list(tmp_path.glob("closed_trades.csv.bak-*")) == []
+
+
+@pytest.mark.asyncio
+async def test_the_backup_is_written_once_not_per_row(tmp_path):
+    """Once per process - not once per amended row within a single sell's
+    correction, and not again for a second, unrelated one."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 100, 100.0, stop=95.0)
+    await _fill(ledger, "buy", 100, 105.0, stop=99.0, day=1)
+    await _fill(ledger, "sell", 200, 110.0, day=2)  # two rows, one order id
+    await _fill(ledger, "buy", 10, 50.0, stop=45.0, symbol="BBB", day=3)
+    await _fill(ledger, "sell", 10, 55.0, symbol="BBB", day=4)  # a second order
+
+    trades = ledger.closed_trades()
+    first_order_id = trades[0].order_id
+    second_order_id = trades[2].order_id
+    assert first_order_id is not None and second_order_id is not None
+    assert first_order_id != second_order_id
+
+    await ledger._on_exit_price_corrected(
+        ExitPriceCorrectedEvent(
+            order_id=first_order_id, symbol="AAA", price=112.0, announced_price=110.0
+        )
+    )
+    await ledger._on_exit_price_corrected(
+        ExitPriceCorrectedEvent(
+            order_id=second_order_id, symbol="BBB", price=56.0, announced_price=55.0
+        )
+    )
+
+    backups = list(tmp_path.glob("closed_trades.csv.bak-*"))
+    assert len(backups) == 1

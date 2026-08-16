@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import shutil
 import threading
 from collections import defaultdict, deque
 from collections.abc import Callable
@@ -46,6 +47,7 @@ from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import (
     EntryPriceCorrectedEvent,
+    ExitPriceCorrectedEvent,
     MarketDataEvent,
     OrderFilledEvent,
     RegimeEvent,
@@ -95,6 +97,11 @@ _FIELDS = (
     # them not to.
     "earnings_at_entry",
     "held_through_earnings",
+    # The broker's id for the SELL that closed this trade (M71), so an
+    # amendment can target the exact row(s) it belongs to rather than every
+    # row for the symbol. Added while the file already has rows without it -
+    # `from_row` reads it with `.get()` for exactly that reason.
+    "order_id",
 )
 
 
@@ -210,6 +217,11 @@ class ClosedTrade:
     worst_price: float | None = None
     best_price: float | None = None
     earnings_at_entry: date | None = None
+    order_id: str | None = None
+    """The broker's id for the sell that closed this trade (M71), so a later
+    price correction can target this exact row. `OpenLot` already carries one
+    for the same reason on the entry side. None for a trade closed before this
+    field existed, or one whose sell was never recorded with an id."""
 
     @property
     def held_through_earnings(self) -> bool | None:
@@ -378,6 +390,7 @@ class ClosedTrade:
             "held_through_earnings": (
                 "" if self.held_through_earnings is None else str(self.held_through_earnings)
             ),
+            "order_id": self.order_id or "",
         }
 
     @classmethod
@@ -414,6 +427,9 @@ class ClosedTrade:
                 # column, and a restart that discarded its whole trade history
                 # over a missing diagnostic would be the M33 mistake again.
                 earnings_at_entry=_optional_date(row.get("earnings_at_entry")),
+                # .get, for the same reason (M71): the two rows in the live
+                # record predate this column entirely.
+                order_id=row.get("order_id") or None,
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -459,6 +475,10 @@ class TradeLedger:
         # and the app restarts every session. A gate needing 30 closed trades
         # could never have reached them.
         self._closed: list[ClosedTrade] = self._load_closed()
+        # Whether closed_trades.csv has been backed up yet in THIS process
+        # (M71). Once, before the first amendment - not once per amended row,
+        # and not again for a later, unrelated correction.
+        self._closed_trades_backed_up = False
 
     def _load_closed(self) -> list[ClosedTrade]:
         """Trades earlier sessions closed.
@@ -542,12 +562,14 @@ class TradeLedger:
     async def start(self) -> None:
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+        self.bus.subscribe(ExitPriceCorrectedEvent, self._on_exit_price_corrected)
         self.bus.subscribe(RegimeEvent, self._on_regime)
         self.bus.subscribe(MarketDataEvent, self._on_price)
 
     async def stop(self) -> None:
         self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
         self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+        self.bus.unsubscribe(ExitPriceCorrectedEvent, self._on_exit_price_corrected)
         self.bus.unsubscribe(RegimeEvent, self._on_regime)
         self.bus.unsubscribe(MarketDataEvent, self._on_price)
 
@@ -583,6 +605,130 @@ class TradeLedger:
                 worst_price=_reseeded(lot.worst_price, event.announced_price, event.price, min),
                 best_price=_reseeded(lot.best_price, event.announced_price, event.price, max),
             )
+
+    async def _on_exit_price_corrected(self, event: ExitPriceCorrectedEvent) -> None:
+        """Amends the closed-trade record for a sell that filled away from its
+        announcement (M71).
+
+        A buy correction rebases an OPEN LOT, still in memory. A sell CLOSES
+        the position, so by the time the true fill arrives the `ClosedTrade` is
+        already on `closed_trades.csv` - write-then-heal, chosen over deferring
+        the write or leaving it manual. The row is rewritten in place, matched
+        EXACTLY on order_id so a correction can never land on the wrong trade,
+        and backed up before the first amendment this process makes.
+
+        One sell can close several lots, producing several rows from one
+        order - every row carrying that order_id is amended, not just the
+        first. `exit_cost` is recomputed from the corrected price and
+        re-apportioned across them on quantity, the same basis
+        `_close_against_lots` used to split it in the first place. `r_multiple`
+        and `gross_r_multiple` need no separate handling - they are properties
+        derived from `exit_price` and `exit_cost`, so correcting those already
+        corrects them.
+        """
+        if event.price <= 0:
+            return
+        matched = [
+            index for index, trade in enumerate(self._closed) if trade.order_id == event.order_id
+        ]
+        if not matched:
+            # Amend nothing you are not sure of. A correction applied to the
+            # wrong trade is worse than no correction - and this is the normal
+            # case for every trade closed before M71 added the column an
+            # amendment targets.
+            logger.info(
+                "No closed trade recorded for order %s (%s) - nothing to amend",
+                event.order_id,
+                event.symbol,
+            )
+            return
+        with self._lock:
+            if not self._backup_closed_trades():
+                logger.error(
+                    "Could not back up %s before amending order %s - amendment abandoned "
+                    "rather than risking an unrecoverable rewrite",
+                    self.path.name,
+                    event.order_id,
+                )
+                return
+            total_quantity = sum(self._closed[index].quantity for index in matched)
+            exit_cost_total = self._fill_cost(total_quantity, event.price)
+            for index in matched:
+                trade = self._closed[index]
+                self._closed[index] = replace(
+                    trade,
+                    exit_price=event.price,
+                    exit_cost=_share_of(exit_cost_total, trade.quantity, total_quantity),
+                )
+            self._rewrite_closed_trades()
+        logger.warning(
+            "EXIT PRICE CORRECTED ON DISK: %s order %s, %d closed-trade row(s) amended from "
+            "%.4f to %.4f (%+.1f bps) - exit price, realised P&L, exit cost and R-multiple all "
+            "moved.",
+            event.symbol,
+            event.order_id,
+            len(matched),
+            event.announced_price,
+            event.price,
+            (
+                10_000.0 * (event.price - event.announced_price) / event.announced_price
+                if event.announced_price
+                else 0.0
+            ),
+        )
+
+    def _backup_closed_trades(self) -> bool:
+        """Backs up closed_trades.csv once per process, before the first
+        amendment (M71) - the convention the CVS and MNST corrections used.
+
+        An amendment rewrites the whole file, so the backup is the only way
+        back to the pre-amendment record. Once, not per row: two rows amended
+        by the same sell, or a second unrelated correction later in the same
+        process, must not produce a second backup of an already-corrected
+        file. Returns False - refusing the amendment - if the backup itself
+        cannot be written, since a rewrite with no backup behind it is exactly
+        the unrecoverable mistake this exists to prevent.
+        """
+        if self._closed_trades_backed_up:
+            return True
+        if not self.path.exists():
+            # Nothing to protect yet - there is no amendment without an
+            # existing row to amend, so this path is not expected to be hit,
+            # but it must not block the write below if it ever is.
+            self._closed_trades_backed_up = True
+            return True
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        backup = self.path.with_name(f"{self.path.name}.bak-{stamp}")
+        try:
+            shutil.copy2(self.path, backup)
+        except OSError:
+            logger.exception("Could not back up %s before amending a closed trade", self.path)
+            return False
+        logger.warning(
+            "BACKED UP %s to %s before the first closed-trade amendment this process makes",
+            self.path.name,
+            backup.name,
+        )
+        self._closed_trades_backed_up = True
+        return True
+
+    def _rewrite_closed_trades(self) -> None:
+        """Rewrites closed_trades.csv from `_closed` (M71).
+
+        Through the same `csv.DictWriter(..., fieldnames=_FIELDS,
+        extrasaction="ignore")` path `_record` appends with, so an amended
+        file keeps exactly the shape a normal write produces - one shape, one
+        writer.
+        """
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=_FIELDS, extrasaction="ignore")
+                writer.writeheader()
+                for trade in self._closed:
+                    writer.writerow(trade.as_row())
+        except OSError:
+            logger.exception("Could not rewrite %s with the amended closed trade(s)", self.path)
 
     async def _on_regime(self, event: RegimeEvent) -> None:
         self._regime = event.label
@@ -677,6 +823,11 @@ class TradeLedger:
                 worst_price=lot.worst_price,
                 best_price=lot.best_price,
                 earnings_at_entry=lot.earnings_at_entry,
+                # The SELL's id, not the lot's - this is what a later exit-price
+                # correction targets (M71). `OpenLot.order_id` answers a
+                # different question (which buy opened it) and is not carried
+                # here.
+                order_id=event.order_id,
             )
             self._record(trade)
 

@@ -147,6 +147,35 @@ class EntryPriceCorrectedEvent(Event):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ExitPriceCorrectedEvent(Event):
+    """What an order THIS APP transmitted to CLOSE a position actually filled
+    at (M71).
+
+    The sell-side twin of EntryPriceCorrectedEvent, published by the same
+    method for the same reason: `_announce_fill` fires at "transmitted" as
+    well as "filled", and at transmit there is no fill price, so what went out
+    for a sell was the price the order was SIZED against - and
+    `TradeLedger._close_against_lots` built the ClosedTrade from it.
+
+    A buy correction rebases an OPEN LOT, still in memory. A sell CLOSES the
+    position, so by the time the true fill arrives the ClosedTrade is already
+    written to closed_trades.csv - there is no next-startup healing path for a
+    trade that is already closed. The ledger amends the row on this event
+    rather than leaving a wrong exit price, P&L, cost and R-multiple on
+    permanent record.
+    """
+
+    order_id: str
+    symbol: str
+    price: float
+    """What the broker charged. `filled_avg_price`, so a partial that later
+    completes reports the cumulative average and corrects again."""
+    announced_price: float
+    """What was published at transmit, carried so the log can state the
+    difference rather than only the destination."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class DataStaleEvent(Event):
     """ONE symbol's quote is too old to size a trade against (M28a).
 

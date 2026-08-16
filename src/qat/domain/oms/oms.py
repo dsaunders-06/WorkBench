@@ -30,6 +30,7 @@ from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal, JournalEntry
 from qat.domain.events import (
     EntryPriceCorrectedEvent,
+    ExitPriceCorrectedEvent,
     OrderFilledEvent,
     OrderPendingSignoffEvent,
 )
@@ -107,10 +108,11 @@ _ABSORBED_ID_RETENTION = timedelta(days=30)
 # loose enough to absorb rounding on the latter is blind to a real move on the
 # former. At 1e-4 this absorbs cent-level rounding on every price in the book.
 _STOP_LEVEL_TOLERANCE = 1e-4
-# The same relative test, for the same reason, applied to what an entry paid
-# against what its announcement claimed (M70). Matches the tolerance
-# `reconcile_entry_prices` heals to at startup, so the live correction and the
-# startup one cannot disagree about whether a price needs correcting.
+# The same relative test, for the same reason, applied to what an order paid
+# or received against what its announcement claimed - an entry (M70) or an
+# exit (M71). Matches the tolerance `reconcile_entry_prices` heals to at
+# startup, so the live correction and the startup one cannot disagree about
+# whether a price needs correcting.
 _ANNOUNCED_PRICE_TOLERANCE = 1e-4
 
 
@@ -1489,7 +1491,7 @@ class OMS:
         return self._orders.get(broker_order_id)
 
     async def _correct_announced_price(self, raw: BrokerFill) -> None:
-        """Announces what an order this app sent actually filled at (M70).
+        """Announces what an order this app sent actually filled at (M70/M71).
 
         `_announce_fill` publishes at "transmitted" as well as at "filled", and
         at transmit there is no fill price - so what went out was the price the
@@ -1498,22 +1500,28 @@ class OMS:
         held on 8 August recorded a price the account never paid, AMD by 141
         bps.
 
-        `reconcile_entry_prices` heals that at the next startup. A position
-        opened and closed inside one session never reaches a next startup - its
-        ClosedTrade is already written, against a basis that is wrong in both
-        the P&L and the R-multiple denominator. This is that gap.
+        One derivation of "what the broker really did versus what we
+        announced", applied to both sides. A buy correction rebases an OPEN
+        LOT, still in memory - `reconcile_entry_prices` also heals that at the
+        next startup, so a position opened and closed inside one session is the
+        only gap this closes for a buy. A sell CLOSES the position: there is no
+        open lot left and no next-startup healing path, because the
+        `ClosedTrade` is already written to `closed_trades.csv` by the time the
+        true fill arrives. `TradeLedger._on_exit_price_corrected` amends that
+        row in place.
 
         Nothing here touches a quantity. The fill was counted at sign-off, and
         counting it again is the M46 discrepancy that halted 4 August.
         """
-        if self.bus is None or raw.side != "buy" or raw.price <= 0:
+        if self.bus is None or raw.price <= 0:
             return
         order = self._order_the_broker_calls(raw.order_id)
-        if order is None or order.side != "buy":
+        if order is None or order.side != raw.side:
             return
         # Remembered only while the order is genuinely still filling, so
         # `_fill_query_floor` reaches back far enough to see the row carrying
-        # the final average - which keeps the FIRST execution's stamp.
+        # the final average - which keeps the FIRST execution's stamp. Side-
+        # independent: a partial fill is a partial fill either way.
         if raw.quantity + 1e-9 < order.quantity:
             self._own_partial_fill_stamps[raw.order_id] = raw.filled_at
         else:
@@ -1521,7 +1529,7 @@ class OMS:
         announced = order.filled_price or order.reference_price
         if not announced or announced <= 0:
             # Nothing was published to correct - `_announce_fill` returns early
-            # without a price, so no entry record was ever built from one.
+            # without a price, so no record was ever built from one.
             return
         if abs(raw.price - announced) <= _ANNOUNCED_PRICE_TOLERANCE * abs(announced):
             return
@@ -1536,24 +1544,45 @@ class OMS:
         # reports a larger cumulative average and corrects again, which is what
         # keeping the guard on DIFFERENCE rather than on having-run-once buys.
         order.filled_price = raw.price
-        logger.warning(
-            "ENTRY PRICE CORRECTED: %s filled at %.4f, announced at %.4f (%+.1f bps). The "
-            "announcement went out at transmit, where the only price available is the one the "
-            "order was SIZED against - so the entry record, the open lot's cost basis and every "
-            "R-multiple measured from it were wrong by that difference.",
-            raw.symbol,
-            raw.price,
-            announced,
-            10_000.0 * (raw.price - announced) / announced,
-        )
-        await self.bus.publish(
-            EntryPriceCorrectedEvent(
-                order_id=raw.order_id,
-                symbol=raw.symbol,
-                price=raw.price,
-                announced_price=float(announced),
+        bps = 10_000.0 * (raw.price - announced) / announced
+        if order.side == "buy":
+            logger.warning(
+                "ENTRY PRICE CORRECTED: %s filled at %.4f, announced at %.4f (%+.1f bps). The "
+                "announcement went out at transmit, where the only price available is the one "
+                "the order was SIZED against - so the entry record, the open lot's cost basis "
+                "and every R-multiple measured from it were wrong by that difference.",
+                raw.symbol,
+                raw.price,
+                announced,
+                bps,
             )
-        )
+            await self.bus.publish(
+                EntryPriceCorrectedEvent(
+                    order_id=raw.order_id,
+                    symbol=raw.symbol,
+                    price=raw.price,
+                    announced_price=float(announced),
+                )
+            )
+        else:
+            logger.warning(
+                "EXIT PRICE CORRECTED: %s filled at %.4f, announced at %.4f (%+.1f bps). The "
+                "announcement went out at transmit, where the only price available is the one "
+                "the order was SIZED against - so the ClosedTrade's exit price, the realised "
+                "P&L, the exit cost and the R-multiple were all wrong by that difference.",
+                raw.symbol,
+                raw.price,
+                announced,
+                bps,
+            )
+            await self.bus.publish(
+                ExitPriceCorrectedEvent(
+                    order_id=raw.order_id,
+                    symbol=raw.symbol,
+                    price=raw.price,
+                    announced_price=float(announced),
+                )
+            )
 
     async def _resync_tracked_quantities(self) -> None:
         """Re-reads the position baseline from the broker after a replay.
