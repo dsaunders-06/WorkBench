@@ -263,6 +263,28 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M92 - Australian dates on the screens, ISO-8601 in the records  **[BUILT 15 August]**
+
+Ahead of the ASX move: `18/08/2026` on screen, not `2026-08-18`. Eight display
+sites, one shared formatter in `qat.domain.display_dates` - `position_view.py`
+is a domain module and cannot import presentation, so the formatter needed a
+home both layers reach, and eight independent format strings would have been
+eight chances to drift back.
+
+**The split is the point, and it is not cosmetic.** Three sites feed a screen
+AND a record: `PendingAction.describe()` is recorded verbatim in
+`decision_journal.csv`, the split-anomaly reason text is written to the anomaly
+store, and the equity monitor's day key, the risk console's filter key and the
+markdown report header are all read back by code. Those stay ISO-8601. **A
+record and a filter key are read by machines; only what a human reads on a
+screen changed.** Reformatting a persisted date would have been a record
+defect dressed as a preference.
+
+Currency was deliberately NOT touched. The account is a US Alpaca paper
+account holding USD, and labelling those columns A$ before the ASX move would
+be a display asserting something false - the defect class M91's table was
+built to avoid.
+
 ## M91 - The positions table showed three columns and none of them helped  **[BUILT 15 August]**
 
 The Dashboard listed Symbol, Quantity and Avg Price. No mark, no P&L, no
