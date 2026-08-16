@@ -3,6 +3,7 @@
     Set-Location "C:\\Claude Programming"
     & ".\\.venv\\Scripts\\python.exe" scripts\\research\\run_ablation.py --rail cost_to_risk
     & ".\\.venv\\Scripts\\python.exe" scripts\\research\\run_ablation.py --list
+    & ".\\.venv\\Scripts\\python.exe" scripts\\research\\run_ablation.py --market ASX --list
 
 **RUN THROUGH POWERSHELL, NEVER BASH.** The Bash sandbox is per-file and covers
 writes as well as reads, so a run from there can read a frozen bar cache and
@@ -50,33 +51,20 @@ from qat.domain.backtester.ablation import RAILS, REGIME_RAIL, ablated_settings 
 from qat.domain.backtester.macro_cache import DEFAULT_MACRO_CACHE, frozen_macro  # noqa: E402
 from qat.domain.backtester.manifest import build_manifest  # noqa: E402
 from qat.domain.backtester.replay_session import ReplaySession  # noqa: E402
+from qat.domain.backtester.research_universe import (  # noqa: E402
+    UNIVERSES,
+    ResearchUniverse,
+    load_bars,
+)
 from qat.domain.backtester.run_comparison import compare_runs  # noqa: E402
 from qat.domain.strategies.swing import SwingStrategy  # noqa: E402
 from qat.presentation.runtime import resolve_macro_source  # noqa: E402
-
-# The gate's own frozen cache, so an ablation and G1 rest on identical inputs.
-# A research run that fetched its own bars could differ from the gate for a
-# reason that has nothing to do with the rail under test.
-BARS_CACHE = _REPO / "scripts" / "analysis" / "g1" / "bars"
-BENCHMARK = "SPY"
-WARM_BARS = 120
-
-
-def _cached_bars() -> dict[str, pd.DataFrame]:
-    out: dict[str, pd.DataFrame] = {}
-    for path in sorted(BARS_CACHE.glob("*.csv")):
-        frame = pd.read_csv(path, parse_dates=["ts"])
-        frame = frame.set_index(pd.DatetimeIndex(frame["ts"])).drop(columns=["ts"])
-        # `run_g1.py` writes `symbol.replace('/', '-')`, and no symbol in this
-        # universe contains a slash - BRK.B is stored as `BRK.B.csv` - so the
-        # stem is the symbol unchanged.
-        out[path.stem] = frame[["open", "high", "low", "close", "volume"]]
-    return out
 
 
 async def _one(
     directory: Path,
     disabled: list[str],
+    universe: ResearchUniverse,
     bars: dict[str, pd.DataFrame],
     macro: dict[str, list[MacroObservation]],
 ) -> None:
@@ -84,6 +72,7 @@ async def _one(
     base = Settings(
         _env_file=None,
         data_dir=str(directory),  # NEVER the live directory
+        market=universe.market,
         execution_mode="auto",
         deployed_strategies="swing",
         autonomous_strategies="swing",
@@ -93,8 +82,8 @@ async def _one(
         strategies=[SwingStrategy()],
         settings=ablated_settings(base, disabled),
         macro=macro,
-        benchmark=BENCHMARK,
-        warm_bars=WARM_BARS,
+        benchmark=universe.benchmark,
+        warm_bars=universe.warm_bars,
         # The regime gate has no Settings knob - ablating it means the engine
         # never publishes, so the exposure scalar holds its 1.0 default.
         start_regime=REGIME_RAIL not in disabled,
@@ -113,6 +102,13 @@ async def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rail", help="the rail to switch off")
     parser.add_argument("--out", default=None, help="where to write both runs")
     parser.add_argument("--list", action="store_true", help="list the ablatable rails and exit")
+    parser.add_argument(
+        "--market",
+        choices=sorted(UNIVERSES),
+        default="US",
+        help="which universe to replay: US (G1 megacaps, the default - every "
+        "existing invocation) or ASX",
+    )
     args = parser.parse_args(argv)
 
     if args.list:
@@ -122,13 +118,17 @@ async def main(argv: list[str] | None = None) -> int:
     if not args.rail:
         parser.error("--rail is required (or --list)")
 
-    if not BARS_CACHE.exists():
-        print(f"no bar cache at {BARS_CACHE}")
-        print("run scripts/analysis/g1/run_g1.py once to populate it")
+    universe = UNIVERSES[args.market]
+    if not universe.bars_cache.exists():
+        print(f"no bar cache at {universe.bars_cache}")
+        if universe.market == "US":
+            print("run scripts/analysis/g1/run_g1.py once to populate it")
+        else:
+            print("run scripts/research/run_asx_replay.py --fetch once to populate it")
         return 1
 
     root = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="ablation-"))
-    bars = _cached_bars()
+    bars = load_bars(universe)
     # Live config, for CREDENTIALS ONLY - read, never written, and never used
     # as a data_dir. One instance, because two reads of the same config to fill
     # two arguments of one call is a difference waiting to happen.
@@ -143,16 +143,16 @@ async def main(argv: list[str] | None = None) -> int:
         source=lambda: resolve_macro_source(live_config),
         series=live_config.fred_series,
     )
-    print(f"universe   : {len(bars)} symbols from the G1 cache")
+    print(f"universe   : {len(bars)} {universe.market} symbols ({universe.bars_cache.name})")
     print(f"macro      : {len(macro)} series, {sum(len(v) for v in macro.values())} observations")
-    print(f"warm bars  : {WARM_BARS}")
+    print(f"warm bars  : {universe.warm_bars}")
     print(f"output     : {root}")
     print()
 
     print("baseline (all rails on)...")
-    await _one(root / "baseline", [], bars, macro)
+    await _one(root / "baseline", [], universe, bars, macro)
     print(f"ablated ({args.rail} off)...")
-    await _one(root / "ablated", [args.rail], bars, macro)
+    await _one(root / "ablated", [args.rail], universe, bars, macro)
 
     print()
     print(compare_runs(root / "baseline", root / "ablated", args.rail))

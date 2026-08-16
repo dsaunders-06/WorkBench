@@ -60,15 +60,13 @@ import tempfile
 import time
 from pathlib import Path
 
-import pandas as pd
-
 _REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(_REPO / "src"))
 
 from qat.config import Settings  # noqa: E402
 from qat.data.history import resolve_history_source  # noqa: E402
 from qat.data.macro_fred import MacroObservation  # noqa: E402
-from qat.data.universe import MARKET_BENCHMARKS, MARKET_WATCHLISTS  # noqa: E402
+from qat.data.universe import MARKET_WATCHLISTS  # noqa: E402
 from qat.domain.backtester.macro_cache import (  # noqa: E402
     DEFAULT_MACRO_CACHE,
     frozen_macro,
@@ -76,17 +74,21 @@ from qat.domain.backtester.macro_cache import (  # noqa: E402
 )
 from qat.domain.backtester.manifest import build_manifest  # noqa: E402
 from qat.domain.backtester.replay_session import ReplaySession  # noqa: E402
+from qat.domain.backtester.research_universe import ASX, load_bars  # noqa: E402
 from qat.domain.evaluation.refusals import load_risk_decisions, summarise_refusals  # noqa: E402
 from qat.domain.strategies.swing import SwingStrategy  # noqa: E402
 from qat.presentation.runtime import resolve_macro_source  # noqa: E402
 
-BARS_CACHE = _REPO / "scripts" / "research" / "asx_bars"
-BENCHMARK = MARKET_BENCHMARKS["ASX"]
+# The universe descriptor - bar cache, benchmark, warm bars, market - is
+# shared with `run_ablation.py` via `research_universe.ASX` rather than owned
+# here, so the two scripts cannot drift into two notions of "the ASX universe".
+BARS_CACHE = ASX.bars_cache
+BENCHMARK = ASX.benchmark
+WARM_BARS = ASX.warm_bars
 # A year and a half of sessions, against the US window's forty. The US run could
 # not fill its book partly because it had no time to: ten decisions in forty
 # sessions cannot reach a ten-position limit.
 BAR_COUNT = 500
-WARM_BARS = 250
 
 
 def _asx_limitations(macro: dict[str, list[MacroObservation]]) -> tuple[str, str]:
@@ -188,44 +190,6 @@ async def _fetch(symbols: list[str]) -> None:
         print("    A run on fabricated prices produces figures that look entirely real.")
 
 
-def _cached() -> dict[str, pd.DataFrame]:
-    """Cached bars, DATE-ALIGNED across the universe.
-
-    `ReplaySession` warm-starts by INDEX POSITION - `ReplayHistorySource(bars,
-    until_index=n)` - so position n must be the same date for every symbol. It
-    was not: all 95 ASX symbols carry 500 bars, but only the benchmark covers
-    the earliest one, so the rest are offset by a session. Position 250 was then
-    a later date for those symbols than for the broker's own calendar, the warm
-    start seeded past the replay boundary, and `prime_bar` refused to move
-    backwards - correctly, and with the one error message that could have
-    explained it.
-
-    Trimming to the intersection costs one session out of 500 and fabricates
-    nothing. Reindexing onto a common spine would have been the other option and
-    is refused: it fills missing days by carrying a price forward, which invents
-    bars in an instrument whose whole value is that it does not.
-    """
-    frames: dict[str, pd.DataFrame] = {}
-    for path in sorted(BARS_CACHE.glob("*.csv")):
-        frame = pd.read_csv(path, parse_dates=["ts"])
-        if frame.empty:
-            continue
-        frame = frame.set_index(pd.DatetimeIndex(frame["ts"])).drop(columns=["ts"])
-        frames[path.stem] = frame[["open", "high", "low", "close", "volume"]]
-    if not frames:
-        return frames
-
-    common = None
-    for index in (f.index for f in frames.values()):
-        common = index if common is None else common.intersection(index)
-    assert common is not None
-    dropped = {s: len(f.index.difference(common)) for s, f in frames.items()}
-    worst = max(dropped.values()) if dropped else 0
-    if worst:
-        print(f"aligning to {len(common)} common sessions (dropping up to {worst} per symbol)")
-    return {symbol: frame.loc[common] for symbol, frame in frames.items()}
-
-
 async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Replay the harness on ASX data")
     parser.add_argument("--fetch", action="store_true", help="populate the bar cache, then stop")
@@ -242,7 +206,7 @@ async def main(argv: list[str] | None = None) -> int:
         await _fetch(_symbols())
         return 0
 
-    bars = _cached()
+    bars = load_bars(ASX)
     if not bars:
         print(f"no cached bars at {BARS_CACHE}")
         print("run with --fetch first")
@@ -302,7 +266,7 @@ async def main(argv: list[str] | None = None) -> int:
     settings = Settings(
         _env_file=None,
         data_dir=str(root),  # NEVER the live directory
-        market="ASX",  # selects the ASX cost profile automatically
+        market=ASX.market,  # "ASX" - selects the ASX cost profile automatically
         execution_mode="auto",
         deployed_strategies="swing",
         autonomous_strategies="swing",
