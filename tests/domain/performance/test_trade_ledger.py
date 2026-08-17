@@ -6,7 +6,10 @@ promotion gate concludes rests on these numbers being right.
 
 from __future__ import annotations
 
+import asyncio
 import csv
+import logging
+import os
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
@@ -14,7 +17,8 @@ import pytest
 from qat.config import Settings
 from qat.domain.bus import EventBus
 from qat.domain.events import ExitPriceCorrectedEvent, MarketDataEvent, OrderFilledEvent
-from qat.domain.performance.trades import EquityCurve, TradeLedger
+from qat.domain.performance import trades as trades_module
+from qat.domain.performance.trades import _FIELDS, ClosedTrade, EquityCurve, TradeLedger
 
 _BASE = datetime(2026, 7, 20, 14, 0, tzinfo=UTC)
 
@@ -537,7 +541,9 @@ async def test_one_sell_closing_two_lots_amends_both_rows(tmp_path):
     assert trades[1].order_id == order_id
 
     await ledger._on_exit_price_corrected(
-        ExitPriceCorrectedEvent(order_id=order_id, symbol="AAA", price=112.0, announced_price=110.0)
+        ExitPriceCorrectedEvent(
+            order_id=order_id, symbol="AAA", price=112.0, announced_price=110.0, quantity=200.0
+        )
     )
 
     amended = ledger.closed_trades()
@@ -562,7 +568,11 @@ async def test_an_unmatched_order_id_amends_nothing(tmp_path):
 
     await ledger._on_exit_price_corrected(
         ExitPriceCorrectedEvent(
-            order_id="no-such-order", symbol="AAA", price=999.0, announced_price=110.0
+            order_id="no-such-order",
+            symbol="AAA",
+            price=999.0,
+            announced_price=110.0,
+            quantity=10.0,
         )
     )
 
@@ -590,14 +600,247 @@ async def test_the_backup_is_written_once_not_per_row(tmp_path):
 
     await ledger._on_exit_price_corrected(
         ExitPriceCorrectedEvent(
-            order_id=first_order_id, symbol="AAA", price=112.0, announced_price=110.0
+            order_id=first_order_id,
+            symbol="AAA",
+            price=112.0,
+            announced_price=110.0,
+            quantity=200.0,
         )
     )
     await ledger._on_exit_price_corrected(
         ExitPriceCorrectedEvent(
-            order_id=second_order_id, symbol="BBB", price=56.0, announced_price=55.0
+            order_id=second_order_id,
+            symbol="BBB",
+            price=56.0,
+            announced_price=55.0,
+            quantity=10.0,
         )
     )
 
     backups = list(tmp_path.glob("closed_trades.csv.bak-*"))
     assert len(backups) == 1
+
+
+# --- M71 review: the rewrite's blast radius ---------------------------------
+#
+# The correction itself was right - exact matching, genuinely recomputed
+# derived values, the buy path untouched. The rewrite that put it on disk
+# was not: it regenerated the whole file from `self._closed`, which silently
+# drops any row `_load_closed` skipped at startup and restates every
+# untouched row's derived figures from whatever blanks `from_row` filled in.
+
+
+def test_an_untouched_row_survives_amendment_byte_identical(tmp_path):
+    """Critical 1 / Important 2, and the Minor 8 test the brief asks for by
+    name. Regenerating the file from `self._closed` is wrong two ways at
+    once: a row `_load_closed` could not parse is not in `self._closed` at
+    all, so it is silently dropped from the rewrite - 3 rows on disk become
+    2. And a row that WAS loaded, but with blank (unknown, not zero) cost
+    fields, gets those fields coerced to 0.0 by `from_row`, and every
+    derived figure downstream of them recomputed on that lie when the row is
+    rewritten - even though nothing about that trade was meant to change.
+
+    Proven on the file's exact lines, not on parsed objects - parsing is
+    exactly what hides this from the ledger itself.
+    """
+    path = tmp_path / "closed_trades.csv"
+    target = ClosedTrade(
+        symbol="AAA",
+        strategy="swing",
+        quantity=10.0,
+        entry_price=100.0,
+        exit_price=110.0,
+        stop_price=95.0,
+        opened_at=_BASE,
+        closed_at=_BASE + timedelta(days=1),
+        entry_cost=5.0,
+        exit_cost=5.5,
+        order_id="sell-AAA-1-10",
+    )
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=_FIELDS, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerow(target.as_row())
+        # A legacy row: blank (unknown) cost fields and no order_id - exactly
+        # the shape of the two rows already in the live closed_trades.csv.
+        legacy_row = target.as_row()
+        legacy_row.update(symbol="ZZZ", order_id="", entry_cost="", exit_cost="")
+        writer.writerow(legacy_row)
+        # A row `_load_closed` cannot parse at all.
+        corrupt_row = target.as_row()
+        corrupt_row.update(symbol="YYY", order_id="", quantity="not-a-number")
+        writer.writerow(corrupt_row)
+
+    before = path.read_text(encoding="utf-8").splitlines()
+    assert len(before) == 4  # header + 3 data rows
+
+    ledger = TradeLedger(EventBus(), tmp_path)
+    assert len(ledger.closed_trades()) == 2, "the corrupt row is skipped at load, by design"
+
+    asyncio.run(
+        ledger._on_exit_price_corrected(
+            ExitPriceCorrectedEvent(
+                order_id="sell-AAA-1-10",
+                symbol="AAA",
+                price=112.0,
+                announced_price=110.0,
+                quantity=10.0,
+            )
+        )
+    )
+
+    after = path.read_text(encoding="utf-8").splitlines()
+    assert len(after) == 4, "no row may vanish - the corrupt row exists on disk and must survive"
+    assert after[2] == before[2], "an untouched legacy row must not change in any way"
+    assert after[3] == before[3], "a row the loader could not parse must survive unamended"
+    assert after[1] != before[1], "the targeted row must actually be amended"
+
+
+@pytest.mark.asyncio
+async def test_a_matching_order_id_for_a_different_symbol_amends_nothing(tmp_path):
+    """Minor 5: matching on order_id alone would let a future id collision or
+    an adapter's id reuse land a correction on the wrong trade's row. Costs
+    nothing to also require the symbol to agree."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0, symbol="AAA")
+    await _fill(ledger, "sell", 10, 110.0, symbol="AAA", day=1)
+    order_id = ledger.closed_trades()[0].order_id
+    assert order_id is not None
+    before_price = ledger.closed_trades()[0].exit_price
+
+    await ledger._on_exit_price_corrected(
+        ExitPriceCorrectedEvent(
+            order_id=order_id, symbol="BBB", price=999.0, announced_price=110.0, quantity=10.0
+        )
+    )
+
+    after = ledger.closed_trades()[0]
+    assert after.exit_price == pytest.approx(before_price)
+    assert list(tmp_path.glob("closed_trades.csv.bak-*")) == []
+
+
+@pytest.mark.asyncio
+async def test_the_exit_cost_basis_matches_the_write_path(tmp_path):
+    """Minor 6: `_close_against_lots` bases the exit cost on the FULL sell
+    quantity and apportions on it; the amendment used to base it on the
+    matched rows' own quantity total instead. Not the same once a per-order
+    commission floor binds at one basis and not the other - exactly the case
+    of a sell that partly closed an untracked position, where
+    `_close_against_lots` logs "unmatched portion ignored" and only the
+    matched part becomes a ClosedTrade row."""
+    ledger = await _costed_ledger(
+        tmp_path, broker_min_commission=6.0, commission_bps=50.0, slippage_bps=0.0
+    )
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    # The sell is for 20; only 10 are tracked, so 10 are unmatched and
+    # ignored - one ClosedTrade row, quantity=10, even though the order's OWN
+    # quantity (what the write path costed the exit against) was 20.
+    await ledger._on_fill(
+        OrderFilledEvent(
+            order_id="sell-1",
+            symbol="AAA",
+            side="sell",
+            quantity=20,
+            price=110.0,
+            ts=_BASE + timedelta(days=1),
+        )
+    )
+    assert len(ledger.closed_trades()) == 1
+
+    await ledger._on_exit_price_corrected(
+        ExitPriceCorrectedEvent(
+            order_id="sell-1", symbol="AAA", price=112.0, announced_price=110.0, quantity=20.0
+        )
+    )
+
+    amended = ledger.closed_trades()[0]
+    # Recomputed on the order's full quantity (20) - the basis
+    # `_close_against_lots` used - not the 10 that matched a tracked lot.
+    # At 50bps: 10 shares @112 = $1,120 notional, 0.5% = $5.60, under the $6
+    # floor - so a matched-total basis would charge the FULL $6.00 floor to
+    # this one row. 20 shares @112 = $2,240 notional, 0.5% = $11.20, over the
+    # floor - so the correct basis charges this row its half-share, $5.60.
+    assert amended.exit_cost == pytest.approx(5.60, abs=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_a_failed_write_is_reported_not_asserted_as_success(tmp_path, caplog, monkeypatch):
+    """Important 3: `_rewrite_closed_trades` used to swallow OSError and
+    return None, and the caller logged 'EXIT PRICE CORRECTED ON DISK ...
+    amended' regardless of whether the write actually happened - so a failed
+    write left memory and disk diverged while the log asserted the opposite
+    of the truth. Separately, `self.path.open("w")` truncated before writing,
+    so a failure mid-write left a truncated evidence file.
+
+    Proves both: a failed write must be reported as a failure, not logged as
+    a success, and the original file must survive untouched because nothing
+    is truncated to make room for a write that does not complete (the atomic
+    temp-file-plus-os.replace swap)."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 10, 110.0, day=1)
+    order_id = ledger.closed_trades()[0].order_id
+    assert order_id is not None
+    path = tmp_path / "closed_trades.csv"
+    before = path.read_text(encoding="utf-8")
+
+    def _raise_oserror(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full (simulated)")
+
+    monkeypatch.setattr(os, "replace", _raise_oserror)
+    caplog.set_level(logging.INFO)
+
+    await ledger._on_exit_price_corrected(
+        ExitPriceCorrectedEvent(
+            order_id=order_id, symbol="AAA", price=112.0, announced_price=110.0, quantity=10.0
+        )
+    )
+
+    assert (
+        path.read_text(encoding="utf-8") == before
+    ), "an incomplete write must not touch the original file"
+    assert ledger.closed_trades()[0].exit_price == pytest.approx(
+        110.0
+    ), "memory must not diverge from disk on a failed write"
+    assert not any(
+        "EXIT PRICE CORRECTED ON DISK" in record.message for record in caplog.records
+    ), "a failed write must never be logged as a success"
+    assert any(
+        record.levelno == logging.ERROR for record in caplog.records
+    ), "a failed write must be logged at ERROR"
+
+
+@pytest.mark.asyncio
+async def test_the_write_is_verified_by_reading_it_back(tmp_path, caplog, monkeypatch):
+    """Important 4 remainder: the CVS/MNST precedent this backup docstring
+    claims to follow re-reads from disk after writing and fails loudly if the
+    result is wrong. M71's rewrite runs unattended, so it needs that check
+    more, not less. Proven by making the file that lands on disk disagree
+    with what was intended, after a write that reports success."""
+    ledger = await _ledger(tmp_path)
+    await _fill(ledger, "buy", 10, 100.0, stop=95.0)
+    await _fill(ledger, "sell", 10, 110.0, day=1)
+    order_id = ledger.closed_trades()[0].order_id
+    assert order_id is not None
+    path = tmp_path / "closed_trades.csv"
+
+    original_write = trades_module.TradeLedger._write_closed_rows
+
+    def _write_then_corrupt(self, fieldnames, rows):  # type: ignore[no-untyped-def]
+        ok = original_write(self, fieldnames, rows)
+        if ok:
+            path.write_text("not,what,was,written\n", encoding="utf-8")
+        return ok
+
+    monkeypatch.setattr(trades_module.TradeLedger, "_write_closed_rows", _write_then_corrupt)
+    caplog.set_level(logging.ERROR)
+
+    await ledger._on_exit_price_corrected(
+        ExitPriceCorrectedEvent(
+            order_id=order_id, symbol="AAA", price=112.0, announced_price=110.0, quantity=10.0
+        )
+    )
+
+    assert any(
+        record.levelno == logging.ERROR for record in caplog.records
+    ), "a write that reads back wrong must be reported, not trusted"

@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import csv
 import logging
+import math
+import os
 import shutil
 import threading
 from collections import defaultdict, deque
@@ -41,6 +43,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import cast
 
 from qat.config import Settings
 from qat.domain.backtester.costs import CostModel
@@ -613,25 +616,24 @@ class TradeLedger:
         A buy correction rebases an OPEN LOT, still in memory. A sell CLOSES
         the position, so by the time the true fill arrives the `ClosedTrade` is
         already on `closed_trades.csv` - write-then-heal, chosen over deferring
-        the write or leaving it manual. The row is rewritten in place, matched
-        EXACTLY on order_id so a correction can never land on the wrong trade,
-        and backed up before the first amendment this process makes.
+        the write or leaving it manual. Matched EXACTLY on order_id AND symbol
+        (M71 review, minor 5 - order_id alone would let a future id collision
+        or an adapter's id reuse land a correction on the wrong trade), and
+        backed up before the first amendment this process makes.
 
-        One sell can close several lots, producing several rows from one
-        order - every row carrying that order_id is amended, not just the
-        first. `exit_cost` is recomputed from the corrected price and
-        re-apportioned across them on quantity, the same basis
-        `_close_against_lots` used to split it in the first place. `r_multiple`
-        and `gross_r_multiple` need no separate handling - they are properties
-        derived from `exit_price` and `exit_cost`, so correcting those already
-        corrects them.
+        The row(s) already on disk are amended IN PLACE - see
+        `_amend_closed_trade` - never regenerated from `self._closed`.
+        Regenerating from memory silently drops any row `_load_closed` could
+        not parse at startup (it is not in `self._closed` at all) and restates
+        every untouched row's derived figures from whatever blanks `from_row`
+        coerced to 0.0 - a review finding this rewrite exists specifically to
+        close.
         """
-        if event.price <= 0:
+        if event.price <= 0 or event.quantity <= 0:
             return
-        matched = [
-            index for index, trade in enumerate(self._closed) if trade.order_id == event.order_id
-        ]
-        if not matched:
+        with self._lock:
+            outcome = self._amend_closed_trade(event)
+        if outcome is None:
             # Amend nothing you are not sure of. A correction applied to the
             # wrong trade is worse than no correction - and this is the normal
             # case for every trade closed before M71 added the column an
@@ -642,32 +644,21 @@ class TradeLedger:
                 event.symbol,
             )
             return
-        with self._lock:
-            if not self._backup_closed_trades():
-                logger.error(
-                    "Could not back up %s before amending order %s - amendment abandoned "
-                    "rather than risking an unrecoverable rewrite",
-                    self.path.name,
-                    event.order_id,
-                )
-                return
-            total_quantity = sum(self._closed[index].quantity for index in matched)
-            exit_cost_total = self._fill_cost(total_quantity, event.price)
-            for index in matched:
-                trade = self._closed[index]
-                self._closed[index] = replace(
-                    trade,
-                    exit_price=event.price,
-                    exit_cost=_share_of(exit_cost_total, trade.quantity, total_quantity),
-                )
-            self._rewrite_closed_trades()
+        amended_count, ok = outcome
+        if not ok:
+            # The failure itself was already logged at ERROR by whichever step
+            # inside `_amend_closed_trade` failed - naming the specific reason
+            # (backup failed, write failed, read-back disagreed). This must
+            # never be followed by the WARNING below: that line asserts the
+            # amendment reached disk, and on this path it did not.
+            return
         logger.warning(
             "EXIT PRICE CORRECTED ON DISK: %s order %s, %d closed-trade row(s) amended from "
             "%.4f to %.4f (%+.1f bps) - exit price, realised P&L, exit cost and R-multiple all "
             "moved.",
             event.symbol,
             event.order_id,
-            len(matched),
+            amended_count,
             event.announced_price,
             event.price,
             (
@@ -676,6 +667,201 @@ class TradeLedger:
                 else 0.0
             ),
         )
+
+    def _amend_closed_trade(self, event: ExitPriceCorrectedEvent) -> tuple[int, bool] | None:
+        """Does the actual amendment, under `self._lock`. Returns None if
+        nothing matched (no backup taken, no write attempted), otherwise
+        `(rows amended, whether the amendment reached disk safely)`.
+
+        Reads the file fresh rather than trusting `self._closed` to still
+        agree with it (M71 review, critical 1 / important 2): a row
+        `_load_closed` skipped at startup is not in `self._closed`, and a
+        rewrite sourced from memory alone would silently lose it. The disk
+        row's own `order_id`/`symbol` columns are what is matched against -
+        the same identity check `self._closed` is matched on - so only rows
+        that were ever written with this order's id can be touched, and every
+        other row is carried forward exactly as read: same strings, same
+        blanks, same formatting.
+        """
+        loaded = self._read_closed_rows()
+        if loaded is None:
+            return None
+        fieldnames, rows = loaded
+        disk_targets = [
+            index
+            for index, row in enumerate(rows)
+            if row.get("order_id") == event.order_id and row.get("symbol") == event.symbol
+        ]
+        memory_targets = [
+            index
+            for index, trade in enumerate(self._closed)
+            if trade.order_id == event.order_id and trade.symbol == event.symbol
+        ]
+        if not disk_targets and not memory_targets:
+            return None
+        if len(disk_targets) != len(memory_targets):
+            # The two views of "what this order closed" disagree in COUNT, not
+            # merely in content - there is no trustworthy way to pair them up
+            # row-for-row, so guessing which memory trade corresponds to which
+            # disk row is exactly the kind of guess this amendment must not
+            # make.
+            logger.error(
+                "Closed trade record for order %s (%s) disagrees between memory (%d row(s)) "
+                "and %s (%d row(s)) - amendment abandoned rather than guessing which rows "
+                "correspond",
+                event.order_id,
+                event.symbol,
+                len(memory_targets),
+                self.path.name,
+                len(disk_targets),
+            )
+            return len(memory_targets), False
+        if not self._backup_closed_trades():
+            logger.error(
+                "Could not back up %s before amending order %s - amendment abandoned rather "
+                "than risking an unrecoverable rewrite",
+                self.path.name,
+                event.order_id,
+            )
+            return len(memory_targets), False
+        # The order's own quantity - what `_close_against_lots` costed the
+        # exit against in the first place - not the sum of what matched a
+        # tracked lot (M71 review, minor 6). Those differ once some of the
+        # sell was unmatched and ignored, and a per-order commission floor is
+        # in play.
+        exit_cost_total = self._fill_cost(event.quantity, event.price)
+        corrected = [
+            replace(
+                trade,
+                exit_price=event.price,
+                exit_cost=_share_of(exit_cost_total, trade.quantity, event.quantity),
+            )
+            for trade in (self._closed[index] for index in memory_targets)
+        ]
+        for disk_index, new_trade in zip(disk_targets, corrected, strict=True):
+            rows[disk_index] = new_trade.as_row()
+        if not self._write_closed_rows(fieldnames, rows):
+            return len(memory_targets), False
+        if not self._verify_closed_rows(len(rows), disk_targets, event.price):
+            return len(memory_targets), False
+        for mem_index, new_trade in zip(memory_targets, corrected, strict=True):
+            self._closed[mem_index] = new_trade
+        return len(memory_targets), True
+
+    def _read_closed_rows(self) -> tuple[list[str], list[dict[str, object]]] | None:
+        """Every row on disk, verbatim, keyed by whatever header the file
+        actually has - not `_FIELDS` - so a row is read and, if untouched,
+        written straight back under the schema it already had. None on a
+        missing or unreadable file: there is nothing to amend into.
+
+        Typed `dict[str, object]` rather than the `dict[str, str]`
+        `csv.DictReader` actually yields, so an untouched row (a plain string
+        value) and an amended one (`ClosedTrade.as_row()`'s floats and dates)
+        can sit in the same list and be handed to the one writer below.
+        """
+        if not self.path.exists():
+            return None
+        try:
+            with self.path.open(newline="", encoding="utf-8") as handle:
+                reader = csv.DictReader(handle)
+                fieldnames = list(reader.fieldnames or [])
+                # Genuinely dict[str, str] at runtime - cast once here so
+                # `rows` can also hold an amended row's dict[str, object]
+                # (ClosedTrade.as_row()'s floats and dates) without every
+                # caller re-litigating the variance.
+                rows = cast("list[dict[str, object]]", [dict(row) for row in reader])
+        except OSError:
+            logger.exception("Could not read %s to amend a closed trade", self.path)
+            return None
+        return fieldnames, rows
+
+    def _write_closed_rows(self, fieldnames: list[str], rows: list[dict[str, object]]) -> bool:
+        """Writes the full row set back to `closed_trades.csv`, atomically.
+
+        `self.path.open("w")` truncates before a single byte of new content
+        is written, so a failure or a kill mid-write used to leave a
+        truncated evidence file (M71 review, important 3). This writes to a
+        sibling temp file first and swaps it in with `os.replace`, which on
+        both POSIX and Windows either lands the whole new file or leaves the
+        original untouched - never a partial one.
+        """
+        tmp_path = self.path.with_name(f"{self.path.name}.tmp-{os.getpid()}")
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with tmp_path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow(row)
+            os.replace(tmp_path, self.path)
+        except OSError:
+            logger.exception("Could not write the amended %s", self.path)
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return False
+        return True
+
+    def _verify_closed_rows(
+        self, expected_row_count: int, targets: list[int], expected_price: float
+    ) -> bool:
+        """Re-reads `closed_trades.csv` after writing it and confirms the row
+        count is unchanged and the amended rows carry the new price (M71
+        review, important 4 remainder - the CVS/MNST precedent this backup
+        discipline claims to follow does exactly this, and re-reads from disk
+        rather than trusting the write).
+
+        This runs unattended, unlike the operator-supervised script it copies
+        the convention from, so a silent divergence between what was written
+        and what actually landed needs the check more, not less.
+        """
+        reread = self._read_closed_rows()
+        if reread is None:
+            logger.error(
+                "Could not re-read %s to verify the amendment to order - see the most recent "
+                "%s.bak-* backup",
+                self.path,
+                self.path.name,
+            )
+            return False
+        _fieldnames, rows = reread
+        if len(rows) != expected_row_count:
+            logger.error(
+                "%s has %d row(s) after being amended, expected %d - see the most recent %s.bak-* "
+                "backup",
+                self.path,
+                len(rows),
+                expected_row_count,
+                self.path.name,
+            )
+            return False
+        for index in targets:
+            try:
+                # A fresh read of the file just written - genuinely str, same
+                # as any other freshly-parsed CSV cell.
+                price = float(str(rows[index]["exit_price"]))
+            except (KeyError, TypeError, ValueError):
+                logger.error(
+                    "Row %d of %s does not carry a readable exit_price after being amended - "
+                    "see the most recent %s.bak-* backup",
+                    index,
+                    self.path,
+                    self.path.name,
+                )
+                return False
+            if not math.isclose(price, expected_price, rel_tol=1e-6, abs_tol=1e-4):
+                logger.error(
+                    "Row %d of %s reads back as exit_price=%.4f after being amended to %.4f - "
+                    "see the most recent %s.bak-* backup",
+                    index,
+                    self.path,
+                    price,
+                    expected_price,
+                    self.path.name,
+                )
+                return False
+        return True
 
     def _backup_closed_trades(self) -> bool:
         """Backs up closed_trades.csv once per process, before the first
@@ -711,24 +897,6 @@ class TradeLedger:
         )
         self._closed_trades_backed_up = True
         return True
-
-    def _rewrite_closed_trades(self) -> None:
-        """Rewrites closed_trades.csv from `_closed` (M71).
-
-        Through the same `csv.DictWriter(..., fieldnames=_FIELDS,
-        extrasaction="ignore")` path `_record` appends with, so an amended
-        file keeps exactly the shape a normal write produces - one shape, one
-        writer.
-        """
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("w", newline="", encoding="utf-8") as handle:
-                writer = csv.DictWriter(handle, fieldnames=_FIELDS, extrasaction="ignore")
-                writer.writeheader()
-                for trade in self._closed:
-                    writer.writerow(trade.as_row())
-        except OSError:
-            logger.exception("Could not rewrite %s with the amended closed trade(s)", self.path)
 
     async def _on_regime(self, event: RegimeEvent) -> None:
         self._regime = event.label
@@ -867,9 +1035,14 @@ class TradeLedger:
             )
 
     def _record(self, trade: ClosedTrade) -> None:
-        self._closed.append(trade)
         try:
             with self._lock:
+                # Appended under the same lock the amendment path takes to
+                # read and rewrite `self._closed` (M71 review, minor 7) - this
+                # append used to happen before the lock was acquired, which
+                # made it possible for an in-flight amendment to observe a
+                # list it does not yet know about, or vice versa.
+                self._closed.append(trade)
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 is_new = not self.path.exists() or self.path.stat().st_size == 0
                 with self.path.open("a", newline="", encoding="utf-8") as handle:

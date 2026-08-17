@@ -173,6 +173,16 @@ class ExitPriceCorrectedEvent(Event):
     announced_price: float
     """What was published at transmit, carried so the log can state the
     difference rather than only the destination."""
+    quantity: float
+    """The order's own quantity - what `_close_against_lots` costed the exit
+    against (`OrderFilledEvent.quantity`), not the broker's fill-report
+    quantity, which can be a partial or a cumulative figure. Carried so the
+    amendment recomputes `exit_cost` on the SAME basis the original write
+    used: `_close_against_lots` bases the per-transaction commission floor on
+    the full sell, then apportions across whatever lots it closed. Basing the
+    amendment on the matched rows' own quantity total instead is only equal
+    when nothing was left unmatched - a sell that partly closed an untracked
+    position (M71 review)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

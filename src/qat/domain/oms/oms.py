@@ -1581,6 +1581,11 @@ class OMS:
                     symbol=raw.symbol,
                     price=raw.price,
                     announced_price=float(announced),
+                    # The order's own quantity - what the original write
+                    # costed the exit against - not `raw.quantity`, which is
+                    # this particular fill report's quantity and can be a
+                    # partial (M71 review, minor 6).
+                    quantity=order.quantity,
                 )
             )
 
