@@ -1812,7 +1812,47 @@ towards the truth rather than away from it.
 disabling the floor reach-back alone and confirming the partial-fill case fails
 on its own.
 
-## M71 - The same root cause on the way OUT - found, not fixed
+## M71 - The same root cause on the way OUT  **[FIXED 17 August]**
+
+**Fixed from the code, without waiting for a live sell to observe.** The roadmap
+had parked this until a transmitted sell could be watched; the cause was already
+known and shared with M70, and waiting had cost four sessions. Both existing
+closed trades are broker-side stops, so **M71 never actually corrupted anything**
+- the fix is prophylactic and the first sell the app sends is the first thing it
+protects.
+
+`_correct_announced_price` now handles sells as well as buys and publishes
+`ExitPriceCorrectedEvent`. `ClosedTrade` gained an `order_id` - mirroring
+`OpenLot`, which already had one - so an amendment targets exactly the rows a
+given sell produced. The ledger amends them in place, recomputing the R-multiples
+and re-apportioning the exit cost.
+
+**The decision that mattered was write-then-heal**, chosen over deferring the
+write or leaving it manual. The application can now amend `closed_trades.csv`,
+which it never could before, so it backs the file up once per process first,
+writes atomically via a temp file and `os.replace`, and re-reads to confirm.
+
+**Review caught the blast radius, and the brief caused it.** "Rewrite via the
+existing writer path so the file keeps one shape" produced a whole-file
+regeneration from memory, which (a) silently DELETED rows `_load_closed` had
+skipped as unparseable - demonstrated, three rows in and two out - and (b)
+restated untouched legacy rows whose BLANK cost fields reloaded as `0.0`, writing
+their P&L and R-multiples as if the trade had been costless. A row that reads as
+reconciled and is not. Both are now impossible: matched rows are amended in
+place and every other row is written back byte-identical, verified by probe
+outside the test suite.
+
+**Two things recorded rather than fixed.** A restart between transmit and the
+broker's confirmation loses that correction - traced, and nothing ends up worse
+than uncorrected: no duplicate row, no phantom trade, and M50's
+double-subtraction trap is held off by the startup replay running `record_only`.
+It is now *fixable*, which it was not before, because the row carries an
+`order_id` and Alpaca's order history can answer what it filled at. And
+**M70/M71 both go dormant on IBKR**: `_correct_announced_price` only runs from
+`absorb_broker_fills`, which needs `recent_fills`, which `IBAdapter` does not
+implement - W1.1 territory.
+
+## M71 (original entry) - found, not fixed
 
 8 August, found while building M70 and deliberately left.
 
