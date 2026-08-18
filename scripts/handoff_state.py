@@ -40,7 +40,7 @@ REPO = Path(__file__).resolve().parent.parent
 # banner - the same figure from the same application, fifteen minutes apart:
 #   14:23:51 Aggregate risk-at-stop 5.01%   (M89, entry prices)
 #   14:40:46 Aggregate risk-at-stop 6.34%   (M90, broker marks)
-DEPLOYED = "5acee83"
+DEPLOYED = "f537a9e"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
