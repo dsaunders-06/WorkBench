@@ -61,7 +61,16 @@ Write-Section 'PROCESSES'
 $app = Get-Process -Name QuantAdvisoryTerminal -ErrorAction SilentlyContinue
 if ($app) {
     foreach ($p in $app) {
-        $up = ((Get-Date) - $p.StartTime).ToString('hh\:mm\:ss')
+        # DAYS, not just hh:mm:ss. A TimeSpan formatted 'hh\:mm\:ss' silently
+        # drops its Days component, so a process up 28 hours reported "up
+        # 04:04:36" - which reads as a restart four hours ago and sent a reader
+        # hunting for a re-adoption that never happened. Measured 18 August.
+        $span = (Get-Date) - $p.StartTime
+        $up = if ($span.TotalDays -ge 1) {
+            '{0}d {1:00}:{2:00}:{3:00}' -f $span.Days, $span.Hours, $span.Minutes, $span.Seconds
+        } else {
+            $span.ToString('hh\:mm\:ss')
+        }
         Write-Output ("app      PID {0,-7} up {1}" -f $p.Id, $up)
     }
 } else {
@@ -139,9 +148,23 @@ if ($regime) {
 $default = @($rows | Where-Object { $_.message -cmatch 'sideways DEFAULT' })
 if ($default.Count -gt 0) {
     $lastDefault = ([datetime]$default[-1].ts).ToLocalTime()
-    $note = 'before the open, which is normal and clears at the bell'
-    if ($regime -and $lastDefault -gt ([datetime]$regime.ts).ToLocalTime()) {
+    # THREE cases, not two. `$rows` runs from the last session start to the END
+    # of the log, so it also contains any LATER launch's warm-up warnings - and
+    # comparing one of those against THIS session's regime publication reported
+    # a healthy app as failing at every launch. Measured 15-18 August: it cried
+    # wolf on four consecutive launches.
+    #
+    # A warning only means something went wrong if it landed after the regime
+    # published AND before the session stood down. After stand-down it belongs
+    # to the next launch, where gating on the default is exactly what warm-up is.
+    $regimeAt = if ($regime) { ([datetime]$regime.ts).ToLocalTime() } else { $null }
+    $standDownAt = if ($standDown) { ([datetime]$standDown.ts).ToLocalTime() } else { $null }
+    if ($standDownAt -and $lastDefault -gt $standDownAt) {
+        $note = 'at a LATER launch, before that session opened - normal warm-up'
+    } elseif ($regimeAt -and $lastDefault -gt $regimeAt) {
         $note = '*** AFTER the regime published - this is the failure ***'
+    } else {
+        $note = 'before the open, which is normal and clears at the bell'
     }
     Write-Output ("           {0} sideways-default warning(s), last {1} - {2}" -f `
         $default.Count, $lastDefault.ToString('HH:mm:ss'), $note)
