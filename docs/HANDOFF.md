@@ -1,53 +1,48 @@
-# Handoff — 14 August 2026, end of day
+# Handoff — 19 August 2026, the day the US trial closed
 
 Paste the block at the bottom into a new context window. Everything above it is
 the detail that block points at.
 
-**Sections dated 13 August and earlier are history and are kept for their
-reasoning, not as current state.** Where the two disagree the paste block and
-`handoff_state.py` win — and on 14 August three of the four "next steps" in
-this file turned out to be already done, void, or misstated. Check the code.
+**Sections dated before 19 August are history and are kept for their reasoning,
+not as current state.** Where the two disagree the paste block and
+`handoff_state.py` win. This file has been wrong about its own next steps twice:
+on 14 August three of four were already done, void, or misstated, and on
+19 August an alarm it would have had you chase turned out to be the watch script
+rather than the app. Check the code.
 
 ## ⚙️ Before quoting any figure in here, run this
 
     .\.venv\Scripts\python.exe scripts/handoff_state.py
 
 It derives the deploy gap, the milestone list and the test count from the
-repository, and **names any test count in this file that has gone stale**. Every
-current-state number here is a hand-maintained copy, and this project lost that
-argument four times in three days: the deploy gap was quoted as five, eight,
-nine and twelve; "the brief has been wrong in detail" as third, fifth, sixth and
-FIVE; the test count sat at 1,690 in three paragraphs while the suite moved on.
-**Counting is not the fix — deriving is.**
+repository. Every current-state number here is a hand-maintained copy, and this
+project lost that argument four times in three days. **Counting is not the fix —
+deriving is.**
 
 ---
 
 # Where this stands, in one paragraph
 
-**M88 is deployed and running, the deploy gap is zero, two overnight sessions
-ran clean, and W2 is complete.** The ASX moved from eventual destination to
-near-term one on 12 August, which reframed the trial rather than pausing it: the
-US phase's deliverable is MACHINERY evidence, and the edge question moved to the
-research harness.
+**The US validation trial closed on 19 August and the ASX/IBKR move is called.**
+M94 (`f537a9e`) is deployed, the deploy gap is zero, the suite is at 2,194
+passed / 25 skipped, and everything is pushed.
 
-**The 20 August review has nothing left to decide, and 14 August is when that
-became clear.** Its one question was whether to widen the co-binding
-10-position / 5% pair, and ROADMAP answered it on 12 August — *the rails hold*,
-because throughput only ever bought US closed trades and those stopped being
-edge evidence. The dated action attached to it, freeing a slot for SFBS on
-21 August, **cannot execute at all**: SFBS is not in the tradable universe. So
-M66 is released, and the review's remaining content is a judgement about what
-the US trial is for rather than a measurement waiting on more nights.
+**The trial failed to answer its own question and succeeded at everything else.**
+It produced ONE closed trade the promotion gate can count, against a gate needing
+thirty — not because the strategy was quiet but because 4,456 of 4,831 refusals
+were the 10-position limit. The book filled on day one and never emptied. The
+rails were sized for capital preservation and the trial needed throughput; that
+conflict was never stated, and it is the whole reason there is no edge evidence.
+The machinery, which is what the phase was really validating, held throughout.
 
-**The trial cannot reach its own gate, and the arithmetic is not close.**
-Derived 14 August from the live record: `promotion_min_trades` is 30; there are
-**2 closed trades in 18 days**, and MNST carries no `r_multiple` and no strategy,
-so swing's gate sees **one** — CVS at **r = −1.68**. 45 approvals out of 4,369
-decisions, a 1.03% approval rate. ROADMAP predicted *"roughly ten closed trades
-a month"*; the actual rate is about one and a half, of which one counts. Thirty
-trades is a year and a half away at that rate, against a near-term ASX move.
+**Two documents supersede everything below.** `docs/2026-08-19-us-trial-close.md`
+is the full account — what worked, what did not, and what was never tested.
+`docs/superpowers/plans/2026-08-19-ibkr-move.md` is the plan for what happens
+next, in four stages, of which only the first is planned in detail because the
+rest is guessing until it measures something.
 
 ---
+
 
 # 🌙 SESSION DEBRIEF — overnight 12–13 August
 
@@ -871,8 +866,9 @@ three days. The ones that are now derived have stopped being wrong.
 Continuing work on QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money is involved.
 
-Read docs/HANDOFF.md first, then the TOP of ROADMAP.md - the validation freeze
-ENDED on 14 August and the standing rule below it is history, not instruction.
+THE US TRIAL CLOSED ON 19 AUGUST. Read docs/2026-08-19-us-trial-close.md first,
+then docs/superpowers/plans/2026-08-19-ibkr-move.md. The ASX/IBKR move is
+CALLED, not proposed.
 
 BEFORE QUOTING ANY CURRENT-STATE FIGURE, RUN:
   .\.venv\Scripts\python.exe scripts/handoff_state.py
@@ -880,129 +876,93 @@ It derives the deploy gap, the milestone and the test count. FOUR
 hand-maintained counts were wrong in three days. Deriving is the fix.
 
 AND CHECK THE BRIEF AGAINST THE CODE BEFORE ACTING ON IT. On 14 August three
-of the four "next steps" in this file turned out to be already done, void, or
-misstated: W1.4 had shipped two days earlier, SFBS was not in the tradable
-universe so the plan built on it could never run, and the 20 August review had
-no question left. Read the code, not the prose.
+of four "next steps" were already done, void, or misstated. On 19 August a
+"failure" alarm turned out to be the watch script, not the app.
 
 READ THE LIVE DATA THROUGH POWERSHELL, NEVER BASH
 The Bash sandbox is PER-FILE and covers WRITES as well as reads. A backup run
 from Bash on 13 August copied 20 files, PRINTED SUCCESS, and wrote nothing.
 Run it through PowerShell, then VERIFY EXTERNALLY - file count and a hash of
 closed_trades.csv against the live one.
-
   Settings(_env_file=None).data_dir is the LIVE data directory. conftest
   protects tests; scripts run outside pytest do not. ANY SCRIPT RUN OUTSIDE
   PYTEST MUST PASS ITS OWN data_dir.
 
-WHERE THIS STANDS - 14 August
-M90 (a9aee6e) deployed and verified, deploy gap ZERO MILESTONES, app stopped.
-The commits after it are research harness only - handoff_state.py derives the
-gap, and it reads 0 milestones across those commits. NOTHING NEEDS DEPLOYING.
-Two deploys landed today, each verified by BEHAVIOUR not by a banner:
-  M89  a stop-out was recorded as `target`; 7 of 23 refusal messages were
-       unclassified, including one whose pattern never matched anything.
-  M90  M66 - the risk cap measured entry prices. The running app went
-       5.01% -> 6.34% on the same book, fifteen minutes apart. That is the fix.
+WHERE THIS STANDS - 19 August
+M94 (f537a9e) deployed and verified, deploy gap ZERO, 2,194 passed / 25 skipped.
+Everything is pushed. The app runs; the US trial is over.
 
-THE FREEZE IS OVER. It kept a result interpretable and there is no result:
-promotion_min_trades is 30 and swing's gate sees ONE, at r=-1.68. The operative
-rule is now the ASX one - EVERYTHING BUILT IS EITHER MARKET-AGNOSTIC OR CHEAP
-TO ABANDON. "Would this survive the move" replaced "would this change a trade".
-A defect that corrupts the record is STILL fix-immediately.
+WHAT THE TRIAL LANDED - the full account is in the close document
+  4,876 risk decisions over 10 sessions. 45 approved (0.92%). TWO closed
+  trades, of which the promotion gate can count ONE: CVS at r=-1.68 against a
+  gate needing THIRTY. Equity +0.74%.
+  4,456 of 4,831 refusals were the 10-position limit. The book filled on day
+  one and never emptied - the rails were sized for capital preservation and
+  the trial needed throughput. That conflict was never stated, and it is the
+  reason there is no edge evidence.
+  THREE rails ever bound in production: position limit, cost-to-risk,
+  aggregate cap. Five never bound at all.
+  The MACHINERY held: 10 of 10 carrying a resting stop at every check across
+  19 days, zero kill-switch trips, zero lost sessions, ledgers always written.
 
-W2 IS COMPLETE, AND IT NOW MEASURES SOMETHING
-ReplaySession drives historical bars through the REAL StrategyEngine, bridge,
-OMS, regime engine and autonomy path into SimulatedBroker. Nothing
-re-implements a strategy, a rail or a fill.
+THE NEXT WORK IS THE IBKR MOVE, IN FOUR STAGES
+Only stage 1 is planned in detail, deliberately - the rest is guessing until
+stage 1 measures something.
+  STAGE 1  the adapter can be trusted. BLOCKED ONLY ON THE ACCOUNT EXISTING.
+  STAGE 2  ASX market data (a commercial decision)
+  STAGE 3  ASX trading rules - the $500 MINIMUM MARKETABLE PARCEL reaches
+           position sizing directly and IS IMPLEMENTED NOWHERE
+  STAGE 4  regime re-sourcing - DO NOT START until the ablation question is
+           settled, because it may delete this stage entirely
 
-  ON THE ASX, 95 symbols over 499 sessions, WITH THE REGIME RAIL LIVE:
-    265 candidates, 109 approved. 156 refusals - 123 capacity, 33 candidate.
-    Position limit 56 - Aggregate cap 52 - Cost-to-risk 21 - Cash floor 15
-      - Gap risk 12
-    80 closed trades: 41 stops, 24 time stops, 15 targets
-    mean -0.06R, total -5.02R, 44% win
-  FIVE RAILS EXERCISED including the position limit and the aggregate cap -
-  the two the spec said could not be ablated naturally. THE REVISIT TRIGGER IS
-  ANSWERED: they were unreachable because of defects and a 40-session US
-  window, not by construction.
+MEASURED 19 AUGUST AGAINST ib_async 2.1.0, NOT ASSUMED
+  recent_fills            -> IB.fills(), IB.reqExecutions()          EXISTS
+  resting_stops           -> IB.openTrades(), IB.reqAllOpenOrders()  EXISTS
+  resting_stop_orders     -> same                                    EXISTS
+  announcements           -> NO STRUCTURED EQUIVALENT. reqFundamentalData is
+                             XML reports, reqHistoricalNews is unstructured.
+                             M39's detection has no direct port - that is a
+                             DECISION to record, not code to write.
+  AND THE ONE THAT BITES: from_ib_trade NEVER records broker identity. Alpaca
+  overwrites order.order_id at three sites; IBKR at none. So
+  _correct_announced_price cannot resolve a fill and BOTH M70 AND M71 GO
+  DORMANT ON IBKR WITHOUT ERRORING - the app would record prices it never
+  paid, silently, exactly as before M70. Execution carries execId, permId and
+  orderId, so the bridge is buildable. Prefer permId if it survives a restart;
+  orderId is per-session.
 
-  ON THE US G1 UNIVERSE: ten decisions in a whole run, all approvals, no rail
-  exercised. Every ablation correctly reports NOT EXERCISED.
+THE ABLATION RAN, AND THE ANSWER IS "NOT WITH THIS INSTRUMENT"
+  Three rails on ASX data, all EXERCISED - the first real ablation this
+  system has produced. Every difference was INSIDE NOISE: 0.30 to 0.67
+  standard errors on 80 trades with a 1.21R standard deviation. Resolving a
+  0.09R effect needs ~2,800 trades PER ARM. No realistic window supplies it.
+  So expectancy on one window cannot decide whether the regime gate earns its
+  keep, and no amount of patience changes that. If that question still needs
+  answering, the lever is VARIANCE or DRAWDOWN, which converge far faster.
 
-  Run:  scripts\research\run_asx_replay.py [--fetch] [--evaluate-at open]
-        scripts\research\run_ablation.py --rail <name> | --list
-        scripts\analysis\g1\run_g1.py [--score-only] [--day YYYY-MM-DD]
-
-  THE MACRO IS NOW WIRED AND THE SIGN FLIPPED. With the rail inert the same
-  window read +0.03R mean / +2.76R total / 48% win. Live, it is NEGATIVE. The
-  earlier figure was never an edge measurement - it was the book trading at
-  a permanent exposure scalar of 1.00 because the HMM could not fit.
-  STILL NOT A FINDING: one run, a deliberately pessimistic fill model that
-  makes expectancy a FLOOR, US macro describing an ASX book, and no ablation
-  yet separating what the rails cost from what the strategy earns.
-
-EIGHT WALL-CLOCK / MARKET ASSUMPTIONS FOUND SO FAR, each defaulting to live
-behaviour: prime_bar, SignalToOrderBridge(clock=), AutonomyGate(clock=),
-RiskEngine(clock=), OMS(clock=), the absorb watermark stamp, the absorbed-id
-retention cutoff, and _announce_fill's missing ts.
-  THE LAST ONE DISABLED THREE RAILS in every replay ever run - the bridge
-  stamps entry.opened_at from that event, so the time stop, the minimum hold
-  and the weekly churn cap could never fire.
-  AND A NINTH, NOT A CLOCK: _simulated_now returned 15:00 UTC "inside the US
-  session". The ASX trades 00:00-06:00 UTC, so every ASX order was refused
-  out-of-hours. Now 0.25 through the session in the market's own timezone -
-  NOT the midpoint, which lands in the Midday Lull that autonomous execution
-  excludes and refuses everything.
-  AND A FAMILY OF ITS OWN: an object constructed, wired, and NEVER STARTED.
-  ReplaySession omitted risk_engine.start, the only place it subscribes to
-  RegimeEvent. Nothing errored.
-
-TWO TESTS PASSED BECAUSE OF A DEFECT, both caught by checking:
-  the ts fixture ran past today, so a wall-clock stamp aged normally inside
-  the window; and the position-limit test counted all orders and expected one,
-  which only held while exits were broken.
-
-SESSION WATCH - one fixed command, at every cadence:
-  & "C:\Claude Programming\scripts\session_check.ps1"
-NO ARGUMENTS, EVER. PowerShell permissions are stored as EXACT COMMAND
-STRINGS, so a varying command can never be allowlisted and offers "approve
-once" forever. That is what made scheduled tasks unworkable - and a scheduled
-task's OUTPUT never reaches the session that created it either.
-  qat.log is NOT a complete view: read risk_decisions.csv alongside it.
-  -match is CASE-INSENSITIVE, use -cmatch. ([datetime]$o.ts) is a DateTime.
-  EXPECTED, NOT A FAULT: zero new entries; ~6.34% aggregate risk under M90;
-  a staleness burst at the bell; CRWD corporate action in shadow mode.
+  ASX replay, 95 symbols over 499 sessions, regime rail LIVE:
+    265 candidates, 109 approved, 156 refusals
+    80 closed trades - mean -0.06R, total -5.02R, 44% win
+    FIVE rails exercised. With the rail inert the same window read +0.03R -
+    the positive figure was never an edge measurement.
 
 OUTSTANDING, IN ORDER
-  Ablation   run_ablation.py drives the US G1 universe, where NO rail can be
-             exercised. Point it at the ASX bars, where five now are, and the
-             position-limit ablation finally means something. This is the
-             first thing that was blocked on macro and no longer is.
-  Cash floor it refused 15 candidates and NO rail in the manifest table models
-             it - now reported under `unmodelled_refusals` rather than being
-             silently absent, but still not ablatable. min_cash_reserve is
-             gt=0 BY DESIGN (config.py:416) so it cannot be neutralised the
-             way the other rails are. Whether to relax that for research is
-             an operator decision, deliberately not taken.
-  M71 sell   CSCO, through the app. THE DATE IN THIS FILE WAS WRONG - the
-             minimum hold is 10 TRADING days, and CSCO, CRWD, JNJ, UNP and WFC
-             cleared it on Fri 14 Aug; MS/AMAT/AMD/GS clear Tue 18, VRTX Wed 19.
-             AND THERE IS NO OPERATOR-ORIGINATED SELL PATH: submit_exit_order
-             has exactly three callers - signal exit, time stop, delever sweep
-             - and the Blotter only signs off what the system already produced.
-             So this is a swing sell signal to WAIT FOR and observe, not an
-             action anyone can take. The time stop is 30 trading days, i.e.
-             around 12 September for the 1 Aug lots.
-  W1.1       measure what IBKR returns for recent_fills, resting_stops,
-             resting_stop_orders, announcements. GENUINELY BLOCKED on the
-             account. scripts/broker_capabilities.py is the checklist.
-  M43        trading halts.
+  W1.1     Stage 1 Task 1. Run scripts/broker_capabilities.py READ-ONLY the
+           day the paper account exists, and record the RAW responses. Every
+           later task is shaped by it. GENUINELY BLOCKED until then.
+  M71      FIXED from the code on 17 August but STILL UNOBSERVED in
+           production - no app-transmitted sell has ever happened. Five
+           sessions of watching produced none.
+  Cash floor  bound 15 times on ASX and no rail in the manifest models it.
+           Now reported under unmodelled_refusals; still not ablatable,
+           because min_cash_reserve is gt=0 BY DESIGN (config.py:416).
+           Whether to relax that for research is an OPERATOR decision.
+  M43      trading halts. DO NOT build the Alpaca shape - ASX halts are
+           announcement-driven, so it depends on the announcements decision.
 
-  DONE, not outstanding: W2 (all six steps), W1.4 (12 Aug), M66/M89/M90,
-  ASX macro (14 Aug - see the section above).
-  DROPPED: SFBS (not tradable), intraday US harness (aimed at the market
-  being left), M71 design (until a sell is observed).
+  DONE: W2, W1.4, M66/M89/M90, ASX macro, M91 positions panel, M92 AU dates,
+  M71, M93, M94 regime label.
+  DROPPED: SFBS, intraday US harness, US expectancy as a deliverable.
 
 CONSTRAINTS
   PowerShell 5.1 - use ; not && and @'...'@ here-strings, closing '@ col 0.
@@ -1010,16 +970,21 @@ CONSTRAINTS
   mypy src, bandit -r src via the venv python.
   EVERY TEST THAT BUILDS AN OMS MUST PASS ITS OWN data_dir.
   Plan -> approval -> implement -> verify -> commit -> build. ALWAYS ask
-  before deploying. The permission classifier refuses Expand-Archive and
-  Remove-Item under C:\Claude Programming, so the operator runs those.
+  before deploying. Build zips are gitignored - one was committed by mistake
+  and the history had to be stripped.
+  SESSION WATCH: & "C:\Claude Programming\scripts\session_check.ps1"
+  NO ARGUMENTS, EVER - permissions are stored as exact command strings.
 
 THE HABITS THAT FOUND EVERYTHING
-  CHECK THE BRIEF AGAINST THE CODE. Three of four "next steps" were void.
+  CHECK THE BRIEF AGAINST THE CODE. Three of four next steps were void.
   VERIFY BY BEHAVIOUR, NOT BY BANNER. M90 was confirmed by 5.01% -> 6.34%.
-  RENDER IT. Reading the comparison output found unwrapped paragraphs every
-  test passed through.
-  PROVE A TEST FAILS FIRST. Two passed against unfixed code.
-  REFUSE SILENT FALLBACKS. yfinance returns SYNTHETIC bars on a 404 - one
-  command from reporting expectancy on invented prices.
+  RENDER IT. The unsigned R-multiple passed a full suite and fell out of a
+  screenshot in one look.
+  PROVE A TEST FAILS FIRST. Several passed against unfixed code.
   DERIVE, DO NOT REMEMBER.
+  AND THE ONE THIS WEEK ADDED: SUSPECT THE INSTRUMENT. Three session_check
+  bugs in four days, all of them the script asserting something false about a
+  healthy app - a dropped days component, a warm-up warning called a failure,
+  and NO REGIME PUBLISHED for a clean session. An alarm you learn to ignore
+  is worse than no alarm.
 ```
