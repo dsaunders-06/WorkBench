@@ -138,12 +138,42 @@ if ($build) { Write-Output ("build      {0}" -f $build.message) }
 
 # --- the four bell checks --------------------------------------------------
 Write-Section 'THE FOUR CHECKS'
+# FOUR outcomes, not two, and the difference is process lifetime versus session.
+#
+# `REGIME x -> y` is logged ONLY WHEN THE LABEL CHANGES (regime_engine/engine.py
+# `_log_classification`); the RegimeEvent itself publishes on every
+# classification. So the first session after a night with no app restart has no
+# line to find, and scoping this check to the session reported the healthiest
+# possible state - engine up, label steady - as the single most consequential
+# silent failure. Measured 19 August: a whole clean session flagged NO REGIME
+# PUBLISHED, and the 120 decisions it wrote could not settle it either way.
+#
+# A genuinely dead engine is NOT silent: `_report_health` logs REGIME ENGINE NOT
+# CLASSIFYING on the transition. That line, not the absence of a change line, is
+# the alarm.
 $regime = $rows | Where-Object { $_.message -cmatch '^REGIME ' } | Select-Object -First 1
+$notClassifying = $rows |
+    Where-Object { $_.message -cmatch 'REGIME ENGINE NOT CLASSIFYING' } | Select-Object -Last 1
 if ($regime) {
     $delay = (([datetime]$regime.ts) - ([datetime]$rows[0].ts)).TotalSeconds
     Write-Output ("1 regime   CLASSIFIED after {0:N0}s: {1}" -f $delay, $regime.message)
+} elseif ($notClassifying) {
+    Write-Output ("1 regime   *** NOT CLASSIFYING *** {0}" -f $notClassifying.message)
 } else {
-    Write-Output '1 regime   *** NO REGIME PUBLISHED *** every strategy is gating on the sideways DEFAULT'
+    # No change line this session. Look back across the whole log for the last
+    # one: if the label has simply held, that is the engine working.
+    $prior = $raw |
+        Where-Object { $_ -cmatch '\"REGIME [a-z]' } |
+        Select-Object -Last 1 |
+        ForEach-Object { try { $_ | ConvertFrom-Json } catch { $null } }
+    if ($prior) {
+        Write-Output ("1 regime   label UNCHANGED since {0} - no new line because the log records " `
+            -f ([datetime]$prior.ts).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
+        Write-Output ("           only CHANGES. Last: {0}" -f $prior.message)
+        Write-Output '           Not proof it classified tonight - a decision''s regime_label is (M94).'
+    } else {
+        Write-Output '1 regime   *** NO REGIME PUBLISHED *** every strategy is gating on the sideways DEFAULT'
+    }
 }
 $default = @($rows | Where-Object { $_.message -cmatch 'sideways DEFAULT' })
 if ($default.Count -gt 0) {
@@ -168,6 +198,13 @@ if ($default.Count -gt 0) {
     }
     Write-Output ("           {0} sideways-default warning(s), last {1} - {2}" -f `
         $default.Count, $lastDefault.ToString('HH:mm:ss'), $note)
+}
+# Reported REGARDLESS of the branch above. An engine that classified at the bell
+# and DIED at 03:00 has both a change line and a failure line, and the failure is
+# the news - letting the earlier success suppress it would be a louder version of
+# the bug this whole check was just fixed for.
+if ($regime -and $notClassifying) {
+    Write-Output ("           *** AND THEN STOPPED: {0}" -f $notClassifying.message)
 }
 $down = @($rows | Where-Object { $_.message -cmatch 'MARKET DATA DOWN' })
 Write-Output ("2 feed     MARKET DATA DOWN x{0}" -f $down.Count)
