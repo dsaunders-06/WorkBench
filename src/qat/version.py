@@ -60,7 +60,7 @@ from qat.domain.display_dates import format_display_date
 # 5.01% -> about 6.34% on the book as it stands. Nothing is forced to sell -
 # QAT_DELEVER_SWEEP_ENABLED=false in the live config - and entries were already
 # refused at 5.01%, so no trade that would have happened now will not.
-MILESTONE = "M93"
+MILESTONE = "M94"
 
 _UNKNOWN = "unknown"
 

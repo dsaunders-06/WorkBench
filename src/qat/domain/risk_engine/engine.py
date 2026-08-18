@@ -113,6 +113,18 @@ class RiskEngine:
         # that inject their own AuditLog keep whatever behaviour they chose.
         self.audit_log = audit_log or AuditLog(self.settings.data_dir)
         self.regime_scalar = 1.0
+        # WHICH regime produced that scalar, or None when no RegimeEvent has
+        # ever arrived. The scalar alone is ambiguous and the ambiguity is
+        # invisible: low_vol's exposure scalar is 1.00 and this default is also
+        # 1.0, so `regime_scalar: 1` in the audit trail could mean "measured
+        # low_vol" or "gated on nothing". On 19 August a whole session's 120
+        # decisions could neither confirm nor deny that the regime engine had
+        # published, which is the corporate-actions failure of 12 August in
+        # miniature - blindness indistinguishable from a quiet book.
+        #
+        # None, never a label standing in for one: a default must not read as a
+        # reading.
+        self.regime_label: str | None = None
 
     def _now(self) -> datetime:
         """The clock every audited decision is stamped with. See `__init__`."""
@@ -126,6 +138,7 @@ class RiskEngine:
 
     async def _on_regime(self, event: RegimeEvent) -> None:
         self.regime_scalar = event.exposure_scalar
+        self.regime_label = event.label
 
     def _earnings_scalar(self, candidate: OrderCandidate, inputs: dict[str, Any]) -> float:
         """Half size into a scheduled earnings print, full size otherwise (M57).
@@ -177,6 +190,7 @@ class RiskEngine:
             "price": candidate.price,
             "equity": equity,
             "regime_scalar": self.regime_scalar,
+            "regime_label": self.regime_label,
             "available_cash": available_cash,
         }
 

@@ -151,3 +151,42 @@ def test_property_no_approved_order_ever_exceeds_limits_across_random_inputs():
         if decision.approved:
             implied_loss = decision.final_shares * settings.atr_stop_multiple * atr
             assert implied_loss <= settings.per_trade_risk_pct * equity + 1e-6
+
+
+@pytest.mark.asyncio
+async def test_a_decision_records_which_regime_produced_its_scalar():
+    """`regime_scalar: 1.0` was ambiguous, and the ambiguity was invisible.
+
+    Low-vol's exposure scalar is 1.00 and the engine's untouched default is
+    also 1.0, so a decision carrying `regime_scalar: 1` could mean "measured
+    low_vol" or "no RegimeEvent has ever arrived and this gate is the default".
+    Nothing written to `risk_decisions.csv` distinguished them.
+
+    Found on 19 August, when session_check reported NO REGIME PUBLISHED for a
+    whole session and the 120 decisions it wrote could not confirm or deny it.
+    Same shape as the corporate-actions failure of 12 August: blindness reading
+    identically to a quiet book.
+
+    `None` means the scalar is a default, never a reading - the same
+    None-is-not-zero rule the positions panel is built on.
+    """
+    bus = EventBus()
+    engine = RiskEngine(bus, KillSwitch(), settings=_settings())
+    await engine.start()
+
+    before = engine.evaluate_order(_candidate(), 100_000.0, {}, {})
+    assert before.inputs["regime_scalar"] == 1.0
+    assert before.inputs["regime_label"] is None, "a default must not look like a reading"
+
+    await bus.publish(
+        RegimeEvent(
+            label=Regime.LOW_VOL.value, probs={Regime.LOW_VOL.value: 0.9}, exposure_scalar=1.0
+        )
+    )
+    after = engine.evaluate_order(_candidate(), 100_000.0, {}, {})
+
+    # The scalar is IDENTICAL either side - which is exactly why the label is
+    # the only thing that can tell the two states apart.
+    assert after.inputs["regime_scalar"] == 1.0
+    assert after.inputs["regime_label"] == Regime.LOW_VOL.value
+    await engine.stop()

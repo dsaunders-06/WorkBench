@@ -263,6 +263,32 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M94 - A decision recorded what the gate DID, never what produced it  **[BUILT 19 August]**
+
+`regime_scalar: 1.0` in `risk_decisions.csv` was ambiguous, and the ambiguity
+was invisible. Low-vol's exposure scalar is 1.00 and `RiskEngine`'s untouched
+default is also 1.0, so the field could mean *measured low_vol* or *no
+RegimeEvent has ever arrived and this gate is a default*. **Every entry decision
+this system has ever made records what the gate did without recording what
+produced it.**
+
+**Found by an alarm that could not be checked.** On 19 August `session_check`
+reported `*** NO REGIME PUBLISHED ***` for a whole session. The 120 decisions
+that session wrote could neither confirm nor deny it - both states write
+`regime_scalar: 1`. Same shape as the corporate-actions failure of 12 August:
+blindness reading identically to a quiet book.
+
+`RiskEngine.regime_label` now travels with the scalar and lands in the audit
+trail. **None means the scalar is a default, never a reading** - a label
+standing in for "we were never told" is the defect, not the fix.
+
+**The alarm itself was a false one**, and that is a separate fix: `REGIME x ->
+y` is logged only on a label CHANGE while `RegimeEvent` publishes
+unconditionally, so the first session after a night with no restart has no line
+for the watch script to find. Third instrument bug of the week and the worst -
+it cries wolf about the one failure the protocol calls the most consequential
+thing that can silently go wrong.
+
 ## M92 - Australian dates on the screens, ISO-8601 in the records  **[BUILT 15 August]**
 
 Ahead of the ASX move: `18/08/2026` on screen, not `2026-08-18`. Eight display
