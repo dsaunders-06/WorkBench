@@ -137,16 +137,27 @@ the app's view of what protects the book.
 
 ## OUTSTANDING, IN ORDER
 
+**RUN THE PRE-FLIGHT BEFORE ANY SESSION:**
+
+    .\.venv\Scripts\python.exe scripts/preflight.py
+
+Read-only, five minutes, exits non-zero when blocked. It walks configuration,
+session, watchlist, feed, broker, Gateway, account, book and contract
+resolution, and **it will not say READY about anything it could not check** -
+UNKNOWN blocks exactly as FAIL does. Verified READY against DUQ200898 on
+19 August with the full ASX configuration.
+
 **STAGE 1 IS DONE and the app runs on IBKR.** What follows is not.
 
-1. **THE $500 MINIMUM MARKETABLE PARCEL** - Stage 3, and now the LAST
-   development blocker before an ASX paper session. ASX rejects an initial
-   parcel below $500, so sizing must respect it or entries simply fail at the
-   broker. Implemented NOWHERE (`grep -rn parcel src/` returns nothing).
-2. **Watchlist category** - `resolve_watchlist` defaults to `curated`, which
-   gave FOUR ASX symbols in the first live run. A real trial wants
-   `watchlist_category=megacap` for the hundred-name universe. Configuration,
-   not code, but it decides what the trial actually measures.
+1. **RUN A SESSION.** Nothing is known to be missing. The configuration is
+   below, the pre-flight says READY, and ASX is 00:00-06:00 UTC. The trial is
+   now the next piece of work rather than a thing being prepared for.
+2. **THE $500 MINIMUM MARKETABLE PARCEL** - DEFERRED by the operator on
+   19 August: it is a listing rule for real trades and paper is about the
+   machinery. Needed before LIVE, not before a paper trial. Implemented
+   nowhere (`grep -rn parcel src/` returns nothing). One residual risk: if
+   IBKR's paper SIMULATOR enforces it, entries below $500 are rejected and the
+   first session will say so.
 3. **Q4** - execution retention, how far back IBKR executions go. Needs a real
    FILL and is the only Stage 1 question that does. Decide whether it is worth
    one; `recent_fills` is the natural place to settle it.
@@ -1278,5 +1289,28 @@ DO NOT
   Trust an empty response from an empty account as evidence a method works.
   Infer cancellability from visibility in reqAllOpenOrders().
   Deploy without asking.
+
+THE CONFIGURATION FOR AN ASX PAPER SESSION
+  QAT_BROKER=ibkr
+  QAT_MARKET=ASX
+  QAT_TRADING_MODE=paper
+  QAT_IBKR_PORT=4002
+  QAT_MARKET_DATA_SOURCE=yfinance
+  QAT_EXECUTION_MODE=auto            <- NOT the default, by design
+  QAT_AUTONOMOUS_STRATEGIES=swing    <- empty means NOTHING ever executes
+  QAT_WATCHLIST_CATEGORY=megacap     <- curated gives FOUR symbols
+
+  ASX trades 00:00-06:00 UTC (10:00-16:00 Sydney). A session run outside that
+  stands down, correctly, and measures nothing.
+
+  promotion_evidence_enforced is FALSE in paper by design - paper is where the
+  evidence is produced - so the 30-trade gate does NOT block an unattended
+  paper run.
+
+RUN THE PRE-FLIGHT FIRST, EVERY TIME
+  .\.venv\Scripts\python.exe scripts/preflight.py
+  Read-only, five minutes, non-zero exit when blocked. It will not say READY
+  about anything it could not check.
+
 ```
 
