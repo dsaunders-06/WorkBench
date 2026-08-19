@@ -323,6 +323,68 @@ orders, legs attached to the parent (`parentId`), both GTC, `whyHeld='child'`
 and `'child,trigger'` - then cancelled through `IBAdapter.cancel_order` with
 zero left resting. Nine mutations, all killed.
 
+## M98 - `resting_stops` on IBKR: protection observed, not asserted  **[BUILT 19 August]**
+
+Stage 1 Task 4. Without it the app stops verifying that what it believes
+protects the book is actually resting at the broker - **"ten of ten carrying a
+stop" becomes an assertion rather than an observation**, and that was the US
+trial's single strongest safety claim. The failure is not hypothetical: on
+31 July six brackets' take-profit legs expired at the close, the paired stops
+were cancelled with them, and NOTHING NOTICED, because reconciliation compares
+filled quantities and an expired protective leg changes none.
+
+**`reqAllOpenOrders`, not `openTrades`.** `openTrades()` is scoped to the
+CONNECTED client, so a stop placed under another clientId is invisible to it -
+and invisible protection reads as NO protection, making the app re-arm a
+position that is already protected. The two are not interchangeable and a test
+says which is used.
+
+**Two fields added to `RestingStopOrder`, both from measurement, both optional
+so Alpaca is untouched.**
+
+* `why_held` - IBKR marks a stop it holds on its own servers awaiting the
+  trigger with `whyHeld='trigger'` (a bracket leg reads `'child,trigger'`).
+  That reaches the risk model directly: a stop held at the broker does not
+  protect outside regular hours, which is the case the gap-risk rail exists for
+  and how MNST lost 51.4%. **Carried RAW rather than as `simulated: bool`** -
+  "held at IBKR" and "simulated on this exchange" are different claims and only
+  the first is observed.
+* `owner_client_id` - an order belongs to the clientId that placed it, and a
+  cancel from another fails with error 10147 while `reqAllOpenOrders()` still
+  shows it. **Visible is not cancellable**, and this record is what M39 calls
+  `modify_order` from, so it has to answer both questions.
+
+**Decisions that could have been silent defaults.** `PreSubmitted` counts as
+working, because a bracket's stop child sits there until its parent fills and
+it IS the protection - the M33d shape, where an OCO's `held` leg read as
+nothing. `TRAIL` is excluded deliberately: its working level is not `auxPrice`,
+so reporting one would put a price the broker is not holding into
+`risk_at_stop` - a wrong number, which is worse than a missing one because it
+looks answered.
+
+**Two live stops on one symbol resolve by RULE, not by arrival order** - the
+tightest wins, being the one that will actually fire. "Tightest" is not
+"highest": a SELL stop protecting a long fires on the way down, a BUY stop
+protecting a short on the way up. Mutation testing earned its keep here twice -
+the first duplicate test passed under "last wins", and after fixing it the
+rewrite still passed under "first wins", because with only two orders those are
+the only positions a naive implementation can pick. A three-stop case with the
+tightest in the MIDDLE is what finally pinned it.
+
+**A test elsewhere failed, correctly.** `test_the_refusal_names_the_capabilities_ibkr_lacks`
+hardcoded `resting_stops` as a capability IBKR lacked. The refusal message is
+DERIVED, so it had already stopped saying it - the hardcoded name was the stale
+half. Now derived too, for the reason `handoff_state.py` exists.
+
+**Verified live, read-only**: accepted against DUQ200898, empty book reads as
+`{}` - "no protection found" rather than raising. Stated for what it is: that
+establishes the call and the empty answer, and NOT the translation, `whyHeld`,
+the clientId or the duplicate rule, all of which need a stop actually resting.
+
+`broker_capabilities.py` now reports IBKR implementing **11 of 12** - only
+`announcements`, which has no IBKR equivalent and is Task 5's recorded
+decision.
+
 ## M97 - `recent_fills` on IBKR: the method the machinery hangs off  **[BUILT 19 August]**
 
 Stage 1 Task 2. Without it `absorb_broker_fills` returns immediately, so a

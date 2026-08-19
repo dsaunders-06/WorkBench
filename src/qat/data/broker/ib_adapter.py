@@ -32,6 +32,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    RestingStopOrder,
     balances_from_summary,
 )
 from qat.data.broker.ib_client_protocol import IBClientProtocol
@@ -39,7 +40,9 @@ from qat.data.broker.ib_translate import (
     from_ib_account_values,
     from_ib_fill,
     from_ib_position,
+    from_ib_resting_stop,
     from_ib_trade,
+    tighter_stop,
     to_ib_contract,
     to_ib_oca_pair,
     to_ib_order,
@@ -321,6 +324,68 @@ class IBAdapter:
                 continue
             fills.append(fill)
         return fills
+
+    async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:
+        """Protective stops actually working at the broker, with enough to
+        CHANGE one (M31b/M39, Stage 1 Task 4).
+
+        This is the primary; `resting_stops` derives from it. One scan rather
+        than two, because two could disagree about what counts as protection
+        and "protected" is the answer the re-arm acts on.
+
+        **`reqAllOpenOrders`, not `openTrades`.** `openTrades()` returns only
+        the CONNECTED client's orders. A stop placed under a different clientId
+        would be invisible to it - and invisible protection reads as NO
+        protection, so the app would re-arm a position that is already
+        protected and the duplicate would be refused for insufficient shares.
+        The same measurement that showed this also showed the trap in the other
+        direction: an order visible here may still not be CANCELLABLE from this
+        connection, which is why the record carries `owner_client_id`.
+
+        Returns an empty dict when nothing is working, which
+        `OMS.verify_position_stops` reads as "no protection found" - and it
+        means we went and looked, not that a page ran out.
+        """
+        request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
+        if not callable(request):
+            return {}
+
+        resting: dict[str, RestingStopOrder] = {}
+        for trade in await request():
+            stop = from_ib_resting_stop(trade, self.settings.market)
+            if stop is None:
+                continue
+            existing = resting.get(stop.symbol)
+            if existing is None:
+                resting[stop.symbol] = stop
+                continue
+            logger.warning(
+                "%s has TWO live protective stops at the broker (%s @ %s and %s @ %s) - "
+                "reporting the one that would fire first. A duplicate re-arm or a leg that "
+                "outlived its parent.",
+                stop.symbol,
+                existing.order_id,
+                existing.stop_price,
+                stop.order_id,
+                stop.stop_price,
+            )
+            resting[stop.symbol] = tighter_stop(
+                existing, stop, selling=str(trade.order.action).upper() == "SELL"
+            )
+        return resting
+
+    async def resting_stops(self) -> dict[str, float]:
+        """Symbol to stop price, from the one scan `resting_stop_orders` runs.
+
+        M31b. The app keeps its own record of the stops it attached, and that
+        record has been wrong: on 31 July six brackets' take-profit legs
+        expired at the close, the paired stops were cancelled with them, and
+        nothing noticed - reconciliation compares filled quantities and an
+        expired protective leg changes none.
+        """
+        return {
+            symbol: stop.stop_price for symbol, stop in (await self.resting_stop_orders()).items()
+        }
 
     async def place_order(self, order: Order) -> Order:
         self._check_not_read_only()

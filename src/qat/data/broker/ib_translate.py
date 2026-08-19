@@ -14,7 +14,14 @@ from ib_async import Position as IBPosition
 from ib_async.order import LimitOrder, MarketOrder, StopOrder, Trade
 from ib_async.order import Order as IBOrder
 
-from qat.data.broker.adapter import AccountSummary, BrokerFill, Order, OrderStatus, Position
+from qat.data.broker.adapter import (
+    AccountSummary,
+    BrokerFill,
+    Order,
+    OrderStatus,
+    Position,
+    RestingStopOrder,
+)
 from qat.data.symbols import from_ibkr, to_ibkr
 
 logger = logging.getLogger(__name__)
@@ -306,6 +313,66 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
         price=float(execution.price),
         filled_at=execution.time,
     )
+
+
+# Order types that ARE a protective stop with a level readable from
+# `auxPrice`. TRAIL and TRAIL LIMIT are excluded deliberately rather than by
+# omission: a trailing stop's working level is not `auxPrice`, so reading it as
+# one would report a stop price the broker is not holding - a wrong number in
+# `risk_at_stop`, which is worse than a missing one because it looks answered.
+_IB_STOP_TYPES = frozenset({"STP", "STP LMT"})
+
+# Statuses at which an order is genuinely working. `PreSubmitted` counts: a
+# bracket's stop child sits there with `whyHeld='child,trigger'` until its
+# parent fills, and it IS the protection - a scan that demanded `Submitted`
+# would report every bracketed position as unprotected (the M33d shape, where
+# an OCO's `held` stop leg read as nothing at all).
+_IB_WORKING_STATUSES = frozenset({"PreSubmitted", "Submitted", "PendingSubmit"})
+
+
+def from_ib_resting_stop(trade: Trade, market: str = "US") -> RestingStopOrder | None:
+    """One open IBKR order as a resting protective stop, or None if it is not
+    one (Task 4).
+
+    Keyed by `permId` for the same reason `from_ib_fill` is: it is the id the
+    rest of the application knows the order by, and M39 re-prices a stop by
+    calling `modify_order` with it.
+    """
+    order = trade.order
+    if str(order.orderType) not in _IB_STOP_TYPES:
+        return None
+    if str(trade.orderStatus.status) not in _IB_WORKING_STATUSES:
+        return None
+    if not order.auxPrice:
+        return None
+    return RestingStopOrder(
+        symbol=from_ibkr(trade.contract.symbol, market),
+        order_id=str(order.permId or order.orderId),
+        stop_price=float(order.auxPrice),
+        quantity=float(order.totalQuantity),
+        why_held=str(trade.orderStatus.whyHeld) or None,
+        owner_client_id=int(order.clientId),
+    )
+
+
+def tighter_stop(
+    left: RestingStopOrder, right: RestingStopOrder, selling: bool
+) -> RestingStopOrder:
+    """Whichever of two stops on one symbol would fire FIRST.
+
+    Two live stops for one symbol is an anomaly - a duplicate re-arm, or a leg
+    that outlived its parent - and the answer has one slot, so the choice must
+    not depend on the order the broker happened to return them in.
+
+    "Tightest" is not "highest". A SELL stop protecting a long fires on the way
+    DOWN, so the higher one goes first; a BUY stop protecting a short fires on
+    the way UP, so the LOWER one does. Always taking the maximum would report
+    the stop furthest from firing on every short, overstating the risk actually
+    being carried.
+    """
+    if selling:
+        return left if left.stop_price >= right.stop_price else right
+    return left if left.stop_price <= right.stop_price else right
 
 
 def from_ib_position(position: IBPosition) -> Position:

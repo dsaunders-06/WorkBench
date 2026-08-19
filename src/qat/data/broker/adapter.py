@@ -105,6 +105,30 @@ class RestingStopOrder:
     order_id: str
     stop_price: float
     quantity: float
+    # The broker's own "why is this order held" marker, RAW (Task 4).
+    #
+    # IBKR reports `whyHeld='trigger'` for a stop it is holding on its own
+    # servers awaiting the trigger, rather than one working at the exchange,
+    # and `'child,trigger'` for a bracket leg. That distinction reaches the
+    # risk model directly: a stop held at the broker does not protect outside
+    # regular hours, which is exactly the case the gap-risk rail exists for
+    # and exactly how MNST lost 51.4%.
+    #
+    # Carried RAW rather than as a `simulated: bool`, because "held at IBKR"
+    # and "simulated on this exchange" are different claims and only the first
+    # is observed. `None` means this adapter does not report one - a DIFFERENT
+    # claim from "it is working at the exchange".
+    why_held: str | None = None
+    # Which broker-side client owns the order (Task 4).
+    #
+    # An IBKR order belongs to the clientId that placed it: a cancel or modify
+    # from another fails with error 10147 while `reqAllOpenOrders()` STILL
+    # SHOWS the order and the local object reports `PendingCancel`. Visible is
+    # not cancellable, so "is this position protected" and "can I actually move
+    # that stop" are different questions - and this record is what M39 calls
+    # `modify_order` from. `None` means the adapter does not scope orders this
+    # way, which is Alpaca's case.
+    owner_client_id: int | None = None
 
 
 @dataclass(slots=True)
