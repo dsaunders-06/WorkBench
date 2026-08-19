@@ -257,6 +257,51 @@ mode. permId remains the correct identity for a persisted record.
 `orderId=8` / the permId above when Task 1's remaining question (4) is
 settled or abandoned.
 
+## Found while CANCELLING the test order: orders belong to a clientId
+
+Cancelling it failed, from a different `clientId` than placed it:
+
+```
+Error 10147, reqId 8: OrderId 8 that needs to be cancelled is not found.
+status after cancel: 'PendingCancel'
+reqAllOpenOrders() now -> 1 order(s)
+*** STILL RESTING - cancellation did NOT take ***
+```
+
+Placed on `clientId=97`, cancel attempted on `clientId=95`. Reconnecting as 97
+cancelled it immediately and `reqAllOpenOrders()` then returned 0.
+
+**Three things here, and the third is the dangerous one.**
+
+1. **An IBKR order is owned by the clientId that placed it.** Another client
+   cannot cancel it by `orderId`.
+2. **`reqAllOpenOrders()` still SHOWS it.** So a client can see an order it
+   cannot cancel or modify — visible, and not actionable. `openTrades()` is
+   scoped to the connected client; `reqAllOpenOrders()` is not. Task 4 must
+   not treat the two as interchangeable.
+3. **The cancel reported `PendingCancel` while being rejected.** The status on
+   our own object claimed progress the broker never made. It was caught only
+   by re-reading `reqAllOpenOrders()` afterwards — verify by behaviour, not by
+   banner, working exactly as the habit intends.
+
+**What it means for this application.** `QAT_IBKR_CLIENT_ID` defaults to 1.
+If it ever changes while protective stops are resting — a config edit, a
+second connection taking the id, a tool run with a different id — those stops
+become **uncancellable and unmodifiable while still appearing in the app's own
+view of what protects the book**. M39's re-pricing of a resting stop through a
+corporate action would fail with error 10147, and Task 3's cancel/modify
+hazard note gains a second cause it did not anticipate.
+
+**Recommendations for Task 4:**
+
+* treat `QAT_IBKR_CLIENT_ID` as **immutable while any order rests**, and say
+  so where it is configured;
+* have `resting_stop_orders` record the owning `clientId`, so "can I actually
+  cancel this" is answerable rather than assumed;
+* consider `clientId=0` (the master client, which receives and can act on all
+  orders) — a design question, not a default to adopt silently;
+* never infer cancellability from visibility in `reqAllOpenOrders()`.
+
 ## What to do next
 
 1. **M95 first — before Task 2, before Task 4, before anything.** `IBAdapter`
@@ -271,6 +316,8 @@ settled or abandoned.
    `reqExecutions`' documented behaviour is enough.
 4. **Question 2 stays formally open** for the live case, though `whyHeld`
    gives the app a way to stop caring: it can read what it currently assumes.
-5. **Cancel the test order** when the restart comparison is done.
+5. ~~Cancel the test order~~ **DONE — cancelled and verified externally,
+   `reqAllOpenOrders()` returns 0. The account holds no orders and no
+   positions.**
 
 Tasks 2 to 5 remain unstarted, as planned.

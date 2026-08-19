@@ -23,27 +23,90 @@ deriving is.**
 
 # Where this stands, in one paragraph
 
-**The US validation trial closed on 19 August and the ASX/IBKR move is called.**
-M94 (`f537a9e`) is the deployed build and the app runs on it. Everything is
-pushed. **The deploy gap is NO LONGER ZERO** — `d094863` carries M70 and M71 into
-the IBKR path and is deliberately undeployed, because there is no IBKR account to
-exercise it against and it changes nothing on Alpaca. Run `handoff_state.py` for
-the live figures rather than reading a number here; this paragraph went stale
-within a day of being written, which is the argument the whole file makes.
+**The IBKR paper account is LIVE (`DUQ200898`) and Stage 1 Task 1 is DONE.**
+Three of its four questions are answered against a real Gateway, not inferred.
+Work is NO LONGER PAUSED - the blocker that paused it is gone.
 
-**The trial failed to answer its own question and succeeded at everything else.**
-It produced ONE closed trade the promotion gate can count, against a gate needing
-thirty — not because the strategy was quiet but because 4,456 of 4,831 refusals
-were the 10-position limit. The book filled on day one and never emptied. The
-rails were sized for capital preservation and the trial needed throughput; that
-conflict was never stated, and it is the whole reason there is no edge evidence.
-The machinery, which is what the phase was really validating, held throughout.
+**Run `handoff_state.py` before quoting any number below.** This file has gone
+stale within a day of being written, twice.
+
+## What Task 1 measured, 19 August
+
+* **ASX trading permission IS granted.** Confirmed by a `whatIfOrder` preview
+  that creates no order. Commission came back **AUD 6.60**, exactly the ASX
+  Fixed floor. Account equity ~**1,003,733** - the 10x figure that changes
+  which rails bind.
+* **All four IBKR calls exist and answer.** `fills`, `reqExecutions`,
+  `openTrades`, `reqAllOpenOrders` - no permission error, no pacing violation.
+* **`announcements` has NO equivalent.** Confirmed, not inferred. Task 5 is a
+  decision to record, not code to write.
+* **Q3 ANSWERED: a resting stop IS visible** to both `openTrades()` and
+  `reqAllOpenOrders()`, agreeing on type, price, status and permId.
+* **Q1 ANSWERED: permId SURVIVES a Gateway restart.** Task 3's identity choice
+  holds, measured. (`orderId` survived too - that is NOT a reason to prefer it;
+  its hazard was reuse, never mutation.)
+* **Q2 advanced, not closed.** The order came back `whyHeld='trigger'` - IBKR's
+  marker for held-at-IBKR rather than working at the exchange. Cannot settle
+  native-vs-simulated for LIVE ASX because IBKR simulates all paper stops. But
+  **the API EXPOSES the distinction**, so the app can read what it currently
+  assumes. Task 4 should carry `whyHeld` through.
+* **Q4 STILL OPEN** - execution retention needs a real fill, the only remaining
+  question that does.
+
+Full report: `docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md`.
+The account now holds **no orders and no positions** - the test order was
+cancelled and the cancellation verified externally.
+
+## THE TWO DEFECTS TASK 1 FOUND, WHICH MATTER MORE THAN WHAT IT WENT LOOKING FOR
+
+**M95 - IBKR sent a protective stop as a MARKET order. STAGE A FIXED.**
+`to_ib_order` branched on `limit_price` alone, so the protective stop
+`OMS._propose_protective_order` builds - `order_type="stop"`, `limit_price=None`
+- fell through to `MarketOrder("SELL", qty)`. **A protective stop for an
+unprotected position became an immediate market sell OF THAT POSITION.** Never
+reached production; `QAT_BROKER=alpaca` throughout the US trial. Stage A ships
+STP-at-GTC, `modify_order` propagating `stop_price`, and a boundary guard that
+RAISES rather than approximating. **Nothing caught it because the capability
+audit asks "is the method there", and `place_order` was there - the TRANSLATION
+was wrong.**
+
+**STAGE B IS NOW THE BLOCKER FOR ANY IBKR TRADING.** `_new_pending_order` sets
+`stop_price`/`take_profit_price` on ordinary entries, so `is_bracket` is true
+for a normal entry - and M95's guard correctly REFUSES it rather than opening
+a position naked. **The app cannot place an IBKR entry until Stage B transmits
+bracket legs** (parent plus two children in an OCA group, which needs
+`place_order` to send several orders rather than one). This is deliberate: a
+rejected entry is recoverable, an unprotected position is the MNST failure.
+
+**ORDERS BELONG TO A clientId.** Cancelling from a different `clientId` than
+placed fails with error 10147 - while `reqAllOpenOrders()` still SHOWS the
+order, and while our own object reports `PendingCancel`. **Visible is not
+cancellable.** `QAT_IBKR_CLIENT_ID` must be treated as IMMUTABLE while any
+order rests, or protective stops become unmodifiable while still appearing in
+the app's view of what protects the book.
+
+## OUTSTANDING, IN ORDER
+
+1. **M95 Stage B** - bracket/OCA transmission. Blocks all IBKR entries.
+2. **Stage 1 Task 2** - `recent_fills`. UNBLOCKED now Task 1 has reported.
+   Without it `absorb_broker_fills` returns immediately, so a stop firing is
+   never recorded as a closed trade and M70/M71 never run.
+3. **Stage 1 Task 4** - `resting_stops`/`resting_stop_orders`. Carry `whyHeld`
+   and the owning `clientId`.
+4. **Stage 1 Task 5** - the announcements decision. Measured; needs an operator
+   choice, not code.
+5. **Q4** - execution retention, needs a real fill. Decide if it is worth one.
+6. **`to_ib_contract` defaults `currency="USD"`** - ASX symbols would go as USD
+   contracts. Deferred to Stage 3 deliberately.
+
+Unchanged from before: the DATA decision (yfinance for ASX bars, IBKR for
+execution - do NOT buy ASX Total during testing), M71 still unobserved in
+production, the cash floor question, and M43 waiting on the announcements
+decision.
 
 **Two documents supersede everything below.** `docs/2026-08-19-us-trial-close.md`
-is the full account — what worked, what did not, and what was never tested.
-`docs/superpowers/plans/2026-08-19-ibkr-move.md` is the plan for what happens
-next, in four stages, of which only the first is planned in detail because the
-rest is guessing until it measures something.
+is the full account of the US phase. `docs/superpowers/plans/2026-08-19-ibkr-move.md`
+is the four-stage plan.
 
 ---
 
@@ -1056,8 +1119,9 @@ nothing to change:
 **5. Know about the daily restart, because it decides question 1.** IB Gateway
 forces a restart every day unless auto-restart is configured, and the app is
 meant to run overnight. Configure -> Settings -> Lock and Exit -> Auto Restart.
-**This is also the cheapest way to answer whether `permId` survives a restart:**
-note a `permId`, let Gateway restart, and look again.
+**ANSWERED 19 August** by exactly that method - a GTC stop left resting,
+Gateway restarted, permId 828725903 unchanged. Auto Restart still matters for
+overnight running; it is no longer an open question.
 
 **6. Sanity-check the connection before running anything else:**
 
@@ -1069,83 +1133,67 @@ the paper one (paper accounts are prefixed `DU`), stop** — you are connected t
 the wrong session.
 
 ```
-The IBKR paper account is live. Begin Stage 1 Task 1 of
-docs/superpowers/plans/2026-08-19-ibkr-move.md.
+Stage 1 Task 1 is DONE and the IBKR paper account (DUQ200898) is live and
+empty - no orders, no positions. Begin M95 STAGE B.
 
-THIS IS A MEASUREMENT, NOT A CODING TASK. The deliverable is a report. Write no
-adapter code, and do not start Task 2 - it was deliberately stopped because this
-task measures exactly what it would otherwise assume.
+READ FIRST
+  docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md - what was
+  measured against a real Gateway on 19 August, including two defects found
+  along the way that matter more than the questions Task 1 asked.
+  ROADMAP.md M95 - Stage A, which shipped, and why the guard exists.
 
-BEFORE CONNECTING TO ANYTHING
-  Confirm QAT_TRADING_MODE=paper and that IB Gateway is on the PAPER port
-  (4002). ib_adapter.py raises LivePortInPaperModeError if a live port (4001 or
-  7496) is reached in paper mode. The test that proves it fires EXISTS -
-  test_paper_mode_with_a_live_port_refuses_to_construct[4001] and [7496] -
-  so run it, do not write it. The guard is one-directional by design: live
-  mode against a paper port is the safe mismatch and is allowed.
+WHY STAGE B AND NOT TASK 2
+  _new_pending_order sets stop_price/take_profit_price on ordinary entries, so
+  Order.is_bracket is TRUE for a normal entry, and M95 Stage A's guard REFUSES
+  it - correctly, because the alternative is placing the entry and silently
+  dropping its protection. THE APP THEREFORE CANNOT PLACE AN IBKR ENTRY AT
+  ALL until bracket legs transmit. Task 2 (recent_fills) records exits; you
+  cannot reach an exit you cannot enter.
 
-  ibkr_probe.py carries that guard itself (connection_target), because it
-  connects on its own rather than through IBAdapter. It also refuses a live
-  ACCOUNT NUMBER after connecting (check_paper_account): the port being right
-  does not prove the Gateway is logged into the paper session.
+WHAT STAGE B IS
+  IBKR wants a parent order plus two children sharing an OCA group, with only
+  the last carrying transmit=True. That means place_order must send SEVERAL
+  orders rather than one, and must track all their ids - which is where the
+  Task 3 cancel/modify hazard resurfaces: _orders and _ib_orders are keyed by
+  the id at insertion, and a caller may hold either the app id or the permId.
 
-  Connect READ-ONLY. IBAdapter has a read_only mode and _check_not_read_only,
-  and the probe opens its session with ib_async readonly=True.
+  M33's reasoning is the requirement, not a nicety: a resting stop and a
+  resting limit for the same shares are NOT independent. If price runs to the
+  target and later gaps back through the stop, BOTH fill and a protected long
+  becomes an accidental short. OCA is what makes them mutually exclusive AT
+  THE BROKER.
 
-THEN RUN
-  & ".\.venv\Scripts\python.exe" scripts/ibkr_probe.py --label "run 1"
+  GTC on every protective leg. M31b: DAY killed every stop this system ever
+  placed - six positions, about $36,000, through a three-day weekend.
 
-  NOT scripts/broker_capabilities.py. That one inspects OUR adapter classes
-  with hasattr and connects to nothing - its own docstring says so - so it
-  prints an identical table whether or not an account exists, and running it
-  here would rubber-stamp the assumptions this task exists to test. It is
-  still the right tool for the other half of the question (what does our
-  adapter implement); it just cannot ask a Gateway anything.
+TWO MEASURED CONSTRAINTS THAT REACH THIS TASK
+  ORDERS BELONG TO A clientId. An order placed on one clientId CANNOT be
+  cancelled or modified from another - error 10147 - while reqAllOpenOrders()
+  still shows it and our own object reports PendingCancel. Visible is not
+  cancellable. Whatever Stage B places, the same clientId must be able to
+  manage later.
 
-  ibkr_probe.py connects read-only, records absent / raised / empty / data
-  per call with the raw repr of each response, carries its own live-port and
-  live-account-number guards, and places nothing.
+  A STOP READS whyHeld='trigger' - held at IBKR, not working at the exchange.
+  Carry it through rather than assuming; it turns the US trial's strongest
+  safety claim from an assertion into an observation.
 
-  FOR QUESTION 1, RUN IT TWICE: once, then restart the Gateway, then
-    & ".\.venv\Scripts\python.exe" scripts/ibkr_probe.py --label "run 2" --out docs/superpowers/specs/2026-08-19-ibkr-capability-measurement-run2.md
-  and compare the permIds in the two reports.
+HOW
+  TDD, red proven first - Stage A's defect existed because to_ib_order had no
+  stop case in its tests at all. Against the fake IB client; do not connect to
+  a broker in a test. Mutate the result to prove each test is load-bearing.
+  Then ruff check ., black --check ., mypy src, bandit -r src, pytest tests -q,
+  all via ./.venv/Scripts/python.exe. Then commit.
 
-RECORD THE RAW RESPONSES, NOT A SUMMARY
-  For recent_fills, resting_stops, resting_stop_orders and announcements: does
-  each return data, return empty, or raise? What SHAPE is the data? Paste the
-  actual objects into the report. The whole reason W1.1 exists is that these
-  absences are SILENT - every caller guards with getattr, so a missing method
-  neither crashes nor corrupts, it just stops verifying, absorbing and
-  detecting. Evidence has to be the response itself.
+  A live end-to-end check IS available now and was not before: the paper
+  account is empty, so a small bracketed BUY on an ASX name would exercise the
+  whole path. ASK THE OPERATOR BEFORE PLACING ANYTHING. Everything provable
+  without an order should be proven without one first.
 
-FOUR QUESTIONS THIS MUST SETTLE
-  1. Does permId survive a Gateway restart? Task 3 (d094863) records permId as
-     the order identity BECAUSE orderId is per-session. If permId does not
-     survive, that decision needs revisiting.
-  2. Are ASX stops NATIVE or IBKR-SIMULATED? IBKR publishes this per exchange.
-     Record it verbatim. A simulated stop is held on IBKR's servers, triggers
-     only in regular hours with a valid quote, and is not resting at the
-     exchange - which weakens the guarantee the entire US trial rested on.
-  3. Does a stop placed in the paper account appear in openTrades() /
-     reqAllOpenOrders()? If a simulated stop is invisible to the API,
-     resting_stops cannot verify protection and the app's central safety check
-     silently stops working.
-  4. How far back do executions go? IB.fills() is documented "all fills from
-     this session", so it cannot see a fill from while the app was down - which
-     is the case absorb_broker_fills exists for. Measure the real retention.
-
-QUESTION 3 NEEDS ONE ORDER PLACED
-  That is the only write in Stage 1. ONE stop on ONE small position, and ASK
-  THE OPERATOR BEFORE PLACING IT. Everything else is read-only.
-
-THEN STATE PLAINLY WHAT PROTECTION THIS ACCOUNT ACTUALLY PROVIDES
-  If stops are simulated, risk_at_stop is optimistic overnight and the gap-risk
-  rail is doing more work than it was sized for. Write that down. DO NOT adjust
-  any rail in response - that is the operator's decision with the measurement
-  in hand.
-
-WRITE THE REPORT TO
-  docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md
-  Commit it. THEN STOP AND REPORT. Tasks 2 to 5 are shaped by what it says.
+DO NOT
+  Weaken the M95 guard to make a test pass. Refusing an unrepresentable order
+  is the feature.
+  Start Task 2 until Stage B is done.
+  Touch to_ib_contract's currency="USD" default - real, deferred to Stage 3
+  deliberately, recorded in ROADMAP under M95.
 ```
 
