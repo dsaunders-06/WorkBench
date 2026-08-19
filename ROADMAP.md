@@ -323,6 +323,45 @@ orders, legs attached to the parent (`parentId`), both GTC, `whyHeld='child'`
 and `'child,trigger'` - then cancelled through `IBAdapter.cancel_order` with
 zero left resting. Nine mutations, all killed.
 
+## M103 - a pre-flight that will not say READY about what it did not check  **[BUILT 19 August]**
+
+Four live runs against the paper Gateway on 19 August found four defects a
+green suite could not - the capability probe was a rubber stamp, the bracket
+run found M96, the protection scan found M99, the wiring run found M102. Not
+bad luck: the fakes and the broker disagreed, and only one of them is real.
+
+`scripts/preflight.py` spends five READ-ONLY minutes walking the chain a
+session depends on - configuration, session, watchlist, feed, broker, Gateway,
+account, book, contract resolution - and reports each link with its reason.
+Exits non-zero when blocked, so it can gate a launch.
+
+**The rule it enforces on itself: a check that could not be performed is not a
+check that passed.** `UNKNOWN` blocks `READY` exactly as `FAIL` does, and an
+empty check list is BLOCKED rather than vacuously ready. Task 1's first run was
+one third of a measurement because an empty answer was read as an answer; a
+pre-flight that green-lit on unperformed checks would be the same failure with
+authority.
+
+**What it catches that nothing else did.** `execution_mode=auto` with an empty
+`autonomous_strategies` is a session that evaluates every signal and executes
+NOTHING - indistinguishable afterwards from a session where the strategy found
+nothing. Synthetic data FAILS rather than warns, because invented bars corrupt
+a record rather than stopping it. A held position with no resting stop blocks
+the session outright.
+
+**And it had the exact defect it exists to catch.** The session check compared
+`phase == "open"`; `phase` is a WITHIN-session descriptor - 'Opening Range',
+'Midday Lull' - and `None` when the market is shut, so the comparison could
+never be true and the pre-flight would have reported ASX closed at midday. **A
+check that cannot pass, inside the instrument written to catch checks that
+cannot fail.** Found by running it against the real calendar, not by the tests.
+`is_open` is the authoritative flag.
+
+**Verified live** against DUQ200898 with the full ASX configuration: 14 checks,
+VERDICT READY - 100-symbol megacap watchlist, all sampled symbols priced and
+resolving on ASX, paper account confirmed, net_liq 1,003,733.21, no positions
+and no resting stops. 11 mutations, all killed.
+
 ## M101 - the app could not reach the broker it had spent a day building  **[BUILT 19 August]**
 
 Stage 1 built and live-verified the IBKR adapter - bracketed entries, stops,
