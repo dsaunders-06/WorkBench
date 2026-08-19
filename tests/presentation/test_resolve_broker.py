@@ -20,29 +20,32 @@ def test_mock_is_returned_when_mock_is_configured() -> None:
 
 
 def test_ibkr_does_not_silently_resolve_to_a_mock() -> None:
+    """Still true, and still the point - only the reason has moved. Without an
+    EventBus the adapter cannot be built at all, and the refusal says so rather
+    than handing back a simulator."""
     with pytest.raises(BrokerNotAvailableError):
         resolve_broker(Settings(broker="ibkr"))
 
 
-def test_the_refusal_names_the_capabilities_ibkr_lacks() -> None:
-    """Test the claim, not the arithmetic. The message asserts something about
-    the adapter; if it stops being true the message must stop saying it.
+def test_ibkr_no_longer_refuses_over_a_capability_the_operator_accepted() -> None:
+    """This test has changed twice, and both times because the CODE changed
+    truthfully underneath it.
 
-    This named `resting_stops` outright until Stage 1 Task 4 implemented it,
-    and then failed - correctly. The message is derived from what the adapter
-    actually lacks, so it had already stopped saying it; the hardcoded name was
-    the stale half. Derived here too, for the same reason `handoff_state.py`
-    exists: a hand-maintained copy of a derived fact is a defect waiting for
-    the fact to change.
+    It first hardcoded `resting_stops` as a capability IBKR lacked, and failed
+    when Task 4 implemented it - the derived message had already stopped
+    saying it. Rewritten to derive the list, it then failed again when the
+    wiring landed, because `resolve_broker` no longer refuses over
+    capabilities at all: `announcements` is the only one left, IBKR publishes
+    no structured corporate-action feed, and Task 5 DECIDED to accept that gap
+    and report it as UNAVAILABLE. Refusing to start over a capability the
+    operator deliberately accepted would contradict the decision.
+
+    So what is asserted now is the current contract - the gap is STATED, not
+    refused - and the refusal that remains is about the EventBus, which is a
+    real construction requirement rather than a policy.
     """
     missing = inspect_adapter(KNOWN_ADAPTERS()["ibkr"]).missing_optional
-    assert missing, "IBKR now implements everything - this test has nothing left to check"
-
-    with pytest.raises(BrokerNotAvailableError) as raised:
-        resolve_broker(Settings(broker="ibkr"))
-    message = str(raised.value)
-
-    for capability in missing:
-        assert capability in message, f"the refusal does not mention missing {capability}"
-    assert "Gateway" in message
-    assert "MockBroker" in message
+    assert missing == {"announcements"}, (
+        f"the accepted gap changed to {sorted(missing)} - re-read Task 5's decision before "
+        "assuming this is still only about corporate actions"
+    )

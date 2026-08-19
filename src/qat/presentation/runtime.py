@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, cast
 
 import requests
 
@@ -29,6 +29,7 @@ from qat.config import Settings
 from qat.data import universe
 from qat.data.broker.account_poller import AccountPoller
 from qat.data.broker.adapter import BrokerAdapter
+from qat.data.broker.ib_client_protocol import IBClientProtocol
 from qat.data.broker.mock_broker import MockBroker
 from qat.data.earnings import EarningsCalendar, NullEarningsCalendar, YFinanceEarningsCalendar
 from qat.data.feature_engine import FeatureEngine
@@ -214,7 +215,45 @@ class BrokerNotAvailableError(RuntimeError):
     """
 
 
-def resolve_broker(settings: Settings) -> BrokerAdapter:
+class BrokerConnection:
+    """Opens and closes the broker's connection as part of the engine lifecycle.
+
+    `resolve_broker` is synchronous and `IBAdapter.connect()` is not - it opens
+    the socket AND starts the heartbeat and the reconnect-with-backoff loop, so
+    it cannot happen at construction. Rather than making the caller know which
+    adapters need connecting, this tolerates the ones that do not: MockBroker
+    and Alpaca have no connect step and pass through as a no-op.
+
+    **Registered FIRST**, so the socket is up before any engine that might place
+    an order - and therefore stopped LAST, because `Orchestrator.stop_all`
+    reverses the order. A broker disconnected while the bridge is still running
+    would turn every order into an error rather than a refusal.
+    """
+
+    name = "broker-connection"
+
+    def __init__(self, broker: object) -> None:
+        self.broker = broker
+
+    async def start(self) -> None:
+        connect = getattr(self.broker, "connect", None)
+        if not callable(connect):
+            return
+        logger.info("Connecting broker: %s", getattr(self.broker, "name", type(self.broker)))
+        await connect()
+
+    async def stop(self) -> None:
+        disconnect = getattr(self.broker, "disconnect", None)
+        if not callable(disconnect):
+            return
+        await disconnect()
+
+
+def resolve_broker(
+    settings: Settings,
+    bus: EventBus | None = None,
+    ib_client: IBClientProtocol | None = None,
+) -> BrokerAdapter:
     """Builds the configured broker, falling back to MockBroker with a logged
     warning rather than failing to start (spec M12).
 
@@ -239,16 +278,54 @@ def resolve_broker(settings: Settings) -> BrokerAdapter:
             return MockBroker(seed=1)
     if settings.broker == "ibkr":
         from qat.data.broker.capabilities import KNOWN_ADAPTERS, inspect_adapter
+        from qat.data.broker.ib_adapter import IBAdapter
+
+        if bus is None:
+            raise BrokerNotAvailableError(
+                "broker=ibkr needs the EventBus. IBAdapter publishes a KillSwitchEvent when "
+                "reconnection is exhausted, and an adapter built against a private bus would "
+                "halt nothing - the application would look connected while the account sat "
+                "unprotected behind a connection the adapter had already given up on. Build "
+                "it through Runtime.build rather than on its own."
+            )
 
         absent = sorted(inspect_adapter(KNOWN_ADAPTERS()["ibkr"]).missing_optional)
-        raise BrokerNotAvailableError(
-            "broker=ibkr is configured, but IBAdapter is not auto-wired here: it needs a "
-            "running Gateway/TWS session, and it does not implement "
-            f"{', '.join(absent) if absent else 'the full protocol yet'}. "
-            "Returning MockBroker would mean trading against a simulator while believing "
-            "the destination broker was connected. Set broker=mock deliberately if that is "
-            "what you want."
-        )
+        if absent:
+            # Stated, not refused. This raised over exactly these names until
+            # Stage 1 closed them - and the one that remains, `announcements`,
+            # is a DECISION rather than an omission: IBKR publishes no
+            # structured corporate-action feed and Task 5 chose to accept the
+            # gap and report it as UNAVAILABLE. Refusing to start over a
+            # capability the operator deliberately accepted would contradict
+            # that decision; going quiet about it would be worse.
+            logger.warning(
+                "IBKR does not implement %s. Corporate-action detection is UNAVAILABLE, so a "
+                "split cannot be seen before its ex-date: entries are not gated on pending "
+                "actions and resting stops are not adjusted through one. Accepted "
+                "deliberately - see docs/superpowers/specs/"
+                "2026-08-19-ibkr-announcements-decision.md",
+                ", ".join(absent),
+            )
+
+        # NOT connected here. `connect()` is async and also starts the
+        # heartbeat and reconnect-with-backoff loop, so it belongs to the
+        # engine lifecycle - see `BrokerConnection`.
+        #
+        # `live_trading_confirmed` is never passed True from here. Only the
+        # in-app confirmation dialog may set it, so configuration alone cannot
+        # reach a live account: IBAdapter refuses to construct in live mode
+        # without it, and refuses a live PORT in paper mode either way (W1.4).
+        if ib_client is None:
+            from ib_async import IB
+
+            ib_client = cast(IBClientProtocol, IB())
+        # `BrokerAdapter` declares all twelve methods, and IBAdapter has
+        # eleven: `announcements` is OPTIONAL by the capability register
+        # (`capabilities.OPTIONAL`) and every caller guards with `getattr`,
+        # but the Protocol cannot express that. The cast records where the
+        # type system and the register disagree - and the register is the one
+        # the application actually consults.
+        return cast(BrokerAdapter, IBAdapter(ib_client, bus, settings=settings))
     return MockBroker(seed=1)
 
 
@@ -431,7 +508,10 @@ class Runtime:
         kill_switch_engine = KillSwitchEngine(bus, kill_switch)
 
         risk_engine = RiskEngine(bus, kill_switch, settings=settings)
-        broker = broker or resolve_broker(settings)
+        # The bus, because IBAdapter publishes a KillSwitchEvent when
+        # reconnection is exhausted and it has to reach the same bus the
+        # application runs on. Built above, so it is available here.
+        broker = broker or resolve_broker(settings, bus)
         # Built before the OMS because the OMS writes to it: every order
         # decision is journalled in every execution mode (M20), not only the
         # unattended ones.
@@ -670,7 +750,14 @@ class Runtime:
         )
 
         for engine in (
-            # First: the orchestrator starts engines in order, and every buffer
+            # Before everything, because it opens the socket the account
+            # pollers, the reconciliation monitor and the OMS all speak
+            # through - and because `stop_all` reverses this order, which
+            # makes the broker the LAST thing disconnected. Torn down while
+            # the bridge still runs, every order becomes an error rather than
+            # a refusal. A no-op for adapters with no connect step.
+            BrokerConnection(broker),
+            # Then: the orchestrator starts engines in order, and every buffer
             # must be seeded before the feed delivers a tick into it.
             warm_start,
             kill_switch_engine,

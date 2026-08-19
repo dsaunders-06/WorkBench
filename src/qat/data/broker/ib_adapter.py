@@ -606,4 +606,20 @@ class IBAdapter:
         return [from_ib_position(pos) for pos in self.ib_client.positions()]
 
     async def account(self) -> AccountSummary:
+        """The account summary, asked through the form that works in a loop.
+
+        `IB.accountSummary()` is a SYNC wrapper around `util.run`, which calls
+        `loop.run_until_complete` - and this application runs inside an asyncio
+        loop already, so it raises "This event loop is already running". That
+        made `account()` and `balances()` unusable in the running app while
+        passing every test, because the fakes implement `accountSummary` as a
+        plain method returning a list (M102).
+
+        Found the first time the APP ran on IBKR rather than a script. The same
+        trap as M99's synchronous permId: a fake wrong in exactly the direction
+        production is.
+        """
+        summary = getattr(self.ib_client, "accountSummaryAsync", None)
+        if callable(summary):
+            return from_ib_account_values(await summary())
         return from_ib_account_values(self.ib_client.accountSummary())

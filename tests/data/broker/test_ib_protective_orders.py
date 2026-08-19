@@ -168,3 +168,66 @@ def test_a_stop_carrying_a_take_profit_is_refused_not_silently_stripped() -> Non
     """
     with pytest.raises(UnrepresentableOrderError, match="take-profit|OCO"):
         to_ib_order(_protective_stop(take_profit_price=70.00))
+
+
+async def test_account_prefers_the_async_summary_inside_a_running_loop() -> None:
+    """M102, found the first time the APP ran on IBKR rather than a script.
+
+    `IB.accountSummary()` is a sync wrapper around `util.run`, which calls
+    `loop.run_until_complete` - and the application runs inside an asyncio
+    loop already. The real failure, verbatim:
+
+        RuntimeError: This event loop is already running
+
+    So `account()` - and `balances()`, which derives from it - could never have
+    worked in the running app. **The suite could not catch it**, because every
+    fake implements `accountSummary` as a plain method that returns a list;
+    the fakes were wrong in exactly the direction production was, which is the
+    same trap as M99's synchronous permId, twice in one session.
+    """
+
+    class LoopHostileIB:
+        """Sync `accountSummary` raises the way ib_async's does inside a loop;
+        the async form works. A client offering both must be asked the one
+        that can answer."""
+
+        def __init__(self) -> None:
+            self.async_used = False
+
+        def isConnected(self) -> bool:
+            return True
+
+        def accountSummary(self, account: str = "") -> list[Any]:
+            raise RuntimeError("This event loop is already running")
+
+        async def accountSummaryAsync(self, account: str = "") -> list[Any]:
+            from ib_async import AccountValue
+
+            self.async_used = True
+            return [
+                AccountValue(
+                    account="DU1",
+                    tag="NetLiquidation",
+                    value="1000.0",
+                    currency="AUD",
+                    modelCode="",
+                ),
+                AccountValue(
+                    account="DU1", tag="TotalCashValue", value="900.0", currency="AUD", modelCode=""
+                ),
+                AccountValue(
+                    account="DU1", tag="BuyingPower", value="4000.0", currency="AUD", modelCode=""
+                ),
+            ]
+
+        def positions(self, account: str = "") -> list[Any]:
+            return []
+
+    client = LoopHostileIB()
+    adapter = IBAdapter(client, EventBus(), settings=Settings(_env_file=None, trading_mode="paper"))
+
+    summary = await adapter.account()
+
+    assert client.async_used, "used the sync form, which cannot run inside the app's loop"
+    assert summary.net_liquidation == 1000.0
+    assert summary.cash == 900.0
