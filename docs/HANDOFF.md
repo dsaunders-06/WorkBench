@@ -946,10 +946,23 @@ THE ABLATION RAN, AND THE ANSWER IS "NOT WITH THIS INSTRUMENT"
     FIVE rails exercised. With the rail inert the same window read +0.03R -
     the positive figure was never an edge measurement.
 
+WORK IS PAUSED PENDING THE IBKR ACCOUNT. This is deliberate, not drift.
+Task 3 shipped; Task 2 was stopped before it started because Task 1 measures
+exactly what Task 2 would have had to assume. Do not resume Task 2 early.
+
 OUTSTANDING, IN ORDER
   W1.1     Stage 1 Task 1. Run scripts/broker_capabilities.py READ-ONLY the
            day the paper account exists, and record the RAW responses. Every
            later task is shaped by it. GENUINELY BLOCKED until then.
+           IT MUST ALSO SETTLE: does permId survive a Gateway restart (Task 3
+           assumes so), are ASX stops native or IBKR-simulated, does a stop
+           appear in openTrades(), and how far back do executions go.
+  DATA     DECIDED 19 Aug: do NOT buy ASX Total ($25/mo) during testing.
+           IBKR is EXECUTION-ONLY in this codebase - neither resolver has an
+           IBKR branch, so no IBKR data of any kind can reach the app. Use
+           yfinance for ASX data, IBKR for execution. Revisit at a real paper
+           trial and price it as subscription PLUS two data sources PLUS a
+           universe trim, not as $25.
   M71      FIXED from the code on 17 August but STILL UNOBSERVED in
            production - no app-transmitted sell has ever happened. Five
            sessions of watching produced none.
