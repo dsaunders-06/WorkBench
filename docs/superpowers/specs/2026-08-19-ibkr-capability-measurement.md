@@ -73,7 +73,7 @@ to exist:
 
 | Question | Needs | Status |
 |---|---|---|
-| 1. Does `permId` survive a Gateway restart? | an order carrying a permId | **order placed — awaiting restart** |
+| 1. Does `permId` survive a Gateway restart? | an order carrying a permId | **ANSWERED: yes** |
 | 3. Does a stop appear in `openTrades()`? | a stop | **ANSWERED: yes** |
 | 4. How far back do executions go? | an execution | **still blocked — needs a real fill** |
 | 2. Are ASX stops native or simulated? | IBKR documentation | **strong evidence found, see below** |
@@ -229,8 +229,33 @@ Two things follow, and they must not be conflated.
    the axis the plan worried it would lose. **Recommend Task 4 carry
    `whyHeld` through.**
 
-`permId = 828725903`. **The order is still resting**, deliberately, for the
-restart comparison. Cancel it with the `orderId=8` / permId above when done.
+### Question 1: ANSWERED — permId survives a Gateway restart
+
+The Gateway was restarted and the resting order re-read, read-only:
+
+```
+reqAllOpenOrders() -> 1
+  BHP BUY 1.0 STP aux=95.0 tif=GTC
+    orderId=8 clientId=97 permId=828725903 status=PreSubmitted whyHeld='trigger'
+```
+
+**`permId 828725903` is unchanged.** Task 3 (`d094863`) wrote permId onto
+`order.order_id` on the reasoning that a per-session id in a record that
+outlives the session is a defect waiting to happen, and flagged the
+survival question as assumed-but-unmeasured. **It is now measured, and the
+choice holds.** The GTC order survived the restart intact, `whyHeld='trigger'`
+persisted with it.
+
+**One thing not to misread.** `orderId` also came back as 8, and that must not
+be taken as "orderId would have worked too". `orderId` is a CLIENT-side
+counter scoped to `(clientId, session)`; its hazard was never that it mutates
+but that it is **reused for a different order** in a later session. Observing
+it unchanged once says nothing about collision, which is the actual failure
+mode. permId remains the correct identity for a persisted record.
+
+`permId = 828725903`. **The order is still resting.** Cancel it with
+`orderId=8` / the permId above when Task 1's remaining question (4) is
+settled or abandoned.
 
 ## What to do next
 
@@ -239,9 +264,8 @@ restart comparison. Cancel it with the `orderId=8` / permId above when done.
    into further IBKR work. It needs its own plan, a failing test proven red
    (`to_ib_order` with `order_type="stop"`), and the currency and
    `modify_order` gaps fixed alongside.
-2. **Restart the Gateway and re-read permId 828725903** — that closes
-   question 1 and validates or overturns Task 3's identity choice. Cheap, and
-   the order is already resting.
+2. ~~Restart the Gateway and re-read permId~~ **DONE — permId survived,
+   Task 3 confirmed.**
 3. **Question 4 still needs a real fill** and is the only one left needing an
    execution. Worth deciding whether it is worth a filled order, or whether
    `reqExecutions`' documented behaviour is enough.
