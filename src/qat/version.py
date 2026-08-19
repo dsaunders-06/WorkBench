@@ -60,7 +60,29 @@ from qat.domain.display_dates import format_display_date
 # 5.01% -> about 6.34% on the book as it stands. Nothing is forced to sell -
 # QAT_DELEVER_SWEEP_ENABLED=false in the live config - and entries were already
 # refused at 5.01%, so no trade that would have happened now will not.
-MILESTONE = "M94"
+#
+# M104 is the first build of the IBKR/ASX path, and it ships TWELVE milestones
+# at once because M94 was the last thing packaged - the repository ran ten
+# milestones ahead of any build, which is the state this constant exists to
+# make visible rather than to hide.
+#
+# What an operator will see that is new: broker=ibkr now RESOLVES rather than
+# refusing (M101), so the application can run against an IB Gateway; ASX
+# symbols reach the ASX listing rather than failing to resolve (M96);
+# corporate-action detection reports UNAVAILABLE as a standing condition
+# instead of a per-symbol query failure every sweep (M100).
+#
+# THE ALPACA PATH IS TOUCHED, and not only added to. M100 changed the
+# corporate-action monitor and both screens, M101 put a BrokerConnection engine
+# first in the startup order for EVERY broker, and M98 added two optional
+# fields to RestingStopOrder. All are no-ops on Alpaca by construction and none
+# has run a session there.
+#
+# NO TRADING-DECISION INPUT CHANGES on the US path. The IBKR order translation
+# changed profoundly - protective stops transmit as STP rather than as MARKET
+# orders (M95), which on IBKR was a stop that liquidated the position it was
+# meant to protect - but none of that path has ever executed in production.
+MILESTONE = "M104"
 
 _UNKNOWN = "unknown"
 

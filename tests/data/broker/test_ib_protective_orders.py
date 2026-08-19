@@ -32,12 +32,18 @@ from typing import Any
 
 import pytest
 
+# Sibling module by bare name, NOT `tests.data.broker....`. pytest puts a test
+# file's own directory on sys.path when it is not in a package, so this resolves
+# under both `pytest` and `python -m pytest`. The dotted form only worked under
+# the second, because that one also puts the CWD on sys.path - so the suite
+# passed here and broke `invoke build`, which runs bare pytest.
+from test_ib_order_identity import FakeIBClient
+
 from qat.config import Settings
 from qat.data.broker.adapter import Order
 from qat.data.broker.ib_adapter import IBAdapter
 from qat.data.broker.ib_translate import UnrepresentableOrderError, to_ib_order
 from qat.domain.bus import EventBus
-from tests.data.broker.test_ib_order_identity import FakeIBClient
 
 
 def _protective_stop(**overrides: Any) -> Order:
