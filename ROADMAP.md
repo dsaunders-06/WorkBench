@@ -323,7 +323,7 @@ orders, legs attached to the parent (`parentId`), both GTC, `whyHeld='child'`
 and `'child,trigger'` - then cancelled through `IBAdapter.cancel_order` with
 zero left resting. Nine mutations, all killed.
 
-## M96 - IBKR cannot resolve an ASX symbol at all  **[IDENTIFIED 19 August, NOT BUILT]**
+## M96 - IBKR cannot resolve an ASX symbol at all  **[BUILT 19 August]**
 
 Two faults in `to_ib_contract(symbol, exchange="SMART", currency="USD")`, which
 `place_order` calls without ever overriding the defaults.
@@ -355,6 +355,32 @@ parent carried no explicit TIF and IBKR's preset forced DAY. `AlpacaAdapter`
 deliberately sets **GTC on an entry that carries protective legs** (M31b) and
 keeps DAY only for a bare entry. `to_ib_parent` should do the same rather than
 leave it to a broker-side preset.
+
+**Built.** `symbols.to_ibkr` strips the exchange suffix at the vendor boundary,
+which is M26's pattern rather than a new one - and it PRESERVES the class-share
+dot, which is why `_split_exchange` lists the suffixes instead of inferring
+them (`.AX` is an exchange, `.B` is part of the name, and `.L` would break a
+guess). `to_ib_contract(symbol, market)` derives currency and
+`primaryExchange` from `Settings.market`, and all four `place_order` /
+`modify_order` / `cancel_order` call sites now pass it. `to_ib_parent` sets
+`tif="GTC"` explicitly, because leaving it unset does not mean "IBKR's
+default" - it means whatever the Gateway's preset says.
+
+**Verified live** against DUQ200898, read-only, using the app's OWN watchlist
+symbols through `to_ib_contract`:
+
+| app symbol | conId | venue | |
+|---|---|---|---|
+| BHP.AX | 4036812 | ASX AUD | not the ADR (4986) |
+| CBA.AX | 4036818 | ASX AUD | |
+| CSL.AX | 11294198 | ASX AUD | |
+| NAB.AX | 4036823 | ASX AUD | |
+| WBC.AX | 4036833 | ASX AUD | |
+| STW.AX | 14065804 | ASX AUD | the regime benchmark |
+
+Five mutations, all killed: suffix left on, currency back to USD,
+`primaryExchange` dropped, the market ignored by `place_order`, and the parent
+TIF left to the preset.
 
 
 ## M94 - A decision recorded what the gate DID, never what produced it  **[BUILT 19 August]**

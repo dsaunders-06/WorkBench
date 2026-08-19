@@ -70,6 +70,25 @@ def from_yfinance(symbol: str) -> str:
     return base.replace(_YFINANCE_CLASS_SEPARATOR, _CANONICAL_CLASS_SEPARATOR) + exchange
 
 
+def to_ibkr(symbol: str) -> str:
+    """Canonical form -> the form IBKR expects: the BASE symbol, no exchange.
+
+    IBKR learns the venue from the contract's `exchange`, `currency` and
+    `primaryExchange` fields, never from a suffix, and it does not merely
+    ignore one it does not want. Measured against the live paper Gateway on
+    19 August: `Stock("BHP.AX", "SMART", ...)` returns error 200, "no security
+    definition has been found", in AUD as well as USD. Every ASX order the
+    application could place would have been rejected outright (M96).
+
+    The class-share dot is PRESERVED, which is why `_split_exchange` lists the
+    exchange suffixes rather than inferring them: `.AX` is an exchange and
+    `.B` is part of the name, and a rule that stripped both would ask IBKR for
+    BRK when the app meant BRK.B.
+    """
+    base, _ = _split_exchange(symbol)
+    return base
+
+
 def canonical(symbol: str) -> str:
     """Normalise a symbol from any source into the app's internal form.
 
@@ -79,4 +98,4 @@ def canonical(symbol: str) -> str:
     return from_yfinance(symbol.strip().upper())
 
 
-__all__ = ["canonical", "from_yfinance", "to_yfinance"]
+__all__ = ["canonical", "from_yfinance", "to_ibkr", "to_yfinance"]

@@ -13,6 +13,7 @@ from ib_async.order import LimitOrder, MarketOrder, StopOrder, Trade
 from ib_async.order import Order as IBOrder
 
 from qat.data.broker.adapter import AccountSummary, Order, OrderStatus, Position
+from qat.data.symbols import to_ibkr
 
 
 class UnrepresentableOrderError(ValueError):
@@ -29,8 +30,37 @@ _IB_STATUS_MAP: dict[str, OrderStatus] = {
 }
 
 
-def to_ib_contract(symbol: str, exchange: str = "SMART", currency: str = "USD") -> Contract:
-    return Stock(symbol, exchange, currency)
+# What a market means to IBKR: (currency, primaryExchange). SMART routes in
+# both cases; `primaryExchange` is what disambiguates a symbol listed on more
+# than one venue. Keyed on `Settings.market`, which already exists as
+# Literal["US", "ASX"] and which the universe and cost profiles key off too -
+# a third market is added here deliberately, not inferred (M96).
+_MARKET_CONTRACT: dict[str, tuple[str, str]] = {
+    "US": ("USD", ""),
+    "ASX": ("AUD", "ASX"),
+}
+
+
+def to_ib_contract(symbol: str, market: str = "US") -> Contract:
+    """The IBKR contract for one of the app's symbols (M96).
+
+    Took `exchange`/`currency` as defaulted arguments that `place_order` never
+    supplied, so every contract was SMART/USD whatever market the application
+    was configured for. Measured against the live paper Gateway on 19 August:
+
+    * `Stock("BHP.AX", "SMART", ...)` -> **error 200, no security definition**,
+      in AUD as well as USD. Every ASX order rejected outright.
+    * `Stock("BHP", "SMART", "USD")` -> conId 4986, NYSE, "BHP GROUP LTD-SPON
+      ADR" - a different instrument from conId 4036812 on ASX.
+
+    The suffix is stripped at the vendor boundary (`symbols.to_ibkr`), which is
+    M26's pattern rather than a new one.
+    """
+    currency, primary_exchange = _MARKET_CONTRACT[market]
+    base = to_ibkr(symbol)
+    if primary_exchange:
+        return Stock(base, "SMART", currency, primaryExchange=primary_exchange)
+    return Stock(base, "SMART", currency)
 
 
 def to_ib_order(order: Order) -> IBOrder:
@@ -103,9 +133,14 @@ def to_ib_parent(order: Order) -> IBOrder:
     is a naked position for as long as the next two calls take.
     """
     action = "BUY" if order.side == "buy" else "SELL"
+    # GTC explicitly, matching AlpacaAdapter's rule that anything CARRYING
+    # protective legs is GTC (M31b) - and because leaving it unset does not
+    # mean "IBKR's default". Measured live: IBKR answered warning 10349,
+    # "Order TIF was set to DAY based on order preset", so a Gateway-side
+    # preset chose the TIF instead of this application (M96).
     if order.limit_price is not None:
-        return LimitOrder(action, order.quantity, order.limit_price, transmit=False)
-    return MarketOrder(action, order.quantity, transmit=False)
+        return LimitOrder(action, order.quantity, order.limit_price, tif="GTC", transmit=False)
+    return MarketOrder(action, order.quantity, tif="GTC", transmit=False)
 
 
 def to_ib_protective_legs(order: Order, parent_id: int) -> list[IBOrder]:

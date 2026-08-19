@@ -57,26 +57,30 @@ Full report: `docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md`.
 The account now holds **no orders and no positions** - the test order was
 cancelled and the cancellation verified externally.
 
-## THE TWO DEFECTS TASK 1 FOUND, WHICH MATTER MORE THAN WHAT IT WENT LOOKING FOR
+## THE DEFECTS TASK 1 FOUND, WHICH MATTER MORE THAN WHAT IT WENT LOOKING FOR
 
-**M95 - IBKR sent a protective stop as a MARKET order. STAGE A FIXED.**
+**M95 - IBKR sent a protective stop as a MARKET order. FIXED, Stages A and B.**
 `to_ib_order` branched on `limit_price` alone, so the protective stop
-`OMS._propose_protective_order` builds - `order_type="stop"`, `limit_price=None`
-- fell through to `MarketOrder("SELL", qty)`. **A protective stop for an
-unprotected position became an immediate market sell OF THAT POSITION.** Never
-reached production; `QAT_BROKER=alpaca` throughout the US trial. Stage A ships
-STP-at-GTC, `modify_order` propagating `stop_price`, and a boundary guard that
-RAISES rather than approximating. **Nothing caught it because the capability
-audit asks "is the method there", and `place_order` was there - the TRANSLATION
-was wrong.**
+`OMS._propose_protective_order` builds - `order_type="stop"`,
+`limit_price=None` - fell through to `MarketOrder("SELL", qty)`. **A protective
+stop for an unprotected position became an immediate market sell OF THAT
+POSITION.** Never reached production; `QAT_BROKER=alpaca` throughout the US
+trial. **Nothing caught it because the capability audit asks "is the method
+there", and `place_order` was there - the TRANSLATION was wrong.**
 
-**STAGE B IS NOW THE BLOCKER FOR ANY IBKR TRADING.** `_new_pending_order` sets
-`stop_price`/`take_profit_price` on ordinary entries, so `is_bracket` is true
-for a normal entry - and M95's guard correctly REFUSES it rather than opening
-a position naked. **The app cannot place an IBKR entry until Stage B transmits
-bracket legs** (parent plus two children in an OCA group, which needs
-`place_order` to send several orders rather than one). This is deliberate: a
-rejected entry is recoverable, an unprotected position is the MNST failure.
+Stage A: STP at GTC, `modify_order` propagating `stop_price`, and a boundary
+guard that RAISES rather than approximating. Stage B: bracketed entries as
+parent plus two legs, standalone stop-plus-target as one OCA group, `cancel`
+that cancels every leg AND RE-READS to confirm, `modify` that reprices the STOP
+LEG rather than the entry.
+
+**M96 - IBKR could not resolve an ASX symbol at all. FIXED.** `to_ib_contract`
+never stripped the `.AX` suffix and hardcoded `currency="USD"`. Measured:
+`BHP.AX` returned error 200 in either currency, and an unsuffixed `BHP` in USD
+resolved to the NYSE ADR (conId 4986) rather than ASX (4036812). Fixed at the
+vendor boundary in `symbols.to_ibkr`, M26's pattern. Also sets the bracketed
+parent's TIF explicitly - IBKR warned 10349 that a Gateway-side PRESET had
+chosen it.
 
 **ORDERS BELONG TO A clientId.** Cancelling from a different `clientId` than
 placed fails with error 10147 - while `reqAllOpenOrders()` still SHOWS the
@@ -87,22 +91,25 @@ the app's view of what protects the book.
 
 ## OUTSTANDING, IN ORDER
 
-1. **M95 Stage B** - bracket/OCA transmission. Blocks all IBKR entries.
-2. **Stage 1 Task 2** - `recent_fills`. UNBLOCKED now Task 1 has reported.
+1. **Stage 1 Task 2** - `recent_fills`. UNBLOCKED and now the top item.
    Without it `absorb_broker_fills` returns immediately, so a stop firing is
-   never recorded as a closed trade and M70/M71 never run.
-3. **Stage 1 Task 4** - `resting_stops`/`resting_stop_orders`. Carry `whyHeld`
-   and the owning `clientId`.
-4. **Stage 1 Task 5** - the announcements decision. Measured; needs an operator
-   choice, not code.
-5. **Q4** - execution retention, needs a real fill. Decide if it is worth one.
-6. **`to_ib_contract` defaults `currency="USD"`** - ASX symbols would go as USD
-   contracts. Deferred to Stage 3 deliberately.
+   never recorded as a closed trade and M70/M71 never run. Research already
+   banked in the plan: use `reqExecutions`/`ExecutionFilter`, not `IB.fills()`
+   (session-scoped); IBKR's side is `BOT`/`SLD`, not buy/sell; filter on FILL
+   time yourself.
+2. **Stage 1 Task 4** - `resting_stops`/`resting_stop_orders`. Carry `whyHeld`
+   (it distinguishes a stop held at IBKR from one working at the exchange) and
+   the owning `clientId` (so "can I actually cancel this" is answerable).
+3. **Stage 1 Task 5** - the announcements decision. Measured; needs an
+   operator choice, not code.
+4. **Q4** - execution retention, needs a real fill. Decide if it is worth one.
+5. **The rest of Stage 3's ASX rules** - the $500 minimum marketable parcel
+   reaches position sizing directly and is implemented nowhere. ASX minTick is
+   0.001 (measured); tick sizes, T+2 and the auctions are unbuilt.
 
-Unchanged from before: the DATA decision (yfinance for ASX bars, IBKR for
-execution - do NOT buy ASX Total during testing), M71 still unobserved in
-production, the cash floor question, and M43 waiting on the announcements
-decision.
+Unchanged: the DATA decision (yfinance for ASX bars, IBKR for execution - do
+NOT buy ASX Total during testing), M71 still unobserved in production, the cash
+floor question, and M43 waiting on the announcements decision.
 
 **Two documents supersede everything below.** `docs/2026-08-19-us-trial-close.md`
 is the full account of the US phase. `docs/superpowers/plans/2026-08-19-ibkr-move.md`
@@ -927,7 +934,16 @@ three days. The ones that are now derived have stopped being wrong.
 
 ---
 
-## Prompt to paste
+## Prompt to paste - SUPERSEDED, kept as the record of what was believed
+
+> **DO NOT PASTE THIS ONE.** It is the brief as it stood on the morning of
+> 19 August, before the account went live. It says WORK IS PAUSED PENDING THE
+> IBKR ACCOUNT and W1.1 is GENUINELY BLOCKED; both were true when written and
+> neither is true now. Task 1 is done, M95 and M96 are built.
+>
+> **The current prompt is the block at the very end of this file.** This one is
+> kept because the file's own argument is that a brief goes stale within a day
+> - and here is one that did, in hours.
 
 ```
 Continuing work on QAT (Quant Advisory Terminal) at C:\Claude Programming.
@@ -1133,67 +1149,71 @@ the paper one (paper accounts are prefixed `DU`), stop** — you are connected t
 the wrong session.
 
 ```
-Stage 1 Task 1 is DONE and the IBKR paper account (DUQ200898) is live and
-empty - no orders, no positions. Begin M95 STAGE B.
+The IBKR paper account (DUQ200898) is LIVE, permissioned for ASX, and EMPTY -
+no orders, no positions. Stage 1 Task 1 is done and M95/M96 are built.
+Begin STAGE 1 TASK 2 of docs/superpowers/plans/2026-08-19-ibkr-move.md:
+recent_fills on IBKR.
 
 READ FIRST
   docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md - what was
-  measured against a real Gateway on 19 August, including two defects found
-  along the way that matter more than the questions Task 1 asked.
-  ROADMAP.md M95 - Stage A, which shipped, and why the guard exists.
+  measured against a real Gateway, including the constraints below.
+  ROADMAP.md M95 and M96.
 
-WHY STAGE B AND NOT TASK 2
-  _new_pending_order sets stop_price/take_profit_price on ordinary entries, so
-  Order.is_bracket is TRUE for a normal entry, and M95 Stage A's guard REFUSES
-  it - correctly, because the alternative is placing the entry and silently
-  dropping its protection. THE APP THEREFORE CANNOT PLACE AN IBKR ENTRY AT
-  ALL until bracket legs transmit. Task 2 (recent_fills) records exits; you
-  cannot reach an exit you cannot enter.
+BEFORE QUOTING ANY CURRENT-STATE FIGURE
+  .\.venv\Scripts\python.exe scripts/handoff_state.py
 
-WHAT STAGE B IS
-  IBKR wants a parent order plus two children sharing an OCA group, with only
-  the last carrying transmit=True. That means place_order must send SEVERAL
-  orders rather than one, and must track all their ids - which is where the
-  Task 3 cancel/modify hazard resurfaces: _orders and _ib_orders are keyed by
-  the id at insertion, and a caller may hold either the app id or the permId.
+WHY THIS ONE NOW
+  Without recent_fills, absorb_broker_fills returns immediately, so a
+  protective stop firing at the broker is NEVER recorded as a closed trade -
+  and M70/M71 never run at all. It is the method the most machinery hangs off.
+  Entries can now be placed (M95 Stage B) and ASX symbols now resolve (M96),
+  so exits are what is missing.
 
-  M33's reasoning is the requirement, not a nicety: a resting stop and a
-  resting limit for the same shares are NOT independent. If price runs to the
-  target and later gaps back through the stop, BOTH fill and a protected long
-  becomes an accidental short. OCA is what makes them mutually exclusive AT
-  THE BROKER.
+RESEARCH ALREADY BANKED - measured against ib_async 2.1.0, do not re-derive
+  IB.fills() is documented "all fills from this session" and therefore CANNOT
+  see a fill that happened while the app was down - which is exactly the case
+  absorb_broker_fills exists for. Use reqExecutions/reqExecutionsAsync with an
+  ExecutionFilter (clientId, acctCode, time, symbol, secType, exchange, side).
+  Execution carries execId, time, permId, orderId, side, shares, price,
+  cumQty, avgPrice.
+  IBKR'S SIDE IS "BOT"/"SLD", NOT buy/sell. An unmapped value silently
+  becoming "buy" would mis-side a fill in the ledger.
+  FILTER ON FILL TIME YOURSELF after the results return. Alpaca's after= meant
+  submitted_at, and the one execution the method existed to catch was the one
+  it could not see.
+  PREFER THE *Async FORMS. The sync reqExecutions wraps IB._run and raises
+  inside a running event loop - scripts/ibkr_probe.py learned this the
+  expensive way.
 
-  GTC on every protective leg. M31b: DAY killed every stop this system ever
-  placed - six positions, about $36,000, through a three-day weekend.
-
-TWO MEASURED CONSTRAINTS THAT REACH THIS TASK
-  ORDERS BELONG TO A clientId. An order placed on one clientId CANNOT be
-  cancelled or modified from another - error 10147 - while reqAllOpenOrders()
-  still shows it and our own object reports PendingCancel. Visible is not
-  cancellable. Whatever Stage B places, the same clientId must be able to
-  manage later.
-
-  A STOP READS whyHeld='trigger' - held at IBKR, not working at the exchange.
-  Carry it through rather than assuming; it turns the US trial's strongest
-  safety claim from an assertion into an observation.
+MEASURED CONSTRAINTS THAT REACH THIS TASK
+  permId SURVIVES a Gateway restart (confirmed 19 August, permId 828725903
+  across a real restart). orderId does too, but that is NOT a reason to use it
+  - its hazard is REUSE for a different order in a later session. Task 3 keys
+  order identity on permId and that choice is now measured, not assumed.
+  ORDERS BELONG TO A clientId. reqAllOpenOrders() shows orders the connected
+  client CANNOT cancel (error 10147), and the cancel reports PendingCancel
+  while achieving nothing. Visible is not cancellable. Whether executions are
+  likewise clientId-scoped is UNMEASURED - find out, because it decides
+  whether ExecutionFilter needs the clientId set or cleared.
+  QUESTION 4 IS STILL OPEN: how far back do executions actually go. It needs a
+  real fill and is the last unanswered Task 1 question. This task is the
+  natural place to settle it - ASK THE OPERATOR before placing anything that
+  can fill.
 
 HOW
-  TDD, red proven first - Stage A's defect existed because to_ib_order had no
-  stop case in its tests at all. Against the fake IB client; do not connect to
-  a broker in a test. Mutate the result to prove each test is load-bearing.
+  TDD, red proven first, against a fake IB - do not connect to a broker in a
+  test. Then MUTATE the implementation to prove each test is load-bearing;
+  this session found two tests that passed for the wrong reason that way.
   Then ruff check ., black --check ., mypy src, bandit -r src, pytest tests -q,
   all via ./.venv/Scripts/python.exe. Then commit.
-
-  A live end-to-end check IS available now and was not before: the paper
-  account is empty, so a small bracketed BUY on an ASX name would exercise the
-  whole path. ASK THE OPERATOR BEFORE PLACING ANYTHING. Everything provable
-  without an order should be proven without one first.
+  A live read-only check IS available and costs nothing - reqExecutions on an
+  empty account returns [], which at least proves the call and the filter
+  shape. Prove everything provable without an order before asking for one.
 
 DO NOT
-  Weaken the M95 guard to make a test pass. Refusing an unrepresentable order
-  is the feature.
-  Start Task 2 until Stage B is done.
-  Touch to_ib_contract's currency="USD" default - real, deferred to Stage 3
-  deliberately, recorded in ROADMAP under M95.
+  Weaken M95's UnrepresentableOrderError guard to make anything pass.
+  Refusing an order the translator cannot faithfully express is the feature.
+  Trust an empty response from an empty account as evidence a method works -
+  that is what made Task 1's first run one third of a measurement.
 ```
 

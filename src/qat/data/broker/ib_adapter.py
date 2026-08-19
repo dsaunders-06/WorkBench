@@ -191,7 +191,7 @@ class IBAdapter:
             )
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
-        contract = to_ib_contract(symbol)
+        contract = to_ib_contract(symbol, self.settings.market)
         ticker = self.ib_client.reqMktData(contract)
         await asyncio.sleep(0)  # yield once so a just-arrived tick can populate the ticker
         return {
@@ -201,7 +201,7 @@ class IBAdapter:
         }
 
     async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
-        contract = to_ib_contract(symbol)
+        contract = to_ib_contract(symbol, self.settings.market)
         bar_data = await self.ib_client.reqHistoricalDataAsync(
             contract,
             endDateTime=None,
@@ -261,7 +261,7 @@ class IBAdapter:
 
     async def place_order(self, order: Order) -> Order:
         self._check_not_read_only()
-        contract = to_ib_contract(order.symbol)
+        contract = to_ib_contract(order.symbol, self.settings.market)
         if order.is_bracket:
             return await self._place_bracket(order, contract)
         if order.order_type == "stop" and order.take_profit_price is not None:
@@ -325,7 +325,7 @@ class IBAdapter:
                 touched.append(target)
 
         if touched:
-            contract = to_ib_contract(order.symbol)
+            contract = to_ib_contract(order.symbol, self.settings.market)
             for leg in touched:
                 self.ib_client.placeOrder(contract, leg)  # type: ignore[arg-type]
         return order
