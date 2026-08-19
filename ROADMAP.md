@@ -263,6 +263,57 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M95 - IBKR sent a protective stop as a MARKET order  **[STAGE A BUILT 19 August]**
+
+Found while preparing Task 1's single write, and it outranks everything Task 1
+went looking for. `to_ib_order` branched on `limit_price` alone:
+
+    if order.limit_price is not None:
+        return LimitOrder(...)
+    return MarketOrder(...)
+
+`OMS._propose_protective_order` (oms.py:1062) builds the protective stop as
+`side="sell"`, `order_type="stop"`, `stop_price=X`, **`limit_price=None`** -
+which fell straight through. **A protective stop for an unprotected position
+became an immediate market sell OF THAT POSITION.** The `Order` dataclass warns
+about exactly this in the comment M31d added: *"submitting it as one would
+liquidate the position it was meant to protect."* Alpaca honours the
+distinction; IBKR did not.
+
+Worse than the M70/M71 dormancy that made Task 3 urgent. That recorded prices
+the account never paid. This one sells the book when it means to protect it.
+Never reached production - `QAT_BROKER=alpaca` throughout the US trial.
+
+**Why nothing caught it.** `test_ib_translate.py` covered `to_ib_order` for a
+market buy and a limit sell, and had no stop case at all. The capability audit
+could not see it either, and that is the more interesting half: `place_order`
+is CORE and present, so a `hasattr` matrix reports IBAdapter complete. **The
+method existed; the TRANSLATION was wrong.** A capability register that asks
+"is it there" cannot ask "does it mean the same thing".
+
+**Stage A, built.** `to_ib_order` transmits a stop as `STP` at `GTC`
+unconditionally (M31b's reasoning: DAY killed every stop this system ever
+placed), and `modify_order` now propagates `stop_price` to `auxPrice` so M39's
+re-pricing through a corporate action actually reaches the broker instead of
+being accepted and ignored.
+
+**And a boundary guard, which is the part that generalises.** `to_ib_order`
+now RAISES `UnrepresentableOrderError` rather than returning something
+plausible: a stop with no stop price, and an entry carrying bracket legs it
+cannot transmit. Returning a bare order for a bracket would place the entry and
+silently drop the protection, opening a position the app believes is protected.
+A rejected entry is recoverable; an unprotected position is the MNST failure.
+The class of defect - a translator quietly approximating an intent - is now
+loud by construction.
+
+**Stage B outstanding**: OCO pairs and bracketed entries, which need
+`place_order` to transmit several orders in an OCA group rather than one. Until
+then those entries are refused, deliberately.
+
+**Not in scope, recorded here so it is not lost**: `to_ib_contract` defaults
+`currency="USD"` and `place_order` never overrides it, so ASX symbols would be
+sent as USD contracts. Belongs with Stage 3's ASX trading rules.
+
 ## M94 - A decision recorded what the gate DID, never what produced it  **[BUILT 19 August]**
 
 `regime_scalar: 1.0` in `risk_decisions.csv` was ambiguous, and the ambiguity

@@ -234,10 +234,23 @@ class IBAdapter:
         for key, value in changes.items():
             setattr(order, key, value)
         ib_order = self._ib_orders.get(order_id)
-        if ib_order is not None and "limit_price" in changes:
-            ib_order.lmtPrice = changes["limit_price"]  # type: ignore[attr-defined]
-            contract = to_ib_contract(order.symbol)
-            self.ib_client.placeOrder(contract, ib_order)  # type: ignore[arg-type]
+        if ib_order is not None:
+            # Re-priced fields have to reach the broker, not just our own
+            # object. Only `limit_price` did, so M39 re-pricing a resting stop
+            # through a corporate action was accepted, recorded here, and
+            # never sent - leaving the app believing the stop had moved while
+            # the broker still held the old level. That is the MNST shape: an
+            # unadjusted stop through a split (M95).
+            resend = False
+            if "limit_price" in changes:
+                ib_order.lmtPrice = changes["limit_price"]  # type: ignore[attr-defined]
+                resend = True
+            if "stop_price" in changes:
+                ib_order.auxPrice = changes["stop_price"]  # type: ignore[attr-defined]
+                resend = True
+            if resend:
+                contract = to_ib_contract(order.symbol)
+                self.ib_client.placeOrder(contract, ib_order)  # type: ignore[arg-type]
         return order
 
     async def cancel_order(self, order_id: str) -> Order:

@@ -9,10 +9,15 @@ from __future__ import annotations
 
 from ib_async import AccountValue, Contract, Stock
 from ib_async import Position as IBPosition
-from ib_async.order import LimitOrder, MarketOrder, Trade
+from ib_async.order import LimitOrder, MarketOrder, StopOrder, Trade
 from ib_async.order import Order as IBOrder
 
 from qat.data.broker.adapter import AccountSummary, Order, OrderStatus, Position
+
+
+class UnrepresentableOrderError(ValueError):
+    """Raised when `to_ib_order` cannot faithfully express an app Order."""
+
 
 _ACCOUNT_TAGS = ("NetLiquidation", "TotalCashValue", "BuyingPower")
 
@@ -29,7 +34,47 @@ def to_ib_contract(symbol: str, exchange: str = "SMART", currency: str = "USD") 
 
 
 def to_ib_order(order: Order) -> IBOrder:
+    """Translate an app Order, or refuse - never approximate it (M95).
+
+    This branched on `limit_price` alone, so a protective stop
+    (`order_type="stop"`, `stop_price` set, `limit_price=None`) fell through
+    to `MarketOrder`. A market sell does not protect a position, it closes it
+    at whatever the book offers - the `Order` dataclass warns about exactly
+    that, in M31d's comment: "submitting it as one would liquidate the
+    position it was meant to protect."
+
+    The refusals matter as much as the branches. An order this cannot express
+    must raise, because the failure it replaces was silent: a plausible order
+    went to the broker and nothing anywhere said the intent had been lost.
+    """
     action = "BUY" if order.side == "buy" else "SELL"
+
+    if order.order_type == "stop":
+        if order.stop_price is None:
+            raise UnrepresentableOrderError(f"stop order for {order.symbol} has no stop price")
+        # GTC unconditionally, mirroring AlpacaAdapter. DAY killed every stop
+        # this system ever placed: on 31 July six positions filled with
+        # brackets attached, the take-profit legs expired at the close, the
+        # paired stops were cancelled with them as OCO does, and about $36,000
+        # sat through a three-day weekend with no protection at the broker.
+        # A stop meant to outlive the application must outlive the session.
+        return StopOrder(action, order.quantity, order.stop_price, tif="GTC")
+
+    if order.is_bracket:
+        # An entry whose protection rides along as bracket legs. One IBOrder
+        # cannot carry them - IBKR wants a parent and two children in an OCA
+        # group - so returning a bare order here would place the entry and
+        # silently drop the protection, opening a position the app believes
+        # is protected. Refused until M95 Stage B can transmit the legs: a
+        # rejected entry is recoverable, an unprotected position is the MNST
+        # failure.
+        raise UnrepresentableOrderError(
+            f"entry for {order.symbol} carries protective legs (stop="
+            f"{order.stop_price}, target={order.take_profit_price}) and IBKR "
+            "bracket transmission is not implemented - refusing rather than "
+            "placing it unprotected"
+        )
+
     if order.limit_price is not None:
         return LimitOrder(action, order.quantity, order.limit_price)
     return MarketOrder(action, order.quantity)
@@ -55,9 +100,12 @@ def from_ib_trade(trade: Trade, our_order: Order) -> Order:
     reported back on an `Execution`. `Execution.permId` (mirrored here on
     `OrderStatus.permId` and `Order.permId`) is TWS-assigned, permanent and
     unique - the property a record meant to outlive the session needs.
-    **NOT YET CONFIRMED**: the IBKR move plan's Task 1 must verify permId
-    actually survives a Gateway restart against the real paper account
-    before this is relied on beyond a single session.
+    **CONFIRMED 19 August** against paper account DUQ200898: a GTC stop was
+    left resting, IB Gateway restarted, and the order re-read - permId
+    828725903 was unchanged. (`orderId` also happened to survive, which is
+    not a reason to prefer it: its hazard was never mutation but REUSE for a
+    different order in a later session.) See
+    `docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md`.
 
     permId can be legitimately absent (0) here: `IB.placeOrder` returns a
     `Trade` before TWS has acknowledged the order, so `trade.order.permId`
