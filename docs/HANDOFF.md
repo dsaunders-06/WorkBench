@@ -1084,7 +1084,7 @@ BEFORE CONNECTING TO ANYTHING
   Connect READ-ONLY. IBAdapter has a read_only mode and _check_not_read_only.
 
 THEN RUN
-  & ".\.venv\Scripts\python.exe" scriptsroker_capabilities.py
+  & ".\.venv\Scripts\python.exe" scripts/broker_capabilities.py
 
 RECORD THE RAW RESPONSES, NOT A SUMMARY
   For recent_fills, resting_stops, resting_stop_orders and announcements: does
