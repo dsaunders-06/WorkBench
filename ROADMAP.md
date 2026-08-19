@@ -323,6 +323,94 @@ orders, legs attached to the parent (`parentId`), both GTC, `whyHeld='child'`
 and `'child,trigger'` - then cancelled through `IBAdapter.cancel_order` with
 zero left resting. Nine mutations, all killed.
 
+## M101 - the app could not reach the broker it had spent a day building  **[BUILT 19 August]**
+
+Stage 1 built and live-verified the IBKR adapter - bracketed entries, stops,
+fills, the protection scan, order resolution - and **none of it was reachable
+by the application**, because `resolve_broker` raised for `broker=ibkr`. Every
+capability had only ever been exercised by a script. **This was in none of the
+plan's four stages**, because the plan is about what the ADAPTER can do rather
+than whether the APP can reach it.
+
+Two things had to be true first, and both had just become true: the adapter
+implements 11 of 12, and the twelfth - `announcements` - is a DECISION rather
+than an omission after Task 5. The refusal used to cite exactly those names.
+
+**Connection is a lifecycle concern, not a construction one.** `connect()` is
+async and starts the heartbeat and reconnect-with-backoff loop, while
+`resolve_broker` is synchronous. `BrokerConnection` is an `Engine` registered
+**first**, so the socket is up before anything that might place an order - and
+therefore stopped **last**, because `stop_all` reverses. A broker torn down
+while the bridge still runs turns every order into an error rather than a
+refusal.
+
+The `EventBus` is now required to build an IBKR broker: `IBAdapter` publishes a
+`KillSwitchEvent` when reconnection is exhausted, and an adapter on a private
+bus would halt nothing while the app looked connected.
+
+**The live run found what the tests could not.** `Runtime.build_demo` called
+`resolve_broker(settings)` with no bus, so the app still could not build the
+very broker this milestone wired - and the test that should have caught it
+passed a pre-built adapter, injecting straight around the defect.
+
+## M102 - `account()` could never have worked in the running app  **[BUILT 19 August]**
+
+`IBAdapter.account()` called `IB.accountSummary()`, a SYNC wrapper around
+`util.run` which calls `loop.run_until_complete`. The application runs inside an
+asyncio loop already:
+
+    RuntimeError: This event loop is already running
+
+So `account()` - and `balances()`, which derives from it - would have raised on
+every call in a real session. Now prefers `accountSummaryAsync`.
+
+**The suite could not catch it**, because every fake implements
+`accountSummary` as a plain method returning a list. **The fakes were wrong in
+exactly the direction production was** - the same trap as M99's synchronous
+`permId`, twice in one session, found both times only by running against a real
+Gateway.
+
+**Verified live**: the application built itself on `broker=ibkr, market=ASX`,
+connected through `BrokerConnection`, read `net_liq=1,003,733.21`,
+`cash=1,001,865.24`, 0 positions, `resting_stops() == {}`, then disconnected.
+**The first time this application has ever run against IBKR.** No order placed.
+Five mutations, all killed.
+
+## M100 - UNSUPPORTED is not UNREADABLE  **[BUILT 19 August]**
+
+Stage 1 Task 5's decision, taken by the operator: option 1, accept the gap and
+report it honestly.
+
+`CorporateActionMonitor._fetch` called `broker.announcements(...)` inside a
+`try/except Exception`, so on IBKR the `AttributeError` was caught and **every
+held symbol landed in `_unreadable` on every sweep**. The blindness reporting
+itself was right and deliberate - M39 makes blindness a STATE so no screen can
+say "none pending" while the detector cannot see. What was wrong was the KIND
+of state: **the message described a transient fault while the condition was
+permanent.** "The query failed, see the log for why", where the log says
+`AttributeError`, for ever, and there is no query. At
+`protection_sweep_seconds=300` with ten positions: 2,880 warnings a day plus a
+permanently lit banner pointing at something unfixable. Three `session_check`
+bugs in four days were this shape - *an alarm you learn to ignore is worse than
+no alarm.*
+
+Three states now. **UNAVAILABLE** - the broker cannot answer at all; permanent,
+knowable without asking, stated once, and pointedly not "check the log".
+**COULD NOT BE READ** - the method exists and this pass failed; unchanged.
+**none pending** - allowed only when the detector can actually see.
+
+The wording moved into pure module-level functions (`corporate_action_summary`,
+`corporate_action_banner_text`) so the SENTENCES are testable without a Qt
+widget. Every defect found on 11 August was in a sentence that explained.
+
+**What the gap actually costs, which the decision sharpened:** this data feeds
+two consumers and they are not equally armed. The ENTRY GATE (`oms.py:256`)
+refuses new entries on a pending action and is what refused CRWD in production.
+The STOP ADJUSTER is what would have prevented MNST - and
+`corporate_action_mode` defaults to `"shadow"`, so it has never placed an
+order. It never blocks a sell, deliberately. So the gap costs an entry refusal
+that has fired and an adjustment that was never switched on.
+
 ## M99 - a stop the SCAN found could not be re-priced or cancelled  **[BUILT 19 August]**
 
 Found by Task 4's live check, and it is the clearest example this project has

@@ -114,6 +114,18 @@ unfixable. Now `detection_supported()` separates the two, and both screens say
 UNAVAILABLE as a standing condition. Wording extracted into pure functions so
 the SENTENCES are testable.
 
+**M101/M102 - THE APP NOW RUNS ON IBKR. BUILT.** Everything Stage 1 produced
+was unreachable: `resolve_broker` raised for `broker=ibkr`, so every capability
+had only ever been driven by a script. `BrokerConnection` is an Engine
+registered FIRST (and so stopped LAST); the EventBus is now required, because
+IBAdapter's KillSwitchEvent must reach the bus the app runs on. The live run
+then found two more: `build_demo` passed no bus, and `account()` used
+`IB.accountSummary()` - a SYNC wrapper that raises inside the app's own event
+loop, so `account()` and `balances()` could never have worked in a session.
+
+**FIRST EVER RUN OF THIS APPLICATION AGAINST IBKR**, verified: net_liq
+1,003,733.21, cash 1,001,865.24, 0 positions, `resting_stops() == {}`.
+
 **STAGE 1 IS COMPLETE.** Tasks 1-5 done, all verified against a real Gateway.
 
 **ORDERS BELONG TO A clientId.** Cancelling from a different `clientId` than
@@ -125,9 +137,17 @@ the app's view of what protects the book.
 
 ## OUTSTANDING, IN ORDER
 
-**STAGE 1 IS DONE.** What follows is not.
+**STAGE 1 IS DONE and the app runs on IBKR.** What follows is not.
 
-1. **Q4** - execution retention, how far back IBKR executions go. Needs a real
+1. **THE $500 MINIMUM MARKETABLE PARCEL** - Stage 3, and now the LAST
+   development blocker before an ASX paper session. ASX rejects an initial
+   parcel below $500, so sizing must respect it or entries simply fail at the
+   broker. Implemented NOWHERE (`grep -rn parcel src/` returns nothing).
+2. **Watchlist category** - `resolve_watchlist` defaults to `curated`, which
+   gave FOUR ASX symbols in the first live run. A real trial wants
+   `watchlist_category=megacap` for the hundred-name universe. Configuration,
+   not code, but it decides what the trial actually measures.
+3. **Q4** - execution retention, how far back IBKR executions go. Needs a real
    FILL and is the only Stage 1 question that does. Decide whether it is worth
    one; `recent_fills` is the natural place to settle it.
 2. **Stage 2's data decision stands** - yfinance for ASX bars, IBKR for
