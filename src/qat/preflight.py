@@ -172,16 +172,43 @@ def settings_checks(settings: Settings) -> list[Check]:
             Check("autonomy", Status.OK, f"auto, strategies cleared: {', '.join(promoted)}")
         )
 
-    # --- what is knowingly given up ----------------------------------------
-    checks.append(
-        Check(
-            "corporate actions",
-            Status.WARN,
-            "IBKR publishes no corporate-action feed, so a split cannot be seen before its "
-            "ex-date: entries are not gated on pending actions and stops are not adjusted "
-            "through one. Accepted deliberately (Task 5) - listed so it is never a surprise.",
+    # --- what is knowingly given up, DERIVED for the configured broker -----
+    #
+    # This asserted "IBKR publishes no corporate-action feed" unconditionally,
+    # and printed it on the first real run against an ALPACA configuration -
+    # where announcements are implemented and the ex-date gate works. A
+    # sentence that explains and is wrong, inside the instrument written to
+    # catch those. Asked of the capability register now, which is what the
+    # application itself consults.
+    from qat.data.broker.capabilities import KNOWN_ADAPTERS, inspect_adapter
+
+    adapter = KNOWN_ADAPTERS().get(settings.broker)
+    missing = sorted(inspect_adapter(adapter).missing_optional) if adapter is not None else []
+    if "announcements" in missing:
+        checks.append(
+            Check(
+                "corporate actions",
+                Status.WARN,
+                f"{settings.broker} does not implement announcements, so detection is "
+                f"UNAVAILABLE: a split cannot be seen before its ex-date, entries are not "
+                f"gated on pending actions and stops are not adjusted through one. Accepted "
+                f"deliberately (Task 5) - listed so it is never a surprise.",
+            )
         )
-    )
+    elif adapter is not None:
+        checks.append(
+            Check(
+                "corporate actions",
+                Status.OK,
+                f"{settings.broker} implements announcements; the ex-date entry gate has an "
+                f"input. Mode is {settings.corporate_action_mode!r}"
+                + (
+                    " - SHADOW, so an adjustment is logged and never placed."
+                    if settings.corporate_action_mode == "shadow"
+                    else "."
+                ),
+            )
+        )
 
     return checks
 

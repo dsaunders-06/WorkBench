@@ -299,3 +299,28 @@ def test_the_session_check_warns_when_the_market_is_shut() -> None:
     after = datetime(2026, 8, 19, 9, 0, tzinfo=UTC)  # 19:00 Sydney
 
     assert _named(session_checks("ASX", after), "session").status is Status.WARN
+
+
+def test_the_corporate_action_note_is_derived_not_asserted() -> None:
+    """It said "IBKR publishes no corporate-action feed" unconditionally -
+    including with broker=alpaca, where announcements ARE implemented and the
+    ex-date gate works. A sentence that explains and is wrong, in the
+    instrument written to catch those, and its first real run printed it.
+
+    Derived from the capability register instead, which is what the
+    application itself consults.
+    """
+    on_alpaca = settings_checks(_paper(broker="alpaca", market="US", market_data_source="alpaca"))
+    names = [c.name for c in on_alpaca]
+
+    assert (
+        "corporate actions" not in names
+        or _named(on_alpaca, "corporate actions").status is Status.OK
+    ), "claimed corporate-action detection is unavailable on a broker that implements it"
+
+
+def test_the_corporate_action_note_still_fires_on_ibkr() -> None:
+    check = _named(settings_checks(_paper()), "corporate actions")
+
+    assert check.status is Status.WARN
+    assert "UNAVAILABLE" in check.detail or "no corporate-action feed" in check.detail
