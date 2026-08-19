@@ -95,6 +95,95 @@ def to_ib_order(order: Order) -> IBOrder:
     return MarketOrder(action, order.quantity)
 
 
+def to_ib_parent(order: Order) -> IBOrder:
+    """The entry leg of a bracket, deliberately NOT transmitted.
+
+    IBKR holds a bracket until a leg arrives with `transmit=True`. Sending the
+    parent transmitted would release the entry ahead of its protection, which
+    is a naked position for as long as the next two calls take.
+    """
+    action = "BUY" if order.side == "buy" else "SELL"
+    if order.limit_price is not None:
+        return LimitOrder(action, order.quantity, order.limit_price, transmit=False)
+    return MarketOrder(action, order.quantity, transmit=False)
+
+
+def to_ib_protective_legs(order: Order, parent_id: int) -> list[IBOrder]:
+    """The take-profit and stop legs of a bracket, attached to `parent_id`.
+
+    Ordering is load-bearing. Only the LAST leg carries `transmit=True`, and
+    that is what releases the whole group - a bracket sent without it sits at
+    IBKR untransmitted, so the app believes the position is protected while
+    nothing rests at the broker.
+
+    The legs REVERSE the entry's side: they exist to close the position, and
+    a leg repeating the entry's side would double it.
+
+    GTC on both (M31b). DAY killed every stop this system ever placed - on
+    31 July six positions filled with brackets attached, the take-profit legs
+    expired at the close, the paired stops were cancelled with them as OCA
+    does, and about $36,000 sat through a three-day weekend unprotected.
+    """
+    reverse = "SELL" if order.side == "buy" else "BUY"
+    legs: list[IBOrder] = []
+    if order.take_profit_price is not None:
+        legs.append(
+            LimitOrder(
+                reverse,
+                order.quantity,
+                order.take_profit_price,
+                parentId=parent_id,
+                tif="GTC",
+                transmit=False,
+            )
+        )
+    if order.stop_price is not None:
+        legs.append(
+            StopOrder(
+                reverse,
+                order.quantity,
+                order.stop_price,
+                parentId=parent_id,
+                tif="GTC",
+                transmit=False,
+            )
+        )
+    if legs:
+        legs[-1].transmit = True
+    return legs
+
+
+def to_ib_oca_pair(order: Order, oca_group: str) -> list[IBOrder]:
+    """A standalone protective stop and target as ONE OCA group (M33).
+
+    A resting stop and a resting limit for the same shares are not
+    independent: if price runs to the target and later gaps back through the
+    stop, BOTH fill and a protected long becomes an accidental short. The OCA
+    group is what makes them mutually exclusive AT THE BROKER, which is the
+    property a bracket had before its legs expired.
+
+    No `parentId`: there is no entry to attach to. These protect a position
+    already held, and a parentId would leave both legs waiting for a fill that
+    never comes.
+    """
+    if order.stop_price is None or order.take_profit_price is None:
+        raise UnrepresentableOrderError(
+            f"OCA pair for {order.symbol} needs both a stop and a target "
+            f"(stop={order.stop_price}, target={order.take_profit_price})"
+        )
+    action = "BUY" if order.side == "buy" else "SELL"
+    pair = [
+        LimitOrder(action, order.quantity, order.take_profit_price, tif="GTC"),
+        StopOrder(action, order.quantity, order.stop_price, tif="GTC"),
+    ]
+    # ocaType 1: cancel the remaining order outright when one fills. Reducing
+    # (2 and 3) would leave a partial resting against shares already sold.
+    for leg in pair:
+        leg.ocaGroup = oca_group
+        leg.ocaType = 1
+    return pair
+
+
 def from_ib_trade(trade: Trade, our_order: Order) -> Order:
     """Updates our Order's status/fill fields from an ib_async Trade, and
     carries the broker's own order identity onto `our_order.order_id` -

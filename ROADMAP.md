@@ -263,7 +263,7 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
-## M95 - IBKR sent a protective stop as a MARKET order  **[STAGE A BUILT 19 August]**
+## M95 - IBKR sent a protective stop as a MARKET order  **[STAGES A AND B BUILT 19 August]**
 
 Found while preparing Task 1's single write, and it outranks everything Task 1
 went looking for. `to_ib_order` branched on `limit_price` alone:
@@ -306,13 +306,56 @@ A rejected entry is recoverable; an unprotected position is the MNST failure.
 The class of defect - a translator quietly approximating an intent - is now
 loud by construction.
 
-**Stage B outstanding**: OCO pairs and bracketed entries, which need
-`place_order` to transmit several orders in an OCA group rather than one. Until
-then those entries are refused, deliberately.
+**Stage B, built.** Bracketed entries transmit as parent plus two legs, and a
+standalone stop carrying a target transmits as one OCA group. The ordering is
+the trap and has its own test: parent and take-profit go `transmit=False`, only
+the final leg carries `transmit=True`, and a bracket sent without it sits at
+IBKR untransmitted - protection in our records and not at the broker, the same
+failure class one level down. `modify_order` reprices the STOP LEG rather than
+the parent, because repricing the entry would report success while leaving the
+protective level where it was. `cancel_order` cancels every leg and then
+RE-READS to confirm, because on 19 August a cancel reported `PendingCancel`
+while being rejected outright.
 
-**Not in scope, recorded here so it is not lost**: `to_ib_contract` defaults
-`currency="USD"` and `place_order` never overrides it, so ASX symbols would be
-sent as USD contracts. Belongs with Stage 3's ASX trading rules.
+**Verified live**, not only against a fake: a bracketed entry placed through
+`IBAdapter` against paper account DUQ200898 was accepted by IBKR as three
+orders, legs attached to the parent (`parentId`), both GTC, `whyHeld='child'`
+and `'child,trigger'` - then cancelled through `IBAdapter.cancel_order` with
+zero left resting. Nine mutations, all killed.
+
+## M96 - IBKR cannot resolve an ASX symbol at all  **[IDENTIFIED 19 August, NOT BUILT]**
+
+Two faults in `to_ib_contract(symbol, exchange="SMART", currency="USD")`, which
+`place_order` calls without ever overriding the defaults.
+
+**1. The `.AX` suffix is never stripped.** The app's ASX tickers are `BHP.AX`
+(`universe.py` - the ShareTrader convention). Measured against the live paper
+Gateway: `Stock("BHP.AX", "SMART", ...)` returns **error 200, no security
+definition**, in AUD as well as USD. So every ASX order would be rejected
+outright.
+
+**2. The currency is hardcoded USD.** `Stock("BHP", "SMART", "USD")` resolves to
+**conId 4986, NYSE, "BHP GROUP LTD-SPON ADR"** - a different instrument from
+the ASX listing (conId 4036812, AUD). The correct call is
+`Stock("BHP", "SMART", "AUD")`.
+
+**This fails LOUDLY, and that is worth stating precisely** because the first
+reading of the evidence was wrong. The wrong-instrument resolution only
+happens for an UNSUFFIXED symbol; the app always sends the suffix, so it gets
+error 200 rather than a US fill. A rejected order, not a silent substitution.
+
+**The fix has a foundation already**: `Settings.market` is
+`Literal["US", "ASX"]` (config.py:540) and `MARKET_BENCHMARKS`/the universe
+already key off the same distinction. Strip the suffix and derive the currency
+from the market rather than inventing a new concept.
+
+**Also measured, and belongs with it**: IBKR answered the bracketed entry with
+**warning 10349, "Order TIF was set to DAY based on order preset"** - the
+parent carried no explicit TIF and IBKR's preset forced DAY. `AlpacaAdapter`
+deliberately sets **GTC on an entry that carries protective legs** (M31b) and
+keeps DAY only for a bare entry. `to_ib_parent` should do the same rather than
+leave it to a broker-side preset.
+
 
 ## M94 - A decision recorded what the gate DID, never what produced it  **[BUILT 19 August]**
 

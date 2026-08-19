@@ -36,7 +36,10 @@ from qat.data.broker.ib_translate import (
     from_ib_position,
     from_ib_trade,
     to_ib_contract,
+    to_ib_oca_pair,
     to_ib_order,
+    to_ib_parent,
+    to_ib_protective_legs,
 )
 from qat.domain.bus import EventBus
 from qat.domain.events import KillSwitchEvent
@@ -118,6 +121,12 @@ class IBAdapter:
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._orders: dict[str, Order] = {}
         self._ib_orders: dict[str, object] = {}
+        # One app Order can map to several IBKR orders (M95 Stage B): a
+        # bracketed entry is a parent plus two legs, a standalone protective
+        # pair is two OCA legs. `_ib_orders` keeps the PRIMARY one so every
+        # existing single-order path is untouched; group operations - cancel,
+        # and repricing the right leg - use this.
+        self._ib_groups: dict[str, list[object]] = {}
 
     async def connect(self) -> None:
         await self.ib_client.connectAsync(
@@ -203,9 +212,60 @@ class IBAdapter:
         )
         return [{"close": float(bar.close)} for bar in bar_data]  # type: ignore[attr-defined]
 
+    def _register(self, order: Order, ib_order: object, group: list[object]) -> None:
+        self._orders[order.order_id] = order
+        self._ib_orders[order.order_id] = ib_order
+        self._ib_groups[order.order_id] = group
+
+    async def _place_bracket(self, order: Order, contract: object) -> Order:
+        """An entry plus its protective legs, in IBKR's required order (M95 B).
+
+        The parent goes first and UNTRANSMITTED so it cannot reach the market
+        ahead of its protection; `placeOrder` assigns its `orderId` (real
+        ib_async does this when the field is unset), which the legs then
+        reference as `parentId`; the final leg carries `transmit=True` and
+        releases the group.
+        """
+        parent = to_ib_parent(order)
+        parent_trade = self.ib_client.placeOrder(contract, parent)  # type: ignore[arg-type]
+        group: list[object] = [parent]
+        for leg in to_ib_protective_legs(order, parent.orderId):
+            self.ib_client.placeOrder(contract, leg)  # type: ignore[arg-type]
+            group.append(leg)
+
+        app_order_id = order.order_id
+        self._register(order, parent, group)
+        result = from_ib_trade(parent_trade, order)
+        if result.order_id != app_order_id:
+            self._register(result, parent, group)
+        return result
+
+    async def _place_oca(self, order: Order, contract: object) -> Order:
+        """A standalone protective stop and target, mutually exclusive at the
+        broker rather than merely both present (M33)."""
+        pair = to_ib_oca_pair(order, oca_group=f"qat-{order.order_id}")
+        trades = [
+            self.ib_client.placeOrder(contract, leg) for leg in pair  # type: ignore[arg-type]
+        ]
+
+        app_order_id = order.order_id
+        stop_leg = next(leg for leg in pair if leg.orderType == "STP")
+        self._register(order, stop_leg, list(pair))
+        # The STOP leg's identity is the one worth carrying: it is the
+        # protection, and it is what `resting_stops` will later have to match.
+        stop_trade = trades[pair.index(stop_leg)]
+        result = from_ib_trade(stop_trade, order)
+        if result.order_id != app_order_id:
+            self._register(result, stop_leg, list(pair))
+        return result
+
     async def place_order(self, order: Order) -> Order:
         self._check_not_read_only()
         contract = to_ib_contract(order.symbol)
+        if order.is_bracket:
+            return await self._place_bracket(order, contract)
+        if order.order_type == "stop" and order.take_profit_price is not None:
+            return await self._place_oca(order, contract)
         ib_order = to_ib_order(order)
         trade = self.ib_client.placeOrder(contract, ib_order)
         app_order_id = order.order_id
@@ -234,31 +294,103 @@ class IBAdapter:
         for key, value in changes.items():
             setattr(order, key, value)
         ib_order = self._ib_orders.get(order_id)
-        if ib_order is not None:
-            # Re-priced fields have to reach the broker, not just our own
-            # object. Only `limit_price` did, so M39 re-pricing a resting stop
-            # through a corporate action was accepted, recorded here, and
-            # never sent - leaving the app believing the stop had moved while
-            # the broker still held the old level. That is the MNST shape: an
-            # unadjusted stop through a split (M95).
-            resend = False
-            if "limit_price" in changes:
-                ib_order.lmtPrice = changes["limit_price"]  # type: ignore[attr-defined]
-                resend = True
-            if "stop_price" in changes:
-                ib_order.auxPrice = changes["stop_price"]  # type: ignore[attr-defined]
-                resend = True
-            if resend:
-                contract = to_ib_contract(order.symbol)
-                self.ib_client.placeOrder(contract, ib_order)  # type: ignore[arg-type]
+        if ib_order is None:
+            return order
+
+        # Re-priced fields have to reach the broker, not just our own object.
+        # Only `limit_price` did, so M39 re-pricing a resting stop through a
+        # corporate action was accepted, recorded here, and never sent -
+        # leaving the app believing the stop had moved while the broker held
+        # the old level. That is the MNST shape: an unadjusted stop through a
+        # split (M95 Stage A).
+        #
+        # And it has to reach the RIGHT ORDER. A bracketed entry is three
+        # orders; repricing the parent when the stop moved would edit the
+        # entry and report success, which is the same failure wearing a
+        # different hat (M95 Stage B).
+        group = self._ib_groups.get(order_id, [ib_order])
+        touched: list[object] = []
+
+        if "limit_price" in changes:
+            ib_order.lmtPrice = changes["limit_price"]  # type: ignore[attr-defined]
+            touched.append(ib_order)
+        if "stop_price" in changes:
+            target = self._leg_of_type(group, "STP") or ib_order
+            target.auxPrice = changes["stop_price"]  # type: ignore[attr-defined]
+            touched.append(target)
+        if "take_profit_price" in changes:
+            target = self._leg_of_type(group, "LMT")
+            if target is not None:
+                target.lmtPrice = changes["take_profit_price"]  # type: ignore[attr-defined]
+                touched.append(target)
+
+        if touched:
+            contract = to_ib_contract(order.symbol)
+            for leg in touched:
+                self.ib_client.placeOrder(contract, leg)  # type: ignore[arg-type]
         return order
 
+    @staticmethod
+    def _leg_of_type(group: list[object], order_type: str) -> object | None:
+        """The leg of a group that carries a given IBKR order type.
+
+        Skips the entry: a bracketed LIMIT entry and its take-profit leg are
+        both "LMT", and repricing the entry when the target moved would be the
+        precise mistake this exists to avoid. Legs carry a parentId or an
+        ocaGroup; an entry carries neither.
+        """
+        for leg in group:
+            if getattr(leg, "orderType", None) != order_type:
+                continue
+            if getattr(leg, "parentId", 0) or getattr(leg, "ocaGroup", ""):
+                return leg
+        # No protective leg of that type - fall back to a lone order, which is
+        # the standalone-stop case where the order IS the protection.
+        for leg in group:
+            if getattr(leg, "orderType", None) == order_type:
+                return leg
+        return None
+
     async def cancel_order(self, order_id: str) -> Order:
+        """Cancel the order, and everything attached to it, VERIFIED.
+
+        IBKR cascades a parent cancel to its children, and "cascades" is not a
+        guarantee this project accepts on trust: on 19 August a cancel
+        reported `PendingCancel` while being rejected outright (error 10147 -
+        an order belongs to the clientId that placed it, and another client
+        cannot cancel it). An orphaned stop resting against a position that no
+        longer exists is worth one extra read.
+        """
         self._check_not_read_only()
         order = self._orders[order_id]
         ib_order = self._ib_orders.get(order_id)
-        if ib_order is not None:
-            self.ib_client.cancelOrder(ib_order)  # type: ignore[arg-type]
+        group = self._ib_groups.get(order_id) or ([ib_order] if ib_order is not None else [])
+        if not group:
+            order.status = "cancelled"
+            return order
+
+        for leg in group:
+            self.ib_client.cancelOrder(leg)  # type: ignore[arg-type]
+
+        # Then confirm, where the client can tell us. `openTrades` is optional
+        # on IBClientProtocol, so this degrades to the unverified path rather
+        # than failing on a client that does not serve it.
+        open_trades = getattr(self.ib_client, "openTrades", None)
+        if callable(open_trades):
+            ours = {id(leg) for leg in group}
+            still_resting = [
+                trade
+                for trade in open_trades()
+                if any(getattr(trade, "order", None) is leg for leg in group)
+                or id(getattr(trade, "order", None)) in ours
+            ]
+            for trade in still_resting:
+                logger.warning(
+                    "IBKR leg %s survived the group cancel - cancelling it individually",
+                    getattr(trade.order, "orderId", "?"),
+                )
+                self.ib_client.cancelOrder(trade.order)
+
         order.status = "cancelled"
         return order
 
