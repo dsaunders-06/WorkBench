@@ -158,6 +158,82 @@ def _scrolled(page: QWidget) -> QScrollArea:
     return area
 
 
+# A clientId of its own, well away from the application's. IBKR does not
+# multiplex a clientId: a second connection using one already in use silently
+# displaces the first, so a test button sharing the app's id would knock the
+# running application off its own Gateway.
+_CONNECTION_TEST_CLIENT_ID_OFFSET = 80
+
+
+def check_broker_connection(
+    broker: str, settings: Settings, ib_client: object | None = None
+) -> tuple[bool, str]:
+    """Can this broker actually be reached? (M105)
+
+    This returned `True, "<broker> needs no connection test"` for everything
+    except Alpaca - and it was TRUE when written, because the only other
+    brokers were `mock` and `simulated`, which run in-process.
+
+    **IBKR broke that assumption and nothing noticed.** It is a real broker
+    over a socket, and it is the one where "is the Gateway up?" is most likely
+    to be the answer somebody needs - yet the button returned a GREEN TICK
+    having checked nothing. A check that cannot fail, in the control whose
+    whole purpose is to fail when the broker is unreachable.
+
+    Read-only, and always disconnected afterwards. It also refuses a non-paper
+    account number, because the Settings screen is exactly where somebody looks
+    to confirm which account they are on, and DU is what says paper.
+    """
+    if broker == "alpaca":
+        from qat.data.broker.alpaca_adapter import AlpacaAdapter
+
+        adapter = AlpacaAdapter(settings=settings)
+        account = asyncio.run(adapter.account())
+        return True, (
+            f"connected to Alpaca {'paper' if adapter.paper else 'LIVE'} - "
+            f"cash ${account.cash:,.2f}, equity ${account.net_liquidation:,.2f}"
+        )
+
+    if broker == "ibkr":
+        client = ib_client
+        if client is None:
+            from ib_async import IB
+
+            client = IB()
+        try:
+            client.connect(  # type: ignore[attr-defined]
+                settings.ibkr_host,
+                settings.ibkr_port,
+                clientId=settings.ibkr_client_id + _CONNECTION_TEST_CLIENT_ID_OFFSET,
+                readonly=True,
+                timeout=10,
+            )
+        except Exception as exc:  # noqa: BLE001 - the failure IS the answer
+            return False, (
+                f"could not reach IB Gateway on {settings.ibkr_host}:{settings.ibkr_port} "
+                f"({type(exc).__name__}: {exc}). Is it running and logged in?"
+            )
+        try:
+            accounts = list(client.managedAccounts())  # type: ignore[attr-defined]
+            if not accounts:
+                return False, "connected, but IB Gateway reported no accounts"
+            live = [a for a in accounts if not a.upper().startswith("DU")]
+            if live:
+                return False, (
+                    f"connected to a NON-PAPER account: {', '.join(live)}. Paper accounts "
+                    f"are prefixed DU - this Gateway is logged into a live session."
+                )
+            return True, (
+                f"connected to IB Gateway on port {settings.ibkr_port} - "
+                f"paper account {', '.join(accounts)}"
+            )
+        finally:
+            client.disconnect()  # type: ignore[attr-defined]
+
+    # mock/simulated run in-process, so this stays true for them.
+    return True, f"{_BROKER_LABELS.get(broker, broker)} runs in-process and needs no connection"
+
+
 class SettingsScreen(QWidget):
     def __init__(self, runtime: Runtime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1184,16 +1260,7 @@ class SettingsScreen(QWidget):
         self.broker_test_result.setStyleSheet(theme.text(theme.SUCCESS if ok else theme.DANGER))
 
     def _check_broker(self, broker: str) -> tuple[bool, str]:
-        if broker != "alpaca":
-            return True, f"{_BROKER_LABELS[broker]} needs no connection test"
-        from qat.data.broker.alpaca_adapter import AlpacaAdapter
-
-        adapter = AlpacaAdapter(settings=self.runtime.settings)
-        account = asyncio.run(adapter.account())
-        return True, (
-            f"connected to Alpaca {'paper' if adapter.paper else 'LIVE'} - "
-            f"cash ${account.cash:,.2f}, equity ${account.net_liquidation:,.2f}"
-        )
+        return check_broker_connection(broker, self.runtime.settings)
 
     def _save_broker_secrets(self) -> None:
         api_key = self.alpaca_key_input.text().strip()
