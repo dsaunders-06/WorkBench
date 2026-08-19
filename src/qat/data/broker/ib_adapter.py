@@ -21,11 +21,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime
+
+from ib_async import ExecutionFilter
 
 from qat.config import Settings
 from qat.data.broker.adapter import (
     AccountBalances,
     AccountSummary,
+    BrokerFill,
     Order,
     Position,
     balances_from_summary,
@@ -33,6 +37,7 @@ from qat.data.broker.adapter import (
 from qat.data.broker.ib_client_protocol import IBClientProtocol
 from qat.data.broker.ib_translate import (
     from_ib_account_values,
+    from_ib_fill,
     from_ib_position,
     from_ib_trade,
     to_ib_contract,
@@ -258,6 +263,64 @@ class IBAdapter:
         if result.order_id != app_order_id:
             self._register(result, stop_leg, list(pair))
         return result
+
+    async def recent_fills(
+        self, since: datetime, symbols: list[str] | None = None
+    ) -> list[BrokerFill]:
+        """Executions IBKR performed that this app did not transmit (M34/M48).
+
+        A protective stop or target filling closes a position with no order
+        leaving this process, so nothing publishes `OrderFilledEvent`. Without
+        this, `absorb_broker_fills` returns immediately: the ledger never
+        records the closed trade, reconciliation reads the changed quantity as
+        a discrepancy and trips the kill-switch on a stop doing its job, and
+        `_correct_announced_price` (M70/M71) never runs at all.
+
+        **`reqExecutions`, not `IB.fills()`.** `IB.fills()` is documented "all
+        fills from this session", so it cannot see a fill that happened while
+        the app was DOWN - which is precisely the case this method exists for.
+        The wrong choice would pass every test and fail only on the restart
+        that mattered.
+
+        **The window is applied HERE, on fill time.** `ExecutionFilter` carries
+        a `time`, and it is deliberately not used to bound the answer: Alpaca's
+        `after=` read like "activity since then" and turned out to mean
+        `submitted_at`, so the one execution the method existed to catch was
+        the one it could not see (M48). A broker-side filter whose semantics
+        have not been MEASURED is not trusted to decide what this returns.
+
+        **Two things still unmeasured, recorded rather than assumed.** Whether
+        executions are `clientId`-scoped the way open orders turned out to be
+        (a cancel from the wrong clientId fails with error 10147 while
+        `reqAllOpenOrders` still shows the order) - `ExecutionFilter` is left
+        with its default clientId, expected to mean "all", and that expectation
+        is untested. And how far back IBKR's executions actually go, which is
+        Task 1's question 4 and needs a real fill. If retention proves large
+        enough that asking for everything is wasteful, bound the request
+        broker-side ONLY after measuring what `time` does.
+        """
+        if symbols is not None and not symbols:
+            # Nothing tracked, so nothing can have closed behind our back - and
+            # no reason to spend a request establishing that.
+            return []
+
+        request = getattr(self.ib_client, "reqExecutionsAsync", None)
+        if not callable(request):
+            return []
+        executions = await request(ExecutionFilter())
+
+        wanted = set(symbols) if symbols else None
+        fills: list[BrokerFill] = []
+        for execution in executions:
+            fill = from_ib_fill(execution, self.settings.market)
+            if fill is None:
+                continue
+            if fill.filled_at <= since:
+                continue
+            if wanted is not None and fill.symbol not in wanted:
+                continue
+            fills.append(fill)
+        return fills
 
     async def place_order(self, order: Order) -> Order:
         self._check_not_read_only()

@@ -7,13 +7,17 @@ objects requiring no network connection.
 
 from __future__ import annotations
 
-from ib_async import AccountValue, Contract, Stock
+import logging
+
+from ib_async import AccountValue, Contract, Fill, Stock
 from ib_async import Position as IBPosition
 from ib_async.order import LimitOrder, MarketOrder, StopOrder, Trade
 from ib_async.order import Order as IBOrder
 
-from qat.data.broker.adapter import AccountSummary, Order, OrderStatus, Position
-from qat.data.symbols import to_ibkr
+from qat.data.broker.adapter import AccountSummary, BrokerFill, Order, OrderStatus, Position
+from qat.data.symbols import from_ibkr, to_ibkr
+
+logger = logging.getLogger(__name__)
 
 
 class UnrepresentableOrderError(ValueError):
@@ -262,6 +266,46 @@ def from_ib_trade(trade: Trade, our_order: Order) -> Order:
     if perm_id:
         our_order.order_id = str(perm_id)
     return our_order
+
+
+# IBKR reports an execution's direction as BOT/SLD, not buy/sell. Strict on
+# purpose: anything unrecognised is DROPPED rather than defaulted, because a
+# fill entering the ledger pointing the wrong way is a realised P&L with the
+# sign reversed - and the promotion gate reads those.
+_IB_EXECUTION_SIDE: dict[str, str] = {"BOT": "buy", "SLD": "sell"}
+
+
+def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
+    """One IBKR execution as a `BrokerFill`, or None if it cannot be trusted.
+
+    **The identity is `permId`**, matching what `from_ib_trade` writes onto
+    `order.order_id` (Task 3). `OMS._order_the_broker_calls` compares those two
+    strings, so using `orderId` here would break the match and leave M70/M71
+    dormant exactly as they were before Task 3 - silently, which is how they
+    were found in the first place.
+
+    **The symbol is translated BACK** into the app's own form. The app tracks
+    `BHP.AX` and IBKR answers `BHP`; a fill returned unqualified matches no
+    tracked position, so the stop that fired still goes unrecorded (M26, M96).
+    """
+    execution = fill.execution
+    side = _IB_EXECUTION_SIDE.get(str(execution.side).upper())
+    if side is None:
+        logger.error(
+            "IBKR execution %s has side %r, which is neither BOT nor SLD - dropping it "
+            "rather than guessing a direction. This fill will NOT reach the ledger.",
+            execution.execId,
+            execution.side,
+        )
+        return None
+    return BrokerFill(
+        order_id=str(execution.permId),
+        symbol=from_ibkr(fill.contract.symbol, market),
+        side=side,  # type: ignore[arg-type]
+        quantity=float(execution.shares),
+        price=float(execution.price),
+        filled_at=execution.time,
+    )
 
 
 def from_ib_position(position: IBPosition) -> Position:

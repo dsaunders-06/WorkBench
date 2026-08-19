@@ -323,6 +323,55 @@ orders, legs attached to the parent (`parentId`), both GTC, `whyHeld='child'`
 and `'child,trigger'` - then cancelled through `IBAdapter.cancel_order` with
 zero left resting. Nine mutations, all killed.
 
+## M97 - `recent_fills` on IBKR: the method the machinery hangs off  **[BUILT 19 August]**
+
+Stage 1 Task 2. Without it `absorb_broker_fills` returns immediately, so a
+protective stop firing at the broker is never recorded as a closed trade,
+reconciliation reads the changed quantity as a discrepancy and trips the
+kill-switch on a stop doing its job, and `_correct_announced_price` (M70/M71)
+never runs at all.
+
+Four decisions, each from something measured rather than assumed:
+
+* **`reqExecutions`, not `IB.fills()`.** `IB.fills()` is documented "all fills
+  from this session" and cannot see a fill from while the app was DOWN - which
+  is the case this method exists for. The wrong choice passes every test and
+  fails only on the restart that matters, so a test asserts which one is asked.
+* **`permId` is the identity**, matching what `from_ib_trade` writes onto
+  `order.order_id` (Task 3, confirmed surviving a Gateway restart). `orderId`
+  here would break `OMS._order_the_broker_calls`'s comparison and leave M70/M71
+  dormant exactly as they were before Task 3.
+* **`BOT`/`SLD`, strictly.** An unrecognised side is DROPPED with an error log
+  rather than defaulted - a fill entering the ledger pointing the wrong way is
+  a realised P&L with the sign reversed, and the promotion gate reads those.
+* **The window is applied on FILL time here**, not delegated to
+  `ExecutionFilter.time`. Alpaca's `after=` read like "activity since then" and
+  meant `submitted_at`, so the one execution the method existed to catch was
+  the one it could not see (M48). A broker-side filter whose semantics have not
+  been measured does not get to decide what this returns.
+
+**And one the port only exposes on the return leg.** The app tracks `BHP.AX`;
+IBKR answers `BHP`. M96 translated outbound; a fill coming back unqualified
+matches no tracked position, so the `symbols` filter drops it and the OMS never
+recognises it - the stop still goes unrecorded, reached by a different road.
+`symbols.from_ibkr` is the inbound half, and it is idempotent because
+`BHP.AX.AX` fails as a silent lookup miss.
+
+**Verified live, read-only**, against DUQ200898: `reqExecutionsAsync(
+ExecutionFilter())` is accepted and returns `[]` on the empty account, through
+`IBAdapter.recent_fills` as well as directly. **Stated for what it is** - that
+establishes the call, the filter shape and the async form against a real
+Gateway, and NOT the translation, the side mapping or retention. Task 1's first
+run was one third of a measurement precisely because an empty answer from an
+empty account was worth less than it looked.
+
+**Still open, and it needs a real fill**: Task 1 question 4, how far back IBKR
+executions actually go. Also unmeasured: whether executions are `clientId`-
+scoped the way open orders turned out to be (a cancel from the wrong clientId
+fails with error 10147 while `reqAllOpenOrders` still shows the order).
+`ExecutionFilter` is left with its default clientId, expected to mean "all",
+and that expectation is recorded as untested rather than relied upon.
+
 ## M96 - IBKR cannot resolve an ASX symbol at all  **[BUILT 19 August]**
 
 Two faults in `to_ib_contract(symbol, exchange="SMART", currency="USD")`, which

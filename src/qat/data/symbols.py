@@ -89,6 +89,34 @@ def to_ibkr(symbol: str) -> str:
     return base
 
 
+# Which suffix each market's symbols carry in the app's own form. IBKR speaks
+# the base symbol and learns the venue from the contract, so the suffix has to
+# be removed on the way out and put back on the way in (M96, Task 2).
+_MARKET_SUFFIX = {"US": "", "ASX": ".AX"}
+
+
+def from_ibkr(symbol: str, market: str = "US") -> str:
+    """IBKR's form -> canonical, the return leg of `to_ibkr`.
+
+    The app tracks `BHP.AX` and IBKR answers `BHP`. A fill returned as `BHP`
+    matches no tracked position: the `symbols` filter drops it and the OMS
+    never recognises it, so a stop firing at the broker still goes unrecorded -
+    the exact outcome `recent_fills` exists to prevent, reached by a different
+    road.
+
+    M26's rule is the reason this is a pair rather than a one-way convenience:
+    a symbol that round-trips wrongly against the broker is a reconciliation
+    mismatch and a halted session.
+    """
+    suffix = _MARKET_SUFFIX[market]
+    if not suffix:
+        return symbol
+    base, existing = _split_exchange(symbol)
+    # Idempotent: a symbol that already carries its suffix must not gain a
+    # second one, because `BHP.AX.AX` fails silently as a lookup miss.
+    return base + (existing or suffix)
+
+
 def canonical(symbol: str) -> str:
     """Normalise a symbol from any source into the app's internal form.
 
@@ -98,4 +126,4 @@ def canonical(symbol: str) -> str:
     return from_yfinance(symbol.strip().upper())
 
 
-__all__ = ["canonical", "from_yfinance", "to_ibkr", "to_yfinance"]
+__all__ = ["canonical", "from_ibkr", "from_yfinance", "to_ibkr", "to_yfinance"]
