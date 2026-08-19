@@ -24,8 +24,12 @@ deriving is.**
 # Where this stands, in one paragraph
 
 **The US validation trial closed on 19 August and the ASX/IBKR move is called.**
-M94 (`f537a9e`) is deployed, the deploy gap is zero, the suite is at 2,194
-passed / 25 skipped, and everything is pushed.
+M94 (`f537a9e`) is the deployed build and the app runs on it. Everything is
+pushed. **The deploy gap is NO LONGER ZERO** — `d094863` carries M70 and M71 into
+the IBKR path and is deliberately undeployed, because there is no IBKR account to
+exercise it against and it changes nothing on Alpaca. Run `handoff_state.py` for
+the live figures rather than reading a number here; this paragraph went stale
+within a day of being written, which is the argument the whole file makes.
 
 **The trial failed to answer its own question and succeeded at everything else.**
 It produced ONE closed trade the promotion gate can count, against a gate needing
