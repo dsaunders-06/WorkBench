@@ -45,7 +45,10 @@ from qat.data.broker.ib_probe import (  # noqa: E402
     render,
 )
 
-DEFAULT_OUT = Path("docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md")
+# The MACHINE-written half. The report a human writes and reasons in lives at
+# 2026-08-19-ibkr-capability-measurement.md and cites this; keeping them apart
+# is what stops a re-run silently erasing the interpretation.
+DEFAULT_OUT = Path("docs/superpowers/specs/2026-08-19-ibkr-capability-measurement-raw.md")
 
 
 def _settings() -> Settings:
@@ -56,7 +59,7 @@ def _settings() -> Settings:
     passing its own directory is what keeps that structural rather than
     incidental.
     """
-    return Settings(data_dir=Path(tempfile.mkdtemp(prefix="qat-probe-")))
+    return Settings(data_dir=tempfile.mkdtemp(prefix="qat-probe-"))
 
 
 async def _run(out: Path, label: str) -> int:
