@@ -323,6 +323,58 @@ orders, legs attached to the parent (`parentId`), both GTC, `whyHeld='child'`
 and `'child,trigger'` - then cancelled through `IBAdapter.cancel_order` with
 zero left resting. Nine mutations, all killed.
 
+## M99 - a stop the SCAN found could not be re-priced or cancelled  **[BUILT 19 August]**
+
+Found by Task 4's live check, and it is the clearest example this project has
+produced of **a fake agreeing with production because both were wrong in the
+same direction.**
+
+**The sequence.** Real IBKR returns `permId=0` from `placeOrder` - TWS has not
+acknowledged yet. `from_ib_trade` correctly leaves the app's own id in place;
+Task 3 reasoned about exactly this and guarded the FIELD. What went unexamined
+was the consequence for the REGISTRATION: `place_order`'s dual registration is
+guarded by `if result.order_id != app_order_id`, which is therefore **false on
+the normal path**. Moments later the broker reports the order under its permId,
+which is what `resting_stop_orders` correctly returns:
+
+    place_order returned order_id: live-m99
+    resting_stop_orders order_id:  893739457
+    modify_order('893739457') -> KeyError
+    cancel_order('893739457') -> KeyError
+
+**A protective stop found by the protection scan could not be re-priced or
+cancelled** - M39's corporate-action path, the MNST repair, failing on the id
+the scan itself hands you.
+
+**Why fifteen tests and fourteen killed mutations all missed it.** Every fake
+in the suite stamped `permId` synchronously inside `placeOrder`, so the dual
+registration fired in every test and in no production call. The tests agreed
+with each other because they shared one wrong assumption about timing, and
+mutation testing cannot find an assumption every test makes.
+
+**The fix resolves an unknown id against the broker** rather than tightening
+the placement timing, because that also reaches orders **this app never
+placed**: an adopted position's protective stop has no local handle at all and
+was equally unreachable. `_adopt_from_broker` scans open orders for a matching
+`permId` or `orderId`, synthesises the app-side `Order`, registers it so a
+second call does not re-scan, and **warns when the owning clientId is not
+ours** - because a modify or cancel from another client fails with error 10147
+while the order stays visible. An id neither side knows still raises: resolving
+must not become succeeding quietly.
+
+**And the fakes were fixed, which is the durable half.** `placeOrder` now
+returns `permId=0` by default across every IBKR fake, matching the socket. Six
+Task 3 tests failed and were opted back in with `acknowledge_on_place=True`,
+which makes the timing an explicit choice in each test rather than an accident
+shared by all of them.
+
+**Verified live** against DUQ200898, through the app's own path end to end:
+placed a stop, read it back through `resting_stop_orders` (permId 893739457,
+`why_held='trigger'`, `owner_client_id=86`), **re-priced it 95.00 -> 97.00
+using the scan's id**, then cancelled with the same id. IBKR's own trade log
+records `status='PreSubmitted', message='Modify'`. Zero orders left. Six
+mutations, all killed.
+
 ## M98 - `resting_stops` on IBKR: protection observed, not asserted  **[BUILT 19 August]**
 
 Stage 1 Task 4. Without it the app stops verifying that what it believes

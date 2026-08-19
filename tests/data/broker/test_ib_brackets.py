@@ -47,9 +47,15 @@ class RecordingIB:
     it, this fake is where the assumption is written down.
     """
 
-    def __init__(self, cascade_cancel: bool = True, flaky_child_cancel: bool = False) -> None:
+    def __init__(
+        self,
+        cascade_cancel: bool = True,
+        flaky_child_cancel: bool = False,
+        acknowledge_on_place: bool = False,
+    ) -> None:
         self._next_id = 100
         self._next_perm = 5000
+        self.acknowledge_on_place = acknowledge_on_place
         self.cascade_cancel = cascade_cancel
         # First cancel attempt on a child is silently ignored. Models the
         # 19 August observation that a cancel can report progress while
@@ -76,10 +82,14 @@ class RecordingIB:
         if not order.orderId:
             order.orderId = self._next_id
             self._next_id += 1
-        if not order.permId:
+        # permId deferred, as real IBKR defers it: placeOrder returns before
+        # TWS acknowledges (M99). Stamped when the broker is next asked.
+        if not self.acknowledge_on_place:
+            order.permId = 0
+        self.placed.append(order)
+        if self.acknowledge_on_place and not order.permId:
             order.permId = self._next_perm
             self._next_perm += 1
-        self.placed.append(order)
         trade = Trade(
             contract=contract,
             order=order,

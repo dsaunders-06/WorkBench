@@ -90,6 +90,22 @@ broker-side filter whose semantics have not been measured. `symbols.from_ibkr`
 is the inbound half of M96 - the app tracks `BHP.AX` and IBKR answers `BHP`,
 and an untranslated fill matches no tracked position.
 
+**M98 - `resting_stops`/`resting_stop_orders`. BUILT.** Stage 1 Task 4, so
+protection is OBSERVED rather than asserted. `reqAllOpenOrders` not
+`openTrades` (the latter is client-scoped, and invisible protection reads as no
+protection). `RestingStopOrder` now carries `why_held` raw and
+`owner_client_id`. `PreSubmitted` counts as working; `TRAIL` is excluded
+deliberately. Two stops on one symbol resolve by RULE - the tightest, which
+flips direction for a short.
+
+**M99 - a stop the SCAN found could not be re-priced or cancelled. BUILT.**
+Real IBKR returns `permId=0` from `placeOrder`, so `place_order`'s dual
+registration never fired and the permId the scan later reports was
+unregistered - `modify_order`/`cancel_order` raised `KeyError` on M39's own
+path. **Every fake stamped permId synchronously, so the whole suite shared
+production's blind spot**; the fakes now default to real timing. Unknown ids
+resolve against the broker, which also reaches adopted positions' stops.
+
 **ORDERS BELONG TO A clientId.** Cancelling from a different `clientId` than
 placed fails with error 10147 - while `reqAllOpenOrders()` still SHOWS the
 order, and while our own object reports `PendingCancel`. **Visible is not
@@ -99,14 +115,10 @@ the app's view of what protects the book.
 
 ## OUTSTANDING, IN ORDER
 
-1. **Stage 1 Task 4** - `resting_stops`/`resting_stop_orders`. Carry `whyHeld`
-   (it distinguishes a stop held at IBKR from one working at the exchange) and
-   the owning `clientId` (so "can I actually cancel this" is answerable).
-2. **Stage 1 Task 5** - the announcements decision. Measured; needs an
+1. **Stage 1 Task 5** - the announcements decision. Measured; needs an
    operator choice, not code.
-3. **Q4** - execution retention, needs a real fill. Decide if it is worth one.
-   `recent_fills` is now the natural place to settle it.
-4. **The rest of Stage 3's ASX rules** - the $500 minimum marketable parcel
+2. **Q4** - execution retention, needs a real fill. Decide if it is worth one.
+3. **The rest of Stage 3's ASX rules** - the $500 minimum marketable parcel
    reaches position sizing directly and is implemented nowhere. ASX minTick is
    0.001 (measured); tick sizes, T+2 and the auctions are unbuilt.
 
@@ -1153,74 +1165,74 @@ the wrong session.
 
 ```
 The IBKR paper account (DUQ200898) is LIVE, permissioned for ASX, and EMPTY -
-no orders, no positions. Stage 1 Task 1 is done; M95, M96 and M97 are built.
-Begin STAGE 1 TASK 4 of docs/superpowers/plans/2026-08-19-ibkr-move.md:
-resting_stops and resting_stop_orders.
+no orders, no positions. Stage 1 Tasks 1, 2, 3 and 4 are DONE and verified
+against a real Gateway. M95 through M99 are built.
+
+STAGE 1 TASK 5 IS THE LAST ITEM, AND IT IS A DECISION, NOT CODE.
+docs/superpowers/plans/2026-08-19-ibkr-move.md, Task 5: announcements.
 
 READ FIRST
   docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md
-  ROADMAP.md M95, M96, M97.
+  ROADMAP.md M95, M96, M97, M98, M99.
 
 BEFORE QUOTING ANY CURRENT-STATE FIGURE
   .\.venv\Scripts\python.exe scripts/handoff_state.py
 
-WHY THIS ONE NOW
-  Without it the app stops verifying that what it believes protects the book
-  is actually resting at the broker. "Ten of ten carrying a stop" becomes an
-  ASSERTION rather than an OBSERVATION - and that was the US trial's single
-  strongest safety claim. Read the protocol for the exact shapes; do not guess
-  them. resting_stops is symbol -> stop price, resting_stop_orders is the
-  richer record carrying the id and quantity needed to MODIFY one.
+WHAT IS ALREADY MEASURED, SO DO NOT RE-RESEARCH IT
+  There is NO structured corporate-action feed on IBKR. Confirmed against
+  ib_async 2.1.0: reqFundamentalData returns XML report documents and
+  reqHistoricalNews returns unstructured headline text. Neither is what M39's
+  detector consumes. broker_capabilities.py reports IBKR implementing 11 of
+  12 - announcements is the only gap, and it is the only one with no port.
 
-MEASURED, SO DO NOT RE-DERIVE
-  Both come from openTrades() / reqAllOpenOrders(), and BOTH WERE CONFIRMED to
-  show a resting stop on 19 August - orderType STP, auxPrice, status and
-  permId all agreeing across the two calls.
+THE THREE OPTIONS, WITH WHAT EACH COSTS
+  1. ACCEPT THE GAP AND MAKE IT LOUD. M39's monitor already reports blindness
+     as a STATE rather than a silence. Extend that: on an adapter without
+     announcements, the Risk Console says corporate-action detection is
+     UNAVAILABLE rather than "none pending". Cheapest and honest, and it
+     leaves the ex-date gate - the piece observed working in production,
+     refusing CRWD - with no input.
+  2. SOURCE ANNOUNCEMENTS ELSEWHERE. ASX publishes company announcements, so
+     a separate feed could supply them. Real work, and it belongs with
+     Stage 2's market-data decision.
+  3. DROP CORPORATE-ACTION DETECTION FOR THE ASX PHASE. Defensible only
+     against the MNST loss on the record: an unadjusted stop through a split
+     cost -51.4% on a position that should have been roughly flat.
 
-  CARRY whyHeld THROUGH. A resting stop read whyHeld='trigger', and a bracket
-  leg read 'child,trigger'. That is IBKR's own marker for an order HELD AT
-  IBKR awaiting its trigger rather than working at the exchange - a SIMULATED
-  stop. It does not settle native-vs-simulated for live ASX (IBKR simulates
-  all paper stops), but it means the app can READ what it currently assumes.
-  Surfacing it turns the strongest safety claim from an assertion into an
-  observation, on exactly the axis the plan worried would be lost.
+  THE DELIVERABLE IS A WRITTEN DECISION WITH ITS COST, COMMITTED. DO NOT
+  IMPLEMENT ANY OPTION BEFORE THE OPERATOR HAS CHOSEN. M43 (trading halts)
+  depends on this too - ASX halts are announcement-driven, so its shape
+  follows from whatever is decided here.
 
-  CARRY THE OWNING clientId. An order belongs to the clientId that placed it:
-  a cancel from another fails with error 10147 while reqAllOpenOrders() STILL
-  SHOWS the order and our own object reports PendingCancel. VISIBLE IS NOT
-  CANCELLABLE, so "is this position protected" and "can I actually move that
-  stop" are different questions and resting_stop_orders should answer both.
+STILL OPEN AFTER STAGE 1
+  Q4, execution retention - the ONLY remaining question needing a real FILL.
+  Everything else about the adapter has been measured against the Gateway.
+  Stage 3's ASX rules - the $500 MINIMUM MARKETABLE PARCEL reaches position
+  sizing directly and is implemented NOWHERE. ASX minTick is 0.001, measured.
+  Stage 2's data decision stands: yfinance for ASX bars, IBKR for execution.
+  Do NOT buy ASX Total during testing - neither resolver has an IBKR branch,
+  so no IBKR data of any kind can reach the app.
+  Stage 4, regime re-sourcing - do NOT start until the ablation question is
+  settled; it may delete the stage entirely.
 
-  openTrades() is scoped to the CONNECTED client; reqAllOpenOrders() is not.
-  They are not interchangeable and a test should say which is used and why.
-
-  THE SYMBOL MUST COME BACK TRANSLATED. IBKR answers BHP, the app tracks
-  BHP.AX. symbols.from_ibkr(symbol, settings.market) is the inbound half -
-  M97 needed it too, and a stop keyed on the wrong form protects nothing the
-  app can find.
-
-HOW
-  TDD, red proven first, against a fake IB - do not connect to a broker in a
-  test. Then MUTATE to prove each test is load-bearing; this session found
-  two tests that passed for the wrong reason exactly that way, and one gap
-  where a shape slipped between two guards.
-  Then ruff check ., black --check ., mypy src, bandit -r src, pytest tests -q,
-  all via ./.venv/Scripts/python.exe. Then commit.
-  A LIVE CHECK IS CHEAP AND WORTH IT: place one resting stop far from the
-  market, read it back through resting_stop_orders, cancel it. ASK THE
-  OPERATOR FIRST. Cancel from the SAME clientId that placed it.
-
-STILL OPEN AFTER THIS
-  Task 5, the announcements decision - measured, needs an operator choice.
-  Question 4, execution retention - needs a real FILL, the only thing left
-  that does.
-  Stage 3's ASX rules - the $500 minimum marketable parcel reaches position
-  sizing directly and is implemented nowhere. ASX minTick is 0.001, measured.
+THE HABITS THAT FOUND EVERYTHING THIS SESSION, IN THE ORDER THEY PAID
+  CHECK THE BRIEF AGAINST THE CODE. The ready prompt named a script that
+  connects to nothing as the instrument for a measurement needing raw broker
+  responses.
+  MUTATE, DO NOT TRUST GREEN. Three separate tests passed for the wrong
+  reason - two cancellation tests that covered for each other, and a duplicate
+  rule where "first" and "last" both happened to be right.
+  VERIFY BY BEHAVIOUR. A cancel reported PendingCancel while being REJECTED.
+  Only a re-read caught it.
+  AND THE ONE THIS SESSION ADDED: A FAKE CAN AGREE WITH PRODUCTION BY BEING
+  WRONG THE SAME WAY. Every IBKR fake stamped permId synchronously; real IBKR
+  does not, and M99 hid behind that agreement through fifteen tests and
+  fourteen killed mutations. When a live check disagrees with a green suite,
+  SUSPECT THE FAKE.
 
 DO NOT
   Weaken M95's UnrepresentableOrderError guard to make anything pass.
-  Trust an empty response from an empty account as evidence a method works -
-  that is what made Task 1's first run one third of a measurement.
+  Trust an empty response from an empty account as evidence a method works.
   Infer cancellability from visibility in reqAllOpenOrders().
 ```
 

@@ -43,6 +43,11 @@ from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
+# Tests below that pass `acknowledge_on_place=True` are exercising the
+# ACKNOWLEDGED case deliberately - TWS has stamped the permId by the time
+# `from_ib_trade` reads it. The default is now the other, commoner sequence,
+# where `placeOrder` returns first and the permId appears afterwards (M99).
+
 
 class FakeIBClient:
     """Enough of ib_async's IB for the identity bridge: `placeOrder` returns a
@@ -56,9 +61,22 @@ class FakeIBClient:
     `from_ib_trade` leaves an unmapped intermediate status alone by design.
     """
 
-    def __init__(self, perm_ids: list[int] | None = None, status: str = "Submitted") -> None:
+    def __init__(
+        self,
+        perm_ids: list[int] | None = None,
+        status: str = "Submitted",
+        acknowledge_on_place: bool = False,
+    ) -> None:
         self._perm_ids = list(perm_ids or [])
         self._status = status
+        # REAL IBKR TIMING IS THE DEFAULT (M99). `IB.placeOrder` returns before
+        # TWS has acknowledged, so `permId` is 0 at that instant and only
+        # appears later. Every fake here used to stamp it synchronously, which
+        # made `place_order`'s dual registration fire in tests and never in
+        # production - and hid a KeyError on M39's re-price path until a live
+        # check found it. Tests that mean to exercise the ACKNOWLEDGED case
+        # now say so explicitly.
+        self._acknowledge_on_place = acknowledge_on_place
         self.placed_orders: list[tuple[Any, Any]] = []
         self.cancelled_orders: list[Any] = []
 
@@ -77,6 +95,9 @@ class FakeIBClient:
     def placeOrder(self, contract: Any, order: Any) -> Trade:
         self.placed_orders.append((contract, order))
         perm_id = self._perm_ids.pop(0) if self._perm_ids else 0
+        if not self._acknowledge_on_place:
+            # Placed, not yet acknowledged: this is what the socket returns.
+            perm_id = 0
         order.permId = perm_id
         order_status = OrderStatus(
             status=self._status,
@@ -132,7 +153,7 @@ async def test_cancel_order_by_the_post_transmit_id_still_works(tmp_path):
     """The identifier a caller actually has after transmit is the RETURNED
     order's `order_id` - which is now the broker's permId, not the app's
     original id. Cancelling by it must not raise KeyError."""
-    client = FakeIBClient(perm_ids=[555111222])
+    client = FakeIBClient(perm_ids=[555111222], acknowledge_on_place=True)
     adapter = IBAdapter(
         client, EventBus(), settings=Settings(_env_file=None, data_dir=str(tmp_path))
     )
@@ -149,7 +170,7 @@ async def test_cancel_order_by_the_post_transmit_id_still_works(tmp_path):
 @pytest.mark.asyncio
 async def test_modify_order_by_the_post_transmit_id_still_works(tmp_path):
     """Same hazard, the other lookup site."""
-    client = FakeIBClient(perm_ids=[555111222])
+    client = FakeIBClient(perm_ids=[555111222], acknowledge_on_place=True)
     adapter = IBAdapter(
         client, EventBus(), settings=Settings(_env_file=None, data_dir=str(tmp_path))
     )
@@ -166,7 +187,7 @@ async def test_cancel_order_by_the_original_app_id_still_works_too(tmp_path):
     `self._orders` by the id it minted before transmit and never re-keys it -
     so `OMS.cancel_order` always calls the broker back with that original id.
     Both callers have to be served from the same registration."""
-    client = FakeIBClient(perm_ids=[555111222])
+    client = FakeIBClient(perm_ids=[555111222], acknowledge_on_place=True)
     adapter = IBAdapter(
         client, EventBus(), settings=Settings(_env_file=None, data_dir=str(tmp_path))
     )
@@ -185,7 +206,7 @@ async def test_cancel_order_by_the_original_app_id_still_works_too(tmp_path):
 
 @pytest.mark.asyncio
 async def test_place_order_writes_the_perm_id_as_the_order_id(tmp_path):
-    client = FakeIBClient(perm_ids=[42])
+    client = FakeIBClient(perm_ids=[42], acknowledge_on_place=True)
     adapter = IBAdapter(
         client, EventBus(), settings=Settings(_env_file=None, data_dir=str(tmp_path))
     )
@@ -231,7 +252,7 @@ async def test_ibkr_fill_resolves_back_to_the_order_that_produced_it(tmp_path):
     """The whole point. An incoming fill carrying IBKR's own identity must
     resolve, through `OMS._order_the_broker_calls`, to the very order object
     that produced it - not merely to a field that looks right."""
-    client = FakeIBClient(perm_ids=[987654321])
+    client = FakeIBClient(perm_ids=[987654321], acknowledge_on_place=True)
     oms = _oms(tmp_path, client)
     order = oms._new_pending_order("AAPL", "buy", 10, reference_price=100.0)
 
@@ -245,7 +266,7 @@ async def test_ibkr_fill_resolves_back_to_the_order_that_produced_it(tmp_path):
 
 @pytest.mark.asyncio
 async def test_an_unknown_broker_id_resolves_to_nothing(tmp_path):
-    client = FakeIBClient(perm_ids=[987654321])
+    client = FakeIBClient(perm_ids=[987654321], acknowledge_on_place=True)
     oms = _oms(tmp_path, client)
     order = oms._new_pending_order("AAPL", "buy", 10, reference_price=100.0)
     await oms.sign_off(order.order_id, "operator")
@@ -264,7 +285,7 @@ async def test_m70_entry_price_correction_wakes_up_through_the_ibkr_path(tmp_pat
     implemented yet, so this drives `_correct_announced_price` directly with a
     fill shaped exactly as a future `recent_fills` would report it - the
     resolution mechanism under test is identical either way."""
-    client = FakeIBClient(perm_ids=[111000111])
+    client = FakeIBClient(perm_ids=[111000111], acknowledge_on_place=True)
     oms = _oms(tmp_path, client)
     bus = oms.bus
     received: list[EntryPriceCorrectedEvent] = []
@@ -302,7 +323,7 @@ async def test_m70_entry_price_correction_wakes_up_through_the_ibkr_path(tmp_pat
 async def test_m71_exit_price_correction_wakes_up_through_the_ibkr_path(tmp_path):
     """The sell-side twin. A resting exit acknowledged by IBKR, then filled at
     a price different from the one announced at transmit."""
-    client = FakeIBClient(perm_ids=[222000222])
+    client = FakeIBClient(perm_ids=[222000222], acknowledge_on_place=True)
     oms = _oms(tmp_path, client)
     bus = oms.bus
     received: list[ExitPriceCorrectedEvent] = []

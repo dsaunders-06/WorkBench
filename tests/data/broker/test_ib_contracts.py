@@ -101,6 +101,7 @@ class _Recorder:
         if not order.orderId:
             order.orderId = self._next
             self._next += 1
+        order.permId = 0  # not yet acknowledged, as real IBKR returns it (M99)
         return Trade(
             contract=contract,
             order=order,

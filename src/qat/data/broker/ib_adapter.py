@@ -49,6 +49,7 @@ from qat.data.broker.ib_translate import (
     to_ib_parent,
     to_ib_protective_legs,
 )
+from qat.data.symbols import from_ibkr
 from qat.domain.bus import EventBus
 from qat.domain.events import KillSwitchEvent
 
@@ -416,9 +417,82 @@ class IBAdapter:
             self._ib_orders[result.order_id] = ib_order
         return result
 
+    async def _adopt_from_broker(self, order_id: str) -> Order | None:
+        """Learn an order the broker knows and this process does not (M99).
+
+        Two ways an id can be real and unregistered, and the second is why this
+        resolves against the broker rather than tightening placement.
+
+        **The permId arrives late.** Real IBKR returns `permId=0` from
+        `placeOrder` - TWS has not acknowledged - so `from_ib_trade` leaves the
+        app's own id in place (correctly) and `place_order`'s dual
+        registration never fires. Moments later the broker reports the order
+        under its permId, which is exactly what `resting_stop_orders` returns.
+        M39 then re-prices a stop through a split using the id the scan gave
+        it, and got a `KeyError`. Found by the Task 4 live check; every fake in
+        the suite stamped permId synchronously, so the tests agreed with each
+        other and with nothing real.
+
+        **The app never placed it.** An adopted position's protective stop has
+        no local handle at all, and was equally unreachable.
+
+        Registers what it finds, so a second call does not re-scan.
+        """
+        request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
+        if not callable(request):
+            return None
+
+        for trade in await request():
+            ib_order = trade.order
+            if order_id not in {str(ib_order.permId), str(ib_order.orderId)}:
+                continue
+
+            owner = int(getattr(ib_order, "clientId", 0) or 0)
+            if owner != self.settings.ibkr_client_id:
+                # Measured 19 August: a cancel from another clientId fails with
+                # error 10147 while reqAllOpenOrders() STILL SHOWS the order
+                # and the local object reports PendingCancel. Visible is not
+                # cancellable. The attempt is still made - IBKR is the
+                # authority on its own orders - but it does not go unremarked.
+                logger.warning(
+                    "IBKR order %s belongs to clientId %s, not this session's %s. A modify "
+                    "or cancel from here fails with error 10147 while the order stays "
+                    "visible in reqAllOpenOrders(). Attempting anyway.",
+                    order_id,
+                    owner,
+                    self.settings.ibkr_client_id,
+                )
+
+            order_type = str(ib_order.orderType)
+            adopted = Order(
+                symbol=from_ibkr(trade.contract.symbol, self.settings.market),
+                side="buy" if str(ib_order.action).upper() == "BUY" else "sell",
+                quantity=float(ib_order.totalQuantity),
+                order_id=order_id,
+                status="transmitted",
+                stop_price=float(ib_order.auxPrice) or None,
+                order_type="stop" if order_type.startswith("STP") else "market",
+            )
+            self._register(adopted, ib_order, [ib_order])
+            return adopted
+        return None
+
+    async def _known_order(self, order_id: str) -> Order:
+        """The app Order for an id, resolving it against the broker if this
+        process does not already hold it. Raises rather than resolving to
+        nothing - an id nobody has heard of is a caller bug, and answering
+        quietly would leave the app believing it had cancelled something."""
+        order = self._orders.get(order_id)
+        if order is not None:
+            return order
+        adopted = await self._adopt_from_broker(order_id)
+        if adopted is None:
+            raise KeyError(order_id)
+        return adopted
+
     async def modify_order(self, order_id: str, **changes: object) -> Order:
         self._check_not_read_only()
-        order = self._orders[order_id]
+        order = await self._known_order(order_id)
         for key, value in changes.items():
             setattr(order, key, value)
         ib_order = self._ib_orders.get(order_id)
@@ -490,7 +564,7 @@ class IBAdapter:
         longer exists is worth one extra read.
         """
         self._check_not_read_only()
-        order = self._orders[order_id]
+        order = await self._known_order(order_id)
         ib_order = self._ib_orders.get(order_id)
         group = self._ib_groups.get(order_id) or ([ib_order] if ib_order is not None else [])
         if not group:
