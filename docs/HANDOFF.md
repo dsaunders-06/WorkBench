@@ -82,6 +82,14 @@ vendor boundary in `symbols.to_ibkr`, M26's pattern. Also sets the bracketed
 parent's TIF explicitly - IBKR warned 10349 that a Gateway-side PRESET had
 chosen it.
 
+**M97 - `recent_fills`. BUILT.** Stage 1 Task 2. `reqExecutions` rather than
+the session-scoped `IB.fills()`, `permId` as the identity so Task 3's bridge
+actually matches, strict `BOT`/`SLD` with an unknown side DROPPED rather than
+defaulted, and the window applied on FILL time here rather than delegated to a
+broker-side filter whose semantics have not been measured. `symbols.from_ibkr`
+is the inbound half of M96 - the app tracks `BHP.AX` and IBKR answers `BHP`,
+and an untranslated fill matches no tracked position.
+
 **ORDERS BELONG TO A clientId.** Cancelling from a different `clientId` than
 placed fails with error 10147 - while `reqAllOpenOrders()` still SHOWS the
 order, and while our own object reports `PendingCancel`. **Visible is not
@@ -91,19 +99,14 @@ the app's view of what protects the book.
 
 ## OUTSTANDING, IN ORDER
 
-1. **Stage 1 Task 2** - `recent_fills`. UNBLOCKED and now the top item.
-   Without it `absorb_broker_fills` returns immediately, so a stop firing is
-   never recorded as a closed trade and M70/M71 never run. Research already
-   banked in the plan: use `reqExecutions`/`ExecutionFilter`, not `IB.fills()`
-   (session-scoped); IBKR's side is `BOT`/`SLD`, not buy/sell; filter on FILL
-   time yourself.
-2. **Stage 1 Task 4** - `resting_stops`/`resting_stop_orders`. Carry `whyHeld`
+1. **Stage 1 Task 4** - `resting_stops`/`resting_stop_orders`. Carry `whyHeld`
    (it distinguishes a stop held at IBKR from one working at the exchange) and
    the owning `clientId` (so "can I actually cancel this" is answerable).
-3. **Stage 1 Task 5** - the announcements decision. Measured; needs an
+2. **Stage 1 Task 5** - the announcements decision. Measured; needs an
    operator choice, not code.
-4. **Q4** - execution retention, needs a real fill. Decide if it is worth one.
-5. **The rest of Stage 3's ASX rules** - the $500 minimum marketable parcel
+3. **Q4** - execution retention, needs a real fill. Decide if it is worth one.
+   `recent_fills` is now the natural place to settle it.
+4. **The rest of Stage 3's ASX rules** - the $500 minimum marketable parcel
    reaches position sizing directly and is implemented nowhere. ASX minTick is
    0.001 (measured); tick sizes, T+2 and the auctions are unbuilt.
 
@@ -1150,70 +1153,74 @@ the wrong session.
 
 ```
 The IBKR paper account (DUQ200898) is LIVE, permissioned for ASX, and EMPTY -
-no orders, no positions. Stage 1 Task 1 is done and M95/M96 are built.
-Begin STAGE 1 TASK 2 of docs/superpowers/plans/2026-08-19-ibkr-move.md:
-recent_fills on IBKR.
+no orders, no positions. Stage 1 Task 1 is done; M95, M96 and M97 are built.
+Begin STAGE 1 TASK 4 of docs/superpowers/plans/2026-08-19-ibkr-move.md:
+resting_stops and resting_stop_orders.
 
 READ FIRST
-  docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md - what was
-  measured against a real Gateway, including the constraints below.
-  ROADMAP.md M95 and M96.
+  docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md
+  ROADMAP.md M95, M96, M97.
 
 BEFORE QUOTING ANY CURRENT-STATE FIGURE
   .\.venv\Scripts\python.exe scripts/handoff_state.py
 
 WHY THIS ONE NOW
-  Without recent_fills, absorb_broker_fills returns immediately, so a
-  protective stop firing at the broker is NEVER recorded as a closed trade -
-  and M70/M71 never run at all. It is the method the most machinery hangs off.
-  Entries can now be placed (M95 Stage B) and ASX symbols now resolve (M96),
-  so exits are what is missing.
+  Without it the app stops verifying that what it believes protects the book
+  is actually resting at the broker. "Ten of ten carrying a stop" becomes an
+  ASSERTION rather than an OBSERVATION - and that was the US trial's single
+  strongest safety claim. Read the protocol for the exact shapes; do not guess
+  them. resting_stops is symbol -> stop price, resting_stop_orders is the
+  richer record carrying the id and quantity needed to MODIFY one.
 
-RESEARCH ALREADY BANKED - measured against ib_async 2.1.0, do not re-derive
-  IB.fills() is documented "all fills from this session" and therefore CANNOT
-  see a fill that happened while the app was down - which is exactly the case
-  absorb_broker_fills exists for. Use reqExecutions/reqExecutionsAsync with an
-  ExecutionFilter (clientId, acctCode, time, symbol, secType, exchange, side).
-  Execution carries execId, time, permId, orderId, side, shares, price,
-  cumQty, avgPrice.
-  IBKR'S SIDE IS "BOT"/"SLD", NOT buy/sell. An unmapped value silently
-  becoming "buy" would mis-side a fill in the ledger.
-  FILTER ON FILL TIME YOURSELF after the results return. Alpaca's after= meant
-  submitted_at, and the one execution the method existed to catch was the one
-  it could not see.
-  PREFER THE *Async FORMS. The sync reqExecutions wraps IB._run and raises
-  inside a running event loop - scripts/ibkr_probe.py learned this the
-  expensive way.
+MEASURED, SO DO NOT RE-DERIVE
+  Both come from openTrades() / reqAllOpenOrders(), and BOTH WERE CONFIRMED to
+  show a resting stop on 19 August - orderType STP, auxPrice, status and
+  permId all agreeing across the two calls.
 
-MEASURED CONSTRAINTS THAT REACH THIS TASK
-  permId SURVIVES a Gateway restart (confirmed 19 August, permId 828725903
-  across a real restart). orderId does too, but that is NOT a reason to use it
-  - its hazard is REUSE for a different order in a later session. Task 3 keys
-  order identity on permId and that choice is now measured, not assumed.
-  ORDERS BELONG TO A clientId. reqAllOpenOrders() shows orders the connected
-  client CANNOT cancel (error 10147), and the cancel reports PendingCancel
-  while achieving nothing. Visible is not cancellable. Whether executions are
-  likewise clientId-scoped is UNMEASURED - find out, because it decides
-  whether ExecutionFilter needs the clientId set or cleared.
-  QUESTION 4 IS STILL OPEN: how far back do executions actually go. It needs a
-  real fill and is the last unanswered Task 1 question. This task is the
-  natural place to settle it - ASK THE OPERATOR before placing anything that
-  can fill.
+  CARRY whyHeld THROUGH. A resting stop read whyHeld='trigger', and a bracket
+  leg read 'child,trigger'. That is IBKR's own marker for an order HELD AT
+  IBKR awaiting its trigger rather than working at the exchange - a SIMULATED
+  stop. It does not settle native-vs-simulated for live ASX (IBKR simulates
+  all paper stops), but it means the app can READ what it currently assumes.
+  Surfacing it turns the strongest safety claim from an assertion into an
+  observation, on exactly the axis the plan worried would be lost.
+
+  CARRY THE OWNING clientId. An order belongs to the clientId that placed it:
+  a cancel from another fails with error 10147 while reqAllOpenOrders() STILL
+  SHOWS the order and our own object reports PendingCancel. VISIBLE IS NOT
+  CANCELLABLE, so "is this position protected" and "can I actually move that
+  stop" are different questions and resting_stop_orders should answer both.
+
+  openTrades() is scoped to the CONNECTED client; reqAllOpenOrders() is not.
+  They are not interchangeable and a test should say which is used and why.
+
+  THE SYMBOL MUST COME BACK TRANSLATED. IBKR answers BHP, the app tracks
+  BHP.AX. symbols.from_ibkr(symbol, settings.market) is the inbound half -
+  M97 needed it too, and a stop keyed on the wrong form protects nothing the
+  app can find.
 
 HOW
   TDD, red proven first, against a fake IB - do not connect to a broker in a
-  test. Then MUTATE the implementation to prove each test is load-bearing;
-  this session found two tests that passed for the wrong reason that way.
+  test. Then MUTATE to prove each test is load-bearing; this session found
+  two tests that passed for the wrong reason exactly that way, and one gap
+  where a shape slipped between two guards.
   Then ruff check ., black --check ., mypy src, bandit -r src, pytest tests -q,
   all via ./.venv/Scripts/python.exe. Then commit.
-  A live read-only check IS available and costs nothing - reqExecutions on an
-  empty account returns [], which at least proves the call and the filter
-  shape. Prove everything provable without an order before asking for one.
+  A LIVE CHECK IS CHEAP AND WORTH IT: place one resting stop far from the
+  market, read it back through resting_stop_orders, cancel it. ASK THE
+  OPERATOR FIRST. Cancel from the SAME clientId that placed it.
+
+STILL OPEN AFTER THIS
+  Task 5, the announcements decision - measured, needs an operator choice.
+  Question 4, execution retention - needs a real FILL, the only thing left
+  that does.
+  Stage 3's ASX rules - the $500 minimum marketable parcel reaches position
+  sizing directly and is implemented nowhere. ASX minTick is 0.001, measured.
 
 DO NOT
   Weaken M95's UnrepresentableOrderError guard to make anything pass.
-  Refusing an order the translator cannot faithfully express is the feature.
   Trust an empty response from an empty account as evidence a method works -
   that is what made Task 1's first run one third of a measurement.
+  Infer cancellability from visibility in reqAllOpenOrders().
 ```
 
