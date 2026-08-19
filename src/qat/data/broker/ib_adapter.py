@@ -208,9 +208,25 @@ class IBAdapter:
         contract = to_ib_contract(order.symbol)
         ib_order = to_ib_order(order)
         trade = self.ib_client.placeOrder(contract, ib_order)
-        self._orders[order.order_id] = order
-        self._ib_orders[order.order_id] = ib_order
-        return from_ib_trade(trade, order)
+        app_order_id = order.order_id
+        self._orders[app_order_id] = order
+        self._ib_orders[app_order_id] = ib_order
+        result = from_ib_trade(trade, order)
+        # `from_ib_trade` may have overwritten `order.order_id` with IBKR's
+        # permId (see its docstring - the Task 3 identity bridge). Both
+        # `_orders` and `_ib_orders` above were keyed under the id that
+        # existed BEFORE that overwrite, so a caller holding the RETURNED
+        # order - the only id it has after transmit - would get a KeyError
+        # from `modify_order`/`cancel_order`, and a protective stop would
+        # become uncancellable. Registered under the new id too, rather than
+        # moved: OMS's own bookkeeping (`_sign_off_locked`) keeps the
+        # ORIGINAL id as its dict key for the order's whole lifetime and
+        # calls `broker.cancel_order`/`modify_order` back with that id, so
+        # both identifiers have to keep resolving.
+        if result.order_id != app_order_id:
+            self._orders[result.order_id] = result
+            self._ib_orders[result.order_id] = ib_order
+        return result
 
     async def modify_order(self, order_id: str, **changes: object) -> Order:
         self._check_not_read_only()

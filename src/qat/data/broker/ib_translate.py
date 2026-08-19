@@ -36,15 +36,44 @@ def to_ib_order(order: Order) -> IBOrder:
 
 
 def from_ib_trade(trade: Trade, our_order: Order) -> Order:
-    """Updates our Order's status/fill fields from an ib_async Trade.
+    """Updates our Order's status/fill fields from an ib_async Trade, and
+    carries the broker's own order identity onto `our_order.order_id` -
+    mirroring what AlpacaAdapter does at transmit (three sites).
     Intermediate IBKR states (Submitted/PreSubmitted/PendingSubmit) aren't
     in the map - they leave our own already-set "transmitted" status alone
-    rather than guessing at a mapping."""
+    rather than guessing at a mapping.
+
+    The identity bridge (IBKR move plan, Task 3): `OMS._order_the_broker_calls`
+    resolves an incoming fill by comparing `order.order_id` against the raw
+    fill's `order_id`. Without this, that comparison could never succeed for
+    an IBKR fill, so `_correct_announced_price` (M70/M71) went dormant
+    without erroring - the app kept recording entry and exit prices it never
+    paid.
+
+    `permId`, not `orderId`. ib_async's `Order.orderId` is IBKR's CLIENT-side
+    id: scoped to (clientId, session), reused across restarts, and never
+    reported back on an `Execution`. `Execution.permId` (mirrored here on
+    `OrderStatus.permId` and `Order.permId`) is TWS-assigned, permanent and
+    unique - the property a record meant to outlive the session needs.
+    **NOT YET CONFIRMED**: the IBKR move plan's Task 1 must verify permId
+    actually survives a Gateway restart against the real paper account
+    before this is relied on beyond a single session.
+
+    permId can be legitimately absent (0) here: `IB.placeOrder` returns a
+    `Trade` before TWS has acknowledged the order, so `trade.order.permId`
+    is frequently still unset at this exact call. Writing "0" as an id would
+    make every such order collide with every other unacknowledged order, so
+    an absent/zero permId leaves `our_order.order_id` exactly as it was
+    (the app's own id) rather than write a junk identifier.
+    """
     mapped = _IB_STATUS_MAP.get(trade.orderStatus.status)
     if mapped is not None:
         our_order.status = mapped
     if trade.orderStatus.avgFillPrice:
         our_order.filled_price = trade.orderStatus.avgFillPrice
+    perm_id = trade.order.permId or trade.orderStatus.permId
+    if perm_id:
+        our_order.order_id = str(perm_id)
     return our_order
 
 
