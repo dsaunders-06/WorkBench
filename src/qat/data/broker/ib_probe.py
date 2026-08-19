@@ -178,7 +178,15 @@ def _perm_ids_in(response: Any) -> tuple[int, ...]:
 
 
 async def _call(client: Any, attribute: str, args: tuple[Any, ...]) -> tuple[Outcome, str, Any]:
-    method = getattr(client, attribute, None)
+    # Prefer the *Async form where ib_async has one. Its sync `reqExecutions`
+    # and `reqAllOpenOrders` are wrappers that call `IB._run(...)`, which
+    # raises once an event loop is already running - and this probe runs
+    # inside `asyncio.run`. Calling the sync form would record OUR nested-loop
+    # bug as an IBKR finding, on a Gateway session that is not cheap to
+    # arrange twice. The pure accessors (`fills`, `openTrades`, `positions`,
+    # `managedAccounts`) have no async twin and are read straight from
+    # ib_async's local state, so the fallback is the normal path, not an edge.
+    method = getattr(client, f"{attribute}Async", None) or getattr(client, attribute, None)
     if method is None:
         return "absent", f"the client has no attribute {attribute!r}", None
     try:

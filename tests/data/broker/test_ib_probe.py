@@ -292,3 +292,42 @@ def test_the_timestamp_is_recorded_so_two_runs_can_be_compared() -> None:
     report = render([observation], account="DU1", now=datetime(2026, 8, 19, 4, 0, tzinfo=UTC))
 
     assert "2026-08-19" in report
+
+
+async def test_the_async_variant_is_preferred_when_the_client_has_one() -> None:
+    """ib_async's sync `reqExecutions`/`reqAllOpenOrders` are wrappers that
+    call `IB._run(...)`, which raises when there is already a running event
+    loop - and the probe runs inside `asyncio.run`. Calling the sync form
+    would record OUR nested-loop bug as an IBKR finding: a "raised" outcome in
+    the report that says nothing about the broker, on a Gateway session that
+    is not cheap to arrange twice.
+    """
+
+    class BothForms(FakeIB):
+        def reqExecutions(self, execFilter: Any = None) -> Any:  # type: ignore[override]
+            raise RuntimeError("This event loop is already running")
+
+        async def reqExecutionsAsync(self, execFilter: Any = None) -> Any:
+            return [_trade(perm_id=555)]
+
+        def reqAllOpenOrders(self) -> Any:  # type: ignore[override]
+            raise RuntimeError("This event loop is already running")
+
+        async def reqAllOpenOrdersAsync(self) -> Any:
+            return [_trade(perm_id=556)]
+
+    observations = await probe(BothForms())
+
+    executions = _by_call(observations, "IB.reqExecutions()")
+    assert executions.outcome == "data", executions.raw
+    assert "555" in executions.raw
+    assert _by_call(observations, "IB.reqAllOpenOrders()").outcome == "data"
+
+
+async def test_the_sync_form_is_used_when_there_is_no_async_variant() -> None:
+    """`fills()`, `openTrades()`, `positions()` and `managedAccounts()` are
+    plain accessors over ib_async's local state - no network, no `_run`, and
+    no async twin. Preferring an async variant must not mean skipping them."""
+    observations = await probe(FakeIB(fills=[_trade(perm_id=1)]))
+
+    assert _by_call(observations, "IB.fills()").outcome == "data"
