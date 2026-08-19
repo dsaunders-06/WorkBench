@@ -106,6 +106,16 @@ path. **Every fake stamped permId synchronously, so the whole suite shared
 production's blind spot**; the fakes now default to real timing. Unknown ids
 resolve against the broker, which also reaches adopted positions' stops.
 
+**M100 - UNSUPPORTED is not UNREADABLE. BUILT.** Task 5's decision, taken:
+option 1 refined. `_fetch` swallowed an `AttributeError` per symbol per sweep,
+so a PERMANENT capability gap was reported through a TRANSIENT-failure channel
+- 2,880 warnings a day and a banner saying "check the log" about something
+unfixable. Now `detection_supported()` separates the two, and both screens say
+UNAVAILABLE as a standing condition. Wording extracted into pure functions so
+the SENTENCES are testable.
+
+**STAGE 1 IS COMPLETE.** Tasks 1-5 done, all verified against a real Gateway.
+
 **ORDERS BELONG TO A clientId.** Cancelling from a different `clientId` than
 placed fails with error 10147 - while `reqAllOpenOrders()` still SHOWS the
 order, and while our own object reports `PendingCancel`. **Visible is not
@@ -115,16 +125,24 @@ the app's view of what protects the book.
 
 ## OUTSTANDING, IN ORDER
 
-1. **Stage 1 Task 5** - the announcements decision. Measured; needs an
-   operator choice, not code.
-2. **Q4** - execution retention, needs a real fill. Decide if it is worth one.
+**STAGE 1 IS DONE.** What follows is not.
+
+1. **Q4** - execution retention, how far back IBKR executions go. Needs a real
+   FILL and is the only Stage 1 question that does. Decide whether it is worth
+   one; `recent_fills` is the natural place to settle it.
+2. **Stage 2's data decision stands** - yfinance for ASX bars, IBKR for
+   execution. Do NOT buy ASX Total during testing: neither resolver has an
+   IBKR branch, so no IBKR data of any kind can reach the app. Revisit at a
+   real paper trial, priced as subscription PLUS two data sources PLUS a
+   universe trim.
 3. **The rest of Stage 3's ASX rules** - the $500 minimum marketable parcel
    reaches position sizing directly and is implemented nowhere. ASX minTick is
    0.001 (measured); tick sizes, T+2 and the auctions are unbuilt.
 
-Unchanged: the DATA decision (yfinance for ASX bars, IBKR for execution - do
-NOT buy ASX Total during testing), M71 still unobserved in production, the cash
-floor question, and M43 waiting on the announcements decision.
+Unchanged: M71 still unobserved in production (no app-transmitted sell has
+ever happened), and the cash-floor question. **M43 is no longer waiting on the
+announcements decision - it is now DECIDED not to build it**, because ASX halts
+are announcement-driven and Task 5 chose to accept the gap.
 
 **Two documents supersede everything below.** `docs/2026-08-19-us-trial-close.md`
 is the full account of the US phase. `docs/superpowers/plans/2026-08-19-ibkr-move.md`
@@ -1164,75 +1182,81 @@ the paper one (paper accounts are prefixed `DU`), stop** — you are connected t
 the wrong session.
 
 ```
-The IBKR paper account (DUQ200898) is LIVE, permissioned for ASX, and EMPTY -
-no orders, no positions. Stage 1 Tasks 1, 2, 3 and 4 are DONE and verified
-against a real Gateway. M95 through M99 are built.
-
-STAGE 1 TASK 5 IS THE LAST ITEM, AND IT IS A DECISION, NOT CODE.
-docs/superpowers/plans/2026-08-19-ibkr-move.md, Task 5: announcements.
+STAGE 1 OF THE IBKR MOVE IS COMPLETE. The paper account (DUQ200898) is live,
+permissioned for ASX, and EMPTY - no orders, no positions. Tasks 1-5 are done
+and every one was verified against a real Gateway. M95 through M100 are built.
+Everything is pushed.
 
 READ FIRST
-  docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md
-  ROADMAP.md M95, M96, M97, M98, M99.
+  docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md - W1.1
+  docs/superpowers/specs/2026-08-19-ibkr-announcements-decision.md - Task 5
+  ROADMAP.md M95 to M100.
 
 BEFORE QUOTING ANY CURRENT-STATE FIGURE
   .\.venv\Scripts\python.exe scripts/handoff_state.py
+  THE DEPLOY GAP IS LARGE AND DELIBERATE. Nothing since M94 is deployed,
+  because none of it changes anything on Alpaca and there has been no reason
+  to restart the running app. ASK BEFORE DEPLOYING.
 
-WHAT IS ALREADY MEASURED, SO DO NOT RE-RESEARCH IT
-  There is NO structured corporate-action feed on IBKR. Confirmed against
-  ib_async 2.1.0: reqFundamentalData returns XML report documents and
-  reqHistoricalNews returns unstructured headline text. Neither is what M39's
-  detector consumes. broker_capabilities.py reports IBKR implementing 11 of
-  12 - announcements is the only gap, and it is the only one with no port.
+WHAT STAGE 1 ESTABLISHED, MEASURED NOT ASSUMED
+  ASX trading permission IS granted. Commission AUD 6.60 - the ASX Fixed
+  floor. Account equity ~1,003,733, ten times the US trial, which changes
+  WHICH RAILS BIND: expect cost-to-risk to stop binding almost entirely.
+  ASX minTick is 0.001 against 0.01 for US.
+  permId SURVIVES a Gateway restart. orderId does too, but its hazard was
+  never mutation - it is REUSE for a different order in a later session.
+  A resting stop IS visible to openTrades() and reqAllOpenOrders(), and reads
+  whyHeld='trigger' - IBKR holding it rather than working it at the exchange.
+  ORDERS BELONG TO A clientId. Visible is NOT cancellable.
+  IBKR has NO structured corporate-action feed, and that gap is now accepted
+  and labelled rather than alarmed about.
 
-THE THREE OPTIONS, WITH WHAT EACH COSTS
-  1. ACCEPT THE GAP AND MAKE IT LOUD. M39's monitor already reports blindness
-     as a STATE rather than a silence. Extend that: on an adapter without
-     announcements, the Risk Console says corporate-action detection is
-     UNAVAILABLE rather than "none pending". Cheapest and honest, and it
-     leaves the ex-date gate - the piece observed working in production,
-     refusing CRWD - with no input.
-  2. SOURCE ANNOUNCEMENTS ELSEWHERE. ASX publishes company announcements, so
-     a separate feed could supply them. Real work, and it belongs with
-     Stage 2's market-data decision.
-  3. DROP CORPORATE-ACTION DETECTION FOR THE ASX PHASE. Defensible only
-     against the MNST loss on the record: an unadjusted stop through a split
-     cost -51.4% on a position that should have been roughly flat.
+THE ONE STAGE 1 QUESTION STILL OPEN
+  Q4: how far back do IBKR executions actually go? It needs a REAL FILL - the
+  only thing left that does. recent_fills is the natural place to settle it.
+  ASK THE OPERATOR BEFORE PLACING ANYTHING THAT CAN FILL.
 
-  THE DELIVERABLE IS A WRITTEN DECISION WITH ITS COST, COMMITTED. DO NOT
-  IMPLEMENT ANY OPTION BEFORE THE OPERATOR HAS CHOSEN. M43 (trading halts)
-  depends on this too - ASX halts are announcement-driven, so its shape
-  follows from whatever is decided here.
-
-STILL OPEN AFTER STAGE 1
-  Q4, execution retention - the ONLY remaining question needing a real FILL.
-  Everything else about the adapter has been measured against the Gateway.
-  Stage 3's ASX rules - the $500 MINIMUM MARKETABLE PARCEL reaches position
-  sizing directly and is implemented NOWHERE. ASX minTick is 0.001, measured.
-  Stage 2's data decision stands: yfinance for ASX bars, IBKR for execution.
-  Do NOT buy ASX Total during testing - neither resolver has an IBKR branch,
-  so no IBKR data of any kind can reach the app.
-  Stage 4, regime re-sourcing - do NOT start until the ablation question is
+WHAT COMES NEXT IS NOT STAGE 1
+  Stage 2 - market data. DECIDED: yfinance for ASX bars, IBKR for execution.
+  Do NOT buy ASX Total during testing; neither resolver has an IBKR branch so
+  no IBKR data of any kind can reach the app. Revisit at a real paper trial.
+  Stage 3 - ASX trading rules. THE $500 MINIMUM MARKETABLE PARCEL reaches
+  position sizing directly and is implemented NOWHERE. Also tick sizes, T+2
+  against cash reconciliation, and the opening and closing auctions against
+  session logic written for a 13:30 UTC open.
+  Stage 4 - regime re-sourcing. DO NOT START until the ablation question is
   settled; it may delete the stage entirely.
 
-THE HABITS THAT FOUND EVERYTHING THIS SESSION, IN THE ORDER THEY PAID
+STILL TRUE, AND OLDER
+  M71 fixed from the code on 17 August but STILL UNOBSERVED - no
+  app-transmitted sell has ever happened.
+  The cash floor bound 15 times on ASX and no rail models it; min_cash_reserve
+  is gt=0 BY DESIGN (config.py), so making it ablatable is an OPERATOR call.
+  M43 trading halts: DECIDED NOT TO BUILD, since ASX halts are
+  announcement-driven and Task 5 accepted that gap.
+
+THE HABITS, IN THE ORDER THEY PAID THIS SESSION
   CHECK THE BRIEF AGAINST THE CODE. The ready prompt named a script that
   connects to nothing as the instrument for a measurement needing raw broker
   responses.
-  MUTATE, DO NOT TRUST GREEN. Three separate tests passed for the wrong
-  reason - two cancellation tests that covered for each other, and a duplicate
-  rule where "first" and "last" both happened to be right.
+  MUTATE, DO NOT TRUST GREEN. Four separate tests passed for the wrong reason
+  - two cancellation tests that covered for each other, a duplicate rule where
+  "first" and "last" both happened to be right, and a latched boolean whose
+  reset nothing exercised.
   VERIFY BY BEHAVIOUR. A cancel reported PendingCancel while being REJECTED.
   Only a re-read caught it.
-  AND THE ONE THIS SESSION ADDED: A FAKE CAN AGREE WITH PRODUCTION BY BEING
-  WRONG THE SAME WAY. Every IBKR fake stamped permId synchronously; real IBKR
-  does not, and M99 hid behind that agreement through fifteen tests and
-  fourteen killed mutations. When a live check disagrees with a green suite,
-  SUSPECT THE FAKE.
+  A FAKE CAN AGREE WITH PRODUCTION BY BEING WRONG THE SAME WAY. Every IBKR
+  fake stamped permId synchronously; real IBKR does not, and M99 hid behind
+  that agreement through fifteen tests and fourteen killed mutations. WHEN A
+  LIVE CHECK DISAGREES WITH A GREEN SUITE, SUSPECT THE FAKE.
+  AND: ASK WHAT THE DATA IS FOR. "Announcements" was priced as a feed until
+  someone asked what fields the code reads - three - and what they gate. Half
+  the rail was in shadow mode and had never placed an order.
 
 DO NOT
   Weaken M95's UnrepresentableOrderError guard to make anything pass.
   Trust an empty response from an empty account as evidence a method works.
   Infer cancellability from visibility in reqAllOpenOrders().
+  Deploy without asking.
 ```
 
