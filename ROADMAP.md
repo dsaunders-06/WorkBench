@@ -323,6 +323,37 @@ orders, legs attached to the parent (`parentId`), both GTC, `whyHeld='child'`
 and `'child,trigger'` - then cancelled through `IBAdapter.cancel_order` with
 zero left resting. Nine mutations, all killed.
 
+## M104 - the first fill would have tripped the kill-switch  **[BUILT 19 August]**
+
+Found the evening before the first ASX session, by asking what was still
+untranslated rather than by any test.
+
+Four boundaries let an IBKR symbol into the application. Three translate -
+fills (M97), resting stops (M98), adopted orders (M99). `from_ib_position` did
+not, and it is the one with the sharpest consequence:
+
+    broker_positions = {pos.symbol: pos.quantity for pos in ...positions()}
+    symbols = set(self._filled_quantities) | set(broker_positions)
+
+A tracked `BHP.AX` against a broker `BHP` produces **two divergences** - the
+tracked holding reading (10, 0) and the broker's reading (0, 10) - and a
+reconciliation mismatch **TRIPS THE KILL SWITCH**. The first fill of the first
+ASX session would have halted it, and the halt would have read as a real
+position discrepancy rather than as a spelling difference. `verify_position_stops`
+fails one step earlier for the same reason: stops are keyed in the app's form,
+so every held position would have read as UNPROTECTED.
+
+**The pre-flight could not have caught this**, and that is worth recording
+plainly. `book_checks` compares held symbols against resting-stop keys, so it
+would have fired - but only with a position already open, and the account was
+empty when it reported READY. An instrument that checks the right thing can
+still be asked at the wrong time.
+
+The cross-call invariant now has its own test: `positions()` and
+`resting_stops()` must agree on the symbol form, asserted ACROSS the two rather
+than inside either, because that is where the silence was. Two mutations, both
+killed.
+
 ## M103 - a pre-flight that will not say READY about what it did not check  **[BUILT 19 August]**
 
 Four live runs against the paper Gateway on 19 August found four defects a

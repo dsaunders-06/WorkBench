@@ -603,7 +603,7 @@ class IBAdapter:
         return balances_from_summary(await self.account())
 
     async def positions(self) -> list[Position]:
-        return [from_ib_position(pos) for pos in self.ib_client.positions()]
+        return [from_ib_position(pos, self.settings.market) for pos in self.ib_client.positions()]
 
     async def account(self) -> AccountSummary:
         """The account summary, asked through the form that works in a loop.

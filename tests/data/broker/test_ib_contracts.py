@@ -180,3 +180,112 @@ def test_a_bracketed_entry_is_gtc_not_left_to_a_broker_preset() -> None:
     )
 
     assert to_ib_parent(entry).tif == "GTC"
+
+
+def test_a_position_comes_back_in_the_apps_own_symbol_form() -> None:
+    """M104, and the one that would have ended the first ASX session.
+
+    Three of the four boundaries where an IBKR symbol enters the app were
+    translated - fills (M97), resting stops (M98), adopted orders (M99). This
+    one was not, and it is the one reconciliation reads:
+
+        broker_positions = {pos.symbol: pos.quantity for pos in ...positions()}
+        symbols = set(self._filled_quantities) | set(broker_positions)
+
+    Tracked `{"BHP.AX": 10}` against broker `{"BHP": 10}` gives TWO divergences
+    - BHP.AX reading (10, 0) and BHP reading (0, 10) - and a reconciliation
+    mismatch TRIPS THE KILL SWITCH. The first fill would have halted the
+    session, and the halt would have looked like a real discrepancy rather than
+    a spelling difference.
+
+    `verify_position_stops` would have failed the same way first: resting stops
+    are keyed BHP.AX and positions were BHP, so every held position would have
+    read as unprotected.
+    """
+    from ib_async import Contract
+    from ib_async import Position as IBPosition
+
+    from qat.data.broker.ib_translate import from_ib_position
+
+    ib_position = IBPosition(
+        account="DUQ200898",
+        contract=Contract(symbol="BHP", secType="STK", exchange="ASX", currency="AUD"),
+        position=10.0,
+        avgCost=60.0,
+    )
+
+    assert from_ib_position(ib_position, market="ASX").symbol == "BHP.AX"
+
+
+def test_a_us_position_is_unchanged() -> None:
+    from ib_async import Contract
+    from ib_async import Position as IBPosition
+
+    from qat.data.broker.ib_translate import from_ib_position
+
+    ib_position = IBPosition(
+        account="DU1",
+        contract=Contract(symbol="AAPL", secType="STK", exchange="SMART", currency="USD"),
+        position=5.0,
+        avgCost=200.0,
+    )
+
+    assert from_ib_position(ib_position, market="US").symbol == "AAPL"
+
+
+async def test_positions_and_resting_stops_agree_on_the_symbol_form() -> None:
+    """The invariant that actually matters, asserted across the two calls
+    rather than inside either.
+
+    `OMS.verify_position_stops` looks a position's symbol up in the resting-stop
+    map, and `check_reconciliation` unions position symbols with tracked ones.
+    Both are silent if the two halves spell the same holding differently - one
+    reports every position unprotected, the other trips the kill switch.
+    """
+    from ib_async import Contract
+    from ib_async import Position as IBPosition
+    from ib_async.order import Order as IBOrder
+    from ib_async.order import OrderStatus, Trade
+
+    from qat.domain.bus import EventBus
+
+    contract = Contract(symbol="BHP", secType="STK", exchange="ASX", currency="AUD")
+    stop = IBOrder(
+        orderId=1,
+        clientId=1,
+        permId=99,
+        action="SELL",
+        totalQuantity=10,
+        orderType="STP",
+        auxPrice=58.0,
+        tif="GTC",
+    )
+
+    class _IB:
+        def isConnected(self) -> bool:
+            return True
+
+        def positions(self, account: str = "") -> list[IBPosition]:
+            return [IBPosition(account="DU1", contract=contract, position=10.0, avgCost=60.0)]
+
+        async def reqAllOpenOrdersAsync(self) -> list[Trade]:
+            return [
+                Trade(
+                    contract=contract,
+                    order=stop,
+                    orderStatus=OrderStatus(orderId=1, status="PreSubmitted", permId=99),
+                )
+            ]
+
+    adapter = IBAdapter(
+        _IB(), EventBus(), settings=Settings(_env_file=None, trading_mode="paper", market="ASX")
+    )
+
+    held = {p.symbol for p in await adapter.positions()}
+    protected = set(await adapter.resting_stops())
+
+    assert held == {"BHP.AX"}
+    assert held == protected, (
+        f"positions say {held} and resting stops say {protected} - the position would "
+        f"read as unprotected and reconciliation would see two holdings, not one"
+    )

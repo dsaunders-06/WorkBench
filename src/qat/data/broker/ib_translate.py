@@ -375,9 +375,27 @@ def tighter_stop(
     return left if left.stop_price <= right.stop_price else right
 
 
-def from_ib_position(position: IBPosition) -> Position:
+def from_ib_position(position: IBPosition, market: str = "US") -> Position:
+    """One IBKR position, in the app's own symbol form (M104).
+
+    The fourth and last boundary where an IBKR symbol enters the application,
+    and the one that was missed: fills (M97), resting stops (M98) and adopted
+    orders (M99) all translate, and this did not.
+
+    It is also the one with the sharpest consequence.
+    `OMS.check_reconciliation` builds `{pos.symbol: pos.quantity}` from here and
+    unions it with the tracked quantities, so a tracked `BHP.AX` against a
+    broker `BHP` produces TWO divergences rather than a match - and a
+    reconciliation mismatch TRIPS THE KILL SWITCH. The first fill of a session
+    would have halted it, and the halt would have read as a real position
+    discrepancy rather than as a spelling difference.
+
+    `verify_position_stops` fails the same way one step earlier: resting stops
+    are keyed in the app's form, so every held position would have read as
+    unprotected.
+    """
     return Position(
-        symbol=position.contract.symbol,
+        symbol=from_ibkr(position.contract.symbol, market),
         quantity=position.position,
         avg_price=position.avgCost,
     )
