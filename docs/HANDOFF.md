@@ -1016,6 +1016,55 @@ Separate from the block above on purpose. That one starts a new context window;
 this one starts Stage 1. Paste it when the live account has ASX permissions and
 IB Gateway is running.
 
+### IB Gateway setup — do this BEFORE pasting the prompt above
+
+Derived from this application's own config, so the port numbers are the ones the
+code actually checks. Menu paths are version-specific; verify them in the UI
+rather than trusting this list.
+
+**1. Install IB Gateway, not TWS.** Gateway is the headless one and is what
+`ib_async` speaks. TWS works too and its paper port is 7497, but Gateway is the
+lighter thing to leave running overnight.
+
+**2. Log in with the PAPER username.** It is a separate username from the live
+one, not a toggle on the same credentials. Logging in with the live username and
+assuming a paper session is the mistake this whole guard exists to catch.
+
+**3. Enable the API.** Configure -> Settings -> API -> Settings:
+  * tick "Enable ActiveX and Socket Clients";
+  * set the socket port to **4002** (Gateway paper);
+  * add **127.0.0.1** to Trusted IPs;
+  * leave "Read-Only API" TICKED for the W1.1 measurement, and untick it only
+    for the single stop order question 3 needs.
+
+**PORTS THIS CODE TREATS AS LIVE: 4001 and 7496.** `ib_adapter.py` raises
+`LivePortInPaperModeError` if `trading_mode` is paper and `ibkr_port` is either.
+Paper ports are 4002 (Gateway) and 7497 (TWS).
+
+**4. Point the app at it.** Defaults already match a paper Gateway, so usually
+nothing to change:
+
+    QAT_IBKR_HOST=127.0.0.1     (default)
+    QAT_IBKR_PORT=4002          (default - paper Gateway)
+    QAT_IBKR_CLIENT_ID=1        (default)
+    QAT_TRADING_MODE=paper
+    QAT_BROKER=ibkr
+
+**5. Know about the daily restart, because it decides question 1.** IB Gateway
+forces a restart every day unless auto-restart is configured, and the app is
+meant to run overnight. Configure -> Settings -> Lock and Exit -> Auto Restart.
+**This is also the cheapest way to answer whether `permId` survives a restart:**
+note a `permId`, let Gateway restart, and look again.
+
+**6. Sanity-check the connection before running anything else:**
+
+    & ".\.venv\Scripts\python.exe" -c "import sys; sys.path.insert(0,'src'); from ib_async import IB; ib=IB(); ib.connect('127.0.0.1',4002,clientId=99,readonly=True); print('connected:', ib.isConnected(), '| accounts:', ib.managedAccounts()); ib.disconnect()"
+
+Use a clientId that is NOT 1 for this check, so it cannot collide with the app's
+own connection. **If `managedAccounts()` shows a live account number rather than
+the paper one (paper accounts are prefixed `DU`), stop** — you are connected to
+the wrong session.
+
 ```
 The IBKR paper account is live. Begin Stage 1 Task 1 of
 docs/superpowers/plans/2026-08-19-ibkr-move.md.
