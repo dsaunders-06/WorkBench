@@ -273,4 +273,34 @@ are announcement-driven and its shape depends on this choice.
   It is a separate, smaller question and mixing it in here would let a
   dividend-date feature read as split coverage.
 
-**Awaiting the operator's choice. No code has been written.**
+## DECIDED 19 August: option 1, refined. Implemented as M100.
+
+The operator chose option 1. Built and committed: `detection_supported()`
+separates UNSUPPORTED from UNREADABLE, the capability is checked once instead
+of an `AttributeError` swallowed per symbol per sweep, and both screens say
+UNAVAILABLE as a standing condition rather than sending anyone to a log.
+
+### What the operator also asked, and it sharpens the cost
+
+*"Is it designed to protect our position or inform a buy or sell decision?"*
+**Both, and they are not equally armed.**
+
+| consumer | what it does | armed today? |
+|---|---|---|
+| `oms.py:256` | **refuses new ENTRIES** on a symbol with a pending action - "an entry sized now is sized against a number with a known expiry" | **yes** - this is what refused CRWD in production |
+| `StopAdjuster` / M39 | **re-prices the resting stop** through the split | **no** - `corporate_action_mode` defaults to `"shadow"`, which logs the adjustment it WOULD place and modifies no order |
+| M60 | quarantines a position whose ratio cannot be trusted | follows the above |
+
+It **never blocks a sell**, deliberately: *"a rail whose effect is 'the account
+may not de-risk' is a broken rail."*
+
+**So the gap costs an entry refusal that has fired, and a stop adjustment that
+was never switched on.** The MNST repair path has never placed an order in
+production - the trial close records the adjustment path as unobserved, with
+only the ex-date gate seen working. That is materially less than "the MNST rail
+is gone", and it is the strongest single argument for the decision taken.
+
+**Buying the EODHD feed would not, by itself, protect anything** - it would
+restore the entry gate and feed a shadow-mode adjuster. Arming the protection
+needs `QAT_CORPORATE_ACTION_MODE=act`, which is a separate operator decision
+that has never been taken.

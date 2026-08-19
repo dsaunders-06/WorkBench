@@ -46,6 +46,66 @@ _OPERATOR = "operator (risk console)"
 logger = logging.getLogger(__name__)
 
 
+def corporate_action_summary(monitor: object | None, mode: str) -> str:
+    """What the Risk Console says about corporate actions.
+
+    Pure and module-level so the WORDING can be tested without a Qt widget -
+    the defects this project keeps finding are in sentences that explain, and
+    a sentence nothing can assert against is where they hide.
+
+    THE ORDER OF THESE BRANCHES IS THE POINT. "Could not find out" must come
+    before "nothing pending", because saying the second while the first is true
+    is a checkably false statement - and it was one: a 135-day query range broke
+    every announcement query while this label went on reporting none pending.
+
+    Three states, not two (Task 5, option 1):
+
+    * **UNAVAILABLE** - the broker cannot answer at all. Permanent, so it is
+      stated calmly and does not send anyone to a log that will say the same
+      thing for ever. IBKR publishes no structured corporate-action feed.
+    * **COULD NOT BE READ** - the broker CAN answer and this pass failed.
+      Transient, so it names the symbols and points at the log.
+    * **none pending** - allowed only when the detector can actually see.
+
+    The mode is not decoration. In shadow nothing has been placed, and an
+    operator reading "adjusted to 36.34" while believing the broker holds that
+    order would be misled in the direction that costs money - the same failure
+    as reading M60's "declared" as "fixed".
+    """
+    if monitor is None:
+        return "Corporate actions: no monitor is running, so nothing is being watched."
+
+    supported = getattr(monitor, "detection_supported", None)
+    if callable(supported) and not supported():
+        return (
+            "Corporate actions: detection UNAVAILABLE on this broker - it publishes no "
+            "corporate-action feed, so a split cannot be seen before its ex-date. Entries "
+            "are not gated on pending actions and stops are not adjusted through one. This "
+            "is a property of the broker, not a fault."
+        )
+
+    blind = monitor.unreadable_symbols()  # type: ignore[attr-defined]
+    if blind:
+        return (
+            f"Corporate actions: COULD NOT BE READ for {', '.join(blind)} - the detector "
+            f"is blind on these, which is not the same as nothing being pending. See the "
+            f"log for why the query failed."
+        )
+
+    pending = monitor.pending_actions()  # type: ignore[attr-defined]
+    if not pending:
+        return "Corporate actions: none pending on held positions."
+
+    rows = []
+    for action in pending:
+        adjusted = (
+            f"{action.adjusted_stop:.2f}" if action.adjusted_stop is not None else "not computed"
+        )
+        state = action.refusal or ("placed" if action.state == "applied" else "NOT placed (shadow)")
+        rows.append(f"{action.describe()}: stop {action.current_stop:.2f} -> {adjusted}, {state}")
+    return f"CORPORATE ACTIONS PENDING (mode: {mode}) - " + "; ".join(rows)
+
+
 class RiskConsoleScreen(QWidget):
     def __init__(self, runtime: Runtime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -183,48 +243,9 @@ class RiskConsoleScreen(QWidget):
         self.refresh_binding_pairs()
 
     def _refresh_corporate_actions(self) -> None:
-        """Symbol, ratio, ex-date, current stop, adjusted stop, and the mode.
-
-        The mode is not decoration. In shadow nothing has been placed, and an
-        operator reading "adjusted to 36.34" and believing the broker holds that
-        order would be misled in the direction that costs money - the same
-        failure as reading M60's "declared" as "fixed".
-        """
         monitor = getattr(self.runtime, "corporate_action_monitor", None)
-        pending = monitor.pending_actions() if monitor is not None else []
-        # "Could not find out" before "nothing pending", because reporting the
-        # second while the first is true is a checkably false statement - and it
-        # was one: a 135-day query range broke every announcement query while
-        # this label went on saying none were pending.
-        blind = monitor.unreadable_symbols() if monitor is not None else []
-        if blind:
-            self.corporate_action_label.setText(
-                f"Corporate actions: COULD NOT BE READ for {', '.join(blind)} - the detector "
-                f"is blind on these, which is not the same as nothing being pending. See the "
-                f"log for why the query failed."
-            )
-            return
-        if not pending:
-            self.corporate_action_label.setText(
-                "Corporate actions: none pending on held positions."
-            )
-            return
-        mode = self.runtime.settings.corporate_action_mode
-        rows = []
-        for action in pending:
-            adjusted = (
-                f"{action.adjusted_stop:.2f}"
-                if action.adjusted_stop is not None
-                else "not computed"
-            )
-            state = action.refusal or (
-                "placed" if action.state == "applied" else "NOT placed (shadow)"
-            )
-            rows.append(
-                f"{action.describe()}: stop {action.current_stop:.2f} -> {adjusted}, {state}"
-            )
         self.corporate_action_label.setText(
-            f"CORPORATE ACTIONS PENDING (mode: {mode}) - " + "; ".join(rows)
+            corporate_action_summary(monitor, self.runtime.settings.corporate_action_mode)
         )
 
     def refresh_binding_pairs(self) -> None:

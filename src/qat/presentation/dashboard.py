@@ -117,6 +117,56 @@ def _format_pnl(pnl_pct: float | None, pnl_r: float | None) -> str:
     return f"{text} ({pnl_r:+.2f}R)"
 
 
+def corporate_action_banner_text(monitor: object | None, acting: bool) -> str | None:
+    """The Dashboard's corporate-action banner, or None to hide it.
+
+    Pure and module-level so the WORDING is testable without a Qt widget.
+
+    **Silence is a claim here.** The banner's original comment says it: "A
+    silent Dashboard while the detector cannot see is indistinguishable from a
+    quiet book." That invariant holds for an UNAVAILABLE broker as much as for
+    a failed query, so this still shows something.
+
+    What changes is the KIND of message (Task 5, option 1). A broker that
+    cannot answer is a STANDING CONDITION, not an alarm: it is stated, and it
+    does NOT say "check the log", because there is nothing in the log to find
+    and sending someone there every time is how a banner stops being read.
+    """
+    if monitor is None:
+        return None
+
+    supported = getattr(monitor, "detection_supported", None)
+    if callable(supported) and not supported():
+        return (
+            "CORPORATE-ACTION DETECTION UNAVAILABLE on this broker - it publishes no "
+            "corporate-action feed, so a split cannot be seen before its ex-date. Entries "
+            "are not gated on pending actions and resting stops are not adjusted through "
+            "one. A standing condition of this broker, not a fault to chase."
+        )
+
+    blind = monitor.unreadable_symbols()  # type: ignore[attr-defined]
+    if blind:
+        return (
+            f"CORPORATE ACTIONS COULD NOT BE READ for {', '.join(blind)}. The split "
+            f"detector is blind on these - that is not the same as nothing being pending. "
+            f"Check the log."
+        )
+
+    pending = monitor.pending_actions()  # type: ignore[attr-defined]
+    if not pending:
+        return None
+
+    verb = (
+        "the resting stop has been adjusted"
+        if acting
+        else "SHADOW MODE - nothing has been adjusted"
+    )
+    return (
+        f"CORPORATE ACTION PENDING: {'; '.join(a.describe() for a in pending)} - {verb}. "
+        f"New entries in these symbols are refused until it has passed."
+    )
+
+
 class DashboardScreen(QWidget):
     def __init__(self, runtime: Runtime, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -278,34 +328,12 @@ class DashboardScreen(QWidget):
         "declared" being read as "fixed".
         """
         monitor = getattr(self.runtime, "corporate_action_monitor", None)
-        if monitor is None:
-            self.corporate_action_banner.setVisible(False)
-            return
-        blind = monitor.unreadable_symbols()
-        if blind:
-            # The banner has to appear for this too. A silent Dashboard while the
-            # detector cannot see is indistinguishable from a quiet book.
-            self.corporate_action_banner.setText(
-                f"CORPORATE ACTIONS COULD NOT BE READ for {', '.join(blind)}. The split "
-                f"detector is blind on these - that is not the same as nothing being pending. "
-                f"Check the log."
-            )
-            self.corporate_action_banner.setVisible(True)
-            return
-        pending = monitor.pending_actions()
-        if not pending:
-            self.corporate_action_banner.setVisible(False)
-            return
         acting = self.runtime.settings.corporate_action_mode == "act"
-        verb = (
-            "the resting stop has been adjusted"
-            if acting
-            else "SHADOW MODE - nothing has been adjusted"
-        )
-        self.corporate_action_banner.setText(
-            f"CORPORATE ACTION PENDING: {'; '.join(a.describe() for a in pending)} - {verb}. "
-            f"New entries in these symbols are refused until it has passed."
-        )
+        text = corporate_action_banner_text(monitor, acting)
+        if text is None:
+            self.corporate_action_banner.setVisible(False)
+            return
+        self.corporate_action_banner.setText(text)
         self.corporate_action_banner.setVisible(True)
 
     def _seed_equity_history(self) -> None:

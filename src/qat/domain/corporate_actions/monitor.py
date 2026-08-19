@@ -91,6 +91,12 @@ class CorporateActionMonitor:
         # a 135-day range broke every query and the Risk Console went on
         # saying "none pending on held positions".
         self._unreadable: set[str] = set()
+        # Whether this broker can answer the question AT ALL, as distinct from
+        # having failed to answer it this pass. Assumed true until a broker
+        # without the capability is seen, so nothing changes for an adapter
+        # that has always had it.
+        self._supported: bool = True
+        self._said_unsupported = False
         self._task: asyncio.Task[None] | None = None
 
     # --- the public face ------------------------------------------------------
@@ -102,6 +108,27 @@ class CorporateActionMonitor:
 
     def pending_actions(self) -> list[PendingAction]:
         return sorted(self._pending.values(), key=lambda a: (a.ex_date, a.symbol))
+
+    def detection_supported(self) -> bool:
+        """Whether this broker can answer the announcements question at all.
+
+        FALSE is a permanent property of the adapter, not a failure to retry:
+        IBKR publishes no structured corporate-action feed, so `IBAdapter` does
+        not implement `announcements` and no split can be seen before its
+        ex-date. Distinct from `unreadable_symbols`, which means the method
+        EXISTS and this pass failed.
+
+        The distinction is the whole of Task 5's option 1. Merged, a capability
+        gap is announced through a transient-failure channel - a banner saying
+        "check the log for why the query failed" where the answer is "there is
+        no query", 2,880 times a day. An alarm you learn to ignore is worse
+        than no alarm.
+
+        **Neither state may be read as "nothing pending".** That invariant is
+        why M39 made blindness a state in the first place, and it holds for
+        both.
+        """
+        return self._supported
 
     def unreadable_symbols(self) -> list[str]:
         """Held symbols whose announcements could not be read on the last pass.
@@ -334,6 +361,26 @@ class CorporateActionMonitor:
         pass - whatever was remembered on an earlier pass still applies.
         """
         self._unreadable = set()
+
+        # Knowing the answer without asking. Swallowing an AttributeError per
+        # symbol per sweep turned a permanent capability gap into a recurring
+        # alarm - and left every held symbol reading as "the query failed"
+        # for ever.
+        query = getattr(broker, "announcements", None)
+        if not callable(query):
+            self._supported = False
+            if not self._said_unsupported:
+                self._said_unsupported = True
+                logger.warning(
+                    "Corporate-action detection is UNAVAILABLE on this broker: %s does not "
+                    "implement announcements, so no split can be seen before its ex-date. "
+                    "The ex-date entry gate and M60's quarantine have no input. This is a "
+                    "property of the broker, not a failure to retry, and is stated once.",
+                    type(broker).__name__,
+                )
+            return
+        self._supported = True
+
         today = datetime.now(UTC).date()
         since = today - timedelta(days=_LOOKBACK_DAYS)
         until = today + timedelta(days=_LOOKAHEAD_DAYS)
