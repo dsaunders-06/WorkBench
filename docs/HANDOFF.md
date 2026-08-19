@@ -955,7 +955,9 @@ Task 3 shipped; Task 2 was stopped before it started because Task 1 measures
 exactly what Task 2 would have had to assume. Do not resume Task 2 early.
 
 OUTSTANDING, IN ORDER
-  W1.1     Stage 1 Task 1. Run scripts/broker_capabilities.py READ-ONLY the
+  W1.1     Stage 1 Task 1. THERE IS A READY PROMPT FOR THIS AT THE END OF
+           docs/HANDOFF.md - paste it the day the account is live.
+           Run scripts/broker_capabilities.py READ-ONLY the
            day the paper account exists, and record the RAW responses. Every
            later task is shaped by it. GENUINELY BLOCKED until then.
            IT MUST ALSO SETTLE: does permId survive a Gateway restart (Task 3
@@ -1005,3 +1007,72 @@ THE HABITS THAT FOUND EVERYTHING
   and NO REGIME PUBLISHED for a clean session. An alarm you learn to ignore
   is worse than no alarm.
 ```
+
+---
+
+## 🔑 Prompt to paste THE DAY THE IBKR ACCOUNT IS ACTIVE
+
+Separate from the block above on purpose. That one starts a new context window;
+this one starts Stage 1. Paste it when the live account has ASX permissions and
+IB Gateway is running.
+
+```
+The IBKR paper account is live. Begin Stage 1 Task 1 of
+docs/superpowers/plans/2026-08-19-ibkr-move.md.
+
+THIS IS A MEASUREMENT, NOT A CODING TASK. The deliverable is a report. Write no
+adapter code, and do not start Task 2 - it was deliberately stopped because this
+task measures exactly what it would otherwise assume.
+
+BEFORE CONNECTING TO ANYTHING
+  Confirm QAT_TRADING_MODE=paper and that IB Gateway is on the PAPER port
+  (4002). ib_adapter.py raises LivePortInPaperModeError if a live port (4001 or
+  7496) is reached in paper mode - run the test that proves it fires, and if
+  there is no such test, WRITE IT FIRST. That guard is what stands between a
+  paper trial and a real account. The guard is one-directional by design: live
+  mode against a paper port is the safe mismatch and is allowed.
+
+  Connect READ-ONLY. IBAdapter has a read_only mode and _check_not_read_only.
+
+THEN RUN
+  & ".\.venv\Scripts\python.exe" scriptsroker_capabilities.py
+
+RECORD THE RAW RESPONSES, NOT A SUMMARY
+  For recent_fills, resting_stops, resting_stop_orders and announcements: does
+  each return data, return empty, or raise? What SHAPE is the data? Paste the
+  actual objects into the report. The whole reason W1.1 exists is that these
+  absences are SILENT - every caller guards with getattr, so a missing method
+  neither crashes nor corrupts, it just stops verifying, absorbing and
+  detecting. Evidence has to be the response itself.
+
+FOUR QUESTIONS THIS MUST SETTLE
+  1. Does permId survive a Gateway restart? Task 3 (d094863) records permId as
+     the order identity BECAUSE orderId is per-session. If permId does not
+     survive, that decision needs revisiting.
+  2. Are ASX stops NATIVE or IBKR-SIMULATED? IBKR publishes this per exchange.
+     Record it verbatim. A simulated stop is held on IBKR's servers, triggers
+     only in regular hours with a valid quote, and is not resting at the
+     exchange - which weakens the guarantee the entire US trial rested on.
+  3. Does a stop placed in the paper account appear in openTrades() /
+     reqAllOpenOrders()? If a simulated stop is invisible to the API,
+     resting_stops cannot verify protection and the app's central safety check
+     silently stops working.
+  4. How far back do executions go? IB.fills() is documented "all fills from
+     this session", so it cannot see a fill from while the app was down - which
+     is the case absorb_broker_fills exists for. Measure the real retention.
+
+QUESTION 3 NEEDS ONE ORDER PLACED
+  That is the only write in Stage 1. ONE stop on ONE small position, and ASK
+  THE OPERATOR BEFORE PLACING IT. Everything else is read-only.
+
+THEN STATE PLAINLY WHAT PROTECTION THIS ACCOUNT ACTUALLY PROVIDES
+  If stops are simulated, risk_at_stop is optimistic overnight and the gap-risk
+  rail is doing more work than it was sized for. Write that down. DO NOT adjust
+  any rail in response - that is the operator's decision with the measurement
+  in hand.
+
+WRITE THE REPORT TO
+  docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md
+  Commit it. THEN STOP AND REPORT. Tasks 2 to 5 are shaped by what it says.
+```
+
