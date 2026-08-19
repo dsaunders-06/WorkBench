@@ -957,9 +957,12 @@ exactly what Task 2 would have had to assume. Do not resume Task 2 early.
 OUTSTANDING, IN ORDER
   W1.1     Stage 1 Task 1. THERE IS A READY PROMPT FOR THIS AT THE END OF
            docs/HANDOFF.md - paste it the day the account is live.
-           Run scripts/broker_capabilities.py READ-ONLY the
-           day the paper account exists, and record the RAW responses. Every
-           later task is shaped by it. GENUINELY BLOCKED until then.
+           Run scripts/ibkr_probe.py READ-ONLY the day the paper account
+           exists, and record the RAW responses. NOT broker_capabilities.py,
+           which connects to nothing and would rubber-stamp the assumptions
+           this task exists to test. Every later task is shaped by it.
+           GENUINELY BLOCKED until a Gateway is actually listening on 4002 -
+           the account being live is not the same thing.
            IT MUST ALSO SETTLE: does permId survive a Gateway restart (Task 3
            assumes so), are ASX stops native or IBKR-simulated, does a stop
            appear in openTrades(), and how far back do executions go.
@@ -1076,15 +1079,36 @@ task measures exactly what it would otherwise assume.
 BEFORE CONNECTING TO ANYTHING
   Confirm QAT_TRADING_MODE=paper and that IB Gateway is on the PAPER port
   (4002). ib_adapter.py raises LivePortInPaperModeError if a live port (4001 or
-  7496) is reached in paper mode - run the test that proves it fires, and if
-  there is no such test, WRITE IT FIRST. That guard is what stands between a
-  paper trial and a real account. The guard is one-directional by design: live
+  7496) is reached in paper mode. The test that proves it fires EXISTS -
+  test_paper_mode_with_a_live_port_refuses_to_construct[4001] and [7496] -
+  so run it, do not write it. The guard is one-directional by design: live
   mode against a paper port is the safe mismatch and is allowed.
 
-  Connect READ-ONLY. IBAdapter has a read_only mode and _check_not_read_only.
+  ibkr_probe.py carries that guard itself (connection_target), because it
+  connects on its own rather than through IBAdapter. It also refuses a live
+  ACCOUNT NUMBER after connecting (check_paper_account): the port being right
+  does not prove the Gateway is logged into the paper session.
+
+  Connect READ-ONLY. IBAdapter has a read_only mode and _check_not_read_only,
+  and the probe opens its session with ib_async readonly=True.
 
 THEN RUN
-  & ".\.venv\Scripts\python.exe" scripts/broker_capabilities.py
+  & ".\.venv\Scripts\python.exe" scripts/ibkr_probe.py --label "run 1"
+
+  NOT scripts/broker_capabilities.py. That one inspects OUR adapter classes
+  with hasattr and connects to nothing - its own docstring says so - so it
+  prints an identical table whether or not an account exists, and running it
+  here would rubber-stamp the assumptions this task exists to test. It is
+  still the right tool for the other half of the question (what does our
+  adapter implement); it just cannot ask a Gateway anything.
+
+  ibkr_probe.py connects read-only, records absent / raised / empty / data
+  per call with the raw repr of each response, carries its own live-port and
+  live-account-number guards, and places nothing.
+
+  FOR QUESTION 1, RUN IT TWICE: once, then restart the Gateway, then
+    & ".\.venv\Scripts\python.exe" scripts/ibkr_probe.py --label "run 2" --out docs/superpowers/specs/2026-08-19-ibkr-capability-measurement-run2.md
+  and compare the permIds in the two reports.
 
 RECORD THE RAW RESPONSES, NOT A SUMMARY
   For recent_fills, resting_stops, resting_stop_orders and announcements: does
