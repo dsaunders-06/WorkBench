@@ -149,3 +149,22 @@ async def test_modify_order_repricing_a_stop_reaches_the_broker() -> None:
         "the re-priced stop never reached the broker - the app believes the "
         "stop moved and the broker still holds the old level"
     )
+
+
+def test_a_stop_carrying_a_take_profit_is_refused_not_silently_stripped() -> None:
+    """The gap in Stage A as first shipped, and the guard's own principle
+    applied to itself.
+
+    `AlpacaAdapter` sends a stop that carries `take_profit_price` as ONE OCO,
+    never two orders (M33): a resting stop and a resting limit for the same
+    shares are not independent - if price runs to the target and later gaps
+    back through the stop, both fill and a protected long becomes an
+    accidental short. Returning a bare `StopOrder` here keeps the protection
+    but silently discards the target, and `is_bracket` is False for
+    `order_type="stop"` so the bracket guard never sees it.
+
+    Less dangerous than transmitting a market sell. Still a translator
+    quietly deciding half an instruction is close enough.
+    """
+    with pytest.raises(UnrepresentableOrderError, match="take-profit|OCO"):
+        to_ib_order(_protective_stop(take_profit_price=70.00))

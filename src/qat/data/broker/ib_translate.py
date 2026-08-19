@@ -52,6 +52,21 @@ def to_ib_order(order: Order) -> IBOrder:
     if order.order_type == "stop":
         if order.stop_price is None:
             raise UnrepresentableOrderError(f"stop order for {order.symbol} has no stop price")
+        if order.take_profit_price is not None:
+            # A stop that also carries a target is ONE OCO, never two
+            # independent orders (M33). A resting stop and a resting limit for
+            # the same shares are not independent: if price runs to the target
+            # and later gaps back through the stop, BOTH fill and a protected
+            # long becomes an accidental short. Returning the stop alone would
+            # keep the protection and silently discard the target - and
+            # `is_bracket` is False for `order_type="stop"`, so the guard
+            # below never sees this case. Refused until Stage B.
+            raise UnrepresentableOrderError(
+                f"protective order for {order.symbol} carries a take-profit "
+                f"({order.take_profit_price}) and must be transmitted as one OCO; "
+                "IBKR OCA transmission is not implemented - refusing rather than "
+                "dropping the target leg"
+            )
         # GTC unconditionally, mirroring AlpacaAdapter. DAY killed every stop
         # this system ever placed: on 31 July six positions filled with
         # brackets attached, the take-profit legs expired at the close, the
