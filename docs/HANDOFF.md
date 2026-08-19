@@ -1280,6 +1280,11 @@ THE HABITS, IN THE ORDER THEY PAID THIS SESSION
   fake stamped permId synchronously; real IBKR does not, and M99 hid behind
   that agreement through fifteen tests and fourteen killed mutations. WHEN A
   LIVE CHECK DISAGREES WITH A GREEN SUITE, SUSPECT THE FAKE.
+  CHECK CI AFTER PUSHING: gh run list --limit 3. CI runs BARE pytest; local
+  runs used python -m pytest, which also puts the CWD on sys.path. A cross-test
+  import resolved locally and failed collection in CI, so the local suite read
+  2,335 passing while SEVEN CONSECUTIVE PUSHES failed and nobody looked. Import
+  sibling test modules by BARE NAME, never as tests.a.b.c.
   AND: ASK WHAT THE DATA IS FOR. "Announcements" was priced as a feed until
   someone asked what fields the code reads - three - and what they gate. Half
   the rail was in shadow mode and had never placed an order.
