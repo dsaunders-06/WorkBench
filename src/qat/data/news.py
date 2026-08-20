@@ -36,10 +36,21 @@ _STOPWORDS = frozenset("""the and for with from that this into over after says s
     """.split())
 _WORD = re.compile(r"[a-z0-9]+")
 
-# Titles this similar are treated as the same story. Tuned against the live
-# 20 August sample: a Reuters and a GuruFocus write-up of one Mirvac earnings
-# call share most of their significant words, and the Westpac story shares none.
-_SAME_STORY = 0.5
+# Titles this similar are treated as the same story.
+#
+# 0.50 first, then LOOSENED TO 0.40 on 20 August by operator decision, against a
+# measurement rather than a preference. Best cross-outlet similarity per symbol
+# on the live feed was AMC 0.57 (passed), RIO 0.44, MGR 0.08, NHF 0.00. The RIO
+# pair - "Rio Tinto Ltd (Q2 2026) Earnings Call Highlights" and "Rio Tinto H1
+# Earnings Call Highlights" - is one earnings call reported by two outlets, and
+# 0.50 threw it away. Two outlets writing their own headline for one event share
+# fewer words than they look like they should.
+#
+# It is a threshold, not a fix. NHF's six items came from ONE outlet, so nothing
+# here can corroborate them; the binding limit is Yahoo's coverage of small ASX
+# names. Loosening further would stop meaning "two outlets on ONE story" and
+# start meaning "two outlets on this company", which is a much weaker claim.
+_SAME_STORY = 0.40
 
 
 @dataclass(frozen=True, slots=True)

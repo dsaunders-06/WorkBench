@@ -230,3 +230,44 @@ def test_the_local_ticker_as_a_whole_word_still_keeps_the_item() -> None:
     ]
 
     assert len(drop_other_listings(items)) == 1
+
+
+# --- the threshold, loosened 0.50 -> 0.40 on 20 August ------------------------
+
+
+def test_the_rio_pair_that_0_50_rejected_now_corroborates() -> None:
+    """The measured case that prompted the change: two outlets, one earnings
+    call, similarity 0.44 - a true match thrown away by the old threshold.
+
+    The live GuruFocus title carried "(RTNTF)" and is now dropped by
+    `drop_other_listings` as the US over-the-counter line, so that exact pair no
+    longer reaches `corroborate` from the real feed. The marker is removed here
+    deliberately: this test isolates the THRESHOLD, and the listing filter has
+    its own tests above. Loosening still shows on live data - RIO surfaced
+    Oilprice.com and Proactive on the Tomago power deal instead."""
+    items = [
+        _item(
+            "Rio Tinto Ltd (Q2 2026) Earnings Call Highlights: Strong Financials",
+            "GuruFocus",
+            symbol="RIO.AX",
+        ),
+        _item("Rio Tinto H1 Earnings Call Highlights", "MarketBeat", symbol="RIO.AX"),
+    ]
+
+    stories = corroborate(items, now=NOW)
+
+    assert len(stories) == 1
+    assert set(stories[0].providers) == {"GuruFocus", "MarketBeat"}
+
+
+def test_loosening_did_not_reach_far_enough_to_merge_different_events() -> None:
+    """The guard on the change. Two Mirvac stories about genuinely different
+    things must still stay apart - otherwise the rule stops meaning
+    "two outlets on ONE story" and starts meaning "two outlets on this company",
+    which is a different and much weaker claim."""
+    items = [
+        _item("Mirvac Group FY 2026 earnings call highlights record profit", "GuruFocus"),
+        _item("Mirvac appoints new chief financial officer from Lendlease", "Reuters"),
+    ]
+
+    assert corroborate(items, now=NOW) == []
