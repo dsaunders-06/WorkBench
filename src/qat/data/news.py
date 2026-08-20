@@ -60,6 +60,10 @@ class NewsItem:
     provider: str
     published: datetime
     url: str = ""
+    # True only for a filing lodged BY the company WITH the exchange. Not "a
+    # source I trust" - a wire service is reliable and still secondary, because
+    # it is reporting on something rather than being it.
+    primary: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +80,7 @@ class CorroboratedStory:
     providers: tuple[str, ...]
     published: datetime
     items: tuple[NewsItem, ...]
+    primary: bool = False
 
 
 def _significant(title: str) -> frozenset[str]:
@@ -137,7 +142,19 @@ def corroborate(
     stories = []
     for cluster in clusters:
         outlets = {_outlet(item.provider) for item in cluster}
-        if len(outlets) < min_sources:
+        # THE PRIMARY-SOURCE EXCEPTION (operator decision, 20 August).
+        #
+        # Corroboration defends against unreliable SECONDARY reporting: two
+        # outlets agreeing makes a claim harder to plant. An exchange filing is
+        # not a report about the news, it IS the news - the company lodged it,
+        # and every outlet below is reporting on this. Holding it to the
+        # two-source bar would discard the most authoritative input there is
+        # because only one place published it, and that place is the company.
+        #
+        # Per story, never a mode: a filing about results does not drag an
+        # unrelated single-source blog through with it.
+        primary = any(item.primary for item in cluster)
+        if not primary and len(outlets) < min_sources:
             continue
         first = min(cluster, key=lambda i: i.published)
         # Distinct provider strings as the vendor spelled them, one per outlet,
@@ -151,6 +168,7 @@ def corroborate(
                 providers=tuple(seen.values()),
                 published=first.published,
                 items=tuple(cluster),
+                primary=primary,
             )
         )
     return sorted(stories, key=lambda s: s.published, reverse=True)

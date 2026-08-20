@@ -105,7 +105,16 @@ own next steps three times.**
    not fix it. The regime label sets the exposure scalar on every position, so
    sizing rides a degenerate fit. Requiring full coverage of all 300 benchmark
    bars looks like the culprit; start there.
-2. **The Stage 2 data decision.** yfinance cannot sustain a 100-symbol 60s poll.
+2. **The Stage 2 data decision — now covering announcements as well as bars.**
+   Researched and MEASURED 20 August; see "NEWS AND ANNOUNCEMENTS" in the plan.
+   `listcorp` refuses bots (403 on robots.txt); `marketindex` permits crawling
+   but is an aggregator that would manufacture false corroboration; `asx.com.au`
+   permits crawling while SELLING the data - ComNews is licensed and even its
+   20-minute tier needs a redistribution agreement. **IBKR was measured against
+   the live account and returned 0 headlines for RIO.AX and NHF.AX over 90 days**
+   from its three free US-centric providers, so it closes neither the
+   corporate-action gap nor ASX news. For ASX, free Yahoo currently beats the
+   broker. yfinance cannot sustain a 100-symbol 60s poll.
    Decide the ASX bar source explicitly — *"Option 1 is what happens if nobody
    decides, and it is the one nobody would choose deliberately."*
 3. **Blocked on a first fill, all of it:** Task 2 (`recent_fills` on IBKR), M71

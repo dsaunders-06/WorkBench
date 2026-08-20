@@ -271,3 +271,85 @@ def test_loosening_did_not_reach_far_enough_to_merge_different_events() -> None:
     ]
 
     assert corroborate(items, now=NOW) == []
+
+
+# --- the primary-source exception --------------------------------------------
+
+
+def test_a_single_PRIMARY_source_is_surfaced_alone() -> None:
+    """Operator decision, 20 August. Corroboration defends against unreliable
+    SECONDARY reporting - two outlets agreeing makes a claim harder to plant.
+    An exchange filing is not a report about the news, it IS the news: the
+    company lodged it, and the outlets below are reporting on this.
+
+    Requiring a second source for a primary filing would discard the most
+    authoritative input available because only one place published it, and the
+    one place is the company itself."""
+    items = [
+        NewsItem(
+            symbol="MGR.AX",
+            title="Mirvac Group - FY26 Results Announcement",
+            provider="ASX Company Announcements",
+            published=NOW - timedelta(hours=2),
+            primary=True,
+        )
+    ]
+
+    stories = corroborate(items, now=NOW)
+
+    assert len(stories) == 1
+    assert stories[0].primary is True
+
+
+def test_a_primary_source_does_not_make_secondary_stories_pass() -> None:
+    """The exception is per-story, not a mode. An ASX filing about results must
+    not drag an unrelated single-source blog post through with it."""
+    items = [
+        NewsItem(
+            symbol="MGR.AX",
+            title="Mirvac Group - FY26 Results Announcement",
+            provider="ASX Company Announcements",
+            published=NOW,
+            primary=True,
+        ),
+        _item("Mirvac tipped to soar on secret takeover talk", "SomeBlog"),
+    ]
+
+    stories = corroborate(items, now=NOW)
+
+    assert len(stories) == 1
+    assert stories[0].primary is True
+
+
+def test_secondary_reports_of_a_primary_filing_join_it() -> None:
+    """When outlets do report the filing, they attach to it rather than forming
+    a second story - the reader should see one event with its evidence."""
+    items = [
+        NewsItem(
+            symbol="MGR.AX",
+            title="Mirvac Group FY26 results announcement record profit",
+            provider="ASX Company Announcements",
+            published=NOW - timedelta(hours=3),
+            primary=True,
+        ),
+        _item(
+            "Mirvac Group FY26 results announcement shows record profit",
+            "Reuters",
+            days_ago=0.05,
+        ),
+    ]
+
+    stories = corroborate(items, now=NOW)
+
+    assert len(stories) == 1
+    assert stories[0].primary is True
+    assert len(stories[0].providers) == 2
+
+
+def test_a_story_with_no_primary_source_is_marked_as_such() -> None:
+    items = [
+        _item("Mirvac Group FY 2026 earnings call highlights", "GuruFocus"),
+        _item("Mirvac Group FY 2026 earnings call highlights", "Reuters"),
+    ]
+
+    assert corroborate(items, now=NOW)[0].primary is False
