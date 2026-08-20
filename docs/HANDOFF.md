@@ -891,6 +891,31 @@ did not tip the cap. **No deploy today changed any trading behaviour.**
 
 ---
 
+# Alpaca-era records — CLEARED 20 August 2026, evening
+
+The app is on IBKR and the account is flat, but three files still described the
+Alpaca book. Cleared with the app stopped, each backed up first with the suffix
+`.bak-20260820-PRE-ALPACA-CLEANUP`:
+
+* **`open_position_entries.json`** → `{}`. It held ten US symbols — JNJ, WFC,
+  CSCO, CRWD, UNP, MS, AMAT, AMD, GS, VRTX — for an account this build no longer
+  trades, and produced a startup line naming them on every launch. M110 had
+  already stopped that line claiming they were *held*; this stops it naming them
+  at all.
+* **`corporate_announcements.json`** → empty. One CRWD split, ex-date
+  2026-07-02, seven weeks past, on a US symbol. IBKR publishes no announcements,
+  so this file can never be refreshed on this broker.
+
+**`absorbed_fills.json` was deliberately NOT touched.** Its watermark is current
+and the four remembered fill ids are live protection against double-recording if
+that watermark is ever rewound. They are inert, not clutter, and removing safety
+state to tidy a file is the wrong trade.
+
+Verified after the fact through PowerShell — the first verification was run from
+Bash and returned a July snapshot of a file emptied minutes earlier.
+
+---
+
 # Standing constraints
 
 * **Read `%LOCALAPPDATA%\QuantAdvisoryTerminal` via PowerShell, never Bash.**
@@ -900,8 +925,16 @@ did not tip the cap. **No deploy today changed any trading behaviour.**
   sandbox covers the whole process tree, and **the Monitor tool cannot see the
   live account either.** Anything watching those files from a Bash shell reads a
   file that never changes: it does not error, it goes quiet, and quiet is
-  indistinguishable from healthy. The Bash tool IS correct for the venv python
-  and for Alpaca API calls — the sandbox is filesystem-only.
+  indistinguishable from healthy.
+  **SHARPENED 20 August, by being bitten twice in one evening.** "The Bash tool
+  IS correct for the venv python" is true only for work that does not READ that
+  directory. A `.venv/Scripts/python.exe` script launched from Bash inherits the
+  frozen view: on 20 August one copied `open_position_entries.json` out of the
+  live directory to verify it had been cleared and read back a CVS entry dated
+  31 July, from a file that had been emptied minutes earlier. The same script run
+  through the PowerShell tool returned `{}`. So: Bash for network calls, git and
+  the repo; **PowerShell for anything that touches
+  `%LOCALAPPDATA%\QuantAdvisoryTerminal`, including Python that only reads it.**
 * **Overnight watching is `scripts\session_check.ps1`, not a scheduled prompt.**
   This bullet used to prescribe a scheduled prompt that wakes and uses the
   PowerShell tool. **Measured on 13–14 August: that does not work**, for two
