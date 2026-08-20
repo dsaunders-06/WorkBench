@@ -199,29 +199,101 @@ class RegimeEngine:
 
     @staticmethod
     def _aligned_breadth(
-        dates: list[datetime], breadth_bars: dict[str, pd.DataFrame]
+        dates: list[datetime],
+        breadth_bars: dict[str, pd.DataFrame],
+        max_missing_fraction: float = 0.10,
     ) -> dict[str, list[float]]:
-        """Symbols with a close on every benchmark date, and only those.
+        """A close for every benchmark date, for every symbol that has enough.
 
-        RegimeFeatureBuilder only counts a breadth symbol whose price history
-        is exactly as long as the benchmark's, so a symbol with a single
-        missing day would be silently dropped from breadth for the whole run.
-        Requiring full coverage up front makes that explicit instead.
+        RegimeFeatureBuilder counts only a breadth symbol whose history is
+        exactly as long as the benchmark's. This used to satisfy that by
+        requiring TOTAL coverage - `set(wanted) <= closes.keys()` - and on the
+        ASX that kept nothing at all (M112). `fetch_daily_panel` requests the
+        last N bars PER SYMBOL, so each window is sized by that symbol's own
+        trading days; the benchmark traded one day the stocks did not, its
+        window began a day earlier, and every stock was missing its first date.
+        Measured 20 August: 0 of 7 kept, and 0 of 100 in the live session. A
+        299-of-300 match was discarded as readily as a 0-of-300 one.
+
+        So satisfy the length constraint by CONSTRUCTION instead. A day a stock
+        did not trade is not missing data - the price did not cease to exist -
+        so carry the last close across it, which is what a breadth count means:
+        is this name above its average, at the last price it had.
+
+        Dropping is still right for a symbol absent for a material fraction of
+        the window - though a single missing day is always tolerated. Carrying
+        a price across a long silence would contribute a flat line that reads as
+        a name holding up in a falling market.
+
+        A LEADING gap takes the earliest price the symbol does have, because
+        there is nothing to carry forward from and a zero would put a false
+        -100% move into the first breadth reading.
         """
         # Matched on the calendar date, not the raw timestamp: vendors stamp a
         # daily bar at their own hour (Alpaca uses 04:00 UTC) and a warm start
         # must not depend on two sources having chosen the same one.
         wanted = [ts.date() for ts in dates]
+        if not wanted:
+            return {}
+        # At least one absent day is always tolerated. A bare fraction is too
+        # harsh on a short window - over six dates it rounds to 0.6, so any
+        # gap at all would disqualify, which is the rule this replaced.
+        limit = max(1.0, len(wanted) * max_missing_fraction)
         aligned: dict[str, list[float]] = {}
+        dropped: dict[str, int] = {}
+
         for symbol, frame in breadth_bars.items():
             if frame.empty:
+                dropped[symbol] = len(wanted)
                 continue
             closes = {
                 as_utc(ts).date(): float(close)
                 for ts, close in zip(frame["ts"], frame["close"], strict=True)
             }
-            if set(wanted) <= closes.keys():
-                aligned[symbol] = [closes[day] for day in wanted]
+            absent = sum(1 for day in wanted if day not in closes)
+            if absent > limit:
+                dropped[symbol] = absent
+                continue
+
+            series: list[float | None] = []
+            carried: float | None = None
+            for day in wanted:
+                value = closes.get(day)
+                if value is not None:
+                    carried = value
+                series.append(carried)
+
+            if series[0] is None:
+                earliest = next((value for value in series if value is not None), None)
+                if earliest is None:  # pragma: no cover - absent > limit catches this
+                    dropped[symbol] = len(wanted)
+                    continue
+                for index, value in enumerate(series):
+                    if value is not None:
+                        break
+                    series[index] = earliest
+
+            # Every slot is filled by construction - carry-forward covers the
+            # interior and the block above covers a leading gap. Checked rather
+            # than cast, because a None reaching the feature matrix would be a
+            # NaN column and the singular fit this whole area exists to avoid.
+            filled = [value for value in series if value is not None]
+            if len(filled) != len(series):  # pragma: no cover - unreachable
+                dropped[symbol] = len(series) - len(filled)
+                continue
+            aligned[symbol] = filled
+
+        if dropped:
+            worst = sorted(dropped.items(), key=lambda item: -item[1])[:5]
+            logger.info(
+                "Breadth: kept %d symbol(s), dropped %d for missing more than %.0f%% of the "
+                "%d benchmark dates (worst: %s)",
+                len(aligned),
+                len(dropped),
+                max_missing_fraction * 100,
+                len(wanted),
+                ", ".join(f"{symbol} missing {count}" for symbol, count in worst),
+            )
         return aligned
 
     async def _on_macro(self, event: MacroEvent) -> None:
