@@ -1007,7 +1007,7 @@ class SignalToOrderBridge:
         self._save_entries()
 
     def _load_entries(self) -> dict[str, _Entry]:
-        """Entry dates for positions this app already holds.
+        """Entry records previously written to disk, whatever is held now.
 
         A missing or unreadable file is not an error - it is a first run, or a
         machine where the previous session never opened anything. It reads as
@@ -1041,8 +1041,18 @@ class SignalToOrderBridge:
             except (KeyError, TypeError, ValueError):
                 logger.warning("Ignoring an unreadable entry record for %s", symbol)
         if entries:
+            # M110. This said "for %d held position(s)", which asserts a fact
+            # this method has no way to establish: it has read a JSON file and
+            # nothing else. On 20 August the same startup produced
+            #   16:41:12  Restored entry dates for 10 held position(s): AMAT, ...
+            #   16:41:26  No pre-existing broker positions to adopt
+            # fourteen seconds apart. Both were emitted by a healthy app; the
+            # first was simply describing a file, and those ten named an Alpaca
+            # account this build no longer trades. Say what is known.
             logger.info(
-                "Restored entry dates for %d held position(s): %s",
+                "Restored %d entry record(s) from open_position_entries.json: %s. These are "
+                "records read from disk, not holdings - what is actually held is settled by "
+                "broker reconciliation moments later, which reports separately.",
                 len(entries),
                 ", ".join(sorted(entries)),
             )

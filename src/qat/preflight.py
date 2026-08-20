@@ -18,6 +18,7 @@ Read-only throughout. It places nothing, cancels nothing and modifies nothing.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 
@@ -274,6 +275,49 @@ def settings_checks(settings: Settings) -> list[Check]:
         )
 
     return checks
+
+
+# How many symbols the feed check prices when no explicit --sample is given.
+# A cap exists because IBKR paces contract resolution one request at a time, so
+# a hundred symbols is slow. The cap is not the problem; a cap that silently
+# excluded part of a SMALL watchlist was.
+PROBE_CAP = 20
+
+
+def probe_plan(watchlist: Sequence[str], sample: int | None) -> tuple[tuple[str, ...], Check]:
+    """Which symbols the feed check will price, and a check that says so.
+
+    M110. `--sample` defaulted to 5, chosen when the watchlist was a hundred.
+    On the six-symbol ASX watchlist the pre-flight priced five, reported
+    "all 5 priced", and never contacted the sixth - a clean-looking feed check
+    of a watchlist it had not finished reading.
+
+    Returned as a pair rather than sliced at the call site so that the number
+    probed and the number claimed cannot be decided in two places. The check is
+    the point: capping is fine, capping silently is not.
+    """
+    total = len(watchlist)
+    limit = min(total, PROBE_CAP if sample is None or sample <= 0 else sample)
+    probe = tuple(watchlist[:limit])
+    if total == 0:
+        return probe, Check(
+            "feed coverage",
+            Status.FAIL,
+            "the watchlist is empty, so no symbol was priced. Zero of zero is not a pass.",
+        )
+    if limit >= total:
+        return probe, Check(
+            "feed coverage",
+            Status.OK,
+            f"all {limit} of {total} watched symbol(s) were priced",
+        )
+    return probe, Check(
+        "feed coverage",
+        Status.WARN,
+        f"only {limit} of {total} watched symbol(s) were priced - the other "
+        f"{total - limit} are UNVERIFIED and this check says nothing about them. "
+        f"Pass --sample {total} to cover the whole watchlist.",
+    )
 
 
 # --- the half that needs a Gateway and a feed ------------------------------

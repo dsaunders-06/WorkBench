@@ -39,6 +39,7 @@ from qat.preflight import (  # noqa: E402
     contract_checks,
     feed_checks,
     gateway_checks,
+    probe_plan,
     render,
     session_checks,
     settings_checks,
@@ -57,7 +58,7 @@ def _settings() -> Settings:
     return Settings(data_dir=tempfile.mkdtemp(prefix="qat-preflight-"))
 
 
-async def _run(sample: int) -> int:
+async def _run(sample: int | None) -> int:
     settings = _settings()
     checks: list[Check] = list(settings_checks(settings))
     checks += session_checks(settings.market)
@@ -79,7 +80,8 @@ async def _run(sample: int) -> int:
         )
     )
 
-    probe = watchlist[:sample]
+    probe, coverage = probe_plan(watchlist, sample)
+    checks.append(coverage)
 
     # --- the feed, which needs no broker -----------------------------------
     if probe:
@@ -156,9 +158,10 @@ def main() -> int:
     parser.add_argument(
         "--sample",
         type=int,
-        default=5,
-        help="how many watchlist symbols to resolve and price (default 5). "
-        "Contract resolution is one request each and IBKR paces them.",
+        default=None,
+        help="how many watchlist symbols to resolve and price. Default covers the "
+        "whole watchlist, capped for a large one; the report always states the "
+        "coverage. Contract resolution is one request each and IBKR paces them.",
     )
     args = parser.parse_args()
     return asyncio.run(_run(args.sample))

@@ -21,115 +21,110 @@ deriving is.**
 
 ---
 
-# Where this stands — 20 August 2026, MID-SESSION
+# Where this stands — 20 August 2026, AFTER THE CLOSE
 
-**THE FIRST ASX SESSION IS RUNNING RIGHT NOW.** Started 11:11:52 AEST on
-20 August. Do not assume anything below is still true — **read the logs
-first**, and run `handoff_state.py` before quoting any figure.
+The first ASX session ran to the close and **traded nothing**. The deploy gap is
+**zero**: M109 is installed and confirmed from the build's own log line, not from
+the packager's claim.
 
-## The session, as at 11:34 AEST
+## The session, as it finished
 
 | | |
 |---|---|
-| App | M104 (`e38b70c`), PID 40616, up since 11:11:52 |
-| Account | `DUQ200898` — **0 positions, 0 orders** |
-| Equity | 1,003,733.21 / cash 1,001,865.24, unchanged, writing every 60s |
-| Regime | recovery → **bull** (exposure scalar 1.00) |
-| Feed | 7 symbols, 300 REAL daily bars each, no synthetic fallback |
-| Signals | **none yet** on the six tradable names |
+| Installed | **M109 (`750cb0d`)** — verified `16:41:12  Build: M109 (750cb0d, ...)` |
+| Ran | 11:11:52 → 16:00 close, 4h49m. A 09:49 run preceded it, see below |
+| Account | `DUQ200898` — **0 positions, 0 orders, all day** |
+| Equity | 1,003,843.14 / cash 1,001,865.24. The +109.93 is **AccruedCash**, not trading |
+| Entries | **zero.** No entry has ever been placed by the app on IBKR |
 
-Everything on the IBKR path works: `BrokerConnection` connected on clientId 1,
-warm start clean, autonomous execution armed with swing promoted. **No entry
-has ever been placed by the app on IBKR**, so `recent_fills`, M70/M71 and
-post-fill reconciliation remain unexercised in a session. That is still the
-experiment.
+## ⚠️ THE HEADLINE, AND IT IS NOT WHAT IT LOOKED LIKE AT MIDDAY
 
-## The configuration, and why it is small
+At 09:51–09:56 `swing` proposed entries on all six names and every one was
+refused — the allow list still read `BHP,CBA,STW`. **Read at midday as a lost
+opportunity: it was not.**
 
-    QAT_MARKET=ASX  QAT_BROKER=ibkr  QAT_TRADING_MODE=paper  QAT_IBKR_PORT=4002
-    QAT_MARKET_DATA_SOURCE=yfinance
-    QAT_EXECUTION_MODE=auto            QAT_AUTONOMOUS_STRATEGIES=swing
-    QAT_WATCHLIST_CATEGORY=curated
-    QAT_WATCHLIST_CURATED_ASX=RIO.AX,APA.AX,AMC.AX,MGR.AX,SGP.AX,NHF.AX
-    QAT_ENTRY_ALLOW_LIST=RIO.AX,APA.AX,AMC.AX,MGR.AX,SGP.AX,NHF.AX
+That session was **force-started pre-open under an operator override**, and per
+M107 a stray Space/Enter on a focused button arms one. It generated signals on a
+CLOSED market against 19 August closing prices, evaluating the 18→19 August daily
+bars. They were never entries the system should have taken; the allow list
+refusing them was a second net doing the right thing.
 
-**THE BIGGEST FINDING OF THE DAY: yfinance cannot sustain a 100-symbol,
-60-second poll.** After ~20 minutes it hard-blocked and answered "possibly
-delisted" for ALL 101 ASX symbols at once, megacaps included, minutes after
-pricing them. The feed produced no ticks. The 499-session replay never exposed
-this because replay reads history in BULK, ONCE; live polling is a different
-load profile and nothing had exercised it. The watchlist was cut to 6 (+ the
-`STW.AX` benchmark) to escape it.
+**During the live session nothing signalled because nothing qualified** — all six
+closed ABOVE their EMA20 on 19 August, so the pullback leg was false all day.
+Today's zero entries is the ordinary no-setup case.
 
-**That cut has a cost, and it is not free:** `Regime features that never moved
-across 300 bars: breadth`. With six symbols the breadth feature is constant, so
-the regime engine is effectively classifying on five of six features. It moves
-the Stage 2 data question from "revisit at a real paper trial" to something
-that needs an answer before any full-universe ASX session.
+Two consequences:
 
-**A second, smaller finding:** six names in the ASX megacap list are dead to
-yfinance — AWC, BKW, DHG, IPL, NSR, SVW — and warm start substituted SYNTHETIC
-bars for them. No tradable name was affected, by timing rather than by design.
+* **Do not force-start pre-open to "catch" a setup.** It manufactures signals
+  against stale prices. M107 is now deployed and the button is `NoFocus`, so the
+  accidental path is closed.
+* **Bars are DAILY** (`bar_interval_seconds=86400`) on a UTC-midnight boundary,
+  which for the ASX *is* the 10:00 open. During a live session `bars[-2]` is
+  yesterday's completed session and `bars[-1]` is today forming. That is the
+  correct evaluation and it is available all session.
 
-## What today found, in order of severity
+## What held, under a real fault
 
-* **M104 — the first fill would have tripped the kill-switch.** Three of four
-  IBKR symbol boundaries translated; `from_ib_position` did not. Tracked
-  `BHP.AX` against broker `BHP` is TWO divergences, and a reconciliation
-  mismatch halts the session. Found by asking what was still untranslated.
-* **M105 — "Test Broker Connection" returned a tick without connecting.** True
-  when written (only mock/simulated were non-Alpaca); IBKR falsified it.
-* **M106 — three gaps the live session found**, including a watchlist and
-  allow list with ZERO overlap: a session that runs all day and can trade
-  nothing, indistinguishable afterwards from one where nothing signalled.
-* **M107 — the app blamed the operator for what a keystroke could do.**
-  `clicked` fires on Space/Enter when focused; the log asserted
-  "operator (dashboard)" regardless. The operator said they had not clicked
-  it, and they were right.
-* **M108 — a session that began in the healthy state announced nothing**, so
-  every tool anchored on "Trading session started" reported the PREVIOUS run.
+* Hourly macro heartbeats 11:12 → 15:12, all on time
+* Equity curve written every minute with **no gaps**, including through the outage
+* **A real ~31s IBKR connectivity loss**, 14:21:21–14:21:52: four `Error 1100`,
+  then `Error 1102` *"restored — data maintained"*. Survived, with the app's
+  equity reconciling exactly to broker NetLiquidation afterwards
+* `MARKET DATA DOWN` correctly did NOT fire (300s threshold vs a 31s outage)
+* No kill-switch trip. Session stood down at 16:00:08, daily report at 16:02:13
 
-## Do not trust these in the RUNNING build
+**It tested only the easy path**: no order in flight, no resting stop to
+reconfirm. `Error 1101` (data LOST) remains unexercised.
 
-The M105–M108 fixes are **committed, pushed, CI-green and NOT DEPLOYED**. In
-the running M104:
+**`ib_async` logs the 1102 RECOVERY at ERROR level**, so one self-healing blip
+reads as 5 errors. Judge by content, not count.
 
-* **`session_check` reports the 09:49 run, not the live one.** The script fix
-  IS live (it is a script), so it now prints a `*** STALE ***` block saying so.
-  Its check 3 also CANNOT FAIL for this session — it shows yesterday's
-  reassuring Alpaca "10 of 10 carry a stop".
-* **The Settings "Test Broker Connection" button lies** — a tick without
-  connecting. Use `scripts/preflight.py`, which connects for real.
-* **The Session panel's button reads "Start session now"** and force-starts
-  against a closed market, on Space/Enter as well as a click.
+## ⚠️ TWO CLAIMS IN THIS FILE DID NOT SURVIVE THE CODE
 
+Both were found in one hour on 20 August, and each produced a wrong
+recommendation before it was checked. **This file has now been wrong about its
+own next steps three times.**
+
+* **"M66 — found and NOT fixed" was false.** M66 shipped 14 August under a
+  recorded lift. `governor.py` reads
+  `prices.get(pos.symbol) or pos.current_price or pos.avg_price` — three tiers,
+  broker's mark in the middle. `ROADMAP.md` says so at the top and this file
+  contradicted it.
+* **"Warm start replaces dead tickers with SYNTHETIC bars" was false.**
+  `fetch_daily_panel` discards degraded frames and leaves those symbols
+  unseeded, and names them: *"No real daily bars for 6 of 101 symbols - they are
+  left unseeded rather than filled"*. The guard exists and worked.
 
 ## OUTSTANDING, IN ORDER
 
-1. **WATCH THE SESSION.** It is running. The one thing that has never happened
-   is an entry placed by the app on IBKR, and the first FILL is what exercises
-   `recent_fills`, M70/M71 and post-fill reconciliation together.
-2. **DEPLOY M105-M108 at the close**, not during. Four milestones, five
-   commits, none touching an order path: a Settings button that lied, a
-   force-start that could fire on a keystroke and blamed the operator, a
-   pre-flight that could not see two settings cancelling each other, and a
-   session that announced nothing when healthy.
-3. **The Stage 2 data question is now urgent**, not deferred. yfinance cannot
-   sustain a full-universe live poll, and the six-symbol workaround kills the
-   regime engine's breadth feature. Decide before any full-universe ASX run.
-4. **Six dead tickers in the ASX megacap list** - AWC, BKW, DHG, IPL, NSR, SVW
-   - which warm start replaces with SYNTHETIC bars. Prune them.
-5. **Q4** - how far back IBKR executions go. Needs a real fill; the session may
-   answer it for free.
-6. **`--sample` defaults to 5** in the pre-flight, chosen when the watchlist was
-   100. On a 6-symbol watchlist it silently checks 5 of 6. Make it cover the
-   whole watchlist when small.
-7. **The $500 minimum marketable parcel** - deferred by the operator: a listing
-   rule for real trades, not needed before live. Implemented nowhere.
+1. **The breadth feature has never worked on ASX.** 20 August, on the FULL
+   100-symbol watchlist: *"100 breadth symbols"* configured, *"0 breadth
+   symbols"* seeded, *"No breadth symbols cover every benchmark bar"*, and a
+   constant column that makes the covariance singular. **The six-symbol trim did
+   not cause this** — it was dead at 100 too, so bulk-fetching a wider set will
+   not fix it. The regime label sets the exposure scalar on every position, so
+   sizing rides a degenerate fit. Requiring full coverage of all 300 benchmark
+   bars looks like the culprit; start there.
+2. **The Stage 2 data decision.** yfinance cannot sustain a 100-symbol 60s poll.
+   Decide the ASX bar source explicitly — *"Option 1 is what happens if nobody
+   decides, and it is the one nobody would choose deliberately."*
+3. **Blocked on a first fill, all of it:** Task 2 (`recent_fills` on IBKR), M71
+   (built, never exercised — an app-transmitted sell has never happened), and Q4
+   (how far back IBKR executions go).
+4. **Stage 3 ASX trading rules** — the $500 minimum marketable parcel reaches
+   position sizing and is implemented nowhere; also tick sizes, T+2, and the
+   auctions against session logic written for a 13:30 UTC open.
+5. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+   settled. If the regime gate does not earn its keep, this stage disappears.
+6. **Alpaca-era records still on disk.** `open_position_entries.json` names ten
+   US positions and `absorbed_fills.json` four August fills, for an account this
+   build no longer trades. M110 made the log honest about them; the files remain.
+7. **Rewrite this file.** It is 1,233 lines and its history sections are now
+   actively misleading, as above.
 
-Unchanged: M71 still unobserved in production (no app-transmitted sell has ever
-happened), and the cash-floor question. M43 is DECIDED not to build, because
-ASX halts are announcement-driven and Task 5 accepted that gap.
+**Done since this list was last written:** the session was watched to the close;
+M105–M108 deployed as M109 along with the allow-list announcement; the six dead
+ASX tickers pruned; `--sample` now covers a small watchlist and states coverage.
 
 **Two documents supersede everything below.** `docs/2026-08-19-us-trial-close.md`
 is the full account of the US phase. `docs/superpowers/plans/2026-08-19-ibkr-move.md`
@@ -674,10 +669,16 @@ Compare `pre-split` against `post-split`, in order of how much each matters:
 
 # ⚠️ Found and NOT fixed
 
-## M66 — the risk cap that gates every entry uses ENTRY prices
+## ~~M66 — the risk cap that gates every entry uses ENTRY prices~~ SHIPPED 14 AUGUST
 
-**Inside the freeze. Do not build without a recorded lift — but nothing else
-blocks it now, and it is the highest-value unblocked work.** Its "land after the
+**THIS SECTION WAS STALE AND COST A WRONG RECOMMENDATION ON 20 AUGUST.** M66
+shipped on 14 August under a recorded lift; `ROADMAP.md` says so in its opening
+paragraph. The code is
+`prices.get(pos.symbol) or pos.current_price or pos.avg_price` in
+`PortfolioGovernor.snapshot` — three tiers, the broker's mark in the middle.
+**The validation freeze also ended on 14 August**, so "inside the freeze" below
+is doubly void. Kept for the reasoning, which is still the clearest statement of
+why the defect mattered. Its "land after the
 SFBS event" sequencing was released on 14 August when SFBS turned out not to be
 tradable. It is a MACHINERY defect, so unlike the edge numbers it transfers to
 the ASX.
