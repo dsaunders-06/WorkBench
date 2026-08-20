@@ -2827,6 +2827,17 @@ def _config_reference(doc: Any) -> None:
                 "$100k account in commission before a single losing trade.",
             ),
             (
+                "QAT_NEWS_SOURCE",
+                "none",
+                "Where company news for the AI Advisor comes from: none, or yfinance "
+                "(free, no key). OFF by default deliberately - news is third-party text "
+                "that reaches a language model, so a fresh install does not start "
+                "fetching it because a default said so. Whatever the source, a story is "
+                "only shown to the model if TWO INDEPENDENT outlets carried it, or the "
+                "company lodged it with the exchange. That check runs in code before the "
+                "text is sent, never by asking the model whether its sources agree.",
+            ),
+            (
                 "QAT_ENTRY_ALLOW_LIST",
                 "(empty)",
                 "Symbols that may be newly ENTERED. Empty means no restriction. Distinct "

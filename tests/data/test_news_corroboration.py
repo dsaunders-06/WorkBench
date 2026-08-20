@@ -353,3 +353,26 @@ def test_a_story_with_no_primary_source_is_marked_as_such() -> None:
     ]
 
     assert corroborate(items, now=NOW)[0].primary is False
+
+
+def test_stories_render_to_the_plain_dicts_the_advisory_context_takes() -> None:
+    """`AdvisoryContext` imports nothing from the rest of the system - that is
+    what lets the safety tests build one in isolation - so the mapping lives
+    here rather than there, and is a function rather than glue in a Qt screen
+    so it can be tested without one."""
+    from qat.data.news import as_context_dicts
+
+    items = [
+        _item("Mirvac FY26 results record profit", "GuruFocus", days_ago=1),
+        _item("Mirvac FY26 results show record profit", "Reuters", days_ago=0.5),
+    ]
+
+    dicts = as_context_dicts(corroborate(items, now=NOW))
+
+    assert len(dicts) == 1
+    story = dicts[0]
+    assert set(story) == {"title", "providers", "published", "primary"}
+    assert story["providers"] == ["GuruFocus", "Reuters"]
+    assert story["published"] == "2026-08-19"
+    assert story["primary"] is False
+    assert isinstance(story["providers"], list), "must be JSON-plain, not a tuple"

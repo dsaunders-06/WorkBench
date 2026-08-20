@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from qat.data.news import as_context_dicts, corroborate, drop_other_listings
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.events import RegimeEvent
 from qat.presentation import theme
@@ -203,6 +204,46 @@ class AiAdvisorScreen(QWidget):
             if (value := portfolio_check.get(name)) is not None
         }
 
+    async def _news_for(self, symbol: str) -> list[dict[str, object]]:
+        """Corroborated company news, or nothing (M117).
+
+        Off unless `QAT_NEWS_SOURCE` says otherwise. The fetch runs in a thread
+        because the vendor client is blocking and this is the UI thread, and
+        every failure degrades to no news: a third-party feed must never be able
+        to stop the advisor answering.
+
+        The two-source rule is applied HERE, deterministically, before the text
+        reaches a model - never by asking the model whether its sources agree.
+        An attacker who controls one article also controls anything that article
+        claims about its own corroboration.
+        """
+        source = getattr(self.runtime, "news_source", None)
+        if source is None:
+            return []
+        try:
+            items = await asyncio.to_thread(source.fetch, symbol)
+            return as_context_dicts(corroborate(drop_other_listings(items)))
+        except Exception:  # noqa: BLE001 - news is never worth failing the screen for
+            return []
+
+    def _next_earnings_for(self, symbol: str) -> str:
+        """The next scheduled results date, ISO, or "" when unknown (M117).
+
+        Read from the calendar the ENTRY GATE already consults, so the advisor
+        and the rail cannot disagree about when results land. Every failure
+        degrades to unknown - the calendar makes that promise itself, and an
+        advisory screen is the last place that should raise.
+        """
+        bridge = getattr(self.runtime, "signal_bridge", None)
+        calendar = getattr(bridge, "earnings_calendar", None)
+        if calendar is None:
+            return ""
+        try:
+            when = calendar.next_earnings(symbol)
+        except Exception:  # noqa: BLE001 - advisory context is never worth raising for
+            return ""
+        return when.isoformat() if when else ""
+
     async def _ask(self, question: str) -> None:
         self.ask_button.setEnabled(False)
         self.conversation.append(f"<b>You:</b> {question}")
@@ -213,8 +254,11 @@ class AiAdvisorScreen(QWidget):
             risk_metrics = self._risk_metrics()
 
             fundamentals = await self._fundamentals_for(symbol)
-            notes = [f"User question: {question}"]
-            notes.extend(self._corporate_action_notes())
+            # M117. The question used to travel inside `fetched_notes`, the field
+            # whose whole purpose is to quarantine third-party text - so what the
+            # operator typed and what a stranger published arrived with identical
+            # standing. Only genuinely external material belongs in there now.
+            notes = list(self._corporate_action_notes())
             context = AdvisoryContext(
                 symbol=symbol,
                 regime_label=self._regime_label,
@@ -223,7 +267,10 @@ class AiAdvisorScreen(QWidget):
                 risk_metrics=risk_metrics,
                 candidate_signal={},
                 fundamentals=fundamentals,
+                next_earnings=self._next_earnings_for(symbol),
+                news=await self._news_for(symbol),
                 fetched_notes=notes,
+                operator_question=question,
             )
             recommendation = await self.runtime.ai_service.get_regime_narrative(context)
             flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"

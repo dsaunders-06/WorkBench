@@ -315,3 +315,26 @@ def _parse_published(value: object) -> datetime | None:
     if isinstance(value, int | float) and value > 0:
         return datetime.fromtimestamp(float(value), tz=UTC)
     return None
+
+
+def as_context_dicts(stories: list[CorroboratedStory]) -> list[dict[str, object]]:
+    """Corroborated stories as the plain dicts `AdvisoryContext` carries.
+
+    That context imports nothing from the rest of the system - which is what
+    lets the prompt-injection safety tests build one in isolation - so the
+    mapping belongs on this side of the boundary. A function rather than glue
+    inside a Qt screen, so it can be tested without one.
+
+    `providers` becomes a list rather than a tuple deliberately: the context is
+    rendered into a prompt and read by tests, and a tuple repr in a prompt is
+    noise the model has to parse past.
+    """
+    return [
+        {
+            "title": story.title,
+            "providers": list(story.providers),
+            "published": story.published.date().isoformat(),
+            "primary": story.primary,
+        }
+        for story in stories
+    ]

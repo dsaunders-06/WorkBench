@@ -37,6 +37,7 @@ from qat.data.fundamentals import FundamentalsSource, MockFundamentalsSource
 from qat.data.history import HistoricalBarSource, resolve_history_source
 from qat.data.macro_fred import FredMacroSource, MacroDataSource, MacroFeed, MockMacroSource
 from qat.data.market_data import MarketDataFeed, MarketDataSource, SyntheticMarketDataSource
+from qat.data.news import NewsSource
 from qat.domain.ai_advisory.llm_engine import (
     AnthropicEngine,
     DemoLLMEngine,
@@ -145,6 +146,20 @@ def _resolve_engine(choice: Literal["anthropic", "local", "demo"], settings: Set
         logger.warning("Local LLM at %s is not reachable - using demo", settings.local_llm_base_url)
         return DemoLLMEngine()
     return DemoLLMEngine()
+
+
+def resolve_news_source(settings: Settings) -> NewsSource:
+    """Company news, or the null source (M117).
+
+    Off unless asked for. News is the only input to this system written by
+    people who are not the operator, and it reaches a model - so a fresh install
+    does not start pulling it because a default said so.
+    """
+    from qat.data.news import NullNewsSource, YFinanceNewsSource
+
+    if settings.news_source == "yfinance":
+        return YFinanceNewsSource()
+    return NullNewsSource()
 
 
 def resolve_market_data_source(settings: Settings) -> MarketDataSource:
@@ -470,6 +485,7 @@ class Runtime:
     watchlist: tuple[str, ...]
     benchmark_symbol: str
     history_source: HistoricalBarSource
+    news_source: NewsSource | None = None
     # Optional so every existing construction, including the tests, is
     # unaffected. Only the adoption banner reads it.
     signal_bridge: SignalToOrderBridge | None = None
@@ -835,4 +851,5 @@ class Runtime:
             watchlist=watchlist,
             benchmark_symbol=benchmark_symbol,
             history_source=history_source,
+            news_source=resolve_news_source(settings),
         )

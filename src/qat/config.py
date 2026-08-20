@@ -434,6 +434,10 @@ class Settings(BaseSettings):
     # unchanged and offline by default. Nothing about a strategy's behaviour on
     # synthetic prices tells you anything about its behaviour on real ones.
     market_data_source: Literal["synthetic", "yfinance", "alpaca"] = "synthetic"
+    # Company news for the advisory screen (M117). Defaults to "none":
+    # news is third-party text and reaches a model, so it is opt-in rather
+    # than something a fresh install starts doing on its own.
+    news_source: Literal["none", "yfinance"] = "none"
 
     # Which Alpaca data feed to request (M17). iex is real time on any account
     # including free paper, but is a single exchange carrying a small share of
