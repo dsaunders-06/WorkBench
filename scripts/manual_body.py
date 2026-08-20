@@ -359,9 +359,9 @@ def _introduction(doc: Any) -> None:
             ),
             (
                 "Optional integrations",
-                "Alpaca (paper broker and US market data), Interactive Brokers via "
-                "Gateway or TWS, Anthropic's API, a local LM Studio server, and FRED for "
-                "macro series.",
+                "Interactive Brokers via Gateway or TWS (the ASX configuration), Alpaca "
+                "(paper broker and US market data), Anthropic's API, a local LM Studio "
+                "server, and FRED for macro series.",
             ),
             (
                 "Where configuration lives",
@@ -1672,6 +1672,47 @@ def _settings(doc: Any, figures: FigureSet) -> None:
     doc.add_paragraph(
         "Alpaca trades US equities only. Selecting it while Market is set to ASX shows an "
         "inline warning, because that combination cannot trade anything."
+    )
+
+    doc.add_heading("Connecting Interactive Brokers", level=3)
+    doc.add_paragraph(
+        "Interactive Brokers is what the ASX configuration trades through. The application "
+        "speaks to IB Gateway or TWS over a local socket; it never contacts IBKR directly "
+        "and never handles your IBKR password. Install Gateway rather than TWS if you plan "
+        "to leave it running - it is the headless one - and log in with the PAPER username, "
+        "which is a separate username from the live one rather than a toggle on the same "
+        "credentials."
+    )
+    doc.add_paragraph(
+        "In Gateway, open Configure then Settings then API then Settings, tick \"Enable "
+        "ActiveX and Socket Clients\", set the socket port, and add 127.0.0.1 to Trusted "
+        "IPs. The application connects on client ID 1."
+    )
+    _table(
+        doc,
+        ("Port", "What it reaches", "Setting"),
+        (
+            ("4002", "IB Gateway - PAPER", "QAT_IBKR_PORT=4002, the default"),
+            ("7497", "TWS - PAPER", "QAT_IBKR_PORT=7497"),
+            ("4001", "IB Gateway - LIVE MONEY", "Refused while trading mode is paper"),
+            ("7496", "TWS - LIVE MONEY", "Refused while trading mode is paper"),
+        ),
+    )
+    doc.add_paragraph(
+        "Pointing a paper configuration at a live port is REFUSED rather than allowed - the "
+        "application will not start. This is deliberate and is the one lock the US path has "
+        "no equivalent of: every banner and every record would read \"paper\" while real "
+        "orders were reachable, which is the most expensive mislabelling the system could "
+        "make. The safe mismatch - live mode against a paper port - is permitted."
+    )
+    doc.add_paragraph(
+        "Two limitations are worth knowing before you rely on this broker. Interactive "
+        "Brokers is used for EXECUTION ONLY here: market data still comes from the sources "
+        "in Section 11.4, so the prices the strategy reads and the venue it trades at are "
+        "not the same feed. And IBKR publishes no corporate-action announcements to this "
+        "application, so a share split cannot be seen before its ex-date; the application "
+        "says so once at startup rather than failing quietly per symbol. Section 12 covers "
+        "what that leaves unprotected."
     )
 
     doc.add_heading("11.4 Market Data", level=2)
