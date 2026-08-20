@@ -39,6 +39,10 @@ _SIZED_AT = 110.0
 _PAID = 115.0
 
 
+# Far enough back that any real `datetime.now(UTC)` fill is strictly after it.
+_WATERMARK_EPOCH = datetime(2026, 1, 1, tzinfo=UTC)
+
+
 class _ExitAcknowledgingBroker(MockBroker):
     """Alpaca on an exit that does not fill in the same second - the sell
     twin of `_AcknowledgingBroker` in test_live_entry_price_correction.py.
@@ -105,6 +109,23 @@ async def _opened_position(tmp_path, broker: _ExitAcknowledgingBroker, quantity:
         switch,
         bus=bus,
         settings=settings,
+        # A FIXED clock in the past, so the fill watermark cannot race the
+        # fills. `absorb_broker_fills` stamps `scan_started = self._now()`
+        # BEFORE querying, and MockBroker filters `filled_at > since` -
+        # STRICTLY greater. The fake stamps its fill with the real
+        # `datetime.now(UTC)`, so when the whole test body lands inside one
+        # clock tick - Windows resolution is coarse and CI runners are fast -
+        # the fill's stamp EQUALS the watermark and is excluded. The correction
+        # then never runs and the exit price stays at what it was sized at.
+        #
+        # That failed in CI on 20 August while passing five times locally.
+        # Production is not exposed the same way: a real `filled_at` comes from
+        # the broker with microsecond precision and the watermark from the local
+        # clock, so exact equality is vanishingly unlikely. This is the test
+        # being non-deterministic, not M71 being wrong - so the fix belongs
+        # here, and NOT in relaxing the `>` boundary, which would risk
+        # re-absorbing a fill already counted.
+        clock=lambda: _WATERMARK_EPOCH,
     )
     await ledger.start()
     await bus.publish(
