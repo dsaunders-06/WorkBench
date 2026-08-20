@@ -33,20 +33,24 @@ REPO = Path(__file__).resolve().parent.parent
 # is actually installed. Everything else derives FROM it, so a stale value here
 # makes every other number confidently wrong.
 #
-# Updated on deploy, verified against the running build's own log line:
-#   01:11:55 Build: M104 (e38b70c, built 19/08/2026 11:45 UTC, packaged)
+# Updated on deploy. M109 was deployed 20 August 16:30 local, after the ASX
+# close, and this line was changed in the same minute as the copy rather than
+# afterwards.
 #
-# Verified by behaviour as well as by the banner: the same run then logged
-# "Connecting broker: ib-adapter" and "Connected" against IB Gateway, which
-# only a build carrying M101 can do - the previous one refused broker=ibkr
-# outright.
+# What is verified so far: `invoke package` stamped the artefact
+#   Build stamp: M109 (750cb0d, built 20/08/2026 06:24 UTC)
+# and that exe is the one now at C:\QuantAdvisoryTerminal. What is NOT yet
+# verified is the running build's own log line - nothing has been launched
+# since the copy. Confirm at the next launch that it says M109; the previous
+# value was stale through five milestones precisely because `invoke package`
+# stamped M104 onto an M109 tree and nobody read the line back.
 #
 # It read f537a9e (M94) for a full day AFTER M104 was deployed, which made the
 # deploy gap it reports confidently wrong in the one script whose purpose is
 # that nothing here is hand-maintained. This is the figure that cannot be
 # derived - only the operator knows what is installed - so it is the one that
 # has to be changed BY HAND at the moment of deploying, not afterwards.
-DEPLOYED = "e38b70c"
+DEPLOYED = "750cb0d"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
