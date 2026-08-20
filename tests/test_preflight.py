@@ -324,3 +324,94 @@ def test_the_corporate_action_note_still_fires_on_ibkr() -> None:
 
     assert check.status is Status.WARN
     assert "UNAVAILABLE" in check.detail or "no corporate-action feed" in check.detail
+
+
+# --- M106: two settings each valid, jointly useless ------------------------
+
+
+def test_a_watchlist_the_allow_list_forbids_entirely_fails() -> None:
+    """Caught live on 20 August, by hand, while changing the watchlist.
+
+    `QAT_WATCHLIST_CATEGORY=curated` gave STW/BHP/CBA/CSL while the entry allow
+    list permitted RIO/APA/AMC/MGR/SGP/NHF. Each setting is individually valid.
+    Together they describe a session that polls four symbols all day and is
+    forbidden from trading any of them - and afterwards that is
+    indistinguishable from a session where nothing signalled.
+
+    The pre-flight checked the watchlist, and checked the feed, and never
+    checked that the two lists intersect.
+    """
+    settings = _paper(
+        watchlist_category="curated",
+        watchlist_curated_asx="STW.AX,BHP.AX",
+        entry_allow_list="RIO.AX,APA.AX",
+    )
+
+    check = _named(settings_checks(settings), "tradable universe")
+
+    assert check.status is Status.FAIL
+    assert "allow" in check.detail.lower()
+
+
+def test_an_overlapping_allow_list_passes_and_names_what_is_tradable() -> None:
+    settings = _paper(
+        watchlist_category="curated",
+        watchlist_curated_asx="RIO.AX,APA.AX,AMC.AX",
+        entry_allow_list="RIO.AX,APA.AX",
+    )
+
+    check = _named(settings_checks(settings), "tradable universe")
+
+    assert check.status is Status.OK
+    assert "RIO.AX" in check.detail
+
+
+def test_no_allow_list_means_the_whole_watchlist_is_tradable() -> None:
+    """None and empty mean opposite things - no restriction, not "nothing
+    permitted" - and the check must not read the first as the second."""
+    settings = _paper(watchlist_category="curated", watchlist_curated_asx="RIO.AX,APA.AX")
+
+    check = _named(settings_checks(settings), "tradable universe")
+
+    assert check.status is Status.OK
+
+
+async def test_a_source_failing_on_every_symbol_is_named_as_a_SOURCE_failure() -> None:
+    """20 August: yfinance answered "possibly delisted" for all 101 ASX symbols
+    at once, including megacaps that had priced minutes earlier. That is a rate
+    limit or an outage, not 101 delistings, and saying "no price for BHP.AX,
+    CBA.AX, ..." sends the operator to check the symbols instead of the source.
+    """
+    from qat.preflight import feed_checks
+
+    class _Dead:
+        async def _poll_once(self, symbols: list[str]) -> list[object]:
+            return []
+
+    check = (await feed_checks(["RIO.AX", "APA.AX", "AMC.AX"], _Dead()))[0]
+
+    assert check.status is Status.FAIL
+    assert "source" in check.detail.lower()
+    # The behaviour, not the wording: it must NOT enumerate the symbols, which
+    # is what sends an operator to check a hundred tickers one at a time.
+    assert "RIO.AX" not in check.detail
+    assert "APA.AX" not in check.detail
+
+
+async def test_some_symbols_missing_still_names_them() -> None:
+    """A partial failure IS about those symbols, and keeps the old wording."""
+    from qat.preflight import feed_checks
+
+    class _Tick:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+            self.price = 10.0
+
+    class _Partial:
+        async def _poll_once(self, symbols: list[str]) -> list[_Tick]:
+            return [_Tick("RIO.AX")]
+
+    check = (await feed_checks(["RIO.AX", "APA.AX"], _Partial()))[0]
+
+    assert check.status is Status.FAIL
+    assert "APA.AX" in check.detail

@@ -137,6 +137,20 @@ def countdown_for(market: mc.Market, now: datetime | None = None) -> Countdown:
     )
 
 
+# The button is only ever VISIBLE when the market is CLOSED (see `refresh`),
+# so its only possible action is `force_start` - which arms an override until
+# the next close and disarms the promise that the staleness rail cannot trip on
+# a market that is simply shut.
+#
+# It read "Start session now". On 20 August the operator clicked it eleven
+# minutes before the ASX open, reasonably, and later said they had not
+# overridden anything - and both were true, because the log recorded an
+# override and the label had never mentioned one. The tooltip did, and a
+# tooltip is only read by somebody already suspicious. A control names what it
+# DOES (M106).
+START_BUTTON_LABEL = "Force-start (market closed)"
+
+
 class SessionPanel(QFrame):
     """Session state and countdowns for the configured market, plus any other
     market currently trading."""
@@ -182,7 +196,7 @@ class SessionPanel(QFrame):
         status_row = QHBoxLayout()
         self.session_status = QLabel("-")
         self.session_status.setWordWrap(True)
-        self.start_button = QPushButton("Start session now")
+        self.start_button = QPushButton(START_BUTTON_LABEL)
         self.start_button.setToolTip(
             "Run the session against a closed market, until the next close.\n"
             "This starts the data feed and lets strategies emit signals. It does not "

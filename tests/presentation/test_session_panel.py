@@ -171,3 +171,27 @@ def test_the_open_banner_and_the_alert_banner_differ():
 
     assert calm != closing_soon
     assert "background-color" in calm and "background-color" in closing_soon
+
+
+def test_the_start_button_says_that_it_OVERRIDES() -> None:
+    """M106. The button read "Start session now" and its only action is
+    `force_start` - it arms an override that runs the session against a CLOSED
+    market until the next close, disarming the promise that the staleness rail
+    cannot trip on a market that is simply shut.
+
+    On 20 August the operator clicked it eleven minutes before the ASX open,
+    reasonably, and later said they had not overridden anything. Both were
+    true: the log recorded an override and the label had not mentioned one.
+    The tooltip did - and a tooltip is only read by someone already suspicious.
+
+    The button is only ever VISIBLE when the market is closed (see `refresh`),
+    so there is no state in which "start" is the whole truth.
+    """
+    from qat.presentation.session_panel import START_BUTTON_LABEL
+
+    label = START_BUTTON_LABEL.lower()
+
+    assert "force" in label or "closed" in label or "override" in label, (
+        f"the button reads {START_BUTTON_LABEL!r}, which does not say it overrides the "
+        f"market calendar"
+    )

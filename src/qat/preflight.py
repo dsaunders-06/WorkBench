@@ -210,6 +210,39 @@ def settings_checks(settings: Settings) -> list[Check]:
             )
         )
 
+    # --- two settings each valid, jointly useless --------------------------
+    #
+    # Caught by hand on 20 August while changing the watchlist: `curated` gave
+    # STW/BHP/CBA/CSL while the allow list permitted RIO/APA/AMC/MGR/SGP/NHF.
+    # Each is a fine setting. Together they describe a session that polls all
+    # day and is forbidden from trading anything it can see - and afterwards
+    # that is indistinguishable from a session where nothing signalled.
+    from qat.data import universe
+
+    watchlist = set(universe.resolve_watchlist(settings))
+    allowed = settings.entry_allow_list_set()
+    tradable = sorted(watchlist & allowed) if allowed is not None else sorted(watchlist)
+    if not tradable:
+        checks.append(
+            Check(
+                "tradable universe",
+                Status.FAIL,
+                f"the watchlist ({len(watchlist)} symbols) and the entry allow list "
+                f"({len(allowed or ())} symbols) DO NOT OVERLAP, so no entry can ever be "
+                f"placed. The session would run to the close and trade nothing, which reads "
+                f"afterwards exactly like a session where the strategy found nothing.",
+            )
+        )
+    else:
+        shown = ", ".join(tradable[:6]) + (" ..." if len(tradable) > 6 else "")
+        checks.append(
+            Check(
+                "tradable universe",
+                Status.OK,
+                f"{len(tradable)} symbol(s) both watched and permitted: {shown}",
+            )
+        )
+
     return checks
 
 
@@ -355,14 +388,30 @@ async def feed_checks(symbols: list[str], source: object) -> list[Check]:
 
     priced = {t.symbol for t in ticks if t.price > 0}
     missing = [s for s in symbols if s not in priced]
+    if missing and not priced:
+        # EVERY symbol failing is a statement about the SOURCE, not about the
+        # symbols. On 20 August yfinance answered "possibly delisted" for all
+        # 101 ASX names at once, megacaps included, minutes after pricing them
+        # - a rate limit. Listing the symbols would send an operator to check
+        # a hundred tickers instead of the one thing that was wrong.
+        return [
+            Check(
+                "feed",
+                Status.FAIL,
+                f"the source priced NONE of the {len(symbols)} symbols asked for. That is a "
+                f"SOURCE failure - a rate limit or an outage - not {len(symbols)} delistings. "
+                f"yfinance blocks under sustained polling; wait for it to clear and reduce "
+                f"the watchlist rather than investigating the symbols.",
+            )
+        ]
     if missing:
         return [
             Check(
                 "feed",
                 Status.FAIL,
-                f"no price for {', '.join(missing)}. A symbol the feed cannot price is "
-                f"excluded from signals, and a source returning nothing degrades to "
-                f"SYNTHETIC bars.",
+                f"no price for {', '.join(missing)} ({len(priced)} of {len(symbols)} priced). "
+                f"A symbol the feed cannot price is excluded from signals, and a source "
+                f"returning nothing degrades to SYNTHETIC bars.",
             )
         ]
     return [Check("feed", Status.OK, f"all {len(symbols)} priced")]
