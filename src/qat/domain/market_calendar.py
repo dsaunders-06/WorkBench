@@ -25,7 +25,7 @@ Known limits, stated plainly rather than hidden:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -211,6 +211,28 @@ def early_closes(market: Market, year: int) -> set[date]:
         if candidate.weekday() < 5:
             closes.add(candidate)
     return closes
+
+
+def trading_date(market: Market, now: datetime | None = None) -> date:
+    """The exchange's own calendar date for a moment - the trading day (M111).
+
+    A UTC date is not a trading day, and on the ASX the two only agree for half
+    the year. Australian Eastern time is UTC+10 until the first Sunday in
+    October and UTC+11 after it, so from 5 October 2026 the session runs 23:00
+    UTC on the previous day to 05:00 UTC and crosses UTC midnight at 11:00
+    AEDT - an hour after the open.
+
+    Anything that means "which session is this" must come through here. Two
+    things did not and were caught before that date: the daily-loss baseline,
+    which would have re-armed mid-session, and the daily bar boundary.
+
+    Deliberately the calendar DATE and not a session lookup. A moment outside
+    market hours still belongs to a trading day for the purpose of keying a
+    day's state, and `session_for` already answers the different question of
+    whether the market is open.
+    """
+    moment = now or datetime.now(UTC)
+    return moment.astimezone(MARKET_TIMEZONES[market]).date()
 
 
 def is_trading_day(market: Market, day: date) -> bool:

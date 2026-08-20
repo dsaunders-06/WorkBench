@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable, Sequence
+from datetime import tzinfo
 from typing import Protocol
 
 from qat.data.bars import MultiSymbolAggregator
@@ -53,6 +54,9 @@ class StrategyEngine:
         max_history: int = 500,
         default_regime: Regime = Regime.SIDEWAYS,
         bar_interval_seconds: float = 60.0,
+        # The exchange whose local midnight ends a daily bar (M111). None keeps
+        # the epoch anchor, which is what every intraday interval wants.
+        bar_tz: tzinfo | None = None,
         position_source: PositionSource | None = None,
         position_cache_seconds: float = 5.0,
         regime_eligibility_mass: float = 0.5,
@@ -67,7 +71,7 @@ class StrategyEngine:
         self.feature_builder = feature_builder or FeatureBuilder()
         self.max_history = max_history
         self.bars = MultiSymbolAggregator(
-            interval_seconds=bar_interval_seconds, max_bars=max_history
+            interval_seconds=bar_interval_seconds, max_bars=max_history, tz=bar_tz
         )
         self._fundamentals_cache: dict[str, FundamentalSnapshot] = {}
         self._context_cache: dict[str, SymbolContext] = {}

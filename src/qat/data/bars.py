@@ -22,7 +22,7 @@ Two things this deliberately does NOT do:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
 import pandas as pd
@@ -65,14 +65,29 @@ def as_utc(ts: Any) -> datetime:
     return stamp.to_pydatetime()
 
 
-def floor_to_interval(ts: datetime, interval_seconds: float) -> datetime:
+def floor_to_interval(ts: datetime, interval_seconds: float, tz: tzinfo | None = None) -> datetime:
     """The opening boundary of the bar this timestamp belongs to.
 
     Anchored to the epoch rather than to the first tick seen, so two symbols
     that started streaming at different moments still produce bars on the same
     boundaries - otherwise cross-sectional comparisons (relative strength,
     breadth, pairs) would be quietly comparing misaligned windows.
+
+    `tz` changes the DAILY boundary only, to local midnight on that exchange
+    (M111). A trading day is not 86,400 seconds from the epoch on a market that
+    observes daylight saving: from 5 October 2026 the ASX session runs 23:00
+    UTC to 05:00 UTC, and an epoch-anchored daily bar closes an hour after the
+    open - one session becoming two partial bars, with today's high and low
+    computed over that first hour.
+
+    The epoch anchor is untouched for every intraday interval, and the
+    cross-symbol alignment it exists for holds either way: every symbol in an
+    aggregator shares one timezone, so they all floor to the same boundary.
     """
+    if tz is not None and interval_seconds == _DAILY_SECONDS:
+        local = ts.astimezone(tz)
+        midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+        return midnight.astimezone(UTC)
     epoch_seconds = ts.timestamp()
     floored = epoch_seconds - (epoch_seconds % interval_seconds)
     return datetime.fromtimestamp(floored, tz=UTC)
@@ -86,10 +101,15 @@ class BarAggregator:
         interval_seconds: float = 60.0,
         max_bars: int = 500,
         max_gap_fill_bars: int | None = None,
+        tz: tzinfo | None = None,
     ) -> None:
         if interval_seconds <= 0:
             raise ValueError("interval_seconds must be positive")
         self.interval_seconds = interval_seconds
+        # The exchange whose local midnight ends a daily bar (M111). None keeps
+        # the pure epoch anchor, which stays correct for every intraday
+        # interval and for a market that does not shift.
+        self.tz = tz
         self.max_bars = max_bars
         # Gap filling is bounded because not every gap is a quiet market. An
         # overnight close, a weekend or a holiday is a *session break*, and
@@ -136,14 +156,16 @@ class BarAggregator:
         if frame.empty:
             return 0
 
-        current_boundary = floor_to_interval(now or datetime.now(UTC), self.interval_seconds)
+        current_boundary = floor_to_interval(
+            now or datetime.now(UTC), self.interval_seconds, self.tz
+        )
 
         # Keyed by boundary so a vendor emitting two rows inside one interval
         # collapses to one bar rather than producing duplicate timestamps.
         by_boundary: dict[datetime, Bar] = {}
         columns = (frame[name] for name in BAR_COLUMNS)
         for raw_ts, open_, high, low, close, volume in zip(*columns, strict=True):
-            boundary = floor_to_interval(as_utc(raw_ts), self.interval_seconds)
+            boundary = floor_to_interval(as_utc(raw_ts), self.interval_seconds, self.tz)
             bar = Bar(
                 ts=boundary,
                 open=float(open_),
@@ -183,7 +205,7 @@ class BarAggregator:
         corrupts every rolling window computed from this buffer, and a bar off
         its boundary is a bar filed under the wrong day.
         """
-        boundary = floor_to_interval(bar.ts, self.interval_seconds)
+        boundary = floor_to_interval(bar.ts, self.interval_seconds, self.tz)
         if bar.ts != boundary:
             raise ValueError(
                 f"prime_bar needs a bar on an interval boundary; {bar.ts} floors to {boundary}"
@@ -209,7 +231,7 @@ class BarAggregator:
         A returned bar is final and will not change again, which is what makes
         it safe for a strategy to act on. The forming bar keeps mutating.
         """
-        boundary = floor_to_interval(ts, self.interval_seconds)
+        boundary = floor_to_interval(ts, self.interval_seconds, self.tz)
 
         if self._forming is None:
             self._forming = Bar(boundary, price, price, price, price, volume)
@@ -292,10 +314,12 @@ class MultiSymbolAggregator:
         interval_seconds: float = 60.0,
         max_bars: int = 500,
         max_gap_fill_bars: int | None = None,
+        tz: tzinfo | None = None,
     ) -> None:
         self.interval_seconds = interval_seconds
         self.max_bars = max_bars
         self.max_gap_fill_bars = max_gap_fill_bars
+        self.tz = tz
         self._by_symbol: dict[str, BarAggregator] = {}
 
     def add_tick(self, symbol: str, ts: datetime, price: float, volume: float = 0.0) -> Bar | None:
@@ -310,7 +334,9 @@ class MultiSymbolAggregator:
     def for_symbol(self, symbol: str) -> BarAggregator:
         aggregator = self._by_symbol.get(symbol)
         if aggregator is None:
-            aggregator = BarAggregator(self.interval_seconds, self.max_bars, self.max_gap_fill_bars)
+            aggregator = BarAggregator(
+                self.interval_seconds, self.max_bars, self.max_gap_fill_bars, self.tz
+            )
             self._by_symbol[symbol] = aggregator
         return aggregator
 

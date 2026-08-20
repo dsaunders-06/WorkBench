@@ -54,6 +54,7 @@ from qat.domain.autonomy import (
 )
 from qat.domain.bus import EventBus
 from qat.domain.corporate_actions.monitor import CorporateActionMonitor
+from qat.domain.market_calendar import MARKET_TIMEZONES
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.reconciliation import ReconciliationMonitor
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
@@ -541,6 +542,7 @@ class Runtime:
             oms,
             settings=settings,
             bar_interval_seconds=settings.bar_interval_seconds,
+            bar_tz=MARKET_TIMEZONES[settings.market],
             # Closes the loop: what a strategy actually achieved decides how
             # much its next trade risks. Falls back to the documented defaults
             # until it has edge_min_trades to measure.
@@ -655,7 +657,11 @@ class Runtime:
         market_data_feed = MarketDataFeed(
             bus, source, feed_symbols, staleness_seconds=settings.data_staleness_seconds
         )
-        feature_engine = FeatureEngine(bus, bar_interval_seconds=settings.bar_interval_seconds)
+        feature_engine = FeatureEngine(
+            bus,
+            bar_interval_seconds=settings.bar_interval_seconds,
+            bar_tz=MARKET_TIMEZONES[settings.market],
+        )
         history_source = resolve_history_source(settings)
 
         macro = macro_source or resolve_macro_source(settings)
@@ -701,6 +707,7 @@ class Runtime:
             [],
             fundamentals,
             bar_interval_seconds=settings.bar_interval_seconds,
+            bar_tz=MARKET_TIMEZONES[settings.market],
             regime_eligibility_mass=settings.regime_eligibility_mass,
             # Read-only position access, so strategies can emit exits (M14).
             # Narrowed to the PositionSource protocol - a strategy engine is
@@ -714,6 +721,7 @@ class Runtime:
             benchmark_symbol=benchmark_symbol,
             breadth_symbols=watchlist,
             bar_interval_seconds=settings.bar_interval_seconds,
+            bar_tz=MARKET_TIMEZONES[settings.market],
         )
 
         # Seeds every rolling buffer from daily history before the feed starts

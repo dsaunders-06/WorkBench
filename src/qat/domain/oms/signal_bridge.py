@@ -38,7 +38,7 @@ import json
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any, Literal, NamedTuple, Protocol, cast
 
@@ -307,6 +307,9 @@ class SignalToOrderBridge:
         max_history: int = 250,
         settings: Settings | None = None,
         bar_interval_seconds: float = 60.0,
+        # The exchange whose local midnight ends a daily bar (M111). None keeps
+        # the epoch anchor, which is what every intraday interval wants.
+        bar_tz: tzinfo | None = None,
         trade_ledger: ClosedTradeSource | None = None,
         earnings_calendar: EarningsCalendar | None = None,
         warm_symbols: tuple[str, ...] = (),
@@ -356,7 +359,7 @@ class SignalToOrderBridge:
         # from these bars sets the stop distance, and the stop distance sets
         # the position size.
         self.bars = MultiSymbolAggregator(
-            interval_seconds=bar_interval_seconds, max_bars=max_history
+            interval_seconds=bar_interval_seconds, max_bars=max_history, tz=bar_tz
         )
         # Churn control state (M31), persisted since M31b. Rebuilt only from
         # live fill events, it was empty after every restart - and the minimum

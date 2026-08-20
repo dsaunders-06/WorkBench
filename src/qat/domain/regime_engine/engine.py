@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, tzinfo
 
 import numpy as np
 import pandas as pd
@@ -58,6 +58,11 @@ class RegimeEngine:
         refit_interval_bars: int = 20,
         min_fit_bars: int = 60,
         bar_interval_seconds: float = 86_400.0,
+        # M111. This engine floors timestamps to the bar boundary in two places
+        # and its default interval is DAILY, so it carries the same UTC-midnight
+        # defect as the price aggregators - and its label sets the exposure
+        # scalar on every position.
+        bar_tz: tzinfo | None = None,
     ) -> None:
         self.bus = bus
         self.benchmark_symbol = benchmark_symbol
@@ -65,6 +70,7 @@ class RegimeEngine:
         self.refit_interval_bars = refit_interval_bars
         self.min_fit_bars = min_fit_bars
         self.bar_interval_seconds = bar_interval_seconds
+        self.bar_tz = bar_tz
 
         self._feature_builder = RegimeFeatureBuilder()
         self._hmm = HMMRegimeModel(n_states=n_states)
@@ -174,7 +180,9 @@ class RegimeEngine:
         # The last seeded bar owns its boundary, so a live tick arriving inside
         # that same day rewrites that row instead of adding a second one for a
         # day the matrix already has.
-        self._current_boundary = floor_to_interval(dates[-1], self.bar_interval_seconds)
+        self._current_boundary = floor_to_interval(
+            dates[-1], self.bar_interval_seconds, self.bar_tz
+        )
 
         rows = len(self._feature_builder.feature_matrix())
         logger.info(
@@ -228,7 +236,7 @@ class RegimeEngine:
         # One row per bar, not per tick. The row for the bar in progress is
         # rewritten as its price moves and only rolls over at the boundary, so
         # a daily matrix gains one row a day rather than one per poll.
-        boundary = floor_to_interval(event.ts, self.bar_interval_seconds)
+        boundary = floor_to_interval(event.ts, self.bar_interval_seconds, self.bar_tz)
         if self._current_boundary is not None and boundary < self._current_boundary:
             return  # out of order: it belongs to a bar already classified
 

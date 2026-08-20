@@ -19,6 +19,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ from qat.config import Settings
 from qat.data.broker.adapter import BrokerAdapter
 from qat.domain.bus import EventBus
 from qat.domain.events import KillSwitchEvent
+from qat.domain.market_calendar import trading_date
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
 logger = logging.getLogger(__name__)
@@ -62,6 +64,7 @@ class EquityMonitor:
         data_dir: str | Path | None = None,
         bus: EventBus | None = None,
         equity_curve: object | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.broker = broker
         self.kill_switch = kill_switch
@@ -72,6 +75,9 @@ class EquityMonitor:
         self.equity_curve = equity_curve
         self.settings = settings or Settings()
         self.path = Path(data_dir or self.settings.data_dir) / STATE_FILENAME
+        # Defaults to the wall clock; injected so a test can cross a DST
+        # boundary without waiting until October (M111).
+        self._clock = clock or (lambda: datetime.now(UTC))
         self.state: EquityState | None = None
         self.last_equity: float | None = None
         self._task: asyncio.Task[None] | None = None
@@ -147,7 +153,12 @@ class EquityMonitor:
         return (current - self.state.day_start_equity) / self.state.day_start_equity
 
     def _refresh_state(self, equity: float) -> EquityState:
-        today = datetime.now(UTC).strftime("%Y-%m-%d")
+        # M111. Was `datetime.now(UTC).strftime(...)`, which is a UTC date and
+        # not a trading day. The ASX session crosses UTC midnight under AEDT,
+        # so from 5 October 2026 this ran an hour into the session, logged
+        # "New trading day", and re-baselined the daily-loss rail against a
+        # book that had already moved.
+        today = trading_date(self.settings.market, self._clock()).isoformat()
         state = self.state if self.state is not None else self._load()
 
         if state is None or state.day != today:

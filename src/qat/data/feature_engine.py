@@ -9,6 +9,8 @@ tick-to-tick delta rather than anything traded.
 
 from __future__ import annotations
 
+from datetime import tzinfo
+
 from qat.data.bars import MultiSymbolAggregator
 from qat.data.features import FeatureBuilder
 from qat.domain.bus import EventBus
@@ -26,12 +28,15 @@ class FeatureEngine:
         builder: FeatureBuilder | None = None,
         max_history: int = 500,
         bar_interval_seconds: float = 60.0,
+        # The exchange whose local midnight ends a daily bar (M111). None keeps
+        # the epoch anchor, which is what every intraday interval wants.
+        bar_tz: tzinfo | None = None,
     ) -> None:
         self.bus = bus
         self.builder = builder or FeatureBuilder()
         self.max_history = max_history
         self.bars = MultiSymbolAggregator(
-            interval_seconds=bar_interval_seconds, max_bars=max_history
+            interval_seconds=bar_interval_seconds, max_bars=max_history, tz=bar_tz
         )
 
     async def start(self) -> None:
