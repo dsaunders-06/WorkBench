@@ -33,7 +33,7 @@ REPO = Path(__file__).resolve().parent.parent
 # is actually installed. Everything else derives FROM it, so a stale value here
 # makes every other number confidently wrong.
 #
-# Updated on deploy. M118 was deployed 21 August 08:57 local, before the open,
+# Updated on deploy. M118 was deployed 21 August ~08:38 local, before the open,
 # with the app stopped and the broker flat, and this line was changed in the
 # same minute as the copy.
 #
@@ -46,9 +46,10 @@ REPO = Path(__file__).resolve().parent.parent
 # What is verified: `invoke package` stamped the artefact
 #   Build stamp: M118 (c53fb59, built 20/08/2026 22:36 UTC)
 # and that exe is the one now at C:\QuantAdvisoryTerminal. What is NOT verified
-# is the running build's own log line - nothing has been launched since the
-# copy, and M111 was never read back either. Read it at the next launch: it
-# should say M118.
+# VERIFIED at 08:57:41 on 21 August, on a run that connected to the broker:
+#   Build: M118 (c53fb59, built 20/08/2026 22:36 UTC, packaged)
+# The first time in this sequence a deployed build has been read back off its own
+# log. M111 never was, and neither was M109 until the evening after it shipped.
 #
 # It read f537a9e (M94) for a full day AFTER M104 was deployed, which made the
 # deploy gap it reports confidently wrong in the one script whose purpose is
