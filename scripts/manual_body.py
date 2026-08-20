@@ -1684,8 +1684,8 @@ def _settings(doc: Any, figures: FigureSet) -> None:
         "credentials."
     )
     doc.add_paragraph(
-        "In Gateway, open Configure then Settings then API then Settings, tick \"Enable "
-        "ActiveX and Socket Clients\", set the socket port, and add 127.0.0.1 to Trusted "
+        'In Gateway, open Configure then Settings then API then Settings, tick "Enable '
+        'ActiveX and Socket Clients", set the socket port, and add 127.0.0.1 to Trusted '
         "IPs. The application connects on client ID 1."
     )
     _table(
@@ -1701,7 +1701,7 @@ def _settings(doc: Any, figures: FigureSet) -> None:
     doc.add_paragraph(
         "Pointing a paper configuration at a live port is REFUSED rather than allowed - the "
         "application will not start. This is deliberate and is the one lock the US path has "
-        "no equivalent of: every banner and every record would read \"paper\" while real "
+        'no equivalent of: every banner and every record would read "paper" while real '
         "orders were reachable, which is the most expensive mislabelling the system could "
         "make. The safe mismatch - live mode against a paper port - is permitted."
     )
