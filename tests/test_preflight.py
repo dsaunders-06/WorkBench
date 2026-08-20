@@ -353,7 +353,15 @@ def test_a_watchlist_the_allow_list_forbids_entirely_fails() -> None:
     assert "allow" in check.detail.lower()
 
 
-def test_an_overlapping_allow_list_passes_and_names_what_is_tradable() -> None:
+def test_an_allow_list_that_excludes_part_of_the_watchlist_WARNS() -> None:
+    """M109. This returned OK until 20 August, and OK was the wrong answer.
+
+    A non-empty overlap only proves SOMETHING can trade. On 20 August three
+    permitted names sat inside a 100-symbol watchlist, the overlap was fine,
+    and six correct signals were thrown away because the three were the
+    previous day's. The check has to say how much of the watchlist it is
+    refusing, not just that the number is above zero.
+    """
     settings = _paper(
         watchlist_category="curated",
         watchlist_curated_asx="RIO.AX,APA.AX,AMC.AX",
@@ -362,8 +370,39 @@ def test_an_overlapping_allow_list_passes_and_names_what_is_tradable() -> None:
 
     check = _named(settings_checks(settings), "tradable universe")
 
+    assert check.status is Status.WARN
+    assert "RIO.AX" in check.detail
+    assert "AMC.AX" in check.detail
+
+
+def test_an_allow_list_covering_the_whole_watchlist_passes() -> None:
+    """Restricted to exactly what is watched is a coherent configuration and
+    must not nag - otherwise the warning becomes noise and stops being read."""
+    settings = _paper(
+        watchlist_category="curated",
+        watchlist_curated_asx="RIO.AX,APA.AX",
+        entry_allow_list="RIO.AX,APA.AX",
+    )
+
+    check = _named(settings_checks(settings), "tradable universe")
+
     assert check.status is Status.OK
     assert "RIO.AX" in check.detail
+
+
+def test_a_permitted_symbol_that_is_not_watched_is_named() -> None:
+    """The dead-setting shape: the allow list still names symbols from a
+    watchlist that has since been replaced, so they can never signal."""
+    settings = _paper(
+        watchlist_category="curated",
+        watchlist_curated_asx="RIO.AX,APA.AX",
+        entry_allow_list="RIO.AX,APA.AX,BHP.AX",
+    )
+
+    check = _named(settings_checks(settings), "tradable universe")
+
+    assert check.status is Status.WARN
+    assert "BHP.AX" in check.detail
 
 
 def test_no_allow_list_means_the_whole_watchlist_is_tradable() -> None:

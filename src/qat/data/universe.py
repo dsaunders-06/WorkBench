@@ -20,6 +20,8 @@ currency-aware, matching the mock-everywhere stance used throughout).
 from __future__ import annotations
 
 import random
+from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Literal
 
 from qat.config import Settings
@@ -279,3 +281,91 @@ def resolve_watchlist(settings: Settings) -> tuple[str, ...]:
         filtered = candidates
 
     return filtered[: settings.watchlist_max_symbols]
+
+
+# --- what may actually be entered (M109) -----------------------------------
+#
+# Derived in one place because two readers need the same answer: the hand-run
+# pre-flight, and the app announcing itself at startup. M106 gave the
+# pre-flight its own copy of this arithmetic and it was the only reader, which
+# is exactly why nobody learned anything on 20 August - the pre-flight is
+# optional and the session is not.
+
+
+@dataclass(frozen=True)
+class TradableUniverse:
+    """The watchlist split by what the entry allow list permits.
+
+    `refused` is the interesting one. Those symbols are polled, evaluated and
+    may signal - and every entry they produce is thrown away. They cost a feed
+    subscription and produce nothing, and until M109 they did it silently.
+    """
+
+    watched: tuple[str, ...]
+    tradable: tuple[str, ...]
+    refused: tuple[str, ...]
+    unwatched: tuple[str, ...]
+    restricted: bool
+
+
+def describe_tradable(watchlist: Iterable[str], allowed: set[str] | None) -> TradableUniverse:
+    """Split the watchlist by the allow list. `allowed=None` is no restriction.
+
+    None and an empty set mean opposite things here, as they do in
+    Settings.entry_allow_list_set: None permits everything, and an empty set
+    would permit nothing. Only the first is a valid configuration.
+    """
+    watched = tuple(sorted({s.strip().upper() for s in watchlist if s.strip()}))
+    if allowed is None:
+        return TradableUniverse(
+            watched=watched,
+            tradable=watched,
+            refused=(),
+            unwatched=(),
+            restricted=False,
+        )
+    permitted = {s.strip().upper() for s in allowed if s.strip()}
+    return TradableUniverse(
+        watched=watched,
+        tradable=tuple(s for s in watched if s in permitted),
+        refused=tuple(s for s in watched if s not in permitted),
+        unwatched=tuple(sorted(permitted - set(watched))),
+        restricted=True,
+    )
+
+
+def allow_list_banner(universe: TradableUniverse) -> str | None:
+    """The startup line, or None when no allow list is in force.
+
+    Announced whether or not anything is wrong. A banner that appears only on
+    a bad configuration teaches its reader that silence means "fine", and then
+    the one session it stays quiet on is the one nobody checks - the same
+    argument M108 made for the session-started line.
+
+    It names the tradable symbols rather than only counting them because the
+    20 August error was about IDENTITY, not arithmetic: three permitted names
+    is a perfectly ordinary machinery-test setting, and the only thing wrong
+    with BHP/CBA/STW was that they were yesterday's three.
+    """
+    if not universe.restricted:
+        return None
+    shown = ", ".join(universe.tradable[:10]) + (" ..." if len(universe.tradable) > 10 else "")
+    parts = [
+        f"ENTRY ALLOW LIST ACTIVE - {len(universe.tradable)} of {len(universe.watched)} "
+        f"watched symbol(s) may be entered: {shown or '(none)'}."
+    ]
+    if universe.refused:
+        parts.append(
+            f"The other {len(universe.refused)} are polled and evaluated, and every entry "
+            f"they signal will be REFUSED. Exits are never gated, so anything already held "
+            f"can still leave."
+        )
+    else:
+        parts.append("Exits are never gated.")
+    if universe.unwatched:
+        parts.append(
+            f"{len(universe.unwatched)} permitted symbol(s) are not watched at all and can "
+            f"never trade: {', '.join(universe.unwatched[:10])}. That is a dead setting - "
+            f"usually an allow list left behind by a watchlist change."
+        )
+    return " ".join(parts)

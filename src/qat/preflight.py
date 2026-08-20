@@ -219,27 +219,57 @@ def settings_checks(settings: Settings) -> list[Check]:
     # that is indistinguishable from a session where nothing signalled.
     from qat.data import universe
 
-    watchlist = set(universe.resolve_watchlist(settings))
-    allowed = settings.entry_allow_list_set()
-    tradable = sorted(watchlist & allowed) if allowed is not None else sorted(watchlist)
+    # M109 widened this. A non-empty overlap only proves SOMETHING can trade,
+    # and on 20 August that was true and useless: three permitted names sat
+    # inside a 100-symbol watchlist, this check would have returned OK, and six
+    # correct signals were refused because the three were the previous day's.
+    # No structural rule separates a stale allow list from a deliberate
+    # narrowing, so the check does not try to - it reports the size of what it
+    # is refusing and lets a human recognise their own mistake.
+    universe_split = universe.describe_tradable(
+        universe.resolve_watchlist(settings), settings.entry_allow_list_set()
+    )
+    watched, tradable = universe_split.watched, universe_split.tradable
+    shown = ", ".join(tradable[:6]) + (" ..." if len(tradable) > 6 else "")
     if not tradable:
         checks.append(
             Check(
                 "tradable universe",
                 Status.FAIL,
-                f"the watchlist ({len(watchlist)} symbols) and the entry allow list "
-                f"({len(allowed or ())} symbols) DO NOT OVERLAP, so no entry can ever be "
-                f"placed. The session would run to the close and trade nothing, which reads "
-                f"afterwards exactly like a session where the strategy found nothing.",
+                f"the watchlist ({len(watched)} symbols) and the entry allow list "
+                f"({len(universe_split.unwatched)} symbols, none of them watched) DO NOT "
+                f"OVERLAP, so no entry can ever be placed. The session "
+                f"would run to the close and trade nothing, which reads afterwards exactly "
+                f"like a session where the strategy found nothing.",
             )
         )
+    elif universe_split.refused or universe_split.unwatched:
+        detail = [f"{len(tradable)} of {len(watched)} watched symbol(s) may be entered: {shown}."]
+        if universe_split.refused:
+            refused = ", ".join(universe_split.refused[:6]) + (
+                " ..." if len(universe_split.refused) > 6 else ""
+            )
+            detail.append(
+                f"{len(universe_split.refused)} watched symbol(s) will be polled, may "
+                f"signal, and every entry will be REFUSED: {refused}."
+            )
+        if universe_split.unwatched:
+            detail.append(
+                f"{len(universe_split.unwatched)} permitted symbol(s) are not watched and "
+                f"can never trade: {', '.join(universe_split.unwatched[:6])}."
+            )
+        detail.append(
+            "Each setting is valid alone. Together they decide which signals are thrown "
+            "away, and afterwards that is indistinguishable from a session where the "
+            "strategy found nothing."
+        )
+        checks.append(Check("tradable universe", Status.WARN, " ".join(detail)))
     else:
-        shown = ", ".join(tradable[:6]) + (" ..." if len(tradable) > 6 else "")
         checks.append(
             Check(
                 "tradable universe",
                 Status.OK,
-                f"{len(tradable)} symbol(s) both watched and permitted: {shown}",
+                f"all {len(tradable)} watched symbol(s) may be entered: {shown}",
             )
         )
 

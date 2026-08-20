@@ -631,6 +631,19 @@ class Runtime:
                 ", ".join(settings.autonomous_strategies_tuple) or "none",
             )
 
+        # M109. The allow list is the one setting that can silently discard a
+        # correct signal, and until now it announced itself nowhere: on
+        # 20 August it refused six good entries pre-open, the refusals went
+        # only to the decision journal, and the mistake was found after the
+        # setups had expired. Same reasoning as the autonomy notice directly
+        # above - a restriction that decides what may trade is said out loud
+        # at startup, whether or not it looks wrong.
+        allow_list_notice = universe.allow_list_banner(
+            universe.describe_tradable(watchlist, settings.entry_allow_list_set())
+        )
+        if allow_list_notice is not None:
+            logger.warning("%s", allow_list_notice)
+
         # The benchmark must always be streamed even if it isn't part of the
         # configured watchlist (e.g. a mega-cap category that doesn't happen
         # to include the market's benchmark ETF) - otherwise RegimeEngine
