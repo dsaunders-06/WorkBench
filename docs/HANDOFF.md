@@ -119,7 +119,44 @@ own next steps three times.**
 6. **Alpaca-era records still on disk.** `open_position_entries.json` names ten
    US positions and `absorbed_fills.json` four August fills, for an account this
    build no longer trades. M110 made the log honest about them; the files remain.
-7. **Rewrite this file.** It is 1,233 lines and its history sections are now
+7. **The AI advisor knows nothing about the company's news or its next
+   results.** The original application pulled news for a selected ticker,
+   including when the next results were due and what they revealed.
+   `ai_advisory/context.py` records this as *"a regression from the original
+   application, where earnings informed the recommendation"*. M40 restored one
+   third of it - `FundamentalSnapshot` is routed in - and the other two thirds
+   are still missing. **Measured 20 August, both halves are cheaper than they
+   look:**
+
+   * **Next results due: already built.** `YFinanceEarningsCalendar`
+     (`data/earnings.py`) fetches and caches `next_earnings()` to a live 21 KB
+     `earnings_cache.json`, free, and the entry gate already uses it. Nothing
+     routes it to `AdvisoryContext`. This is the M40 shape exactly: the data is
+     fetched, cached, and used elsewhere.
+   * **News: free, and it works on ASX.** `yfinance.Ticker.get_news(count, tab)`
+     needs no key and hits `/xhr/ncp` - a DIFFERENT endpoint from the chart API,
+     confirmed by it returning results on 20 August while chart calls were
+     rate-limited. `MGR.AX` returned "Mirvac Group (ASX:MGR) (FY 2026) Earnings
+     Call Highlights", which is the content this item is about.
+
+   **Three caveats to design against, all measured, none fatal:** Yahoo conflates
+   cross-listings - `RIO.AX` returned two items about **LSE:RIO**, the London
+   line, so a naive feed hands the model another exchange's news for an ASX
+   position. A December 2025 item appeared in a "latest" list, so items need
+   date-filtering rather than trusting the order. And the providers are
+   aggregators (GuruFocus, Simply Wall St), not primary sources.
+
+   **⚠️ THE SAFETY POINT, and it is the reason to build this carefully.** News is
+   text written by people who are not the operator, and anyone can publish. It
+   is the prompt-injection surface this codebase already anticipated:
+   `fetched_notes` exists precisely so external text is *"rendered as
+   clearly-labelled, inert data, never as part of the instruction-bearing prompt
+   text"*, and `tests/safety/test_prompt_injection_in_context_is_ignored.py`
+   guards it. News must go through that path. It must NOT be concatenated into
+   the instruction text, and `fetched_notes` is currently carrying the operator's
+   own typed question, so the two need separating before news shares the field.
+
+8. **Rewrite this file.** It is 1,233 lines and its history sections are now
    actively misleading, as above.
 
 **Done since this list was last written:** the session was watched to the close;
