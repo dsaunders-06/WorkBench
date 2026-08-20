@@ -114,7 +114,38 @@ from qat.domain.display_dates import format_display_date
 # gating, risk limits or order translation. M109's pre-flight WARN does not
 # block a launch - the pre-flight is a hand-run script and has never been a
 # startup gate - and the two new startup lines are log output.
-MILESTONE = "M109"
+#
+# M118 ships M110-M118. The label sat at M109 on master this whole time because
+# M111's bump was made on the `deploy/m111` branch, to exclude an unmeasured
+# M112, and never came back - so `invoke package` on master would have stamped
+# an M118 tree "M109". That is the exact staleness M109 was raised to fix,
+# recurring by a different route, and it is why this constant is read back off
+# a RUNNING build rather than trusted from the packager.
+#
+# CHANGES A TRADING-DECISION INPUT, twice.
+#
+# M111: the ASX daily bar boundary was UTC midnight, so a vendor bar stamped
+# `2026-08-20 00:00:00+10:00` floored to the 19th. Every seeded ASX bar carried
+# the day BEFORE the one it traded on, and today's half-finished session was
+# admitted as a COMPLETED bar - so the swing entry's "previous bar" contained
+# today's prices. It now reads yesterday's completed close. The daily-loss
+# baseline also keys on the exchange trading date, so it will not re-arm an hour
+# into the session when AEDT starts on 5 October.
+#
+# M112: the regime engine's breadth feature has been constant-zero for the whole
+# ASX period - `_aligned_breadth` required TOTAL coverage of the benchmark's
+# dates and kept 0 of 7 symbols on live data. It now carries a close across a
+# gap. MEASURED before shipping, on 301 seeded bars: label low_vol either way,
+# exposure scalar 1.0 either way, NO SIZE CHANGE on that day's data. The
+# probability distribution does move, so that is evidence and not a proof.
+#
+# What else an operator will see: the entry allow list announces itself at
+# startup (M109); the pre-flight states its feed coverage instead of implying it
+# checked everything, and a total feed failure now names the SOURCE rather than
+# the symbols (M110, M118); six dead ASX tickers are gone; the AI Advisor is
+# given the next results date and, if QAT_NEWS_SOURCE says so, company news that
+# two independent outlets carried (M115-M117, off by default).
+MILESTONE = "M118"
 
 _UNKNOWN = "unknown"
 
