@@ -1320,7 +1320,7 @@ DO NOT
 
 ---
 
-# 📋 PROMPT TO PASTE — next session, as at 20 August 2026 evening
+# 📋 PROMPT TO PASTE — next session, 21 August 2026, before the open
 
 Continuing QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money.
@@ -1330,40 +1330,70 @@ FIRST, BEFORE ANYTHING ELSE:
     & "C:\Claude Programming\scripts\session_check.ps1"     (NO ARGUMENTS, EVER)
     .\.venv\Scripts\python.exe scripts/handoff_state.py
 
-Read the live data dir through POWERSHELL, never Bash - the Bash sandbox serves
-a stale snapshot and will hand you July's numbers without erroring.
+Read the live data dir through POWERSHELL, never Bash. The Bash sandbox serves a
+frozen snapshot AND SO DOES venv python LAUNCHED FROM BASH - on 20 August that
+returned a July record from a file emptied two minutes earlier. Bash is correct
+for network, git and the repo.
+
+⚠️ THE FIRST THING, AND IT IS TIME-CRITICAL
+
+yfinance's CHART/HISTORY endpoint was rate-limited from about 17:40 on 20 August
+and was STILL blocked at 21:35 - nearly four hours, against ~80 minutes earlier
+that day. Warm start needs 7 symbols x 300 daily bars from that endpoint, and
+`WarmStart.seed` DOES NOT RETRY: it logs "Warm start got no daily bars at all -
+the application starts cold" and returns. A block at launch costs the whole
+session with no recovery short of a restart.
+
+So check it ONCE, early - not at 09:50:
+
+    .\.venv\Scripts\python.exe -c "import yfinance,warnings; warnings.filterwarnings('ignore'); d=yfinance.Ticker('RIO.AX').history(period='5d'); print('OK' if not d.empty else 'STILL BLOCKED')"
+
+ONE call. Do not probe repeatedly - repeated diagnostic fetches are what caused
+this, and each attempt plausibly extends the window. The NEWS endpoint (/xhr/ncp)
+was unaffected throughout; it is specifically chart/history.
+
+If it is clear: launch, confirm the build line says M111, and run the breadth
+measurement. If it is still blocked: the choice is a cold-start session or not
+running, and that is the operator's call.
 
 WHERE THINGS STAND
-  Deployed M111 (5e88ee5). Repo is one milestone ahead: M112 is committed and
-  deliberately NOT deployed. The app is DOWN. Broker flat, equity ~1,003,843.
-  No entry has ever been placed by the app on IBKR - that is still the
-  experiment, and nothing since 19 August has changed it.
+  Deployed M111 (5e88ee5) - NEVER READ BACK, no build has yet said "M111" out
+  loud. Repo is at M117. The app is DOWN. Broker flat, equity ~1,003,843.
+  No entry has ever been placed by the app on IBKR. Still the experiment.
 
-THE FIRST THING THAT NEEDS A DECISION
-  M112 turns the regime breadth feature from a constant into a real one, which
-  moves the exposure scalar on every position. It must be MEASURED before it
-  ships. yfinance was rate-limited on the evening of 20 August; the harness at
-  scratchpad/measure_breadth.py caches its panel so a retry costs one fetch.
-  Until that is settled, do not land anything on top of M112 - while it is the
-  tip commit, excluding it is a checkout; afterwards it is a revert.
+  M112 (breadth) is committed and DELIBERATELY NOT DEPLOYED - it turns a
+  constant feature into a real one and moves the exposure scalar on every
+  position, and the sizing change was to be measured first. The measurement
+  never ran; yfinance was blocked all evening. Harness:
+  scratchpad/measure_breadth.py, which caches its panel so a retry costs one
+  fetch. While M112 is the tip of the src/ changes, excluding it from a build is
+  a checkout; once anything lands on top it becomes a revert.
 
 BEFORE THE 10:00 OPEN
-  The app must be up and correctly configured BEFORE the open, not restarted
-  into a live session. Do NOT use the dashboard force-start to "catch" a
-  pre-open setup: on 20 August that produced six signals against stale closing
-  prices on a shut market. M107 made the button NoFocus so a keystroke cannot
-  arm it any more.
-
-  Confirm at launch that the build says M111 - it has never been read back.
+  The app must be up and configured BEFORE the open, not restarted into a live
+  session. Do NOT use the dashboard force-start to "catch" a pre-open setup - on
+  20 August that produced six signals against stale closing prices on a shut
+  market. M107 made the button NoFocus so a keystroke cannot arm it.
 
 DO NOT
-  Trust a quiet log as a healthy app. On 20 August the log went silent at 17:01
-  because the process had EXITED, and that read identically to an idle feed.
+  Trust a quiet log as a healthy app - on 20 August the log went silent because
+  the process had EXITED, and that reads identically to an idle feed.
   session_check checks the process first; use it rather than an ad-hoc query.
   Deploy mid-session. Weaken M95's UnrepresentableOrderError guard.
   Widen the watchlist without settling the Stage 2 data question.
-  Re-fetch yfinance repeatedly while investigating - that is what blocked it.
 
 AFTER EVERY PUSH
   gh run list --limit 3. CI runs BARE pytest; import sibling test modules by
-  BARE NAME.
+  BARE NAME. And never gate a push on a piped command's exit code - `invoke
+  build | tail` returns tail's status, which is how a red build got pushed on
+  20 August.
+
+WHAT LANDED ON THE EVENING OF 20 AUGUST
+  M113 the instruments that read the record (log rotation, run anchoring,
+  check 3 can now fail) · M114 the manual could not tell you how to connect the
+  broker it runs on · M115 the two-source news rule · M116 the primary-source
+  exception, and IBKR measured out of the news question (0 ASX headlines on this
+  account; ASX ComNews is the only thing that closes the corporate-action gap)
+  · M117 the advisor now gets the results date and corroborated news, and the
+  operator's question no longer travels in the field that quarantines strangers'
+  text.
