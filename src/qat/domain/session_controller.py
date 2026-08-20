@@ -81,6 +81,8 @@ class SessionController:
         self.active = True
         self.override_until_close = False
         self._task: asyncio.Task[None] | None = None
+        # Whether the last `apply_once` changed the session state.
+        self._transitioned = False
 
     # --- lifecycle ----------------------------------------------------------
 
@@ -92,6 +94,23 @@ class SessionController:
             )
             return
         await self.apply_once()
+        if not self._transitioned and self.active:
+            # Constructed `active = True` because the orchestrator starts the
+            # feed before this engine runs. So on an OPEN market the first
+            # check finds `desired == self.active`, changes nothing, and used
+            # to log NOTHING - a session in the healthy state said nothing at
+            # all (M108).
+            #
+            # Every tool that anchors on "Trading session started" then fell
+            # back to the PREVIOUS run. On 20 August `session_check` reported
+            # the 09:49 session's start time, its 1,056 errors and its adopted
+            # Alpaca positions against a session that had begun at 11:12 -
+            # three wrong answers from one missing line, in the instrument an
+            # operator relies on overnight.
+            #
+            # Silence is not a state. A session announces itself whether it
+            # transitioned into that state or was born in it.
+            self._announce_active(self.session())
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -135,9 +154,28 @@ class SessionController:
             self.override_until_close = False
 
         desired = self.should_be_active()
-        if desired != self.active:
+        # Recorded rather than returned: the return value is documented as
+        # is-active and callers rely on it, so "did this pass change anything"
+        # gets its own attribute instead of quietly redefining the contract.
+        self._transitioned = desired != self.active
+        if self._transitioned:
             await self._set_active(desired, session)
         return self.active
+
+    def _announce_active(self, session: mc.MarketSession) -> None:
+        """Say HOW the session is running. Shared by the transition and by a
+        session that was born active, so both produce the same line and no
+        reader has to know which happened."""
+        if self.override_until_close:
+            logger.warning(
+                "Trading session started by OPERATOR OVERRIDE - %s is NOT open. Signals "
+                "are being generated against whatever last traded, and the staleness rail "
+                "is now live on a closed market, so symbols will be excluded until they "
+                "print again. The override lapses at the close.",
+                self.market,
+            )
+        else:
+            logger.info("Trading session started - %s is open", self.market)
 
     async def _set_active(self, active: bool, session: mc.MarketSession) -> None:
         if active:
@@ -155,16 +193,7 @@ class SessionController:
             # simply shut" - and it produced 94 exclusions in six seconds
             # against a market that had been closed for seventeen hours. Whoever
             # forces it should be told what they have just turned on.
-            if self.override_until_close:
-                logger.warning(
-                    "Trading session started by OPERATOR OVERRIDE - %s is NOT open. Signals "
-                    "are being generated against whatever last traded, and the staleness rail "
-                    "is now live on a closed market, so symbols will be excluded until they "
-                    "print again. The override lapses at the close.",
-                    self.market,
-                )
-            else:
-                logger.info("Trading session started - %s is open", self.market)
+            self._announce_active(session)
         else:
             await self.feed.stop()
             self.strategy_engine.emitting = False

@@ -122,6 +122,26 @@ $standDown = $rows | Where-Object { $_.message -cmatch 'Trading session stood do
 
 Write-Section 'SESSION'
 Write-Output ("started    {0}" -f $sessionStart.ToString('yyyy-MM-dd HH:mm:ss'))
+# A SECOND anchor, because the first one can be missing. Until M108 a session
+# that began life active logged no "Trading session started" at all - the
+# controller is constructed active and an OPEN market is not a transition - so
+# this slice silently fell back to the PREVIOUS run. On 20 August that reported
+# the 09:49 session's start, its 1,056 errors and its adopted Alpaca positions
+# against a session that had begun at 11:12: three wrong answers from one
+# missing line.
+#
+# The process start is the fact that cannot go missing. If the session line
+# predates it, everything below is about a run that has already ended.
+if ($app) {
+    $appStart = (@($app) | Sort-Object StartTime | Select-Object -First 1).StartTime
+    if ($sessionStart -lt $appStart) {
+        Write-Output ''
+        Write-Output ('*** STALE: this session line predates the RUNNING app (started {0}). ***' -f $appStart.ToString('yyyy-MM-dd HH:mm:ss'))
+        Write-Output '*** Everything below describes a PREVIOUS run, not the one now going.  ***'
+        Write-Output '*** If the current run logged no start line, the build predates M108.  ***'
+        Write-Output ''
+    }
+}
 if ($standDown) {
     Write-Output ("stood down {0}" -f ([datetime]$standDown.ts).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
 } else {

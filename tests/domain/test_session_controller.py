@@ -217,3 +217,51 @@ async def test_the_status_line_names_why_the_market_is_shut():
     await controller.apply_once()
 
     assert "public holiday" in controller.status_line()
+
+
+async def test_a_session_that_begins_active_still_announces_itself(caplog):
+    """M108. The controller is constructed `active = True` - the orchestrator
+    starts the feed before this engine runs - so on an OPEN market the first
+    `apply_once` finds `desired == self.active`, calls nothing, and LOGS
+    NOTHING.
+
+    A session in the healthy state therefore said nothing at all, and every
+    tool that anchors on "Trading session started" fell back to the previous
+    run. On 20 August `session_check` reported the 09:49 session's start time,
+    its 1,056 errors and its adopted Alpaca positions against a session that
+    had begun at 11:12 - three wrong answers from one missing line, about the
+    instrument an operator relies on overnight.
+
+    Silence is not a state. A session announces itself whether it transitioned
+    into that state or was born in it.
+    """
+    import logging
+
+    controller, _feed, _engine = _controller(MID_SESSION)
+
+    with caplog.at_level(logging.INFO):
+        await controller.start()
+    await controller.stop()
+
+    assert controller.active
+    assert any("Trading session started" in r.message for r in caplog.records), [
+        r.message for r in caplog.records
+    ]
+
+
+async def test_a_session_born_closed_still_says_so(caplog):
+    """The other half: the stood-down path already logged because it IS a
+    transition. It must keep doing so, and must not be announced twice."""
+    import logging
+
+    controller, _feed, _engine = _controller(BEFORE_OPEN)
+
+    with caplog.at_level(logging.INFO):
+        await controller.start()
+    await controller.stop()
+
+    assert not controller.active
+    started = [r for r in caplog.records if "Trading session started" in r.message]
+    stood = [r for r in caplog.records if "stood down" in r.message]
+    assert not started, "announced a start for a session that never became active"
+    assert len(stood) == 1, [r.message for r in stood]
