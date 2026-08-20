@@ -114,7 +114,37 @@ from qat.domain.display_dates import format_display_date
 # gating, risk limits or order translation. M109's pre-flight WARN does not
 # block a launch - the pre-flight is a hand-run script and has never been a
 # startup gate - and the two new startup lines are log output.
-MILESTONE = "M109"
+#
+# M111 ships M110 and M111, and unlike M109 it DOES change a trading-decision
+# input. Say so plainly rather than inheriting the previous note's disclaimer.
+#
+# THE ASX DAILY BAR was bounded at UTC midnight, so a vendor bar stamped
+# `2026-08-20 00:00:00+10:00` floored to the 19th. Two consequences, both live
+# since the ASX move: every seeded bar carried the date BEFORE the one it
+# traded on, and today's HALF-FINISHED session was admitted as a completed bar
+# rather than the forming one - which `seed`'s own docstring says it must not
+# do. The swing entry compares the previous bar's close against the latest, so
+# its "previous bar" contained today's prices. It now reads yesterday's
+# completed close, which is what the strategy was written to compare.
+#
+# THE DAILY-LOSS BASELINE keyed on the UTC date. From 5 October 2026, under
+# AEDT, that rolls an hour AFTER the ASX open - re-baselining day_start_equity
+# mid-session and handing a book already down a fresh allowance. It now keys on
+# the exchange's own trading date, via `market_calendar.trading_date`.
+#
+# What else an operator will see: bar dates on screens and records move forward
+# one day, to the day actually traded; the pre-flight states its feed coverage
+# ("N of M watched") instead of implying it checked everything; the entry allow
+# list announces itself at startup; the entry-record restore line no longer
+# claims positions are held when it has only read a file. Six dead ASX tickers
+# are gone from the megacap pool.
+#
+# NOT INCLUDED, DELIBERATELY: M112. The breadth-alignment fix is committed on
+# master and left out of this build. It turns a constant feature into a real
+# one, which changes the regime label and therefore the exposure scalar applied
+# to every position, and that has not been measured yet. This build is packaged
+# from the commit before it for exactly that reason.
+MILESTONE = "M111"
 
 _UNKNOWN = "unknown"
 
