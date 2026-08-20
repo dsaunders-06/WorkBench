@@ -82,7 +82,39 @@ from qat.domain.display_dates import format_display_date
 # changed profoundly - protective stops transmit as STP rather than as MARKET
 # orders (M95), which on IBKR was a stop that liquidated the position it was
 # meant to protect - but none of that path has ever executed in production.
-MILESTONE = "M104"
+#
+# M109 ships FIVE milestones, all of them observability, and every one of them
+# was written because the first two live ASX sessions on 19-20 August produced
+# a true statement that answered the wrong question.
+#
+# What an operator will see that is new: a session announces itself at startup
+# even when it was BORN healthy rather than transitioning into it (M108) -
+# without that line every tool anchored on "Trading session started" fell back
+# to the previous run, and on 20 August session_check reported a finished
+# session's start time, its 1,056 errors and its adopted Alpaca positions
+# against a session that had begun ninety minutes later. The entry allow list
+# now announces itself too (M109), naming how many watched symbols may be
+# entered and how many will signal and be refused; on 20 August it silently
+# discarded six correct pre-open signals and was found four minutes after the
+# setups had expired. "Test Broker Connection" now actually tests the
+# connection instead of returning a tick regardless (M105).
+#
+# The pre-flight gained a tradable-universe check (M106) and then had it
+# widened (M109), because the first version only asserted that the watchlist
+# and the allow list OVERLAP - which was true on 20 August, and useless. It
+# now warns when the allow list excludes part of the watchlist and names what
+# it is refusing.
+#
+# THE ALPACA PATH IS TOUCHED. M108 changes SessionController for every market,
+# so a US session will now emit a started line it did not emit before. M109's
+# allow-list banner fires only when QAT_ENTRY_ALLOW_LIST is set, which is a
+# machinery-test setting and empty on the US path.
+#
+# NO TRADING-DECISION INPUT CHANGES on any path. Nothing here touches sizing,
+# gating, risk limits or order translation. M109's pre-flight WARN does not
+# block a launch - the pre-flight is a hand-run script and has never been a
+# startup gate - and the two new startup lines are log output.
+MILESTONE = "M109"
 
 _UNKNOWN = "unknown"
 
