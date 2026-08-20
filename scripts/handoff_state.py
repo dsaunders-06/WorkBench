@@ -33,29 +33,29 @@ REPO = Path(__file__).resolve().parent.parent
 # is actually installed. Everything else derives FROM it, so a stale value here
 # makes every other number confidently wrong.
 #
-# Updated on deploy. M111 was deployed 20 August 18:45 local, from the branch
-# `deploy/m111` rather than from master, and this line was changed in the same
-# minute as the copy.
+# Updated on deploy. M118 was deployed 21 August 08:57 local, before the open,
+# with the app stopped and the broker flat, and this line was changed in the
+# same minute as the copy.
 #
-# NOT MASTER, DELIBERATELY. Master's tip carries M112, which turns the regime
-# breadth feature from a constant into a real one and so moves the exposure
-# scalar on every position. The operator asked for that measured first and
-# yfinance was rate-limited, so the build was packaged from the commit before
-# it. `5e88ee5` is that commit plus the milestone label, and the gap this
-# script reports - one milestone, M112 - is real and intended.
+# BACK ON MASTER. M111 was packaged from the `deploy/m111` branch to exclude an
+# unmeasured M112. That measurement was taken on 21 August - breadth dead and
+# breadth live both give label low_vol and exposure scalar 1.0, no size change -
+# so M112 shipped and the branch is spent. The milestone constant came back to
+# master with it; it had been reading M109 against an M118 tree.
 #
 # What is verified: `invoke package` stamped the artefact
-#   Build stamp: M111 (5e88ee5, built 20/08/2026 08:34 UTC)
-# and that exe is the one now at C:\QuantAdvisoryTerminal. What is NOT yet
-# verified is the running build's own log line - nothing has been launched
-# since the copy. Read it back at the next launch; it should say M111.
+#   Build stamp: M118 (c53fb59, built 20/08/2026 22:36 UTC)
+# and that exe is the one now at C:\QuantAdvisoryTerminal. What is NOT verified
+# is the running build's own log line - nothing has been launched since the
+# copy, and M111 was never read back either. Read it at the next launch: it
+# should say M118.
 #
 # It read f537a9e (M94) for a full day AFTER M104 was deployed, which made the
 # deploy gap it reports confidently wrong in the one script whose purpose is
 # that nothing here is hand-maintained. This is the figure that cannot be
 # derived - only the operator knows what is installed - so it is the one that
 # has to be changed BY HAND at the moment of deploying, not afterwards.
-DEPLOYED = "5e88ee5"
+DEPLOYED = "c53fb59"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
