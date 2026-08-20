@@ -97,7 +97,12 @@ own next steps three times.**
 
 ## OUTSTANDING, IN ORDER
 
-1. **The breadth feature has never worked on ASX.** 20 August, on the FULL
+1. ~~**The breadth feature has never worked on ASX.**~~ **DONE - M112, and
+   VERIFIED LIVE 21 August 08:57:** *"Regime engine seeded with 300 daily bars
+   ..., 6 breadth symbols"*, up from 0, with both the singular-covariance and
+   the never-moved warnings gone. Measured before shipping: label and exposure
+   scalar unchanged, no size change on that day's data. Original text kept
+   because the diagnosis is the useful part: 20 August, on the FULL
    100-symbol watchlist: *"100 breadth symbols"* configured, *"0 breadth
    symbols"* seeded, *"No breadth symbols cover every benchmark bar"*, and a
    constant column that makes the covariance singular. **The six-symbol trim did
@@ -125,11 +130,22 @@ own next steps three times.**
    auctions against session logic written for a 13:30 UTC open.
 5. **Stage 4 regime re-sourcing** — do not start until the ablation question is
    settled. If the regime gate does not earn its keep, this stage disappears.
-6. **Alpaca-era records still on disk.** `open_position_entries.json` names ten
+6. ~~**Alpaca-era records still on disk.**~~ **DONE 20 August evening** -
+   `open_position_entries.json` and `corporate_announcements.json` cleared with
+   the app stopped, both backed up. `absorbed_fills.json` deliberately kept:
+   its watermark is current and the remembered ids are live protection.
+   Original: `open_position_entries.json` names ten
    US positions and `absorbed_fills.json` four August fills, for an account this
    build no longer trades. M110 made the log honest about them; the files remain.
 7. **The AI advisor knows nothing about the company's news or its next
-   results.** The original application pulled news for a selected ticker,
+   results.** **PARTLY DONE 20-21 August.** M115 built the two-source rule,
+   M116 added the primary-source exception, and M117 routed the next results
+   date in from the calendar the entry gate already uses and wired
+   corroborated news behind `QAT_NEWS_SOURCE` (off by default). **What is
+   left is a SOURCE worth reading:** Yahoo yielded two corroborated stories
+   across six ASX names, IBKR measured ZERO, and the only feed that would
+   close the gap properly is ASX ComNews - which is item 2, not this one.
+   Original diagnosis: The original application pulled news for a selected ticker,
    including when the next results were due and what they revealed.
    `ai_advisory/context.py` records this as *"a regression from the original
    application, where earnings informed the recommendation"*. M40 restored one
@@ -165,8 +181,33 @@ own next steps three times.**
    the instruction text, and `fetched_notes` is currently carrying the operator's
    own typed question, so the two need separating before news shares the field.
 
-8. **Rewrite this file.** It is 1,233 lines and its history sections are now
-   actively misleading, as above.
+8. **Confirm the Force-Start control before it acts.** Clicking "Start session
+   now" force-starts against a closed market immediately, with nothing between
+   the click and a live session. M107 removed the ACCIDENTAL path - the button
+   is `NoFocus`, so Space or Enter cannot reach it - but a deliberate click is
+   still instant, and on 20 August a force-start produced six signals against
+   stale closing prices on a shut market. **Operator decision, 21 August: prompt
+   "Are you sure?" and act only on an affirmative response.** The dialog must
+   default to the safe answer, so that dismissing it, pressing Escape, or
+   hitting Enter out of habit does NOT start a session - the whole point is to
+   put a deliberate second act between the click and the override, and a
+   default-to-yes dialog is one keystroke, which is what M107 just removed.
+
+9. **The app quits when the broker refuses the connection.** 21 August, 08:53:
+    Gateway was running but not logged in, so port 4002 was closed, and the app
+    logged `ConnectionRefusedError` and shut down - no wait, no retry. A Gateway
+    thirty seconds late costs a full restart. Same shape as `WarmStart.seed`
+    having no retry: both make the pre-open fragile in a way that has nothing to
+    do with trading. A bounded connect-retry with backoff would cover both.
+
+10. **A Gateway process is not a Gateway that is listening.** The ports stay
+    closed until someone logs in, so checking for the process tells you nothing -
+    "quiet looks like healthy" again, in a new place. The pre-flight should test
+    the PORT, not the process, and say which of the four it found.
+
+11. **Rewrite this file.** It is 1,233 lines and its history sections are now
+    actively misleading, as above.
+
 
 **Done since this list was last written:** the session was watched to the close;
 M105–M108 deployed as M109 along with the allow-list announcement; the six dead
