@@ -33,24 +33,29 @@ REPO = Path(__file__).resolve().parent.parent
 # is actually installed. Everything else derives FROM it, so a stale value here
 # makes every other number confidently wrong.
 #
-# Updated on deploy. M109 was deployed 20 August 16:30 local, after the ASX
-# close, and this line was changed in the same minute as the copy rather than
-# afterwards.
+# Updated on deploy. M111 was deployed 20 August 18:45 local, from the branch
+# `deploy/m111` rather than from master, and this line was changed in the same
+# minute as the copy.
 #
-# What is verified so far: `invoke package` stamped the artefact
-#   Build stamp: M109 (750cb0d, built 20/08/2026 06:24 UTC)
+# NOT MASTER, DELIBERATELY. Master's tip carries M112, which turns the regime
+# breadth feature from a constant into a real one and so moves the exposure
+# scalar on every position. The operator asked for that measured first and
+# yfinance was rate-limited, so the build was packaged from the commit before
+# it. `5e88ee5` is that commit plus the milestone label, and the gap this
+# script reports - one milestone, M112 - is real and intended.
+#
+# What is verified: `invoke package` stamped the artefact
+#   Build stamp: M111 (5e88ee5, built 20/08/2026 08:34 UTC)
 # and that exe is the one now at C:\QuantAdvisoryTerminal. What is NOT yet
 # verified is the running build's own log line - nothing has been launched
-# since the copy. Confirm at the next launch that it says M109; the previous
-# value was stale through five milestones precisely because `invoke package`
-# stamped M104 onto an M109 tree and nobody read the line back.
+# since the copy. Read it back at the next launch; it should say M111.
 #
 # It read f537a9e (M94) for a full day AFTER M104 was deployed, which made the
 # deploy gap it reports confidently wrong in the one script whose purpose is
 # that nothing here is hand-maintained. This is the figure that cannot be
 # derived - only the operator knows what is installed - so it is the one that
 # has to be changed BY HAND at the moment of deploying, not afterwards.
-DEPLOYED = "750cb0d"
+DEPLOYED = "5e88ee5"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
