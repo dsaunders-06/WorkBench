@@ -80,12 +80,35 @@ async def fetch_daily_panel(
                 frames[symbol] = frame
 
     unavailable = tuple(symbol for symbol in symbols if symbol not in frames)
-    if unavailable:
+    if unavailable and len(unavailable) == len(symbols):
+        # M118. This used to print the same line however it failed, and on
+        # 20 August that cost four hours: an ALPACA source asked for ASX
+        # symbols answered nothing, the message read exactly like a yfinance
+        # rate limit, and it was waited out, retried, and written into a
+        # handover as the next session's top risk. One clears on its own; the
+        # other never will, and the message could not tell them apart.
+        #
+        # M106 made this argument for the pre-flight's feed check - a source
+        # that prices NONE of what it was asked has failed AS A SOURCE, not as
+        # N delistings. It was missing one layer down, in the panel every warm
+        # start uses.
         logger.warning(
-            "No real daily bars for %d of %d symbols - they are left unseeded rather than "
-            "filled: %s",
+            "No daily bars for ANY of the %d symbols requested from %s. That is a SOURCE "
+            "failure - a throttle, an outage, or a source that cannot serve this market at "
+            "all - and not %d individual symbol problems. Check which source is configured "
+            "before investigating the symbols: %s",
+            len(symbols),
+            type(source).__name__,
+            len(symbols),
+            ", ".join(symbols),
+        )
+    elif unavailable:
+        logger.warning(
+            "No real daily bars for %d of %d symbols from %s - they are left unseeded "
+            "rather than filled: %s",
             len(unavailable),
             len(symbols),
+            type(source).__name__,
             ", ".join(unavailable),
         )
     return DailyPanel(frames=frames, unavailable=unavailable)

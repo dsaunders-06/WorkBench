@@ -981,6 +981,16 @@ Bash and returned a July snapshot of a file emptied minutes earlier.
   through the PowerShell tool returned `{}`. So: Bash for network calls, git and
   the repo; **PowerShell for anything that touches
   `%LOCALAPPDATA%\QuantAdvisoryTerminal`, including Python that only reads it.**
+  **SHARPENED AGAIN 21 August, having walked into it a third time.** The rule
+  above was already correct and I still broke it, because the read was
+  IMPLICIT: **`Settings()` silently loads `%LOCALAPPDATA%\QuantAdvisoryTerminal\.env`**
+  (see `config.env_path`). A harness that looks like it only calls a vendor
+  API reads that file the moment it constructs `Settings`, and under Bash it
+  gets a July snapshot - US market, `QAT_BROKER=alpaca`,
+  `QAT_MARKET_DATA_SOURCE=alpaca`. On 20-21 August that resolved an Alpaca
+  history source, asked it for ASX symbols, and produced four hours of
+  imaginary rate limit. **Any script that constructs `Settings()` runs under
+  PowerShell** - or passes `_env_file=None` and sets what it needs explicitly.
 * **Overnight watching is `scripts\session_check.ps1`, not a scheduled prompt.**
   This bullet used to prescribe a scheduled prompt that wakes and uses the
   PowerShell tool. **Measured on 13–14 August: that does not work**, for two
@@ -1320,7 +1330,7 @@ DO NOT
 
 ---
 
-# 📋 PROMPT TO PASTE — next session, 21 August 2026, before the open
+# 📋 PROMPT TO PASTE — next session, as at 21 August 2026, 09:00
 
 Continuing QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money.
@@ -1330,44 +1340,40 @@ FIRST, BEFORE ANYTHING ELSE:
     & "C:\Claude Programming\scripts\session_check.ps1"     (NO ARGUMENTS, EVER)
     .\.venv\Scripts\python.exe scripts/handoff_state.py
 
-Read the live data dir through POWERSHELL, never Bash. The Bash sandbox serves a
-frozen snapshot AND SO DOES venv python LAUNCHED FROM BASH - on 20 August that
-returned a July record from a file emptied two minutes earlier. Bash is correct
-for network, git and the repo.
+⚠️ THE ONE RULE THAT HAS COST THE MOST TIME
 
-⚠️ THE FIRST THING, AND IT IS TIME-CRITICAL
+Run anything that touches C:\Users\mailm\AppData\Local\QuantAdvisoryTerminal
+through POWERSHELL, never Bash. The Bash sandbox serves a frozen July snapshot
+and does NOT error - and this includes venv python launched from Bash.
 
-yfinance's CHART/HISTORY endpoint was rate-limited from about 17:40 on 20 August
-and was STILL blocked at 21:35 - nearly four hours, against ~80 minutes earlier
-that day. Warm start needs 7 symbols x 300 daily bars from that endpoint, and
-`WarmStart.seed` DOES NOT RETRY: it logs "Warm start got no daily bars at all -
-the application starts cold" and returns. A block at launch costs the whole
-session with no recovery short of a restart.
+It also includes scripts that never NAME that directory, because `Settings()`
+silently loads `%LOCALAPPDATA%\QuantAdvisoryTerminal\.env` (see
+`config.env_path`). On the evening of 20 August a measurement harness that
+looked like it only called a vendor API constructed `Settings()` under Bash, got
+the July config - US market, broker alpaca, market_data_source alpaca - resolved
+an ALPACA history source, asked it for ASX symbols, and reported "No real daily
+bars for 7 of 7". That was read as a yfinance rate limit, waited out for four
+hours, retried seven times, and written into the previous handover as this
+session's top risk. IT WAS NOT A RATE LIMIT AND THERE WAS NO BLOCK.
 
-So check it ONCE, early - not at 09:50:
-
-    .\.venv\Scripts\python.exe -c "import yfinance,warnings; warnings.filterwarnings('ignore'); d=yfinance.Ticker('RIO.AX').history(period='5d'); print('OK' if not d.empty else 'STILL BLOCKED')"
-
-ONE call. Do not probe repeatedly - repeated diagnostic fetches are what caused
-this, and each attempt plausibly extends the window. The NEWS endpoint (/xhr/ncp)
-was unaffected throughout; it is specifically chart/history.
-
-If it is clear: launch, confirm the build line says M111, and run the breadth
-measurement. If it is still blocked: the choice is a cold-start session or not
-running, and that is the operator's call.
+M118 made that message name its source so the next reader cannot make the same
+mistake. Any harness constructing `Settings()` runs under PowerShell, or passes
+`_env_file=None` and sets what it needs explicitly.
 
 WHERE THINGS STAND
-  Deployed M111 (5e88ee5) - NEVER READ BACK, no build has yet said "M111" out
-  loud. Repo is at M117. The app is DOWN. Broker flat, equity ~1,003,843.
-  No entry has ever been placed by the app on IBKR. Still the experiment.
+  Deployed: see handoff_state.py, do not trust this line.
+  The app may be DOWN - session_check checks the process FIRST, and a quiet log
+  is NOT a healthy app: on 20 August the log went silent because the process had
+  exited, which reads identically to an idle feed.
+  Broker flat, equity ~1,003,843. NO ENTRY HAS EVER BEEN PLACED BY THE APP ON
+  IBKR. That is still the experiment.
 
-  M112 (breadth) is committed and DELIBERATELY NOT DEPLOYED - it turns a
-  constant feature into a real one and moves the exposure scalar on every
-  position, and the sizing change was to be measured first. The measurement
-  never ran; yfinance was blocked all evening. Harness:
-  scratchpad/measure_breadth.py, which caches its panel so a retry costs one
-  fetch. While M112 is the tip of the src/ changes, excluding it from a build is
-  a checkout; once anything lands on top it becomes a revert.
+M112 IS MEASURED AND SETTLED
+  Breadth dead vs live, on 301 seeded bars, 21 August:
+    dead  label=low_vol scalar=1.0  (low_vol .440, recovery .242, sideways .206)
+    live  label=low_vol scalar=1.0  (low_vol .382, recovery .362, bull .256)
+  Same label, same exposure scalar - NO SIZE CHANGE. The distribution does move,
+  so this is one day's evidence and not a proof it can never tip a label.
 
 BEFORE THE 10:00 OPEN
   The app must be up and configured BEFORE the open, not restarted into a live
@@ -1376,24 +1382,12 @@ BEFORE THE 10:00 OPEN
   market. M107 made the button NoFocus so a keystroke cannot arm it.
 
 DO NOT
-  Trust a quiet log as a healthy app - on 20 August the log went silent because
-  the process had EXITED, and that reads identically to an idle feed.
-  session_check checks the process first; use it rather than an ad-hoc query.
   Deploy mid-session. Weaken M95's UnrepresentableOrderError guard.
   Widen the watchlist without settling the Stage 2 data question.
+  Read "no daily bars" as a vendor block without checking WHICH SOURCE is
+  configured - that is what M118 exists to stop.
 
 AFTER EVERY PUSH
   gh run list --limit 3. CI runs BARE pytest; import sibling test modules by
-  BARE NAME. And never gate a push on a piped command's exit code - `invoke
-  build | tail` returns tail's status, which is how a red build got pushed on
-  20 August.
-
-WHAT LANDED ON THE EVENING OF 20 AUGUST
-  M113 the instruments that read the record (log rotation, run anchoring,
-  check 3 can now fail) · M114 the manual could not tell you how to connect the
-  broker it runs on · M115 the two-source news rule · M116 the primary-source
-  exception, and IBKR measured out of the news question (0 ASX headlines on this
-  account; ASX ComNews is the only thing that closes the corporate-action gap)
-  · M117 the advisor now gets the results date and corroborated news, and the
-  operator's question no longer travels in the field that quarantines strangers'
-  text.
+  BARE NAME. Never gate a push on a piped command's exit code - `invoke build |
+  tail` returns tail's status, which is how a red build reached master.
