@@ -1371,64 +1371,85 @@ DO NOT
 
 ---
 
-# 📋 PROMPT TO PASTE — next session, as at 21 August 2026, 09:00
+# 📋 PROMPT TO PASTE — next session, as at 21 August 2026, 09:15
 
 Continuing QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money.
 
-FIRST, BEFORE ANYTHING ELSE:
+A LIVE ASX PAPER SESSION IS RUNNING OR ABOUT TO. Assume nothing below is still
+true. Read the logs first:
 
     & "C:\Claude Programming\scripts\session_check.ps1"     (NO ARGUMENTS, EVER)
     .\.venv\Scripts\python.exe scripts/handoff_state.py
 
 ⚠️ THE ONE RULE THAT HAS COST THE MOST TIME
 
-Run anything that touches C:\Users\mailm\AppData\Local\QuantAdvisoryTerminal
-through POWERSHELL, never Bash. The Bash sandbox serves a frozen July snapshot
-and does NOT error - and this includes venv python launched from Bash.
+Run anything touching C:\Users\mailm\AppData\Local\QuantAdvisoryTerminal through
+POWERSHELL, never Bash. The Bash sandbox serves a frozen July snapshot and does
+NOT error - including venv python launched from Bash.
 
-It also includes scripts that never NAME that directory, because `Settings()`
+It also covers scripts that never NAME that directory, because `Settings()`
 silently loads `%LOCALAPPDATA%\QuantAdvisoryTerminal\.env` (see
-`config.env_path`). On the evening of 20 August a measurement harness that
-looked like it only called a vendor API constructed `Settings()` under Bash, got
-the July config - US market, broker alpaca, market_data_source alpaca - resolved
-an ALPACA history source, asked it for ASX symbols, and reported "No real daily
-bars for 7 of 7". That was read as a yfinance rate limit, waited out for four
-hours, retried seven times, and written into the previous handover as this
-session's top risk. IT WAS NOT A RATE LIMIT AND THERE WAS NO BLOCK.
+`config.env_path`). On 20 August a harness that looked like it only called a
+vendor API built `Settings()` under Bash, got the July config - US market,
+broker alpaca, market_data_source alpaca - resolved an ALPACA history source,
+asked it for ASX symbols, and reported "No real daily bars for 7 of 7". That was
+read as a yfinance rate limit, waited out four hours, retried seven times, and
+written into a handover as the top risk. THERE WAS NO BLOCK. M118 made that
+message name its source. Any harness building `Settings()` runs under
+PowerShell, or passes `_env_file=None` and sets what it needs explicitly.
 
-M118 made that message name its source so the next reader cannot make the same
-mistake. Any harness constructing `Settings()` runs under PowerShell, or passes
-`_env_file=None` and sets what it needs explicitly.
+WHERE THINGS STAND — all of this was verified this morning, not assumed
 
-WHERE THINGS STAND
-  Deployed: see handoff_state.py, do not trust this line.
-  The app may be DOWN - session_check checks the process FIRST, and a quiet log
-  is NOT a healthy app: on 20 August the log went silent because the process had
-  exited, which reads identically to an idle feed.
-  Broker flat, equity ~1,003,843. NO ENTRY HAS EVER BEEN PLACED BY THE APP ON
-  IBKR. That is still the experiment.
+  Deployed M118 (c53fb59). DEPLOY GAP IS ZERO - deployed equals HEAD.
+  App running since 08:57:39, stood down until the 10:00 open.
+  Broker connected, FLAT, equity 1,003,843.14, day-start recorded 08:57.
+  Verified off the running build's own log at 08:57:41:
+    Build: M118 (c53fb59, built 20/08/2026 22:36 UTC, packaged)
+    ENTRY ALLOW LIST ACTIVE - 6 of 6 watched symbol(s) may be entered
+    Warm start seeded 7 symbols ... 300-300 daily bars each
+    Regime engine seeded ... 6 breadth symbols     <- M112 live, was 0
 
-M112 IS MEASURED AND SETTLED
-  Breadth dead vs live, on 301 seeded bars, 21 August:
-    dead  label=low_vol scalar=1.0  (low_vol .440, recovery .242, sideways .206)
-    live  label=low_vol scalar=1.0  (low_vol .382, recovery .362, bull .256)
-  Same label, same exposure scalar - NO SIZE CHANGE. The distribution does move,
-  so this is one day's evidence and not a proof it can never tip a label.
+THE EXPERIMENT, UNCHANGED SINCE 19 AUGUST
 
-BEFORE THE 10:00 OPEN
-  The app must be up and configured BEFORE the open, not restarted into a live
-  session. Do NOT use the dashboard force-start to "catch" a pre-open setup - on
-  20 August that produced six signals against stale closing prices on a shut
-  market. M107 made the button NoFocus so a keystroke cannot arm it.
+  NO ENTRY HAS EVER BEEN PLACED BY THE APP ON IBKR. The first FILL exercises
+  recent_fills, M70/M71 and post-fill reconciliation together. M104 is what
+  stops it tripping the kill-switch on a symbol-form mismatch.
+
+  Today is the first session where the swing entry compares the bars it was
+  written to compare. Until M111 the ASX daily boundary was UTC midnight, so
+  every seeded bar carried the day BEFORE it traded and today's half-finished
+  session was admitted as a COMPLETED bar - the "previous bar" contained today's
+  prices. Whether anything signals is the market's business.
+
+WATCHING IT
+
+  session_check checks the PROCESS first, and that matters: on 20 August the log
+  went silent because the app had EXITED, which reads identically to an idle
+  feed. A quiet log is not a healthy app.
+  Sweep every 20-30 minutes. Escalate on ERROR/CRITICAL, MARKET DATA DOWN, the
+  process dying, a kill-switch trip, or any order appearing at the broker.
+  ib_async logs the 1102 RECOVERY at ERROR, so a self-healing blip inflates the
+  count - judge by content.
 
 DO NOT
+
+  Touch the dashboard force-start. On 20 August it produced six signals against
+  stale closing prices on a shut market. M107 made it NoFocus so a keystroke
+  cannot arm it; a deliberate click still can, and item 8 on the list is to put
+  a confirmation in front of it.
   Deploy mid-session. Weaken M95's UnrepresentableOrderError guard.
   Widen the watchlist without settling the Stage 2 data question.
   Read "no daily bars" as a vendor block without checking WHICH SOURCE is
   configured - that is what M118 exists to stop.
 
 AFTER EVERY PUSH
+
   gh run list --limit 3. CI runs BARE pytest; import sibling test modules by
   BARE NAME. Never gate a push on a piped command's exit code - `invoke build |
   tail` returns tail's status, which is how a red build reached master.
+
+THE LIST is "OUTSTANDING, IN ORDER" above: 1 and 6 are done, 7 is partly done,
+8-10 were added on 21 August (force-start confirmation, the app quitting when
+the broker refuses a connection, and a Gateway process not being a Gateway that
+listens).
