@@ -195,3 +195,47 @@ def test_the_start_button_says_that_it_OVERRIDES() -> None:
         f"the button reads {START_BUTTON_LABEL!r}, which does not say it overrides the "
         f"market calendar"
     )
+
+
+def test_the_force_start_button_cannot_be_fired_by_a_stray_keypress() -> None:
+    """M107. `QPushButton.clicked` fires on SPACE or ENTER when the button has
+    keyboard focus, not only on a mouse click - and this button, with the
+    default focus policy, is the only focusable widget in the panel, so a
+    freshly-shown window can hand it focus at launch.
+
+    On 20 August the log recorded `force-started by operator (dashboard)`
+    eleven minutes before the ASX open and the operator said - correctly - that
+    they had not clicked it. Both are consistent: the handler ran, and the only
+    string that path can log is "operator (dashboard)", so the app attributed
+    to a person an action a keystroke could have caused.
+
+    A control that arms a trading override against a closed market must require
+    a deliberate POINTER action. NoFocus means `clicked` can only come from an
+    actual click.
+    """
+    from PySide6.QtCore import Qt
+
+    from qat.presentation.session_panel import START_BUTTON_FOCUS_POLICY
+
+    assert START_BUTTON_FOCUS_POLICY == Qt.FocusPolicy.NoFocus, (
+        "the force-start button can take keyboard focus, so Space or Enter can arm "
+        "a session override without anyone clicking anything"
+    )
+
+
+def test_the_force_start_is_attributed_to_the_CONTROL_not_to_a_person() -> None:
+    """The app logged "force-started by operator (dashboard)" - an assertion
+    that a PERSON acted. The handler cannot know that: `clicked` fires from a
+    mouse click OR a keypress, and the string is a constant passed by the panel
+    either way.
+
+    So the log asserted something it had no way to establish, and on 20 August
+    that assertion was read back to the operator as evidence of what they had
+    done. Name the control; the control is what is known.
+    """
+    from qat.presentation.session_panel import FORCE_START_SOURCE
+
+    assert (
+        "operator" not in FORCE_START_SOURCE.lower()
+    ), f"{FORCE_START_SOURCE!r} claims a person acted, which this code path cannot know"
+    assert "dashboard" in FORCE_START_SOURCE.lower() or "control" in FORCE_START_SOURCE.lower()

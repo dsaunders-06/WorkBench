@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
@@ -150,6 +150,30 @@ def countdown_for(market: mc.Market, now: datetime | None = None) -> Countdown:
 # DOES (M106).
 START_BUTTON_LABEL = "Force-start (market closed)"
 
+# NoFocus, because `QPushButton.clicked` fires on SPACE or ENTER when the button
+# has keyboard focus - not only on a mouse click. With the default policy this
+# is the only focusable widget in the panel, so a freshly-shown window can hand
+# it focus at launch and a stray keystroke arms a session override.
+#
+# On 20 August the log recorded "force-started by operator (dashboard)" eleven
+# minutes before the ASX open and the operator said, correctly, that they had
+# not clicked it. Both are consistent: the handler ran, and "operator
+# (dashboard)" is the only string that path can log - so the application
+# attributed to a PERSON an action a keypress could have caused.
+#
+# A control that runs the session against a closed market, and disarms the
+# promise that the staleness rail cannot trip on a market that is simply shut,
+# should require a deliberate pointer action (M107).
+START_BUTTON_FOCUS_POLICY = Qt.FocusPolicy.NoFocus
+
+# What gets logged as the SOURCE of a force-start. It used to be
+# "operator (dashboard)", which asserts that a PERSON acted - and this code
+# path cannot know that: `clicked` fires from a mouse click or from a keypress,
+# and the string is a constant passed either way. On 20 August that assertion
+# was read back to the operator as evidence of what they had done, and it was
+# wrong. Name the control, because the control is what is actually known.
+FORCE_START_SOURCE = "the dashboard force-start control"
+
 
 class SessionPanel(QFrame):
     """Session state and countdowns for the configured market, plus any other
@@ -202,6 +226,7 @@ class SessionPanel(QFrame):
             "This starts the data feed and lets strategies emit signals. It does not "
             "place any order, and does not change who signs orders off."
         )
+        self.start_button.setFocusPolicy(START_BUTTON_FOCUS_POLICY)
         self.start_button.clicked.connect(self._on_start_clicked)
         status_row.addWidget(self.session_status, stretch=1)
         status_row.addWidget(self.start_button)
@@ -217,7 +242,7 @@ class SessionPanel(QFrame):
 
     async def _force_start(self) -> None:
         try:
-            await self.controller.force_start("operator (dashboard)")
+            await self.controller.force_start(FORCE_START_SOURCE)
         except Exception as exc:  # noqa: BLE001 - surfaced rather than swallowed
             logger.exception("Could not force-start the trading session")
             self.session_status.setText(f"Could not start the session: {exc}")
