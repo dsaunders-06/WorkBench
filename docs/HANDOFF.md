@@ -21,159 +21,115 @@ deriving is.**
 
 ---
 
-# Where this stands, in one paragraph
+# Where this stands — 20 August 2026, MID-SESSION
 
-**The IBKR paper account is LIVE (`DUQ200898`) and Stage 1 Task 1 is DONE.**
-Three of its four questions are answered against a real Gateway, not inferred.
-Work is NO LONGER PAUSED - the blocker that paused it is gone.
+**THE FIRST ASX SESSION IS RUNNING RIGHT NOW.** Started 11:11:52 AEST on
+20 August. Do not assume anything below is still true — **read the logs
+first**, and run `handoff_state.py` before quoting any figure.
 
-**Run `handoff_state.py` before quoting any number below.** This file has gone
-stale within a day of being written, twice.
+## The session, as at 11:34 AEST
 
-## What Task 1 measured, 19 August
+| | |
+|---|---|
+| App | M104 (`e38b70c`), PID 40616, up since 11:11:52 |
+| Account | `DUQ200898` — **0 positions, 0 orders** |
+| Equity | 1,003,733.21 / cash 1,001,865.24, unchanged, writing every 60s |
+| Regime | recovery → **bull** (exposure scalar 1.00) |
+| Feed | 7 symbols, 300 REAL daily bars each, no synthetic fallback |
+| Signals | **none yet** on the six tradable names |
 
-* **ASX trading permission IS granted.** Confirmed by a `whatIfOrder` preview
-  that creates no order. Commission came back **AUD 6.60**, exactly the ASX
-  Fixed floor. Account equity ~**1,003,733** - the 10x figure that changes
-  which rails bind.
-* **All four IBKR calls exist and answer.** `fills`, `reqExecutions`,
-  `openTrades`, `reqAllOpenOrders` - no permission error, no pacing violation.
-* **`announcements` has NO equivalent.** Confirmed, not inferred. Task 5 is a
-  decision to record, not code to write.
-* **Q3 ANSWERED: a resting stop IS visible** to both `openTrades()` and
-  `reqAllOpenOrders()`, agreeing on type, price, status and permId.
-* **Q1 ANSWERED: permId SURVIVES a Gateway restart.** Task 3's identity choice
-  holds, measured. (`orderId` survived too - that is NOT a reason to prefer it;
-  its hazard was reuse, never mutation.)
-* **Q2 advanced, not closed.** The order came back `whyHeld='trigger'` - IBKR's
-  marker for held-at-IBKR rather than working at the exchange. Cannot settle
-  native-vs-simulated for LIVE ASX because IBKR simulates all paper stops. But
-  **the API EXPOSES the distinction**, so the app can read what it currently
-  assumes. Task 4 should carry `whyHeld` through.
-* **Q4 STILL OPEN** - execution retention needs a real fill, the only remaining
-  question that does.
+Everything on the IBKR path works: `BrokerConnection` connected on clientId 1,
+warm start clean, autonomous execution armed with swing promoted. **No entry
+has ever been placed by the app on IBKR**, so `recent_fills`, M70/M71 and
+post-fill reconciliation remain unexercised in a session. That is still the
+experiment.
 
-Full report: `docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md`.
-The account now holds **no orders and no positions** - the test order was
-cancelled and the cancellation verified externally.
+## The configuration, and why it is small
 
-## THE DEFECTS TASK 1 FOUND, WHICH MATTER MORE THAN WHAT IT WENT LOOKING FOR
+    QAT_MARKET=ASX  QAT_BROKER=ibkr  QAT_TRADING_MODE=paper  QAT_IBKR_PORT=4002
+    QAT_MARKET_DATA_SOURCE=yfinance
+    QAT_EXECUTION_MODE=auto            QAT_AUTONOMOUS_STRATEGIES=swing
+    QAT_WATCHLIST_CATEGORY=curated
+    QAT_WATCHLIST_CURATED_ASX=RIO.AX,APA.AX,AMC.AX,MGR.AX,SGP.AX,NHF.AX
+    QAT_ENTRY_ALLOW_LIST=RIO.AX,APA.AX,AMC.AX,MGR.AX,SGP.AX,NHF.AX
 
-**M95 - IBKR sent a protective stop as a MARKET order. FIXED, Stages A and B.**
-`to_ib_order` branched on `limit_price` alone, so the protective stop
-`OMS._propose_protective_order` builds - `order_type="stop"`,
-`limit_price=None` - fell through to `MarketOrder("SELL", qty)`. **A protective
-stop for an unprotected position became an immediate market sell OF THAT
-POSITION.** Never reached production; `QAT_BROKER=alpaca` throughout the US
-trial. **Nothing caught it because the capability audit asks "is the method
-there", and `place_order` was there - the TRANSLATION was wrong.**
+**THE BIGGEST FINDING OF THE DAY: yfinance cannot sustain a 100-symbol,
+60-second poll.** After ~20 minutes it hard-blocked and answered "possibly
+delisted" for ALL 101 ASX symbols at once, megacaps included, minutes after
+pricing them. The feed produced no ticks. The 499-session replay never exposed
+this because replay reads history in BULK, ONCE; live polling is a different
+load profile and nothing had exercised it. The watchlist was cut to 6 (+ the
+`STW.AX` benchmark) to escape it.
 
-Stage A: STP at GTC, `modify_order` propagating `stop_price`, and a boundary
-guard that RAISES rather than approximating. Stage B: bracketed entries as
-parent plus two legs, standalone stop-plus-target as one OCA group, `cancel`
-that cancels every leg AND RE-READS to confirm, `modify` that reprices the STOP
-LEG rather than the entry.
+**That cut has a cost, and it is not free:** `Regime features that never moved
+across 300 bars: breadth`. With six symbols the breadth feature is constant, so
+the regime engine is effectively classifying on five of six features. It moves
+the Stage 2 data question from "revisit at a real paper trial" to something
+that needs an answer before any full-universe ASX session.
 
-**M96 - IBKR could not resolve an ASX symbol at all. FIXED.** `to_ib_contract`
-never stripped the `.AX` suffix and hardcoded `currency="USD"`. Measured:
-`BHP.AX` returned error 200 in either currency, and an unsuffixed `BHP` in USD
-resolved to the NYSE ADR (conId 4986) rather than ASX (4036812). Fixed at the
-vendor boundary in `symbols.to_ibkr`, M26's pattern. Also sets the bracketed
-parent's TIF explicitly - IBKR warned 10349 that a Gateway-side PRESET had
-chosen it.
+**A second, smaller finding:** six names in the ASX megacap list are dead to
+yfinance — AWC, BKW, DHG, IPL, NSR, SVW — and warm start substituted SYNTHETIC
+bars for them. No tradable name was affected, by timing rather than by design.
 
-**M97 - `recent_fills`. BUILT.** Stage 1 Task 2. `reqExecutions` rather than
-the session-scoped `IB.fills()`, `permId` as the identity so Task 3's bridge
-actually matches, strict `BOT`/`SLD` with an unknown side DROPPED rather than
-defaulted, and the window applied on FILL time here rather than delegated to a
-broker-side filter whose semantics have not been measured. `symbols.from_ibkr`
-is the inbound half of M96 - the app tracks `BHP.AX` and IBKR answers `BHP`,
-and an untranslated fill matches no tracked position.
+## What today found, in order of severity
 
-**M98 - `resting_stops`/`resting_stop_orders`. BUILT.** Stage 1 Task 4, so
-protection is OBSERVED rather than asserted. `reqAllOpenOrders` not
-`openTrades` (the latter is client-scoped, and invisible protection reads as no
-protection). `RestingStopOrder` now carries `why_held` raw and
-`owner_client_id`. `PreSubmitted` counts as working; `TRAIL` is excluded
-deliberately. Two stops on one symbol resolve by RULE - the tightest, which
-flips direction for a short.
+* **M104 — the first fill would have tripped the kill-switch.** Three of four
+  IBKR symbol boundaries translated; `from_ib_position` did not. Tracked
+  `BHP.AX` against broker `BHP` is TWO divergences, and a reconciliation
+  mismatch halts the session. Found by asking what was still untranslated.
+* **M105 — "Test Broker Connection" returned a tick without connecting.** True
+  when written (only mock/simulated were non-Alpaca); IBKR falsified it.
+* **M106 — three gaps the live session found**, including a watchlist and
+  allow list with ZERO overlap: a session that runs all day and can trade
+  nothing, indistinguishable afterwards from one where nothing signalled.
+* **M107 — the app blamed the operator for what a keystroke could do.**
+  `clicked` fires on Space/Enter when focused; the log asserted
+  "operator (dashboard)" regardless. The operator said they had not clicked
+  it, and they were right.
+* **M108 — a session that began in the healthy state announced nothing**, so
+  every tool anchored on "Trading session started" reported the PREVIOUS run.
 
-**M99 - a stop the SCAN found could not be re-priced or cancelled. BUILT.**
-Real IBKR returns `permId=0` from `placeOrder`, so `place_order`'s dual
-registration never fired and the permId the scan later reports was
-unregistered - `modify_order`/`cancel_order` raised `KeyError` on M39's own
-path. **Every fake stamped permId synchronously, so the whole suite shared
-production's blind spot**; the fakes now default to real timing. Unknown ids
-resolve against the broker, which also reaches adopted positions' stops.
+## Do not trust these in the RUNNING build
 
-**M100 - UNSUPPORTED is not UNREADABLE. BUILT.** Task 5's decision, taken:
-option 1 refined. `_fetch` swallowed an `AttributeError` per symbol per sweep,
-so a PERMANENT capability gap was reported through a TRANSIENT-failure channel
-- 2,880 warnings a day and a banner saying "check the log" about something
-unfixable. Now `detection_supported()` separates the two, and both screens say
-UNAVAILABLE as a standing condition. Wording extracted into pure functions so
-the SENTENCES are testable.
+The M105–M108 fixes are **committed, pushed, CI-green and NOT DEPLOYED**. In
+the running M104:
 
-**M101/M102 - THE APP NOW RUNS ON IBKR. BUILT.** Everything Stage 1 produced
-was unreachable: `resolve_broker` raised for `broker=ibkr`, so every capability
-had only ever been driven by a script. `BrokerConnection` is an Engine
-registered FIRST (and so stopped LAST); the EventBus is now required, because
-IBAdapter's KillSwitchEvent must reach the bus the app runs on. The live run
-then found two more: `build_demo` passed no bus, and `account()` used
-`IB.accountSummary()` - a SYNC wrapper that raises inside the app's own event
-loop, so `account()` and `balances()` could never have worked in a session.
+* **`session_check` reports the 09:49 run, not the live one.** The script fix
+  IS live (it is a script), so it now prints a `*** STALE ***` block saying so.
+  Its check 3 also CANNOT FAIL for this session — it shows yesterday's
+  reassuring Alpaca "10 of 10 carry a stop".
+* **The Settings "Test Broker Connection" button lies** — a tick without
+  connecting. Use `scripts/preflight.py`, which connects for real.
+* **The Session panel's button reads "Start session now"** and force-starts
+  against a closed market, on Space/Enter as well as a click.
 
-**FIRST EVER RUN OF THIS APPLICATION AGAINST IBKR**, verified: net_liq
-1,003,733.21, cash 1,001,865.24, 0 positions, `resting_stops() == {}`.
-
-**STAGE 1 IS COMPLETE.** Tasks 1-5 done, all verified against a real Gateway.
-
-**ORDERS BELONG TO A clientId.** Cancelling from a different `clientId` than
-placed fails with error 10147 - while `reqAllOpenOrders()` still SHOWS the
-order, and while our own object reports `PendingCancel`. **Visible is not
-cancellable.** `QAT_IBKR_CLIENT_ID` must be treated as IMMUTABLE while any
-order rests, or protective stops become unmodifiable while still appearing in
-the app's view of what protects the book.
 
 ## OUTSTANDING, IN ORDER
 
-**RUN THE PRE-FLIGHT BEFORE ANY SESSION:**
+1. **WATCH THE SESSION.** It is running. The one thing that has never happened
+   is an entry placed by the app on IBKR, and the first FILL is what exercises
+   `recent_fills`, M70/M71 and post-fill reconciliation together.
+2. **DEPLOY M105-M108 at the close**, not during. Four milestones, five
+   commits, none touching an order path: a Settings button that lied, a
+   force-start that could fire on a keystroke and blamed the operator, a
+   pre-flight that could not see two settings cancelling each other, and a
+   session that announced nothing when healthy.
+3. **The Stage 2 data question is now urgent**, not deferred. yfinance cannot
+   sustain a full-universe live poll, and the six-symbol workaround kills the
+   regime engine's breadth feature. Decide before any full-universe ASX run.
+4. **Six dead tickers in the ASX megacap list** - AWC, BKW, DHG, IPL, NSR, SVW
+   - which warm start replaces with SYNTHETIC bars. Prune them.
+5. **Q4** - how far back IBKR executions go. Needs a real fill; the session may
+   answer it for free.
+6. **`--sample` defaults to 5** in the pre-flight, chosen when the watchlist was
+   100. On a 6-symbol watchlist it silently checks 5 of 6. Make it cover the
+   whole watchlist when small.
+7. **The $500 minimum marketable parcel** - deferred by the operator: a listing
+   rule for real trades, not needed before live. Implemented nowhere.
 
-    .\.venv\Scripts\python.exe scripts/preflight.py
-
-Read-only, five minutes, exits non-zero when blocked. It walks configuration,
-session, watchlist, feed, broker, Gateway, account, book and contract
-resolution, and **it will not say READY about anything it could not check** -
-UNKNOWN blocks exactly as FAIL does. Verified READY against DUQ200898 on
-19 August with the full ASX configuration.
-
-**STAGE 1 IS DONE and the app runs on IBKR.** What follows is not.
-
-1. **RUN A SESSION.** Nothing is known to be missing. The configuration is
-   below, the pre-flight says READY, and ASX is 00:00-06:00 UTC. The trial is
-   now the next piece of work rather than a thing being prepared for.
-2. **THE $500 MINIMUM MARKETABLE PARCEL** - DEFERRED by the operator on
-   19 August: it is a listing rule for real trades and paper is about the
-   machinery. Needed before LIVE, not before a paper trial. Implemented
-   nowhere (`grep -rn parcel src/` returns nothing). One residual risk: if
-   IBKR's paper SIMULATOR enforces it, entries below $500 are rejected and the
-   first session will say so.
-3. **Q4** - execution retention, how far back IBKR executions go. Needs a real
-   FILL and is the only Stage 1 question that does. Decide whether it is worth
-   one; `recent_fills` is the natural place to settle it.
-2. **Stage 2's data decision stands** - yfinance for ASX bars, IBKR for
-   execution. Do NOT buy ASX Total during testing: neither resolver has an
-   IBKR branch, so no IBKR data of any kind can reach the app. Revisit at a
-   real paper trial, priced as subscription PLUS two data sources PLUS a
-   universe trim.
-3. **The rest of Stage 3's ASX rules** - the $500 minimum marketable parcel
-   reaches position sizing directly and is implemented nowhere. ASX minTick is
-   0.001 (measured); tick sizes, T+2 and the auctions are unbuilt.
-
-Unchanged: M71 still unobserved in production (no app-transmitted sell has
-ever happened), and the cash-floor question. **M43 is no longer waiting on the
-announcements decision - it is now DECIDED not to build it**, because ASX halts
-are announcement-driven and Task 5 chose to accept the gap.
+Unchanged: M71 still unobserved in production (no app-transmitted sell has ever
+happened), and the cash-floor question. M43 is DECIDED not to build, because
+ASX halts are announcement-driven and Task 5 accepted that gap.
 
 **Two documents supersede everything below.** `docs/2026-08-19-us-trial-close.md`
 is the full account of the US phase. `docs/superpowers/plans/2026-08-19-ibkr-move.md`
@@ -1213,109 +1169,65 @@ the paper one (paper accounts are prefixed `DU`), stop** — you are connected t
 the wrong session.
 
 ```
-STAGE 1 OF THE IBKR MOVE IS COMPLETE. The paper account (DUQ200898) is live,
-permissioned for ASX, and EMPTY - no orders, no positions. Tasks 1-5 are done
-and every one was verified against a real Gateway. M95 through M100 are built.
-Everything is pushed.
+A LIVE ASX PAPER SESSION IS RUNNING. Do not assume anything is still true.
 
-READ FIRST
-  docs/superpowers/specs/2026-08-19-ibkr-capability-measurement.md - W1.1
-  docs/superpowers/specs/2026-08-19-ibkr-announcements-decision.md - Task 5
-  ROADMAP.md M95 to M100.
+FIRST, BEFORE ANYTHING ELSE, READ THE LOGS AND SAY WHAT IS ACTUALLY HAPPENING:
 
-BEFORE QUOTING ANY CURRENT-STATE FIGURE
+  & "C:\Claude Programming\scripts\session_check.ps1"     (NO ARGUMENTS, EVER)
   .\.venv\Scripts\python.exe scripts/handoff_state.py
-  THE DEPLOY GAP IS LARGE AND DELIBERATE. Nothing since M94 is deployed,
-  because none of it changes anything on Alpaca and there has been no reason
-  to restart the running app. ASK BEFORE DEPLOYING.
 
-WHAT STAGE 1 ESTABLISHED, MEASURED NOT ASSUMED
-  ASX trading permission IS granted. Commission AUD 6.60 - the ASX Fixed
-  floor. Account equity ~1,003,733, ten times the US trial, which changes
-  WHICH RAILS BIND: expect cost-to-risk to stop binding almost entirely.
-  ASX minTick is 0.001 against 0.01 for US.
-  permId SURVIVES a Gateway restart. orderId does too, but its hazard was
-  never mutation - it is REUSE for a different order in a later session.
-  A resting stop IS visible to openTrades() and reqAllOpenOrders(), and reads
-  whyHeld='trigger' - IBKR holding it rather than working it at the exchange.
-  ORDERS BELONG TO A clientId. Visible is NOT cancellable.
-  IBKR has NO structured corporate-action feed, and that gap is now accepted
-  and labelled rather than alarmed about.
+  The log is C:\Users\mailm\AppData\Local\QuantAdvisoryTerminal\data\logs\qat.log
+  Read it through POWERSHELL, never Bash - the Bash sandbox is per-file and
+  covers writes as well as reads.
 
-THE ONE STAGE 1 QUESTION STILL OPEN
-  Q4: how far back do IBKR executions actually go? It needs a REAL FILL - the
-  only thing left that does. recent_fills is the natural place to settle it.
-  ASK THE OPERATOR BEFORE PLACING ANYTHING THAT CAN FILL.
+READ THE SESSION CHECK'S OUTPUT SCEPTICALLY. It has been wrong about this
+session in three separate ways today. If it prints a *** STALE *** block, every
+line under it describes a run that has ALREADY ENDED - that guard is live now,
+but the running build is M104 and its check 3 CANNOT FAIL for the current
+session: it will show yesterday's Alpaca "10 of 10 carry a stop" even against a
+held ASX position with none. Check positions at the broker instead, read-only:
 
-WHAT COMES NEXT IS NOT STAGE 1
-  Stage 2 - market data. DECIDED: yfinance for ASX bars, IBKR for execution.
-  Do NOT buy ASX Total during testing; neither resolver has an IBKR branch so
-  no IBKR data of any kind can reach the app. Revisit at a real paper trial.
-  Stage 3 - ASX trading rules. THE $500 MINIMUM MARKETABLE PARCEL reaches
-  position sizing directly and is implemented NOWHERE. Also tick sizes, T+2
-  against cash reconciliation, and the opening and closing auctions against
-  session logic written for a 13:30 UTC open.
-  Stage 4 - regime re-sourcing. DO NOT START until the ablation question is
-  settled; it may delete the stage entirely.
+  & ".\.venv\Scripts\python.exe" -c "import sys; sys.path.insert(0,'src'); from ib_async import IB; ib=IB(); ib.connect('127.0.0.1',4002,clientId=92,readonly=True); import time; time.sleep(2); print(ib.managedAccounts(), len(ib.positions()), len(ib.openTrades())); ib.disconnect()"
 
-STILL TRUE, AND OLDER
-  M71 fixed from the code on 17 August but STILL UNOBSERVED - no
-  app-transmitted sell has ever happened.
-  The cash floor bound 15 times on ASX and no rail models it; min_cash_reserve
-  is gt=0 BY DESIGN (config.py), so making it ablatable is an OPERATOR call.
-  M43 trading halts: DECIDED NOT TO BUILD, since ASX halts are
-  announcement-driven and Task 5 accepted that gap.
+WHAT THE SESSION IS FOR
+  Machinery validation on IBKR, not edge. Ten times the US trial's capital, so
+  cost-to-risk and the cash floor barely bind and the rail mix is NOT
+  comparable to the US trial. Six tradable names, autonomous execution armed.
+  THE THING THAT HAS NEVER HAPPENED is an entry placed by the app on IBKR. The
+  first FILL exercises recent_fills, M70/M71 and post-fill reconciliation
+  together - M104 is what stops it tripping the kill-switch on a symbol-form
+  mismatch.
 
-THE HABITS, IN THE ORDER THEY PAID THIS SESSION
-  CHECK THE BRIEF AGAINST THE CODE. The ready prompt named a script that
-  connects to nothing as the instrument for a measurement needing raw broker
-  responses.
-  MUTATE, DO NOT TRUST GREEN. Four separate tests passed for the wrong reason
-  - two cancellation tests that covered for each other, a duplicate rule where
-  "first" and "last" both happened to be right, and a latched boolean whose
-  reset nothing exercised.
-  VERIFY BY BEHAVIOUR. A cancel reported PendingCancel while being REJECTED.
-  Only a re-read caught it.
-  A FAKE CAN AGREE WITH PRODUCTION BY BEING WRONG THE SAME WAY. Every IBKR
-  fake stamped permId synchronously; real IBKR does not, and M99 hid behind
-  that agreement through fifteen tests and fourteen killed mutations. WHEN A
-  LIVE CHECK DISAGREES WITH A GREEN SUITE, SUSPECT THE FAKE.
-  CHECK CI AFTER PUSHING: gh run list --limit 3. CI runs BARE pytest; local
-  runs used python -m pytest, which also puts the CWD on sys.path. A cross-test
-  import resolved locally and failed collection in CI, so the local suite read
-  2,335 passing while SEVEN CONSECUTIVE PUSHES failed and nobody looked. Import
-  sibling test modules by BARE NAME, never as tests.a.b.c.
-  AND: ASK WHAT THE DATA IS FOR. "Announcements" was priced as a feed until
-  someone asked what fields the code reads - three - and what they gate. Half
-  the rail was in shadow mode and had never placed an order.
+IF SOMETHING LOOKS WRONG
+  Suspect the instrument before the app. Five defects today were controls or
+  messages that were TRUE WHEN WRITTEN and were falsified by IBKR arriving:
+  a probe that could not measure, a check that could not pass, a button that
+  could not fail, a log that named a person it could not know about, and a
+  healthy session that announced nothing.
+  A FAKE CAN AGREE WITH PRODUCTION BY BEING WRONG THE SAME WAY. When a live
+  check disagrees with a green suite, suspect the fake.
+
+AT THE CLOSE, NOT DURING
+  Deploy M105-M108. Build with `invoke package` then `invoke sign` - note that
+  `invoke build` runs lint+test and does NOT package. ASK BEFORE unzipping over
+  C:\QuantAdvisoryTerminal. Rollback is a rename:
+  C:\QuantAdvisoryTerminal.rollback-20260819-2149 and .env.bak-20260820-101145.
+  UPDATE DEPLOYED IN scripts/handoff_state.py AT THE MOMENT OF DEPLOYING - it
+  read a day-stale commit today and made every gap figure it reports wrong.
+
+AFTER EVERY PUSH
+  gh run list --limit 3      CI runs BARE pytest; local runs use python -m
+  pytest, which also puts the CWD on sys.path. Seven consecutive pushes failed
+  on that difference and nobody looked. Import sibling test modules by BARE
+  NAME, never as tests.a.b.c.
 
 DO NOT
+  Deploy mid-session.
   Weaken M95's UnrepresentableOrderError guard to make anything pass.
-  Trust an empty response from an empty account as evidence a method works.
+  Trust an empty answer from an empty account as evidence a method works.
   Infer cancellability from visibility in reqAllOpenOrders().
-  Deploy without asking.
-
-THE CONFIGURATION FOR AN ASX PAPER SESSION
-  QAT_BROKER=ibkr
-  QAT_MARKET=ASX
-  QAT_TRADING_MODE=paper
-  QAT_IBKR_PORT=4002
-  QAT_MARKET_DATA_SOURCE=yfinance
-  QAT_EXECUTION_MODE=auto            <- NOT the default, by design
-  QAT_AUTONOMOUS_STRATEGIES=swing    <- empty means NOTHING ever executes
-  QAT_WATCHLIST_CATEGORY=megacap     <- curated gives FOUR symbols
-
-  ASX trades 00:00-06:00 UTC (10:00-16:00 Sydney). A session run outside that
-  stands down, correctly, and measures nothing.
-
-  promotion_evidence_enforced is FALSE in paper by design - paper is where the
-  evidence is produced - so the 30-trade gate does NOT block an unattended
-  paper run.
-
-RUN THE PRE-FLIGHT FIRST, EVERY TIME
-  .\.venv\Scripts\python.exe scripts/preflight.py
-  Read-only, five minutes, non-zero exit when blocked. It will not say READY
-  about anything it could not check.
-
+  Widen the watchlist without answering the yfinance rate-limit question - it
+  hard-blocked on 101 symbols today and returned "possibly delisted" for all of
+  them, megacaps included.
 ```
 

@@ -34,13 +34,19 @@ REPO = Path(__file__).resolve().parent.parent
 # makes every other number confidently wrong.
 #
 # Updated on deploy, verified against the running build's own log line:
-#   14:35:31 Build: M90 (a9aee6e, built 2026-08-14 04:25 UTC, packaged)
+#   01:11:55 Build: M104 (e38b70c, built 19/08/2026 11:45 UTC, packaged)
 #
-# And M90 was verified by the number it exists to change, not just by its
-# banner - the same figure from the same application, fifteen minutes apart:
-#   14:23:51 Aggregate risk-at-stop 5.01%   (M89, entry prices)
-#   14:40:46 Aggregate risk-at-stop 6.34%   (M90, broker marks)
-DEPLOYED = "f537a9e"
+# Verified by behaviour as well as by the banner: the same run then logged
+# "Connecting broker: ib-adapter" and "Connected" against IB Gateway, which
+# only a build carrying M101 can do - the previous one refused broker=ibkr
+# outright.
+#
+# It read f537a9e (M94) for a full day AFTER M104 was deployed, which made the
+# deploy gap it reports confidently wrong in the one script whose purpose is
+# that nothing here is hand-maintained. This is the figure that cannot be
+# derived - only the operator knows what is installed - so it is the one that
+# has to be changed BY HAND at the moment of deploying, not afterwards.
+DEPLOYED = "e38b70c"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
