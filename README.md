@@ -6,6 +6,13 @@ backtests strategy signals, enforces risk limits, integrates with Interactive
 Brokers, and uses an LLM as an analyst that proposes and explains — while a
 human approves every live order.
 
+> **Where this actually is, as at 20 August 2026.** Deployed build **M111**.
+> Trading **ASX** through an **IBKR paper** account (Gateway on port 4002), with
+> **yfinance** for market data — Alpaca and the US market remain supported and
+> documented below, but are not what is running. No entry has yet been placed by
+> the app on IBKR. Run `scripts/handoff_state.py` for the derived figures rather
+> than trusting any number typed into a document, this one included.
+
 > **Educational / paper-trading software.** This project is for research and
 > paper trading. Live trading is at your own risk; nothing here is investment
 > advice. The default and only shipped configuration is paper trading — going

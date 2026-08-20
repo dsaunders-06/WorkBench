@@ -48,6 +48,33 @@ $ErrorActionPreference = 'Stop'
 $dataDir = Join-Path $env:LOCALAPPDATA 'QuantAdvisoryTerminal\data'
 $logPath = Join-Path $dataDir 'logs\qat.log'
 
+function Get-LogFiles($path) {
+    <#
+        M113. RotatingFileHandler keeps qat.log plus qat.log.1 .. qat.log.10,
+        and a HIGHER suffix is OLDER. Every check here used to read qat.log
+        alone.
+
+        On 20 August the file stood at 4.79 MB of a 5 MB cap - about 595 lines
+        of headroom - so the next rotation lands during a session. When it does,
+        the session's own start line moves into qat.log.1 and every check
+        anchored on it silently reports against a file that no longer contains
+        the session. That is M108's failure by a different route: the instrument
+        stays confident and stops being right.
+
+        Returns the files OLDEST FIRST. It returns files rather than lines, and
+        prints nothing, because a PowerShell function's Write-Output goes into
+        its RETURN VALUE - a status line written here would be appended to the
+        log lines and then parsed as one.
+    #>
+    $dir  = Split-Path $path -Parent
+    $name = Split-Path $path -Leaf
+    $pattern = '^' + [regex]::Escape($name) + '\.(\d+)$'
+    $backups = @(Get-ChildItem -Path $dir -Filter "$name.*" -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match $pattern } |
+        Sort-Object { [int]($_.Name -replace '^.*\.(\d+)$', '$1') } -Descending)
+    return @($backups) + @(Get-Item $path)
+}
+
 function Write-Section($title) {
     Write-Output ''
     Write-Output "=== $title ==="
@@ -97,14 +124,48 @@ if (-not (Test-Path $logPath)) {
 # --- locate the session ----------------------------------------------------
 # Bounded tail, then slice from the last "session started". Parsing every line
 # of a multi-megabyte log on 5.1 is slow enough to discourage running the check.
-$raw = Get-Content $logPath -Tail 20000
+# @() wrapped: a single-element array returns from a function as a SCALAR,
+# and StrictMode then rejects .Count on it.
+$logFiles = @(Get-LogFiles $logPath)
+$raw = @()
+foreach ($f in $logFiles) { $raw += Get-Content $f.FullName }
+if ($raw.Count -gt 20000) { $raw = $raw[($raw.Count - 20000)..($raw.Count - 1)] }
+
+$logSizeMb = (Get-Item $logPath).Length / 1MB
+$logPct = [int](($logSizeMb / 5.0) * 100)
+Write-Output ''
+if ($logFiles.Count -gt 1) {
+    Write-Output ("log      qat.log {0:N2} MB ({1}% of cap), {2} rotated file(s) also read" -f $logSizeMb, $logPct, ($logFiles.Count - 1))
+} elseif ($logPct -ge 90) {
+    Write-Output ("log      qat.log {0:N2} MB ({1}% of cap) - ROTATION IMMINENT; backups will be read automatically" -f $logSizeMb, $logPct)
+} else {
+    Write-Output ("log      qat.log {0:N2} MB ({1}% of cap)" -f $logSizeMb, $logPct)
+}
+
+# Anchor on the RUN, not on the session (M113).
+#
+# This used to slice from the last "Trading session started". A session that
+# begins with the market SHUT never logs that line - it logs "stood down" - so
+# on 20 August the 16:41 launch produced no anchor at all and the slice fell
+# back to the 09:49 run, reporting that run's start time and error count beside
+# the 16:41 run's build banner. Two runs in one report, again.
+#
+# M108 fixed the case where the market was OPEN and added a stale guard, but
+# that guard compares against a RUNNING process - so with the app stopped it
+# cannot fire, which is exactly when an operator reads this.
+#
+# "Logging to ..." is the FIRST line configure_logging writes, once per
+# process, whatever the market is doing and whether the process still lives.
+# Measured on the live log: 92 of each against 92 runs. The build banner is
+# only in 75 of them, so it cannot be the anchor - and it is printed BEFORE
+# "Starting Quant Advisory Terminal", which is why anchoring there dropped it.
 $startIndex = -1
 for ($i = $raw.Count - 1; $i -ge 0; $i--) {
-    if ($raw[$i] -cmatch 'Trading session started') { $startIndex = $i; break }
+    if ($raw[$i] -cmatch 'Logging to ') { $startIndex = $i; break }
 }
 if ($startIndex -lt 0) {
     Write-Output ''
-    Write-Output 'No "Trading session started" in the last 20,000 log lines - no session to report.'
+    Write-Output 'No app start line in the last 20,000 log lines - nothing to report.'
     exit 0
 }
 
@@ -116,45 +177,36 @@ foreach ($line in $raw[$startIndex..($raw.Count - 1)]) {
 }
 
 # ([datetime]$o.ts) is a DateTime, not a string - format it, never .Substring it.
-$sessionStart = ([datetime]$rows[0].ts).ToLocalTime()
+$runStart = ([datetime]$rows[0].ts).ToLocalTime()
 $sessionStartUtcIso = ([datetime]$rows[0].ts).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss')
+$sessionLine = $rows | Where-Object { $_.message -cmatch 'Trading session started' } | Select-Object -First 1
 $standDown = $rows | Where-Object { $_.message -cmatch 'Trading session stood down' } | Select-Object -Last 1
 
 Write-Section 'SESSION'
-Write-Output ("started    {0}" -f $sessionStart.ToString('yyyy-MM-dd HH:mm:ss'))
-# A SECOND anchor, because the first one can be missing. Until M108 a session
-# that began life active logged no "Trading session started" at all - the
-# controller is constructed active and an OPEN market is not a transition - so
-# this slice silently fell back to the PREVIOUS run. On 20 August that reported
-# the 09:49 session's start, its 1,056 errors and its adopted Alpaca positions
-# against a session that had begun at 11:12: three wrong answers from one
-# missing line.
-#
-# The process start is the fact that cannot go missing. If the session line
-# predates it, everything below is about a run that has already ended.
+Write-Output ("run started {0}" -f $runStart.ToString('yyyy-MM-dd HH:mm:ss'))
 if ($app) {
     $appStart = (@($app) | Sort-Object StartTime | Select-Object -First 1).StartTime
-    if ($sessionStart -lt $appStart) {
+    if ($runStart -lt $appStart.AddSeconds(-5)) {
         Write-Output ''
-        Write-Output ('*** STALE: this session line predates the RUNNING app (started {0}). ***' -f $appStart.ToString('yyyy-MM-dd HH:mm:ss'))
-        Write-Output '*** Everything below describes a PREVIOUS run, not the one now going.  ***'
-        Write-Output '*** If the current run logged no start line, the build predates M108.  ***'
+        Write-Output ('*** STALE: this run predates the RUNNING app (started {0}). ***' -f $appStart.ToString('yyyy-MM-dd HH:mm:ss'))
+        Write-Output '*** Everything below describes a PREVIOUS run, not the one now going. ***'
         Write-Output ''
     }
+} else {
+    Write-Output 'app         NOT RUNNING - this is the last run, already ended'
+}
+if ($sessionLine) {
+    Write-Output ("session     ACTIVATED {0}" -f ([datetime]$sessionLine.ts).ToLocalTime().ToString('HH:mm:ss'))
+} else {
+    Write-Output 'session     never activated in this run (market shut, or stood down at launch)'
 }
 if ($standDown) {
-    Write-Output ("stood down {0}" -f ([datetime]$standDown.ts).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
-} else {
-    Write-Output 'stood down (still running)'
+    Write-Output ("stood down  {0}" -f ([datetime]$standDown.ts).ToLocalTime().ToString('yyyy-MM-dd HH:mm:ss'))
+} elseif ($app) {
+    Write-Output 'stood down  (still running)'
 }
 $build = $rows | Where-Object { $_.message -cmatch '^Build:' } | Select-Object -Last 1
-if (-not $build) {
-    # The build banner is printed at launch, which may precede the session start.
-    $build = $raw | Where-Object { $_ -cmatch '"Build: ' } | Select-Object -Last 1 | ForEach-Object {
-        try { $_ | ConvertFrom-Json } catch { $null }
-    }
-}
-if ($build) { Write-Output ("build      {0}" -f $build.message) }
+if ($build) { Write-Output ("build       {0}" -f $build.message) }
 
 # --- the four bell checks --------------------------------------------------
 Write-Section 'THE FOUR CHECKS'
@@ -228,20 +280,25 @@ if ($regime -and $notClassifying) {
 }
 $down = @($rows | Where-Object { $_.message -cmatch 'MARKET DATA DOWN' })
 Write-Output ("2 feed     MARKET DATA DOWN x{0}" -f $down.Count)
-# Searched across the WHOLE tail, not the session slice. Adoption happens at
-# LAUNCH, which is always before the bell - scoping this to the session made the
-# single most important check unable to pass, every time. Found by running it.
-$stops = $null
-for ($i = $raw.Count - 1; $i -ge 0; $i--) {
-    if ($raw[$i] -cmatch 'carry a stop resting at the broker') {
-        try { $stops = $raw[$i] | ConvertFrom-Json } catch { $stops = $null }
-        break
-    }
-}
+# Scoped to the RUN (M113), which it could not be before.
+#
+# This searched the WHOLE tail, because adoption happens at LAUNCH - before the
+# bell - and scoping it to the SESSION made the most important check unable to
+# pass. True at the time. The cost was that it could not FAIL either: on
+# 20 August it reported a reassuring "10 of 10 carry a stop" from an Alpaca run
+# the previous day, against a live IBKR session holding nothing, and that was
+# the first thing an operator read.
+#
+# The run slice now starts at the process's own first log line, so adoption is
+# inside it. A check that cannot fail is not a check.
+$stops = $rows | Where-Object { $_.message -cmatch 'carry a stop resting at the broker' } | Select-Object -Last 1
+$nothingToAdopt = $rows | Where-Object { $_.message -cmatch 'No pre-existing broker positions to adopt' } | Select-Object -Last 1
 if ($stops) {
     Write-Output ("3 stops    {0} (at {1})" -f $stops.message, ([datetime]$stops.ts).ToLocalTime().ToString('MM-dd HH:mm:ss'))
+} elseif ($nothingToAdopt) {
+    Write-Output ("3 stops    nothing to adopt - the account was FLAT at launch {0}. No protection to verify, and none missing." -f ([datetime]$nothingToAdopt.ts).ToLocalTime().ToString('MM-dd HH:mm:ss'))
 } else {
-    Write-Output '3 stops    *** NO ADOPTION LINE FOUND *** protection is unverified'
+    Write-Output '3 stops    *** NO ADOPTION LINE IN THIS RUN *** protection is unverified'
 }
 $unprot = @($rows | Where-Object { $_.message -cmatch 'POSITION UNPROTECTED' })
 Write-Output ("4 unprot   POSITION UNPROTECTED x{0}" -f $unprot.Count)

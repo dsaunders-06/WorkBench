@@ -263,6 +263,84 @@ now known rather than assumed. What Alpaca does to a held QUANTITY and to a
 resting OCO through a split is still unmeasured, and M39's adjustment waits on
 it.
 
+## M113 - the instruments that read the record were reading the wrong one  **[BUILT 20 August]**
+
+`session_check.ps1` read `logs\qat.log` and nothing else. `RotatingFileHandler`
+is configured at 5 MB with 10 backups and the file stood at **4.79 MB - 96%,
+about 595 lines of headroom** - so the next rotation lands mid-session, moving
+the run's own start line into `qat.log.1` while every check carried on
+reporting confidently against what remained. M108's failure by another route.
+
+It also anchored the slice on `Trading session started`, which a session
+beginning with the market SHUT never logs - it logs `stood down`. On 20 August
+the 16:41 launch produced no anchor, the slice fell back to the 09:49 run, and
+the report showed that run's start time beside the 16:41 run's build banner.
+M108's stale guard could not catch it because that guard compares against a
+RUNNING process, and the app was stopped - which is exactly when the check is
+read. The anchor is now `Logging to`, the first line every run writes:
+92 of them against 92 runs, where the build banner appears in only 75.
+
+**Check 3 can now fail.** It searched the whole tail because adoption happens at
+launch, before the bell - true, and the cost was that it could not fail either:
+on 20 August it reported a reassuring "10 of 10 carry a stop" from the previous
+day's ALPACA run against a live IBKR session holding nothing. The run slice now
+starts at the process's first line, so adoption is inside it.
+
+Documentation corrected in the same pass: `ROADMAP.md` was four milestones
+behind, `LIVE_TRADING_READINESS.md` carried three claims falsified by the code,
+and the ibkr-move plan still had Task 4 unticked against M98, which built it.
+
+## M112 - a missing DAY disqualified a whole SYMBOL, so breadth was never on  **[BUILT 20 August — NOT DEPLOYED]**
+
+`_aligned_breadth` required TOTAL coverage of the benchmark's dates. Windows are
+sized per symbol, so the benchmark traded one day the stocks did not and every
+stock was missing its first date: **0 of 7 kept on live data, 0 of 100 in the
+live session.** Breadth has been constant-zero for the whole ASX period and the
+regime HMM has been fitting a singular column while logging a warning saying so.
+Now carries the last close across a gap and drops only a symbol absent for more
+than 10% of the window. 7 of 7 kept.
+
+**Held back deliberately.** It moves the regime label and therefore the exposure
+scalar on every position, and that is to be measured first.
+
+## M111 - UTC stood in for the trading day  **[BUILT + DEPLOYED 20 August]**
+
+Two defects. The daily-loss baseline re-armed on a UTC date change, which under
+AEDT rolls an hour AFTER the ASX open - from 5 October it would have handed a
+book already down a fresh allowance mid-session. And the daily bar boundary was
+UTC midnight, so a yfinance bar stamped `2026-08-20 00:00:00+10:00` floored to
+the 19th: **every seeded ASX bar carried the day before the one it traded on,
+and today's half-finished session was admitted as a completed bar** - the
+opposite of what `seed` documents. The swing entry's "previous bar" therefore
+contained today's prices. Both live since the ASX move, not future problems.
+
+## M110 - four things the app or its documents stated that were not true  **[BUILT 20 August — DEPLOYED in the M111 build]**
+
+Six dead ASX tickers pruned; `--sample` now covers a small watchlist and states
+its coverage instead of implying it checked everything; the entry-record restore
+line no longer claims positions are held when it has only read a file. Two of
+the handoff's own claims were falsified against the code in the same pass.
+
+## M109 - an allow list that silenced six correct signals said nothing  **[BUILT + DEPLOYED 20 August]**
+
+`swing` proposed entries on all six ASX names pre-open and every one was refused:
+the allow list still named the previous day's symbols. Nothing said so - the
+refusals went only to the decision journal. The list is now announced at startup
+whether or not it looks wrong, and the pre-flight warns on a partial exclusion
+instead of reporting OK.
+
+## M105-M108 - four defects the first live ASX session found  **[BUILT 20 August — DEPLOYED in the M109 build]**
+
+* **M105** "Test Broker Connection" returned a tick without connecting. True when
+  written; IBKR falsified it. Verified against the real thing on 20 August at
+  16:45:37 - it now connects, synchronises and disconnects in 210 ms.
+* **M106** the pre-flight could not see two settings cancelling each other.
+* **M107** the app blamed the operator for what a keystroke could do. `clicked`
+  fires on Space or Enter when focused; the log asserted "operator (dashboard)"
+  regardless. The operator said they had not clicked it, and they were right.
+* **M108** a session that began in the healthy state announced nothing, so every
+  tool anchored on "Trading session started" reported the PREVIOUS run.
+
 ## M95 - IBKR sent a protective stop as a MARKET order  **[STAGES A AND B BUILT 19 August]**
 
 Found while preparing Task 1's single write, and it outranks everything Task 1

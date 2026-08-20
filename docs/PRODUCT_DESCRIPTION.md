@@ -1,5 +1,17 @@
 # Quant Advisory Terminal — Product Description
 
+> **⚠️ SUPERSEDED — this describes build M37 on a US / Alpaca account.**
+> As at 20 August 2026 the deployed build is **M111** and the system trades
+> **ASX through Interactive Brokers**, with yfinance for market data. Roughly
+> seventy milestones separate the two, including the entire IBKR path, the
+> regime engine's macro re-seeding, corporate actions, and the research harness.
+>
+> The claim below that this document "describes what the software currently
+> does" is the part that has aged worst, because it is the reason to trust it.
+> **Read it as the record of the M37 product, not as current capability.**
+> For current state run `scripts/handoff_state.py`; for the milestone record see
+> `ROADMAP.md`.
+
 **As at 1 August 2026. Build M37.**
 
 This document describes what the software currently does, verified against the
@@ -30,7 +42,7 @@ only in the Windows Credential Manager and never in configuration files.
 
 | | |
 |---|---|
-| Market | US equities, Alpaca paper account |
+| Market | US equities, Alpaca paper account — **as at M37. Now ASX via IBKR paper; see the banner above** |
 | Mode | Paper trading, unattended execution enabled for one strategy |
 | Deployed strategy | `swing` |
 | Watchlist | 100 symbols |

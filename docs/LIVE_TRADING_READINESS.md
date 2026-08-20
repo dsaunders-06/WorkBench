@@ -1,5 +1,13 @@
 # Live trading readiness
 
+> **⚠️ CORRECTED 20 AUGUST 2026, and this document predates the ASX/IBKR move.**
+> It was drafted against an Alpaca-only, US-only system. Three of its claims were
+> checked against the code on 20 August and found false - they are struck and
+> corrected in place below rather than deleted, because the reasoning around them
+> still holds. The locks table has gained the IBKR-only lock. **Section 3 (the
+> market problem) and section 6 (the order to answer things in) are still written
+> for the US phase and have NOT been rewritten** - read them as history.
+
 **Drafted 6 August 2026, against build M56+M51.** The reference for the question
 "what has to be true before this trades real money", written while the answer is
 clearly *not yet* — which is the right time to write it, because the list is
@@ -21,10 +29,14 @@ increasing order of deliberateness:
 | `trading_mode` | Config, defaults to `paper` | A settings edit |
 | `live_trading_confirmed` | Constructor argument on the broker adapter | **A code change** — no caller anywhere in `src/` passes it |
 | `allow_autonomous_live_trading` | Separate flag with no Settings UI | A deliberate config edit, checked by the autonomy gate |
+| `ibkr_port` **(IBKR only, added since)** | `trading_mode='paper'` against a LIVE port (4001 / 7496) is REFUSED | Not openable by mistake - it exists to stop the opposite error |
 
 Setting `trading_mode='live'` **on its own makes the application refuse to
-start** — `AlpacaLiveTradingNotConfirmedError` is raised when the adapter is
-constructed. That is by design: reaching a real-money endpoint can never be the
+start** — `AlpacaLiveTradingNotConfirmedError` on Alpaca, and the equivalent on
+`IBAdapter`, is raised when the adapter is constructed. IBKR adds one the
+US path has no concept of: claiming `paper` while pointed at a live Gateway port
+raises `LivePortInPaperModeError`, because every banner in the app would read
+"paper" while real orders were reachable. That is by design: reaching a real-money endpoint can never be the
 result of one mistaken edit.
 
 The third lock means there is no supported configuration in which this system
@@ -80,8 +92,14 @@ intended market.
 
 Each of these is survivable on paper and expensive live.
 
-**M39 — Corporate actions.** Nothing in the order, position or protection path
-knows they exist. One ordinary 2-for-1 split produces four failures from a
+**M39 — Corporate actions.** ~~Nothing in the order, position or protection path
+knows they exist.~~ **FALSE as of 20 August** - `domain/corporate_actions/` exists
+with `detector`, `adjuster`, `monitor` and `announcements`, and M60 added the
+quarantine. What remains true, and is worse on this broker: **IBKR serves no
+announcements at all**, so the detection machinery has no input and a split
+cannot be seen before its ex-date. That was accepted deliberately (Task 5,
+19 August) and the app states it at startup. The failure modes below therefore
+still describe the ASX position, by a different cause: One ordinary 2-for-1 split produces four failures from a
 non-event: the kill-switch trips on the doubled share count, the resting stop
 sits at roughly twice the new price, the re-arm restores protection at a level
 that liquidates the position, and the trade's P&L is wrong by the split factor.
@@ -103,7 +121,10 @@ modelled at a flat 5bps regardless of size, time of day or spread. The first
 real data point is not encouraging: the CVS stop gapped through and cost
 **1.68R, not the 1R the sizing assumes**. If that is typical, every position is
 sized against an understated downside — and `entry_slippage` is recorded on
-every trade specifically to answer this, and is currently read by nothing.
+every trade specifically to answer this. ~~currently read by nothing~~ - **FALSE
+as of 20 August**: `domain/evaluation/diagnostics.py` reads it and reports
+`mean_entry_slippage`. The instrument exists; what is still missing is the trade
+count to make it mean anything.
 
 ---
 

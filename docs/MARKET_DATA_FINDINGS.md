@@ -1,5 +1,46 @@
 # Market data — what this account actually has, measured 8 August 2026
 
+> **⚠️ EVERYTHING BELOW IS THE US / ALPACA ACCOUNT.** The system moved to ASX and
+> IBKR on 19-20 August. Alpaca is no longer the data source and IBKR is
+> execution-only in this codebase. The ASX findings are the section immediately
+> below; the original 8 August measurements are kept unchanged beneath them
+> because they are still the record of what the US account had.
+
+## ASX / yfinance — measured 20 August 2026, the first live session
+
+**yfinance cannot sustain a 100-symbol, 60-second poll.** After roughly twenty
+minutes it hard-blocked and answered "possibly delisted" for ALL 101 symbols at
+once - megacaps included, minutes after pricing them - and the feed produced no
+ticks. The 499-session replay never exposed this because replay reads history in
+BULK, ONCE; live polling is a different access pattern against the same vendor.
+
+**It is not a per-symbol fact and must not be read as one.** M106 rewrote the
+pre-flight's feed check for exactly this: a source that prices NONE of the
+symbols asked for has failed as a SOURCE, and listing a hundred tickers sends an
+operator to check the symbols instead of the one thing that is wrong.
+
+**The block is easy to re-trigger with diagnostics.** On the evening of
+20 August five separate probe fetches while investigating an unrelated defect
+blocked it again for over an hour, which delayed a measurement that needed it.
+Cache the panel; re-fetching per attempt is the same hazard at a smaller scale.
+
+**Six ASX tickers in the megacap list were dead** - AWC, BKW, DHG, IPL, NSR, SVW
+- returning no real bars at all. `fetch_daily_panel` correctly discarded them and
+named them rather than seeding synthetic data. Pruned in M110.
+
+**Daily bars are stamped exchange-local midnight**, e.g. `2026-08-20 00:00:00+10:00`
+for the 20 August session. Flooring those to a UTC boundary dated every bar a day
+early and admitted today's partial session as a completed bar - see M111.
+
+**The open question this leaves is Stage 2:** which source supplies ASX bars.
+yfinance is free and proven across 499 sessions but unofficial, rate-limited, and
+fabricates bars on a 404. IBKR would need an `IBHistorySource` written with
+pacing. A third vendor is the only option that would let the survivorship caveat
+come off the research manifests.
+
+---
+
+
 Written because the question gates two things — M43 (halts) and M32 (ASX) — and
 because the assumptions in circulation turned out to be wrong in both
 directions.

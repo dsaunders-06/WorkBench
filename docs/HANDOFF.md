@@ -1,9 +1,9 @@
-# Handoff — 19 August 2026, the day the US trial closed
+# Handoff — 20 August 2026, after the first two ASX sessions
 
 Paste the block at the bottom into a new context window. Everything above it is
 the detail that block points at.
 
-**Sections dated before 19 August are history and are kept for their reasoning,
+**Sections dated before 20 August are history and are kept for their reasoning,
 not as current state.** Where the two disagree the paste block and
 `handoff_state.py` win. This file has been wrong about its own next steps twice:
 on 14 August three of four were already done, void, or misstated, and on
@@ -667,7 +667,12 @@ Compare `pre-split` against `post-split`, in order of how much each matters:
 
 ---
 
-# ⚠️ Found and NOT fixed
+# ⚠️ Found and NOT fixed — MOSTLY FIXED NOW, read the strikethroughs
+
+Three of the four below are struck through and settled. **Only M71 is still
+live**, and it is blocked on an app-transmitted sell, which has never happened.
+M66 in particular was stale here for six days and cost a wrong recommendation
+on 20 August.
 
 ## ~~M66 — the risk cap that gates every entry uses ENTRY prices~~ SHIPPED 14 AUGUST
 
@@ -762,9 +767,10 @@ transmitted sell** — do that before designing it.
 
 # What has landed since 8 August
 
-**Those 18 were deployed on 12 August as `M86 (7812c22)`. M39, M87 and M88 have
-landed since and are ALL installed** — the running build is `M88 (45980a5)` and
-the deploy gap is zero. Run `handoff_state.py` rather than trusting this
+**Those 18 were deployed on 12 August as `M86 (7812c22)`.** ~~the running build
+is `M88 (45980a5)` and the deploy gap is zero~~ — **stale: as at 20 August the
+deployed build is `M111 (5e88ee5)` and the gap is one milestone, M112.** The
+paragraph below already warned this sentence would go stale, and it did, twice. Run `handoff_state.py` rather than trusting this
 paragraph: its `DEPLOYED` constant is the one figure it cannot derive, and the
 milestone label beside it reads out of `version.py` at that commit rather than
 being typed. **This sentence has already been stale once** — it still said M39
@@ -1113,13 +1119,14 @@ THE HABITS THAT FOUND EVERYTHING
 
 ---
 
-## 🔑 Prompt to paste THE DAY THE IBKR ACCOUNT IS ACTIVE
+## ~~Prompt to paste THE DAY THE IBKR ACCOUNT IS ACTIVE~~ — SPENT 19-20 AUGUST
 
-Separate from the block above on purpose. That one starts a new context window;
-this one starts Stage 1. Paste it when the live account has ASX permissions and
-IB Gateway is running.
+**Do not paste this.** The account is active and two ASX sessions have run. Kept
+only because the Gateway setup under it is still the reference for the port
+numbers and the API configuration. The current paste block is at the very bottom
+of this file.
 
-### IB Gateway setup — do this BEFORE pasting the prompt above
+### IB Gateway setup — still current reference
 
 Derived from this application's own config, so the port numbers are the ones the
 code actually checks. Menu paths are version-specific; verify them in the UI
@@ -1232,3 +1239,52 @@ DO NOT
   them, megacaps included.
 ```
 
+---
+
+# 📋 PROMPT TO PASTE — next session, as at 20 August 2026 evening
+
+Continuing QAT (Quant Advisory Terminal) at C:\Claude Programming.
+Paper account throughout - no real money.
+
+FIRST, BEFORE ANYTHING ELSE:
+
+    & "C:\Claude Programming\scripts\session_check.ps1"     (NO ARGUMENTS, EVER)
+    .\.venv\Scripts\python.exe scripts/handoff_state.py
+
+Read the live data dir through POWERSHELL, never Bash - the Bash sandbox serves
+a stale snapshot and will hand you July's numbers without erroring.
+
+WHERE THINGS STAND
+  Deployed M111 (5e88ee5). Repo is one milestone ahead: M112 is committed and
+  deliberately NOT deployed. The app is DOWN. Broker flat, equity ~1,003,843.
+  No entry has ever been placed by the app on IBKR - that is still the
+  experiment, and nothing since 19 August has changed it.
+
+THE FIRST THING THAT NEEDS A DECISION
+  M112 turns the regime breadth feature from a constant into a real one, which
+  moves the exposure scalar on every position. It must be MEASURED before it
+  ships. yfinance was rate-limited on the evening of 20 August; the harness at
+  scratchpad/measure_breadth.py caches its panel so a retry costs one fetch.
+  Until that is settled, do not land anything on top of M112 - while it is the
+  tip commit, excluding it is a checkout; afterwards it is a revert.
+
+BEFORE THE 10:00 OPEN
+  The app must be up and correctly configured BEFORE the open, not restarted
+  into a live session. Do NOT use the dashboard force-start to "catch" a
+  pre-open setup: on 20 August that produced six signals against stale closing
+  prices on a shut market. M107 made the button NoFocus so a keystroke cannot
+  arm it any more.
+
+  Confirm at launch that the build says M111 - it has never been read back.
+
+DO NOT
+  Trust a quiet log as a healthy app. On 20 August the log went silent at 17:01
+  because the process had EXITED, and that read identically to an idle feed.
+  session_check checks the process first; use it rather than an ad-hoc query.
+  Deploy mid-session. Weaken M95's UnrepresentableOrderError guard.
+  Widen the watchlist without settling the Stage 2 data question.
+  Re-fetch yfinance repeatedly while investigating - that is what blocked it.
+
+AFTER EVERY PUSH
+  gh run list --limit 3. CI runs BARE pytest; import sibling test modules by
+  BARE NAME.
