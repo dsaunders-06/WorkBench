@@ -54,7 +54,9 @@ source.
 
 Stood down cleanly at 16:00:19; daily and weekly reports written at 16:02. **No
 trades, no signals, no sizing decisions.** Equity +$109.93 (+0.01%) with cash
-unchanged — mark/FX drift, not trading.
+unchanged — **accrued interest**, queried from the account rather than guessed
+at. An earlier note here called it FX drift; the account is single-currency AUD,
+so there is no FX to drift.
 
 31 of 94 symbols were armed all afternoon and **none crossed**. At the close the
 nearest were A2M +0.29%, NHF +0.48%, ANZ +0.59%. The market declined to
@@ -158,43 +160,50 @@ for each gap and is worth reading; the list lives here.
 
 ### Correctness and hygiene
 
-8. **M132 — the risk model is in the wrong currency.** `risk_budget` is the
-   broker's base currency (USD); `stop_distance` is AUD, and
-   `risk_engine/engine.py:229-231` divides one by the other. MEASURED at AUDUSD
-   0.7164: positions come out **~28% smaller than intended** and a "1% risk"
-   trade actually risks **0.72%**. `affordable_shares = spendable / price` and
-   `max_order_notional` (a bare `50_000.0` with no currency) cross the same
-   boundary and err the same conservative way, which is why nothing has ever
-   tripped over it. The safe direction is an ACCIDENT of the pair being below
-   parity; above it, the same code over-sizes. Alongside it,
-   `from_ib_account_values` ignores `value.currency` and lets the last matching
-   row win — harmless while AUD balances are zero, dangerous the moment they
-   are not. **Do not fix this the night before a session**: it undersizes, so
-   waiting costs nothing, and changing the sizing rail would make the next
-   result uninterpretable.
+8. **The exposure metric counts accrued interest as exposure.**
+   `metrics.py:_exposure_ratios` computes `(equity - cash) / equity`. With no
+   positions at all the daily report prints "Avg exposure 0.2%, Peak exposure
+   0.2%", and every cent of that is `AccruedCash`. `GrossPositionValue` is the
+   figure that means market exposure and reads 0.00. Minor, but it will overstate
+   exposure by the accrued amount once positions exist.
+   > **M132 IS RETRACTED — the risk model is NOT in the wrong currency.**
+   > Queried the live account 21 August: **the base currency is AUD**, not USD.
+   > Every account tag reports AUD, and `$LEDGER-TotalCashBalance` shows the
+   > identical 1,001,865.24 for both `AUD` and `BASE` — if BASE were USD it
+   > would be a converted, different number. So `risk_budget` (AUD) divided by
+   > `stop_distance` (AUD) is dimensionally correct, there is no 28% undersize,
+   > and `max_order_notional = 50_000` is AUD matching AUD prices.
+   >
+   > The claim was built on the IBKR-move plan's line *"Paper accounts start
+   > with USD 1,000,000"* plus a round million, and never checked against the
+   > broker. Reading a document instead of querying the account, inside an audit
+   > whose purpose was checking claims against reality.
+   >
+   > What survives is smaller: `from_ib_account_values` still ignores
+   > `value.currency` and lets the last matching row win. Harmless while the
+   > account is single-currency AUD — which it is — and worth fixing before it
+   > ever holds a second one.
 9. **Stage 3 ASX rules — the rest.** Tick sizes are done (M123). Still absent:
-   the $500 minimum marketable parcel (unlikely to bind at $1M equity), T+2, and
-   the auctions against session logic written for a 13:30 UTC open.
+   the $500 minimum marketable parcel (unlikely to bind at ~1M AUD equity), T+2,
+   and the auctions against session logic written for a 13:30 UTC open.
 10. **The liquidity filter does not filter.** `average_daily_volume` is a
     deterministic RNG seeded on the ticker — a synthetic number between 10,000
     and 20,000,000, not real volume — so `QAT_WATCHLIST_MIN_AVG_VOLUME` screens
     on noise. Harmless across 94 megacaps that are liquid by construction;
     actively misleading if the universe widens beyond them.
-11. **The $2,087.83 that is not cash.** Equity minus cash is a steady 2,087.83
-    reported as 0.2% exposure while the OMS holds no positions.
-12. **News yield at 94 symbols.** Live in the deployed build, so measurable on
+11. **News yield at 94 symbols.** Live in the deployed build, so measurable on
     Monday. The only measurement is six ASX names yielding two corroborated
     stories; if 94 yield four, the feature is honest and nearly empty.
-13. **`invoke build` does not build.** `@task(pre=[lint, test])` with a `pass`
+12. **`invoke build` does not build.** `@task(pre=[lint, test])` with a `pass`
     body — returns 0 with a green suite while `dist/` keeps yesterday's exe.
     Packaging is `invoke package`, then `invoke sign`.
-14. **Retire the Alpaca CODE paths?** Open question. The adapter and market-data
+13. **Retire the Alpaca CODE paths?** Open question. The adapter and market-data
     source are still in the tree and still tested, and `alpaca_source.py` is the
     reference implementation M119's retry came from. The 21 August decision was
     about DATA.
-15. **`migrate_ledger_eras.py` is superseded** by `retire_alpaca_era.py`. Dead
+14. **`migrate_ledger_eras.py` is superseded** by `retire_alpaca_era.py`. Dead
     script; keep or delete deliberately.
-16. **Design-system debt in the screens.** `docs/UI_UX_APPROACH.md` records
+15. **Design-system debt in the screens.** `docs/UI_UX_APPROACH.md` records
     Group 4 (every screen restyled) as complete, and it is. What survives,
     RE-MEASURED 21 August: **20 `setStyleSheet` calls across seven files
     hand-write what a `theme` helper returns**, and 8 of those hardcode a pixel
@@ -202,10 +211,9 @@ for each gap and is worth reading; the list lives here.
     5, `risk_console.py` 3. One colour constant lives outside `theme.py`.
     Raw hex IS solved — 18 sites, all inside `theme.py`, guarded by a passing
     test — so that document's "25 raw-hex sites" note is stale and now says so.
-    The guard catches hex and cannot catch a primitive written longhand, which
-    is why the next restyle that should be one edit to `theme.py` will not be.
+    The guard catches hex and cannot catch a primitive written longhand.
     Nothing is wrong on screen; this is debt, not a defect.
-17. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+16. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
@@ -234,7 +242,8 @@ found that blocks a fill. Recorded so the next person does not repeat it:
   reconciliation mismatch TRIPS THE KILL SWITCH. All four IBKR boundaries now
   translate.
 
-**Closed 21 August:** the ASX breadth feature (M112, verified live at 94 breadth
+**Closed 21 August:** the $2,087.83 that was not cash — it is `AccruedCash`,
+accrued interest, queried from the live account rather than guessed at; the ASX breadth feature (M112, verified live at 94 breadth
 symbols); the Stage 2 data decision (news → Yahoo by operator decision, bars →
 yfinance, measured at 95/95 with zero empty polls across a full session); tick
 sizes (M123); the Force-Start confirmation (M124); the broker connect retry and
