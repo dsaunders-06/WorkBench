@@ -58,10 +58,11 @@ source.
 > (`9C63B69D…306C`). Rollback artefact `QuantAdvisoryTerminal-M130-f5b9bd2.zip`
 > is still in `dist/`.
 >
-> ⚠️ **The one thing not yet verified is the read-back.** The app has not been
-> launched since the copy, so no `Build:` line has come off its own log. Until
-> `session_check` prints `Build: M134 (2d7777c, …, packaged)`, the deployed
-> build is an intention, not an observation. **Check it on the first launch.**
+> ✅ **Read back off its own log at 20:10**, on a run that connected to the
+> broker: `Build: M134 (2d7777c, built 21/08/2026 10:00 UTC, packaged)`. Launched
+> 20:09:43, stood down 20:10:51 with the account FLAT and nothing to adopt, zero
+> ERROR/CRITICAL, three equity samples written. The deployed build is an
+> observation, not an intention.
 
 ### The account is AUD-base. Verified, not assumed.
 
