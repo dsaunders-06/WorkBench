@@ -26,10 +26,18 @@ class _Ledger:
     def __init__(self, trades: list[ClosedTrade]) -> None:
         self._trades = trades
 
-    def closed_trades(self, strategy: str | None = None) -> list[ClosedTrade]:
-        if strategy is None:
-            return list(self._trades)
-        return [t for t in self._trades if t.strategy == strategy]
+    def closed_trades(
+        self, strategy: str | None = None, market: str | None = None
+    ) -> list[ClosedTrade]:
+        # `market` since M122: the estimator scopes to the market being traded,
+        # because "swing" names the same code on two exchanges in two
+        # currencies and this list becomes a position size.
+        trades = list(self._trades)
+        if strategy is not None:
+            trades = [t for t in trades if t.strategy == strategy]
+        if market is not None:
+            trades = [t for t in trades if t.market == market]
+        return trades
 
 
 def _trade(pnl: float, strategy: str = "swing", n: int = 0) -> ClosedTrade:
@@ -43,6 +51,11 @@ def _trade(pnl: float, strategy: str = "swing", n: int = 0) -> ClosedTrade:
         stop_price=95.0,
         opened_at=datetime.now(UTC) - timedelta(days=60 - n),
         closed_at=datetime.now(UTC) - timedelta(days=40 - n),
+        # Settings here take the default market, so these have to be US trades
+        # to be measurable at all after M122 - which is the point of the
+        # scoping, not an inconvenience of it.
+        market="US",
+        currency="USD",
     )
 
 

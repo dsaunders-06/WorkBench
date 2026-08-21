@@ -12,12 +12,15 @@ promote noise.
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from datetime import timedelta
 from statistics import fmean, pstdev
 
 from qat.domain.performance.trades import ClosedTrade, EquityPoint
+
+logger = logging.getLogger(__name__)
 
 # Below this, per-trade statistics are not reported at all.
 MIN_TRADES_FOR_STATS = 5
@@ -101,6 +104,22 @@ def compute_stats(trades: list[ClosedTrade]) -> PerformanceStats:
             worst_trade=None,
             total_costs=0.0,
             gross_pnl=0.0,
+        )
+
+    # M122. Every figure below is a SUM or a mean over net_pnl, which is only
+    # meaningful if every row is in one currency. The ledger carried no
+    # currency until M122, so a total could silently add USD to AUD and read
+    # as a number. Said once, loudly, rather than returning a plausible lie -
+    # and not raised, because a report that crashes on a mixed file tells the
+    # operator less than one that computes and warns.
+    currencies = {trade.currency for trade in trades if trade.currency is not None}
+    if len(currencies) > 1:
+        logger.error(
+            "MIXED-CURRENCY TOTALS: %d closed trades span %s. Every money figure "
+            "below adds them together and is therefore meaningless. Scope the "
+            "trades to one market before reading these numbers.",
+            len(trades),
+            ", ".join(sorted(currencies)),
         )
 
     # Net, every one of them (M28). Expectancy, profit factor and average R

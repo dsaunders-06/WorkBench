@@ -184,7 +184,34 @@ from qat.domain.display_dates import format_display_date
 # date lagged the UTC one and no order was placed. CI passed at 23:14 UTC on
 # 20 August and the same commit failed at 00:30 UTC on the 21st - green or red
 # by the hour of the push, on the one test covering the unattended first fill.
-MILESTONE = "M120"
+#
+# M122 is NOT in the deployed build and is not scheduled to be. It ships with
+# whatever goes out next; the M120 install running today does not have it.
+#
+# CHANGES A TRADING-DECISION INPUT, eventually rather than now.
+#
+# M122: `closed_trades.csv` had no market, no broker and no currency column, so
+# it could not distinguish the Alpaca/US period from the ASX trial that appends
+# to the same file. On 21 August it held two rows, both from the US period, and
+# `EdgeEstimator` filtered on STRATEGY ALONE - so at swing's twentieth closed
+# trade an Alpaca loss would have been a twentieth of the win rate that sets
+# POSITION SIZE. With 94 symbols now enterable, twenty trades stopped being a
+# distant number. Trades are now stamped with market and currency at close,
+# `closed_trades(strategy, market=...)` can scope, `EdgeEstimator` pins to
+# settings.market, and `compute_stats` logs at ERROR when a total spans two
+# currencies rather than returning a plausible sum of USD and AUD.
+#
+# MEASURED: no change to any figure today. Swing has one closed trade against
+# an edge_min_trades of 20, so the estimator returned the default edge before
+# this change and returns it after.
+#
+# The two legacy rows are LABELLED, not deleted, by scripts/migrate_ledger_eras.py
+# - dry-run by default, refuses to run while the app holds the file. One of them
+# is MNST at 45.9975 against an entry of 91.1838 with no strategy and no stop:
+# an unadjusted split recorded as a stop-out, which the script reports and
+# deliberately does not rewrite. Whether that row is a loss or an artefact is a
+# judgement, and a migration has no business making it.
+MILESTONE = "M122"
 
 _UNKNOWN = "unknown"
 

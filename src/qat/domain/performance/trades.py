@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import cast
 
 from qat.config import Settings
+from qat.domain import market_calendar as mc
 from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import (
@@ -100,6 +101,13 @@ _FIELDS = (
     # them not to.
     "earnings_at_entry",
     "held_through_earnings",
+    # Which exchange, and what the money on this row is denominated in (M122).
+    # This file had no era dimension at all, so two US trades from the Alpaca
+    # period - one of them an unadjusted MNST split recorded as a stop-out -
+    # sat in the same ledger the ASX trial appends to, with their USD P&L
+    # summable against AUD P&L. Blank on both means a pre-M122 row.
+    "market",
+    "currency",
     # The broker's id for the SELL that closed this trade (M71), so an
     # amendment can target the exact row(s) it belongs to rather than every
     # row for the symbol. Added while the file already has rows without it -
@@ -220,6 +228,14 @@ class ClosedTrade:
     worst_price: float | None = None
     best_price: float | None = None
     earnings_at_entry: date | None = None
+    market: str | None = None
+    """Which exchange this trade belongs to (M122). None for a trade closed
+    before this field existed - which is not the same as "unknown market", it
+    means the Alpaca/US period, and the migration script names them."""
+    currency: str | None = None
+    """What `net_pnl` and every other money figure on this row is denominated
+    in (M122). Recorded rather than derived from `market`, because a row that
+    cannot say what its own numbers mean is not evidence."""
     order_id: str | None = None
     """The broker's id for the sell that closed this trade (M71), so a later
     price correction can target this exact row. `OpenLot` already carries one
@@ -394,6 +410,10 @@ class ClosedTrade:
                 "" if self.held_through_earnings is None else str(self.held_through_earnings)
             ),
             "order_id": self.order_id or "",
+            # Blank on a pre-M122 row, which means the Alpaca/US period rather
+            # than "unknown" - see the migration script, which names them.
+            "market": self.market or "",
+            "currency": self.currency or "",
         }
 
     @classmethod
@@ -433,6 +453,12 @@ class ClosedTrade:
                 # .get, for the same reason (M71): the two rows in the live
                 # record predate this column entirely.
                 order_id=row.get("order_id") or None,
+                # .get and blank-to-None, same reason again (M122): the two
+                # rows in the live record predate both columns, and a restart
+                # that dropped them would destroy the only evidence of what the
+                # Alpaca period actually did.
+                market=row.get("market") or None,
+                currency=row.get("currency") or None,
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -996,6 +1022,10 @@ class TradeLedger:
                 # different question (which buy opened it) and is not carried
                 # here.
                 order_id=event.order_id,
+                # Stamped at close from the running configuration (M122), which
+                # is the only moment either fact is known for certain.
+                market=self.settings.market,
+                currency=mc.currency_for(self.settings.market),
             )
             self._record(trade)
 
@@ -1055,10 +1085,23 @@ class TradeLedger:
 
     # --- reads ---------------------------------------------------------------
 
-    def closed_trades(self, strategy: str | None = None) -> list[ClosedTrade]:
-        if strategy is None:
-            return list(self._closed)
-        return [trade for trade in self._closed if trade.strategy == strategy]
+    def closed_trades(
+        self, strategy: str | None = None, market: str | None = None
+    ) -> list[ClosedTrade]:
+        """Closed trades, optionally narrowed to one strategy and one market.
+
+        `market` exists because strategy alone was never a sufficient filter
+        (M122). "swing" names the same code on two exchanges in two currencies,
+        so asking for swing's trades returned an Alpaca US loss alongside the
+        ASX trial's - and `EdgeEstimator` turns exactly that list into a win
+        rate that sets position size.
+        """
+        trades = list(self._closed)
+        if strategy is not None:
+            trades = [trade for trade in trades if trade.strategy == strategy]
+        if market is not None:
+            trades = [trade for trade in trades if trade.market == market]
+        return trades
 
     def open_lots(self, symbol: str | None = None) -> list[OpenLot]:
         if symbol is not None:

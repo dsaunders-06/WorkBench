@@ -42,7 +42,9 @@ _MAX_WIN_LOSS_RATIO = 4.0
 
 
 class ClosedTradeSource(Protocol):
-    def closed_trades(self, strategy: str | None = None) -> list[ClosedTrade]: ...
+    def closed_trades(
+        self, strategy: str | None = None, market: str | None = None
+    ) -> list[ClosedTrade]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,7 +92,11 @@ class EdgeEstimator:
         if self.ledger is None or strategy is None:
             return default
 
-        trades = self.ledger.closed_trades(strategy)
+        # Scoped to the market being traded (M122). This list becomes a win
+        # rate and a win/loss ratio, and those set POSITION SIZE - so a trade
+        # from the Alpaca/US period, in another currency, on another broker,
+        # must not be one of the twenty that switches measurement on.
+        trades = self.ledger.closed_trades(strategy, market=self.settings.market)
         if len(trades) < self.settings.edge_min_trades:
             return Edge(
                 win_rate=self.default_win_rate,

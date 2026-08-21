@@ -36,6 +36,20 @@ ASX_TZ = ZoneInfo("Australia/Sydney")
 
 MARKET_TIMEZONES: dict[Market, ZoneInfo] = {"US": US_TZ, "ASX": ASX_TZ}
 
+# The currency a market's prices and P&L are denominated in (M122).
+#
+# Here rather than in the ledger because it is a property of the exchange, and
+# because the ledger is not the only thing that will need it. `closed_trades.csv`
+# carried no currency at all: two US trades from the Alpaca period sat in the
+# same file the ASX trial appends to, and their USD net_pnl would have been
+# summed with AUD net_pnl into one total that means nothing.
+CURRENCY_BY_MARKET: dict[Market, str] = {"US": "USD", "ASX": "AUD"}
+
+
+def currency_for(market: Market) -> str:
+    return CURRENCY_BY_MARKET[market]
+
+
 _REGULAR_HOURS: dict[Market, tuple[time, time]] = {
     "US": (time(9, 30), time(16, 0)),
     "ASX": (time(10, 0), time(16, 0)),
