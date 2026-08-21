@@ -211,7 +211,54 @@ from qat.domain.display_dates import format_display_date
 # an unadjusted split recorded as a stop-out, which the script reports and
 # deliberately does not rewrite. Whether that row is a loss or an artefact is a
 # judgement, and a migration has no business making it.
-MILESTONE = "M122"
+#
+# M130 ships M123-M130, all of it built on 21 August after the close.
+#
+# CHANGES A TRADING-DECISION INPUT, twice. M123 and M128; the rest do not.
+#
+# M123: order prices are rounded onto the exchange's own increments. Nothing
+# computed ticks before, and on the US side nothing had to - the tick is a cent
+# at every price a megacap trades at, so AlpacaAdapter's round(x, 2) and "on a
+# valid increment" were the same thing by coincidence. The ASX step between
+# $0.10 and $2.00 is half a cent and the swing stop comes off ATR, so a stop on
+# MGR.AX at $1.91 lands at 1.8734 - a price the exchange does not have. IBKR
+# answers error 110 and the order never reaches the market. BUYS ROUND DOWN,
+# SELLS ROUND UP, which is conservative on cost and on protection at once:
+# because a long's protective legs are transmitted as SELLs, rounding can only
+# move a stop TOWARD the market. It may tighten protection by up to a tick and
+# can never loosen it, and since size is computed from the unrounded stop the
+# realised risk is at most a tick smaller than sized.
+#
+# M128: ticks carry the BAR's timestamp instead of their arrival time, and
+# staleness is measured BEYOND the feed's 1,200s structural delay. Under
+# ts=now the rail could not see price age at all - it measured feed silence and
+# nothing else, which is why both full ASX sessions reported zero exclusions
+# while every price in them was twenty minutes old. MEASURED: the rail fired
+# 1,589 times on the US feed between 31 July and 18 August and has NEVER fired
+# on ASX. Expect the first ASX exclusion after this build; it is the rail
+# working. Stamping bar time WITHOUT the delay allowance would have excluded
+# every symbol and traded nothing at all, silently, while reporting a healthy
+# feed - which is why the two land together.
+#
+# The rest change no trading input. M124 puts a confirmation in front of the
+# dashboard force-start, defaulting to NO so Escape, Enter and closing the
+# window all decline. M125 retries a refused Gateway port for about a minute
+# instead of shutting down, and the pre-flight now probes the PORT rather than
+# the process - a Gateway that is running but not logged in refuses its API
+# port, so the process being up proves nothing. M126 turns Yahoo news on and
+# SHOWS the operator the stories handed to the model; the advisory layer
+# reaches no part of the trading system. M127 gives the equity curve and the
+# refusal log the same era boundary M122 gave the ledger, which is what stops a
+# 9.9x broker migration reading as an 896% return. M130 watches the feed's real
+# lag against the 1,200s claim and reports drift WITHOUT ever adjusting the
+# threshold.
+#
+# What an operator will see that is new: a confirmation dialog on force-start;
+# "gateway port" in the pre-flight naming which of the four it found; a sources
+# line under the AI Advisor's conversation; and, on the first ASX session after
+# this build, possibly the first staleness exclusion this system has ever
+# produced on that market.
+MILESTONE = "M130"
 
 _UNKNOWN = "unknown"
 
