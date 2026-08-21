@@ -258,7 +258,36 @@ from qat.domain.display_dates import format_display_date
 # line under the AI Advisor's conversation; and, on the first ASX session after
 # this build, possibly the first staleness exclusion this system has ever
 # produced on that market.
-MILESTONE = "M130"
+#
+# M134 ships M133-M134. NO TRADING-DECISION INPUT CHANGES: one reported figure,
+# one rename, one log line, and the build tooling.
+#
+# M133: exposure is the market value HELD, read from IBKR's
+# `GrossPositionValue`, rather than `(equity - cash) / equity` - which treats
+# anything that is neither a position nor spendable cash as though it were
+# invested. On 21 August that printed "Avg exposure 0.2%" for an account
+# holding NOTHING, the 0.2% being `AccruedCash` of 2,087.83 sitting in the gap.
+# Samples with no recorded position value are SKIPPED rather than computed the
+# old way, so exposure is unavailable for existing history rather than wrong
+# about it.
+#
+# M134: three things that looked like they worked.
+# * `invoke build` was `pre=[lint, test]` with a `pass` body - it ran the
+#   checks, built NOTHING, and returned 0 while dist/ kept an eight-milestone-
+#   old exe. It now packages, verifies the file exists, and prints what it
+#   produced. `lint`, `test` and `format` shelled out to BARE tool names that
+#   are not on PATH, which is why it died on "'ruff' is not recognized"; all
+#   now run as `<this interpreter> -m <tool>`, which `package` and `manual`
+#   already did and explained.
+# * `average_daily_volume` is a deterministic random number seeded on the
+#   ticker, and `QAT_WATCHLIST_MIN_AVG_VOLUME` screens on it. Renamed
+#   `synthetic_average_daily_volume`; `resolve_watchlist` warns when it drops
+#   anything; and the SCREENER, which displays this figure in its results
+#   table, now says at the call site that it means nothing about liquidity.
+#   Not deleted - removing it would silently widen the universe.
+# * `migrate_ledger_eras.py` is superseded by `retire_alpaca_era.py` and now
+#   says so in its first line.
+MILESTONE = "M134"
 
 _UNKNOWN = "unknown"
 

@@ -14,9 +14,13 @@ def test_watchlist_tables_are_non_empty_for_both_markets():
             assert len(universe.MARKET_WATCHLISTS[market][category]) > 0  # type: ignore[literal-required]
 
 
-def test_average_daily_volume_is_deterministic():
-    assert universe.average_daily_volume("AAPL") == universe.average_daily_volume("AAPL")
-    assert universe.average_daily_volume("AAPL") != universe.average_daily_volume("MSFT")
+def test_synthetic_average_daily_volume_is_deterministic():
+    assert universe.synthetic_average_daily_volume(
+        "AAPL"
+    ) == universe.synthetic_average_daily_volume("AAPL")
+    assert universe.synthetic_average_daily_volume(
+        "AAPL"
+    ) != universe.synthetic_average_daily_volume("MSFT")
 
 
 def test_resolve_watchlist_curated_matches_settings_default():
@@ -53,7 +57,7 @@ def test_resolve_watchlist_min_volume_filter_narrows_pool():
     filtered = universe.resolve_watchlist(high_bar)
 
     assert len(filtered) < len(unfiltered)
-    assert all(universe.average_daily_volume(symbol) >= 15_000_000 for symbol in filtered)
+    assert all(universe.synthetic_average_daily_volume(symbol) >= 15_000_000 for symbol in filtered)
 
 
 def test_resolve_watchlist_falls_back_when_volume_filter_excludes_everything():

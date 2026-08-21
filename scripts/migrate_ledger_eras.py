@@ -1,4 +1,18 @@
-r"""Label the pre-M122 rows in closed_trades.csv with the era they belong to.
+r"""SUPERSEDED 21 August 2026 — use `scripts/retire_alpaca_era.py` instead.
+
+This script LABELS the two eras in place and leaves both in the live files, so
+the readers can scope past the old one. The operator decided the same evening
+that the app does not need the Alpaca data at all, and `retire_alpaca_era.py`
+moves it to an offline archive instead. Running this now would find nothing to
+do: every remaining row is already labelled ASX.
+
+Kept rather than deleted because it is the record of an approach that was
+correct for a day, and because its `--cutover` handling is the reasoning the
+retirement script inherited. Do not run it.
+
+---
+
+Label the pre-M122 rows in closed_trades.csv with the era they belong to.
 
     .\.venv\Scripts\python.exe scripts\migrate_ledger_eras.py            # dry run
     .\.venv\Scripts\python.exe scripts\migrate_ledger_eras.py --apply

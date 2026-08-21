@@ -186,7 +186,12 @@ for each gap and is worth reading; the list lives here.
 9. **Stage 3 ASX rules — the rest.** Tick sizes are done (M123). Still absent:
    the $500 minimum marketable parcel (unlikely to bind at ~1M AUD equity), T+2,
    and the auctions against session logic written for a 13:30 UTC open.
-10. **The liquidity filter does not filter.** `average_daily_volume` is a
+10. ~~**The liquidity filter does not filter.**~~ **DONE — M134.** Renamed to
+    `synthetic_average_daily_volume`, `resolve_watchlist` warns when it drops
+    anything, and the Screener — which DISPLAYS it — now says at the call site
+    that the number is derived from the ticker string. Left in place rather
+    than removed: deleting it would silently widen the universe.
+    Original: `average_daily_volume` is a
     deterministic RNG seeded on the ticker — a synthetic number between 10,000
     and 20,000,000, not real volume — so `QAT_WATCHLIST_MIN_AVG_VOLUME` screens
     on noise. Harmless across 94 megacaps that are liquid by construction;
@@ -194,15 +199,23 @@ for each gap and is worth reading; the list lives here.
 11. **News yield at 94 symbols.** Live in the deployed build, so measurable on
     Monday. The only measurement is six ASX names yielding two corroborated
     stories; if 94 yield four, the feature is honest and nearly empty.
-12. **`invoke build` does not build.** `@task(pre=[lint, test])` with a `pass`
+12. ~~**`invoke build` does not build.**~~ **DONE — M134.** It is now
+    `pre=[lint, test, package]`, verifies the exe exists afterwards, and
+    prints its path, size and timestamp. `lint`, `test` and `format` now run
+    every tool as `<this interpreter> -m <tool>` — they shelled out to bare
+    names that are not on PATH, which is why it died on `'ruff' is not
+    recognized`. Original: `@task(pre=[lint, test])` with a `pass`
     body — returns 0 with a green suite while `dist/` keeps yesterday's exe.
     Packaging is `invoke package`, then `invoke sign`.
 13. **Retire the Alpaca CODE paths?** Open question. The adapter and market-data
     source are still in the tree and still tested, and `alpaca_source.py` is the
     reference implementation M119's retry came from. The 21 August decision was
     about DATA.
-14. **`migrate_ledger_eras.py` is superseded** by `retire_alpaca_era.py`. Dead
-    script; keep or delete deliberately.
+14. ~~**`migrate_ledger_eras.py` is superseded.**~~ **RESOLVED — kept, marked.**
+    Its docstring now opens with SUPERSEDED and points at
+    `retire_alpaca_era.py`. Kept rather than deleted because it records an
+    approach that was correct for a day and its `--cutover` reasoning is what
+    the retirement script inherited. Do not run it.
 15. **Design-system debt in the screens.** `docs/UI_UX_APPROACH.md` records
     Group 4 (every screen restyled) as complete, and it is. What survives,
     RE-MEASURED 21 August: **20 `setStyleSheet` calls across seven files

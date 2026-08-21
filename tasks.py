@@ -17,23 +17,33 @@ def install(c):
     c.run('pip install -e ".[dev]"')
 
 
+# Every tool is invoked as `<this interpreter> -m <tool>`, for the reason
+# `package` gives below and `manual` repeats: a bare name resolves to whatever
+# happens to be on PATH, which is not necessarily this venv and may not exist at
+# all. On 21 August `invoke build` died on `'ruff' is not recognized` — the
+# tools are installed in the venv and nothing had put its Scripts directory on
+# PATH, so the one command meant to gate a release could not run.
+def _tool(c, module: str, args: str) -> None:
+    c.run(f'"{sys.executable}" -m {module} {args}')
+
+
 @task
 def test(c):
-    c.run("pytest -q")
+    _tool(c, "pytest", "-q")
 
 
 @task
 def lint(c):
-    c.run("ruff check .")
-    c.run("black --check .")
-    c.run("mypy src")
-    c.run("bandit -q -r src")
+    _tool(c, "ruff", "check .")
+    _tool(c, "black", "--check .")
+    _tool(c, "mypy", "src")
+    _tool(c, "bandit", "-q -r src")
 
 
 @task
 def format(c):
-    c.run("ruff check --fix .")
-    c.run("black .")
+    _tool(c, "ruff", "check --fix .")
+    _tool(c, "black", ".")
 
 
 @task
@@ -200,6 +210,29 @@ def _first_code_signing_thumbprint(c) -> str:
     return (result.stdout or "").strip()
 
 
-@task(pre=[lint, test])
+@task(pre=[lint, test, package])
 def build(c):
-    pass
+    """Lint, test, and actually PRODUCE the executable.
+
+    It used to be `pre=[lint, test]` with a `pass` body, so it ran the checks
+    and built nothing while returning 0 - and `dist/` kept whatever the last
+    real `package` left there. On 21 August that returned success on a green
+    2,433-test suite while the exe in `dist/` was three hours and eight
+    milestones old, and it was caught by reading the file's timestamp rather
+    than by anything the command said.
+
+    The name was the whole defect. `invoke build | tail` is already recorded as
+    a trap in this project because a pipe hides the exit code; this was the
+    same shape one level up, where the exit code was honest and the NAME was
+    not.
+
+    Prints what it produced, because "verify the artefact, not the exit code"
+    is only actionable if the artefact is named. Unsigned - run `invoke sign`
+    afterwards.
+    """
+    exe = pathlib.Path("dist/QuantAdvisoryTerminal/QuantAdvisoryTerminal.exe")
+    if not exe.exists():
+        raise Exit(f"package reported success but {exe} does not exist", code=1)
+    stamped = datetime.fromtimestamp(exe.stat().st_mtime)
+    print(f"\nbuilt: {exe}  {exe.stat().st_size / 1_048_576:.1f} MB  {stamped:%Y-%m-%d %H:%M:%S}")
+    print("UNSIGNED - run `invoke sign` before deploying.")

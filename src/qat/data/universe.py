@@ -1,6 +1,6 @@
 """Market/watchlist universe (spec M10): curated/ETF/mega-cap ticker lists
 per market, benchmark symbols, and a deterministic synthetic average-daily-
-volume figure used as a liquidity filter.
+volume figure that LOOKS like a liquidity filter and is not one (M134).
 
 The US/ASX curated+ETF+mega-cap lists are ported directly from the original
 ShareTrader app's WATCHLISTS_US / WATCHLISTS_ASX
@@ -10,7 +10,7 @@ official index membership, so they'll drift from real market composition
 over time (mergers/delistings, index reweighting). Update the tuples below if
 you want them current.
 
-average_daily_volume uses the same seeded-per-symbol pattern as
+synthetic_average_daily_volume uses the same seeded-per-symbol pattern as
 MockFundamentalsSource._generate (data/fundamentals.py) - deterministic, so
 watchlist resolution is reproducible, and symbol-agnostic (works the same for
 plain US tickers and ".AX"-suffixed ASX ones since nothing here is
@@ -19,6 +19,7 @@ currency-aware, matching the mock-everywhere stance used throughout).
 
 from __future__ import annotations
 
+import logging
 import random
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ from typing import Literal
 from qat.config import Settings
 
 Market = Literal["US", "ASX"]
+logger = logging.getLogger(__name__)
+
 WatchlistCategory = Literal["curated", "etf", "megacap"]
 
 MARKET_BENCHMARKS: dict[Market, str] = {"US": "SPY", "ASX": "STW.AX"}
@@ -246,9 +249,23 @@ MARKET_WATCHLISTS: dict[Market, dict[WatchlistCategory, tuple[str, ...]]] = {
 }
 
 
-def average_daily_volume(symbol: str) -> int:
-    """Deterministic synthetic average daily volume (shares/day), used as a
-    liquidity filter since no real market-data vendor backs this app."""
+def synthetic_average_daily_volume(symbol: str) -> int:
+    """A DETERMINISTIC RANDOM NUMBER, not a liquidity measurement (M134).
+
+    Named `average_daily_volume` until 21 August, which is what a caller reads
+    and what `QAT_WATCHLIST_MIN_AVG_VOLUME` appears to screen on. It has never
+    been volume: it is `random.Random(symbol).randint(10_000, 20_000_000)`, so
+    the filter admits or rejects a symbol on the hash of its ticker.
+
+    Harmless across the 94 ASX megacaps, which are liquid by construction —
+    none is excluded at the default threshold. Actively misleading the moment
+    the universe widens beyond them, because it looks like a liquidity rail and
+    is not one.
+
+    Left in place rather than deleted: removing it would silently widen the
+    universe, and the setting is documented. Renamed so no call site can read
+    it as real, and `resolve_watchlist` says so out loud once.
+    """
     rng = random.Random(f"volume:{symbol}")  # nosec B311 - deterministic synthetic data, not crypto
     return rng.randint(10_000, 20_000_000)
 
@@ -267,8 +284,19 @@ def resolve_watchlist(settings: Settings) -> tuple[str, ...]:
     filtered = tuple(
         symbol
         for symbol in candidates
-        if average_daily_volume(symbol) >= settings.watchlist_min_avg_volume
+        if synthetic_average_daily_volume(symbol) >= settings.watchlist_min_avg_volume
     )
+    if len(filtered) != len(candidates):
+        # Said once, at the point it changes the answer (M134). A reader seeing
+        # symbols disappear would otherwise conclude a liquidity rail had
+        # judged them, and no such rail exists.
+        logger.warning(
+            "%d of %d symbol(s) were dropped by QAT_WATCHLIST_MIN_AVG_VOLUME, which screens "
+            "on a SYNTHETIC volume derived from the ticker string - not on real liquidity. "
+            "See universe.synthetic_average_daily_volume.",
+            len(candidates) - len(filtered),
+            len(candidates),
+        )
     if not filtered:
         # The volume filter excluded every candidate - fall back to the
         # unfiltered pool rather than leaving the app with an empty watchlist.

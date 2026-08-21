@@ -390,7 +390,11 @@ class ScreenerScreen(QWidget):
 
             rows: list[ScreenResult] = []
             for symbol in symbols:
-                avg_volume = universe.average_daily_volume(symbol)
+                # SYNTHETIC, and named so since M134. This figure is derived
+                # from the ticker string, not from any market: it is displayed
+                # in the results table, so a reader has been comparing symbols
+                # on a number that means nothing about liquidity.
+                avg_volume = universe.synthetic_average_daily_volume(symbol)
                 if avg_volume < min_avg_volume:
                     continue
 
