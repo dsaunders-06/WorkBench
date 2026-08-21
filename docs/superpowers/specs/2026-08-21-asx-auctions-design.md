@@ -189,10 +189,24 @@ would contradict them out of the exchange's own mouth.
 disagreements report `WARN`, never `FAIL`. Preflight `FAIL` is reserved for
 things that stop a session being run, and none of these do: the app can trade a
 session perfectly well while disagreeing with IBKR about a label or a minute.
-A missing or unparseable hours string is `UNKNOWN`, matching how
-`contract_checks` already reports a client that cannot resolve contracts.
 Agreement emits **one** `OK` line naming what matched, not four — four green
 lines for one round trip is noise in an instrument read at the open.
+
+**A missing or unparseable hours string is `WARN`, and this is a deliberate
+departure from the rule in this module's docstring** — *"a check that could not
+be performed is not a check that passed"* — under which `UNKNOWN` blocks READY
+exactly as `FAIL` does. The departure is justified by what this check's subject
+is. Every other check in `preflight` asks whether something the session depends
+on is true; if it cannot ask, the session should not start. This one asks
+whether a hand-maintained constant still agrees with the broker. The calendar
+is authoritative at runtime either way, so nothing about the session degrades
+when the comparison cannot be made. `UNKNOWN` here would mean a Gateway that
+returned an odd hours string could block trading over a disagreement that is
+cosmetic by construction.
+
+The reasoning is recorded at the call site, because a departure from a
+module-level invariant that is not written down next to it reads as an
+oversight to the next person and gets "fixed".
 
 ## The accepted divergence
 
