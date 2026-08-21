@@ -13,15 +13,25 @@ import asyncio
 import contextlib
 import logging
 import random
+from collections import deque
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from statistics import median
 from typing import Protocol
 
 from qat.domain.bus import EventBus
 from qat.domain.events import DataStaleEvent, MarketDataEvent, MarketDataFeedEvent
 
 logger = logging.getLogger(__name__)
+
+# How many ticks to observe before saying anything about the feed's real lag,
+# and how far it may drift from the configured claim before that is worth
+# saying. Five minutes, because a vendor's publication delay moves in steps of
+# minutes and a tighter band would just report jitter.
+_LAG_SAMPLE_SIZE = 200
+_MIN_LAG_SAMPLES = 20
+_LAG_TOLERANCE_SECONDS = 300.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +115,18 @@ class MarketDataFeed:
         self._started_at: datetime | None = None
         self._last_tick_at: datetime | None = None
         self._feed_healthy = True
+        # M130. What the feed's delay ACTUALLY is, watched against what it was
+        # configured to be. `source_delay_seconds` is a measured claim about a
+        # vendor, taken on one morning, and nothing else in this system checks
+        # it - not the replay harness, which bypasses this class entirely, and
+        # not the unit tests, which supply their own timestamps. A number that
+        # only one observation supports should be re-observed continuously.
+        #
+        # IT NEVER CHANGES THE THRESHOLD. A safety rail that widens its own
+        # tolerance when the feed degrades is blind exactly when it matters, so
+        # this only ever reports.
+        self._observed_lags: deque[float] = deque(maxlen=_LAG_SAMPLE_SIZE)
+        self._delay_claim_warned = False
 
     async def start(self) -> None:
         # Cleared so a feed restarted after a break (M19: the overnight stand
@@ -139,6 +161,7 @@ class MarketDataFeed:
             tick = await self._queue.get()
             self._last_seen[tick.symbol] = tick.ts
             self._last_tick_at = datetime.now(UTC)
+            self._observe_lag(tick.ts, self._last_tick_at)
             if not self._feed_healthy:
                 self._feed_healthy = True
                 await self.bus.publish(
@@ -192,10 +215,77 @@ class MarketDataFeed:
             await asyncio.sleep(self.staleness_check_interval)
             await self._check_staleness_once()
 
+    def _observe_lag(self, bar_ts: datetime, arrived_at: datetime) -> None:
+        """How far behind this tick actually was (M130).
+
+        Skips a naive timestamp rather than guessing at its zone: a source that
+        does not say which clock it used cannot be measured against ours, and
+        inventing UTC would manufacture a lag rather than observe one.
+        """
+        if bar_ts.tzinfo is None:
+            return
+        lag = (arrived_at - bar_ts).total_seconds()
+        # A negative lag means the bar is stamped in the future, which is a
+        # clock problem rather than a delay - excluded so it cannot drag the
+        # median toward a reassuring number.
+        if lag >= 0:
+            self._observed_lags.append(lag)
+
+    def observed_delay_seconds(self) -> float | None:
+        """The feed's measured lag, or None before there is enough to say.
+
+        Median rather than mean: one tick arriving after a stall would drag a
+        mean and says nothing about the feed's normal behaviour.
+        """
+        if len(self._observed_lags) < _MIN_LAG_SAMPLES:
+            return None
+        return median(self._observed_lags)
+
+    def _check_delay_claim(self) -> None:
+        """Say so when the vendor stops behaving the way the config claims.
+
+        Reports on the EDGE only, both ways, so a feed that drifts and comes
+        back does not repeat itself every interval - the same rule the staleness
+        rail follows for the same reason.
+        """
+        observed = self.observed_delay_seconds()
+        if observed is None:
+            return
+
+        drift = observed - self.source_delay_seconds
+        if abs(drift) <= _LAG_TOLERANCE_SECONDS:
+            if self._delay_claim_warned:
+                self._delay_claim_warned = False
+                logger.info(
+                    "Feed delay is back in line with the configured %.0fs (observed %.0fs)",
+                    self.source_delay_seconds,
+                    observed,
+                )
+            return
+
+        if self._delay_claim_warned:
+            return
+        self._delay_claim_warned = True
+        logger.warning(
+            "FEED DELAY CLAIM IS OUT OF DATE: configured %.0fs, observed %.0fs (%+.0fs). "
+            "Staleness is measured beyond the configured figure, so the rail is currently "
+            "%s. This does NOT adjust itself - re-measure the vendor and set "
+            "QAT_MARKET_DATA_DELAY_SECONDS.",
+            self.source_delay_seconds,
+            observed,
+            drift,
+            "blind by the difference" if drift > 0 else "tighter than intended",
+        )
+
     async def _check_staleness_once(self) -> None:
         """One pass of the rail, extracted so it can be tested without driving
         a loop (M128). The arithmetic below is a risk decision; it deserves a
         test that does not depend on sleeping."""
+        # M130. Checked on the same interval, because "is the feed as delayed as
+        # we think" and "is this print too old" are the same question asked from
+        # two directions, and an answer to the second is only as good as the
+        # first.
+        self._check_delay_claim()
         now = datetime.now(UTC)
         for symbol in self.symbols:
             last = self._last_seen.get(symbol)

@@ -150,6 +150,27 @@ Alpaca-era records, now covering all three ledgers (M122, M127).
   **beyond** the feed's 1,200s structural delay. ⚠️ **Risk-rail change:** a print
   is stale at 900s of age *past* the vendor's lag. Stamping bar time alone would
   have excluded every symbol and traded nothing, silently.
+* **M130** — the feed watches its own lag and says so when the vendor stops
+  matching the configured 1,200s. It **never** adjusts the threshold: a rail
+  that widened its own tolerance as a feed degraded would hide the degradation.
+
+### ⚠️ Expect the first ASX staleness exclusion, and do not read it as a fault
+
+The staleness rail has **never fired on ASX** — 1,589 exclusions between 31 July
+and 18 August on the US/Alpaca feed, then 9 on the 19th and **zero** across both
+full ASX sessions. That was not calm; it was `ts=now` making price age
+unmeasurable, so the rail could only ever see a feed that had gone silent.
+
+Once M128 is deployed, ASX exclusions become possible for the first time. **The
+first one is the rail working**, not a regression — and it will be the first
+honest reading of ASX price age this system has produced.
+
+Two things that make the old record readable: the US exclusions were genuine
+(1,440 of 1,598 were on prints an hour or more old, averaging ~20 hours), so
+nothing in the US trial is contaminated by this. And the 499-session ASX replay
+harness has **no coverage of this rail at all** — `replay_session.py` publishes
+`MarketDataEvent` straight onto the bus and never constructs a `MarketDataFeed`,
+so it neither confirms nor contradicts any of it.
 
 ---
 
