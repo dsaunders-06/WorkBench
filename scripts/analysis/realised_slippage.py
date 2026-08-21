@@ -33,7 +33,21 @@ from qat.data.broker.alpaca_adapter import (  # noqa: E402
 )
 from qat.security import get_secret  # noqa: E402
 
-JOURNAL = Path.home() / "AppData/Local/QuantAdvisoryTerminal/data/decision_journal.csv"
+# The ARCHIVE, not the live directory (21 August 2026). Every transmitted order
+# this script measures happened on Alpaca, and those journal rows were retired
+# out of the app's live record that evening - the live file now holds six ASX
+# rows, all rejected, and will never again contain an Alpaca fill. Pointing at
+# the live path would return an empty result that looks like "no slippage"
+# rather than "no data", which is the distinction this project keeps having to
+# relearn.
+#
+# ⚠️ THE OTHER HALF OF THIS SCRIPT IS ALREADY DEAD. `broker_fills()` calls the
+# Alpaca paper API live, and that account is finished. Re-running this needs the
+# fills captured alongside the journal, or the comparison rebuilt against IBKR
+# executions once M44 has ASX trades to measure.
+JOURNAL = (
+    Path(__file__).resolve().parents[2] / "docs" / "archive" / "alpaca-era" / "decision_journal.csv"
+)
 TRANSMITTED = {"signed_off", "auto_signed"}
 ASSUMED_BPS = 5.0
 

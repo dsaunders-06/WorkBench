@@ -1,0 +1,29 @@
+{
+  "watermark": "2026-08-21T02:16:56.970396+00:00",
+  "absorbed": {
+    "3b2c03ce-3457-42b0-9e12-0b75f687c245": {
+      "filled_at": "2026-08-05T13:33:06.790885+00:00",
+      "quantity": 0.0,
+      "price": 0.0,
+      "quantity_known": false
+    },
+    "d4279114-2c8d-45c9-b30c-97f03c168f81": {
+      "filled_at": "2026-08-05T14:15:45.608408+00:00",
+      "quantity": 41.0,
+      "price": 218.12,
+      "quantity_known": true
+    },
+    "35010615-6f66-4e58-8fdb-c43cdb490b68": {
+      "filled_at": "2026-08-10T13:35:16.080345+00:00",
+      "quantity": 8.0,
+      "price": 91.18375,
+      "quantity_known": true
+    },
+    "34ffd4cd-18ba-45d8-8028-5a1cf0b85b85": {
+      "filled_at": "2026-08-11T13:33:54.218456+00:00",
+      "quantity": 8.0,
+      "price": 45.9975,
+      "quantity_known": true
+    }
+  }
+}

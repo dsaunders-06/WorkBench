@@ -41,14 +41,14 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M120 (`14dc257`)**, running since 12:10:52 |
-| Repository HEAD | **M128 (`ae364a3`)** |
-| Deploy gap | **M122–M128 are NOT deployed** |
+| Deployed build | **M130 (`f5b9bd2`)**, running since 17:59:58 |
+| Deploy gap | **ZERO.** Everything committed after `f5b9bd2` is docs and data, not code |
 | Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September |
-| Suite | 2,505 passed, 25 skipped |
-| Watchlist | **94 ASX megacaps + STW.AX**, widened 12:09 |
+| Suite | 2,515 passed, 25 skipped. ruff and black both clean |
+| Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | FLAT, equity 1,003,953.07. No entry has ever been placed by the app on IBKR |
+| Ledgers | **EMPTY.** The Alpaca era was retired to `docs/archive/alpaca-era/` on 21 August: 0 closed trades, 0 risk decisions, 920 equity samples (ASX only), 6 journal rows |
 
 ### The session, as it finished
 
@@ -68,9 +68,11 @@ RECOVERY, logged at ERROR** — judge by content, never by count.
 
 ## ⚠️ WHAT MONDAY'S OPEN ACTUALLY TESTS
 
-**M119 has never been exercised.** Zero empty polls in 3h48m. Its entire purpose
-is surviving the open, and today's session started at 12:10 — *after* the delay
-window that killed the 10:00 one. **Monday 10:00 is its first real test.**
+**M119 has never been exercised.** It is deployed — it has been since 12:10 and
+is in the M130 build — but zero empty polls in 3h48m means nothing has tested
+it. Its entire purpose is surviving the open, and Friday's session started at
+12:10, *after* the delay window that killed the 10:00 one. **Monday 10:00 is its
+first real test.**
 
 What happened at the 10:00 open: Yahoo publishes ASX intraday ~20 minutes late,
 so all five 60s polls from the bell returned empty, the source hit
@@ -84,44 +86,93 @@ it was restarted by hand at 12:10.
 
 ## OUTSTANDING, IN ORDER
 
-1. **Run the era migration, then deploy M122–M128, before Monday's open.**
-   `scripts\migrate_ledger_eras.py` — dry run first, `--apply` second, **with the
-   app closed** (it refuses while the process is up). Dry run as at 21 August:
-   `equity_curve.csv` 14,473→US / 876→ASX; `risk_decisions.csv` 4,876→US / 0→ASX;
-   `closed_trades.csv` 2→US/USD. Then **decide the MNST row by hand**: entry
-   91.1838, exit 45.9975, no strategy, no stop — an unadjusted split recorded as
-   a stop-out, not a −375 loss. The script reports it and deliberately will not
-   rewrite it.
-2. **Blocked on a first fill, all of it:** Task 2 (`recent_fills` on IBKR), M71
-   (built, never exercised — an app-transmitted sell has never happened), and Q4
-   (how far back IBKR executions go). M123 removed one reason it could not
-   happen; nothing proves it was the only one.
-3. **Stage 3 ASX trading rules — the rest of them.** M123 did tick sizes. Still
-   unimplemented: the $500 minimum marketable parcel (unlikely to bind at $1M
-   equity, but absent), T+2, and the auctions against session logic written for
-   a 13:30 UTC open.
-4. **The $2,087.83 that is not cash.** Equity minus cash is a steady 2,087.83
-   that the app reports as 0.2% exposure while the OMS holds no positions. Small,
-   unexplained, and somebody will eventually mistake it for a position.
-5. **`invoke build` does not build.** It is `@task(pre=[lint, test])` with a
-   `pass` body — lint and tests only, no packaging. It returns 0 with a green
-   suite while `dist/` keeps yesterday's exe. Packaging is `invoke package`, then
-   `invoke sign`. Same family as the `invoke build | tail` trap.
-6. **How much news actually clears the two-source rule at 94 symbols?** M126
-   turned Yahoo on, but the only measurement is six ASX names yielding two
-   corroborated stories. If 94 names yield four, the feature is honest and nearly
-   empty — worth knowing before it informs anything.
-7. **Stage 4 regime re-sourcing** — do not start until the ablation question is
-   settled. If the regime gate does not earn its keep, this stage disappears.
+**One list.** It used to be two: this file's, and section 4 of
+`docs/LIVE_TRADING_READINESS.md` ("what is not built, and only matters with real
+money"). Two lists is how M39, M41, M43 and M44 went unmentioned in a review of
+outstanding work on 21 August. The readiness document still holds the REASONING
+for each gap and is worth reading; the list lives here.
+
+### Blocking the experiment
+
+1. **The first fill, and everything behind it:** `recent_fills` on IBKR, M71
+   (built, never exercised — an app-transmitted sell has never happened), and how
+   far back IBKR executions go. M123 removed one reason it could not happen;
+   nothing proves it was the only one. The ledger is now EMPTY, so the first fill
+   will be row one.
+2. **M119 is deployed but unexercised.** Friday's session started at 12:10, after
+   the delay window that killed the 10:00 one. Monday's open is its first real
+   test and the highest-value thing to watch.
+3. **Reach 20 closed trades**, then 30. Below 20 the sizer uses invented
+   constants; below 30 the promotion gate cannot be read at all. Every question
+   below this line is partly speculative until then.
+
+### Turns an ordinary market event into a loss
+
+4. **M39 — corporate actions.** The readiness document calls this *the
+   highest-severity gap*. The machinery exists (`domain/corporate_actions/`, plus
+   M60's quarantine) but **IBKR serves no announcements**, so it has no input and
+   a split cannot be seen before its ex-date. One ordinary 2-for-1 produces four
+   failures from a non-event: the kill-switch trips on the doubled share count,
+   the resting stop sits at roughly twice the new price, the re-arm restores
+   protection at a level that liquidates the position, and the trade's P&L is
+   wrong by the split factor. Ten positions held for a quarter makes it a
+   question of when. **The MNST row retired on 21 August is what this looks like
+   when it happens.**
+5. **M43 — trading halts.** No detection anywhere. The staleness rail covers
+   entry and says nothing about the case that hurts: position held, symbol
+   halted, stop cannot fill, reopens materially lower.
+6. **M41 — earnings event risk.** M120 fixed the DATE the blackout is computed
+   against; the risk itself is untouched. With a 10-day minimum hold and a 30-day
+   time stop, holding through an announcement is unavoidable — roughly quarterly
+   per position. The 6% gap budget was measured across 28,987 ORDINARY nights;
+   earnings gaps run 15–20% and a stop does not help, because the price never
+   trades there. Widening to 94 symbols multiplies the exposure.
+7. **M44 — execution quality.** Every order is a market order and slippage is
+   modelled at a flat 5bps regardless of size, time of day or spread. The one
+   real data point is not encouraging: the CVS stop gapped through and cost
+   **1.68R, not the 1R the sizing assumes**. If that is typical, every position
+   is sized against an understated downside. The instrument exists —
+   `diagnostics.py` reads `entry_slippage` — and what is missing is trade count.
+   ⚠️ Its analysis script now reads the ARCHIVE, because the 21 August retirement
+   moved the journal rows out of the live directory; its other input was a live
+   Alpaca API call that will not be made again.
+
+### Correctness and hygiene
+
+8. **Stage 3 ASX rules — the rest.** Tick sizes are done (M123). Still absent:
+   the $500 minimum marketable parcel (unlikely to bind at $1M equity), T+2, and
+   the auctions against session logic written for a 13:30 UTC open.
+9. **The liquidity filter does not filter.** `average_daily_volume` is a
+   deterministic RNG seeded on the ticker — a synthetic number between 10,000 and
+   20,000,000, not real volume — so `QAT_WATCHLIST_MIN_AVG_VOLUME` screens on
+   noise. Harmless across 94 megacaps that are liquid by construction; actively
+   misleading if the universe widens beyond them.
+10. **The $2,087.83 that is not cash.** Equity minus cash is a steady 2,087.83
+    reported as 0.2% exposure while the OMS holds no positions.
+11. **News yield at 94 symbols.** Live in the deployed build, so measurable on
+    Monday. The only measurement is six ASX names yielding two corroborated
+    stories; if 94 yield four, the feature is honest and nearly empty.
+12. **`invoke build` does not build.** `@task(pre=[lint, test])` with a `pass`
+    body — returns 0 with a green suite while `dist/` keeps yesterday's exe.
+    Packaging is `invoke package`, then `invoke sign`.
+13. **Retire the Alpaca CODE paths?** Open question. The adapter and market-data
+    source are still in the tree and still tested, and `alpaca_source.py` is the
+    reference implementation M119's retry came from. The 21 August decision was
+    about DATA.
+14. **`migrate_ledger_eras.py` is superseded** by `retire_alpaca_era.py`. Dead
+    script; keep or delete deliberately.
+15. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+    settled. If the regime gate does not earn its keep, this stage disappears.
 
 **Closed 21 August:** the ASX breadth feature (M112, verified live at 94 breadth
 symbols); the Stage 2 data decision (news → Yahoo by operator decision, bars →
-yfinance, measured at 95/95 symbols with zero empty polls across a full
-session); the Force-Start confirmation (M124); the broker connect retry and the
-port pre-flight (M125); the AI advisor's news and results date (M126); the
-Alpaca-era records, now covering all three ledgers (M122, M127).
-
----
+yfinance, measured at 95/95 with zero empty polls across a full session); tick
+sizes (M123); the Force-Start confirmation (M124); the broker connect retry and
+port pre-flight (M125); the AI advisor's news and results date (M126); the era
+boundaries (M122, M127); the tick-timestamp and staleness pair (M128, M130); the
+handoff rewrite (M129); the M130 deploy; and the Alpaca-era data, now retired
+from the app entirely to `docs/archive/alpaca-era/` — which dissolved the MNST
+question rather than answering it.
 
 ## What shipped today, and what each one changes
 

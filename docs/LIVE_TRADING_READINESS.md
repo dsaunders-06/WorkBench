@@ -90,6 +90,13 @@ intended market.
 
 ## 4. What is not built, and only matters with real money
 
+> **The LIST of outstanding work lives in `docs/HANDOFF.md`, not here.** These
+> four were merged into it on 21 August 2026, because carrying two lists is how
+> M39, M41, M43 and M44 went unmentioned in a review of outstanding work that
+> same day — the reviewer read the handoff and never opened this file. What
+> stays here is the REASONING, which is longer than a list item and worth
+> keeping. Add a gap to both, or add it to the handoff and link it here.
+
 Each of these is survivable on paper and expensive live.
 
 **M39 — Corporate actions.** ~~Nothing in the order, position or protection path
