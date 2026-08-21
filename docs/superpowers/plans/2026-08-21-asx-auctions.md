@@ -1034,7 +1034,7 @@ Expected: only the probe timestamp line differs. Any change to the hours themsel
 
 - [ ] **Step 3: Update the milestone and the handoff**
 
-Set `MILESTONE` in `src/qat/version.py` to `"M135"` (M134 is the current value) and describe this work in one line, following the shape of the existing milestone notes in that file.
+Set `MILESTONE` in `src/qat/version.py` to the next unused number (M135 was taken on the evening of 21 August by the AI-advisor and design-system work, so this is M136 unless something else has shipped since — check the constant rather than trusting this line) and describe this work in one line, following the shape of the existing milestone notes in that file.
 
 In `docs/HANDOFF.md`, mark outstanding item 9 as done in the same style as items 8, 10, 12 and 14 — struck through, with what shipped and what the original said. State explicitly that the minimum parcel and T+2 were deferred as live-only by operator decision on 21 August, and carry the paper-fidelity residual across: if IBKR paper fills a sub-$500 order the live exchange would refuse, the paper record is optimistic by exactly the trades that could not have happened. **Do not let that residual die with the item** — an unrecorded deferral reads later as an oversight.
 

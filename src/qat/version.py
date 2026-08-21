@@ -287,7 +287,43 @@ from qat.domain.display_dates import format_display_date
 #   Not deleted - removing it would silently widen the universe.
 # * `migrate_ledger_eras.py` is superseded by `retire_alpaca_era.py` and now
 #   says so in its first line.
-MILESTONE = "M134"
+#
+# M135 is operator-facing work from running the app rather than reading it, plus
+# one guard that was passing while blind. NO TRADING-DECISION INPUT CHANGES.
+#
+# What an operator will see: single-source news reaching the AI Advisor where
+# nothing reached it before; what the model was given printed in the
+# conversation instead of clipped to one line; the symbol named in front of
+# every question; four permanently-blank fields gone from the Dashboard; and the
+# backtest equity curve plotted against dates rather than a bar count.
+#
+# * NEWS. The two-source rule was surfacing nothing on the ASX names being
+#   asked about - `data/news.py` had already recorded why: NHF's six items came
+#   from ONE outlet, and the binding limit is Yahoo's .AX coverage rather than
+#   the threshold. `QAT_NEWS_MIN_SOURCES` now carries it, default 1. What that
+#   costs is stated at the setting: a single planted story can reach the model.
+#   What still holds is everything that never depended on counting outlets.
+# * The sources block moved into the conversation, which also gave each answer
+#   its OWN sources - one label meant a second question overwrote the first
+#   question's. Escaped on the way in: the conversation is rich text and a
+#   headline is third-party text.
+# * DASHBOARD. Short market value, both margin figures and Day trades (5d)
+#   removed. `ib_adapter.balances` already said the IB layer maps none of them,
+#   so all four rendered a dash every session; and two are meaningless even
+#   filled, this system being long-only and the day-trade count belonging to a
+#   US rule that does not reach an ASX account.
+# * The equity curve is plotted on its own timestamps. M55 left a note saying
+#   the index existed and was discarded at the render site. It was.
+# * DESIGN SYSTEM. 28 hand-written stylesheet arguments, 11 of them a pixel
+#   size that is ON the type scale. `theme.text` now takes an OPTIONAL colour,
+#   which is why they existed - a heading wants a size and a weight and had
+#   nothing to call - and `theme.panel()` owns the bordered card.
+# * ⚠️ The colour guard was passing while blind. Python 3.12 (PEP 701) made
+#   f-string text arrive as FSTRING_MIDDLE, not STRING, and the scan filtered
+#   on STRING - so it read every f-string as empty, which is exactly where a
+#   stylesheet is written. It hid `color: white` in `dashboard.py`. Any guard
+#   in this codebase written before 3.12 could have narrowed the same way.
+MILESTONE = "M135"
 
 _UNKNOWN = "unknown"
 

@@ -41,11 +41,11 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M134 (`2d7777c`)**, installed 21 August 20:05, app not yet launched on it |
-| Repository HEAD | **`2d7777c`** (M134 is `1ed894f`; HEAD is the handover commit on top of it) |
-| Deploy gap | **NONE.** M133 and M134 shipped in the 20:05 deploy |
+| Deployed build | **M134 (`2d7777c`)**, installed 21 August 20:05 and read back off its own log |
+| Repository HEAD | Past M134 — evening work of 21 August is **M135**, uncommitted to any build |
+| Deploy gap | **M135.** UI, news and design-system only; **no trading-decision input changed**. Not urgent, and see the warning below about deploying before Monday |
 | Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September. The count is deliberately not written here; `handoff_state.py` derives it (`vs origin ... [ahead N]`), and a hardcoded one was stale within the hour on 21 August |
-| Suite | 2,517 passed, 25 skipped, 70.9s. ruff, black, mypy and bandit all clean |
+| Suite | **2,528 passed, 25 skipped.** ruff, black and mypy clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | FLAT, equity 1,003,953.07 **AUD**. No entry has ever been placed by the app on IBKR |
@@ -63,6 +63,17 @@ source.
 > 20:09:43, stood down 20:10:51 with the account FLAT and nothing to adopt, zero
 > ERROR/CRITICAL, three equity samples written. The deployed build is an
 > observation, not an intention.
+
+### ⚠️ Do not deploy M135 before Monday's open
+
+Nothing in M135 touches a trading-decision input — it is news scope, three
+screens and the design system. But M119's first real test is Monday 10:00, and
+it is more informative read against the build that is actually installed than
+against one that changed five files the night before. Deploy after the open, or
+once the feed has been watched through it.
+
+The app currently installed is M134 and **tonight's work is not in it.** To look
+at any of it, run from source with `invoke run`.
 
 ### The account is AUD-base. Verified, not assumed.
 
@@ -210,7 +221,23 @@ for each gap and is worth reading; the list lives here.
    > `value.currency` and lets the last matching row win. Harmless while the
    > account is single-currency AUD — which it is — and worth fixing before it
    > ever holds a second one.
-9. **Stage 3 ASX rules — the rest.** Tick sizes are done (M123). Still absent:
+9. **Stage 3 ASX rules — DESIGNED AND PLANNED, execution parked to Sunday
+   23 August by operator choice.** Spec
+   `docs/superpowers/specs/2026-08-21-asx-auctions-design.md`, plan
+   `docs/superpowers/plans/2026-08-21-asx-auctions.md` (5 tasks, bottom-up).
+   **Scope was narrowed:** the minimum marketable parcel and T+2 were dropped
+   as live-only concerns with no bite in a paper account. One residual is
+   recorded rather than lost — if IBKR paper fills a sub-$500 order the live
+   exchange would refuse, the paper record is optimistic by exactly the trades
+   that could not have happened.
+   The measurement behind it is committed and should not be re-derived:
+   `scripts/asx_session_probe.py` asked the live Gateway and settled the design
+   by evidence. **IBKR does not report a staggered ASX open** — fourteen
+   contracts from A2M to XRO returned identical hours — so a per-symbol group
+   model is not buildable. **The closing auction is derivable**: tradingHours
+   1611 against liquidHours 1600. And the app already disagrees with the broker
+   about the open, 10:00 against 0959.
+   Original text: tick sizes are done (M123). Still absent:
    the $500 minimum marketable parcel (unlikely to bind at ~1M AUD equity), T+2,
    and the auctions against session logic written for a 13:30 UTC open.
 10. ~~**The liquidity filter does not filter.**~~ **DONE — M134.** Renamed to
@@ -223,7 +250,7 @@ for each gap and is worth reading; the list lives here.
     and 20,000,000, not real volume — so `QAT_WATCHLIST_MIN_AVG_VOLUME` screens
     on noise. Harmless across 94 megacaps that are liquid by construction;
     actively misleading if the universe widens beyond them.
-11. **News yield at 94 symbols.** Live in the deployed build, so measurable on
+11. ~~**News yield at 94 symbols.**~~ **DONE — M135.** News was never gated per symbol; `news_source` defaults to `yfinance` and the picker carries the whole watchlist. What suppressed it was the two-source rule, now `QAT_NEWS_MIN_SOURCES` defaulting to **1**. What that costs is written at the setting: a single planted story can reach the model. Original: Live in the deployed build, so measurable on
     Monday. The only measurement is six ASX names yielding two corroborated
     stories; if 94 yield four, the feature is honest and nearly empty.
 12. ~~**`invoke build` does not build.**~~ **DONE — M134.** It is now
@@ -243,7 +270,7 @@ for each gap and is worth reading; the list lives here.
     `retire_alpaca_era.py`. Kept rather than deleted because it records an
     approach that was correct for a day and its `--cutover` reasoning is what
     the retirement script inherited. Do not run it.
-15. **Design-system debt in the screens.** `docs/UI_UX_APPROACH.md` records
+15. ~~**Design-system debt in the screens.**~~ **DONE — M135**, and the counts below were understated: 28 hand-written stylesheet arguments, not 20, and 11 longhand pixel sizes, not 8. `theme.text` now takes an optional colour — the reason they existed — and `theme.panel()` owns the bordered card. ⚠️ **The colour guard was passing while blind**: PEP 701 made f-string text arrive as `FSTRING_MIDDLE`, the scan filtered on `STRING`, and it was hiding a live `color: white` in `dashboard.py`. Original: `docs/UI_UX_APPROACH.md` records
     Group 4 (every screen restyled) as complete, and it is. What survives,
     RE-MEASURED 21 August: **20 `setStyleSheet` calls across seven files
     hand-write what a `theme` helper returns**, and 8 of those hardcode a pixel
@@ -253,7 +280,25 @@ for each gap and is worth reading; the list lives here.
     test — so that document's "25 raw-hex sites" note is stale and now says so.
     The guard catches hex and cannot catch a primitive written longhand.
     Nothing is wrong on screen; this is debt, not a defect.
-16. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+16. **One symbol, one recommendation — NEXT, agreed 21 August.** The AI Advisor
+    forms buy/sell/hold from regime, positions, risk, fundamentals, results date
+    and news. The Workbench forms one from backtest stats and the strategy's
+    candidate signal — and passes `regime_label="unknown"`, so **it does not know
+    the prevailing regime**. Neither sees everything. The ask is one answer over
+    both, against the prevailing regime and following the current strategy's
+    rules. Needs a design pass first, and **M73's framing has to survive it**:
+    this screen is "an analyst, never a trader" and its output reaches no part of
+    the trading system. A recommendation that follows the live strategy's rules
+    sits closer to that line, not further from it.
+
+17. **Sweep the other guards for the same blindness.** M135 found the colour
+    guard reading every f-string as empty since the 3.12 upgrade, hiding a live
+    violation while reporting none. Any pattern- or `tokenize`-based guard in
+    this codebase written before that upgrade could have narrowed the same way,
+    and a narrowed guard is worse than none because its green result is read as
+    evidence. Not urgent; genuinely worth doing.
+
+18. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
@@ -428,9 +473,12 @@ still says M130, the copy did not take and nothing downstream is trustworthy.
 
 THE STATE
 
-  Deployed M134 (2d7777c) - installed, not yet read back. HEAD is the same
-  commit. Deploy gap: NONE. One uncommitted change sits in the tree:
-  handoff_state.py's DEPLOYED constant, updated at the moment of the copy.
+  Deployed M134 (2d7777c), read back off its own log at 20:10 on 21 August.
+  HEAD is past it: the evening's work is M135 and is NOT in the installed
+  build, so run from source (`invoke run`) to see any of it.
+  DO NOT DEPLOY M135 BEFORE THE OPEN - nothing in it touches a trading-decision
+  input, and M119's first test is worth reading against the build that has been
+  running rather than one changed the night before.
   Account FLAT, ~1,003,953 AUD. NO ENTRY HAS EVER BEEN PLACED BY THE APP ON
   IBKR. Ledgers are EMPTY: the Alpaca era was retired to
   docs/archive/alpaca-era/ on 21 August, so the first fill will be row one.
@@ -465,8 +513,11 @@ FIRST WORK, IN ORDER
      reconciliation have never run. The first-fill path was audited on
      21 August and found sound - see "Audited 21 August" in the handoff, and do
      not re-walk it without a reason.
-  3. Otherwise, item 9 (Stage 3 ASX rules) is the next real work. Items 8, 10,
-     12 and 14 were cleared on 21 August.
+  3. Otherwise the agreed order is item 16 (one symbol, one recommendation -
+     needs a design pass, and M73's "analyst, never a trader" framing has to
+     survive it), then item 9, whose spec and plan are already written and
+     whose measurement is already committed. Items 8, 10, 11, 12, 14 and 15
+     were cleared on 21 August.
 
 TWO HABITS THAT EARNED THEIR KEEP ON 21 AUGUST
 
