@@ -49,6 +49,7 @@ from qat.data.broker.ib_translate import (
     to_ib_parent,
     to_ib_protective_legs,
 )
+from qat.data.broker.ticks import round_to_tick
 from qat.data.symbols import from_ibkr
 from qat.domain.bus import EventBus
 from qat.domain.events import KillSwitchEvent
@@ -254,7 +255,8 @@ class IBAdapter:
         broker rather than merely both present (M33)."""
         pair = to_ib_oca_pair(order, oca_group=f"qat-{order.order_id}")
         trades = [
-            self.ib_client.placeOrder(contract, leg) for leg in pair  # type: ignore[arg-type]
+            self.ib_client.placeOrder(contract, leg)
+            for leg in pair  # type: ignore[arg-type]
         ]
 
         app_order_id = order.order_id
@@ -388,8 +390,53 @@ class IBAdapter:
             symbol: stop.stop_price for symbol, stop in (await self.resting_stop_orders()).items()
         }
 
+    def _price_side(self, order: Order, field: str) -> str:
+        """Which side a given price field is actually transmitted as (M123).
+
+        Protective legs REVERSE the entry's side - a long's stop and its target
+        are both SELLs - unless the order IS the resting stop, in which case its
+        own side is already the closing side.
+        """
+        if field == "limit_price":
+            return order.side
+        if order.order_type == "stop":
+            return order.side
+        return "sell" if order.side == "buy" else "buy"
+
+    def _round_prices_onto_ticks(self, order: Order) -> None:
+        """Move every price on this order onto a valid exchange increment (M123).
+
+        Done HERE, at the broker boundary, for the same reason AlpacaAdapter
+        rounds to 2dp here: fifteen call sites construct order prices and none
+        of them should have to know what an exchange's price steps are. Mutated
+        in place rather than copied so the object the OMS keeps is the one the
+        broker holds - a stop the app records at 1.8734 while IBKR rests at
+        1.875 is the M95 Stage A failure in miniature.
+
+        Nothing rounded before the ASX move and nothing needed to: the US tick
+        is a cent at every price a megacap trades at, so AlpacaAdapter's 2dp
+        and "on tick" were the same thing. On the ASX between $0.10 and $2.00
+        the step is half a cent, and an ATR-derived stop lands off it.
+        """
+        for field in ("limit_price", "stop_price", "take_profit_price"):
+            price = getattr(order, field)
+            if price is None:
+                continue
+            rounded = round_to_tick(price, self.settings.market, self._price_side(order, field))
+            if rounded != price:
+                logger.info(
+                    "%s %s moved onto the %s tick: %s -> %s",
+                    order.symbol,
+                    field,
+                    self.settings.market,
+                    price,
+                    rounded,
+                )
+                setattr(order, field, rounded)
+
     async def place_order(self, order: Order) -> Order:
         self._check_not_read_only()
+        self._round_prices_onto_ticks(order)
         contract = to_ib_contract(order.symbol, self.settings.market)
         if order.is_bracket:
             return await self._place_bracket(order, contract)
@@ -493,6 +540,17 @@ class IBAdapter:
     async def modify_order(self, order_id: str, **changes: object) -> Order:
         self._check_not_read_only()
         order = await self._known_order(order_id)
+        # M123. The re-priced value has to be on a tick too. A split-adjusted
+        # stop is the old level divided by the ratio, which lands off the grid
+        # far more often than it lands on it - and a rejected adjustment leaves
+        # the OLD stop resting at the broker while the app records the new one.
+        for key in ("limit_price", "stop_price", "take_profit_price"):
+            if key in changes and changes[key] is not None:
+                changes[key] = round_to_tick(
+                    float(changes[key]),  # type: ignore[arg-type]
+                    self.settings.market,
+                    self._price_side(order, key),
+                )
         for key, value in changes.items():
             setattr(order, key, value)
         ib_order = self._ib_orders.get(order_id)
