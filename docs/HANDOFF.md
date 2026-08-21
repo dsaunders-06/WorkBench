@@ -42,13 +42,33 @@ source.
 | | |
 |---|---|
 | Deployed build | **M130 (`f5b9bd2`)**, running since 17:59:58 |
-| Deploy gap | **M133 only.** Everything else committed after `f5b9bd2` is docs and data. M133 changes the exposure metric and needs a build to take effect |
-| Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September |
+| Repository HEAD | **M134 (`1ed894f`)** |
+| Deploy gap | **M133 + M134.** Neither is urgent: one changes a reported figure, the other is tooling and a rename |
+| Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September. **15 commits unpushed** |
 | Suite | 2,517 passed, 25 skipped. ruff and black both clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
-| Account | FLAT, equity 1,003,953.07. No entry has ever been placed by the app on IBKR |
-| Ledgers | **EMPTY.** The Alpaca era was retired to `docs/archive/alpaca-era/` on 21 August: 0 closed trades, 0 risk decisions, 920 equity samples (ASX only), 6 journal rows |
+| Account | FLAT, equity 1,003,953.07 **AUD**. No entry has ever been placed by the app on IBKR |
+| Ledgers | **EMPTY.** The Alpaca era was retired to `docs/archive/alpaca-era/`: 0 closed trades, 0 risk decisions, equity samples ASX-only, 6 journal rows |
+
+> ⚠️ **There is a `-dirty` exe in `dist/`.** It was built at 19:48 from a tree
+> with M134 uncommitted, so its stamp carries "built from a working tree with
+> uncommitted changes". **Do not deploy it.** Run `invoke build` again from the
+> clean tree first — it now prints the artefact it produced, so the stamp is
+> visible before anything is copied.
+
+### The account is AUD-base. Verified, not assumed.
+
+Every IBKR tag reports **AUD**, and `$LEDGER-TotalCashBalance` returns the
+identical 1,001,865.24 for both `AUD` and `BASE` — if BASE were USD it would be
+a converted figure. Single currency, no FX exposure anywhere. The equity-minus-
+cash gap of **2,087.83 is `AccruedCash`**, accrued interest.
+
+`docs/superpowers/plans/2026-08-19-ibkr-move.md` says *"Paper accounts start
+with USD 1,000,000"* and now carries a correction at that sentence, because on
+21 August it was taken as given and produced a confident, wrong finding that the
+risk model divided USD by AUD and undersized every position by 28%. **The
+account's own tags are the authority on its currency, not a plan document.**
 
 ### The session, as it finished
 
@@ -377,45 +397,76 @@ shares its shape.
 Continuing QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money.
 
-Read the state first, and trust it over anything in this prompt:
+READ THE STATE FIRST, and trust it over anything in this prompt:
 
-    & "C:\Claude Programming\scripts\session_check.ps1"     (NO ARGUMENTS, EVER)
+    & "C:\Claude Programming\scripts\session_check.ps1"   (NO ARGUMENTS, EVER)
     .\.venv\Scripts\python.exe scripts\handoff_state.py
 
-Then read docs\HANDOFF.md. It is short now, and current as at the 21 August
-close.
+Then read docs\HANDOFF.md. It is short and current as at 21 August evening.
 
-⚠️ PowerShell for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal,
-including Python that only reads it, and including anything that builds
-Settings() - which loads that directory's .env whether or not the script
+⚠️ POWERSHELL for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal -
+including Python that only READS it, and including anything that builds
+Settings(), which loads that directory's .env whether or not the script
 mentions it. The Bash sandbox serves a frozen July snapshot and does NOT error.
 
-⚠️ DO NOT PUSH. GitHub Actions minutes are exhausted until September, so the
-local suite is the only gate. Run it in full and read the summary line, never a
-piped tail. Format with black, lint with ruff.
+⚠️ DO NOT PUSH. GitHub Actions minutes are exhausted until September. 15
+commits sit unpushed on master and the local suite is the ONLY gate: run it in
+full and read the summary line, never a piped tail. Lint with ruff, format with
+BLACK (they diverged on one file on 21 August).
 
-THE STATE, as at the 21 August close:
+⚠️ DO NOT DEPLOY THE EXE CURRENTLY IN dist/. It was built before M134 was
+committed and its stamp says "-dirty". Run `invoke build` from the clean tree -
+it packages properly now and prints the artefact it produced.
 
-  Deployed M120 (14dc257). HEAD is M128 (ae364a3). SEVEN COMMITS UNDEPLOYED.
-  Account FLAT. No entry has ever been placed by the app on IBKR.
-  Watchlist widened to 94 ASX megacaps + STW.AX; entry allow list CLEARED.
+THE STATE
 
-THE FIRST TWO THINGS, IN ORDER, BEFORE MONDAY'S 10:00 OPEN:
+  Deployed M130 (f5b9bd2). HEAD is M134 (1ed894f). Deploy gap: M133 + M134,
+  neither urgent - one is a reported figure, one is tooling.
+  Account FLAT, ~1,003,953 AUD. NO ENTRY HAS EVER BEEN PLACED BY THE APP ON
+  IBKR. Ledgers are EMPTY: the Alpaca era was retired to
+  docs/archive/alpaca-era/ on 21 August, so the first fill will be row one.
+  Watchlist is 94 ASX megacaps + STW.AX and the entry allow list is CLEARED.
+  Autonomous execution is ON with 10 free slots.
 
-  1. Run scripts\migrate_ledger_eras.py - dry run, then --apply, WITH THE APP
-     CLOSED. Then decide the MNST row by hand: it is a split recorded as a
-     stop-out, not a loss, and the script will not rewrite it for you.
-  2. Deploy M122-M128. M119 - the fix that stops the feed dying at the open -
-     IS deployed but has NEVER been exercised, because Friday's session started
-     at 12:10, after the delay window that killed the 10:00 one. Monday's open
-     is its first real test.
+MONDAY'S OPEN IS THE THING THAT MATTERS
 
-M128 CHANGED A RISK RAIL. Ticks now carry the bar's own timestamp, and
-staleness is measured BEYOND the feed's 1,200s structural delay. If you touch
-either number, understand both: stamping bar time without the delay allowance
-excludes every symbol and trades nothing, silently, while reporting a healthy
-feed.
+  M119 - the fix that stops the feed dying at the bell - is DEPLOYED and has
+  NEVER been exercised. Friday's session started at 12:10, after the 20-minute
+  delay window that killed the 10:00 one. Monday 10:00 is its first real test.
+  Watch the first six minutes: five empty 60s polls used to end the stream
+  permanently, with nothing halting, because MARKET DATA DOWN is deliberately
+  not a kill-switch trigger.
 
-Anything not deployed is not protecting anything. Check the stamp on the
-RUNNING build, never the repository.
+  An entry can only happen in 57% of the session. Blocked during Opening
+  Volatility (10:00-10:28) and Midday Lull (11:59-14:04). With the feed's
+  ~20-minute delay the last usable moment is about 15:40, so a trigger must
+  land inside 10:29-11:58 or 14:05-15:40. A quiet morning is not a quiet day.
+
+  EXPECT THE FIRST ASX STALENESS EXCLUSION and do not read it as a fault. The
+  rail fired 1,589 times on the US feed and has NEVER fired on ASX, because
+  ts=now made price age unmeasurable until M128. The first one is it working.
+
+FIRST WORK, IN ORDER
+
+  1. Watch the open. Sweep with session_check every 20-30 minutes. Escalate on
+     ERROR/CRITICAL by CONTENT (ib_async logs the 1102 RECOVERY at ERROR), on
+     the process dying, a kill-switch trip, a reconciliation mismatch, or any
+     order at the broker.
+  2. If a fill happens, report it in detail. recent_fills, M71 and post-fill
+     reconciliation have never run. The first-fill path was audited on
+     21 August and found sound - see "Audited 21 August" in the handoff, and do
+     not re-walk it without a reason.
+  3. Otherwise, item 9 (Stage 3 ASX rules) is the next real work. Items 8, 10,
+     12 and 14 were cleared on 21 August.
+
+TWO HABITS THAT EARNED THEIR KEEP ON 21 AUGUST
+
+  Verify the artefact, not the exit code. `invoke build` returned 0 having
+  built nothing; three PowerShell string-replacements silently did not match;
+  the liquidity filter screens on a random number. None of them FAILED.
+
+  Query the system, do not read the document. Two documents asserted things the
+  running system contradicted - the UI/UX colour counts, and the account's
+  currency. The second produced a confident wrong finding that had to be
+  retracted the same evening.
 ```
