@@ -48,6 +48,7 @@ from qat.domain.backtester.vectorized_engine import VectorizedBacktester
 from qat.domain.backtester.walk_forward import run_walk_forward
 from qat.domain.display_dates import format_display_date
 from qat.presentation import theme
+from qat.presentation.advisory_inputs import news_for, next_earnings_for
 from qat.presentation.runtime import Runtime
 from qat.presentation.ui_level import UiLevel
 from qat.presentation.widgets import KpiTile
@@ -517,6 +518,13 @@ class WorkbenchScreen(QWidget):
             # commenting on a fundamentals-driven strategy while knowing none of
             # the fundamentals that drove it.
             fundamentals=fundamentals.available_figures() if fundamentals is not None else {},
+            # M126. The Workbench asks the same per-symbol question the Advisor
+            # does and was given strictly less to answer it with - no results
+            # date, no news - so the two screens could reach different views of
+            # the same company from the same moment. Parity, or one of them is
+            # reasoning on a subset for no stated reason.
+            next_earnings=next_earnings_for(self.runtime, symbol),
+            news=await news_for(self.runtime, symbol),
         )
         recommendation = await self.runtime.ai_service.get_regime_narrative(context)
         flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"
@@ -671,8 +679,7 @@ def _walk_forward_headline(result: WalkForwardResult) -> str:
         )
     elif profitable <= count / 2:
         parts.append(
-            "It failed out of sample as often as it worked: treat the backtest above "
-            "as unproven."
+            "It failed out of sample as often as it worked: treat the backtest above as unproven."
         )
     elif spread > abs(mean):
         parts.append(

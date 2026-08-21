@@ -437,7 +437,19 @@ class Settings(BaseSettings):
     # Company news for the advisory screen (M117). Defaults to "none":
     # news is third-party text and reaches a model, so it is opt-in rather
     # than something a fresh install starts doing on its own.
-    news_source: Literal["none", "yfinance"] = "none"
+    #
+    # M126: default flipped to "yfinance". The operator decision of 21 August
+    # is that Yahoo is the single news source for now - IBKR measured ZERO
+    # headlines for RIO.AX and NHF.AX over 90 days, listcorp refuses bots, and
+    # ASX ComNews is licensed. Yahoo is not merely the lazy option here, it is
+    # the only free one that returns anything on .AX at all.
+    #
+    # Opting IN by default does not weaken the injection stance: the two-source
+    # rule still runs at the edge in `data/news.py`, the text still travels as
+    # inert `news` rather than instruction, and `tests/safety/
+    # test_prompt_injection_in_context_is_ignored.py` still guards the boundary.
+    # What changes is only whether the fetch happens.
+    news_source: Literal["none", "yfinance"] = "yfinance"
 
     # Which Alpaca data feed to request (M17). iex is real time on any account
     # including free paper, but is a single exchange carrying a small share of

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -26,13 +27,63 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from qat.data.news import as_context_dicts, corroborate, drop_other_listings
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.events import RegimeEvent
 from qat.presentation import theme
+from qat.presentation.advisory_inputs import news_for, next_earnings_for
 from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
+
+SOURCES_IDLE = "Sources: nothing fetched yet - ask a question."
+
+
+def describe_sources(news: list[dict[str, object]], next_earnings: str, news_enabled: bool) -> str:
+    """What the model was given, in the operator's words (M126).
+
+    The THREE states are deliberately distinct, because collapsing them is how
+    a reader concludes the wrong thing from the same blank line:
+
+    * news is switched off - nothing was looked for;
+    * news is on and nothing cleared the two-source rule - it was looked for
+      and there was nothing worth passing on;
+    * stories were passed, and these are exactly the ones.
+
+    "no news" and "we did not ask" are different facts, the same distinction
+    `Status.UNKNOWN` exists for in the pre-flight.
+    """
+    parts: list[str] = []
+    parts.append(
+        f"Next scheduled results: {next_earnings}"
+        if next_earnings
+        else "Next scheduled results: unknown"
+    )
+
+    if not news_enabled:
+        parts.append("News: OFF (QAT_NEWS_SOURCE=none) - no stories were fetched or passed on.")
+        return "  |  ".join(parts)
+
+    if not news:
+        parts.append(
+            "News: fetched, none corroborated - nothing cleared the two-source rule, "
+            "so nothing reached the model."
+        )
+        return "  |  ".join(parts)
+
+    parts.append(f"News passed to the model ({len(news)}, UNTRUSTED external text):")
+    rendered = "  |  ".join(parts)
+    for story in news:
+        title = str(story.get("title", "")).strip()
+        providers = story.get("providers") or []
+        joined = ", ".join(str(p) for p in providers) if isinstance(providers, list) else ""
+        when = str(story.get("published", "") or "").strip()
+        # M116's exception, named where it applies. A story carried on ONE
+        # source because that source is the company itself passed a different
+        # test from one carried by two aggregators, and an operator weighing
+        # the answer should be able to tell which they are looking at.
+        basis = "primary source" if story.get("primary") else joined
+        rendered += f"\n  • {title} — {basis}{f' ({when})' if when else ''}"
+    return rendered
 
 
 def _answer_caveats(fundamentals: dict[str, object], risk_metrics: dict[str, float]) -> str:
@@ -49,8 +100,7 @@ def _answer_caveats(fundamentals: dict[str, object], risk_metrics: dict[str, flo
     caveats: list[str] = []
     if fundamentals.get("is_synthetic"):
         caveats.append(
-            "the company fundamentals in its context were SYNTHETIC placeholders, not real "
-            "figures"
+            "the company fundamentals in its context were SYNTHETIC placeholders, not real figures"
         )
     if not risk_metrics:
         caveats.append("no portfolio risk check had been recorded yet, so it had no VaR or ES")
@@ -100,6 +150,24 @@ class AiAdvisorScreen(QWidget):
         self.conversation = QTextEdit()
         self.conversation.setReadOnly(True)
         layout.addWidget(self.conversation)
+
+        # M126. What the model was actually given, shown to the operator.
+        #
+        # News was fetched, corroborated and passed into the context, and there
+        # was nowhere to see it. An operator reading a recommendation could not
+        # tell whether it rested on two stories or none, which is the same
+        # class of defect as a report that cannot be checked against its own
+        # inputs. It is labelled UNTRUSTED here for the same reason it is
+        # labelled that way in the prompt: this is third-party text, and the
+        # label is part of what makes reading it safe.
+        self.sources_label = QLabel(SOURCES_IDLE)
+        self.sources_label.setWordWrap(True)
+        self.sources_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # Through the design system, not a hand-written rule - this file's own
+        # note calls an inline stylesheet "the 67-stylesheet problem returning
+        # one widget at a time".
+        self.sources_label.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
+        layout.addWidget(self.sources_label)
 
         input_row = QHBoxLayout()
         self.symbol_picker = QComboBox()
@@ -207,24 +275,11 @@ class AiAdvisorScreen(QWidget):
     async def _news_for(self, symbol: str) -> list[dict[str, object]]:
         """Corroborated company news, or nothing (M117).
 
-        Off unless `QAT_NEWS_SOURCE` says otherwise. The fetch runs in a thread
-        because the vendor client is blocking and this is the UI thread, and
-        every failure degrades to no news: a third-party feed must never be able
-        to stop the advisor answering.
-
-        The two-source rule is applied HERE, deterministically, before the text
-        reaches a model - never by asking the model whether its sources agree.
-        An attacker who controls one article also controls anything that article
-        claims about its own corroboration.
+        The rules moved to `advisory_inputs` in M126 so the Workbench can reach
+        the same answer. Two copies of the corroboration rules would drift, and
+        the one that drifted would be the one nobody was reading.
         """
-        source = getattr(self.runtime, "news_source", None)
-        if source is None:
-            return []
-        try:
-            items = await asyncio.to_thread(source.fetch, symbol)
-            return as_context_dicts(corroborate(drop_other_listings(items)))
-        except Exception:  # noqa: BLE001 - news is never worth failing the screen for
-            return []
+        return await news_for(self.runtime, symbol)
 
     def _next_earnings_for(self, symbol: str) -> str:
         """The next scheduled results date, ISO, or "" when unknown (M117).
@@ -234,15 +289,7 @@ class AiAdvisorScreen(QWidget):
         degrades to unknown - the calendar makes that promise itself, and an
         advisory screen is the last place that should raise.
         """
-        bridge = getattr(self.runtime, "signal_bridge", None)
-        calendar = getattr(bridge, "earnings_calendar", None)
-        if calendar is None:
-            return ""
-        try:
-            when = calendar.next_earnings(symbol)
-        except Exception:  # noqa: BLE001 - advisory context is never worth raising for
-            return ""
-        return when.isoformat() if when else ""
+        return next_earnings_for(self.runtime, symbol)
 
     async def _ask(self, question: str) -> None:
         self.ask_button.setEnabled(False)
@@ -259,6 +306,18 @@ class AiAdvisorScreen(QWidget):
             # operator typed and what a stranger published arrived with identical
             # standing. Only genuinely external material belongs in there now.
             notes = list(self._corporate_action_notes())
+            next_earnings = self._next_earnings_for(symbol)
+            news = await self._news_for(symbol)
+            # Shown BEFORE the model answers, so the operator reads the reply
+            # already knowing what it rested on rather than inferring it after
+            # the fact (M126).
+            self.sources_label.setText(
+                describe_sources(
+                    news,
+                    next_earnings,
+                    news_enabled=getattr(self.runtime.settings, "news_source", "none") != "none",
+                )
+            )
             context = AdvisoryContext(
                 symbol=symbol,
                 regime_label=self._regime_label,
@@ -267,8 +326,8 @@ class AiAdvisorScreen(QWidget):
                 risk_metrics=risk_metrics,
                 candidate_signal={},
                 fundamentals=fundamentals,
-                next_earnings=self._next_earnings_for(symbol),
-                news=await self._news_for(symbol),
+                next_earnings=next_earnings,
+                news=news,
                 fetched_notes=notes,
                 operator_question=question,
             )
