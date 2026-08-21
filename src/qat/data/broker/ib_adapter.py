@@ -314,8 +314,7 @@ class IBAdapter:
         broker rather than merely both present (M33)."""
         pair = to_ib_oca_pair(order, oca_group=f"qat-{order.order_id}")
         trades = [
-            self.ib_client.placeOrder(contract, leg)
-            for leg in pair  # type: ignore[arg-type]
+            self.ib_client.placeOrder(contract, leg) for leg in pair  # type: ignore[arg-type]
         ]
 
         app_order_id = order.order_id
