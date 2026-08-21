@@ -2918,8 +2918,20 @@ def _config_reference(doc: Any) -> None:
                 "QAT_DATA_STALENESS_SECONDS",
                 "900",
                 "How old a symbol's last print may be before that symbol is dropped from "
-                "signal generation. It never halts the account - only the stale symbol "
-                "stops being traded.",
+                "signal generation, measured BEYOND the feed's own delay below. It never "
+                "halts the account - only the stale symbol stops being traded.",
+            ),
+            (
+                "QAT_MARKET_DATA_DELAY_SECONDS",
+                "1200",
+                "How far behind the market the price feed structurally is. This is a claim "
+                "about the vendor, not a tolerance: Yahoo publishes ASX intraday about "
+                "twenty minutes late, measured on 21 August 2026 when the market opened at "
+                "10:00 and the first bars appeared at 10:22. Staleness is measured beyond "
+                "it, so raising it BLINDS the staleness rail by exactly that much, and "
+                "lowering it below the real delay makes every symbol read as permanently "
+                "stale and stops the system trading at all. Change it only if the vendor's "
+                "delay is re-measured and found to have changed.",
             ),
             # --- the de-lever sweep -----------------------------------------
             (

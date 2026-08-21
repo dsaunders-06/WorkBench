@@ -312,10 +312,23 @@ class YFinanceMarketDataSource:
             price = float(last["close"])
             if price <= 0:
                 continue
+            # M128. WAS `ts=now`, which stamped a twenty-minute-old price as if
+            # it had just printed. The staleness rail measures price age from
+            # `tick.ts`, so under receive-time stamping it could not see the
+            # vendor's delay AT ALL: every symbol read as fresh for as long as
+            # the poll kept returning, and `excluded 0` meant "the feed is
+            # answering", never "these prices are current".
+            #
+            # The bar's own timestamp is the truth, and telling that truth costs
+            # something - every ASX tick is now ~1,200s old on arrival, which is
+            # past a 900s threshold. `MarketDataFeed` is given the feed's
+            # structural delay so the rail measures staleness BEYOND it rather
+            # than being tripped by it; see `market_data_delay_seconds`.
+            bar_ts = last["ts"]
             ticks.append(
                 RawTick(
                     symbol=symbol,
-                    ts=now,
+                    ts=bar_ts.to_pydatetime() if pd.notna(bar_ts) else now,
                     price=price,
                     volume=float(last["volume"]) if pd.notna(last["volume"]) else 0.0,
                 )

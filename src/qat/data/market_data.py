@@ -79,11 +79,17 @@ class MarketDataFeed:
         staleness_check_interval: float = 5.0,
         queue_maxsize: int = 1000,
         feed_down_seconds: float = 300.0,
+        # How far behind the market this SOURCE structurally is (M128). Yahoo
+        # publishes ASX intraday roughly twenty minutes late; that is a property
+        # of the feed, not a symptom of a thin symbol, and the staleness rail
+        # must not read it as one. Zero for a real-time source.
+        source_delay_seconds: float = 0.0,
     ) -> None:
         self.bus = bus
         self.source = source
         self.symbols = list(symbols)
         self.staleness_seconds = staleness_seconds
+        self.source_delay_seconds = source_delay_seconds
         self.staleness_check_interval = staleness_check_interval
         self.feed_down_seconds = feed_down_seconds
         self._queue: asyncio.Queue[RawTick] = asyncio.Queue(maxsize=queue_maxsize)
@@ -184,25 +190,39 @@ class MarketDataFeed:
         """
         while True:
             await asyncio.sleep(self.staleness_check_interval)
-            now = datetime.now(UTC)
-            for symbol in self.symbols:
-                last = self._last_seen.get(symbol)
-                if last is None:
-                    continue
-                elapsed = (now - last).total_seconds()
-                stale = elapsed > self.staleness_seconds
-                if stale == self._stale_symbols.get(symbol, False):
-                    continue
-                self._stale_symbols[symbol] = stale
-                if stale:
-                    logger.warning(
-                        "%s last printed %.0fs ago - excluded from signals until it trades "
-                        "again. The account is NOT halted",
-                        symbol,
-                        elapsed,
-                    )
-                else:
-                    logger.info("%s is printing again after %.0fs", symbol, elapsed)
-                await self.bus.publish(
-                    DataStaleEvent(symbol=symbol, seconds_since_update=elapsed, stale=stale)
+            await self._check_staleness_once()
+
+    async def _check_staleness_once(self) -> None:
+        """One pass of the rail, extracted so it can be tested without driving
+        a loop (M128). The arithmetic below is a risk decision; it deserves a
+        test that does not depend on sleeping."""
+        now = datetime.now(UTC)
+        for symbol in self.symbols:
+            last = self._last_seen.get(symbol)
+            if last is None:
+                continue
+            # M128. Measured BEYOND the feed's own lag. `elapsed` is now the
+            # true age of the price, because the tick carries the bar's
+            # timestamp rather than its arrival time - so on a feed that is
+            # structurally twenty minutes behind, every symbol would be
+            # permanently stale and nothing would ever signal. Subtracting
+            # the known delay keeps `staleness_seconds` meaning what its
+            # own config comment says: how far past the feed's normal lag a
+            # print has to be before sizing against it is a hazard.
+            elapsed = (now - last).total_seconds() - self.source_delay_seconds
+            stale = elapsed > self.staleness_seconds
+            if stale == self._stale_symbols.get(symbol, False):
+                continue
+            self._stale_symbols[symbol] = stale
+            if stale:
+                logger.warning(
+                    "%s last printed %.0fs ago - excluded from signals until it trades "
+                    "again. The account is NOT halted",
+                    symbol,
+                    elapsed,
                 )
+            else:
+                logger.info("%s is printing again after %.0fs", symbol, elapsed)
+            await self.bus.publish(
+                DataStaleEvent(symbol=symbol, seconds_since_update=elapsed, stale=stale)
+            )

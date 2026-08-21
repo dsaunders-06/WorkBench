@@ -672,8 +672,27 @@ class Runtime:
         feed_symbols = tuple(dict.fromkeys((benchmark_symbol, *watchlist)))
 
         source = market_data_source or resolve_market_data_source(settings)
+        # The delay is a property of the SOURCE, so a synthetic or real-time
+        # feed gets zero and only the delayed vendor gets its measured lag
+        # (M128). Reading it off the setting for every source would tell the
+        # rail that synthetic ticks are twenty minutes old.
+        source_delay = (
+            settings.market_data_delay_seconds if settings.market_data_source == "yfinance" else 0.0
+        )
+        logger.info(
+            "Staleness rail: a print is stale %.0fs beyond the feed's own %.0fs delay "
+            "(%.0fs of real age). Under receive-time stamping the delay was invisible "
+            "and no symbol could ever read as stale (M128).",
+            settings.data_staleness_seconds,
+            source_delay,
+            settings.data_staleness_seconds + source_delay,
+        )
         market_data_feed = MarketDataFeed(
-            bus, source, feed_symbols, staleness_seconds=settings.data_staleness_seconds
+            bus,
+            source,
+            feed_symbols,
+            staleness_seconds=settings.data_staleness_seconds,
+            source_delay_seconds=source_delay,
         )
         feature_engine = FeatureEngine(
             bus,

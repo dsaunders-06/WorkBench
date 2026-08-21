@@ -533,6 +533,19 @@ class Settings(BaseSettings):
     # without producing newer prices.
     yfinance_poll_seconds: float = Field(default=60.0, gt=0)
 
+    # How far behind the market the yfinance feed structurally is (M128).
+    #
+    # MEASURED on 21 August 2026 against the live vendor: the ASX opened at
+    # 10:00 and the first intraday bars appeared at 10:22, with the 10:02 bar
+    # visible at 10:22. Twenty minutes, near enough exactly - which is also what
+    # IBKR publishes its own free ASX tier at.
+    #
+    # This is NOT a tolerance to be tuned. It is a claim about the vendor, and
+    # `data_staleness_seconds` is measured beyond it. Setting it too high blinds
+    # the staleness rail; too low and every symbol reads as permanently stale
+    # and nothing signals at all.
+    market_data_delay_seconds: float = Field(default=1200.0, ge=0)
+
     # --- AI advisory (M8) --------------------------------------------------
     anthropic_model: str = "claude-sonnet-5"
     # LM Studio's default port; still works with Ollama by pointing this at
