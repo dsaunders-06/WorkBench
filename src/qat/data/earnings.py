@@ -209,22 +209,33 @@ class YFinanceEarningsCalendar:
         except Exception:  # noqa: BLE001 - an optional rail must never raise
             logger.debug("No earnings date available for %s", symbol, exc_info=True)
             return None
-        return _first_future_date(calendar)
+        return _first_future_date(calendar, self.market)
 
     def trading_days_until(self, symbol: str, as_of: date | None = None) -> int | None:
         announcement = self.next_earnings(symbol)
         if announcement is None:
             return None
-        return trading_days_between(as_of or datetime.now(UTC).date(), announcement, self.market)
+        # M120. `datetime.now(UTC).date()` is a UTC date, not a trading day, and
+        # this number decides whether a candidate is inside the earnings
+        # blackout - so an off-by-one here is an off-by-one in position size.
+        return trading_days_between(
+            as_of or mc.trading_date(self.market), announcement, self.market
+        )
 
 
-def _first_future_date(calendar: object) -> date | None:
+def _first_future_date(
+    calendar: object, market: mc.Market = "US", now: datetime | None = None
+) -> date | None:
     """The next announcement out of whatever shape yfinance returned.
 
     Deliberately defensive. `Ticker.calendar` has been a DataFrame and a dict
     across versions, `Earnings Date` holds either one date or a low/high
     estimate pair, and this is an unofficial API on an optional rail - so
     anything unrecognised reads as "unknown" rather than as an error.
+
+    "Future" is measured against the EXCHANGE's date (M120). Under a UTC date a
+    print scheduled for today still reads as upcoming for the first hour of an
+    AEDT session, which moves the blackout window by a day.
     """
     values: list[object] = []
     if isinstance(calendar, dict):
@@ -236,7 +247,7 @@ def _first_future_date(calendar: object) -> date | None:
         except Exception:  # noqa: BLE001
             return None
 
-    today = datetime.now(UTC).date()
+    today = mc.trading_date(market, now)
     found: list[date] = []
     for value in values:
         parsed = _as_date(value)

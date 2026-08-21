@@ -19,19 +19,27 @@ wins, and these tests pin it.
 from __future__ import annotations
 
 import csv
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 from qat.config import Settings
+from qat.domain import market_calendar as mc
 from qat.presentation.risk_console import RiskConsoleScreen
 from qat.presentation.runtime import Runtime
 from qat.presentation.ui_level import UiLevel
 
 _COLUMNS = ["timestamp", "symbol", "approved", "reason", "shares", "inputs"]
-_TODAY = datetime.now(UTC).date().isoformat()
-_YESTERDAY = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+# M120. The panel is bounded to the TRADING day, so the fixture must be too.
+# Under `datetime.now(UTC).date()` these rows were written against a UTC date:
+# between 00:00 UTC and the exchange catching up, "today" was dated into the
+# future and "yesterday" was in fact the session still running, so the panel
+# correctly counted two candidates where the test demanded one. Settings here
+# takes the default market, which is US.
+_SESSION_DAY = mc.trading_date("US")
+_TODAY = _SESSION_DAY.isoformat()
+_YESTERDAY = (_SESSION_DAY - timedelta(days=1)).isoformat()
 
 
 def _write_decisions(tmp_path: Path, rows: list[tuple[str, str, str]]) -> None:

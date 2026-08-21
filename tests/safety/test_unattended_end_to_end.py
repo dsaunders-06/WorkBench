@@ -13,12 +13,13 @@ configurable, without which nothing downstream is reachable at all.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
+from qat.domain import market_calendar as mc
 from qat.domain.events import MarketDataEvent, RegimeEvent
 from qat.domain.regime import Regime
 from qat.presentation.runtime import Runtime
@@ -94,7 +95,14 @@ async def test_a_tick_becomes_a_signed_order_and_a_journal_entry(tmp_path):
     # the "Morning Trend" phase that permits unattended execution.
     runtime.autonomy_gate.clock = lambda: datetime(2026, 7, 29, 15, 0, tzinfo=UTC)
 
-    today = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+    # M120. Was `datetime.now(UTC).replace(hour=12, ...)`, which is a UTC date
+    # and not a trading day. The bars below are keyed on the exchange's date, so
+    # whenever the market's date lagged the UTC one - every run between 00:00
+    # UTC and the exchange catching up - this fixture dated itself into the
+    # future and no order was ever placed. CI passed at 23:14 UTC on 20 August
+    # and the same commit failed at 00:30 UTC on the 21st.
+    session_day = mc.trading_date("US", datetime.now(UTC))
+    today = datetime.combine(session_day, time(12, 0), tzinfo=UTC)
     history = _uptrend(days=118, last_day=today - timedelta(days=1))
     runtime.strategy_engine.bars.seed(_SYMBOL, history, now=today - timedelta(days=2))
     # The bridge keeps its own aggregator and sizes the order from it, which is

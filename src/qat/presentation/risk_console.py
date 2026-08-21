@@ -7,7 +7,6 @@ layer and cannot be hidden.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 
 import pandas as pd
 from PySide6.QtCore import QTimer
@@ -24,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from qat.domain import market_calendar as mc
 from qat.domain.display_dates import format_display_date
 from qat.domain.evaluation.refusals import load_risk_decisions, summarise_refusals
 from qat.domain.events import MarketDataEvent
@@ -299,7 +299,10 @@ class RiskConsoleScreen(QWidget):
         # report claimed a kill-switch that had fired on the 4th. Unbounded,
         # this panel reads "2,629 candidates considered" while meaning "since
         # the file was created", and an operator would take it for tonight.
-        today = datetime.now(UTC).date().isoformat()
+        # M120. The exchange's trading date. A UTC date would relabel the panel
+        # an hour into an AEDT session and show the operator an empty "today"
+        # while the session it belongs to was still running.
+        today = mc.trading_date(self.runtime.settings.market).isoformat()
         rows = load_risk_decisions(self.runtime.settings.data_dir, since=today)
         summary = summarise_refusals(rows)
         self.refusal_headline.setText(summary.headline())

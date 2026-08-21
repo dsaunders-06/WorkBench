@@ -26,7 +26,8 @@ teaching the system what a timezone is.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import re
+from datetime import UTC, date, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -35,6 +36,7 @@ import pytest
 
 from qat.config import Settings
 from qat.data.bars import BarAggregator, floor_to_interval
+from qat.data.earnings import _first_future_date
 from qat.domain.autonomy.equity_monitor import EquityMonitor
 from qat.domain.market_calendar import trading_date
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -308,3 +310,58 @@ def test_the_seeded_bars_carry_the_date_the_exchange_traded_them() -> None:
 
     assert first.close == 10.0
     assert first.ts.astimezone(SYD).date().isoformat() == "2026-08-18"
+
+
+# --- M120: the sites M111 did not reach -------------------------------------
+#
+# M111 built `trading_date` and routed two callers through it. Three more kept
+# deriving a calendar date from a UTC instant, and one of them - the earnings
+# blackout - is a position-SIZE input. They are all invisible today, because in
+# AEST the ASX session runs 00:00-06:00 UTC and the two dates agree. From
+# 5 October they disagree for the first hour of every session.
+
+
+def test_a_print_that_already_happened_is_not_read_as_upcoming_under_aedt() -> None:
+    """The earnings blackout half-sizes any trade within N trading days of a
+    print. At 10:30 AEDT the UTC date is still the 4th, so a print that went out
+    on the 4th reads as `>= today` and the symbol stays in a blackout it has
+    already left - a sizing decision made on a stale calendar."""
+    calendar = {"Earnings Date": [date(2026, 10, 4)]}
+
+    assert _first_future_date(calendar, "ASX", OPEN_5_OCT) is None
+    # The premise: the UTC date is the day before, which is what kept it.
+    assert OPEN_5_OCT.astimezone(UTC).date() == date(2026, 10, 4)
+
+
+def test_a_print_scheduled_for_today_is_still_found_under_aedt() -> None:
+    """The other direction, so the fix cannot be "return None more often"."""
+    calendar = {"Earnings Date": [date(2026, 10, 5)]}
+
+    assert _first_future_date(calendar, "ASX", OPEN_5_OCT) == date(2026, 10, 5)
+
+
+def test_no_source_file_derives_a_calendar_date_from_a_utc_instant() -> None:
+    """The guard that makes this milestone stick.
+
+    M111 fixed two call sites and the same bug survived in three others for a
+    milestone and a half, because nothing failed when it was reintroduced. A
+    UTC *instant* is correct and stays - this only bans turning one into a
+    calendar DATE, which is what `trading_date` exists for.
+    """
+    banned = re.compile(r"now\(UTC\)\.date\(\)|now\(UTC\)\.strftime|utcnow\(\)\.date\(\)")
+    src = Path(__file__).resolve().parents[1] / "src" / "qat"
+
+    # Comments are stripped before matching. Both milestone notes QUOTE the
+    # banned call to explain it, and a guard that cannot survive being
+    # documented would be deleted the first time someone wrote about it.
+    offenders = [
+        f"{path.relative_to(src)}:{number}"
+        for path in src.rglob("*.py")
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if banned.search(line.split("#", 1)[0])
+    ]
+
+    assert not offenders, (
+        "a trading day is the exchange's date, not a UTC one - "
+        f"route these through market_calendar.trading_date: {offenders}"
+    )

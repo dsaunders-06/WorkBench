@@ -145,7 +145,46 @@ from qat.domain.display_dates import format_display_date
 # the symbols (M110, M118); six dead ASX tickers are gone; the AI Advisor is
 # given the next results date and, if QAT_NEWS_SOURCE says so, company news that
 # two independent outlets carried (M115-M117, off by default).
-MILESTONE = "M118"
+#
+# M120 ships M119-M120, both found during the first live ASX session.
+#
+# M119 is an AVAILABILITY fix, not a decision-input one. The yfinance source
+# ended its stream after five empty polls, and nothing restarts an ended stream
+# - MarketDataFeed's ingest loop is `async for tick in stream_ticks`, so the
+# task simply completes. Yahoo publishes ASX intraday about 20 minutes late, so
+# all five 60s polls from the 10:00 bell landed inside the delay window: the
+# feed died at 10:04:20 waiting for data that arrived at 10:22, and the account
+# sat flat and blind on an open market. Nothing halted, because MARKET DATA DOWN
+# is deliberately not a kill-switch trigger and per-symbol staleness skips
+# symbols that have never ticked - so the halt the old design relied on could
+# not fire, which the comment in that file claimed it would. The Alpaca source
+# had already been fixed for exactly these reasons and the fix was never carried
+# across; this ports it. Verified against the live vendor before writing: daily
+# bars were fine throughout and ASX 1m had 1,445 rows over the prior four
+# sessions. The vendor was never blocking us.
+#
+# CHANGES A TRADING-DECISION INPUT.
+#
+# M120: `trading_date` was built by M111 to answer "which session is this" and
+# had exactly ONE caller. Three sites still derived a calendar date from a UTC
+# instant, and one of them is a SIZING input - the earnings blackout half-sizes
+# a trade within N trading days of a print, and `_first_future_date` decided
+# which print was still upcoming against a UTC date. MEASURED: no change today
+# and none until 5 October, because in AEST the ASX session runs 00:00-06:00
+# UTC and the two dates agree; the earnings calendar warms at session start,
+# which is after the rollover. From 5 October, AEDT puts the first hour of every
+# session on the PREVIOUS UTC date, so a print that has already gone out reads
+# as upcoming and the symbol stays in a blackout it has left. The same crossing
+# M111's own note predicted, in the rails M111 did not reach. A guard test now
+# fails on any new `now(UTC).date()` in `src`, because this bug survived a
+# milestone and a half by never failing anything when reintroduced.
+#
+# Also M120: the unattended end-to-end safety test built its fixture from
+# `datetime.now(UTC)`, so it dated itself into the future whenever the market's
+# date lagged the UTC one and no order was placed. CI passed at 23:14 UTC on
+# 20 August and the same commit failed at 00:30 UTC on the 21st - green or red
+# by the hour of the push, on the one test covering the unattended first fill.
+MILESTONE = "M120"
 
 _UNKNOWN = "unknown"
 

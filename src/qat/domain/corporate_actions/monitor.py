@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from qat.config import Settings
 from qat.data.broker.adapter import RestingStopOrder
@@ -381,7 +381,10 @@ class CorporateActionMonitor:
             return
         self._supported = True
 
-        today = datetime.now(UTC).date()
+        # M120. The exchange's trading date, not a UTC one: the announcement
+        # window this builds is what the ex-date entry gate reads, and under
+        # AEDT a UTC date is a day behind for the first hour of the session.
+        today = mc.trading_date(self.settings.market)
         since = today - timedelta(days=_LOOKBACK_DAYS)
         until = today + timedelta(days=_LOOKAHEAD_DAYS)
         for symbol in symbols:
