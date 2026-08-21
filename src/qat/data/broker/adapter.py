@@ -154,6 +154,20 @@ class AccountSummary:
     net_liquidation: float
     cash: float
     buying_power: float
+    gross_position_value: float | None = None
+    """Market value of what is actually held (M133).
+
+    Added despite `AccountBalances`' note below about not widening this
+    structure, and the reason is that this is NOT a display concern. Exposure
+    was computed as `(equity - cash) / equity`, which counts anything that is
+    neither a position nor spendable cash as though it were invested - and on
+    21 August that made the daily report print "Avg exposure 0.2%" for an
+    account holding NOTHING, because IBKR's `AccruedCash` sat in the gap.
+
+    None rather than 0.0 when the broker does not report it. An unreported
+    figure is not a figure of zero, and exposure computed from a guess is the
+    defect this field exists to remove.
+    """
 
 
 @dataclass(frozen=True, slots=True)

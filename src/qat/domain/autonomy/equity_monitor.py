@@ -118,7 +118,16 @@ class EquityMonitor:
 
         if self.equity_curve is not None:
             try:
-                self.equity_curve.record(equity, float(account.cash))  # type: ignore[attr-defined]
+                # M133. `gross_position_value` is what exposure means. Passed
+                # through as None when the broker does not report it, so the
+                # metric can say "unknown" instead of inferring it from
+                # `equity - cash` and counting accrued interest as a position.
+                position_value = getattr(account, "gross_position_value", None)
+                self.equity_curve.record(  # type: ignore[attr-defined]
+                    equity,
+                    float(account.cash),
+                    position_value=None if position_value is None else float(position_value),
+                )
             except Exception:  # noqa: BLE001 - sampling must not break the rails
                 logger.warning("Could not record an equity sample", exc_info=True)
 

@@ -31,7 +31,10 @@ class UnrepresentableOrderError(ValueError):
     """Raised when `to_ib_order` cannot faithfully express an app Order."""
 
 
-_ACCOUNT_TAGS = ("NetLiquidation", "TotalCashValue", "BuyingPower")
+# GrossPositionValue since M133: exposure means the market value of what is
+# HELD, and deriving it from `equity - cash` counted AccruedCash as though it
+# were invested.
+_ACCOUNT_TAGS = ("NetLiquidation", "TotalCashValue", "BuyingPower", "GrossPositionValue")
 
 _IB_STATUS_MAP: dict[str, OrderStatus] = {
     "Filled": "filled",
@@ -413,4 +416,7 @@ def from_ib_account_values(values: list[AccountValue]) -> AccountSummary:
         net_liquidation=by_tag.get("NetLiquidation", 0.0),
         cash=by_tag.get("TotalCashValue", 0.0),
         buying_power=by_tag.get("BuyingPower", 0.0),
+        # No default: a broker that does not report it leaves None, which the
+        # exposure metric reads as "unknown" rather than as zero.
+        gross_position_value=by_tag.get("GrossPositionValue"),
     )

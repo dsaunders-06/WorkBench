@@ -285,8 +285,23 @@ def peak_exposure(points: list[EquityPoint]) -> float | None:
 
 
 def _exposure_ratios(points: list[EquityPoint]) -> list[float]:
-    # Clamped at zero: a cash balance above equity is arithmetically possible
-    # mid-settlement and means "nothing invested", not negative exposure.
+    """Market value HELD over equity, for samples that recorded it (M133).
+
+    Was `(equity - cash) / equity`, which treats anything that is neither a
+    position nor spendable cash as though it were invested. On 21 August that
+    made the daily report state "Avg exposure 0.2%, Peak exposure 0.2%" for an
+    account holding NOTHING AT ALL: IBKR's `AccruedCash` of 2,087.83 sat in the
+    gap between NetLiquidation and TotalCashValue, and the arithmetic could not
+    tell accrued interest from a position.
+
+    Samples with no recorded position value are SKIPPED rather than falling
+    back to the old formula. Every sample before this milestone is one, and
+    computing them the old way would keep publishing the same wrong figure
+    under a metric that now claims to mean something else. An unrecorded
+    exposure is unknown, and unknown is not zero.
+    """
     return [
-        max(0.0, (point.equity - point.cash) / point.equity) for point in points if point.equity > 0
+        max(0.0, point.position_value / point.equity)
+        for point in points
+        if point.equity > 0 and point.position_value is not None
     ]

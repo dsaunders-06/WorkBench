@@ -42,9 +42,9 @@ source.
 | | |
 |---|---|
 | Deployed build | **M130 (`f5b9bd2`)**, running since 17:59:58 |
-| Deploy gap | **ZERO.** Everything committed after `f5b9bd2` is docs and data, not code |
+| Deploy gap | **M133 only.** Everything else committed after `f5b9bd2` is docs and data. M133 changes the exposure metric and needs a build to take effect |
 | Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September |
-| Suite | 2,515 passed, 25 skipped. ruff and black both clean |
+| Suite | 2,517 passed, 25 skipped. ruff and black both clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | FLAT, equity 1,003,953.07. No entry has ever been placed by the app on IBKR |
@@ -160,7 +160,7 @@ for each gap and is worth reading; the list lives here.
 
 ### Correctness and hygiene
 
-8. **The exposure metric counts accrued interest as exposure.**
+8. ~~**The exposure metric counts accrued interest as exposure.**~~ **DONE — M133.**
    `metrics.py:_exposure_ratios` computes `(equity - cash) / equity`. With no
    positions at all the daily report prints "Avg exposure 0.2%, Peak exposure
    0.2%", and every cent of that is `AccruedCash`. `GrossPositionValue` is the

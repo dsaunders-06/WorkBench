@@ -51,11 +51,23 @@ def _trades(count: int = 10, **kwargs) -> list[ClosedTrade]:
     return [_trade(index=i, **kwargs) for i in range(count)]
 
 
-def _points(equities: list[float], cash: list[float] | None = None) -> list[EquityPoint]:
+def _points(
+    equities: list[float],
+    cash: list[float] | None = None,
+    held: list[float] | None = None,
+) -> list[EquityPoint]:
+    """`held` is the market value of POSITIONS (M133).
+
+    Defaulted to `equity - cash` so the existing callers keep their meaning,
+    but supplied explicitly wherever exposure is under test: the whole point of
+    M133 is that those two are not the same number, and a helper that keeps
+    inferring one from the other would hide exactly the defect being pinned.
+    """
     cash = cash if cash is not None else [e * 0.5 for e in equities]
+    held = held if held is not None else [e - c for e, c in zip(equities, cash, strict=True)]
     return [
-        EquityPoint(ts=BASE + timedelta(days=i), equity=e, cash=c)
-        for i, (e, c) in enumerate(zip(equities, cash, strict=True))
+        EquityPoint(ts=BASE + timedelta(days=i), equity=e, cash=c, position_value=h)
+        for i, (e, c, h) in enumerate(zip(equities, cash, held, strict=True))
     ]
 
 
@@ -139,24 +151,50 @@ def test_recovery_factor_is_unavailable_below_the_minimum_sample():
 # --- exposure ----------------------------------------------------------------
 
 
-def test_exposure_is_the_share_of_equity_not_in_cash():
-    points = _points([100.0, 100.0], cash=[20.0, 40.0])
+def test_exposure_is_the_market_value_actually_held():
+    """M133. Was "the share of equity not in cash", which counts anything that
+    is neither a position nor spendable cash as though it were invested."""
+    points = _points([100.0, 100.0], cash=[20.0, 40.0], held=[80.0, 60.0])
 
     assert average_exposure(points) == pytest.approx(0.7)
     assert peak_exposure(points) == pytest.approx(0.8)
 
 
+def test_accrued_interest_is_not_exposure():
+    """The defect, as it actually appeared. On 21 August the account held
+    NOTHING and the daily report printed "Avg exposure 0.2%, Peak exposure
+    0.2%" - every cent of it IBKR's AccruedCash of 2,087.83 sitting in the gap
+    between NetLiquidation and TotalCashValue."""
+    points = _points([1_003_953.07], cash=[1_001_865.24], held=[0.0])
+
+    assert average_exposure(points) == 0.0
+    assert peak_exposure(points) == 0.0
+
+
+def test_an_unrecorded_position_value_is_unknown_not_zero():
+    """Every sample written before M133 has none, and inferring one from
+    `equity - cash` is the defect. Unknown is not zero."""
+    points = [EquityPoint(ts=BASE, equity=100.0, cash=80.0, position_value=None)]
+
+    assert average_exposure(points) is None
+    assert peak_exposure(points) is None
+
+
 def test_a_fully_cash_account_has_zero_exposure_not_none():
-    """Measured and zero, which is a different claim from unmeasurable."""
-    points = _points([100.0, 100.0], cash=[100.0, 100.0])
+    """Measured and zero, which is a different claim from unmeasurable. M133
+    sharpens the distinction rather than removing it: a sample that RECORDED
+    nothing held reads 0.0, and one that recorded nothing at all reads None."""
+    points = _points([100.0, 100.0], cash=[100.0, 100.0], held=[0.0, 0.0])
 
     assert average_exposure(points) == 0.0
 
 
 def test_cash_above_equity_reads_as_nothing_invested_not_negative():
     """Arithmetically possible mid-settlement; negative exposure is not a
-    thing this application can have, being long-only and unleveraged."""
-    points = _points([100.0], cash=[120.0])
+    thing this application can have, being long-only and unleveraged. The
+    clamp is kept defensively although M133 makes a negative unreachable: a
+    position value cannot be less than nothing."""
+    points = _points([100.0], cash=[120.0], held=[0.0])
 
     assert average_exposure(points) == 0.0
 

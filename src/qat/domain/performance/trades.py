@@ -1121,6 +1121,10 @@ class EquityPoint:
     """Which account this sample measures (M127). None means a sample written
     before this column existed - the Alpaca/US period - and is treated as its
     own era rather than as "unknown"."""
+    position_value: float | None = None
+    """Market value of what was HELD at this sample (M133). None when the
+    broker did not report it, or on any sample written before the column
+    existed - and "unknown" is not "nothing held"."""
 
     def as_row(self) -> dict[str, object]:
         return {
@@ -1128,6 +1132,7 @@ class EquityPoint:
             "equity": round(self.equity, 2),
             "cash": round(self.cash, 2),
             "market": self.market or "",
+            "position_value": "" if self.position_value is None else round(self.position_value, 2),
         }
 
 
@@ -1148,7 +1153,7 @@ class EquityCurve:
     # nominal equity rise ... a 896.39% increase" and had an LLM reason about
     # it as performance. Sharpe and max drawdown for that week were computed
     # across the change of account.
-    _FIELDS = ("ts", "equity", "cash", "market")
+    _FIELDS = ("ts", "equity", "cash", "market", "position_value")
 
     def __init__(
         self, data_dir: str | Path, filename: str | None = None, market: str | None = None
@@ -1187,6 +1192,7 @@ class EquityCurve:
                                 cash=float(row["cash"]),
                                 # .get, so every pre-M127 file still loads.
                                 market=row.get("market") or None,
+                                position_value=_optional_float(row.get("position_value")),
                             )
                         )
                     except (KeyError, TypeError, ValueError):
@@ -1196,9 +1202,19 @@ class EquityCurve:
             return []
         return points
 
-    def record(self, equity: float, cash: float, ts: datetime | None = None) -> EquityPoint:
+    def record(
+        self,
+        equity: float,
+        cash: float,
+        ts: datetime | None = None,
+        position_value: float | None = None,
+    ) -> EquityPoint:
         point = EquityPoint(
-            ts=ts or datetime.now(UTC), equity=equity, cash=cash, market=self.market
+            ts=ts or datetime.now(UTC),
+            equity=equity,
+            cash=cash,
+            market=self.market,
+            position_value=position_value,
         )
         self._points.append(point)
         try:

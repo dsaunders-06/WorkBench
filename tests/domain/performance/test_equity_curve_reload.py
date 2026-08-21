@@ -37,11 +37,24 @@ def test_exposure_survives_the_restart(tmp_path) -> None:
 
     curve = EquityCurve(tmp_path)
     start = datetime(2026, 7, 27, 13, 30, tzinfo=UTC)
-    curve.record(equity=100_000.0, cash=70_000.0, ts=start)  # 30% invested
-    curve.record(equity=100_000.0, cash=90_000.0, ts=start + timedelta(minutes=1))  # 10%
+    # `position_value` is recorded explicitly since M133: exposure is the market
+    # value HELD, not `equity - cash`, and the round-trip under test now has to
+    # carry it through the file as well.
+    curve.record(equity=100_000.0, cash=70_000.0, ts=start, position_value=30_000.0)
+    curve.record(
+        equity=100_000.0,
+        cash=90_000.0,
+        ts=start + timedelta(minutes=1),
+        position_value=10_000.0,
+    )
 
     reopened = EquityCurve(tmp_path)
-    reopened.record(equity=100_000.0, cash=100_000.0, ts=start + timedelta(minutes=2))  # flat
+    reopened.record(
+        equity=100_000.0,
+        cash=100_000.0,
+        ts=start + timedelta(minutes=2),
+        position_value=0.0,
+    )  # flat
 
     points = reopened.points()
     assert peak_exposure(points) == 0.30
