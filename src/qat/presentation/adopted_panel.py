@@ -36,7 +36,7 @@ _BLOCKING_COLOUR = theme.DANGER
 
 _HEADLINE_STYLE = (
     "background-color: {fill}; color: " + theme.WHITE + "; padding: 8px; "
-    "border-radius: 4px; font-size: 15px; font-weight: bold;"
+    "border-radius: 4px; " + theme.text(size=theme.SUBHEAD, bold=True)
 )
 _BODY_STYLE = f"color: {theme.BORDER}; padding: 4px 8px; font-size: {theme.BODY}px;"
 

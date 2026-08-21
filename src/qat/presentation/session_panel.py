@@ -48,9 +48,9 @@ _ALERT_COLOUR = theme.WARNING
 # flat: making every state shout is the same as making none of them.
 _BANNER_STYLE = (
     "background-color: {fill}; color: " + theme.WHITE + "; padding: 8px; "
-    "border-radius: 4px; font-size: 18px; font-weight: bold;"
+    "border-radius: 4px; " + theme.text(size=theme.TITLE, bold=True)
 )
-_QUIET_STYLE = "color: {fill}; padding: 8px; font-size: 15px; font-weight: bold;"
+_QUIET_STYLE = "color: {fill}; padding: 8px; " + theme.text(size=theme.SUBHEAD, bold=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,27 +247,22 @@ class SessionPanel(QFrame):
         # Scoped by object name: an unscoped "QFrame { border... }" is inherited
         # by every child, which drew a box around each individual label.
         self.setObjectName("sessionPanel")
-        self.setStyleSheet(
-            f"QFrame#sessionPanel {{ border: 1px solid {theme.BORDER}; "
-            "border-radius: 4px; padding: 6px; }}"
-        )
+        self.setStyleSheet(theme.panel("sessionPanel"))
 
         layout = QVBoxLayout(self)
         grid = QGridLayout()
 
         self.headline = QLabel("-")
-        self.headline.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.headline.setStyleSheet(theme.text(size=theme.SUBHEAD, bold=True))
         self.detail = QLabel("-")
-        self.detail.setStyleSheet("font-size: 13px;")
+        self.detail.setStyleSheet(theme.text(size=theme.BODY))
         grid.addWidget(self.headline, 0, 0)
         grid.addWidget(self.detail, 0, 1)
 
         # The other market only earns a line when it is actually trading -
         # a permanent "ASX closed" row is noise to a US-configured operator.
         self.other_market = QLabel("")
-        self.other_market.setStyleSheet(
-            f"color: {_OPEN_COLOUR}; font-size: 13px; font-weight: bold;"
-        )
+        self.other_market.setStyleSheet(theme.text(_OPEN_COLOUR, size=theme.BODY, bold=True))
         grid.addWidget(self.other_market, 1, 0, 1, 2)
         layout.addLayout(grid)
 
@@ -322,10 +317,11 @@ class SessionPanel(QFrame):
         self.headline.setText(countdown.headline)
         self.headline.setStyleSheet(countdown.banner_style)
         self.detail.setText(countdown.detail)
+        loud = countdown.is_open or countdown.alerting
         self.detail.setStyleSheet(
-            f"font-size: 15px; font-weight: bold; color: {countdown.colour};"
-            if countdown.is_open or countdown.alerting
-            else f"font-size: 13px; color: {countdown.colour};"
+            theme.text(countdown.colour, size=theme.SUBHEAD, bold=True)
+            if loud
+            else theme.text(countdown.colour, size=theme.BODY)
         )
 
         other: mc.Market = "ASX" if self.market == "US" else "US"

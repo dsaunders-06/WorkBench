@@ -131,9 +131,9 @@ class _Cell(QFrame):
         layout.setSpacing(0)
         self.label_text = label
         self._label = _ElidingLabel(label)
-        self._label.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        self._label.setStyleSheet(theme.text(_MUTED, size=theme.CAPTION))
         self._value = QLabel(NOT_REPORTED)
-        self._value.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self._value.setStyleSheet(theme.text(size=theme.SUBHEAD, bold=True))
         if tooltip:
             self.setToolTip(tooltip)
             # The label's own tooltip leads with the full label, because the
@@ -146,15 +146,12 @@ class _Cell(QFrame):
         self.caption.setWordWrap(True)
         # theme.CAPTION rather than a smaller size of its own: the scale is
         # closed, and a caption is exactly what the smallest step is for.
-        self.caption.setStyleSheet(f"color: {_MUTED}; font-size: {theme.CAPTION}px;")
+        self.caption.setStyleSheet(theme.text(_MUTED, size=theme.CAPTION))
         layout.addWidget(self.caption)
 
     def set(self, text: str, colour: str | None = None) -> None:
         self._value.setText(text)
-        style = "font-size: 15px; font-weight: bold;"
-        if colour:
-            style += f" color: {colour};"
-        self._value.setStyleSheet(style)
+        self._value.setStyleSheet(theme.text(colour, size=theme.SUBHEAD, bold=True))
 
     def rendered_label(self) -> str:
         """What the label ACTUALLY shows at the current width, elision included.
@@ -200,14 +197,11 @@ class BalancesPanel(QFrame):
         self.level = level
 
         self.setObjectName("balancesPanel")
-        self.setStyleSheet(
-            f"QFrame#balancesPanel {{ border: 1px solid {theme.BORDER}; "
-            "border-radius: 4px; padding: 6px; }}"
-        )
+        self.setStyleSheet(theme.panel("balancesPanel"))
 
         outer = QVBoxLayout(self)
         header = QLabel("Balances")
-        header.setStyleSheet("font-size: 13px; font-weight: bold;")
+        header.setStyleSheet(theme.text(size=theme.BODY, bold=True))
         outer.addWidget(header)
 
         # --- Primary: what this system acts on ---------------------------
@@ -310,7 +304,7 @@ class BalancesPanel(QFrame):
             self._build_broker_group(outer)
 
         self.freshness = QLabel("")
-        self.freshness.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        self.freshness.setStyleSheet(theme.text(_MUTED, size=theme.CAPTION))
         outer.addWidget(self.freshness)
 
     def _build_broker_group(self, outer: QVBoxLayout) -> None:
@@ -330,8 +324,11 @@ class BalancesPanel(QFrame):
         self.broker_toggle.setText("At the broker - not used by this system")
         self.broker_toggle.setCheckable(True)
         self.broker_toggle.setChecked(self.level.prefers_density())
+        # Scoped to QToolButton so the flat look does not leak to siblings.
+        # "border: none" is structure rather than a design token, so it is
+        # written here; the colour and the size come from the scale.
         self.broker_toggle.setStyleSheet(
-            f"QToolButton {{ border: none; color: {_MUTED}; font-size: 11px; }}"
+            f"QToolButton {{ border: none; {theme.text(_MUTED, size=theme.CAPTION)} }}"
         )
         self.broker_toggle.toggled.connect(self._on_broker_toggled)
         group_layout.addWidget(self.broker_toggle)
@@ -381,10 +378,8 @@ class BalancesPanel(QFrame):
         self._render_status(balances)
 
         self.freshness.setText(snapshot.age_line())
-        self.freshness.setStyleSheet(
-            f"color: {_NEGATIVE if snapshot.error or snapshot.is_stale else _MUTED}; "
-            "font-size: 11px;"
-        )
+        stale = snapshot.error or snapshot.is_stale
+        self.freshness.setStyleSheet(theme.text(_NEGATIVE if stale else _MUTED, size=theme.CAPTION))
 
     def _render_day_pnl(self, balances: AccountBalances) -> None:
         change = balances.day_pnl

@@ -192,7 +192,7 @@ class WorkbenchScreen(QWidget):
         # trade looks exactly like a cone built from two hundred.
         self.mc_caption = QLabel("")
         self.mc_caption.setWordWrap(True)
-        self.mc_caption.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
+        self.mc_caption.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
         layout.addWidget(self.mc_caption)
 
         self.walk_forward_group = self._build_walk_forward_group()
@@ -281,7 +281,7 @@ class WorkbenchScreen(QWidget):
             "Run a walk-forward to see whether the result above survives out of sample."
         )
         self.wf_headline.setWordWrap(True)
-        self.wf_headline.setStyleSheet("font-weight: bold;")
+        self.wf_headline.setStyleSheet(theme.text(bold=True))
         outer.addWidget(self.wf_headline)
 
         self.wf_table = QTableWidget(0, len(_WF_COLUMNS))

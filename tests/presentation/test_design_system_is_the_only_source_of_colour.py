@@ -51,6 +51,28 @@ _NAMED = re.compile(
     re.IGNORECASE,
 )
 _PEN_CODE = re.compile(r"\bpen\s*=\s*['\"]([bgrcmykw])['\"]")
+# A font size written longhand is the same defect as a colour written longhand,
+# and this guard could not see it - so `theme.py` owned the palette while the
+# type scale leaked into eleven call sites, every one of them a number that IS
+# on the scale: 11 is CAPTION, 13 BODY, 15 SUBHEAD, 18 TITLE (M135).
+#
+# `theme.text` takes an optional colour precisely so a heading can ask for a
+# size and a weight without inventing either.
+_PX_SIZE = re.compile(r"font-size\s*:\s*\d+\s*px")
+# ⚠️ FSTRING_MIDDLE, and it is the whole reason this guard was passing.
+#
+# Python 3.12 (PEP 701) retokenised f-strings: their literal text now arrives as
+# FSTRING_MIDDLE, not as STRING. This scan tested `type != tokenize.STRING`, so
+# from that interpreter upgrade onward EVERY hand-written colour inside an
+# f-string was invisible to it - and an f-string is the natural way to write a
+# stylesheet, because interpolation is how the theme value gets in.
+#
+# It was hiding a live one: `dashboard.py` wrote `color: white` in an f-string
+# banner, under a guard reporting no offenders. A guard that quietly narrows
+# when a dependency changes is worse than no guard, because the green result is
+# read as evidence. `test_the_guard_sees_inside_an_fstring` is what stops it
+# narrowing again.
+_STRINGISH = frozenset({"STRING", "FSTRING_MIDDLE"})
 _PRESENTATION = Path(presentation_package.__file__).parent
 # The one module allowed to know what a colour actually is. That is the whole
 # point of it: "Primitives are raw values named by what they ARE. Nothing
@@ -63,9 +85,9 @@ def _hand_written_colours(path: Path) -> list[tuple[int, str]]:
     found: list[tuple[int, str]] = []
     source = path.read_text(encoding="utf-8")
     for token in tokenize.generate_tokens(io.StringIO(source).readline):
-        if token.type != tokenize.STRING:
+        if tokenize.tok_name[token.type] not in _STRINGISH:
             continue
-        for pattern in (_HEX, _NAMED, _PEN_CODE):
+        for pattern in (_HEX, _NAMED, _PEN_CODE, _PX_SIZE):
             for match in pattern.findall(token.string):
                 found.append((token.start[0], match))
     # A pen code is an argument, not a string's contents, so it is matched
@@ -122,6 +144,9 @@ def _scan(source: str) -> list[str]:
         ('x = "color: gray;"\n', ["gray"]),
         ('x = "background-color: white;"\n', ["white"]),
         ('plot(pen="y")\n', ['pen="y"']),
+        # A size off the scale, written longhand. 11 is CAPTION, 13 BODY,
+        # 15 SUBHEAD, 18 TITLE - and eleven call sites spelled one of them out.
+        ('x = "font-size: 15px; font-weight: bold;"\n', ["font-size: 15px"]),
     ],
 )
 def test_the_scan_would_actually_catch_one(source, expected):
@@ -144,3 +169,29 @@ def test_prose_about_a_colour_is_not_an_offence(source):
     Discussing a colour is not using one, and a guard that cannot tell the
     difference gets disabled rather than obeyed."""
     assert _scan(source) == []
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('x = f"color: {a}; background: white;"\n', ["white"]),
+        ('x = f"font-size: 15px; color: {a};"\n', ["font-size: 15px"]),
+        ('x = f"border: 1px solid #b71c1c; padding: {p}px;"\n', ["#b71c1c"]),
+    ],
+)
+def test_the_guard_sees_inside_an_fstring(source, expected):
+    """The regression that made this guard pass while a violation stood.
+
+    Python 3.12 (PEP 701) retokenised f-strings, so their literal text stopped
+    arriving as a STRING token and started arriving as FSTRING_MIDDLE. The scan
+    filtered on STRING, so from that upgrade onward it read every f-string as
+    empty - and an f-string is exactly how a stylesheet gets written, because
+    interpolation is how the theme value gets in.
+
+    `dashboard.py` was writing `color: white` in an f-string banner the whole
+    time, under a guard reporting zero offenders.
+
+    This is the test that matters most in the file. The others assert the guard
+    catches things; this one asserts it can still SEE - and it is the failure
+    mode that produces a green suite and a false conclusion."""
+    assert _scan(source) == expected

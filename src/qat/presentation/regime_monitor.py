@@ -62,7 +62,7 @@ class RegimeMonitorScreen(QWidget):
         self.level = UiLevel.from_settings(runtime.settings)
 
         self.regime_label = QLabel("Regime: (waiting for data...)")
-        self.regime_label.setStyleSheet(f"font-size: {theme.SUBHEAD}px; font-weight: bold;")
+        self.regime_label.setStyleSheet(theme.text(size=theme.SUBHEAD, bold=True))
         layout.addWidget(self.regime_label)
 
         # --- What the regime DOES, which the screen never said ------------
@@ -75,18 +75,18 @@ class RegimeMonitorScreen(QWidget):
         # looks exactly like one that found no setup.
         self.eligibility_label = QLabel("Strategies: (waiting for a regime...)")
         self.eligibility_label.setWordWrap(True)
-        self.eligibility_label.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        self.eligibility_label.setStyleSheet(theme.text(size=theme.BODY, bold=True))
         layout.addWidget(self.eligibility_label)
 
         self.mass_detail = QLabel("")
         self.mass_detail.setWordWrap(True)
-        self.mass_detail.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
+        self.mass_detail.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
         self.mass_detail.setVisible(self.level.shows_advanced())
         layout.addWidget(self.mass_detail)
 
         self.scalar_sentence = QLabel("")
         self.scalar_sentence.setWordWrap(True)
-        self.scalar_sentence.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
+        self.scalar_sentence.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
         self.scalar_sentence.setVisible(self.level.explains())
         layout.addWidget(self.scalar_sentence)
 
@@ -99,7 +99,7 @@ class RegimeMonitorScreen(QWidget):
             "nothing still trades, the reason is a risk rail - see the Risk Console."
         )
         self.elsewhere_hint.setWordWrap(True)
-        self.elsewhere_hint.setStyleSheet(f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;")
+        self.elsewhere_hint.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
         layout.addWidget(self.elsewhere_hint)
 
         self.probability_bars: dict[str, ProbabilityBar] = {}
@@ -146,7 +146,7 @@ class RegimeMonitorScreen(QWidget):
 
         self.macro_signal_label = QLabel("Deterministic read: (not yet run)")
         self.macro_signal_label.setWordWrap(True)
-        self.macro_signal_label.setStyleSheet("font-weight: bold;")
+        self.macro_signal_label.setStyleSheet(theme.text(bold=True))
         box_layout.addWidget(self.macro_signal_label)
 
         self.macro_ai_output = QTextEdit()

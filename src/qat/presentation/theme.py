@@ -164,17 +164,49 @@ SPACE_XL: Final = 24
 # --------------------------------------------------------------------------
 
 
-def text(colour: str, *, size: int | None = None, bold: bool = False) -> str:
+def text(colour: str | None = None, *, size: int | None = None, bold: bool = False) -> str:
     """Coloured text, optionally sized and weighted.
 
     The commonest case by far: `setStyleSheet(theme.text(theme.MUTED))`.
+
+    **`colour` is optional**, which it was not until M135, and that omission was
+    the reason a third of the layer's hand-written stylesheets existed. A
+    heading wants size and weight and no colour at all, so every one of them
+    wrote `"font-size: 15px; font-weight: bold;"` by hand - eleven sites
+    spelling out a number that IS on the type scale, `SUBHEAD` written longhand.
+
+    The colour guard could not see any of it. It catches a colour written by
+    hand and a font size is not a colour, so `theme.py` owned the palette while
+    the type scale leaked everywhere. `tests/presentation/
+    test_design_system_is_the_only_source_of_colour.py` now checks both.
     """
-    parts = [f"color: {colour};"]
+    parts = []
+    if colour is not None:
+        parts.append(f"color: {colour};")
     if size is not None:
         parts.append(f"font-size: {size}px;")
     if bold:
         parts.append("font-weight: bold;")
     return " ".join(parts)
+
+
+def panel(object_name: str | None = None) -> str:
+    """The bordered card that groups a screen's figures.
+
+    Written out identically in three places before M135 - `balances_panel`,
+    `session_panel` and `KpiTile` - so a change to the card shape was three
+    edits, and the kind of change nobody makes because it is three edits.
+
+    `object_name` scopes the rule, and the reason is recorded where it was
+    learned (`session_panel`): an unscoped `QFrame { border... }` is inherited
+    by every child widget, which drew a box around each individual label.
+    Passing None gives the unscoped form, which is right only when the frame
+    has no child frames - `KpiTile` is the one such case.
+    """
+    selector = f"QFrame#{object_name}" if object_name else "QFrame"
+    # 4 and 6 are the card's own geometry rather than type or spacing scale
+    # values, and they live here precisely so that stays true of one place.
+    return f"{selector} {{ border: 1px solid {BORDER}; border-radius: 4px; padding: 6px; }}"
 
 
 def callout(kind: str) -> str:

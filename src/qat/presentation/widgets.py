@@ -13,23 +13,18 @@ class KpiTile(QFrame):
     def __init__(self, label: str, value: str = "-", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            f"QFrame {{ border: 1px solid {theme.BORDER}; border-radius: 4px; padding: 6px; }}"
-        )
+        self.setStyleSheet(theme.panel())
         layout = QVBoxLayout(self)
         self._label = QLabel(label)
         self._label.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
         self._value = QLabel(value)
-        self._value.setStyleSheet("font-size: 18px; font-weight: bold;")
+        self._value.setStyleSheet(theme.text(size=theme.TITLE, bold=True))
         layout.addWidget(self._label)
         layout.addWidget(self._value)
 
     def set_value(self, value: str, color: str | None = None) -> None:
         self._value.setText(value)
-        style = "font-size: 18px; font-weight: bold;"
-        if color:
-            style += f" color: {color};"
-        self._value.setStyleSheet(style)
+        self._value.setStyleSheet(theme.text(color, size=theme.TITLE, bold=True))
 
 
 class ProbabilityBar(QFrame):

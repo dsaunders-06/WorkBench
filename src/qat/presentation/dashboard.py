@@ -200,14 +200,16 @@ class DashboardScreen(QWidget):
         # partly for.
         self.corporate_action_banner = QLabel("")
         self.corporate_action_banner.setWordWrap(True)
-        self.corporate_action_banner.setStyleSheet(
-            f"background-color: {theme.WARNING}; color: white; font-weight: bold; padding: 6px;"
-        )
+        # theme.banner, not a hand-rolled band. This wrote `color: white` as a
+        # NAMED COLOUR inside an f-string, which the colour guard could not see
+        # (see that test's note on PEP 701) - so the one screen still deciding a
+        # colour for itself was the one the guard was blind to.
+        self.corporate_action_banner.setStyleSheet(theme.banner(theme.WARNING))
         self.corporate_action_banner.setVisible(False)
         layout.addWidget(self.corporate_action_banner)
 
         self.regime_header = QLabel("Regime: (waiting for data...)")
-        self.regime_header.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.regime_header.setStyleSheet(theme.text(size=theme.SUBHEAD, bold=True))
         layout.addWidget(self.regime_header)
 
         # The balances panel replaces the old NAV tile (M21). Showing both

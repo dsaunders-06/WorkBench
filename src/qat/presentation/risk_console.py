@@ -144,7 +144,7 @@ class RiskConsoleScreen(QWidget):
         layout.addWidget(QLabel("Why orders did not happen - today"))
         self.refusal_headline = QLabel("No sizing decisions recorded.")
         self.refusal_headline.setWordWrap(True)
-        self.refusal_headline.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        self.refusal_headline.setStyleSheet(theme.text(size=theme.BODY, bold=True))
         layout.addWidget(self.refusal_headline)
 
         self.refusal_detail = QPlainTextEdit()
@@ -166,7 +166,7 @@ class RiskConsoleScreen(QWidget):
         # area - found by rendering the deployed build.
         self.corporate_action_label = QLabel("")
         self.corporate_action_label.setWordWrap(True)
-        self.corporate_action_label.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        self.corporate_action_label.setStyleSheet(theme.text(size=theme.BODY, bold=True))
         layout.addWidget(self.corporate_action_label)
         self._refresh_corporate_actions()
 
@@ -205,7 +205,7 @@ class RiskConsoleScreen(QWidget):
         # only one of them refuses trades.
         self.binding_pairs_label = QLabel("")
         self.binding_pairs_label.setWordWrap(True)
-        self.binding_pairs_label.setStyleSheet(f"font-size: {theme.BODY}px; font-weight: bold;")
+        self.binding_pairs_label.setStyleSheet(theme.text(size=theme.BODY, bold=True))
         layout.addWidget(self.binding_pairs_label)
 
         self.correlation_caption = QLabel(
@@ -213,9 +213,7 @@ class RiskConsoleScreen(QWidget):
             "is the measure the cluster cap actually enforces."
         )
         self.correlation_caption.setWordWrap(True)
-        self.correlation_caption.setStyleSheet(
-            f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;"
-        )
+        self.correlation_caption.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
         self.correlation_caption.setVisible(self.level.shows_advanced())
         layout.addWidget(self.correlation_caption)
 

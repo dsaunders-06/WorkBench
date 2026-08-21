@@ -434,18 +434,35 @@ pattern.
 > > non-theme calls are `setStyleSheet("")`, which CLEARS a stylesheet rather
 > > than duplicating a theme string.
 > >
-> > **What survives is the same defect one layer up.** 20 `setStyleSheet` calls
-> > across seven files still hand-write what a `theme` helper returns —
-> > `f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;"` where
-> > `theme.text(theme.MUTED, size=theme.CAPTION)` exists — and 8 of those
-> > hardcode a pixel size, bypassing the type scale entirely. `regime_monitor.py`
-> > has 6, `balances_panel.py` 5, `risk_console.py` 3. One colour constant lives
-> > outside `theme.py` (`_MUTED` in `balances_panel.py`).
+> > **CLOSED 21 August 2026 (M135), and the counts above were understated.**
+> > Re-derived rather than read: it was **28** hand-written `setStyleSheet`
+> > arguments, not 20, and **11** hardcoded a pixel size, not 8. All are gone.
+> > `theme.text` now takes an OPTIONAL colour — the missing piece, since a
+> > heading wants a size and a weight and no colour, so every one of them wrote
+> > `"font-size: 15px; font-weight: bold;"` by hand — and `theme.panel()` owns
+> > the bordered card that three modules were spelling out identically.
 > >
-> > **The guard catches hex and cannot catch a primitive spelled out longhand**,
-> > which is the shape this project keeps meeting: a rule enforced at one
-> > boundary and not the one beside it. Same as `trading_date` having one caller
-> > out of four (M120).
+> > The one surviving hand-written declaration is deliberate:
+> > `QToolButton { border: none; ... }` in `balances_panel.py`, where the colour
+> > and size come from `theme.text` and only the border is written, because a
+> > border reset is structure rather than a design token. Every other
+> > non-`theme` call in the layer passes a variable that holds one — mostly
+> > `theme.banner(...)` — or is `setStyleSheet("")`, which clears rather than
+> > duplicates.
+> >
+> > **⚠️ The guard was passing while blind, and that is the real finding.**
+> > Python 3.12 (PEP 701) retokenised f-strings, so their text arrives as
+> > `FSTRING_MIDDLE` rather than `STRING`. The scan filtered on `STRING`, so
+> > from that interpreter upgrade onward it read **every f-string as empty** —
+> > and an f-string is exactly how a stylesheet gets written, because
+> > interpolation is how the theme value gets in. It was hiding a live
+> > violation: `dashboard.py` wrote `color: white` in an f-string banner while
+> > the guard reported zero offenders.
+> >
+> > The guard now reads both token kinds, also catches a longhand `font-size`,
+> > and has a test asserting it can see inside an f-string. **A guard that
+> > quietly narrows when a dependency changes is worse than no guard, because
+> > the green result gets read as evidence.**
 > >
 > > **Do not trust the counts in this file.** Two of them were wrong within a
 > > fortnight. Re-measure before acting on any of it.
