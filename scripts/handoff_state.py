@@ -33,30 +33,27 @@ REPO = Path(__file__).resolve().parent.parent
 # is actually installed. Everything else derives FROM it, so a stale value here
 # makes every other number confidently wrong.
 #
-# Updated on deploy. M118 was deployed 21 August ~08:38 local, before the open,
-# with the app stopped and the broker flat, and this line was changed in the
-# same minute as the copy.
+# It has to be changed BY HAND at the moment of the copy, not afterwards, and
+# this is the second time in the record that it was not. It read f537a9e (M94)
+# for a full day after M104 was deployed. Then it sat at c53fb59 (M118) across
+# the M130 deploy on 21 August at 17:49 and was still reading M118 the same
+# evening - reporting a deploy gap of 14 milestones against a real gap of two.
+# The prose in HANDOFF.md was right and this constant was wrong, which is the
+# inversion this script exists to prevent.
 #
-# BACK ON MASTER. M111 was packaged from the `deploy/m111` branch to exclude an
-# unmeasured M112. That measurement was taken on 21 August - breadth dead and
-# breadth live both give label low_vol and exposure scalar 1.0, no size change -
-# so M112 shipped and the branch is spent. The milestone constant came back to
-# master with it; it had been reading M109 against an M118 tree.
+# M134 was deployed 21 August at 20:05 local, market shut, app stopped, broker
+# flat, ledgers empty, and this line was changed in the same minute as the copy.
 #
-# What is verified: `invoke package` stamped the artefact
-#   Build stamp: M118 (c53fb59, built 20/08/2026 22:36 UTC)
-# and that exe is the one now at C:\QuantAdvisoryTerminal. What is NOT verified
-# VERIFIED at 08:57:41 on 21 August, on a run that connected to the broker:
-#   Build: M118 (c53fb59, built 20/08/2026 22:36 UTC, packaged)
-# The first time in this sequence a deployed build has been read back off its own
-# log. M111 never was, and neither was M109 until the evening after it shipped.
-#
-# It read f537a9e (M94) for a full day AFTER M104 was deployed, which made the
-# deploy gap it reports confidently wrong in the one script whose purpose is
-# that nothing here is hand-maintained. This is the figure that cannot be
-# derived - only the operator knows what is installed - so it is the one that
-# has to be changed BY HAND at the moment of deploying, not afterwards.
-DEPLOYED = "c53fb59"
+# What is verified for M134: the tree was clean at 2d7777c, `invoke build`
+# stamped the artefact
+#   Build stamp: M134 (2d7777c, built 21/08/2026 10:00 UTC)
+# with no `-dirty` marker, `invoke sign` signed and timestamp-verified it, and
+# the exe now at C:\QuantAdvisoryTerminal is SHA256-identical to the one signed
+# in dist\. What is NOT yet verified is the read-back: the app has not been
+# launched since the copy, so no `Build:` line has come off its own log. Until
+# it has, this constant is an intention, not an observation - which is exactly
+# what it was during the M130 deploy.
+DEPLOYED = "2d7777c"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 

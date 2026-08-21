@@ -41,21 +41,27 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M130 (`f5b9bd2`)**, running since 17:59:58 |
-| Repository HEAD | **M134 (`1ed894f`)** |
-| Deploy gap | **M133 + M134.** Neither is urgent: one changes a reported figure, the other is tooling and a rename |
-| Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September. **15 commits unpushed** |
-| Suite | 2,517 passed, 25 skipped. ruff and black both clean |
+| Deployed build | **M134 (`2d7777c`)**, installed 21 August 20:05, app not yet launched on it |
+| Repository HEAD | **`2d7777c`** (M134 is `1ed894f`; HEAD is the handover commit on top of it) |
+| Deploy gap | **NONE.** M133 and M134 shipped in the 20:05 deploy |
+| Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September. **16 commits unpushed**, plus one uncommitted `DEPLOYED` change |
+| Suite | 2,517 passed, 25 skipped, 70.9s. ruff, black, mypy and bandit all clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | FLAT, equity 1,003,953.07 **AUD**. No entry has ever been placed by the app on IBKR |
 | Ledgers | **EMPTY.** The Alpaca era was retired to `docs/archive/alpaca-era/`: 0 closed trades, 0 risk decisions, equity samples ASX-only, 6 journal rows |
 
-> ⚠️ **There is a `-dirty` exe in `dist/`.** It was built at 19:48 from a tree
-> with M134 uncommitted, so its stamp carries "built from a working tree with
-> uncommitted changes". **Do not deploy it.** Run `invoke build` again from the
-> clean tree first — it now prints the artefact it produced, so the stamp is
-> visible before anything is copied.
+> ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
+> clean tree, stamped `M134 (2d7777c, built 21/08/2026 10:00 UTC)` with no
+> `-dirty` marker, signed and timestamp-verified, and installed at 20:05. The
+> installed exe is **SHA256-identical** to the signed one in `dist\`
+> (`9C63B69D…306C`). Rollback artefact `QuantAdvisoryTerminal-M130-f5b9bd2.zip`
+> is still in `dist/`.
+>
+> ⚠️ **The one thing not yet verified is the read-back.** The app has not been
+> launched since the copy, so no `Build:` line has come off its own log. Until
+> `session_check` prints `Build: M134 (2d7777c, …, packaged)`, the deployed
+> build is an intention, not an observation. **Check it on the first launch.**
 
 ### The account is AUD-base. Verified, not assumed.
 
@@ -91,8 +97,8 @@ RECOVERY, logged at ERROR** — judge by content, never by count.
 ## ⚠️ WHAT MONDAY'S OPEN ACTUALLY TESTS
 
 **M119 has never been exercised.** It is deployed — it has been since 12:10 and
-is in the M130 build — but zero empty polls in 3h48m means nothing has tested
-it. Its entire purpose is surviving the open, and Friday's session started at
+is in the M134 build now installed — but zero empty polls in 3h48m means nothing
+has tested it. Its entire purpose is surviving the open, and Friday's session started at
 12:10, *after* the delay window that killed the 10:00 one. **Monday 10:00 is its
 first real test.**
 
@@ -409,19 +415,21 @@ including Python that only READS it, and including anything that builds
 Settings(), which loads that directory's .env whether or not the script
 mentions it. The Bash sandbox serves a frozen July snapshot and does NOT error.
 
-⚠️ DO NOT PUSH. GitHub Actions minutes are exhausted until September. 15
+⚠️ DO NOT PUSH. GitHub Actions minutes are exhausted until September. 16
 commits sit unpushed on master and the local suite is the ONLY gate: run it in
 full and read the summary line, never a piped tail. Lint with ruff, format with
 BLACK (they diverged on one file on 21 August).
 
-⚠️ DO NOT DEPLOY THE EXE CURRENTLY IN dist/. It was built before M134 was
-committed and its stamp says "-dirty". Run `invoke build` from the clean tree -
-it packages properly now and prints the artefact it produced.
+⚠️ THE FIRST LAUNCH MUST BE READ BACK. M134 was built clean, signed and
+installed at 20:05 on 21 August, but the app has NOT been launched on it. The
+first session_check must print `Build: M134 (2d7777c, ..., packaged)`. If it
+still says M130, the copy did not take and nothing downstream is trustworthy.
 
 THE STATE
 
-  Deployed M130 (f5b9bd2). HEAD is M134 (1ed894f). Deploy gap: M133 + M134,
-  neither urgent - one is a reported figure, one is tooling.
+  Deployed M134 (2d7777c) - installed, not yet read back. HEAD is the same
+  commit. Deploy gap: NONE. One uncommitted change sits in the tree:
+  handoff_state.py's DEPLOYED constant, updated at the moment of the copy.
   Account FLAT, ~1,003,953 AUD. NO ENTRY HAS EVER BEEN PLACED BY THE APP ON
   IBKR. Ledgers are EMPTY: the Alpaca era was retired to
   docs/archive/alpaca-era/ on 21 August, so the first fill will be row one.
