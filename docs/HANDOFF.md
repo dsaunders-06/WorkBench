@@ -44,7 +44,7 @@ source.
 | Deployed build | **M134 (`2d7777c`)**, installed 21 August 20:05, app not yet launched on it |
 | Repository HEAD | **`2d7777c`** (M134 is `1ed894f`; HEAD is the handover commit on top of it) |
 | Deploy gap | **NONE.** M133 and M134 shipped in the 20:05 deploy |
-| Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September. **16 commits unpushed**, plus one uncommitted `DEPLOYED` change |
+| Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September. The count is deliberately not written here; `handoff_state.py` derives it (`vs origin ... [ahead N]`), and a hardcoded one was stale within the hour on 21 August |
 | Suite | 2,517 passed, 25 skipped, 70.9s. ruff, black, mypy and bandit all clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
