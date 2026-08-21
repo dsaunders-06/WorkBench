@@ -82,6 +82,25 @@ deliberately not a kill-switch trigger, and per-symbol staleness skips symbols
 that have never ticked. The account sat flat and blind on an open market until
 it was restarted by hand at 12:10.
 
+### An entry can only happen in 57% of the session
+
+Computed from the calendar, not assumed. The autonomy gate permits Morning
+Trend, Afternoon and Closing Session, and excludes the other two:
+
+| | | |
+|---|---|---|
+| 10:00–10:28 | Opening Volatility | **blocked** |
+| **10:29–11:58** | Morning Trend | **entries** |
+| 11:59–14:04 | Midday Lull | **blocked** |
+| **14:05–15:16** | Afternoon | **entries** |
+| **15:17–16:00** | Closing Session | **entries** |
+
+206 of 361 minutes. Subtract the feed's ~20-minute delay and **the last usable
+moment is about 15:40**, because a move after that never reaches the strategy
+before the stand-down. So a fill needs a trigger inside roughly **10:29–11:58 or
+14:05–15:40**. A quiet morning does not mean a quiet day, and a crossing at
+12:30 does nothing at all.
+
 ---
 
 ## OUTSTANDING, IN ORDER
@@ -139,30 +158,70 @@ for each gap and is worth reading; the list lives here.
 
 ### Correctness and hygiene
 
-8. **Stage 3 ASX rules — the rest.** Tick sizes are done (M123). Still absent:
+8. **M132 — the risk model is in the wrong currency.** `risk_budget` is the
+   broker's base currency (USD); `stop_distance` is AUD, and
+   `risk_engine/engine.py:229-231` divides one by the other. MEASURED at AUDUSD
+   0.7164: positions come out **~28% smaller than intended** and a "1% risk"
+   trade actually risks **0.72%**. `affordable_shares = spendable / price` and
+   `max_order_notional` (a bare `50_000.0` with no currency) cross the same
+   boundary and err the same conservative way, which is why nothing has ever
+   tripped over it. The safe direction is an ACCIDENT of the pair being below
+   parity; above it, the same code over-sizes. Alongside it,
+   `from_ib_account_values` ignores `value.currency` and lets the last matching
+   row win — harmless while AUD balances are zero, dangerous the moment they
+   are not. **Do not fix this the night before a session**: it undersizes, so
+   waiting costs nothing, and changing the sizing rail would make the next
+   result uninterpretable.
+9. **Stage 3 ASX rules — the rest.** Tick sizes are done (M123). Still absent:
    the $500 minimum marketable parcel (unlikely to bind at $1M equity), T+2, and
    the auctions against session logic written for a 13:30 UTC open.
-9. **The liquidity filter does not filter.** `average_daily_volume` is a
-   deterministic RNG seeded on the ticker — a synthetic number between 10,000 and
-   20,000,000, not real volume — so `QAT_WATCHLIST_MIN_AVG_VOLUME` screens on
-   noise. Harmless across 94 megacaps that are liquid by construction; actively
-   misleading if the universe widens beyond them.
-10. **The $2,087.83 that is not cash.** Equity minus cash is a steady 2,087.83
+10. **The liquidity filter does not filter.** `average_daily_volume` is a
+    deterministic RNG seeded on the ticker — a synthetic number between 10,000
+    and 20,000,000, not real volume — so `QAT_WATCHLIST_MIN_AVG_VOLUME` screens
+    on noise. Harmless across 94 megacaps that are liquid by construction;
+    actively misleading if the universe widens beyond them.
+11. **The $2,087.83 that is not cash.** Equity minus cash is a steady 2,087.83
     reported as 0.2% exposure while the OMS holds no positions.
-11. **News yield at 94 symbols.** Live in the deployed build, so measurable on
+12. **News yield at 94 symbols.** Live in the deployed build, so measurable on
     Monday. The only measurement is six ASX names yielding two corroborated
     stories; if 94 yield four, the feature is honest and nearly empty.
-12. **`invoke build` does not build.** `@task(pre=[lint, test])` with a `pass`
+13. **`invoke build` does not build.** `@task(pre=[lint, test])` with a `pass`
     body — returns 0 with a green suite while `dist/` keeps yesterday's exe.
     Packaging is `invoke package`, then `invoke sign`.
-13. **Retire the Alpaca CODE paths?** Open question. The adapter and market-data
+14. **Retire the Alpaca CODE paths?** Open question. The adapter and market-data
     source are still in the tree and still tested, and `alpaca_source.py` is the
     reference implementation M119's retry came from. The 21 August decision was
     about DATA.
-14. **`migrate_ledger_eras.py` is superseded** by `retire_alpaca_era.py`. Dead
+15. **`migrate_ledger_eras.py` is superseded** by `retire_alpaca_era.py`. Dead
     script; keep or delete deliberately.
-15. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+16. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
+
+### Audited 21 August and found SOUND — do not re-audit without a reason
+
+The first-fill path was walked end to end looking for another M123. Nothing
+found that blocks a fill. Recorded so the next person does not repeat it:
+
+* **whole-share quantities** — floored, refused below one (M31a);
+* **the `.AX` contract** — M96, measured against the live Gateway;
+* **bracket `parentId` linkage** — the adapter builds legs from `parent.orderId`
+  straight after `placeOrder`; verified in the INSTALLED ib_async that line 790
+  assigns a local and line 806 writes it back, so the linkage holds. Had it not,
+  every leg would have carried `parentId=0` and the protection would have been
+  standalone orders;
+* **bracket structure** — `is_bracket` guarantees at least one leg, so a parent
+  cannot be left untransmitted;
+* **fill identity and symbol form** — `permId`, and `from_ibkr` on the way back;
+* **execution timestamps** — timezone-aware on both parse branches. One residual:
+  if IBKR sends an unqualified time AND `TimezoneTWS` is empty, Python assumes
+  the LOCAL machine zone. Server 178 sends zone-qualified times, so unlikely,
+  but it would shift fill times silently;
+* **the absorb path** — M48/M53/M70 defended, and a `recent_fills` failure
+  degrades to "nothing absorbed" while still logging at ERROR;
+* **position symbol form (M104)** — the sharpest of them. A tracked `BHP.AX`
+  against a broker `BHP` produces two divergences rather than a match, and a
+  reconciliation mismatch TRIPS THE KILL SWITCH. All four IBKR boundaries now
+  translate.
 
 **Closed 21 August:** the ASX breadth feature (M112, verified live at 94 breadth
 symbols); the Stage 2 data decision (news → Yahoo by operator decision, bars →
