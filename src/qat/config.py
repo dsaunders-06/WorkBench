@@ -451,6 +451,30 @@ class Settings(BaseSettings):
     # What changes is only whether the fetch happens.
     news_source: Literal["none", "yfinance"] = "yfinance"
 
+    # How many INDEPENDENT outlets must carry a story before it is shown to the
+    # model at all.
+    #
+    # LOOSENED TO 1 on 21 August by operator decision, against a measurement.
+    # The two-source rule was surfacing nothing on the symbols actually being
+    # asked about: `data/news.py` records the reason - NHF's six items came
+    # from ONE outlet, so nothing could corroborate them, and the binding limit
+    # is Yahoo's coverage of ASX names rather than the threshold. A rule that
+    # discards everything is not a strict rule, it is a silent one.
+    #
+    # WHAT THIS COSTS, stated plainly because the default is the weaker one:
+    # at 1, a single planted story reaches the model, which is exactly what the
+    # two-source rule existed to prevent. The defences that remain are the ones
+    # that never depended on counting outlets - the text still travels as inert
+    # `news` rather than as instruction, `drop_other_listings` still runs, and
+    # tests/safety/test_prompt_injection_in_context_is_ignored.py still guards
+    # the boundary. The screen also names the outlets behind every story, so a
+    # single-source claim is visible as one rather than passing as corroborated.
+    #
+    # Set to 2 to restore the original rule. The primary-source exception is
+    # unaffected either way: an exchange filing is the news, not a report about
+    # it, and has never been held to this bar.
+    news_min_sources: int = Field(default=1, ge=1)
+
     # Which Alpaca data feed to request (M17). iex is real time on any account
     # including free paper, but is a single exchange carrying a small share of
     # US consolidated volume. sip is the full consolidated tape and needs a

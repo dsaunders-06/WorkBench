@@ -2828,14 +2828,27 @@ def _config_reference(doc: Any) -> None:
             ),
             (
                 "QAT_NEWS_SOURCE",
-                "none",
-                "Where company news for the AI Advisor comes from: none, or yfinance "
-                "(free, no key). OFF by default deliberately - news is third-party text "
-                "that reaches a language model, so a fresh install does not start "
-                "fetching it because a default said so. Whatever the source, a story is "
-                "only shown to the model if TWO INDEPENDENT outlets carried it, or the "
-                "company lodged it with the exchange. That check runs in code before the "
-                "text is sent, never by asking the model whether its sources agree.",
+                "yfinance",
+                "Where company news for the AI Advisor and the Strategy Workbench comes "
+                "from: none, or yfinance (free, no key). ON by default since M126 - IBKR "
+                "returned zero headlines for ASX names over 90 days, listcorp refuses "
+                "bots and ASX ComNews is licensed, so Yahoo is the only free source that "
+                "returns anything on .AX at all. Set to none to stop fetching entirely; "
+                "the screen then says so, rather than showing an empty list that could "
+                "mean either.",
+            ),
+            (
+                "QAT_NEWS_MIN_SOURCES",
+                "1",
+                "How many INDEPENDENT outlets must carry a story before it is shown to "
+                "the model. Set to 2 to require corroboration, which is what shipped "
+                "before 21 August; it was loosened to 1 because on ASX names it was "
+                "surfacing nothing at all - Yahoo's coverage, not the threshold, is the "
+                "binding limit. At 1, a single planted story can reach the model, so "
+                "read the outlet names the screen prints beside each story. Either way "
+                "the check runs in code before the text is sent, never by asking the "
+                "model whether its sources agree, and a company's own exchange filing "
+                "has never been held to this bar.",
             ),
             (
                 "QAT_ENTRY_ALLOW_LIST",

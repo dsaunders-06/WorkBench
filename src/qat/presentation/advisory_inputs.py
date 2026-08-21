@@ -36,17 +36,24 @@ async def news_for(runtime: object, symbol: str) -> list[dict[str, object]]:
     The fetch runs in a thread because the vendor client is blocking and the
     caller is the UI thread.
 
-    THE TWO-SOURCE RULE IS APPLIED HERE, deterministically, before the text
+    THE CORROBORATION RULE IS APPLIED HERE, deterministically, before the text
     reaches a model - never by asking the model whether its sources agree. An
     attacker who controls one article also controls anything that article
     claims about its own corroboration.
+
+    How many outlets it takes is `QAT_NEWS_MIN_SOURCES`, and it is read from
+    settings rather than left at the function's default so that the operator
+    can change it without a rebuild. It defaulted to two until 21 August; the
+    reasoning for the change, and what it costs, is recorded at the setting.
     """
     source = getattr(runtime, "news_source", None)
     if source is None:
         return []
+    settings = getattr(runtime, "settings", None)
+    min_sources = int(getattr(settings, "news_min_sources", 2) or 2)
     try:
         items = await asyncio.to_thread(source.fetch, symbol)
-        return as_context_dicts(corroborate(drop_other_listings(items)))
+        return as_context_dicts(corroborate(drop_other_listings(items), min_sources=min_sources))
     except Exception:  # noqa: BLE001 - news is never worth failing the screen for
         logger.debug("News fetch failed for %s", symbol, exc_info=True)
         return []

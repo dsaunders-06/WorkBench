@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from html import escape
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -35,19 +35,27 @@ from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
 
-SOURCES_IDLE = "Sources: nothing fetched yet - ask a question."
 
-
-def describe_sources(news: list[dict[str, object]], next_earnings: str, news_enabled: bool) -> str:
+def describe_sources(
+    news: list[dict[str, object]],
+    next_earnings: str,
+    news_enabled: bool,
+    min_sources: int = 1,
+) -> str:
     """What the model was given, in the operator's words (M126).
 
     The THREE states are deliberately distinct, because collapsing them is how
     a reader concludes the wrong thing from the same blank line:
 
     * news is switched off - nothing was looked for;
-    * news is on and nothing cleared the two-source rule - it was looked for
+    * news is on and nothing cleared the corroboration bar - it was looked for
       and there was nothing worth passing on;
     * stories were passed, and these are exactly the ones.
+
+    `min_sources` is printed rather than described, because it is now an
+    operator setting (`QAT_NEWS_MIN_SOURCES`) rather than the fixed two this
+    used to name. A screen that said "the two-source rule" while the rule was
+    one would be worse than saying nothing.
 
     "no news" and "we did not ask" are different facts, the same distinction
     `Status.UNKNOWN` exists for in the pre-flight.
@@ -64,9 +72,10 @@ def describe_sources(news: list[dict[str, object]], next_earnings: str, news_ena
         return "  |  ".join(parts)
 
     if not news:
+        outlets = "outlet" if min_sources == 1 else "independent outlets"
         parts.append(
-            "News: fetched, none corroborated - nothing cleared the two-source rule, "
-            "so nothing reached the model."
+            f"News: fetched, none corroborated - nothing cleared the bar of "
+            f"{min_sources} {outlets}, so nothing reached the model."
         )
         return "  |  ".join(parts)
 
@@ -84,6 +93,24 @@ def describe_sources(news: list[dict[str, object]], next_earnings: str, news_ena
         basis = "primary source" if story.get("primary") else joined
         rendered += f"\n  • {title} — {basis}{f' ({when})' if when else ''}"
     return rendered
+
+
+def _sources_html(text: str) -> str:
+    """`describe_sources` output, safe to put in the rich-text conversation.
+
+    Escaped first, then newlines become breaks. Order matters: escaping after
+    inserting the breaks would escape the breaks too, and doing only the second
+    half would render an outlet's headline as markup.
+
+    Styled through `theme.text`, the same call the label it replaced used, so
+    moving the text did not quietly promote it to the same weight as the
+    answer. Written as `theme.text(...)` rather than as a hand-rolled colour
+    and size for the reason this file's own notes already give twice: an inline
+    stylesheet here is "the 67-stylesheet problem returning one widget at a
+    time", and a hand-written size would bypass the type scale.
+    """
+    body = escape(text).replace("\n", "<br>")
+    return f'<div style="{theme.text(theme.MUTED, size=theme.CAPTION)}">{body}</div>'
 
 
 def _answer_caveats(fundamentals: dict[str, object], risk_metrics: dict[str, float]) -> str:
@@ -151,24 +178,17 @@ class AiAdvisorScreen(QWidget):
         self.conversation.setReadOnly(True)
         layout.addWidget(self.conversation)
 
-        # M126. What the model was actually given, shown to the operator.
+        # M126 put this in a one-line QLabel under the conversation. What the
+        # model was given is frequently longer than one line - a results date,
+        # a bar, and a bullet per story with its outlets - so the label showed
+        # the first fragment of it and the rest was simply not visible.
         #
-        # News was fetched, corroborated and passed into the context, and there
-        # was nowhere to see it. An operator reading a recommendation could not
-        # tell whether it rested on two stories or none, which is the same
-        # class of defect as a report that cannot be checked against its own
-        # inputs. It is labelled UNTRUSTED here for the same reason it is
-        # labelled that way in the prompt: this is third-party text, and the
-        # label is part of what makes reading it safe.
-        self.sources_label = QLabel(SOURCES_IDLE)
-        self.sources_label.setWordWrap(True)
-        self.sources_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        # Through the design system, not a hand-written rule - this file's own
-        # note calls an inline stylesheet "the 67-stylesheet problem returning
-        # one widget at a time".
-        self.sources_label.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
-        layout.addWidget(self.sources_label)
-
+        # It now goes into the conversation itself, immediately above the answer
+        # it belongs to, which is scrollable, selectable and already sized for
+        # paragraphs. That also fixes something the label could not: with one
+        # label, asking a second question overwrote the first question's
+        # sources, so scrolling back to an earlier answer showed it beside the
+        # inputs of a LATER one. In the transcript each answer keeps its own.
         input_row = QHBoxLayout()
         self.symbol_picker = QComboBox()
         # Alphabetical, not watchlist order (M76). `resolve_watchlist` returns
@@ -293,9 +313,14 @@ class AiAdvisorScreen(QWidget):
 
     async def _ask(self, question: str) -> None:
         self.ask_button.setEnabled(False)
-        self.conversation.append(f"<b>You:</b> {question}")
+        # The symbol is read BEFORE the question is echoed, so the transcript
+        # line can carry it. Every answer is about one company, and a scrolled-
+        # back transcript of "is the valuation stretched?" against six replies
+        # gave no way to tell which company each one was about - the picker only
+        # ever shows its CURRENT value.
+        symbol = self.symbol_picker.currentText()
+        self.conversation.append(f"<b>You [{escape(symbol)}]:</b> {escape(question)}")
         try:
-            symbol = self.symbol_picker.currentText()
             positions = {p.symbol: p.quantity for p in await self.runtime.oms.broker.positions()}
 
             risk_metrics = self._risk_metrics()
@@ -311,11 +336,22 @@ class AiAdvisorScreen(QWidget):
             # Shown BEFORE the model answers, so the operator reads the reply
             # already knowing what it rested on rather than inferring it after
             # the fact (M126).
-            self.sources_label.setText(
-                describe_sources(
-                    news,
-                    next_earnings,
-                    news_enabled=getattr(self.runtime.settings, "news_source", "none") != "none",
+            #
+            # ESCAPED. This is the one place in the screen where third-party
+            # text is rendered, and the conversation widget is rich text - an
+            # unescaped headline containing markup would be interpreted as
+            # markup rather than shown as the words the outlet published. The
+            # prompt already treats this text as untrusted; the display has to
+            # as well, or the two disagree about what it is.
+            self.conversation.append(
+                _sources_html(
+                    describe_sources(
+                        news,
+                        next_earnings,
+                        news_enabled=getattr(self.runtime.settings, "news_source", "none")
+                        != "none",
+                        min_sources=int(getattr(self.runtime.settings, "news_min_sources", 1) or 1),
+                    )
                 )
             )
             context = AdvisoryContext(

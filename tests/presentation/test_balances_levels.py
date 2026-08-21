@@ -182,8 +182,8 @@ def test_the_demoted_figures_keep_their_values(qtbot):
     """Demoted is not discarded - the numbers are the same, in a quieter place."""
     panel = _panel(qtbot, UiLevel.PROFESSIONAL)
 
+    # Was three assertions until 21 August. The margin figures and short market
+    # value were removed from the panel entirely - on IBKR all three render a
+    # permanent dash, and short value is structurally zero on a long-only
+    # system. Buying power is what is left in the demoted row, and it is real.
     assert panel.buying_power._value.text().startswith("$336,485.98")
-    assert panel.initial_margin._value.text() == "$28,599.70"
-    # Structurally always zero on a long-only system, which is why it is
-    # demoted - not because it is missing.
-    assert panel.short_value._value.text() == "$0.00"

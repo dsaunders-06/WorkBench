@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
@@ -146,14 +147,25 @@ class WorkbenchScreen(QWidget):
         self.headline_label.setStyleSheet(theme.text(theme.ACCENT, size=theme.BODY, bold=True))
         layout.addWidget(self.headline_label)
 
-        self.equity_plot = pg.PlotWidget(title="Equity vs Benchmark")
-        # Bar index, not dates (M55). `result.equity_curve` IS indexed by
-        # timestamp, but `.to_numpy()` at the render site discards that index,
-        # so what reaches the chart is a bare sequence. Labelled for what is
-        # actually drawn rather than for what the data could have supported -
-        # plotting against the real dates is a separate change, and mislabelling
-        # this one in anticipation would be worse than the honest label.
-        theme.label_axes(self.equity_plot, bottom="Daily bars (backtest)", left="Equity ($)")
+        # Dates, at last. M55 labelled this "Daily bars (backtest)" and left a
+        # note saying the curve IS indexed by timestamp and `.to_numpy()` threw
+        # the index away at the render site, so the chart received a bare
+        # sequence and the axis counted 0..N. The label was honest and the
+        # chart was hard to read: "bar 340" answers no question anyone asks of
+        # an equity curve.
+        #
+        # The index was never missing, only discarded, so this is a render-site
+        # change and not a data one. `_epoch_seconds` degrades to None if the
+        # index is ever not datetime, and the render falls back to the bar
+        # index rather than plotting nonsense against a date axis.
+        self.equity_plot = pg.PlotWidget(
+            title="Equity vs Benchmark", axisItems={"bottom": pg.DateAxisItem()}
+        )
+        # "Synthetic" is in the label deliberately. These are re-labelled daily
+        # timestamps on a per-symbol random walk, not real market dates, and a
+        # bare "Date" would invite the reader to compare a run against what the
+        # market actually did on those days.
+        theme.label_axes(self.equity_plot, bottom="Date (synthetic daily bars)", left="Equity ($)")
         self.equity_curve_item = self.equity_plot.plot(pen=theme.SERIES_PRIMARY, name="strategy")
         self.benchmark_curve_item = self.equity_plot.plot(
             pen=theme.SERIES_BENCHMARK, name="benchmark"
@@ -471,9 +483,23 @@ class WorkbenchScreen(QWidget):
     def _render_result(
         self, result: BacktestResult, benchmark_prices: pd.Series, starting_equity: float
     ) -> None:
-        self.equity_curve_item.setData(result.equity_curve.to_numpy())
         benchmark_equity = starting_equity * (benchmark_prices / benchmark_prices.iloc[0])
-        self.benchmark_curve_item.setData(benchmark_equity.to_numpy())
+        # Each series is placed on its OWN timestamps rather than on a shared
+        # axis derived from one of them. The strategy curve and the benchmark
+        # come from different frames, and pairing one series' values with the
+        # other's dates is the kind of wrong that draws a perfectly plausible
+        # chart.
+        equity_x = _epoch_seconds(result.equity_curve)
+        benchmark_x = _epoch_seconds(benchmark_equity)
+        if equity_x is None or benchmark_x is None:
+            # No usable date index on one of them. Fall back to the bar index
+            # both series always have, rather than drawing on a date axis with
+            # made-up dates.
+            self.equity_curve_item.setData(result.equity_curve.to_numpy())
+            self.benchmark_curve_item.setData(benchmark_equity.to_numpy())
+        else:
+            self.equity_curve_item.setData(equity_x, result.equity_curve.to_numpy())
+            self.benchmark_curve_item.setData(benchmark_x, benchmark_equity.to_numpy())
 
         for tile in self._metric_tiles.values():
             tile.setParent(None)
@@ -533,6 +559,20 @@ class WorkbenchScreen(QWidget):
             f"[{recommendation.recommendation.upper()}, confidence={confidence_pct}] "
             f"{recommendation.rationale} (risk flags: {flags})"
         )
+
+
+def _epoch_seconds(series: pd.Series) -> np.ndarray | None:
+    """A series' index as seconds since the epoch, or None if it is not dated.
+
+    `pg.DateAxisItem` reads x in epoch seconds. Returning None rather than
+    raising is what lets the caller fall back to the bar index: a chart that
+    cannot be dated should say less, not fail, and this screen has no business
+    taking the Workbench down over an axis.
+    """
+    index = series.index
+    if not isinstance(index, pd.DatetimeIndex) or index.empty:
+        return None
+    return index.astype("int64").to_numpy() // 1_000_000_000
 
 
 def _monte_carlo_caption(trade_count: int) -> str:

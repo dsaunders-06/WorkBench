@@ -103,24 +103,26 @@ def test_the_reserve_is_deducted_from_spendable_cash(qtbot):
 
 
 def test_unreported_fields_render_as_a_dash_not_zero(qtbot):
-    """0 day trades and 'not reported' are different claims, and one of them
-    is a statement about pattern-day-trader status."""
+    """ "Not reported" and zero are different claims. This used to be asserted
+    on the day-trade count, which was removed from the panel on 21 August; the
+    PROPERTY is not about that field, so it is asserted on the two that remain
+    and can genuinely be absent."""
     panel = _panel(qtbot)
 
-    panel.update_from(_snapshot())
+    panel.update_from(_snapshot(AccountBalances(currency="AUD")))
 
-    assert panel.day_trades._value.text() == NOT_REPORTED
+    assert panel.account_status._value.text() == NOT_REPORTED
+    assert panel.day_pnl._value.text() == NOT_REPORTED
 
 
-def test_a_pattern_day_trader_flag_is_called_out(qtbot):
-    panel = _panel(qtbot)
-
-    panel.update_from(
-        _snapshot(AccountBalances(daytrade_count=4, pattern_day_trader=True, currency="USD"))
-    )
-
-    assert "4" in panel.day_trades._value.text()
-    assert "PDT" in panel.day_trades._value.text()
+# REMOVED 21 August 2026: test_a_pattern_day_trader_flag_is_called_out.
+#
+# Its subject was the "Day trades (5d)" cell, which no longer exists. It was
+# not failing and it was not wrong - it guarded a real behaviour of a field that
+# IBKR never fills and that belongs to a US pattern-day-trader rule with no
+# application to an ASX account. Recorded here rather than deleted silently,
+# because a test disappearing from a safety-conscious suite should say whether
+# it was retired or lost.
 
 
 def test_a_blocked_account_is_unmistakable(qtbot):

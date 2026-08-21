@@ -1,6 +1,6 @@
 """A cell label must degrade legibly, never be hard-cut at a container edge (M87).
 
-Found by screenshotting the deployed M86 build. "Day trades (5d)" rendered as
+Found by screenshotting the deployed M86 build. "Broker buying power" rendered as
 **"Da"** on the Dashboard, cut off at the right edge of the Balances card - and
 still cut off with the window maximised, so not a small-window artefact.
 
@@ -12,6 +12,13 @@ spaced ~755px demand ~3775px, and the fifth got 15 visible pixels.
 four, and the comment says why - five wrapped at four orphan the last onto a row
 of its own. That reasoning is sound; it just traded a wrapped row for a clipped
 one, and the clipped one is worse because a wrapped row is legible.
+
+**The subject moved on 21 August.** These tests were written against "Day
+trades (5d)", the cell the screenshot caught, and that cell was removed from the
+panel along with the two margin figures and short market value - all four were
+Alpaca-shaped and rendered a permanent dash on IBKR. The property being guarded
+is not about that cell, so the tests now exercise "Broker buying power", which
+is what remains in the demoted row.
 
 **The overflow itself is not reproducible here.** The operator's display runs at
 125% scaling (3840 physical / 3072 logical, AppliedDPI 120); the offscreen test
@@ -50,7 +57,7 @@ def test_a_label_that_fits_is_shown_in_full(qtbot):
     panel.resize(2000, 400)
     _settle(panel, qtbot)
 
-    assert panel.day_trades.rendered_label() == "Day trades (5d)"
+    assert panel.buying_power.rendered_label() == "Broker buying power"
 
 
 def test_a_label_too_narrow_for_its_column_elides(qtbot):
@@ -60,14 +67,14 @@ def test_a_label_too_narrow_for_its_column_elides(qtbot):
     panel = _panel(qtbot)
     panel.resize(2000, 400)
     _settle(panel, qtbot)
-    panel.day_trades.setFixedWidth(60)
+    panel.buying_power.setFixedWidth(60)
     _settle(panel, qtbot)
 
-    rendered = panel.day_trades.rendered_label()
+    rendered = panel.buying_power.rendered_label()
 
-    assert rendered != "Day trades (5d)", "nothing elided - the test is vacuous"
+    assert rendered != "Broker buying power", "nothing elided - the test is vacuous"
     assert "…" in rendered, f"hard-cut rather than elided: {rendered!r}"
-    assert rendered != "Da", "the exact rendering the screenshot caught"
+    assert rendered != "Br", "the shape of the rendering the screenshot caught"
 
 
 def test_the_full_text_stays_reachable_when_elided(qtbot):
@@ -76,27 +83,34 @@ def test_the_full_text_stays_reachable_when_elided(qtbot):
     panel = _panel(qtbot)
     panel.resize(2000, 400)
     _settle(panel, qtbot)
-    panel.day_trades.setFixedWidth(60)
+    panel.buying_power.setFixedWidth(60)
     _settle(panel, qtbot)
 
-    assert "Day trades (5d)" in panel.day_trades.label_tooltip()
+    assert "Broker buying power" in panel.buying_power.label_tooltip()
     # label_text is what tests and readers ask for, and it never elides.
-    assert panel.day_trades.label_text == "Day trades (5d)"
+    assert panel.buying_power.label_text == "Broker buying power"
 
 
 def test_every_demoted_column_gets_an_equal_share(qtbot):
     """The row is sized by division, not by whichever cell demands most. Without
-    this the five minimum widths sum past the card and the last one is pushed
-    off the edge - which is exactly what the screenshot showed."""
+    this the minimum widths sum past the card and the last cell is pushed off
+    the edge - which is exactly what the screenshot showed.
+
+    The column COUNT is read from the grid rather than written here. It was five
+    until 21 August and is one now, and a hardcoded five would have failed on a
+    change that did not touch the property being guarded - while a hardcoded one
+    would silently stop checking the cell that is added next."""
     panel = _panel(qtbot)
     body = panel.broker_body
     assert body is not None
     grid = body.layout()
     assert grid is not None
 
-    stretches = [grid.columnStretch(column) for column in range(5)]
+    columns = grid.count()
+    stretches = [grid.columnStretch(column) for column in range(columns)]
 
-    assert stretches == [1, 1, 1, 1, 1], f"columns are not evenly divided: {stretches}"
+    assert columns >= 1, "the demoted row is empty - this test is vacuous"
+    assert stretches == [1] * columns, f"columns are not evenly divided: {stretches}"
 
 
 def test_the_last_demoted_cell_stays_inside_the_card(qtbot):
@@ -106,7 +120,7 @@ def test_the_last_demoted_cell_stays_inside_the_card(qtbot):
     for width in (900, 1214, 1920, 3072):
         panel.resize(width, 400)
         _settle(panel, qtbot)
-        cell = panel.day_trades
+        cell = panel.buying_power
         right_edge = cell.mapTo(panel, cell.rect().topRight()).x()
 
         assert right_edge <= panel.width(), (

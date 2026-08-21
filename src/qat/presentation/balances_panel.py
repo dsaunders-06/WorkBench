@@ -8,9 +8,16 @@ Alpaca's equity against its own last_equity, not a figure derived here - when
 two screens disagree about money the operator has to work out which one is
 lying, and that is a worse position than having one number with a caveat.
 
-A figure the broker did not report renders as a dash, never as zero. An Alpaca
-paper account returns nothing for the day-trade count or the pattern-day-trader
-flag, and "0 day trades" is a different claim from "not reported".
+A figure the broker did not report renders as a dash, never as zero — "0 day
+trades" is a different claim from "not reported".
+
+That rule is right and it is not a licence to show a field no broker will ever
+fill. On 21 August the day-trade count, both margin figures and short market
+value were removed from the panel, because on IBKR all four rendered a dash
+every session and two of them would be meaningless even filled: this
+application is long-only, and the day-trade count belongs to a US rule that
+does not reach an ASX account. A permanent dash teaches an operator to stop
+reading the row, which costs the rule its force where it genuinely applies.
 
 The one figure here that is NOT the broker's is spendable cash, and it is the
 most important one on the panel. Alpaca will offer four times your cash as
@@ -53,10 +60,6 @@ def money(value: float | None, currency: str | None = None) -> str:
         return NOT_REPORTED
     symbol = "$" if currency in (None, "USD") else f"{currency} "
     return f"{symbol}{value:,.2f}"
-
-
-def count(value: int | None) -> str:
-    return NOT_REPORTED if value is None else str(value)
 
 
 def flag(value: bool | None, true_text: str, false_text: str) -> str:
@@ -276,14 +279,29 @@ class BalancesPanel(QFrame):
             "What the broker would allow, including margin. This application does "
             "not use margin.",
         )
-        self.short_value = _Cell("Short market value", "Market value of short positions.")
-        self.initial_margin = _Cell("Initial margin", "Margin required to open current positions.")
-        self.maintenance_margin = _Cell(
-            "Maintenance margin", "Margin required to keep current positions."
-        )
-        self.day_trades = _Cell(
-            "Day trades (5d)", "Day-trade count. A dash means the broker did not report it."
-        )
+        # REMOVED 21 August 2026: Short market value, Initial margin,
+        # Maintenance margin, Day trades (5d).
+        #
+        # All four were Alpaca-shaped and none of them can be filled on IBKR.
+        # `ib_adapter.balances` says so itself - "the IB translation layer does
+        # not map margin or day-trade fields, so those stay None rather than
+        # being guessed at" - and `_ACCOUNT_TAGS` requests four tags, none of
+        # them a margin tag. So all four rendered a dash, every session, for
+        # ever.
+        #
+        # Two of them would stay meaningless even if IBKR did fill them. This
+        # application is long-only (`QAT_ALLOW_SHORT_SELLING` defaults false and
+        # a sell in an unheld symbol is dropped rather than opening a short), so
+        # short market value is structurally zero; and "day trades (5d)" counts
+        # against a US pattern-day-trader rule that does not apply to an ASX
+        # account at all.
+        #
+        # The two margin figures COULD be sourced - IBKR publishes InitMarginReq
+        # and MaintMarginReq - and were deliberately not, because the
+        # no-leverage rail means the account never borrows and the numbers would
+        # be reported at rather than acted on. `AccountBalances` keeps all four
+        # fields: the Alpaca adapter still populates them, and this was a
+        # decision about what the Dashboard SHOWS, not about the data model.
 
         self.broker_group: QWidget | None = None
         self.broker_body: QWidget | None = None
@@ -322,24 +340,17 @@ class BalancesPanel(QFrame):
         body_grid = QGridLayout(self.broker_body)
         body_grid.setContentsMargins(0, 0, 0, 0)
         body_grid.setHorizontalSpacing(14)
-        demoted = (
-            self.buying_power,
-            self.short_value,
-            self.initial_margin,
-            self.maintenance_margin,
-            self.day_trades,
-        )
-        # One row, not the primary grid's four columns. Five cells wrapped at
-        # four orphan the last one onto a row of its own, which reads as a new
-        # section rather than the tail of this one - and a compact single row
-        # is itself part of saying "secondary".
+        demoted = (self.buying_power,)
+        # One row, not the primary grid's four columns - a compact single row is
+        # itself part of saying "secondary".
         #
-        # That reasoning was right about the orphan and wrong about the width
-        # (M87). Sized by content, five columns demanded ~3775px of a 3086px
-        # window on a 125%-scaled display, and "Day trades (5d)" rendered as
-        # "Da" against the card's right edge. Even division plus an eliding
-        # label means the fifth cell shrinks with the rest instead of being
-        # pushed out, at any width and any dpi.
+        # It was five cells until 21 August, and the width reasoning M87 added
+        # here is kept deliberately even though one cell cannot overflow: sized
+        # by content, five columns demanded ~3775px of a 3086px window on a
+        # 125%-scaled display, and "Day trades (5d)" rendered as "Da" against
+        # the card's right edge. Even division plus an eliding label is what
+        # makes that harmless at any width and any dpi, and it must survive the
+        # next cell added here rather than being rediscovered by screenshot.
         for index, cell in enumerate(demoted):
             body_grid.addWidget(cell, 0, index)
             body_grid.setColumnStretch(index, 1)
@@ -367,10 +378,6 @@ class BalancesPanel(QFrame):
         self._render_spendable(balances, currency)
         self._render_buying_power(balances, currency)
         self.long_value.set(money(balances.long_market_value, currency))
-        self.short_value.set(money(balances.short_market_value, currency))
-        self.initial_margin.set(money(balances.initial_margin, currency))
-        self.maintenance_margin.set(money(balances.maintenance_margin, currency))
-        self._render_day_trades(balances)
         self._render_status(balances)
 
         self.freshness.setText(snapshot.age_line())
@@ -399,12 +406,6 @@ class BalancesPanel(QFrame):
         if balances.multiplier and balances.multiplier > 1:
             text += f"  ({balances.multiplier:g}x)"
         self.buying_power.set(text)
-
-    def _render_day_trades(self, balances: AccountBalances) -> None:
-        text = count(balances.daytrade_count)
-        if balances.pattern_day_trader:
-            text += "  PDT"
-        self.day_trades.set(text, _WARNING if balances.pattern_day_trader else None)
 
     def _render_status(self, balances: AccountBalances) -> None:
         blocked = balances.trading_blocked or balances.account_blocked
