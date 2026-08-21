@@ -7,6 +7,9 @@ call is unverified in this environment, same as IBKR and Anthropic.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 import pandas as pd
 import pytest
 
@@ -225,14 +228,76 @@ async def test_an_empty_symbol_list_ends_immediately():
 
 
 @pytest.mark.asyncio
-async def test_a_persistently_dead_feed_ends_the_stream():
-    """Looping forever on a dead feed would leave the app looking alive while
-    trading on nothing. Ending it lets the staleness detector fire."""
+async def test_the_stream_keeps_retrying_instead_of_ending():
+    """M119. This reverses the original design, and the first live ASX session
+    is why.
+
+    Ending the iterator was meant to let MarketDataFeed's staleness detector
+    fire and trip the kill-switch. It never could: staleness is per-symbol and
+    skips symbols that have not ticked even once, so a feed that failed from its
+    first poll produced no ticks, no staleness and no halt - and the stream was
+    over for the session.
+
+    On 21 August all five polls from the ASX open landed inside Yahoo's ~20
+    minute publication delay. The stream ended at 10:04:20; the data it was
+    waiting for arrived at 10:22. The market stayed open for another five and a
+    half hours with nothing watching it.
+    """
     source = YFinanceMarketDataSource(
         client=_FakeClient(pd.DataFrame()), poll_seconds=0.0, max_consecutive_failures=3
     )
-    ticks = [tick async for tick in source.stream_ticks(["AAPL"])]
-    assert ticks == []
+
+    stream = source.stream_ticks(["AAPL"])
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(anext(stream), timeout=0.25)
+    await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_backoff_grows_while_down_and_is_capped():
+    """A feed that recovers must be picked up in a poll or two, not an hour."""
+    source = YFinanceMarketDataSource(
+        client=_FakeClient(_yahoo_frame()),
+        poll_seconds=10.0,
+        max_consecutive_failures=3,
+        max_backoff_seconds=120.0,
+    )
+
+    assert source._delay_after(0) == 10.0  # healthy: normal cadence
+    assert source._delay_after(2) == 10.0  # still inside the strike count
+    first = source._delay_after(3)
+    second = source._delay_after(4)
+    assert first > 10.0 and second > first
+    assert source._delay_after(50) == 120.0  # capped, never unbounded
+
+
+@pytest.mark.asyncio
+async def test_a_feed_that_was_down_yields_again_and_says_so(caplog):
+    """The ASX open case: empty polls past the strike count, then real data."""
+
+    class _LateClient:
+        def __init__(self) -> None:
+            self.count = 0
+
+        def download(self, tickers, **kwargs):
+            self.count += 1
+            # Three empty polls - one more than the strike count, so the feed is
+            # declared down - and then Yahoo publishes.
+            if self.count <= 3:
+                return pd.DataFrame()
+            return _yahoo_frame()
+
+    source = YFinanceMarketDataSource(
+        client=_LateClient(), poll_seconds=0.0, max_consecutive_failures=2
+    )
+
+    stream = source.stream_ticks(["AAPL"])
+    with caplog.at_level(logging.WARNING, logger="qat.data.yfinance_source"):
+        tick = await asyncio.wait_for(anext(stream), timeout=2.0)
+    await stream.aclose()
+
+    assert tick.price > 0
+    assert any("recovered" in record.getMessage() for record in caplog.records)
 
 
 @pytest.mark.asyncio

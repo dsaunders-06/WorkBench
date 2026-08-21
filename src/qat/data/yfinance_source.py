@@ -54,6 +54,10 @@ _COLUMN_MAP = {
 }
 
 DEFAULT_POLL_SECONDS = 60.0
+# Ceiling on the retry wait while the feed is down. Five minutes, so a feed
+# that comes back is picked up inside a couple of polls rather than after an
+# ever-doubling wait that outlives the session.
+MAX_BACKOFF_SECONDS = 300.0
 DEFAULT_HISTORY_PERIOD = "6mo"
 DEFAULT_HISTORY_INTERVAL = "1d"
 
@@ -207,10 +211,12 @@ class YFinanceMarketDataSource:
         client: YFinanceClient | None = None,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         max_consecutive_failures: int = 5,
+        max_backoff_seconds: float = MAX_BACKOFF_SECONDS,
     ) -> None:
         self._client = client
         self.poll_seconds = poll_seconds
         self.max_consecutive_failures = max_consecutive_failures
+        self.max_backoff_seconds = max_backoff_seconds
 
     @property
     def client(self) -> YFinanceClient:
@@ -228,28 +234,55 @@ class YFinanceMarketDataSource:
             ticks = await self._poll_once(symbol_list)
 
             if ticks:
+                if consecutive_failures >= self.max_consecutive_failures:
+                    logger.warning("yfinance market data has recovered")
                 consecutive_failures = 0
                 for tick in ticks:
                     yield tick
             else:
                 consecutive_failures += 1
-                if consecutive_failures >= self.max_consecutive_failures:
-                    # Stopping lets MarketDataFeed's staleness detector raise
-                    # DataStaleEvent, which trips the kill-switch. Silently
-                    # looping forever on a dead feed would leave the app
-                    # looking alive while trading on nothing.
+                if consecutive_failures == self.max_consecutive_failures:
+                    # M119. Ending the stream here used to be the design, on the
+                    # reasoning that a dead feed must not look alive. It could
+                    # never work: the staleness detector it relied on is
+                    # per-symbol and skips symbols that have not ticked even
+                    # once, so a feed failing from its first poll produced no
+                    # ticks, no staleness and no halt - just a permanent outage
+                    # nothing would recover from.
+                    #
+                    # On 21 August that cost the whole ASX session. Yahoo
+                    # publishes ASX intraday about 20 minutes late, so all five
+                    # 60s polls from the open landed inside the delay window and
+                    # the stream ended at 10:04:20 waiting for data that arrived
+                    # at 10:22. The account sat flat and blind on an open market.
+                    #
+                    # Visibility is MarketDataFeed's job - it publishes
+                    # MarketDataFeedEvent and logs MARKET DATA DOWN - which
+                    # leaves this loop free to keep trying.
                     logger.error(
-                        "yfinance returned no data %d times consecutively - ending the stream",
+                        "yfinance has returned no data %d times consecutively - "
+                        "market data is down. Retrying with backoff.",
                         consecutive_failures,
                     )
-                    return
-                logger.warning(
-                    "yfinance poll produced no ticks (%d/%d)",
-                    consecutive_failures,
-                    self.max_consecutive_failures,
-                )
+                elif consecutive_failures < self.max_consecutive_failures:
+                    logger.warning(
+                        "yfinance poll produced no ticks (%d/%d)",
+                        consecutive_failures,
+                        self.max_consecutive_failures,
+                    )
 
-            await asyncio.sleep(self.poll_seconds)
+            await asyncio.sleep(self._delay_after(consecutive_failures))
+
+    def _delay_after(self, consecutive_failures: int) -> float:
+        """Normal cadence while healthy, backing off while down.
+
+        Capped, because a feed that recovers after an hour should be picked up
+        within a poll or two rather than after an ever-doubling wait.
+        """
+        if consecutive_failures < self.max_consecutive_failures:
+            return self.poll_seconds
+        over = consecutive_failures - self.max_consecutive_failures
+        return float(min(self.poll_seconds * (2 ** min(over + 1, 5)), self.max_backoff_seconds))
 
     async def _poll_once(self, symbols: list[str]) -> list[RawTick]:
         # Requested in Yahoo's spelling, emitted in the app's. A tick labelled
