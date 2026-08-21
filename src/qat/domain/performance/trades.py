@@ -1117,12 +1117,17 @@ class EquityPoint:
     ts: datetime
     equity: float
     cash: float
+    market: str | None = None
+    """Which account this sample measures (M127). None means a sample written
+    before this column existed - the Alpaca/US period - and is treated as its
+    own era rather than as "unknown"."""
 
     def as_row(self) -> dict[str, object]:
         return {
             "ts": self.ts.isoformat(timespec="seconds"),
             "equity": round(self.equity, 2),
             "cash": round(self.cash, 2),
+            "market": self.market or "",
         }
 
 
@@ -1136,12 +1141,23 @@ class EquityCurve:
     """
 
     FILENAME = "equity_curve.csv"
-    _FIELDS = ("ts", "equity", "cash")
+    # "market" since M127. This file spans a BROKER MIGRATION: on 2026-08-18 it
+    # records 101,157.17 in an Alpaca US account and on 2026-08-19 it records
+    # 1,003,733.21 in an IBKR one, in a single continuous series. Nothing said
+    # so, and the weekly report of 21 August read the step as "a dramatic
+    # nominal equity rise ... a 896.39% increase" and had an LLM reason about
+    # it as performance. Sharpe and max drawdown for that week were computed
+    # across the change of account.
+    _FIELDS = ("ts", "equity", "cash", "market")
 
-    def __init__(self, data_dir: str | Path, filename: str | None = None) -> None:
+    def __init__(
+        self, data_dir: str | Path, filename: str | None = None, market: str | None = None
+    ) -> None:
         self.path = Path(data_dir) / (filename or self.FILENAME)
+        self.market = market
         self._points: list[EquityPoint] = self._load()
         self._lock = threading.Lock()
+        self._warned_about_eras = False
 
     def _load(self) -> list[EquityPoint]:
         """Read back what earlier runs recorded.
@@ -1169,6 +1185,8 @@ class EquityCurve:
                                 ts=datetime.fromisoformat(row["ts"]),
                                 equity=float(row["equity"]),
                                 cash=float(row["cash"]),
+                                # .get, so every pre-M127 file still loads.
+                                market=row.get("market") or None,
                             )
                         )
                     except (KeyError, TypeError, ValueError):
@@ -1179,7 +1197,9 @@ class EquityCurve:
         return points
 
     def record(self, equity: float, cash: float, ts: datetime | None = None) -> EquityPoint:
-        point = EquityPoint(ts=ts or datetime.now(UTC), equity=equity, cash=cash)
+        point = EquityPoint(
+            ts=ts or datetime.now(UTC), equity=equity, cash=cash, market=self.market
+        )
         self._points.append(point)
         try:
             with self._lock:
@@ -1195,6 +1215,44 @@ class EquityCurve:
         return point
 
     def points(self) -> list[EquityPoint]:
+        """The samples for the CURRENT era only (M127).
+
+        Scoped here rather than at each caller because there are four of them -
+        the daily report, the weekly report, the summary and the dashboard
+        chart - and every one computes returns, drawdown or Sharpe by walking
+        this list. A caller that forgot would not fail; it would publish a
+        number. The weekly report of 21 August published 896.39%.
+
+        An "era" is a run of samples sharing one market label. The trailing run
+        is the current account, and everything before the last change belongs
+        to a different one - a different broker, a different base currency, and
+        a step between them that is a transfer rather than a return. Use
+        `all_points()` for the whole file.
+        """
+        points = list(self._points)
+        if not points:
+            return points
+
+        current = points[-1].market
+        first = len(points)
+        while first > 0 and points[first - 1].market == current:
+            first -= 1
+
+        if first > 0 and not self._warned_about_eras:
+            self._warned_about_eras = True
+            logger.warning(
+                "Equity history spans more than one account: %d sample(s) before "
+                "%s belong to a different era (%r) and are EXCLUDED from returns, "
+                "drawdown and Sharpe. The step between two accounts is a transfer, "
+                "not a return.",
+                first,
+                points[first].ts.date().isoformat(),
+                points[first - 1].market or "unlabelled (pre-M127)",
+            )
+        return points[first:]
+
+    def all_points(self) -> list[EquityPoint]:
+        """Every sample, eras included. For migration and inspection only."""
         return list(self._points)
 
 

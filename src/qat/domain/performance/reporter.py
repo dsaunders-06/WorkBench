@@ -187,7 +187,9 @@ class PerformanceReporter:
         # The rest of this report counts outcomes. At a ten-position cap the
         # behaviour lives in the refusals: on 5 August the book refused 540
         # candidates and took five, and none of that appeared anywhere.
-        decisions = load_risk_decisions(self.settings.data_dir, since=start.isoformat())
+        decisions = load_risk_decisions(
+            self.settings.data_dir, since=start.isoformat(), market=self.settings.market
+        )
         refusals = summarise_refusals(decisions)
         # The same rows read from the other side: not what was blocked, but how
         # close what passed came to being blocked.

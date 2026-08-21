@@ -30,7 +30,11 @@ from qat.presentation.risk_console import RiskConsoleScreen
 from qat.presentation.runtime import Runtime
 from qat.presentation.ui_level import UiLevel
 
-_COLUMNS = ["timestamp", "symbol", "approved", "reason", "shares", "inputs"]
+# "market" since M127. The console scopes refusals to the account it is looking
+# at, so a row with no market is not claimed by it - which is the safe
+# direction, and means a fixture has to say which era it is writing.
+_COLUMNS = ["timestamp", "symbol", "approved", "reason", "shares", "inputs", "market"]
+_MARKET = "US"  # Settings here takes the default market
 # M120. The panel is bounded to the TRADING day, so the fixture must be too.
 # Under `datetime.now(UTC).date()` these rows were written against a UTC date:
 # between 00:00 UTC and the exchange catching up, "today" was dated into the
@@ -57,6 +61,7 @@ def _write_decisions(tmp_path: Path, rows: list[tuple[str, str, str]]) -> None:
                     "reason": reason,
                     "shares": "0",
                     "inputs": "{}",
+                    "market": _MARKET,
                 }
             )
 
@@ -197,6 +202,7 @@ def test_yesterdays_refusals_are_not_reported_as_tonights(qtbot, tmp_path):
                     "reason": "already at the 10-position limit",
                     "shares": "0",
                     "inputs": "{}",
+                    "market": _MARKET,
                 }
             )
 

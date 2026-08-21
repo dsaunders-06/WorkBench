@@ -303,7 +303,9 @@ class RiskConsoleScreen(QWidget):
         # an hour into an AEDT session and show the operator an empty "today"
         # while the session it belongs to was still running.
         today = mc.trading_date(self.runtime.settings.market).isoformat()
-        rows = load_risk_decisions(self.runtime.settings.data_dir, since=today)
+        rows = load_risk_decisions(
+            self.runtime.settings.data_dir, since=today, market=self.runtime.settings.market
+        )
         summary = summarise_refusals(rows)
         self.refusal_headline.setText(summary.headline())
 

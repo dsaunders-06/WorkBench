@@ -606,7 +606,9 @@ class Runtime:
         # Evidence layer (spec M16): the equity curve and the reports built
         # from it. The ledger itself is constructed earlier, because sizing now
         # reads from it.
-        equity_curve = EquityCurve(settings.data_dir)
+        # Stamped with the market so a change of broker is visible in the file
+        # rather than appearing as a 9.9x return (M127).
+        equity_curve = EquityCurve(settings.data_dir, market=settings.market)
         # The equity monitor already polls the account on a timer, so it doubles
         # as the curve's sampler rather than adding a second poller for the
         # same number.

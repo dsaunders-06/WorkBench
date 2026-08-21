@@ -28,7 +28,21 @@ logger = logging.getLogger(__name__)
 
 AUDIT_FILENAME = "risk_decisions.csv"
 
-_FIELDS = ("timestamp", "symbol", "approved", "final_shares", "stop_price", "reason", "inputs")
+# "market" since M127. This file spans the Alpaca/US period and the IBKR/ASX
+# one with nothing to separate them, and the weekly report of 21 August cited
+# "rejected all 120 candidate orders because the book was full" as that week's
+# ASX behaviour when every one of those refusals happened on the other broker,
+# against a book that no longer exists.
+_FIELDS = (
+    "timestamp",
+    "symbol",
+    "approved",
+    "final_shares",
+    "stop_price",
+    "reason",
+    "inputs",
+    "market",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,11 +61,17 @@ class RiskDecision:
 
 
 class AuditLog:
-    def __init__(self, data_dir: str | Path | None = None, filename: str = AUDIT_FILENAME) -> None:
+    def __init__(
+        self,
+        data_dir: str | Path | None = None,
+        filename: str = AUDIT_FILENAME,
+        market: str | None = None,
+    ) -> None:
         self._entries: list[RiskDecision] = []
         # Optional so an AuditLog built without a directory - every existing
         # test, and any in-memory use - behaves exactly as it always did.
         self.path = Path(data_dir) / filename if data_dir is not None else None
+        self.market = market
         self._lock = threading.Lock()
 
     def record(self, decision: RiskDecision) -> None:
@@ -87,6 +107,7 @@ class AuditLog:
                             # the inputs dict grows as rails are added, and a
                             # widening header would break every earlier file.
                             "inputs": json.dumps(decision.inputs, default=str),
+                            "market": self.market or "",
                         }
                     )
         except OSError:

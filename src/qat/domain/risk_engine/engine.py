@@ -111,7 +111,7 @@ class RiskEngine:
         self.cost_model = cost_model or CostModel.from_settings(self.settings)
         # Given the data_dir so the trail outlives the session (M20). Callers
         # that inject their own AuditLog keep whatever behaviour they chose.
-        self.audit_log = audit_log or AuditLog(self.settings.data_dir)
+        self.audit_log = audit_log or AuditLog(self.settings.data_dir, market=self.settings.market)
         self.regime_scalar = 1.0
         # WHICH regime produced that scalar, or None when no RegimeEvent has
         # ever arrived. The scalar alone is ambiguous and the ambiguity is

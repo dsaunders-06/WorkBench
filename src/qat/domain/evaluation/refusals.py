@@ -264,7 +264,11 @@ def summarise_refusals(rows: list[dict[str, str]]) -> RefusalSummary:
 
 
 def load_risk_decisions(
-    data_dir: str | Path, *, since: str | None = None, filename: str = RISK_DECISIONS_FILENAME
+    data_dir: str | Path,
+    *,
+    since: str | None = None,
+    market: str | None = None,
+    filename: str = RISK_DECISIONS_FILENAME,
 ) -> list[dict[str, str]]:
     """Sizing decisions from disk, optionally from an ISO timestamp onwards.
 
@@ -272,6 +276,15 @@ def load_risk_decisions(
     in ISO-8601 - and is why it is written that way. A missing or unreadable
     file reads as "no decisions" rather than raising: this is an analysis
     layer, and it must never be able to stop a report being produced.
+
+    `market` narrows to one era (M127). This file, like the equity curve and
+    the trade ledger, spans the Alpaca/US period and the IBKR/ASX one - and the
+    weekly report of 21 August cited *"rejected all 120 candidate orders
+    because the book was full"* as this week's ASX behaviour when every one of
+    those refusals happened on the other broker, against a book that no longer
+    exists. Rows written before the column exists carry no market and are
+    excluded by any market filter, which is the safe direction: an
+    unattributable refusal should not be reported as this account's.
     """
     path = Path(data_dir) / filename
     if not path.exists():
@@ -282,9 +295,11 @@ def load_risk_decisions(
     except OSError:
         logger.exception("Could not read %s", path)
         return []
-    if since is None:
-        return rows
-    return [row for row in rows if (row.get("timestamp") or "") >= since]
+    if since is not None:
+        rows = [row for row in rows if (row.get("timestamp") or "") >= since]
+    if market is not None:
+        rows = [row for row in rows if (row.get("market") or "") == market]
+    return rows
 
 
 def format_refusal_section(summary: RefusalSummary) -> str:
@@ -313,7 +328,7 @@ def format_refusal_section(summary: RefusalSummary) -> str:
             else ""
         )
         lines.append(
-            f"**Asked for and never taken:** {named}{more}. " "A capacity cap is what these cost."
+            f"**Asked for and never taken:** {named}{more}. A capacity cap is what these cost."
         )
         lines.append("")
 
