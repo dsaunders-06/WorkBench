@@ -425,6 +425,31 @@ pattern.
 > had no consumers until M72. Finish it in one pass when the Blotter's turn
 > comes, with the screens rendered before and after.
 >
+> > **RE-MEASURED 21 August 2026, and the paragraph above is now stale in every
+> > particular.** Raw hex is SOLVED: 18 hex colours exist and all 18 are inside
+> > `theme.py`, which is where the design system's primitives belong. None
+> > survive anywhere else, and
+> > `tests/presentation/test_design_system_is_the_only_source_of_colour.py`
+> > guards it. The `settings.py` example is stale too — its two remaining
+> > non-theme calls are `setStyleSheet("")`, which CLEARS a stylesheet rather
+> > than duplicating a theme string.
+> >
+> > **What survives is the same defect one layer up.** 20 `setStyleSheet` calls
+> > across seven files still hand-write what a `theme` helper returns —
+> > `f"color: {theme.MUTED}; font-size: {theme.CAPTION}px;"` where
+> > `theme.text(theme.MUTED, size=theme.CAPTION)` exists — and 8 of those
+> > hardcode a pixel size, bypassing the type scale entirely. `regime_monitor.py`
+> > has 6, `balances_panel.py` 5, `risk_console.py` 3. One colour constant lives
+> > outside `theme.py` (`_MUTED` in `balances_panel.py`).
+> >
+> > **The guard catches hex and cannot catch a primitive spelled out longhand**,
+> > which is the shape this project keeps meeting: a rule enforced at one
+> > boundary and not the one beside it. Same as `trading_date` having one caller
+> > out of four (M120).
+> >
+> > **Do not trust the counts in this file.** Two of them were wrong within a
+> > fortnight. Re-measure before acting on any of it.
+>
 > **Read §4.x as intent and check its particulars first.** Every occurrence is
 > listed in the register in `ROADMAP.md` - "The two patterns, and every
 > occurrence of each". **Count the rows there rather than repeating a number

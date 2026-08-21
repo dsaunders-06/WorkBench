@@ -194,7 +194,18 @@ for each gap and is worth reading; the list lives here.
     about DATA.
 15. **`migrate_ledger_eras.py` is superseded** by `retire_alpaca_era.py`. Dead
     script; keep or delete deliberately.
-16. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+16. **Design-system debt in the screens.** `docs/UI_UX_APPROACH.md` records
+    Group 4 (every screen restyled) as complete, and it is. What survives,
+    RE-MEASURED 21 August: **20 `setStyleSheet` calls across seven files
+    hand-write what a `theme` helper returns**, and 8 of those hardcode a pixel
+    size, bypassing the type scale. `regime_monitor.py` 6, `balances_panel.py`
+    5, `risk_console.py` 3. One colour constant lives outside `theme.py`.
+    Raw hex IS solved — 18 sites, all inside `theme.py`, guarded by a passing
+    test — so that document's "25 raw-hex sites" note is stale and now says so.
+    The guard catches hex and cannot catch a primitive written longhand, which
+    is why the next restyle that should be one edit to `theme.py` will not be.
+    Nothing is wrong on screen; this is debt, not a defect.
+17. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
