@@ -39,6 +39,7 @@ from qat.preflight import (  # noqa: E402
     contract_checks,
     feed_checks,
     gateway_checks,
+    gateway_port_check,
     probe_plan,
     render,
     session_checks,
@@ -61,6 +62,11 @@ def _settings() -> Settings:
 async def _run(sample: int | None) -> int:
     settings = _settings()
     checks: list[Check] = list(settings_checks(settings))
+    # Before anything that needs a Gateway, ask whether one is actually
+    # LISTENING (M125). Every check below this that touches the broker fails
+    # confusingly when the port is shut, and "not logged in" is the common
+    # cause - the process is up, so nothing else notices.
+    checks.append(gateway_port_check(settings))
     checks += session_checks(settings.market)
 
     watchlist = list(universe.resolve_watchlist(settings))

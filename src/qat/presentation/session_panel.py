@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -174,6 +175,59 @@ START_BUTTON_FOCUS_POLICY = Qt.FocusPolicy.NoFocus
 # wrong. Name the control, because the control is what is actually known.
 FORCE_START_SOURCE = "the dashboard force-start control"
 
+# M124. M107 removed the ACCIDENTAL path - the button is NoFocus, so a keystroke
+# cannot reach it - but a deliberate click was still instant, and on 20 August a
+# force-start produced six signals against stale closing prices on a shut
+# market. This puts a second deliberate act between the click and the override.
+#
+# THE DEFAULT IS THE WHOLE POINT. Escape, Enter, and closing the dialog must all
+# mean NO. A confirmation that defaults to yes is one keystroke away from no
+# confirmation at all, which is precisely what M107 just took away - it would
+# reintroduce the defect through the control added to prevent it.
+FORCE_START_CONFIRM_TITLE = "Force-start the session?"
+FORCE_START_CONFIRM_TEXT = "Run the trading session against a CLOSED market?"
+FORCE_START_CONFIRM_DETAIL = (
+    "The feed will start and strategies will emit signals against the last "
+    "prices seen, which on a shut market are stale closing prices. On "
+    "20 August this produced six signals in that state.\n\n"
+    "The override lasts until the next close. It places no order by itself and "
+    "does not change who signs orders off."
+)
+FORCE_START_CONFIRM_ACCEPT = "Force-start"
+FORCE_START_CONFIRM_REJECT = "Cancel"
+
+
+def build_force_start_dialog(parent: QWidget | None = None) -> tuple[QMessageBox, QPushButton]:
+    """The confirmation, and the one button that means yes.
+
+    Split from `confirm_force_start` so the DEFAULTING can be asserted without
+    running a modal loop. The safe-default behaviour is the requirement here;
+    testing only the yes/no outcome would leave it uncovered.
+    """
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(FORCE_START_CONFIRM_TITLE)
+    box.setText(FORCE_START_CONFIRM_TEXT)
+    box.setInformativeText(FORCE_START_CONFIRM_DETAIL)
+    reject = box.addButton(FORCE_START_CONFIRM_REJECT, QMessageBox.ButtonRole.RejectRole)
+    accept = box.addButton(FORCE_START_CONFIRM_ACCEPT, QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(reject)
+    box.setEscapeButton(reject)
+    return box, accept
+
+
+def confirm_force_start(parent: QWidget | None = None) -> bool:
+    """True only on an explicit affirmative.
+
+    Anything else - Cancel, Escape, Enter, or closing the window - is a no.
+    `clickedButton()` is None when the dialog is dismissed without a button,
+    and `None is accept` is False, so that path is safe by construction rather
+    than by a branch someone has to remember.
+    """
+    box, accept = build_force_start_dialog(parent)
+    box.exec()
+    return box.clickedButton() is accept
+
 
 class SessionPanel(QFrame):
     """Session state and countdowns for the configured market, plus any other
@@ -227,6 +281,9 @@ class SessionPanel(QFrame):
             "place any order, and does not change who signs orders off."
         )
         self.start_button.setFocusPolicy(START_BUTTON_FOCUS_POLICY)
+        # An attribute rather than a bare call, so a test can answer the dialog
+        # without running a modal loop (M124).
+        self.confirm_force_start = confirm_force_start
         self.start_button.clicked.connect(self._on_start_clicked)
         status_row.addWidget(self.session_status, stretch=1)
         status_row.addWidget(self.start_button)
@@ -238,6 +295,17 @@ class SessionPanel(QFrame):
         self._timer.start(1000)  # a countdown that ticks in seconds must tick
 
     def _on_start_clicked(self) -> None:
+        # M124. The decline is logged as well as the accept. A log that only
+        # records overrides that happened cannot answer "was this offered and
+        # refused", and on 20 August the question asked afterwards was exactly
+        # what the operator had and had not done.
+        if not self.confirm_force_start(self):
+            logger.info(
+                "Force-start was offered and DECLINED - the session remains stood "
+                "down and no override is armed"
+            )
+            return
+        logger.info("Force-start CONFIRMED at the dialog - arming the override")
         asyncio.ensure_future(self._force_start())
 
     async def _force_start(self) -> None:

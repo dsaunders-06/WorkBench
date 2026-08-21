@@ -101,6 +101,10 @@ class IBAdapter:
         initial_backoff_seconds: float = 1.0,
         max_backoff_seconds: float = 30.0,
         max_reconnect_attempts: int = 5,
+        # Six attempts over ~1 minute at the default backoff (M125). Enough for
+        # a human to finish a Gateway login; short enough that a genuinely
+        # closed port still fails before the open rather than hanging.
+        max_connect_attempts: int = 6,
     ) -> None:
         settings = settings or Settings()
         if settings.is_live and not live_trading_confirmed:
@@ -127,6 +131,7 @@ class IBAdapter:
         self.initial_backoff_seconds = initial_backoff_seconds
         self.max_backoff_seconds = max_backoff_seconds
         self.max_reconnect_attempts = max_reconnect_attempts
+        self.max_connect_attempts = max_connect_attempts
 
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._orders: dict[str, Order] = {}
@@ -139,13 +144,67 @@ class IBAdapter:
         self._ib_groups: dict[str, list[object]] = {}
 
     async def connect(self) -> None:
-        await self.ib_client.connectAsync(
-            self.settings.ibkr_host,
+        """Connect, retrying a refused port for a bounded time (M125).
+
+        A single attempt used to be the whole of this method, and on 21 August
+        at 08:53 that cost a full restart four minutes before the ASX open: the
+        Gateway process was running but nobody had logged in, so port 4002 was
+        closed, `connectAsync` raised ConnectionRefusedError, and the
+        application shut down. A Gateway thirty seconds late should not end the
+        session before it starts.
+
+        The asymmetry this fixes is the odd part: `_reconnect_with_backoff`
+        already existed for the HEARTBEAT, so a connection lost at 14:17
+        mid-session recovered by itself - as one did - while a connection not
+        yet established at startup did not retry once.
+
+        Bounded, not infinite. Six attempts over roughly a minute covers a
+        human finishing a Gateway login; past that, something is wrong that
+        waiting will not fix, and the original exception is raised so the
+        operator sees the real reason rather than a timeout.
+        """
+        last: Exception | None = None
+        for attempt in range(1, self.max_connect_attempts + 1):
+            try:
+                await self.ib_client.connectAsync(
+                    self.settings.ibkr_host,
+                    self.settings.ibkr_port,
+                    self.settings.ibkr_client_id,
+                    readonly=self.read_only,
+                )
+            except Exception as exc:  # noqa: BLE001 - any connect failure is a retry
+                last = exc
+                if attempt == self.max_connect_attempts:
+                    break
+                delay = min(
+                    self.max_backoff_seconds, self.initial_backoff_seconds * (2 ** (attempt - 1))
+                )
+                logger.warning(
+                    "IBKR connect attempt %d/%d failed (%s: %s) - retrying in %.0fs. "
+                    "A Gateway that is running but not logged in refuses the port.",
+                    attempt,
+                    self.max_connect_attempts,
+                    type(exc).__name__,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            if attempt > 1:
+                logger.info(
+                    "IBKR connected on attempt %d of %d", attempt, self.max_connect_attempts
+                )
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            return
+
+        logger.error(
+            "IBKR refused the connection %d times - giving up. Check that the Gateway "
+            "is logged in and that its API port (%s) is open.",
+            self.max_connect_attempts,
             self.settings.ibkr_port,
-            self.settings.ibkr_client_id,
-            readonly=self.read_only,
         )
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        raise last if last is not None else RuntimeError("IBKR connect failed")
 
     async def disconnect(self) -> None:
         if self._heartbeat_task is not None:

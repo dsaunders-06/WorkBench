@@ -18,7 +18,8 @@ Read-only throughout. It places nothing, cancels nothing and modifies nothing.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import socket
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 
@@ -59,6 +60,64 @@ def verdict_for(checks: list[Check]) -> Verdict:
     if any(c.status in (Status.FAIL, Status.UNKNOWN) for c in checks):
         return Verdict.BLOCKED
     return Verdict.READY
+
+
+# The four sockets an IBKR session can be behind, named (M125). A process check
+# cannot tell these apart and cannot tell any of them from "not logged in".
+KNOWN_IBKR_PORTS: dict[int, str] = {
+    4001: "live Gateway",
+    4002: "paper Gateway",
+    7496: "live TWS",
+    7497: "paper TWS",
+}
+
+
+def port_is_open(host: str, port: int, timeout: float = 0.5) -> bool:
+    """Whether something is LISTENING, which is the only question worth asking.
+
+    A running Gateway with nobody logged into it holds its API port closed, so
+    checking for the process reports healthy while every connection is refused
+    - "quiet looks like healthy" again, in a new place. On 21 August that cost a
+    restart four minutes before the open.
+    """
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def gateway_port_check(
+    settings: Settings, probe: Callable[[str, int], bool] | None = None
+) -> Check:
+    """Which of the four IBKR sockets is actually listening, and is ours one.
+
+    Reports every port it found rather than only the configured one, because
+    the two failures look identical from the configured port alone: "the
+    Gateway is not up" and "the Gateway is up, but it is the OTHER one".
+    """
+    probe = probe or (lambda host, port: port_is_open(host, port))
+    host = settings.ibkr_host
+    open_ports = [port for port in sorted(KNOWN_IBKR_PORTS) if probe(host, port)]
+    found = (
+        ", ".join(f"{port} ({KNOWN_IBKR_PORTS[port]})" for port in open_ports)
+        if open_ports
+        else "none of the four"
+    )
+
+    if settings.ibkr_port in open_ports:
+        return Check(
+            "gateway port",
+            Status.OK,
+            f"{settings.ibkr_port} is listening on {host}. Open: {found}",
+        )
+    return Check(
+        "gateway port",
+        Status.FAIL,
+        f"{settings.ibkr_port} ({KNOWN_IBKR_PORTS.get(settings.ibkr_port, 'unknown')}) is "
+        f"NOT listening on {host}. Open: {found}. A Gateway that is running but not "
+        f"logged in refuses its API port, so the process being up proves nothing.",
+    )
 
 
 def settings_checks(settings: Settings) -> list[Check]:
