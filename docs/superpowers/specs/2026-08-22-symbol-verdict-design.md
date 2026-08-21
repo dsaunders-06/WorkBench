@@ -20,10 +20,25 @@ Three defects, in ascending order of severity.
 recommendation is formed against no regime at all while the Advisor's is formed
 against the live one.
 
-**2. Neither screen fills the context it already has.** `AdvisoryContext`
-carries `macro_signal` and `macro_series` — the deterministic macro read the
-Regime Monitor computes and displays — and **neither screen passes them**. The
-Advisor also passes an empty `candidate_signal` and no `backtest_stats`.
+**2. Neither screen fills the context it already has.** The Advisor passes an
+empty `candidate_signal` and no `backtest_stats`; the Workbench passes no
+`operator_question`, `positions` or `risk_metrics`.
+
+> **CORRECTED while planning, 22 August.** An earlier version of this section
+> also claimed both screens should pass `macro_signal` and `macro_series`,
+> on the belief that the deterministic macro read was sitting on the runtime
+> waiting to be handed over. **It is not.** `compute_macro_signal` needs an
+> awaited `get_daily_bars` fetch for the benchmark, and the Regime Monitor
+> computes it only when the operator presses *Analyse* — so there is no
+> current value to pass, and passing one would mean a vendor call on every
+> question.
+>
+> **Macro is therefore out of scope here**, and deliberately not faked from a
+> stale or absent value. Where the macro read should live and when it should
+> refresh is its own question, and answering it badly inside an advisory
+> change would be the worse outcome. The `macro_signal` and `macro_series`
+> fields stay empty, which the prompt already renders as absent rather than as
+> zero.
 
 **3. ⚠️ The model cannot see anything about a position it is asked to judge.**
 The Advisor passes `positions = {p.symbol: p.quantity ...}` and nothing more. For
@@ -186,8 +201,7 @@ rule_checks: list[dict[str, Any]] = field(default_factory=list)
 
 One builder in `advisory_inputs.py` — already "the per-symbol material an
 advisory answer is entitled to" — assembles the full context, and **both screens
-call it**. That closes all three defects above at once, including the two
-`macro_*` fields neither screen has ever passed.
+call it**. That closes all three defects above at once.
 
 **The verdict travels as fact, not as fetched text.** `fetched_notes` exists to
 quarantine third-party material. The rule checks are the application's own
@@ -261,6 +275,9 @@ constraint.
 
 * **Sizing, and anything that would call the risk engine.** See above.
 * **The verdict panel on the Workbench.**
+* **The macro read.** See the correction above: it is not a cheap attribute
+  read, and wiring it here would put a vendor fetch on every question. Its
+  fields stay empty and the prompt states them as absent.
 * **Any change to what the strategy engine, autonomy gate or OMS DECIDE.** This
   reads the rails; it does not alter one. The only production change outside the
   advisory path is extracting `entry_permitted`, which moves two membership
