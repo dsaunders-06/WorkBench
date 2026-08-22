@@ -222,6 +222,28 @@ class OMS:
         # Explained divergences are logged once per session, not once per poll.
         self._explained_logged: set[str] = set()
 
+    def entry_permitted(self, symbol: str) -> str | None:
+        """Why an entry in `symbol` would be refused by the allow lists, or None.
+
+        Pure: no logging, no state, no order. Extracted so the symbol verdict
+        can report the identical decision without proposing anything, rather
+        than growing a second copy of a two-line rule - which is exactly how
+        `minimum_hold_status`'s two callers had drifted before it was pulled
+        out, with nothing pinning them together.
+
+        The symbol allow list is checked first because it is the broader rule:
+        it governs HOLDING as well as entering, so it is the refusal worth
+        naming when both would fire.
+
+        An EMPTY set is not None. None permits everything; an empty set permits
+        nothing, which is what a cleared entry allow list means.
+        """
+        if self.symbol_allow_list is not None and symbol not in self.symbol_allow_list:
+            return "symbol not on the allow list"
+        if self.entry_allow_list is not None and symbol not in self.entry_allow_list:
+            return "symbol not on the entry allow list (machinery test in progress)"
+        return None
+
     async def submit_order(
         self,
         candidate: OrderCandidate,
@@ -230,13 +252,9 @@ class OMS:
         existing_returns: dict[str, pd.Series],
         sector_by_symbol: dict[str, str] | None = None,
     ) -> Order:
-        if self.symbol_allow_list is not None and candidate.symbol not in self.symbol_allow_list:
-            return self._new_rejected_order(candidate, 0.0, "symbol not on the allow list")
-
-        if self.entry_allow_list is not None and candidate.symbol not in self.entry_allow_list:
-            return self._new_rejected_order(
-                candidate, 0.0, "symbol not on the entry allow list (machinery test in progress)"
-            )
+        refusal = self.entry_permitted(candidate.symbol)
+        if refusal is not None:
+            return self._new_rejected_order(candidate, 0.0, refusal)
 
         # Ahead of the kill-switch check so the refusal names the anomaly
         # rather than a generic halt, and ahead of the risk pipeline because
