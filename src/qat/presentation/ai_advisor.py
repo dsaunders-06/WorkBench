@@ -27,10 +27,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.events import RegimeEvent
 from qat.presentation import theme
-from qat.presentation.advisory_inputs import news_for, next_earnings_for
+from qat.presentation.advisory_inputs import build_advisory_context, news_for, next_earnings_for
 from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -354,18 +353,18 @@ class AiAdvisorScreen(QWidget):
                     )
                 )
             )
-            context = AdvisoryContext(
-                symbol=symbol,
+            context = await build_advisory_context(
+                self.runtime,
+                symbol,
+                operator_question=question,
                 regime_label=self._regime_label,
                 regime_probs=self._regime_probs,
                 positions=positions,
                 risk_metrics=risk_metrics,
-                candidate_signal={},
                 fundamentals=fundamentals,
-                next_earnings=next_earnings,
-                news=news,
                 fetched_notes=notes,
-                operator_question=question,
+                verdict=None,
+                position=None,
             )
             recommendation = await self.runtime.ai_service.get_regime_narrative(context)
             flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"

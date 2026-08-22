@@ -19,6 +19,28 @@ from collections.abc import Iterator
 import pytest
 
 
+@pytest.fixture
+def advisory_runtime(tmp_path):
+    """A runtime with only what the advisory builder reads.
+
+    Deliberately not a real Runtime: the builder's contract is "every path
+    degrades to nothing known", and a stub is how that gets exercised without
+    a broker, a feed or a vendor.
+    """
+    from qat.config import Settings
+
+    class _Bridge:
+        earnings_calendar = None
+
+    class _Runtime:
+        def __init__(self):
+            self.news_source = None
+            self.settings = Settings(_env_file=None, data_dir=str(tmp_path))
+            self.signal_bridge = _Bridge()
+
+    return _Runtime()
+
+
 @pytest.fixture(scope="session", autouse=True)
 def isolate_data_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
     # An environment variable rather than a monkeypatched default, because

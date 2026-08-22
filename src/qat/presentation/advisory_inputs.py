@@ -19,8 +19,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from qat.data.news import as_context_dicts, corroborate, drop_other_listings
+from qat.domain.ai_advisory.context import AdvisoryContext
 
 logger = logging.getLogger(__name__)
 
@@ -75,3 +77,56 @@ def next_earnings_for(runtime: object, symbol: str) -> str:
         logger.debug("Earnings lookup failed for %s", symbol, exc_info=True)
         return ""
     return when.isoformat() if when else ""
+
+
+async def build_advisory_context(
+    runtime: object,
+    symbol: str,
+    *,
+    operator_question: str = "",
+    candidate_signal: dict[str, Any] | None = None,
+    backtest_stats: dict[str, float] | None = None,
+    regime_label: str = "unknown",
+    regime_probs: dict[str, float] | None = None,
+    verdict: object | None = None,
+    positions: dict[str, float] | None = None,
+    risk_metrics: dict[str, float] | None = None,
+    fundamentals: dict[str, Any] | None = None,
+    fetched_notes: list[str] | None = None,
+    position: dict[str, Any] | None = None,
+) -> AdvisoryContext:
+    """Everything an advisory answer about `symbol` is entitled to, in one place.
+
+    Both screens call this. They differ ONLY in what they can legitimately
+    supply - the Workbench has backtest stats and the Advisor has the operator's
+    question - and never in what they fetch, because that difference is what let
+    them reach different views of one company (M126, and the regime gap this
+    closes).
+
+    Every path degrades to "nothing known". A third-party feed must never stop
+    the advisor answering, and an advisory screen is the last place that should
+    raise.
+    """
+    # NO macro_signal / macro_series. The spec's correction of 22 August: the
+    # macro read is not an attribute waiting to be handed over -
+    # `compute_macro_signal` needs an awaited `get_daily_bars` fetch, and the
+    # Regime Monitor computes it only when the operator presses Analyse. Wiring
+    # it here would put a vendor call on every question, and passing a stale or
+    # absent value would be worse. The fields stay empty; the prompt already
+    # renders them as absent rather than as zero.
+    return AdvisoryContext(
+        symbol=symbol,
+        regime_label=regime_label,
+        regime_probs=dict(regime_probs or {}),
+        positions=dict(positions or {}),
+        risk_metrics=dict(risk_metrics or {}),
+        candidate_signal=dict(candidate_signal or {}),
+        backtest_stats=dict(backtest_stats or {}),
+        fundamentals=dict(fundamentals or {}),
+        next_earnings=next_earnings_for(runtime, symbol),
+        news=await news_for(runtime, symbol),
+        fetched_notes=list(fetched_notes or []),
+        operator_question=operator_question,
+        position=dict(position or {}),
+        rule_checks=verdict.as_dicts() if verdict is not None else [],
+    )

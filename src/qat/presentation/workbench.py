@@ -39,7 +39,6 @@ from PySide6.QtWidgets import (
 )
 
 from qat.data.fundamentals import FundamentalSnapshot
-from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.backtester.costs import CostModel
 from qat.domain.backtester.monte_carlo import run_monte_carlo
 from qat.domain.backtester.results import BacktestResult, WalkForwardResult
@@ -48,8 +47,9 @@ from qat.domain.backtester.sizing import FixedFractionalSizer
 from qat.domain.backtester.vectorized_engine import VectorizedBacktester
 from qat.domain.backtester.walk_forward import run_walk_forward
 from qat.domain.display_dates import format_display_date
+from qat.domain.events import RegimeEvent
 from qat.presentation import theme
-from qat.presentation.advisory_inputs import news_for, next_earnings_for
+from qat.presentation.advisory_inputs import build_advisory_context
 from qat.presentation.runtime import Runtime
 from qat.presentation.ui_level import UiLevel
 from qat.presentation.widgets import KpiTile
@@ -204,7 +204,20 @@ class WorkbenchScreen(QWidget):
         self.ai_note_label.setWordWrap(True)
         layout.addWidget(self.ai_note_label)
 
+        # No regime state of its own until now - that was the defect. The
+        # Advisor forms its recommendation against the live regime; this
+        # screen formed one against `regime_label="unknown"`, so the same
+        # company at the same moment could read differently on each screen
+        # for no stated reason (M136, see advisory_inputs.build_advisory_context).
+        self._regime_label = "unknown"
+        self._regime_probs: dict[str, float] = {}
+        self.runtime.bus.subscribe(RegimeEvent, self._on_regime)
+
         self._apply_level()
+
+    async def _on_regime(self, event: RegimeEvent) -> None:
+        self._regime_label = event.label
+        self._regime_probs = event.probs
 
     def _apply_level(self) -> None:
         """Three levels, three outcomes.
@@ -529,28 +542,20 @@ class WorkbenchScreen(QWidget):
         signal_series: pd.Series,
         fundamentals: FundamentalSnapshot | None = None,
     ) -> None:
-        context = AdvisoryContext(
-            symbol=symbol,
-            regime_label="unknown",
-            regime_probs={},
-            positions={},
-            risk_metrics={},
+        context = await build_advisory_context(
+            self.runtime,
+            symbol,
             candidate_signal={
                 "strategy": strategy_name,
                 "last_target_exposure": float(signal_series.iloc[-1]),
             },
             backtest_stats=result.metrics,
-            # Already fetched for the signal series itself (M40) - the note was
-            # commenting on a fundamentals-driven strategy while knowing none of
-            # the fundamentals that drove it.
+            # The defect this closes: it passed "unknown" and formed a
+            # recommendation against no regime at all, while the Advisor formed
+            # one against the live regime for the same company.
+            regime_label=self._regime_label,
+            regime_probs=self._regime_probs,
             fundamentals=fundamentals.available_figures() if fundamentals is not None else {},
-            # M126. The Workbench asks the same per-symbol question the Advisor
-            # does and was given strictly less to answer it with - no results
-            # date, no news - so the two screens could reach different views of
-            # the same company from the same moment. Parity, or one of them is
-            # reasoning on a subset for no stated reason.
-            next_earnings=next_earnings_for(self.runtime, symbol),
-            news=await news_for(self.runtime, symbol),
         )
         recommendation = await self.runtime.ai_service.get_regime_narrative(context)
         flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"
