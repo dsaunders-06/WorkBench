@@ -136,10 +136,10 @@ engine: the per-order notional cap and the sizer. Those are not asked, and
 "What this does not check" says so. A probe of one share therefore answers the
 gate's question faithfully and answers no question about size at all.
 
-**One targeted change.** `OMS.propose_entry` opens with two membership tests —
+**One targeted change.** `OMS.submit_order` opens with two membership tests —
 symbol allow list, then entry allow list — before any side effect. They are
 lifted into a pure `entry_permitted(symbol) -> str | None` returning the refusal
-reason or None, which `propose_entry` then calls. One implementation, two
+reason or None, which `submit_order` then calls. One implementation, two
 readers, rather than the verdict growing a copy.
 
 ### The branch
@@ -264,7 +264,7 @@ rather than the code:
 
 Plus: the held branch reports sell rails and the unheld branch reports entry
 rails, and neither reports the other's; `entry_permitted` has one implementation
-with `propose_entry` and the verdict both calling it; and the existing
+with `submit_order` and the verdict both calling it; and the existing
 `tests/safety/test_prompt_injection_in_context_is_ignored.py` still passes with
 the two new fields present.
 

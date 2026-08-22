@@ -28,7 +28,7 @@
 
 | File | Responsibility |
 |---|---|
-| `src/qat/domain/oms/oms.py` | **Modify.** Extract `entry_permitted`, called by `propose_entry`. |
+| `src/qat/domain/oms/oms.py` | **Modify.** Extract `entry_permitted`, called by `submit_order`. |
 | `src/qat/presentation/symbol_verdict.py` | **Create.** `RuleCheck`, `StrategyRules`, `SymbolVerdict`, `build_verdict`. Pure, no Qt. |
 | `tests/presentation/test_symbol_verdict.py` | **Create.** Both branches, unknown handling, probe semantics. |
 | `src/qat/domain/ai_advisory/context.py` | **Modify.** Two plain-dict fields, their prompt rendering, and the stale corroboration sentence. |
@@ -59,7 +59,7 @@ Create `tests/domain/oms/test_oms_entry_permitted.py`:
 ```python
 """The allow-list rule, asked rather than re-derived.
 
-`propose_entry` opened with two membership tests. The symbol verdict needs the
+`submit_order` opened with two membership tests. The symbol verdict needs the
 same answer WITHOUT proposing anything, and a second copy of a rule is how the
 two drift - the defect `minimum_hold_status` was extracted to prevent, and the
 one `trading_date` had with one caller out of four (M120).
@@ -67,9 +67,11 @@ one `trading_date` had with one caller out of four (M120).
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from qat.domain.oms.oms import OMS
+from qat.domain.risk_engine.engine import OrderCandidate
 
 
 def _oms(tmp_path, **kwargs) -> OMS:
@@ -115,11 +117,43 @@ def test_an_empty_entry_allow_list_refuses_everything(tmp_path):
     assert oms.entry_permitted("BHP.AX") is not None
 
 
-def test_propose_entry_and_the_predicate_cannot_disagree(tmp_path):
-    """The whole reason for the extraction. If `propose_entry` ever stops
-    calling this, the two answers diverge and nothing else would notice."""
+@pytest.mark.asyncio
+async def test_submit_order_reports_exactly_what_the_predicate_says(tmp_path):
+    """THE test in this file, and the whole reason for the extraction.
+
+    An earlier draft asserted only that `entry_permitted` returned something -
+    which duplicated the test above it and would have passed even if
+    `submit_order` stopped calling the predicate entirely. A guard that cannot
+    fail for the reason it exists is not a guard.
+
+    So this calls the REAL `submit_order` and asserts the rejected order's
+    reason is the string the predicate produced for the same symbol. If the
+    two implementations ever diverge, this is what says so.
+
+    Copy the OMS/bridge construction from `tests/domain/oms/test_churn_control.py`
+    (`OMS(broker, engine, switch, bus=bus)`) and build an `OrderCandidate` from
+    `qat.domain.risk_engine.engine`; a one-row `pd.Series` is enough for
+    `candidate_returns` because the order is refused before sizing.
+    """
     oms = _oms(tmp_path, entry_allow_list={"CBA.AX"})
-    assert oms.entry_permitted("BHP.AX") is not None
+    expected = oms.entry_permitted("BHP.AX")
+    assert expected is not None, "the fixture must actually be refused"
+
+    candidate = OrderCandidate(
+        symbol="BHP.AX",
+        side="buy",
+        price=41.50,
+        atr=0.8,
+        win_rate=0.5,
+        win_loss_ratio=1.5,
+        candidate_returns=pd.Series([0.0]),
+    )
+    order = await oms.submit_order(
+        candidate, equity=1_000_000.0, existing_weights={}, existing_returns={}
+    )
+
+    assert order.status == "rejected"
+    assert expected in (order.rejection_reason or order.reason or "")
 ```
 
 If `OMS.__init__` does not accept `symbol_allow_list` / `entry_allow_list` as keyword arguments in this form, read its signature at `src/qat/domain/oms/oms.py:120-160` and adapt the helper — do not change the OMS constructor.
@@ -132,7 +166,7 @@ Expected: FAIL, `AttributeError: 'OMS' object has no attribute 'entry_permitted'
 
 - [ ] **Step 3: Extract the predicate**
 
-In `src/qat/domain/oms/oms.py`, add the method above `propose_entry`:
+In `src/qat/domain/oms/oms.py`, add the method above `submit_order`:
 
 ```python
     def entry_permitted(self, symbol: str) -> str | None:
@@ -158,9 +192,9 @@ In `src/qat/domain/oms/oms.py`, add the method above `propose_entry`:
         return None
 ```
 
-- [ ] **Step 4: Make `propose_entry` call it**
+- [ ] **Step 4: Make `submit_order` call it**
 
-Replace the two membership tests at the top of `propose_entry` with:
+Replace the two membership tests at the top of `submit_order` with:
 
 ```python
         refusal = self.entry_permitted(candidate.symbol)
@@ -1225,7 +1259,7 @@ git commit -m "One builder for the advisory context, so two screens cannot drift
 Append to `tests/test_m136_symbol_verdict.py`:
 
 ```python
-def test_the_advisory_path_writes_no_risk_decisions(tmp_path, advisory_runtime):
+def test_the_advisory_path_writes_no_risk_decisions(tmp_path, monkeypatch, advisory_runtime):
     """⚠️ THE CONSTRAINT THAT SHAPED THE WHOLE DESIGN.
 
     `RiskEngine.evaluate_*` writes `risk_decisions.csv`. If the verdict ever
@@ -1236,12 +1270,35 @@ def test_the_advisory_path_writes_no_risk_decisions(tmp_path, advisory_runtime):
     """
     import hashlib
 
+    from qat.domain.risk_engine.engine import RiskEngine
+
+    # TWO assertions, because the file hash alone is a rubber stamp: nothing in
+    # the advisory path touches this directory today, so it would pass whether
+    # or not the sizer were wired in against some OTHER data_dir. The SPY is
+    # what has teeth - it fails on the CALL, wherever that call would write.
+    called: list[str] = []
+    for name in ("evaluate_entry", "evaluate_exit"):
+        original = getattr(RiskEngine, name, None)
+        if original is None:
+            continue
+
+        def _spy(*args, _name=name, _original=original, **kwargs):
+            called.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(RiskEngine, name, _spy)
+
     ledger = tmp_path / "risk_decisions.csv"
     ledger.write_text("", encoding="utf-8")
     before = hashlib.sha256(ledger.read_bytes()).hexdigest()
 
     build_verdict_for_test(advisory_runtime, "BHP.AX")
 
+    assert called == [], (
+        f"the advisory path called RiskEngine.{called[0] if called else ''} - "
+        "every such call writes a row to the risk audit trail for a trade "
+        "nobody proposed"
+    )
     after = hashlib.sha256(ledger.read_bytes()).hexdigest()
     assert before == after, "the advisory path wrote to the risk audit trail"
 
