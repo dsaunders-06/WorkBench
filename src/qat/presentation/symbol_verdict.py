@@ -128,7 +128,7 @@ def build_verdict(
     held = any(p.symbol == symbol and p.quantity for p in positions)
     view = next((v for v in position_views if v.symbol == symbol), None)
 
-    checks: list[RuleCheck] = [_session_check(symbol, now)]
+    checks: list[RuleCheck] = [_session_check(symbol, now, held)]
     if held:
         checks.append(_position_check(view))
     else:
@@ -158,10 +158,24 @@ def build_verdict(
     )
 
 
-def _session_check(symbol: str, now: datetime) -> RuleCheck:
+def _session_check(symbol: str, now: datetime, held: bool) -> RuleCheck:
+    """Mirrors `AutonomyGate.evaluate`'s own buy/sell asymmetry (gate.py
+    ~146-158): a sell is risk-reducing and gated only on `is_open`, while
+    session PHASE only binds buys. Reporting `is_autonomous_eligible` for a
+    held symbol during Midday Lull would disagree with `_gate_check`'s
+    faithful probe of the same order and would win the headline, since this
+    check runs first - see the M135 finding this fixes.
+    """
     session = mc.session_for(market_for_symbol(symbol), now)
     if not session.is_open:
         return RuleCheck("session", False, f"{session.market} is closed ({session.closed_reason})")
+    if held:
+        return RuleCheck(
+            "session",
+            True,
+            f"{session.market} is open, phase '{session.phase}' - a sell is risk-reducing "
+            "and is not gated on session phase",
+        )
     return RuleCheck(
         "session",
         session.is_autonomous_eligible,
@@ -301,6 +315,10 @@ def _gate_check(
         status="pending_signoff",
         reference_price=last_price,
         strategy=strategy.name,
+        # Without this, Order.created_at defaults to datetime.now(UTC) - a
+        # wall-clock read this module's own docstring forbids. `now` is
+        # already the injected clock for everything else this function does.
+        created_at=now,
     )
     decision = gate.evaluate(probe, account, current_price=last_price, now=now)
     verb = "sell" if held else "entry"

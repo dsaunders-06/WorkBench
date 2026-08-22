@@ -23,6 +23,13 @@ from qat.presentation.symbol_verdict import build_verdict
 # an autonomy-eligible phase.
 _SYD_MORNING = datetime(2026, 8, 24, 1, 0, tzinfo=UTC)
 
+# The same Monday, but 13:00 Sydney (AEST, UTC+10) - inside ASX continuous
+# trading and inside "Midday Lull" (elapsed fraction 0.5 of the 10:00-16:00
+# session), which is open but NOT an autonomy-eligible phase. The fixed clock
+# every other test uses sits inside an eligible phase, which is exactly why
+# the asymmetry this test guards went uncaught (M135).
+_SYD_MIDDAY_LULL = datetime(2026, 8, 24, 3, 0, tzinfo=UTC)
+
 
 class _Engine:
     """Stands in for StrategyEngine's two public eligibility accessors."""
@@ -126,6 +133,23 @@ def test_first_refusal_names_one_rail_and_does_not_claim_an_audit():
 def test_nothing_refusing_says_so_without_promising_a_fill():
     verdict = _verdict()
     assert verdict.per_strategy[0].first_refusal == ""
+
+
+def test_a_held_symbol_session_check_passes_outside_autonomy_eligible_phase():
+    """AutonomyGate.evaluate gates a SELL on `is_open` only - session phase
+    only binds buys (gate.py ~146-158). During Midday Lull, an open but
+    non-eligible phase, `_session_check` on the held branch must agree with
+    the gate's own probe rather than reporting the buy-side rule and handing
+    the headline a refusal the gate itself would not raise.
+    """
+    position = Position(symbol="BHP.AX", quantity=300.0, avg_price=40.0)
+    view = _StubView(symbol="BHP.AX", pnl_r=0.1, stop_distance=0.08)
+    verdict = _verdict(positions=[position], position_views=[view], now=_SYD_MIDDAY_LULL)
+
+    session = _find(verdict.checks, "session")
+    assert session.passed is True
+    assert "not eligible for unattended execution" not in verdict.headline
+    assert "no rail checked here would refuse it" in verdict.headline
 
 
 def test_a_quarantined_symbol_is_refused():
