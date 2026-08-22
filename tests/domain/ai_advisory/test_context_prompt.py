@@ -52,12 +52,25 @@ def test_the_rule_checks_are_not_labelled_untrusted():
     """They are the application's OWN deterministic output about itself.
     `fetched_notes` quarantines third-party text; filing these there would
     repeat the misfiling M117 corrected when the operator's own question was
-    travelling in the untrusted channel."""
+    travelling in the untrusted channel.
+
+    Both `news` and `fetched_notes` are populated here so the UNTRUSTED block
+    actually exists in the rendered text - splitting on "UNTRUSTED" against a
+    prompt that never contains it degenerates to "not in empty string" and
+    would pass even if rule_checks were rendered inside that block. What
+    matters is real adjacency: the rule-check detail must appear before the
+    untrusted block starts, not fall within it."""
     text = _context(
-        rule_checks=[{"name": "session", "passed": True, "detail": "ASX is open"}]
+        rule_checks=[{"name": "session", "passed": True, "detail": "ASX is open"}],
+        news=[{"title": "A result", "providers": ["Somewhere"], "published": "2026-08-21"}],
+        fetched_notes=["some external note"],
     ).to_prompt_text()
 
-    untrusted_block = text.split("UNTRUSTED")[1] if "UNTRUSTED" in text else ""
+    untrusted_index = text.index("UNTRUSTED")
+    rule_check_index = text.index("ASX is open")
+    assert rule_check_index < untrusted_index
+
+    untrusted_block = text[untrusted_index:]
     assert "ASX is open" not in untrusted_block
 
 
@@ -75,7 +88,13 @@ def test_a_held_position_reaches_the_model_with_its_basis():
 
 
 def test_no_position_block_when_nothing_is_held():
-    assert "Position:" not in _context().to_prompt_text()
+    """The rendered sentence for a held position is "The account HOLDS this
+    symbol...", never the literal "Position:" - so asserting against that
+    literal would pass even if the block rendered unconditionally. Assert on
+    the real sentinel so a regression that drops the `if self.position:`
+    guard (the M73 shape: an empty-looking block reaching the model as if it
+    were data) actually fails this test."""
+    assert "HOLDS this symbol" not in _context().to_prompt_text()
 
 
 def test_the_news_line_states_the_bar_that_was_actually_applied():
