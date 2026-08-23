@@ -110,3 +110,28 @@ async def test_the_sources_block_is_rendered_before_the_answer(qtbot):
     assert sources_at != -1, "the sources block was not rendered at all"
     assert answer_at != -1, "the answer was not rendered at all"
     assert sources_at < answer_at, "the sources block must precede the answer it describes"
+
+
+@pytest.mark.asyncio
+async def test_the_verdict_block_appears_above_the_answer(qtbot):
+    """M136: what the rails say goes beside what the model says, above the
+    answer it accompanies - the same place the sources block landed for the
+    same reason (M126)."""
+    from qat.presentation.symbol_verdict import render_caveats
+
+    screen = _screen(qtbot)
+    screen.runtime.news_source = _CountingNewsSource()
+    screen.runtime.ai_service = _StubAdvisory()
+
+    symbol = screen.symbol_picker.currentText()
+    await screen._ask("anything")
+
+    transcript = screen.conversation.toPlainText()
+    verdict_at = transcript.find("If a")
+    answer_at = transcript.find("Advisor")
+    caveats_at = transcript.find("Not checked: position SIZE")
+
+    assert verdict_at != -1, f"no verdict headline was rendered for {symbol}"
+    assert caveats_at != -1, "the verdict's caveats were not rendered"
+    assert render_caveats().splitlines()[0][:20] in transcript
+    assert verdict_at < answer_at, "the verdict must precede the answer it accompanies"

@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from html import escape
 
+import pandas as pd
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -27,10 +29,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from qat.data.broker.account_poller import AccountSnapshot
+from qat.data.broker.adapter import Position
+from qat.domain.autonomy.gate import AccountState, AutonomyGate
 from qat.domain.events import RegimeEvent
+from qat.domain.oms.position_view import PositionView, build_position_views
 from qat.presentation import theme
 from qat.presentation.advisory_inputs import build_advisory_context
 from qat.presentation.runtime import Runtime
+from qat.presentation.symbol_verdict import SymbolVerdict, build_verdict, render_caveats
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +140,31 @@ def _answer_caveats(fundamentals: dict[str, object], risk_metrics: dict[str, flo
     if not caveats:
         return ""
     return "<br><i>Answered without: " + "; ".join(caveats) + ".</i>"
+
+
+def _position_dict(view: PositionView | None) -> dict[str, object]:
+    """The held position's own facts, read from `position_view.py` (M136) -
+    never re-derived, for the reason `AdvisoryContext.position`'s own comment
+    gives: a model asked whether to sell a symbol with only its share count
+    has no entry price, no P&L, no R multiple and no stop to reason from.
+
+    Empty when the symbol is not held or the view could not be built - the
+    same "show nothing rather than guess" rule `position_view.py` states for
+    itself, not a substitute zero.
+    """
+    if view is None:
+        return {}
+    return {
+        "quantity": view.quantity,
+        "entry_price": view.entry_price,
+        "last_price": view.last_price,
+        "pnl_pct": view.pnl_pct,
+        "pnl_r": view.pnl_r,
+        "exit_distance": view.exit_distance,
+        "stop_distance": view.stop_distance,
+        "risk_share": view.risk_share,
+        "notes": list(view.notes),
+    }
 
 
 class AiAdvisorScreen(QWidget):
@@ -266,6 +298,108 @@ class AiAdvisorScreen(QWidget):
             for a in pending
         ]
 
+    def _bars_for(self, symbol: str) -> pd.DataFrame | None:
+        """The bars `PositionView.exit_distance` is computed from.
+
+        The identical read `dashboard.py`'s own `_bars_for` performs, for the
+        identical reason given there: read-only, so building a verdict cannot
+        mutate `SignalToOrderBridge` state, and never the aggregator the exit
+        condition is actually judged against - `exit_distance` is a strategy
+        accessor over whichever bars this bridge happens to hold.
+        """
+        bridge = self.runtime.signal_bridge
+        if bridge is None:
+            return None
+        return bridge.bars.frame_if_present(symbol)
+
+    def _build_verdict(
+        self,
+        symbol: str,
+        positions: list[Position],
+        account_snapshot: AccountSnapshot,
+    ) -> tuple[SymbolVerdict | None, PositionView | None]:
+        """What this application's own rails say about `symbol`, right now
+        (M136) - or (None, None) when it cannot be said without guessing.
+
+        Every input here is a READ: `governor.snapshot`, `position_stops`,
+        `entry_permitted`, `is_quarantined`, and `gate.evaluate` are all pure
+        or read-only, and `RiskEngine.evaluate_*` - the sizer, which WRITES
+        `risk_decisions.csv` - is never called. See `symbol_verdict.py`'s own
+        docstring for why that line may never be crossed.
+
+        Wrapped so a failure anywhere in here costs the verdict block and
+        never the answer - an advisory screen is the last place that should
+        raise, the same rule `_fundamentals_for` and `news_for` already keep.
+        """
+        try:
+            equity = account_snapshot.balances.equity
+            if equity is None:
+                # The Dashboard's own `_refresh` bails identically when equity
+                # is unknown - a verdict computed from an assumed equity would
+                # guess, which `position_view.py` forbids of itself.
+                return None, None
+            account = AccountState(
+                equity=equity,
+                cash=account_snapshot.balances.cash or 0.0,
+                day_pnl_pct=account_snapshot.balances.day_pnl_pct or 0.0,
+            )
+
+            resting_stops = self.runtime.oms.position_stops()
+            entries = (
+                self.runtime.signal_bridge.position_entries()
+                if self.runtime.signal_bridge is not None
+                else {}
+            )
+            views = build_position_views(
+                positions=positions,
+                entries=entries,
+                resting_stops=resting_stops,
+                # The SAME derivation the aggregate cap is gated on - never
+                # recomputed here, the reason `dashboard.py`'s identical call
+                # gives for its own copy.
+                snapshot=self.runtime.risk_engine.governor.snapshot(
+                    positions, resting_stops, equity
+                ),
+                settings=self.runtime.settings,
+                bars_for=self._bars_for,
+                strategies=self.runtime.available_strategies,
+                clock=lambda: datetime.now(UTC),
+            )
+            view = next((v for v in views if v.symbol == symbol), None)
+
+            # The DEPLOYED set, not the available one (M136) - what the
+            # verdict reports is whether the rails would refuse a real order,
+            # and only a deployed strategy could ever place one.
+            by_name = {s.name: s for s in self.runtime.available_strategies}
+            deployed = [
+                by_name[name]
+                for name in self.runtime.settings.deployed_strategies_tuple
+                if name in by_name
+            ]
+
+            gate = getattr(self.runtime, "autonomy_gate", None)
+            if gate is None:
+                gate = AutonomyGate(self.runtime.settings, self.runtime.kill_switch)
+
+            verdict = build_verdict(
+                symbol=symbol,
+                positions=positions,
+                position_views=views,
+                strategies=deployed,
+                strategy_engine=self.runtime.strategy_engine,
+                gate=gate,
+                account=account,
+                entry_refusal=self.runtime.oms.entry_permitted,
+                is_quarantined=self.runtime.oms.anomalies.is_quarantined,
+                settings=self.runtime.settings,
+                last_price=view.last_price if view is not None else None,
+                now=datetime.now(UTC),
+            )
+            return verdict, view
+        except Exception:  # noqa: BLE001 - the verdict must never cost the answer
+            logger.debug("Could not build the symbol verdict for %s", symbol, exc_info=True)
+            return None, None
+
     def _risk_metrics(self) -> dict[str, float]:
         """The portfolio risk figures that actually exist (M73).
 
@@ -307,7 +441,12 @@ class AiAdvisorScreen(QWidget):
         symbol = self.symbol_picker.currentText()
         self.conversation.append(f"<b>You [{escape(symbol)}]:</b> {escape(question)}")
         try:
-            positions = {p.symbol: p.quantity for p in await self.runtime.oms.broker.positions()}
+            # One shared, throttled read (M21) - the same snapshot the
+            # Dashboard's own `_refresh` reads, rather than a second broker
+            # round trip for this screen's own copy of the same figures.
+            account_snapshot = await self.runtime.account_poller.snapshot()
+            raw_positions = list(account_snapshot.positions)
+            positions = {p.symbol: p.quantity for p in raw_positions}
 
             risk_metrics = self._risk_metrics()
 
@@ -334,6 +473,16 @@ class AiAdvisorScreen(QWidget):
             # That is M126's defect exactly - an operator unable to tell what an
             # answer rested on - reproduced inside one screen, on every
             # question. One fetch now, and the display reads its result.
+            #
+            # THE RISK ENGINE IS NEVER ASKED HERE (M136). `_build_verdict`
+            # reads the gates - the governor's snapshot, the allow lists, the
+            # autonomy gate's own decision function - and never the sizer,
+            # which is what writes `risk_decisions.csv`. See
+            # `symbol_verdict.py`'s module docstring for why that line is the
+            # one this whole design exists to hold.
+            verdict, view = self._build_verdict(symbol, raw_positions, account_snapshot)
+            position = _position_dict(view)
+
             context = await build_advisory_context(
                 self.runtime,
                 symbol,
@@ -344,8 +493,8 @@ class AiAdvisorScreen(QWidget):
                 risk_metrics=risk_metrics,
                 fundamentals=fundamentals,
                 fetched_notes=notes,
-                verdict=None,
-                position=None,
+                verdict=verdict,
+                position=position,
             )
             # Still appended BEFORE the model is awaited, so the operator reads
             # the reply already knowing what it rested on rather than inferring
@@ -369,6 +518,13 @@ class AiAdvisorScreen(QWidget):
                     )
                 )
             )
+            # Above the answer, like the sources block above it - what the
+            # rails say belongs beside what the model says, not scrolled past
+            # underneath it. Skipped entirely when `_build_verdict` could not
+            # say (never a placeholder row): a verdict that guessed would be
+            # worse than one that said nothing.
+            if verdict is not None:
+                self.conversation.append(_sources_html(f"{verdict.headline}\n{render_caveats()}"))
             recommendation = await self.runtime.ai_service.get_regime_narrative(context)
             flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"
             self.conversation.append(
