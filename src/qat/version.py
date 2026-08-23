@@ -323,7 +323,49 @@ from qat.domain.display_dates import format_display_date
 #   on STRING - so it read every f-string as empty, which is exactly where a
 #   stylesheet is written. It hid `color: white` in `dashboard.py`. Any guard
 #   in this codebase written before 3.12 could have narrowed the same way.
-MILESTONE = "M135"
+#
+# M136 - one symbol, one recommendation. The AI Advisor now shows what the
+# application's OWN RAILS say about a symbol, beside what the model says, and
+# both advisory screens build their context through one builder. NO
+# TRADING-DECISION INPUT CHANGES: this reads the rails, it alters none.
+#
+# * THE DEFECT THAT SHAPED IT. The Advisor passed `positions` as
+#   {symbol: quantity} and nothing else, so asked whether to SELL a holding the
+#   model saw a share count and no entry price, no P&L, no R multiple, no stop
+#   and no hold state. It had nothing to form a sell or hold view from. Hence
+#   the verdict BRANCHES on whether the symbol is held: entry rails and sell
+#   rails share almost nothing, and `position_view.py` already computed the
+#   held picture for the Dashboard.
+# * Every rail is ASKED of its owner - StrategyEngine.is_eligible/eligible_mass,
+#   AutonomyGate.evaluate (a pure decision function, probed with a one-share
+#   order), market_calendar, and a new pure `OMS.entry_permitted` extracted from
+#   `submit_order`. Nothing is reimplemented, because the rails live in four
+#   subsystems and a second derivation drifts.
+# * ⚠️ THE RISK ENGINE IS NEVER ASKED. `evaluate_order`, `evaluate_exit` and
+#   `_reject` all write `risk_decisions.csv`; a hypothetical would file risk
+#   decisions for trades nobody proposed. A test spies on all three and fails on
+#   the CALL. Its first version spied on `evaluate_entry`, WHICH DOES NOT EXIST,
+#   so `getattr(..., None)` skipped it silently and the entry side was unguarded
+#   while the docstring claimed otherwise. Found in review.
+# * The Workbench passed `regime_label="unknown"` and so formed a recommendation
+#   against no regime at all, while the Advisor used the live one. Both now go
+#   through `build_advisory_context`.
+# * The Advisor fetched news TWICE per question - once for the sources block,
+#   once inside the builder. `news_for` calls the vendor live every time, so the
+#   two could disagree and the operator would be shown stories the model never
+#   received. M126's defect inside one screen. One fetch now.
+# * `to_prompt_text` told the model each story "was carried by two or more
+#   independent outlets", which went false when QAT_NEWS_MIN_SOURCES shipped at
+#   1. The screen was corrected when the setting landed and the prompt was not.
+#
+# ⚠️ NOT YET VISIBLE ON IBKR. The verdict declines to render when day P&L is
+# unknown rather than fabricating 0.0 - a fabricated 0.0 can never trip the
+# always-negative pause threshold, so it would report "permitted" on an invented
+# fact. But NOTHING populates `AccountBalances.last_equity` on IBKR: it is an
+# Alpaca field and `_ACCOUNT_TAGS` requests no previous close, so `day_pnl_pct`
+# is None on the real broker always. Sourcing it is the operator's chosen next
+# step and is blocked on a running Gateway.
+MILESTONE = "M136"
 
 _UNKNOWN = "unknown"
 

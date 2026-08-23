@@ -280,7 +280,32 @@ for each gap and is worth reading; the list lives here.
     test — so that document's "25 raw-hex sites" note is stale and now says so.
     The guard catches hex and cannot catch a primitive written longhand.
     Nothing is wrong on screen; this is debt, not a defect.
-16. **One symbol, one recommendation — NEXT, agreed 21 August.** The AI Advisor
+16. ~~**One symbol, one recommendation.**~~ **BUILT — M136**, spec
+    `docs/superpowers/specs/2026-08-22-symbol-verdict-design.md`, plan
+    `docs/superpowers/plans/2026-08-22-symbol-verdict.md`, five tasks all
+    reviewed clean. **NO trading-decision input changed** — it reads the rails
+    and alters none.
+    ⚠️ **IT DOES NOT RENDER ON IBKR YET, and that is the remaining work.** The
+    verdict declines rather than fabricating a day P&L of 0.0 — a fabricated
+    0.0 can never trip the always-negative pause threshold, so it would report
+    "permitted" on an invented fact (M73's shape). But **nothing populates
+    `AccountBalances.last_equity` on IBKR**: it is an Alpaca field, and
+    `_ACCOUNT_TAGS` requests no previous close. Operator chose on 22 August to
+    SOURCE the day P&L rather than render a partial verdict.
+    **Measured 24 August against the live Gateway, read-only:**
+    `PreviousDayEquityWithLoanValue` is **NOT in the default accountSummary tag
+    set** (nor is `SettledCash`), and `reqPnL` returned **nan** for dailyPnL,
+    unrealizedPnL and realizedPnL after 3s on a flat account. A second probe
+    using `accountValues` hung and was killed — possibly client contention. So
+    the route is NOT yet established, and the next person should finish that
+    measurement before mapping any tag. Do not map one from documentation.
+    Two traps already hit while probing, both already documented in this
+    codebase: `reqAccountUpdates` is a sync `util.run` wrapper and raises
+    "event loop is already running" inside the app's loop (the M102 shape), and
+    the default tag set is not the same thing as what IBKR can return.
+
+17. **One symbol, one recommendation — the original entry, kept for its
+    reasoning.** The AI Advisor
     forms buy/sell/hold from regime, positions, risk, fundamentals, results date
     and news. The Workbench forms one from backtest stats and the strategy's
     candidate signal — and passes `regime_label="unknown"`, so **it does not know
@@ -291,14 +316,14 @@ for each gap and is worth reading; the list lives here.
     the trading system. A recommendation that follows the live strategy's rules
     sits closer to that line, not further from it.
 
-17. **Sweep the other guards for the same blindness.** M135 found the colour
+18. **Sweep the other guards for the same blindness.** M135 found the colour
     guard reading every f-string as empty since the 3.12 upgrade, hiding a live
     violation while reporting none. Any pattern- or `tokenize`-based guard in
     this codebase written before that upgrade could have narrowed the same way,
     and a narrowed guard is worse than none because its green result is read as
     evidence. Not urgent; genuinely worth doing.
 
-18. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+19. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
