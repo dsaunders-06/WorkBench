@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 
 from qat.domain.events import RegimeEvent
 from qat.presentation import theme
-from qat.presentation.advisory_inputs import build_advisory_context, news_for, next_earnings_for
+from qat.presentation.advisory_inputs import build_advisory_context
 from qat.presentation.runtime import Runtime
 
 logger = logging.getLogger(__name__)
@@ -291,24 +291,11 @@ class AiAdvisorScreen(QWidget):
             if (value := portfolio_check.get(name)) is not None
         }
 
-    async def _news_for(self, symbol: str) -> list[dict[str, object]]:
-        """Corroborated company news, or nothing (M117).
-
-        The rules moved to `advisory_inputs` in M126 so the Workbench can reach
-        the same answer. Two copies of the corroboration rules would drift, and
-        the one that drifted would be the one nobody was reading.
-        """
-        return await news_for(self.runtime, symbol)
-
-    def _next_earnings_for(self, symbol: str) -> str:
-        """The next scheduled results date, ISO, or "" when unknown (M117).
-
-        Read from the calendar the ENTRY GATE already consults, so the advisor
-        and the rail cannot disagree about when results land. Every failure
-        degrades to unknown - the calendar makes that promise itself, and an
-        advisory screen is the last place that should raise.
-        """
-        return next_earnings_for(self.runtime, symbol)
+    # `_news_for` and `_next_earnings_for` went when the double fetch did. Both
+    # were one-line passes through to `advisory_inputs`, and their only caller
+    # now reads the same material off the context the builder returns. Left in
+    # place they would be a second, tempting way to fetch the same thing - which
+    # is how the divergence they caused got written in the first place.
 
     async def _ask(self, question: str) -> None:
         self.ask_button.setEnabled(False)
@@ -330,29 +317,23 @@ class AiAdvisorScreen(QWidget):
             # operator typed and what a stranger published arrived with identical
             # standing. Only genuinely external material belongs in there now.
             notes = list(self._corporate_action_notes())
-            next_earnings = self._next_earnings_for(symbol)
-            news = await self._news_for(symbol)
-            # Shown BEFORE the model answers, so the operator reads the reply
-            # already knowing what it rested on rather than inferring it after
-            # the fact (M126).
+            # The context is built FIRST, and the sources block is rendered from
+            # what it actually contains. It was the other way round until the
+            # 22 August review: this screen fetched news and the results date
+            # for the DISPLAY, and `build_advisory_context` then fetched both
+            # AGAIN for the model.
             #
-            # ESCAPED. This is the one place in the screen where third-party
-            # text is rendered, and the conversation widget is rich text - an
-            # unescaped headline containing markup would be interpreted as
-            # markup rather than shown as the words the outlet published. The
-            # prompt already treats this text as untrusted; the display has to
-            # as well, or the two disagree about what it is.
-            self.conversation.append(
-                _sources_html(
-                    describe_sources(
-                        news,
-                        next_earnings,
-                        news_enabled=getattr(self.runtime.settings, "news_source", "none")
-                        != "none",
-                        min_sources=int(getattr(self.runtime.settings, "news_min_sources", 1) or 1),
-                    )
-                )
-            )
+            # `news_for` is not a cache read - it calls the vendor live, in a
+            # thread, every time, and degrades silently to [] on failure. So two
+            # round trips milliseconds apart can legitimately disagree: a story
+            # publishes between them, or the second is rate-limited where the
+            # first succeeded. The operator would then be shown stories the
+            # model never received, or shown none while it reasoned from
+            # several, with no way to tell.
+            #
+            # That is M126's defect exactly - an operator unable to tell what an
+            # answer rested on - reproduced inside one screen, on every
+            # question. One fetch now, and the display reads its result.
             context = await build_advisory_context(
                 self.runtime,
                 symbol,
@@ -365,6 +346,28 @@ class AiAdvisorScreen(QWidget):
                 fetched_notes=notes,
                 verdict=None,
                 position=None,
+            )
+            # Still appended BEFORE the model is awaited, so the operator reads
+            # the reply already knowing what it rested on rather than inferring
+            # it afterwards (M126). Only the FETCH moved; the order the operator
+            # sees is unchanged, and a test pins that.
+            #
+            # ESCAPED. This is the one place in the screen where third-party
+            # text is rendered, and the conversation widget is rich text - an
+            # unescaped headline containing markup would be interpreted as
+            # markup rather than shown as the words the outlet published. The
+            # prompt already treats this text as untrusted; the display has to
+            # as well, or the two disagree about what it is.
+            self.conversation.append(
+                _sources_html(
+                    describe_sources(
+                        context.news,
+                        context.next_earnings,
+                        news_enabled=getattr(self.runtime.settings, "news_source", "none")
+                        != "none",
+                        min_sources=int(getattr(self.runtime.settings, "news_min_sources", 1) or 1),
+                    )
+                )
             )
             recommendation = await self.runtime.ai_service.get_regime_narrative(context)
             flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"
