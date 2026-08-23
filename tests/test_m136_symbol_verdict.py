@@ -160,11 +160,24 @@ def test_the_advisory_path_writes_no_risk_decisions(tmp_path, monkeypatch, advis
     # the advisory path touches this directory today, so it would pass whether
     # or not the sizer were wired in against some OTHER data_dir. The SPY is
     # what has teeth - it fails on the CALL, wherever that call would write.
+    #
+    # WHICH methods to spy on is verified, not guessed: every method whose
+    # body reaches `self.audit_log.record(...)` in engine.py, found with
+    # `grep -n audit_log.record src/qat/domain/risk_engine/engine.py`. That is
+    # `evaluate_order` (sizes and audits a buy or sell), `evaluate_exit`
+    # (audits a close), and `_reject` (audits a refusal reached by either of
+    # the other two). `evaluate_entry` does not exist on `RiskEngine` at all -
+    # the method that sizes a BUY is `evaluate_order` - so the previous
+    # version of this list spied on a name nobody calls and never caught the
+    # entry-sizing path, which is the one that matters most.
+    #
+    # No `getattr(..., None)` skip-on-missing: an unknown name here is this
+    # list going stale, and a guard that quietly covers nothing is exactly the
+    # defect this test exists to prevent. `AttributeError` (a hard failure) is
+    # what a stale name should produce, not a silent no-op.
     called: list[str] = []
-    for name in ("evaluate_entry", "evaluate_exit"):
-        original = getattr(RiskEngine, name, None)
-        if original is None:
-            continue
+    for name in ("evaluate_order", "evaluate_exit", "_reject"):
+        original = getattr(RiskEngine, name)
 
         def _spy(*args, _name=name, _original=original, **kwargs):
             called.append(_name)
@@ -187,22 +200,40 @@ def test_the_advisory_path_writes_no_risk_decisions(tmp_path, monkeypatch, advis
     assert before == after, "the advisory path wrote to the risk audit trail"
 
 
-def test_the_headline_is_a_conditional_not_a_suggestion():
+def test_the_headline_is_a_conditional_not_a_suggestion(advisory_runtime):
     """M73's framing says these recommendations reach no part of the trading
     system. A verdict is the opposite kind of statement, and "the rails would
     permit a buy" under "[BUY, confidence 80%]" reads as the application
-    endorsing a trade - the exact inference M73 exists to prevent."""
-    from qat.presentation.symbol_verdict import RuleCheck, StrategyRules, SymbolVerdict
+    endorsing a trade - the exact inference M73 exists to prevent.
 
-    verdict = SymbolVerdict(
-        symbol="BHP.AX",
-        held=False,
-        checks=(RuleCheck("session", True, "open"),),
-        per_strategy=(StrategyRules("swing", (), ""),),
-        headline="If an entry in BHP.AX were proposed now, no rail checked here would refuse it. "
-        "Sizing is not checked.",
+    Calls the REAL `build_verdict` and asserts on its RETURNED headline. An
+    earlier version of this test hand-constructed a `SymbolVerdict` with a
+    headline it wrote itself and asserted properties of that self-authored
+    string - it never called `build_verdict` or `_headline`, so it could not
+    have detected a regression in either. Exactly the rubber-stamp failure
+    mode `build_verdict_for_test`'s own docstring warns about, reproduced by
+    a different test in this same file.
+
+    `execution_mode="auto"` and `autonomous_strategies="swing"` so every rail
+    the probe order meets actually passes - `runtime.settings`' own default is
+    `execution_mode="recommend"`, whose block reason literally contains the
+    word "execution mode is 'recommend'", which would trip the "recommend"
+    check below for a reason that has nothing to do with the application
+    making a suggestion. The unblocked headline is the one this test cares
+    about: the M73 framing applies to what the verdict says when nothing
+    refuses, not only to a refusal's wording.
+    """
+    from qat.config import Settings
+
+    advisory_runtime.settings = Settings(
+        _env_file=None,
+        data_dir=advisory_runtime.settings.data_dir,
+        execution_mode="auto",
+        autonomous_strategies="swing",
     )
+    verdict = build_verdict_for_test(advisory_runtime, "BHP.AX")
 
     assert verdict.headline.startswith("If ")
+    assert "no rail checked here would refuse it" in verdict.headline
     for word in ("you should", "recommend", "buy now"):
         assert word not in verdict.headline.lower()

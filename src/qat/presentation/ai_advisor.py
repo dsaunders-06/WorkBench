@@ -333,16 +333,24 @@ class AiAdvisorScreen(QWidget):
         """
         try:
             equity = account_snapshot.balances.equity
-            if equity is None:
+            cash = account_snapshot.balances.cash
+            day_pnl_pct = account_snapshot.balances.day_pnl_pct
+            if equity is None or cash is None or day_pnl_pct is None:
                 # The Dashboard's own `_refresh` bails identically when equity
-                # is unknown - a verdict computed from an assumed equity would
-                # guess, which `position_view.py` forbids of itself.
+                # is unknown - a verdict computed from an assumed figure would
+                # guess, which `position_view.py` forbids of itself: "a value
+                # this module cannot support is `None`, never `0` or `0.0`".
+                #
+                # `day_pnl_pct` is the one that bites: `AutonomyGate.evaluate`
+                # only pauses buys when day P&L is at or below a threshold that
+                # is always negative, so a substituted 0.0 could NEVER trip
+                # that pause - an unreported -6% day would read as "no rail
+                # checked here would refuse it". That is M73's `var_95=0.0`
+                # scar again, this time in the verdict rather than the prompt.
+                # `cash` is inert today (the gate never reads it) but is the
+                # same category of fact, so it is held to the same rule.
                 return None, None
-            account = AccountState(
-                equity=equity,
-                cash=account_snapshot.balances.cash or 0.0,
-                day_pnl_pct=account_snapshot.balances.day_pnl_pct or 0.0,
-            )
+            account = AccountState(equity=equity, cash=cash, day_pnl_pct=day_pnl_pct)
 
             resting_stops = self.runtime.oms.position_stops()
             entries = (

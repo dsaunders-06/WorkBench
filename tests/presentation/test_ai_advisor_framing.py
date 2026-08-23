@@ -22,9 +22,13 @@ codebase refuses to produce.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from qat.config import Settings
+from qat.data.broker.account_poller import AccountSnapshot
+from qat.data.broker.adapter import AccountBalances
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.risk_engine.audit import RiskDecision
 from qat.presentation import theme
@@ -187,3 +191,50 @@ def test_both_caveats_appear_together_when_both_apply():
 
     assert "SYNTHETIC" in caveats
     assert "no portfolio risk check" in caveats
+
+
+# --- an unknown day P&L must never be fabricated as zero -----------------------
+
+
+def test_an_unknown_day_pnl_produces_no_verdict_rather_than_a_permissive_one(qtbot):
+    """M73's scar again, one hop over. `AutonomyGate.evaluate` pauses buys only
+    when `day_pnl_pct` is at or below a threshold that is always negative
+    (`autonomous_pause_buys_below_day_pnl_pct`, default -0.04, constrained
+    `lt=0`), so a substituted `0.0` could NEVER trip that pause: an unreported
+    -6% day would read as "no rail checked here would refuse it", a stated
+    permission resting on a fabricated fact.
+
+    `position_view.py`'s rule - "a value this module cannot support is `None`,
+    never `0` or `0.0`" - already governs `equity` here; this pins that
+    `day_pnl_pct` (and `cash`, the same category of fact) are held to it too.
+
+    `AccountBalances.day_pnl_pct` is itself `None` whenever `last_equity` is
+    unreported, which is the realistic shape of "the broker didn't say" -
+    omitting it here reproduces exactly that.
+    """
+    screen = _screen(qtbot)
+    balances = AccountBalances(equity=100_000.0, cash=50_000.0)  # no last_equity
+    assert balances.day_pnl_pct is None
+    snapshot = AccountSnapshot(
+        summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
+    )
+
+    verdict, view = screen._build_verdict("AMD", [], snapshot)
+
+    assert verdict is None
+    assert view is None
+
+
+def test_a_fully_known_account_still_produces_a_verdict(qtbot):
+    """The guard above must not have made every account unverdictable - only
+    one with a genuinely unknown figure."""
+    screen = _screen(qtbot)
+    balances = AccountBalances(equity=100_000.0, cash=50_000.0, last_equity=100_000.0)
+    assert balances.day_pnl_pct == 0.0
+    snapshot = AccountSnapshot(
+        summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
+    )
+
+    verdict, _view = screen._build_verdict("AMD", [], snapshot)
+
+    assert verdict is not None

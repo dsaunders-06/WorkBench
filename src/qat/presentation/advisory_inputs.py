@@ -19,12 +19,25 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Protocol
 
 from qat.data.news import as_context_dicts, corroborate, drop_other_listings
 from qat.domain.ai_advisory.context import AdvisoryContext
 
 logger = logging.getLogger(__name__)
+
+
+class _VerdictSource(Protocol):
+    """`SymbolVerdict`'s one method this module needs, and nothing else.
+
+    A Protocol rather than importing `SymbolVerdict` itself, the same reason
+    `symbol_verdict.EligibilitySource` is a Protocol rather than importing
+    `StrategyEngine`: this module stays free of a dependency it does not
+    otherwise need, and a test can supply the one method without building the
+    real dataclass.
+    """
+
+    def as_dicts(self) -> list[dict[str, object]]: ...
 
 
 def news_enabled(runtime: object) -> bool:
@@ -88,7 +101,7 @@ async def build_advisory_context(
     backtest_stats: dict[str, float] | None = None,
     regime_label: str = "unknown",
     regime_probs: dict[str, float] | None = None,
-    verdict: object | None = None,
+    verdict: _VerdictSource | None = None,
     positions: dict[str, float] | None = None,
     risk_metrics: dict[str, float] | None = None,
     fundamentals: dict[str, Any] | None = None,

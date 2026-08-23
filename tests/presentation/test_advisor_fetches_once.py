@@ -22,9 +22,13 @@ rendered text or the context contents can catch it.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from qat.config import Settings
+from qat.data.broker.account_poller import AccountSnapshot
+from qat.data.broker.adapter import AccountBalances
 from qat.domain.ai_advisory.schema import AdvisoryRecommendation
 from qat.presentation.ai_advisor import AiAdvisorScreen
 from qat.presentation.runtime import Runtime
@@ -59,6 +63,31 @@ class _StubAdvisory:
             confidence=0.5,
             rationale="stubbed",
             risk_flags=[],
+        )
+
+
+class _StubAccountPoller:
+    """A fully-known account snapshot - equity, cash AND `last_equity`, so
+    `day_pnl_pct` is a real number rather than the unknown MockBroker always
+    reports.
+
+    `MockBroker.balances()` never sets `last_equity` (mock_broker.py), so
+    `AccountBalances.day_pnl_pct` is always `None` under the demo broker. That
+    is now correctly a verdict-suppressing unknown (Finding 2 of the M136
+    review - a fabricated `0.0` day P&L could never trip the autonomy gate's
+    pause, which is always negative), not a bug in this test's fixtures. This
+    test is about WHERE the verdict block renders, not about account data, so
+    it supplies the one fact the demo broker does not report rather than
+    asserting around a verdict that can no longer exist.
+    """
+
+    async def snapshot(self, force: bool = False) -> AccountSnapshot:
+        return AccountSnapshot(
+            summary=None,
+            balances=AccountBalances(equity=100_000.0, cash=50_000.0, last_equity=99_500.0),
+            positions=(),
+            taken_at=datetime.now(UTC),
+            error=None,
         )
 
 
@@ -122,6 +151,7 @@ async def test_the_verdict_block_appears_above_the_answer(qtbot):
     screen = _screen(qtbot)
     screen.runtime.news_source = _CountingNewsSource()
     screen.runtime.ai_service = _StubAdvisory()
+    screen.runtime.account_poller = _StubAccountPoller()
 
     symbol = screen.symbol_picker.currentText()
     await screen._ask("anything")
