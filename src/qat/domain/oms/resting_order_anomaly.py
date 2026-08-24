@@ -57,11 +57,23 @@ class RestingOrderAnomalyStore:
     def declare(
         self, *, symbol: str, reason: str, declared_by: str, excess: float
     ) -> RestingOrderAnomaly:
+        """Declares (or re-declares) one symbol's quarantine.
+
+        `declared_at` is PRESERVED across a re-declare of a symbol already
+        present (I5, final review). With cancelling off - the default - the
+        scan calls this on every poll for as long as a divergence stays
+        unresolved, and stamping a fresh timestamp each time would make the
+        file say the orphans were "declared" a moment ago on their seventy-
+        eighth re-detection, losing the one fact an operator arriving mid-day
+        actually needs: how long has this been resting. `excess` and `reason`
+        still update, because those DO change as legs fill or cancel.
+        """
+        existing = self._active.get(symbol)
         anomaly = RestingOrderAnomaly(
             symbol=symbol,
             reason=reason,
             declared_by=declared_by,
-            declared_at=datetime.now(UTC),
+            declared_at=existing.declared_at if existing is not None else datetime.now(UTC),
             excess=excess,
         )
         self._active[symbol] = anomaly

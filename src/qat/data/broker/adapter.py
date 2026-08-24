@@ -154,6 +154,18 @@ class RestingOrder:
     order_type: str
     # `orderStatus.remaining`, not `totalQuantity`: a half-filled stop carries
     # half the risk, and the excess calculation is a quantity comparison.
+    #
+    # `remaining` is the right number ONLY once it has actually been
+    # populated (I7, final review). Verified in installed ib_async 2.1.0:
+    # `wrapper.openOrder` constructs `OrderStatus(status=orderState.status)`
+    # for an order this session has never seen before - the orphan case
+    # exactly - and `OrderStatus.remaining` defaults to `0.0` until the
+    # separate `orderStatus` callback fills it in. If that callback has not
+    # landed yet, this reads `quantity=0.0` on an order that is not actually
+    # empty, and `unjustified_resting_risk` would drop it at its own
+    # zero-quantity filter - reporting the book clean on the exact incident
+    # this feature exists to catch. `total_quantity` below is the fallback
+    # that makes that condition detectable at all.
     quantity: float
     status: str
     oca_group: str | None = None
@@ -165,6 +177,14 @@ class RestingOrder:
     why_held: str | None = None
     stop_price: float | None = None
     limit_price: float | None = None
+    # `order.totalQuantity` (I7, final review) - the ONE fallback for the case
+    # described at `quantity` above: a working order whose `remaining` reads
+    # 0.0 only because IBKR has not yet delivered the separate `orderStatus`
+    # callback that populates it, not because the order is actually done.
+    # Defaulted rather than required so the many pre-existing call sites that
+    # construct a `RestingOrder` with a real, already-populated `quantity`
+    # need not also state a total that means nothing for them.
+    total_quantity: float = 0.0
 
 
 @dataclass(slots=True)

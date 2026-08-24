@@ -121,6 +121,30 @@ _EVERY_REFUSAL = [
     ("kill-switch tripped", "Kill-switch active"),
     ("notional above the per-order cap", "Per-order notional cap"),
     ("corporate action pending - SFBS 2-for-1", "Corporate action pending"),
+    # M141/item 23, and I6's own fix: the row went into `refusals.py` when the
+    # rail was built but never into THIS inventory - the exact M60 failure
+    # this file exists to prevent, committed against the module that exists to
+    # prevent it. `resting_anomaly.reason` is an f-string with two independent
+    # branches (`flat` / `holds N`) crossed with two sides (`sell` / `buy`),
+    # so all four combinations are pinned rather than just one.
+    (
+        "resting order anomaly - 3051 shares of resting sell the book does not justify (flat)",
+        "Resting orders unjustified",
+    ),
+    (
+        "resting order anomaly - 800 shares of resting buy the book does not justify (flat)",
+        "Resting orders unjustified",
+    ),
+    (
+        "resting order anomaly - 1851 shares of resting sell the book does not justify "
+        "(holds 1200)",
+        "Resting orders unjustified",
+    ),
+    (
+        "resting order anomaly - 800 shares of resting buy the book does not justify "
+        "(holds 500)",
+        "Resting orders unjustified",
+    ),
 ]
 
 

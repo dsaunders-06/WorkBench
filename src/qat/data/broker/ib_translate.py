@@ -439,6 +439,10 @@ def from_ib_open_order(trade: Trade, market: str = "US") -> RestingOrder:
         why_held=str(trade.orderStatus.whyHeld) or None,
         stop_price=aux,
         limit_price=limit,
+        # I7, final review: the fallback for `remaining` reading 0.0 only
+        # because `orderStatus` has not landed yet. See `RestingOrder.
+        # total_quantity`.
+        total_quantity=float(order.totalQuantity),
     )
 
 

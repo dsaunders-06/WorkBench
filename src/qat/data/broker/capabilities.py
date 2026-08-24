@@ -64,11 +64,19 @@ OPTIONAL: dict[str, str] = {
         "cost this account $375.23 on 11 August"
     ),
     "open_orders": (
-        "M141/item 23's resting-order scan cannot run: `OMS.check_resting_orders` "
-        "reads an adapter without it as having nothing to report, not as unable "
-        "to answer, so orders resting on this adapter stay invisible to the scan "
-        "- exactly the blind spot that let 24 August's sixteen orphaned GTC legs "
-        "go unwatched"
+        "INFORMATIONAL ONLY (I3, final review) - by the time this was written "
+        "every adapter in KNOWN_ADAPTERS() had grown an `open_orders` method, "
+        "so `inspect_adapter`'s hasattr classification can no longer catch the "
+        "case this entry originally described and this row can never appear in "
+        "`missing_optional`. What actually decides whether the resting-order "
+        "scan sees anything on an adapter is what that method's BODY returns: "
+        "AlpacaAdapter and MockBroker both implement it as an unconditional "
+        "`[]`, so the scan sees nothing resting on either, silently, forever - "
+        "the same blind spot that let 24 August's sixteen orphaned GTC legs go "
+        "unwatched, now reachable only by reading each adapter's own docstring "
+        "rather than by this audit. `OMS.check_resting_orders` itself logs an "
+        "ERROR naming the adapter when `open_orders` is missing ENTIRELY (I2), "
+        "which is the one case this classification can still be said to gate."
     ),
 }
 """Optional by the Protocol's own design - and each entry says what stops

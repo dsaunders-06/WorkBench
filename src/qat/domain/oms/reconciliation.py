@@ -100,9 +100,6 @@ class ReconciliationMonitor:
         was_tripped = self.oms.kill_switch.tripped
         mismatch = await self.oms.check_reconciliation()
 
-        if self.settings.resting_order_reconcile_enabled:
-            await self.oms.check_resting_orders()
-
         # KillSwitch.trip() publishes nothing, so without this a reconciliation
         # halt would be real but invisible to every screen - the same gap the
         # equity rails had before M13.
@@ -113,4 +110,23 @@ class ReconciliationMonitor:
                     triggered_by=self.name,
                 )
             )
+
+        # AFTER the publish above, and in its own try/except - both deliberate
+        # (C1, final review). This used to run BEFORE the publish: a poll that
+        # found a real mismatch tripped the switch, and if THIS scan then raised
+        # (a broker blip on open_orders(), a gateway disconnect, positions()
+        # timing out) poll() aborted before the event was ever sent. Every later
+        # poll's `was_tripped` is already True at that point, so `not was_tripped`
+        # above is False forever after - the halt is real and PERMANENTLY
+        # invisible to every screen, which is the precise gap the comment on the
+        # publish block says it exists to close. Do not move this back above the
+        # publish.
+        if self.settings.resting_order_reconcile_enabled:
+            try:
+                await self.oms.check_resting_orders()
+            except Exception:  # noqa: BLE001 - must not swallow the mismatch just published
+                logger.exception(
+                    "Resting-order scan failed during poll; the broker reconciliation "
+                    "result above is unaffected and already published"
+                )
         return mismatch

@@ -65,6 +65,15 @@ def test_quantity_is_remaining_not_total() -> None:
     assert resting.quantity == 40.0
 
 
+def test_total_quantity_is_carried_too() -> None:
+    """I7, final review: the fallback for the case where `remaining` is 0.0
+    only because `orderStatus` has not populated it yet - `total_quantity`
+    has to be on the record for `unjustified_resting_risk` to fall back to."""
+    resting = from_ib_open_order(_trade(total_quantity=3051.0, remaining=0.0), market="ASX")  # type: ignore[arg-type]
+    assert resting.quantity == 0.0
+    assert resting.total_quantity == 3051.0
+
+
 def test_the_symbol_is_translated() -> None:
     """M104 - every IBKR boundary translates."""
     resting = from_ib_open_order(_trade(symbol="TNE"), market="ASX")  # type: ignore[arg-type]

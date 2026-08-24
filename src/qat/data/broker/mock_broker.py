@@ -167,12 +167,23 @@ class MockBroker:
         return orders
 
     async def open_orders(self) -> list[RestingOrder]:
-        """The mock has no order-level record of a resting leg (M141, item 23) -
+        """Not implemented here (I3, final review, correcting M141/item 23).
+
+        This mock has no order-level record of a resting leg -
         `_resting_stops`/`_resting_targets` are position-keyed prices, not
-        orders with an id and status. An empty list is this adapter's "cannot
-        answer" (same convention as `recent_fills`), not a claim that nothing
-        rests - `check_resting_orders` is exercised against the real IBKR shape
-        in `tests/data/broker/test_ib_open_orders.py`, not through this mock."""
+        orders with an id and status, and building that record would give the
+        orphan scan a shape this mock invented rather than the real IBKR one
+        it is actually measured against
+        (`tests/data/broker/test_ib_open_orders.py`).
+
+        `[]` here reads exactly the way `BrokerAdapter.open_orders`'s own
+        docstring says empty means: `OMS.check_resting_orders` treats it
+        identically to a real broker with nothing open, never as "unknown".
+        So the orphan scan will see NOTHING resting through this mock, ever -
+        which is why `open_orders` is named in `capabilities.py`'s OPTIONAL
+        registry, so that consequence is written down somewhere rather than
+        only discoverable by reading this method.
+        """
         return []
 
     def resting_stop(self, symbol: str) -> float | None:

@@ -176,6 +176,45 @@ async def test_a_mismatch_publishes_an_event_so_the_ui_learns_about_it():
     await monitor.stop()
 
 
+@pytest.mark.asyncio
+async def test_a_resting_order_scan_failure_does_not_suppress_the_kill_switch_event(
+    monkeypatch, caplog
+):
+    """C1, final review: `check_resting_orders` used to run BEFORE the publish
+    block. A poll finding a real mismatch trips the switch; if the scan then
+    raised (a broker blip on open_orders(), a gateway disconnect,
+    positions() timing out), poll() aborted before the event was sent - and
+    every LATER poll's `was_tripped` is already True, so the publish condition
+    can never fire again. The halt would be real and permanently invisible on
+    every screen. This proves the event still goes out even when the scan
+    that now runs after it blows up.
+    """
+    broker, oms, _, bus, monitor = _build({"AAPL": 50.0})
+    seen: list[KillSwitchEvent] = []
+
+    async def _capture(event: KillSwitchEvent) -> None:
+        seen.append(event)
+
+    bus.subscribe(KillSwitchEvent, _capture)
+    await monitor.start()
+
+    broker._positions["AAPL"] = 80.0  # a real mismatch
+
+    async def _boom() -> list[object]:
+        raise ConnectionError("broker blip on open_orders()")
+
+    monkeypatch.setattr(oms, "check_resting_orders", _boom)
+
+    with caplog.at_level("ERROR"):
+        mismatch = await monitor.poll()
+
+    assert mismatch is True
+    assert len(seen) == 1
+    assert "resting" in caplog.text.lower()
+
+    await monitor.stop()
+
+
 # --- Failure behaviour --------------------------------------------------------
 
 

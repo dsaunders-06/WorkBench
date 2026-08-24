@@ -398,8 +398,18 @@ class IBAdapter:
         running" inside the app (the M102 trap, hit three times in one
         afternoon), so this uses the async form and nothing else.
 
-        Returns [] when the client cannot answer, which callers must read as
-        "we could not look" and NOT as "nothing is resting".
+        Returns `[]` when the underlying client cannot answer (not yet
+        connected, or too old to carry `reqAllOpenOrdersAsync`) - the SAME
+        `[]` a genuinely clean broker returns (I3, final review, correcting an
+        earlier version of this docstring that told callers to read the two
+        apart). `BrokerAdapter.open_orders`'s own contract is that an empty
+        list means "nothing to report", full stop, and `OMS.check_resting_
+        orders` follows it: it cannot and does not distinguish "asked and
+        found nothing" from "could not ask" at this layer. What DOES surface
+        the difference is `OMS.check_resting_orders`'s own `source is None`
+        branch, one level up - that fires when THIS adapter has no
+        `open_orders` attribute at all, which is a different failure than the
+        one handled here.
         """
         request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
         if not callable(request):

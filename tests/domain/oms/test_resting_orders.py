@@ -9,11 +9,15 @@ position this system has ever placed correctly, on its first run.
 
 from __future__ import annotations
 
+import logging
+
 from qat.data.broker.adapter import Position, RestingOrder
 from qat.domain.oms.resting_orders import WORKING_STATUSES, unjustified_resting_risk
 
 
-def _order(order_id, symbol="TNE.AX", side="sell", qty=3051.0, oca=None, parent=None, **kw):
+def _order(
+    order_id, symbol="TNE.AX", side="sell", qty=3051.0, oca=None, parent=None, total_qty=0.0, **kw
+):
     return RestingOrder(
         symbol=symbol,
         order_id=str(order_id),
@@ -26,6 +30,7 @@ def _order(order_id, symbol="TNE.AX", side="sell", qty=3051.0, oca=None, parent=
         owner_client_id=kw.get("owner_client_id", 1),
         stop_price=kw.get("stop_price"),
         limit_price=kw.get("limit_price"),
+        total_quantity=total_qty,
     )
 
 
@@ -148,3 +153,39 @@ def test_working_statuses_excludes_validation_error():
     assert {"Submitted", "PreSubmitted", "PendingSubmit", "ApiPending", "ApiUpdate"} <= (
         WORKING_STATUSES
     )
+
+
+# --- I7: remaining=0.0 before orderStatus lands must not read as flat ------
+
+
+def test_a_zero_remaining_order_is_counted_at_its_total_when_known(caplog):
+    """Verified in installed ib_async 2.1.0: `openOrder` seeds
+    `remaining=0.0` for an order this session has never seen - the orphan
+    case exactly - and the real figure only lands via the separate
+    `orderStatus` callback. Dropping it here reports the book clean on the
+    24 August incident this feature exists to catch."""
+    orders = [_order(1, qty=0.0, total_qty=3051.0)]
+    with caplog.at_level(logging.WARNING):
+        found = unjustified_resting_risk(orders, [_pos("TNE.AX", 0.0)])
+    assert len(found) == 1
+    assert found[0].resting == 3051.0
+    assert found[0].excess == 3051.0
+    assert "totalQuantity" in caplog.text
+
+
+def test_a_working_order_with_a_genuinely_zero_total_is_still_skipped():
+    orders = [_order(1, qty=0.0, total_qty=0.0)]
+    assert unjustified_resting_risk(orders, [_pos("TNE.AX", 0.0)]) == []
+
+
+def test_the_zero_remaining_fallback_still_nets_within_its_oca_group():
+    """The fallback quantity has to reach the SAME netting `_netted` applies
+    to every other leg, or a bracket with one not-yet-populated leg would
+    double-count instead of taking the max."""
+    orders = [
+        _order(1, qty=0.0, total_qty=3051.0, oca="OCA-1"),
+        _order(2, qty=3051.0, oca="OCA-1"),
+    ]
+    found = unjustified_resting_risk(orders, [_pos("TNE.AX", 0.0)])
+    assert len(found) == 1
+    assert found[0].resting == 3051.0

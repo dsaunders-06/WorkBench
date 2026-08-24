@@ -1,6 +1,13 @@
 """What rests at the broker that the book cannot justify (M141, item 23).
 
-Pure. No broker, no clock, no logging, no I/O - so every case below is a table
+Pure, with one deliberate exception (I7, final review): `unjustified_resting_
+risk` logs a WARNING when it falls back from `quantity` to `total_quantity` on
+an order whose `remaining` has not been populated yet. That is a genuine
+anomaly in the DATA this module was handed, not a decision this module made,
+and it needs to be on the record wherever it happens rather than only at
+whichever caller happened to notice - the same reasoning `verify_position_
+stops` and `_resting_stops` already apply to a broker that cannot answer at
+all. No broker, no clock, no other I/O - so every other case below is a table
 and the hard part is testable without a Gateway.
 
 **Why arithmetic and never identity.** Order identity does not survive a restart:
@@ -23,11 +30,14 @@ limit buy on a flat symbol reads as an orphan. Revisit here.
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
 from qat.data.broker.adapter import Position, RestingOrder
+
+logger = logging.getLogger(__name__)
 
 # Share counts are whole numbers at every broker this app talks to, so this is a
 # float-comparison guard rather than a real tolerance. Same value and same
@@ -36,17 +46,19 @@ _TOLERANCE = 1e-6
 
 # Statuses at which an order can still fill, and therefore still carries risk.
 #
-# DERIVED from ib_async's own `OrderStatus.ActiveStates` rather than restated,
-# and asserted against it by `tests/data/broker/test_working_statuses.py`. A
-# hand-maintained status set is exactly what caused M139: `_IB_STATUS_MAP` held
-# four entries and none of IBKR's working states, so a transmitted order read as
-# `pending_signoff` and went out four times.
+# PINNED TO ib_async's own `OrderStatus.ActiveStates`, not derived from it -
+# and asserted against it, in both directions, by
+# `tests/data/broker/test_working_statuses.py`. Written as literals HERE
+# because this module is domain and must not import the broker library; the
+# test at the boundary is what keeps the two from drifting apart the way
+# `_IB_STATUS_MAP` did, which held four entries and none of IBKR's working
+# states, so a transmitted order read as `pending_signoff` and went out four
+# times (M139).
 #
-# Written as literals HERE because this module is domain and must not import the
-# broker library; the test at the boundary is what keeps the two in step. It is
-# WIDER than `ib_translate._IB_WORKING_STATUSES`, deliberately and by operator
-# decision on 24 August: widening that one moves `_position_stops`, which is a
-# sizing input, and it is being shipped separately. The divergence is expected.
+# It is WIDER than `ib_translate._IB_WORKING_STATUSES`, deliberately and by
+# operator decision on 24 August: widening that one moves `_position_stops`,
+# which is a sizing input, and it is being shipped separately. The divergence
+# is expected.
 #
 # `ValidationError` is subtracted: ib_async counts it active, but an order that
 # failed validation cannot fill and is not resting risk.
@@ -96,12 +108,18 @@ def _group_key(order: RestingOrder) -> str:
     return f"solo:{order.order_id}"
 
 
-def _netted(orders: Sequence[RestingOrder]) -> float:
-    """MAX within a one-cancels-all group, SUM across groups."""
+def _netted(orders: Sequence[RestingOrder], effective_quantity: dict[str, float]) -> float:
+    """MAX within a one-cancels-all group, SUM across groups.
+
+    `effective_quantity` overrides `order.quantity` for the I7 zero-remaining
+    fallback below - keyed by order id rather than mutating the (frozen)
+    `RestingOrder`, so the log line at the substitution site stays the one
+    place that decision is made.
+    """
     groups: dict[str, float] = defaultdict(float)
     for order in orders:
         key = _group_key(order)
-        groups[key] = max(groups[key], order.quantity)
+        groups[key] = max(groups[key], effective_quantity.get(order.order_id, order.quantity))
     return sum(groups.values())
 
 
@@ -122,17 +140,49 @@ def unjustified_resting_risk(
     held = {position.symbol: float(position.quantity) for position in positions}
 
     by_symbol_side: dict[tuple[str, str], list[RestingOrder]] = defaultdict(list)
+    # I7, final review: order id -> the quantity to actually risk-count, when
+    # it differs from `order.quantity`. See `RestingOrder.total_quantity` and
+    # the module docstring's note on the one exception to "pure".
+    effective_quantity: dict[str, float] = {}
     for order in orders:
         if order.status not in WORKING_STATUSES:
             continue
-        if order.quantity <= _TOLERANCE:
-            continue
+        quantity = order.quantity
+        if quantity <= _TOLERANCE:
+            if order.total_quantity <= _TOLERANCE:
+                # A working order with a genuinely zero total. Dropped exactly
+                # as before this fix - there is nothing here to fall back to.
+                continue
+            # `remaining` reads zero not because the order is empty, but
+            # because IBKR had not yet delivered the `orderStatus` callback
+            # that populates it when `openOrder` was read - verified in
+            # installed ib_async 2.1.0, where `wrapper.openOrder` seeds
+            # `OrderStatus(remaining=0.0)` for exactly this case: an order
+            # this session has never seen before, which is the orphan case
+            # this whole feature exists to catch. Dropping it here would
+            # report the book clean on the incident it was built for, so it
+            # is counted at `total_quantity` instead - and logged, because a
+            # silent substitution of the risk figure is its own kind of lie.
+            logger.warning(
+                "Resting order %s (%s %s) on %s reports remaining=%g with "
+                "totalQuantity=%g - counting it at totalQuantity rather than "
+                "dropping it, since orderStatus.remaining had not been "
+                "populated yet when this was read.",
+                order.order_id,
+                order.side,
+                order.order_type,
+                order.symbol,
+                quantity,
+                order.total_quantity,
+            )
+            quantity = order.total_quantity
+        effective_quantity[order.order_id] = quantity
         by_symbol_side[(order.symbol, order.side.lower())].append(order)
 
     divergences: list[SymbolOrderDivergence] = []
     for (symbol, side), legs in sorted(by_symbol_side.items()):
         position = held.get(symbol, 0.0)
-        resting = _netted(legs)
+        resting = _netted(legs, effective_quantity)
         justified = max(position, 0.0) if side == "sell" else max(-position, 0.0)
         excess = resting - justified
         if excess <= _TOLERANCE:

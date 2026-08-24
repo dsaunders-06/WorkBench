@@ -332,13 +332,26 @@ class AlpacaAdapter:
         return resting
 
     async def open_orders(self) -> list[RestingOrder]:
-        """Unsupported here, honestly (M141, item 23) - the orphan scan this
-        feeds was built and measured against the live IBKR shape only
-        (`tests/data/broker/test_ib_open_orders.py`), the same way
-        `get_market_data`/`get_historical` above are honest about not being a
-        data feed rather than faking one. An empty list is `open_orders`'s own
-        documented "cannot answer" (`adapter.py`'s `BrokerAdapter.open_orders`),
-        not a claim that Alpaca has nothing resting."""
+        """Not implemented here (I3, final review, correcting M141/item 23).
+
+        The orphan scan this feeds was built and measured against the live
+        IBKR shape only (`tests/data/broker/test_ib_open_orders.py`), the same
+        way `get_market_data`/`get_historical` above are honest about not
+        being a data feed rather than faking one.
+
+        **`[]` here means exactly what `[]` means from a real broker with
+        nothing open - never "unknown".** `BrokerAdapter.open_orders`'s own
+        docstring says so plainly: `OMS.check_resting_orders` treats an empty
+        list identically to a clean scan. This adapter reporting nothing does
+        NOT get read as "we could not look" by anything downstream - it reads
+        as "nothing to report", which for this adapter is always true, because
+        it never reports resting orders at all. So the orphan scan will see
+        NOTHING resting on this adapter, ever, whatever Alpaca actually holds.
+        That is why `open_orders` is named in `capabilities.py`'s OPTIONAL
+        registry: the consequence of not implementing it is real, it is just
+        silent rather than an error - which is exactly what a reader of that
+        registry needs to be told.
+        """
         return []
 
     async def _order_page(

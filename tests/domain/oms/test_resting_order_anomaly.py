@@ -15,6 +15,7 @@ way.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -64,6 +65,38 @@ def test_redeclaring_replaces_rather_than_duplicates(tmp_path: Path) -> None:
     anomaly = store.get("TNE.AX")
     assert anomaly is not None
     assert anomaly.excess == 2.0
+
+
+def test_redeclaring_preserves_the_original_declared_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """I5, final review. With cancelling off (the default) the scan re-declares
+    an unresolved symbol on every poll - dozens of times across a trading day.
+    `declared_at` must survive that, so the file can still say when the
+    orphans were FIRST seen rather than when they were last re-detected.
+    `excess` and `reason` are NOT preserved - those genuinely change."""
+    import qat.domain.oms.resting_order_anomaly as mod
+
+    first_seen = datetime(2026, 8, 24, 10, 0, 0, tzinfo=UTC)
+    later = datetime(2026, 8, 24, 15, 30, 0, tzinfo=UTC)
+    stamps = iter([first_seen, later])
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001 - mirrors datetime.now's signature
+            return next(stamps)
+
+    monkeypatch.setattr(mod, "datetime", _FixedDateTime)
+
+    store = RestingOrderAnomalyStore(tmp_path)
+    store.declare(symbol="TNE.AX", reason="a", declared_by="d", excess=1.0)
+    store.declare(symbol="TNE.AX", reason="b", declared_by="d", excess=2.0)
+
+    anomaly = store.get("TNE.AX")
+    assert anomaly is not None
+    assert anomaly.declared_at == first_seen
+    assert anomaly.excess == 2.0
+    assert anomaly.reason == "b"
 
 
 def test_an_unreadable_file_quarantines_nothing_and_does_not_raise(tmp_path: Path) -> None:

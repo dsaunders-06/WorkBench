@@ -36,7 +36,11 @@ from qat.domain.events import (
 )
 from qat.domain.oms.anomaly import PositionAnomalyStore
 from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
-from qat.domain.oms.resting_orders import SymbolOrderDivergence, unjustified_resting_risk
+from qat.domain.oms.resting_orders import (
+    WORKING_STATUSES,
+    SymbolOrderDivergence,
+    unjustified_resting_risk,
+)
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -245,6 +249,15 @@ class OMS:
         self.corporate_actions = corporate_actions
         # Explained divergences are logged once per session, not once per poll.
         self._explained_logged: set[str] = set()
+        # Same idea, for the resting-order scan (I5, final review). With
+        # cancelling off - the default - an unresolved divergence is detected
+        # again on every poll, and logging it every time turned one incident
+        # into ~78 identical ERROR blocks across a trading day, drowning
+        # `session_check.ps1`'s output exactly when the rail fires. Keyed by
+        # (symbol, side) rather than symbol alone, because the two sides net
+        # independently in `unjustified_resting_risk`. The value is the excess
+        # last logged, so a CHANGE (not just a re-detection) still gets a line.
+        self._resting_order_logged: dict[tuple[str, str], float] = {}
         # Order ids this OMS has handed to a broker. Guards against a second
         # transmission independently of the status field - see `_sign_off_locked`.
         self._transmitted: set[str] = set()
@@ -1877,17 +1890,57 @@ class OMS:
         needs a human reset on a detector with no field history is how the
         staleness rail ended up suppressed with a 69-hour value.
 
-        A broker that cannot answer judges NOTHING. An adapter without
-        `open_orders` must never read as "nothing rests anywhere", which would
-        be a fabricated all-clear - the same defensive shape
-        `verify_position_stops` uses.
+        A broker that cannot answer judges NOTHING - and says so LOUDLY (I2,
+        final review). Before that fix, a scan that ran and found nothing, an
+        adapter stub returning `[]`, an adapter with no `open_orders` at all,
+        and the scan disabled by settings were four causes producing
+        byte-identical silence: no log line distinguished any of them, so
+        `session_check.ps1` could not tell "checked, clean" from "never
+        checked" - the exact gap `verify_position_stops`'s own defensive shape
+        does not have, because that one at least never claims to have looked.
         """
         source = getattr(self.broker, "open_orders", None)
         if source is None:
+            logger.error(
+                "RESTING ORDER SCAN: %s has no open_orders() - resting orders "
+                "cannot be checked on this adapter. This is NOT a clean scan; "
+                "it is a capability this adapter does not have, and must not "
+                "be read as 'nothing rests anywhere'.",
+                type(self.broker).__name__,
+            )
             return []
-        divergences = unjustified_resting_risk(await source(), await self.broker.positions())
+
+        orders = await source()
+        positions = await self.broker.positions()
+        working = [order for order in orders if order.status in WORKING_STATUSES]
+        divergences = unjustified_resting_risk(orders, positions)
+
+        # The heartbeat. Unconditional and always the same prefix - unlike the
+        # per-divergence ERROR below, which is throttled once landed (I5) -
+        # because this is the line that proves the scan ran at all, on every
+        # poll, clean or not. `session_check.ps1` greps `RESTING ORDER SCAN:`
+        # for exactly that reason; do not change the prefix without updating it.
+        logger.info(
+            "RESTING ORDER SCAN: %d working leg(s) across %d symbol(s), %s",
+            len(working),
+            len({order.symbol for order in working}),
+            (
+                "nothing unjustified"
+                if not divergences
+                else f"{len(divergences)} symbol/side divergence(s) unjustified"
+            ),
+        )
+
         for divergence in divergences:
-            logger.error("RESTING ORDER ORPHAN: %s", divergence.describe())
+            # Logged once per session per (symbol, side), and again only if
+            # the excess actually changed (I5) - see `_resting_order_logged`.
+            # `declare()` below still runs every scan regardless, because the
+            # anomaly store must stay current even when the log stays quiet.
+            key = (divergence.symbol, divergence.side)
+            last_excess = self._resting_order_logged.get(key)
+            if last_excess is None or abs(last_excess - divergence.excess) > 1e-6:
+                logger.error("RESTING ORDER ORPHAN: %s", divergence.describe())
+                self._resting_order_logged[key] = divergence.excess
             self.resting_order_anomalies.declare(
                 symbol=divergence.symbol,
                 reason=(
@@ -1914,6 +1967,34 @@ class OMS:
                 # logs, and cancelling automatically before this flag existed
                 # would have been a different kind of unattended surprise.
                 continue
+
+            # TOCTOU guard (Task 7b, final review). `divergence.flat` was
+            # decided from the `positions()` snapshot taken above, before any
+            # cancel. This account carries live brackets - a stop AND a target,
+            # one-cancels-all - so a fill between that snapshot and any one of
+            # the `cancel_order` awaits below is not hypothetical: leg 1's
+            # stop-sell filling mid-loop opens a real short, and cancelling
+            # legs 2-8 (one of them that fill's own OCA sibling) leaves it with
+            # no protection at all. Re-read immediately before committing to
+            # the loop, and refuse on either of two INDEPENDENT signals - the
+            # broker's fresh answer, and this app's own tracked fill count -
+            # because the whole feature exists on the premise that one source
+            # alone was not enough to trust.
+            fresh_positions = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
+            broker_flat_now = abs(fresh_positions.get(divergence.symbol, 0.0)) <= 1e-6
+            tracked = self._filled_quantities.get(divergence.symbol, 0.0)
+            if not broker_flat_now or abs(tracked) > 1e-6:
+                logger.error(
+                    "Cancel ABANDONED for %s: no longer flat by the time the cancel loop "
+                    "was reached (broker now reports %g held, this app tracks %g filled). "
+                    "Cancelling orphan legs on a symbol that just acquired a real position "
+                    "would leave it with no protection at all. STILL RESTING.",
+                    divergence.symbol,
+                    fresh_positions.get(divergence.symbol, 0.0),
+                    tracked,
+                )
+                continue
+
             for leg in divergence.legs:
                 try:
                     await self.broker.cancel_order(leg.order_id)
