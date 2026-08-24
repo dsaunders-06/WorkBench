@@ -152,33 +152,34 @@ class Settings(BaseSettings):
     # to about 0.75%, and cuts what the worst gap observed on this universe
     # (-22.1%) costs from 5.5% of equity to 3.3%.
     max_single_name_concentration_pct: float = Field(default=0.15, gt=0, le=1.0)
-    # The largest notional a SINGLE ORDER may carry. Buys above it are TRIMMED
-    # to fit; exits are exempt entirely (see `OMS.submit_order`).
+    # The largest share of AVAILABLE CASH a single order may spend. Buys above
+    # it are TRIMMED to fit; exits are exempt entirely (see `OMS.submit_order`).
     #
-    # Promoted from a bare default argument on `OMS.__init__` on 24 August 2026.
-    # It had no comment, no setting, no manual entry and no recorded
-    # measurement - alone among the risk rails, which all carry their working.
+    # A FRACTION, not a sum, and that is the whole point. This was
+    # `max_order_notional = 50_000.0` - a bare default argument on
+    # `OMS.__init__` with no comment, no setting and no measurement, and the
+    # only risk limit in the system that was an absolute figure. Every other
+    # rail is a percentage of equity and grew with the account; this one did
+    # not, so it and the 15% single-name cap were consistent at about $333k of
+    # equity and nowhere else.
     #
-    # WHY IT BOUND. Every other rail here is a PERCENTAGE of equity and grows
-    # with the account; this one is an absolute figure and does not. They were
-    # consistent at about $333k of equity (50,000 / 0.15). At the ~1.0M AUD this
-    # account now holds, the half-Kelly sizer asks for ~12.5% of equity - about
-    # $125k - so on 24 August it refused the first real ASX entry signal this
-    # system ever produced, 48 times in a row, one a minute.
+    # It bound for the first time on 24 August 2026, at ~1.0M AUD: the
+    # half-Kelly sizer asked for ~12.5% of equity, about $125k, and the flat
+    # $50k refused the first real ASX entry signal this system ever produced,
+    # 48 times in a row.
     #
-    # TRIM, NOT REFUSE (operator decision, 24 August). The concentration cap
-    # beside it has trimmed rather than rejected since M31c, for the reason
-    # recorded there: under reject semantics 15% "would have refused every swing
-    # trade outright rather than making it smaller". This rail was the last one
-    # still saying no instead of saying less, and the inconsistency was never
-    # deliberate - it simply had no reasoning attached either way.
+    # Expressed against CASH rather than equity deliberately. The paper account
+    # holds a round 1M AUD that says nothing about how much of a real position
+    # the market would absorb; on a live account cash is the figure that
+    # actually constrains what can be bought, and liquidity will bite long
+    # before the balance does. A fraction travels from paper to live without
+    # needing to be re-derived, which a dollar figure tuned at 1M would not.
     #
-    # It remains a real limit: it is the most this application will put into one
-    # order regardless of what the sizer, the edge estimate or the concentration
-    # cap would allow, and it is the only rail that is not a fraction of
-    # something. That is the point of it - a fixed backstop against a sizing
-    # chain whose inputs are, below 20 closed trades, invented constants.
-    max_order_notional: float = Field(default=50_000.0, gt=0)
+    # 0 IS ALLOWED AND MEANS NO NEW ENTRIES. A trim to zero cannot make one
+    # whole share, so every buy is refused while exits stay exempt - which is a
+    # usable "stop opening positions but let the book run off" switch rather
+    # than a misconfiguration. 1.0 disables the cap.
+    max_order_pct_of_cash: float = Field(default=0.10, ge=0.0, le=1.0)
 
     # 40% -> 30%, and only now that the governor can trim to it (M31c). At 15%
     # single-name, 40% never bound before the third position in a sector was

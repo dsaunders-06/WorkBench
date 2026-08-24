@@ -39,7 +39,7 @@ async def _build(tmp_path):
     settings = Settings(_env_file=None, max_aggregate_risk_at_stop_pct=1.0)
     engine = RiskEngine(bus, switch, settings=settings)
     broker = MockBroker(seed=1)
-    oms = OMS(broker, engine, switch, max_order_notional=1_000_000.0, bus=bus)
+    oms = OMS(broker, engine, switch, max_order_pct_of_cash=1.0, bus=bus)
     ledger = TradeLedger(bus, tmp_path)
     await ledger.start()
     return oms, broker, ledger

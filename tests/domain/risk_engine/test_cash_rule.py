@@ -47,7 +47,7 @@ def _engine(**settings_kwargs: object) -> tuple[RiskEngine, Settings]:
 def _oms(**settings_kwargs: object) -> tuple[OMS, MockBroker, Settings]:
     engine, settings = _engine(**settings_kwargs)
     broker = MockBroker(seed=1)
-    return OMS(broker, engine, engine.kill_switch, max_order_notional=1_000_000.0), broker, settings
+    return OMS(broker, engine, engine.kill_switch, max_order_pct_of_cash=1.0), broker, settings
 
 
 def test_buy_is_capped_at_available_cash_less_the_reserve():

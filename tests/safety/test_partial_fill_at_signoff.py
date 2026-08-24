@@ -89,7 +89,7 @@ def _oms(broker: _PartiallyFillingBroker, bus: EventBus | None = None) -> OMS:
     settings = Settings(_env_file=None)
     switch = KillSwitch()
     engine = RiskEngine(bus or EventBus(), switch, settings=settings)
-    return OMS(broker, engine, switch, bus=bus, max_order_notional=10_000_000.0)
+    return OMS(broker, engine, switch, bus=bus, max_order_pct_of_cash=1.0)
 
 
 async def _place(oms: OMS) -> None:

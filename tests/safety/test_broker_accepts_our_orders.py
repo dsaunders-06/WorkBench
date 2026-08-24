@@ -77,7 +77,7 @@ def _oms(broker: _AlpacaLikeBroker) -> OMS:
     settings = Settings(_env_file=None, max_single_name_concentration_pct=1.0)
     switch = KillSwitch()
     engine = RiskEngine(EventBus(), switch, settings=settings)
-    return OMS(broker, engine, switch, max_order_notional=1_000_000.0)
+    return OMS(broker, engine, switch, max_order_pct_of_cash=1.0)
 
 
 @pytest.mark.asyncio

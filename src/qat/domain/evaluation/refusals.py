@@ -91,7 +91,8 @@ _PATTERNS: tuple[tuple[str, RefusalFamily, str], ...] = (
     # is the M89 defect - seven refusal messages classified as "not recognised"
     # because the taxonomy had drifted from the strings actually emitted.
     ("notional above the per-order cap", RefusalFamily.CAPACITY, "Per-order notional cap"),
-    ("does not cover one share", RefusalFamily.CAPACITY, "Per-order notional cap"),
+    ("does not cover one share", RefusalFamily.CAPACITY, "Per-order cap (share of cash)"),
+    ("cannot be computed", RefusalFamily.CAPACITY, "Per-order cap (cash unknown)"),
     ("cash", RefusalFamily.CAPACITY, "Cash floor"),
     ("too small to carry its", RefusalFamily.CANDIDATE, "Cost-to-risk (trade too small)"),
     ("round-trip cost", RefusalFamily.CANDIDATE, "Cost-to-risk (trade too small)"),

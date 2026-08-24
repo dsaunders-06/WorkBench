@@ -29,14 +29,14 @@ def _candidate(symbol: str = "AAA") -> OrderCandidate:
 
 
 def _oms(
-    max_order_notional: float = 1_000_000.0, **settings_overrides: object
+    max_order_pct_of_cash: float = 1.0, **settings_overrides: object
 ) -> tuple[OMS, KillSwitch]:
     bus = EventBus()
     switch = KillSwitch()
     settings = Settings(_env_file=None, **settings_overrides)  # type: ignore[arg-type]
     engine = RiskEngine(bus, switch, settings=settings)
     broker = MockBroker(seed=1)
-    oms = OMS(broker, engine, switch, max_order_notional=max_order_notional)
+    oms = OMS(broker, engine, switch, max_order_pct_of_cash=max_order_pct_of_cash)
     return oms, switch
 
 
@@ -114,7 +114,7 @@ async def test_a_cap_too_small_for_one_share_still_rejects():
     residual refusal path rather than the one its name described. Renamed to
     what it actually proves.
     """
-    oms, _ = _oms(max_order_notional=1.0, per_trade_risk_pct=0.02)
+    oms, _ = _oms(max_order_pct_of_cash=0.0, per_trade_risk_pct=0.02)
 
     order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
 
@@ -131,14 +131,14 @@ async def test_an_order_over_the_cap_is_trimmed_to_it_not_rejected():
     ASX entry signal this system ever produced, 48 times in a row, rather than
     placing a smaller one.
     """
-    cap = 5_000.0
-    oms, _ = _oms(max_order_notional=cap, per_trade_risk_pct=0.02)
+    oms, _ = _oms(max_order_pct_of_cash=0.01, per_trade_risk_pct=0.02)
+    cash = (await oms.broker.account()).cash
 
     order = await oms.submit_order(_candidate(), 1_000_000.0, {}, {})
 
     assert order.status != "rejected", "the cap refused instead of trimming"
     assert order.quantity >= 1
-    assert order.quantity * _candidate().price <= cap, "the trim did not respect the cap"
+    assert order.quantity * _candidate().price <= 0.01 * cash, "the trim did not respect the cap"
 
 
 @pytest.mark.asyncio
@@ -146,8 +146,8 @@ async def test_trimming_only_ever_reduces_the_order():
     """A trim must not be able to size UP. The stop is per-share and unchanged,
     so fewer shares is strictly less at stake than the sizer approved - that is
     what makes trimming safe to do silently to a risk figure."""
-    generous, _ = _oms(max_order_notional=10_000_000.0, per_trade_risk_pct=0.02)
-    tight, _ = _oms(max_order_notional=5_000.0, per_trade_risk_pct=0.02)
+    generous, _ = _oms(max_order_pct_of_cash=1.0, per_trade_risk_pct=0.02)
+    tight, _ = _oms(max_order_pct_of_cash=0.01, per_trade_risk_pct=0.02)
 
     untrimmed = await generous.submit_order(_candidate(), 1_000_000.0, {}, {})
     trimmed = await tight.submit_order(_candidate(), 1_000_000.0, {}, {})

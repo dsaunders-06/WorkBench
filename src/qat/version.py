@@ -398,16 +398,33 @@ from qat.domain.display_dates import format_display_date
 # Verified by reproducing the failure: with the stock handler the same scenario
 # writes 13 lines and silently loses 28; with this one all 40 arrive.
 #
-# M138 - the per-order notional cap becomes a setting, and TRIMS instead of
-# refusing. ⚠️ THIS CHANGES A TRADING-DECISION INPUT. Signals that were refused
+# M138 - the per-order cap becomes a SHARE OF CASH, a setting, and TRIMS
+# instead of refusing. ⚠️ THIS CHANGES A TRADING-DECISION INPUT. Signals that were refused
 # will now place smaller orders.
 #
 # `max_order_notional` was a bare default argument on `OMS.__init__` -
 # 50_000.0, no comment, no setting, no manual entry, no measurement. Alone
-# among the risk rails it carried none of its own reasoning, and it is the only
-# one that is a fixed sum rather than a fraction of equity, so it never grew
-# with the account. It and the 15% single-name cap agree at about $333k of
-# equity; above that this one binds first.
+# among the risk rails it carried none of its own reasoning, and it was the only
+# one that was a fixed sum rather than a fraction, so it never grew with the
+# account. It and the 15% single-name cap agreed at about $333k of equity and
+# nowhere else.
+#
+# It is now `QAT_MAX_ORDER_PCT_OF_CASH`, default 10%, range 0 to 1. Against CASH
+# rather than equity by operator decision: the paper account holds a round 1M
+# AUD that says nothing about what a real market would absorb, and on a live
+# account cash is the figure that actually constrains a purchase, with liquidity
+# biting long before the balance does. A fraction travels from paper to live;
+# a dollar figure tuned at 1M does not.
+#
+# 0 IS ALLOWED and means no new entries - a trim to zero cannot make one whole
+# share, so buys are refused while exits stay exempt. That is a usable "stop
+# opening positions, let the book run off" switch. An unknown cash balance
+# REFUSES rather than skipping the cap, matching the fail-closed rule that
+# test_cash_check_fails_closed_without_a_price already names.
+#
+# On the 24 August numbers: cash 1,001,865, cap 100,187, the sizer wanted
+# 125,508, so TNE.AX would have gone in at 3,067 shares rather than being
+# refused 48 times. The 15% single-name cap (150,609) still does not bind.
 #
 # It bound for the first time on 24 August. The half-Kelly sizer asked for
 # ~12.5% of ~1.0M AUD - about $125k - and the flat $50k refused the first real

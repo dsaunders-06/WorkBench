@@ -47,7 +47,7 @@ def _build() -> tuple[SignalToOrderBridge, OMS, MockBroker]:
     switch = KillSwitch()
     risk_engine = RiskEngine(bus, switch, settings=settings)
     broker = MockBroker(seed=1)
-    oms = OMS(broker, risk_engine, switch, max_order_notional=1_000_000.0)
+    oms = OMS(broker, risk_engine, switch, max_order_pct_of_cash=1.0)
     bridge = SignalToOrderBridge(bus, oms, settings=settings)
     return bridge, oms, broker
 

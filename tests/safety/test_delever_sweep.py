@@ -62,7 +62,7 @@ def _build(positions: dict[str, float], stops: dict[str, float] | None = None, *
     switch = KillSwitch()
     broker = _Broker(positions)
     engine = RiskEngine(EventBus(), switch, settings=settings)
-    oms = OMS(broker, engine, switch, max_order_notional=10_000_000.0)
+    oms = OMS(broker, engine, switch, max_order_pct_of_cash=1.0)
     if stops:
         oms._position_stops.update(stops)
     sweep = DeleverSweep(oms, PortfolioGovernor(settings), settings=settings, poll_seconds=3600.0)

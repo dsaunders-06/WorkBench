@@ -66,7 +66,7 @@ def _build_oms() -> tuple[OMS, PlaceOrderSpy]:
         ),
     )
     broker = PlaceOrderSpy(seed=1)
-    oms = OMS(broker, engine, switch, max_order_notional=1_000_000.0)
+    oms = OMS(broker, engine, switch, max_order_pct_of_cash=1.0)
     return oms, broker
 
 

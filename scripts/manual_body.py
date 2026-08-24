@@ -2851,18 +2851,20 @@ def _config_reference(doc: Any) -> None:
                 "has never been held to this bar.",
             ),
             (
-                "QAT_MAX_ORDER_NOTIONAL",
-                "50000",
-                "The most one ORDER may be worth. A buy above it is TRIMMED to fit, not "
-                "refused - the same way the single-name concentration cap has worked since "
-                "M31c. EXITS ARE EXEMPT: a cap that refused a sell meant a position bigger "
-                "than the cap could not be closed at all, and a trimmed sell would leave a "
-                "residual you believe is closed. Note this is the only risk limit that is a "
-                "fixed sum rather than a fraction of equity, so unlike the others it does "
-                "NOT grow with the account - at about $333,000 of equity it matches the 15% "
-                "single-name cap, and above that it binds first. That is deliberate: it is a "
-                "flat backstop against a sizing chain whose win-rate inputs are assumed "
-                "rather than measured until 20 trades have closed.",
+                "QAT_MAX_ORDER_PCT_OF_CASH",
+                "0.10",
+                "The largest share of AVAILABLE CASH one order may spend, 0 to 1. A buy "
+                "above it is TRIMMED to fit, not refused - the same way the single-name "
+                "concentration cap has worked since M31c. EXITS ARE EXEMPT: a cap that "
+                "refused a sell meant a position bigger than the cap could not be closed "
+                "at all, and a trimmed sell would leave a residual you believe is closed. "
+                "A FRACTION rather than a sum on purpose - it replaced a flat $50,000 that "
+                "never grew with the account and refused every entry once the balance "
+                "passed about $333,000. Cash rather than equity because on a live account "
+                "cash is what actually constrains a purchase, and liquidity bites long "
+                "before the balance does. Set 0 to stop opening new positions while "
+                "letting the existing book run off; set 1 to disable the cap. If the "
+                "broker does not report cash the order is REFUSED, not waved through.",
             ),
             (
                 "QAT_ENTRY_ALLOW_LIST",

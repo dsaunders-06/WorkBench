@@ -122,7 +122,7 @@ class OMS:
         broker: BrokerAdapter,
         risk_engine: RiskEngine,
         kill_switch: KillSwitch,
-        max_order_notional: float | None = None,
+        max_order_pct_of_cash: float | None = None,
         symbol_allow_list: set[str] | None = None,
         entry_allow_list: set[str] | None = None,
         bus: EventBus | None = None,
@@ -154,11 +154,12 @@ class OMS:
         # From settings unless a caller pins it. It was a bare default argument
         # of 50_000.0 until 24 August 2026, with no comment and no way to change
         # it without editing this file - the only risk rail in the system with
-        # no recorded reasoning. `Settings.max_order_notional` now carries both.
-        self.max_order_notional = (
-            max_order_notional
-            if max_order_notional is not None
-            else (settings or Settings()).max_order_notional
+        # no recorded reasoning, and the only one that was an absolute sum
+        # rather than a fraction. `Settings.max_order_pct_of_cash` carries both.
+        self.max_order_pct_of_cash = (
+            max_order_pct_of_cash
+            if max_order_pct_of_cash is not None
+            else (settings or Settings()).max_order_pct_of_cash
         )
         self.symbol_allow_list = symbol_allow_list
         # Entries only (M61). `symbol_allow_list` above gates exits too, so it
@@ -371,24 +372,40 @@ class OMS:
         # sizer approved. The audit trail keeps the sizer's own figure, so a
         # trimmed order and its risk decision will legitimately differ - which
         # is why the trim is logged rather than applied quietly.
+        # FAIL CLOSED on an unknown cash balance. The cap is a fraction of cash,
+        # so without cash there is no cap - and silently skipping a risk limit
+        # because its input is missing is the failure this codebase already has
+        # a test named for (test_cash_check_fails_closed_without_a_price).
+        if account.cash is None:
+            return self._new_rejected_order(
+                candidate,
+                0.0,
+                "the broker did not report cash, so the per-order cap "
+                "(a share of available cash) cannot be computed",
+            )
+
+        cap = self.max_order_pct_of_cash * account.cash
         notional = shares * candidate.price
-        if notional > self.max_order_notional:
-            trimmed = float(int(self.max_order_notional / candidate.price))
+        if notional > cap:
+            trimmed = float(int(cap / candidate.price)) if candidate.price > 0 else 0.0
             if trimmed < 1:
                 return self._new_rejected_order(
                     candidate,
                     0.0,
-                    f"the per-order cap of {self.max_order_notional:,.0f} does not cover "
-                    f"one share at {candidate.price:,.2f}",
+                    f"the per-order cap of {self.max_order_pct_of_cash:.1%} of cash "
+                    f"({cap:,.0f}) does not cover one share at {candidate.price:,.2f}",
                 )
             logger.info(
-                "%s trimmed from %g to %g shares by the per-order cap of %.0f: "
-                "notional %.0f -> %.0f. The risk decision in the audit trail keeps "
-                "the sizer's own figure, so the two will differ for this order.",
+                "%s trimmed from %g to %g shares by the per-order cap of %.1f%% of "
+                "cash (%.0f of %.0f): notional %.0f -> %.0f. The risk decision in the "
+                "audit trail keeps the sizer's own figure, so the two will differ for "
+                "this order.",
                 candidate.symbol,
                 shares,
                 trimmed,
-                self.max_order_notional,
+                self.max_order_pct_of_cash * 100,
+                cap,
+                account.cash,
                 notional,
                 trimmed * candidate.price,
             )

@@ -347,7 +347,7 @@ async def test_the_governor_gates_orders_through_the_oms_path():
     by omitting an argument - the same reasoning as the cash check."""
     settings = _settings(max_concurrent_positions=3)
     engine = RiskEngine(EventBus(), KillSwitch(), settings=settings)
-    oms = OMS(MockBroker(seed=1), engine, engine.kill_switch, max_order_notional=1_000_000.0)
+    oms = OMS(MockBroker(seed=1), engine, engine.kill_switch, max_order_pct_of_cash=1.0)
 
     accepted = []
     for i in range(12):
@@ -363,7 +363,7 @@ async def test_every_approved_buy_carries_a_protective_stop():
     """A stop that exists only as a sizing assumption protects nothing - so the
     sizing stop is attached as a real bracket when the strategy proposes none."""
     engine = RiskEngine(EventBus(), KillSwitch(), settings=_settings())
-    oms = OMS(MockBroker(seed=1), engine, engine.kill_switch, max_order_notional=1_000_000.0)
+    oms = OMS(MockBroker(seed=1), engine, engine.kill_switch, max_order_pct_of_cash=1.0)
 
     order = await oms.submit_order(_candidate(), EQUITY, {}, {})
 

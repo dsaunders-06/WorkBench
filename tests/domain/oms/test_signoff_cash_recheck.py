@@ -57,7 +57,7 @@ def _build() -> tuple[OMS, PlaceOrderSpy, Settings]:
     )
     engine = RiskEngine(EventBus(), KillSwitch(), settings=settings)
     broker = PlaceOrderSpy(seed=1)
-    oms = OMS(broker, engine, engine.kill_switch, max_order_notional=1_000_000.0)
+    oms = OMS(broker, engine, engine.kill_switch, max_order_pct_of_cash=1.0)
     return oms, broker, settings
 
 

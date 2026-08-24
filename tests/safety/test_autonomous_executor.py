@@ -92,7 +92,7 @@ def _build(tmp_path, settings: Settings, broker: _Broker | None = None, now=OPEN
     bus = EventBus()
     switch = KillSwitch()
     risk_engine = RiskEngine(bus, switch, settings=settings)
-    oms = OMS(broker, risk_engine, switch, max_order_notional=1_000_000.0, bus=bus)
+    oms = OMS(broker, risk_engine, switch, max_order_pct_of_cash=1.0, bus=bus)
     gate = AutonomyGate(settings, switch, clock=lambda: now)
     journal = DecisionJournal(tmp_path)
     executor = AutonomousExecutor(bus, oms, gate, journal, settings=settings)

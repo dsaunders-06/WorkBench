@@ -37,7 +37,7 @@ def _build() -> tuple[OMS, KillSwitch, EventBus]:
     switch = KillSwitch()
     engine = RiskEngine(bus, switch, settings=Settings(_env_file=None))
     broker = MockBroker(seed=1)
-    oms = OMS(broker, engine, switch, max_order_notional=1_000_000.0)
+    oms = OMS(broker, engine, switch, max_order_pct_of_cash=1.0)
     return oms, switch, bus
 
 
