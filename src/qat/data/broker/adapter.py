@@ -131,6 +131,42 @@ class RestingStopOrder:
     owner_client_id: int | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class RestingOrder:
+    """One order open at the broker, translated and NOT judged (M141, item 23).
+
+    Distinct from `RestingStopOrder`, which answers "is this position
+    protected". This answers "what is working at the broker", which is a
+    different question and the one nothing was asking: on 24 August sixteen
+    orphaned GTC bracket legs rested against a FLAT TNE.AX and no code path
+    could see them.
+
+    **Nothing is filtered on the way in - not type, not status.** A bracket's
+    take-profit LIMIT leg is dropped by `from_ib_resting_stop` and is exactly
+    half of what went orphaned. Filtering is each consumer's own business, and
+    keeping it out of here is what stops the orphan scan's WIDE working-status
+    set leaking into `from_ib_resting_stop`'s deliberately narrow one.
+    """
+
+    symbol: str
+    order_id: str
+    side: str
+    order_type: str
+    # `orderStatus.remaining`, not `totalQuantity`: a half-filled stop carries
+    # half the risk, and the excess calculation is a quantity comparison.
+    quantity: float
+    status: str
+    oca_group: str | None = None
+    # The OCA fallback. A bracket's legs share a parent even where IBKR sends
+    # no ocaGroup, and taking the MAX within a group rather than the sum is
+    # what stops a correct bracket reading as double the risk it is.
+    parent_perm_id: int | None = None
+    owner_client_id: int | None = None
+    why_held: str | None = None
+    stop_price: float | None = None
+    limit_price: float | None = None
+
+
 @dataclass(slots=True)
 class Position:
     symbol: str
@@ -309,3 +345,8 @@ class BrokerAdapter(Protocol):
     # `resting_stops`, which every protection check depends on and needs
     # neither field.
     async def resting_stop_orders(self) -> dict[str, RestingStopOrder]: ...
+
+    # All open orders at the broker, translated and not judged (M141, item 23).
+    # Unlike `resting_stop_orders`, this returns every order type and status -
+    # filtering is each consumer's own business.
+    async def open_orders(self) -> list[RestingOrder]: ...

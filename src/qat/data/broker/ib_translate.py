@@ -20,6 +20,7 @@ from qat.data.broker.adapter import (
     Order,
     OrderStatus,
     Position,
+    RestingOrder,
     RestingStopOrder,
 )
 from qat.data.symbols import from_ibkr, to_ibkr
@@ -402,6 +403,42 @@ def from_ib_resting_stop(trade: Trade, market: str = "US") -> RestingStopOrder |
         quantity=float(order.totalQuantity),
         why_held=str(trade.orderStatus.whyHeld) or None,
         owner_client_id=int(order.clientId),
+    )
+
+
+def from_ib_open_order(trade: Trade, market: str = "US") -> RestingOrder:
+    """One open IBKR order, translated and unjudged (M141, item 23).
+
+    Returns a record for EVERY order, always. Compare `from_ib_resting_stop`,
+    which returns None three separate ways - wrong type, non-working status, no
+    auxPrice - each of which is correct for the question IT answers and wrong
+    for this one.
+
+    `ocaGroup` and `parentPermId` arrive as "" and 0 rather than absent, and the
+    grouping in `unjustified_resting_risk` keys on falsiness, so both are
+    normalised to None here rather than at each reader.
+    """
+    order = trade.order
+    aux: float | None = None
+    if order.auxPrice:
+        aux = float(order.auxPrice)
+    limit: float | None = None
+    lmt_price = getattr(order, "lmtPrice", 0.0)
+    if lmt_price:
+        limit = float(lmt_price)
+    return RestingOrder(
+        symbol=from_ibkr(trade.contract.symbol, market),
+        order_id=str(order.permId or order.orderId),
+        side=str(order.action).lower(),
+        order_type=str(order.orderType),
+        quantity=float(trade.orderStatus.remaining),
+        status=str(trade.orderStatus.status),
+        oca_group=str(order.ocaGroup) or None,
+        parent_perm_id=int(order.parentPermId) or None,
+        owner_client_id=int(order.clientId),
+        why_held=str(trade.orderStatus.whyHeld) or None,
+        stop_price=aux,
+        limit_price=limit,
     )
 
 
