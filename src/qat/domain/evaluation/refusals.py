@@ -134,6 +134,11 @@ _PATTERNS: tuple[tuple[str, RefusalFamily, str], ...] = (
     # the failure this module exists to prevent, committed against this module.
     ("corporate action pending", RefusalFamily.STATE, "Corporate action pending"),
     ("position anomaly", RefusalFamily.STATE, "Position quarantined"),
+    # M141's, and added WITH the reason string rather than after it. M60's
+    # "position anomaly" was never added, so every quarantine refusal rendered
+    # as "not recognised - see the note below" from 8 August onward - the exact
+    # failure this module exists to prevent, committed against this module.
+    ("resting order anomaly", RefusalFamily.STATE, "Resting orders unjustified"),
     ("broker refused", RefusalFamily.EXECUTION, "Broker refused the order"),
     ("oms rejected at sign-off", RefusalFamily.EXECUTION, "OMS rejected at sign-off"),
     ("insufficient qty", RefusalFamily.EXECUTION, "Broker: insufficient quantity"),

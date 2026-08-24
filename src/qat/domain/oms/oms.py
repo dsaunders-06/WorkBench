@@ -35,6 +35,8 @@ from qat.domain.events import (
     OrderPendingSignoffEvent,
 )
 from qat.domain.oms.anomaly import PositionAnomalyStore
+from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
+from qat.domain.oms.resting_orders import SymbolOrderDivergence, unjustified_resting_risk
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -230,6 +232,14 @@ class OMS:
         # from the broker at every launch and would otherwise launder the very
         # divergence this records.
         self.anomalies = PositionAnomalyStore(settings.data_dir if settings is not None else None)
+        # Separate from `anomalies`, and separate ON PURPOSE (M141, item 23).
+        # `PositionAnomalyStore.explains` suppresses the reconciliation halt;
+        # this store has no such method, so quarantining a flat symbol here
+        # cannot grant it immunity from the halt that caught the real mismatch
+        # on 24 August.
+        self.resting_order_anomalies = RestingOrderAnomalyStore(
+            settings.data_dir if settings is not None else None
+        )
         # The corporate-action monitor, when one is running (M39). Optional,
         # so an OMS built without it refuses exactly what it refused before.
         self.corporate_actions = corporate_actions
@@ -280,6 +290,17 @@ class OMS:
         anomaly = self.anomalies.get(candidate.symbol)
         if anomaly is not None:
             return self._new_rejected_order(candidate, 0.0, f"position anomaly - {anomaly.reason}")
+
+        # Beside the position anomaly for the same reason, and separately
+        # because the two stores answer different questions (M141, item 23). A
+        # symbol carrying resting orders the book cannot justify may be about
+        # to acquire a position nobody asked for; sizing a new entry into it
+        # sizes against a quantity with a known expiry.
+        resting_anomaly = self.resting_order_anomalies.get(candidate.symbol)
+        if resting_anomaly is not None:
+            return self._new_rejected_order(
+                candidate, 0.0, f"resting order anomaly - {resting_anomaly.reason}"
+            )
 
         # Beside the anomaly check for the same reason (M39): a pending split
         # means the share count and the per-share price are both about to
@@ -1837,6 +1858,47 @@ class OMS:
             )
             self.kill_switch.check_reconciliation()
         return bool(unexplained)
+
+    async def check_resting_orders(self) -> list[SymbolOrderDivergence]:
+        """Orders resting at the broker that the book cannot justify (M141).
+
+        The counterpart to `check_reconciliation`, and the question nothing was
+        asking. That one unions tracked positions with broker positions, so a
+        holding this app knows nothing about is still compared. Orders had no
+        equivalent: every order-side check asked "is what I believe still
+        there" and none asked "what is there that I do not believe in". On
+        24 August sixteen orphaned GTC bracket legs rested against a flat
+        TNE.AX - up to 12,304 shares of automatic short risk that buying power
+        would not have refused.
+
+        Does NOT trip the kill-switch. The risk is symbol-local, the switch
+        halts new flow without cancelling anything (24 August's second lesson:
+        stopping the process did not stop the fills), and spending a rail that
+        needs a human reset on a detector with no field history is how the
+        staleness rail ended up suppressed with a 69-hour value.
+
+        A broker that cannot answer judges NOTHING. An adapter without
+        `open_orders` must never read as "nothing rests anywhere", which would
+        be a fabricated all-clear - the same defensive shape
+        `verify_position_stops` uses.
+        """
+        source = getattr(self.broker, "open_orders", None)
+        if source is None:
+            return []
+        divergences = unjustified_resting_risk(await source(), await self.broker.positions())
+        for divergence in divergences:
+            logger.error("RESTING ORDER ORPHAN: %s", divergence.describe())
+            self.resting_order_anomalies.declare(
+                symbol=divergence.symbol,
+                reason=(
+                    f"{divergence.excess:g} shares of resting {divergence.side} the book does "
+                    f"not justify ("
+                    f"{'flat' if divergence.flat else f'holds {divergence.justified:g}'})"
+                ),
+                declared_by="order-reconciler",
+                excess=divergence.excess,
+            )
+        return divergences
 
     def record_unsized_signal(
         self, symbol: str, side: Literal["buy", "sell"], strategy: str | None, reason: str
