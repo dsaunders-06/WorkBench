@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
+from qat.data.broker.ib_adapter import IBAdapter
 from qat.data.broker.ib_translate import from_ib_open_order
 
 
@@ -82,3 +85,61 @@ def test_absent_group_markers_become_none() -> None:
     resting = from_ib_open_order(_trade(oca_group="", parent_perm_id=0), market="ASX")  # type: ignore[arg-type]
     assert resting.oca_group is None
     assert resting.parent_perm_id is None
+
+
+class _FakeIB:
+    def __init__(self, trades):
+        self._trades = trades
+
+    async def reqAllOpenOrdersAsync(self):  # noqa: N802 - mirrors ib_async
+        return self._trades
+
+
+def _adapter(trades, monkeypatch):
+    adapter = IBAdapter.__new__(IBAdapter)
+    adapter.ib_client = _FakeIB(trades)
+    adapter.settings = SimpleNamespace(market="ASX")
+    return adapter
+
+
+@pytest.mark.asyncio
+async def test_open_orders_returns_every_order(monkeypatch):
+    trades = [
+        _trade(perm_id=1, order_type="STP", status="PreSubmitted"),
+        _trade(perm_id=2, order_type="LMT", status="Submitted", aux_price=0.0, lmt_price=36.86),
+        _trade(perm_id=3, order_type="STP", status="Cancelled"),
+        _trade(perm_id=4, order_type="STP", status="ApiPending"),
+    ]
+    got = await _adapter(trades, monkeypatch).open_orders()
+    assert [o.order_id for o in got] == ["1", "2", "3", "4"]
+
+
+@pytest.mark.asyncio
+async def test_resting_stop_orders_still_applies_the_NARROW_set(monkeypatch):
+    """The whole point of Task 2.
+
+    `ApiPending` is a working state ib_async recognises and this app's
+    `_IB_WORKING_STATUSES` does not. Deriving `resting_stop_orders` from
+    `open_orders` must NOT widen it - that would move `_position_stops`, which
+    is a sizing input, inside a change that claims to move none.
+    """
+    trades = [
+        _trade(symbol="TNE", perm_id=1, order_type="STP", status="ApiPending", aux_price=30.69),
+        _trade(symbol="DXS", perm_id=2, order_type="STP", status="PreSubmitted", aux_price=7.10),
+    ]
+    got = await _adapter(trades, monkeypatch).resting_stop_orders()
+    assert set(got) == {"DXS.AX"}, "ApiPending must stay invisible to the protection check"
+
+
+@pytest.mark.asyncio
+async def test_a_take_profit_leg_is_not_a_resting_stop(monkeypatch):
+    trades = [_trade(perm_id=2, order_type="LMT", aux_price=0.0, lmt_price=36.86)]
+    assert await _adapter(trades, monkeypatch).resting_stop_orders() == {}
+
+
+@pytest.mark.asyncio
+async def test_no_capability_means_no_orders(monkeypatch):
+    adapter = IBAdapter.__new__(IBAdapter)
+    adapter.ib_client = SimpleNamespace()
+    adapter.settings = SimpleNamespace(market="ASX")
+    assert await adapter.open_orders() == []

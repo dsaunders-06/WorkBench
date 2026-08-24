@@ -32,6 +32,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    RestingOrder,
     RestingStopOrder,
     balances_from_summary,
 )
@@ -39,6 +40,7 @@ from qat.data.broker.ib_client_protocol import IBClientProtocol
 from qat.data.broker.ib_translate import (
     from_ib_account_values,
     from_ib_fill,
+    from_ib_open_order,
     from_ib_position,
     from_ib_resting_stop,
     from_ib_trade,
@@ -385,6 +387,24 @@ class IBAdapter:
                 continue
             fills.append(fill)
         return fills
+
+    async def open_orders(self) -> list[RestingOrder]:
+        """Every order working at the broker, unfiltered (M141, item 23).
+
+        **`reqAllOpenOrders`, not `openTrades`.** `openTrades()` is CLIENT
+        SCOPED: on 24 August it reported no protective stops while sixteen were
+        resting, because they belonged to clientId 1 and the probe was 99. The
+        sync form is a `util.run` wrapper that raises "event loop is already
+        running" inside the app (the M102 trap, hit three times in one
+        afternoon), so this uses the async form and nothing else.
+
+        Returns [] when the client cannot answer, which callers must read as
+        "we could not look" and NOT as "nothing is resting".
+        """
+        request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
+        if not callable(request):
+            return []
+        return [from_ib_open_order(trade, self.settings.market) for trade in await request()]
 
     async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:
         """Protective stops actually working at the broker, with enough to
