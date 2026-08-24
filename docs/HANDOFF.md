@@ -41,7 +41,7 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M134 (`2d7777c`)**, installed 21 August 20:05 and read back off its own log |
+| Deployed build | **M138 (`77b7238`)** installed 24 August 13:03. **M139 is BUILT AND NOT DEPLOYED** — it fixes the duplicate-transmission defect and should go on before the next session |
 | Repository HEAD | Past M134 — evening work of 21 August is **M135**, uncommitted to any build |
 | Deploy gap | **M135.** UI, news and design-system only; **no trading-decision input changed**. Not urgent, and see the warning below about deploying before Monday |
 | Pushed | **Up to date as of 24 August.** 43 commits pushed at 13:07 and CI went **green** in 3m57s. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
@@ -142,6 +142,73 @@ before the stand-down. So a fill needs a trigger inside roughly **10:29–11:58 
 12:30 does nothing at all.
 
 ---
+
+## ⚠️ 24 AUGUST: THE FIRST ORDERS THIS SYSTEM EVER PLACED, AND WHAT WENT WRONG
+
+Read this before touching the order path. It is the most instructive thing the
+project has produced and it was found by running the application, not by a test.
+
+### What happened
+
+**10:00** — M119 got its first real test and PASSED. Five empty polls at
+10:04:26, `"Retrying with backoff"` instead of ending the stream, and recovery
+on its own at 10:21. The defect that killed Friday did not recur.
+
+**10:06:27 — the log died** and stayed dead across a full restart while the app
+traded normally. `watch_session.py` held `qat.log` open; on Windows a plain
+`open()` grants no delete-sharing, so `doRollover`'s rename failed with
+WinError 32, and the handler left `stream=None` and swallowed it. **It cost a
+wrong diagnosis:** a feed that had recovered looked hung, and the app was
+restarted for nothing. Fixed in M137.
+
+**13:05** — the first real ASX entry signal. The sizer asked for 3,468 shares;
+M138's new cap trimmed it to 3,076; the gate refused it because Midday Lull is
+not eligible. Every rail correct.
+
+**14:04:51** — Afternoon opened, the gate auto-signed, and TNE.AX and DXS.AX
+were transmitted. **Then re-transmitted every sixty seconds, four times each.**
+
+### Why
+
+`_IB_STATUS_MAP` had four entries and none of IBKR's working states, and
+`from_ib_trade` only assigned a status when the lookup succeeded — so a
+transmitted order came back still reading `pending_signoff`, which is exactly
+what `OMS.pending_orders` filters on, so `retry_pending` found it again a minute
+later and the gate correctly allowed it again.
+
+**Two individually correct decisions combined.** M31a removed
+`order.status = "transmitted"` from before `place_order`, because a raised call
+left a false "transmitted". `from_ib_trade` left the working states unmapped on
+the stated grounds that they *"leave our own already-set transmitted status
+alone"* — true when written, false the moment M31a landed. Fixed in M139, with
+a second guard in the OMS that refuses a repeat transmission independently of
+any status field.
+
+### The damage, and the cost
+
+68,268 DXS against an intended 17,067 — exactly 4× — and 12,304 TNE against
+3,076. About $800k of exposure on a $1M account, and **sixteen orphaned GTC
+bracket legs**. Unwound the same afternoon: **NetLiquidation $1,001,287 against
+$1,004,063, so −$2,776, or −0.28%.** Never a P&L event; a position-integrity one.
+
+### Four things this taught that outlive the bug
+
+1. **A PER-ORDER CAP IS NOT A PER-POSITION CAP.** The $100k cap worked
+   perfectly, four times over. Nothing bounds total exposure per name at
+   transmission time — the concentration cap lives in the sizer, upstream, so it
+   never saw the duplicates.
+2. **Stopping the process does not stop the damage.** Orders already at the
+   broker kept filling after the app was killed; TNE went from 8,587 to 12,304
+   afterwards.
+3. **`ib.openTrades()` is CLIENT-SCOPED.** It showed no protective stops while
+   sixteen were resting, because they belonged to client id 1 and the probe was
+   client 99. Anything auditing broker state must use `reqAllOpenOrders`
+   — **and its async form**, because the sync one is a `util.run` wrapper that
+   raises "event loop is already running" inside the app (the M102 trap, hit
+   three times in one afternoon).
+4. **A flat position can still carry short risk.** TNE was flat with eight legs
+   resting on it — up to 12,304 shares of automatic short, and buying power
+   would not have refused it.
 
 ## OUTSTANDING, IN ORDER
 
@@ -401,7 +468,31 @@ for each gap and is worth reading; the list lives here.
     rail permits what another forbids. The reserve exists to be raised; at
     $50,000 the two diverge properly.
 
-23. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+23. **Nothing reconciles RESTING ORDERS.** M139 stops duplicates being
+    created; it does nothing about the sixteen orphaned GTC bracket legs an
+    interrupted session left at the broker on 24 August, with the application
+    holding no record of any of them. `adopt_broker_positions` adopts
+    POSITIONS — establish whether anything adopts or reconciles open ORDERS,
+    because a flat TNE carrying 12,304 shares of resting sells is short risk
+    nothing was watching. Highest-value item on this list.
+
+24. **Bound total exposure per name at TRANSMISSION time.** See lesson 1 above.
+    The concentration cap is upstream in the sizer and cannot see what has
+    already gone out.
+
+25. **`preflight` should use `reqAllOpenOrdersAsync`.** Its current broker view
+    is client-scoped, so it cannot see orders this app did not place in this
+    session — including its own from a previous one.
+
+26. **The IBKR order preset.** Every API sell on DXS.AX threw
+    `Error 10349: Order TIF was set to DAY based on order preset` and
+    `Warning 404: Order held while securities are located` — a short-sale locate
+    on the sale of a LONG position, which never resolves in paper, parking the
+    order at `PreSubmitted`. 68,268 and 12,000 both failed identically, so it is
+    not size. A manual sell through TWS filled. Find the preset; every order
+    this application places goes through the API.
+
+27. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
