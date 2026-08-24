@@ -104,6 +104,24 @@ def test_partial_fills_use_remaining():
     assert unjustified_resting_risk(orders, [_pos("TNE.AX", 40.0)]) == []
 
 
+def test_unequal_quantities_in_oca_group_uses_max():
+    """Within one OCA group, only the largest leg can fire, so risk is the MAX.
+
+    A partial fill on one leg (e.g., 3,051 filled down to 1,200 remaining)
+    leaves its sibling at full size (3,051). Only one leg can ever fire, so
+    the worst-case resting risk is the larger leg, not the sum.
+    """
+    orders = [
+        _order(1, qty=3051.0, oca="OCA-1"),
+        _order(2, qty=1200.0, oca="OCA-1"),
+    ]
+    found = unjustified_resting_risk(orders, [_pos("TNE.AX", 1200.0)])
+    assert len(found) == 1
+    assert found[0].resting == 3051.0
+    assert found[0].justified == 1200.0
+    assert found[0].excess == 1851.0
+
+
 def test_done_statuses_are_ignored():
     orders = [_order(1, status="Cancelled"), _order(2, status="Filled")]
     assert unjustified_resting_risk(orders, [_pos("TNE.AX", 0.0)]) == []
