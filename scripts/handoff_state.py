@@ -44,6 +44,10 @@ REPO = Path(__file__).resolve().parent.parent
 # M134 was deployed 21 August at 20:05 local, market shut, app stopped, broker
 # flat, ledgers empty, and this line was changed in the same minute as the copy.
 #
+# M140 was deployed 24 August at 15:54, read back at 15:55:24: Build: M140
+# (e432e1f, built 24/08/2026 05:51 UTC, packaged). This line was changed in the
+# same minute as the copy, which is the rule and which M139 broke.
+#
 # M139 was deployed 24 August at 15:17, read back at 15:19:02: Build: M139
 # (f2d0278, built 24/08/2026 04:23 UTC, packaged). Verified in production the
 # same minute - one signal, ONE transmission, correctly bracketed.
@@ -75,7 +79,7 @@ REPO = Path(__file__).resolve().parent.parent
 # launched since the copy, so no `Build:` line has come off its own log. Until
 # it has, this constant is an intention, not an observation - which is exactly
 # what it was during the M130 deploy.
-DEPLOYED = "f2d0278"
+DEPLOYED = "e432e1f"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
