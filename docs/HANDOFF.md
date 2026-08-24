@@ -512,7 +512,20 @@ for each gap and is worth reading; the list lives here.
     not size. A manual sell through TWS filled. Find the preset; every order
     this application places goes through the API.
 
-27. **⚠️ THE ABSORB WATERMARK DOES NOT SURVIVE A CRASH.** Highest priority of
+27. ~~**⚠️ THE ABSORB WATERMARK DOES NOT SURVIVE A CRASH.**~~ **FIXED — M140.**
+    The guard sits at the MATCH, not the watermark: `_close_against_lots` refuses
+    an exit that precedes a lot **this app opened itself** (`strategy is not
+    None`), and a restored watermark over two hours old now warns. The wide
+    replay is left alone deliberately — it is what M50 exists for.
+    **Narrowed by an existing test:** the first version compared timestamps
+    alone and broke three tests in `test_live_exit_price_correction`, which
+    absorbs an exit against an ADOPTED lot whose `opened_at` is a placeholder.
+    That fixture also ran two clocks and was corrected; the guard was not
+    weakened. **What is still true and unfixed: order identity does not survive
+    a restart** — `_broker_order_ids` and `_orders` are in-memory, so after a
+    restart the app's own fills read as foreign. The guard makes that harmless
+    to the ledger rather than making it untrue.
+    Original: highest priority of
     everything on this list, because it corrupts the record rather than costing
     money. `absorbed_fills.json`'s watermark advances during a run; if the
     process dies, it stays where it was and the next run absorbs everything that
@@ -524,9 +537,10 @@ for each gap and is worth reading; the list lives here.
     `opened_at`/`closed_at` inversion outright** — it is arithmetic, and nothing
     checks it today.
 
-28. **The kill switch is TRIPPED and should stay tripped** until item 27 is
-    fixed. It caught the mismatch correctly. Resetting it first only invites the
-    same corruption on the next launch.
+28. **The kill switch is TRIPPED.** It caught the mismatch correctly. Item 27
+    is now fixed, so it is safe to reset — but reset it on a launch you are
+    WATCHING, because the mismatch it caught came from a replay whose first
+    pass now warns rather than being silent.
 
 29. **Make deploying update `DEPLOYED` itself.** `handoff_state.py`'s hand-
     maintained constant has now been wrong three times: for a day after M104,
@@ -758,15 +772,15 @@ WHAT 24 AUGUST ESTABLISHED
 
 FIRST WORK, IN ORDER
 
-  1. Item 27 - the absorb watermark does not survive a crash. Highest priority
-     because it corrupts the RECORD rather than costing money, and the promotion
-     gate reads that record. Also reject an opened_at/closed_at inversion; it is
-     arithmetic and nothing checks it.
-  2. Item 23 - nothing reconciles RESTING ORDERS. A flat TNE carried 12,304
-     shares of automatic short risk on 24 August and nothing was watching.
-  3. Item 24 - bound total exposure per NAME at transmission time. The per-order
-     cap worked perfectly four times over; that is the whole problem.
-  4. Only then reset the kill switch and run a session.
+  1. Item 23 - nothing reconciles RESTING ORDERS. A flat TNE carried 12,304
+     shares of automatic short risk on 24 August and nothing was watching. This
+     is now the highest-value item; item 27 was fixed in M140.
+  2. Item 24 - bound total exposure per NAME at transmission time. The
+     per-order cap worked perfectly four times over; that is the whole problem.
+  3. Item 25 - preflight's broker view is client-scoped and cannot see orders
+     this app did not place in this session, including its own from the last one.
+  4. Then reset the kill switch and run a session you are WATCHING. M140 must be
+     deployed first - it is committed and NOT yet installed.
 
 TWO HABITS THAT PAID FOR THEMSELVES ON 24 AUGUST
 
