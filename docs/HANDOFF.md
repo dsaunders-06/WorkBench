@@ -438,8 +438,21 @@ so it neither confirms nor contradicts any of it.
 * **PowerShell for `%LOCALAPPDATA%`** — see the top of this file.
 * ~~**Do not push until September.**~~ **TESTED AND FALSE, 24 August.** 43
   held-back commits were pushed at 13:07 and CI completed **green in 3m57s** on
-  `windows-latest`. Push normally; run the local suite in full anyway and read
-  the actual summary line, never a piped tail.
+  `windows-latest`. Run the local suite in full anyway and read the actual
+  summary line, never a piped tail.
+
+  ⚠️ **NOT "push freely" — corrected the same afternoon.** The repo is
+  **PRIVATE**, so minutes come from a finite monthly allowance, and that
+  `windows-latest` runner bills at a **2× multiplier**: the 3m57s run cost about
+  **8 minutes**. Every GitHub budget is **$0 with "Stop usage: Yes"**, which is
+  a hard wall — **no spend is possible**, and the failure mode is runs being
+  BLOCKED rather than a bill. That is almost certainly what "exhausted" meant.
+
+  `ci.yml` fires on every push with no path filter, so a documentation-only
+  commit buys a full Windows lint-and-test run — which is what the commit
+  correcting this very paragraph did. **Batch commits and push once.** A
+  `paths-ignore` for `docs/**` and `*.md` is worth adding, since most commits
+  here are prose.
 
   **The rule was also the wrong SHAPE, which is the part worth keeping.** A
   push costs no Actions minutes — only the workflow it triggers does. So even
@@ -452,6 +465,9 @@ so it neither confirms nor contradicts any of it.
   running the thing rather than reading about it. They had been copied forward
   from document to document since 21 August without anyone testing them — the
   same failure the account-currency retraction and the UI colour counts were.
+  Then the replacement rule was written from a single outcome without checking
+  the conditions, and had to be corrected within the hour. Both halves are the
+  same error.
 * **Formats with `black`, not `ruff format`.** They agree on nearly everything
   and diverged on exactly one file on 21 August. `black --check .` before
   committing. `invoke lint` shells out to a `ruff` that is not on PATH — run the
