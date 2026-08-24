@@ -124,11 +124,27 @@ new frozen dataclass in `adapter.py`:
 translates via a new `from_ib_open_order`, which — unlike `from_ib_resting_stop`
 — **discards nothing by order type**.
 
-`resting_stop_orders()` is then rewritten to derive from `open_orders()` rather
-than issuing its own call. This consolidation is not a new idea: its own
-docstring already argues for it — *"One scan rather than two, because two could
-disagree about what counts as protection."* Leaving both calls in place would
-create precisely the second scan it warns about.
+**`open_orders()` applies NO status filter and NO type filter.** It returns what
+the broker returned, translated, with `status` carried as a field. Filtering is
+each consumer's own business.
+
+That is not tidiness — it is what makes the operator's separability decision
+hold structurally. `resting_stop_orders()` is rewritten to derive from
+`open_orders()` rather than issuing its own call, and if `open_orders()` did the
+status filtering, `from_ib_resting_stop` would silently inherit the **wide** set
+and the sizing change we just agreed to defer would ship anyway, unannounced,
+inside a change that claims to move no sizing input. Exactly the M31a /
+`from_ib_trade` combination this design already cites twice.
+
+So: `open_orders()` filters nothing; `from_ib_resting_stop` keeps applying
+`_IB_WORKING_STATUSES` unchanged; the orphan scan applies its own wide set. A
+test asserts that `resting_stop_orders()` returns the same result before and
+after the derivation, which is what proves the inheritance did not happen.
+
+The consolidation itself is not a new idea: `resting_stop_orders`' own docstring
+already argues for it — *"One scan rather than two, because two could disagree
+about what counts as protection."* Leaving both calls in place would create
+precisely the second scan it warns about.
 
 ### 2. The rule, as a pure function
 
@@ -167,22 +183,25 @@ that M139 did not touch. Here it fails in the **unsafe direction**: an orphan
 sitting in `ApiPending` is invisible, so resting risk is **under**-counted and
 the rail reports an all-clear it has not earned.
 
-**Derive the set from `OrderStatus.ActiveStates` rather than restating it**, so
-an ib_async upgrade cannot silently narrow it again — with one documented
-subtraction, `ValidationError`, which ib_async counts active but which is not an
-order that can fill. The subtraction is written at the definition with its
-reason, and a test asserts the derived set against `ActiveStates` so a future
-divergence fails the suite instead of passing quietly.
+**The orphan scan derives its set from `OrderStatus.ActiveStates` rather than
+restating it**, so an ib_async upgrade cannot silently narrow it again — with
+one documented subtraction, `ValidationError`, which ib_async counts active but
+which is not an order that can fill. The subtraction is written at the
+definition with its reason, and a test asserts the derived set against
+`ActiveStates` so a future divergence fails the suite instead of passing
+quietly.
 
-> **This also affects existing behaviour.** `from_ib_resting_stop` uses the same
-> set, so a protective stop in `ApiPending` currently reads as no protection at
-> all: `verify_position_stops` drops it from `_position_stops` and logs
-> `POSITION UNPROTECTED` for a position that is in fact protected. That
-> direction is conservative for sizing and merely a false alarm — the opposite
-> of the orphan scan's failure — but it is the same bug, and widening the set
-> fixes both. Expect existing tests around `resting_stop_orders` to speak to
-> this; per M140's lesson, check the fixture before assuming the change is
-> wrong.
+> **The same bug also affects existing behaviour, and is deliberately NOT fixed
+> here.** `from_ib_resting_stop` uses the narrow set, so a protective stop in
+> `ApiPending` currently reads as no protection: `verify_position_stops` drops
+> it from `_position_stops` and logs `POSITION UNPROTECTED` for a position that
+> is in fact protected. That direction is conservative for sizing and merely a
+> false alarm — the opposite of the orphan scan's failure — but it is the same
+> defect.
+>
+> Fixing it moves a sizing input, so per the operator's decision below it is
+> **split out into its own item** and `_IB_WORKING_STATUSES` is left untouched
+> by this change. See *What this changes, and what it does not*.
 
 Verified against the three states that matter:
 
@@ -364,10 +383,26 @@ aggregate falls and the governor may allow an entry it would previously have
 refused. That is correct — the position genuinely was protected — but it is a
 loosening, and a loosening reached by fixing a measurement is still a loosening.
 
-If that is not wanted in the same change, the status widening can be split out
-and shipped on its own with the effect watched, leaving the orphan scan to carry
-its own local status set in the interim. **Operator's call, and the plan should
-keep the two separable.**
+**DECIDED by the operator, 24 August: keep them separable.** The status widening
+is split out and does NOT ship with the orphan scan.
+
+What that means concretely:
+
+* The orphan scan carries its **own** working-status set, derived from
+  `OrderStatus.ActiveStates` minus `ValidationError`, living in the new
+  `resting_orders` module. It is complete from the start, because for the scan
+  an incomplete set fails unsafe.
+* `_IB_WORKING_STATUSES` and `from_ib_resting_stop` are **left exactly as they
+  are**. `verify_position_stops` keeps its current behaviour, `_position_stops`
+  keeps its current contents, and the governor's aggregate does not move.
+* The two sets will therefore **disagree** for the duration, and that is
+  deliberate rather than an oversight. A comment at each definition points at
+  the other and at this decision, so the next reader finds the divergence
+  explained instead of discovering it.
+* The widening becomes its own outstanding item, with its own before-and-after
+  measurement of the governor's aggregate on a watched session.
+
+This keeps the change's headline claim literally true: **no sizing input moves.**
 
 Nothing else moves. No strategy, signal, sizer or gate decides anything
 differently, except that a symbol carrying unjustified resting risk stops
