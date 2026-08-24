@@ -379,7 +379,29 @@ for each gap and is worth reading; the list lives here.
     explicit offsets (`2026-08-24T03:05:01+00:00`), which is correct and
     unambiguous. This is display only.
 
-22. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+22. **The per-order cap keys off CASH; it should key off SPENDABLE cash.**
+    Operator finding, 24 August, agreed and deferred to after the session.
+    M138's cap uses `account.cash`, which ignores `min_cash_reserve` — money the
+    system has already declared unspendable. Fix to
+    `balances.spendable_cash(min_cash_reserve)`, the method the Balances panel
+    already calls, so there is one definition with three readers rather than
+    three definitions.
+
+    **Live numbers:** reserve is **$1,000** (not the $1 default), so 10% of cash
+    is $100,186.52 against 10% of spendable at $100,086.52 — **$100** on a $100k
+    order. Immaterial today, which is not the argument.
+
+    The argument is that the no-leverage rail already computes
+    `spendable = available_cash - min_cash_reserve` (`engine.py:242`) and the
+    panel already shows `spendable_cash(...)`. A cap on raw cash is a THIRD
+    basis for one question — the shape that hurt `trading_date` (one caller of
+    four) and `minimum_hold_status` before it was extracted. And the failure
+    that actually bites is not the $100: as cash approaches the reserve, a cap
+    on raw cash can authorise an order the no-leverage rail then refuses, so one
+    rail permits what another forbids. The reserve exists to be raised; at
+    $50,000 the two diverge properly.
+
+23. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
