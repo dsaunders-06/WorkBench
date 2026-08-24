@@ -70,16 +70,23 @@ REPO = Path(__file__).resolve().parent.parent
 # 01:16 UTC, packaged). Installed exe SHA256-identical to the signed artefact,
 # signature Valid, rollback M134 still in dist/.
 #
-# What is verified for M134: the tree was clean at 2d7777c, `invoke build`
+# What is verified for M141: the tree was clean at 09ab51b, `invoke build`
 # stamped the artefact
-#   Build stamp: M134 (2d7777c, built 21/08/2026 10:00 UTC)
+#   Build stamp: M141 (09ab51b, built 24/08/2026 22:58 UTC)
 # with no `-dirty` marker, `invoke sign` signed and timestamp-verified it, and
 # the exe now at C:\QuantAdvisoryTerminal is SHA256-identical to the one signed
-# in dist\. What is NOT yet verified is the read-back: the app has not been
-# launched since the copy, so no `Build:` line has come off its own log. Until
-# it has, this constant is an intention, not an observation - which is exactly
-# what it was during the M130 deploy.
-DEPLOYED = "e432e1f"
+# in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
+# C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
+#
+# What is NOT yet verified is the read-back: the app has not been launched
+# since the copy, so no `Build:` line has come off its own log. Until it has,
+# this constant is an intention, not an observation - which is exactly what it
+# was during the M130 deploy.
+#
+# Updated in the same minute as the copy, which is the whole of item 29. This
+# line was wrong for a day after M104, across the whole M130 deploy, and for
+# two hours after M139.
+DEPLOYED = "09ab51b"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 

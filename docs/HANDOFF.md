@@ -41,9 +41,9 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M140 (`e432e1f`)**, installed 24 August and read back off its own log. This table said M139 until 24 August evening, four rows stale at once — which is item 29's whole argument |
-| Repository HEAD | Ahead of the deployed build by **M141**, item 23's resting-order reconciliation. `handoff_state.py` derives the gap; do not read a number from here |
-| Deploy gap | **M141 IS WAITING TO DEPLOY.** Committed and pushed, not installed. It adds the orphan scan, its quarantine, and the Risk Console surface to clear one. Nothing in it has yet run against the live account |
+| Deployed build | **M141 (`09ab51b`)**, installed 25 August 09:01. Exe SHA256-identical to the signed artefact, signature Valid. **NOT yet read back off its own log** — the app has not been launched since the copy, so this is an observation of the COPY, not of the running build |
+| Repository HEAD | At or just ahead of the deployed build by the deploy record itself. `handoff_state.py` derives the gap; do not read a number from here |
+| Deploy gap | **None of consequence.** M141 is installed. Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M140-20260825-0901` holds the M140 install intact |
 | Pushed | **Up to date.** M141 pushed 24 August evening. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
 | Suite | **2,666 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
