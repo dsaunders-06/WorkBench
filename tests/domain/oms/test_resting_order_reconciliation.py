@@ -162,10 +162,14 @@ async def test_the_scan_runs_at_startup_before_any_strategy_could_trade(oms_fact
 
 
 def test_the_settings_default_correctly():
-    """Detection on, cancelling off. The second is the one that matters."""
+    """Detection on, cancelling off. The second is the one that matters.
+
+    `_env_file=None` is load-bearing: without it this asserts whatever the
+    operator's real .env says, not the declared defaults.
+    """
     from qat.config import Settings
 
-    settings = Settings()
+    settings = Settings(_env_file=None)  # type: ignore[arg-type]
     assert settings.resting_order_reconcile_enabled is True
     assert settings.resting_order_cancel_enabled is False
 
@@ -186,7 +190,7 @@ async def test_detection_can_be_switched_off(oms_factory, monkeypatch):
 
     oms = oms_factory(_Broker([_order(1)], []))
     monkeypatch.setattr(oms, "check_resting_orders", _scan)
-    monitor = ReconciliationMonitor(oms, settings=Settings(resting_order_reconcile_enabled=False))
+    monitor = ReconciliationMonitor(oms, settings=Settings(_env_file=None, resting_order_reconcile_enabled=False))  # type: ignore[arg-type]
     monkeypatch.setattr(monitor, "_run", _never_run)
     await monitor.start()
     await monitor.stop()
