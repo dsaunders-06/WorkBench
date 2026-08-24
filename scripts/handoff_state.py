@@ -44,6 +44,11 @@ REPO = Path(__file__).resolve().parent.parent
 # M134 was deployed 21 August at 20:05 local, market shut, app stopped, broker
 # flat, ledgers empty, and this line was changed in the same minute as the copy.
 #
+# M137 was deployed 24 August at 11:20, after standing the session down. Read
+# back off its own log at 11:21:43: Build: M137 (8387a6b, built 24/08/2026
+# 01:16 UTC, packaged). Installed exe SHA256-identical to the signed artefact,
+# signature Valid, rollback M134 still in dist/.
+#
 # What is verified for M134: the tree was clean at 2d7777c, `invoke build`
 # stamped the artefact
 #   Build stamp: M134 (2d7777c, built 21/08/2026 10:00 UTC)
@@ -53,7 +58,7 @@ REPO = Path(__file__).resolve().parent.parent
 # launched since the copy, so no `Build:` line has come off its own log. Until
 # it has, this constant is an intention, not an observation - which is exactly
 # what it was during the M130 deploy.
-DEPLOYED = "2d7777c"
+DEPLOYED = "8387a6b"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
