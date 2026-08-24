@@ -397,7 +397,42 @@ from qat.domain.display_dates import format_display_date
 #
 # Verified by reproducing the failure: with the stock handler the same scenario
 # writes 13 lines and silently loses 28; with this one all 40 arrive.
-MILESTONE = "M137"
+#
+# M138 - the per-order notional cap becomes a setting, and TRIMS instead of
+# refusing. ⚠️ THIS CHANGES A TRADING-DECISION INPUT. Signals that were refused
+# will now place smaller orders.
+#
+# `max_order_notional` was a bare default argument on `OMS.__init__` -
+# 50_000.0, no comment, no setting, no manual entry, no measurement. Alone
+# among the risk rails it carried none of its own reasoning, and it is the only
+# one that is a fixed sum rather than a fraction of equity, so it never grew
+# with the account. It and the 15% single-name cap agree at about $333k of
+# equity; above that this one binds first.
+#
+# It bound for the first time on 24 August. The half-Kelly sizer asked for
+# ~12.5% of ~1.0M AUD - about $125k - and the flat $50k refused the first real
+# ASX entry signal this system has ever produced, 48 times in a row, one a
+# minute, for the whole morning window.
+#
+# * BUYS TRIM. A limit that refuses makes the trade disappear; a limit that
+#   trims makes it the size the limit believes in. The concentration cap has
+#   worked this way since M31c. Trimming can only reduce risk - the stop is
+#   per-share and unchanged - and it is logged, because the audit trail keeps
+#   the sizer's untrimmed figure and the two will differ for that order.
+# * EXITS ARE EXEMPT, and this was the more dangerous half. The old code
+#   REFUSED a sell above the cap, so a position larger than the cap could not
+#   be closed by this application at all. A trimmed exit is no better: it leaves
+#   a residual the operator believes is closed. The autonomy gate already draws
+#   this line - risk-reducing orders are not gated on appetite limits.
+#
+# Two things the suite did not catch and reading did. The existing test
+# `test_order_exceeding_max_notional_is_rejected` KEPT PASSING after the
+# change, because its $1 cap cannot cover one share at any price, so it took
+# the residual refusal path rather than the one its name described. And the
+# refusal string it emitted is no longer produced anywhere, while the new one
+# was absent from the taxonomy - which would have classified it as "not
+# recognised" on the Blotter and in the daily report, the M89 defect exactly.
+MILESTONE = "M138"
 
 _UNKNOWN = "unknown"
 

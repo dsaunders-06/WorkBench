@@ -83,7 +83,15 @@ _PATTERNS: tuple[tuple[str, RefusalFamily, str], ...] = (
     # UNCLASSIFIED and rendered as a pseudo-rail named "remaining aggregate risk
     # headroom", splitting one rail across two rows of the same report.
     ("aggregate risk headroom", RefusalFamily.CAPACITY, "Aggregate risk-at-stop cap"),
+    # The per-order cap TRIMS a buy since 24 August 2026 rather than refusing it,
+    # so "notional above the per-order cap" is no longer emitted anywhere. What
+    # survives is the one case a trim cannot rescue: a cap too small to cover a
+    # single share. Left mapped rather than deleted because historical journals
+    # still carry the old wording, and an unrecognised reason in an old report
+    # is the M89 defect - seven refusal messages classified as "not recognised"
+    # because the taxonomy had drifted from the strings actually emitted.
     ("notional above the per-order cap", RefusalFamily.CAPACITY, "Per-order notional cap"),
+    ("does not cover one share", RefusalFamily.CAPACITY, "Per-order notional cap"),
     ("cash", RefusalFamily.CAPACITY, "Cash floor"),
     ("too small to carry its", RefusalFamily.CANDIDATE, "Cost-to-risk (trade too small)"),
     ("round-trip cost", RefusalFamily.CANDIDATE, "Cost-to-risk (trade too small)"),

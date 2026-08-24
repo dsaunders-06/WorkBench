@@ -122,7 +122,7 @@ class OMS:
         broker: BrokerAdapter,
         risk_engine: RiskEngine,
         kill_switch: KillSwitch,
-        max_order_notional: float = 50_000.0,
+        max_order_notional: float | None = None,
         symbol_allow_list: set[str] | None = None,
         entry_allow_list: set[str] | None = None,
         bus: EventBus | None = None,
@@ -151,7 +151,15 @@ class OMS:
         self.journal = journal
         self.risk_engine = risk_engine
         self.kill_switch = kill_switch
-        self.max_order_notional = max_order_notional
+        # From settings unless a caller pins it. It was a bare default argument
+        # of 50_000.0 until 24 August 2026, with no comment and no way to change
+        # it without editing this file - the only risk rail in the system with
+        # no recorded reasoning. `Settings.max_order_notional` now carries both.
+        self.max_order_notional = (
+            max_order_notional
+            if max_order_notional is not None
+            else (settings or Settings()).max_order_notional
+        )
         self.symbol_allow_list = symbol_allow_list
         # Entries only (M61). `symbol_allow_list` above gates exits too, so it
         # cannot be used to narrow what may be OPENED without also making
@@ -350,9 +358,41 @@ class OMS:
                 "a fractional quantity cannot carry a protective bracket",
             )
 
+        # TRIMMED, not refused (operator decision, 24 August 2026). The
+        # concentration cap beside this one has trimmed since M31c for the
+        # reason recorded at that setting - a limit that refuses makes the
+        # trade disappear, a limit that trims makes it the size the limit
+        # believes in. This rail was the last one still saying no rather than
+        # less, and on 24 August it refused the first real ASX entry signal
+        # this system ever produced, 48 times in a row.
+        #
+        # Trimming can only ever REDUCE risk: the stop is per-share and
+        # unchanged, so fewer shares is proportionally less at stake than the
+        # sizer approved. The audit trail keeps the sizer's own figure, so a
+        # trimmed order and its risk decision will legitimately differ - which
+        # is why the trim is logged rather than applied quietly.
         notional = shares * candidate.price
         if notional > self.max_order_notional:
-            return self._new_rejected_order(candidate, shares, "notional above the per-order cap")
+            trimmed = float(int(self.max_order_notional / candidate.price))
+            if trimmed < 1:
+                return self._new_rejected_order(
+                    candidate,
+                    0.0,
+                    f"the per-order cap of {self.max_order_notional:,.0f} does not cover "
+                    f"one share at {candidate.price:,.2f}",
+                )
+            logger.info(
+                "%s trimmed from %g to %g shares by the per-order cap of %.0f: "
+                "notional %.0f -> %.0f. The risk decision in the audit trail keeps "
+                "the sizer's own figure, so the two will differ for this order.",
+                candidate.symbol,
+                shares,
+                trimmed,
+                self.max_order_notional,
+                notional,
+                trimmed * candidate.price,
+            )
+            shares = trimmed
 
         order = self._new_pending_order(
             candidate.symbol,
@@ -421,9 +461,19 @@ class OMS:
         if not decision.approved or decision.final_shares <= 0:
             return self._new_rejected_order_for(symbol, "sell", 0.0)
 
-        notional = decision.final_shares * price
-        if notional > self.max_order_notional:
-            return self._new_rejected_order_for(symbol, "sell", decision.final_shares)
+        # NO per-order cap on an exit, deliberately (24 August 2026).
+        #
+        # This used to refuse a sell above the cap, which meant a position
+        # larger than the cap COULD NOT BE CLOSED BY THIS APPLICATION AT ALL -
+        # and the half-Kelly sizer asks for roughly 12.5% of equity, well above
+        # a fixed $50,000 at this account size. The rail that blocked the entry
+        # would have trapped the position had one ever been opened another way.
+        #
+        # Nor is it trimmed. A trimmed exit leaves a residual the operator
+        # believes is closed, which is worse than either alternative. The
+        # autonomy gate already draws this exact line - "risk-reducing orders
+        # are not gated on appetite limits" - and a notional cap is an appetite
+        # limit. An exit is not an expression of appetite.
 
         order = self._new_pending_order(symbol, "sell", decision.final_shares, price)
         await self._announce_pending(order)

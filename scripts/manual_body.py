@@ -2851,6 +2851,20 @@ def _config_reference(doc: Any) -> None:
                 "has never been held to this bar.",
             ),
             (
+                "QAT_MAX_ORDER_NOTIONAL",
+                "50000",
+                "The most one ORDER may be worth. A buy above it is TRIMMED to fit, not "
+                "refused - the same way the single-name concentration cap has worked since "
+                "M31c. EXITS ARE EXEMPT: a cap that refused a sell meant a position bigger "
+                "than the cap could not be closed at all, and a trimmed sell would leave a "
+                "residual you believe is closed. Note this is the only risk limit that is a "
+                "fixed sum rather than a fraction of equity, so unlike the others it does "
+                "NOT grow with the account - at about $333,000 of equity it matches the 15% "
+                "single-name cap, and above that it binds first. That is deliberate: it is a "
+                "flat backstop against a sizing chain whose win-rate inputs are assumed "
+                "rather than measured until 20 trades have closed.",
+            ),
+            (
                 "QAT_ENTRY_ALLOW_LIST",
                 "(empty)",
                 "Symbols that may be newly ENTERED. Empty means no restriction. Distinct "

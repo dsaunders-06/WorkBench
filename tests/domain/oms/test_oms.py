@@ -105,12 +105,54 @@ async def test_symbol_not_in_allow_list_is_rejected():
 
 
 @pytest.mark.asyncio
-async def test_order_exceeding_max_notional_is_rejected():
+async def test_a_cap_too_small_for_one_share_still_rejects():
+    """The one refusal a trim cannot rescue.
+
+    This test used to be called "exceeding max notional is rejected", and it
+    kept passing after the rail began TRIMMING on 24 August 2026 - but only
+    because a $1 cap cannot cover a single share at any price, so it took the
+    residual refusal path rather than the one its name described. Renamed to
+    what it actually proves.
+    """
     oms, _ = _oms(max_order_notional=1.0, per_trade_risk_pct=0.02)
 
     order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
 
     assert order.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_an_order_over_the_cap_is_trimmed_to_it_not_rejected():
+    """The behaviour change itself, and the reason for it.
+
+    A limit that refuses makes the trade disappear; a limit that trims makes it
+    the size the limit believes in. The single-name cap has trimmed since M31c
+    for exactly this reason, and on 24 August this rail refused the first real
+    ASX entry signal this system ever produced, 48 times in a row, rather than
+    placing a smaller one.
+    """
+    cap = 5_000.0
+    oms, _ = _oms(max_order_notional=cap, per_trade_risk_pct=0.02)
+
+    order = await oms.submit_order(_candidate(), 1_000_000.0, {}, {})
+
+    assert order.status != "rejected", "the cap refused instead of trimming"
+    assert order.quantity >= 1
+    assert order.quantity * _candidate().price <= cap, "the trim did not respect the cap"
+
+
+@pytest.mark.asyncio
+async def test_trimming_only_ever_reduces_the_order():
+    """A trim must not be able to size UP. The stop is per-share and unchanged,
+    so fewer shares is strictly less at stake than the sizer approved - that is
+    what makes trimming safe to do silently to a risk figure."""
+    generous, _ = _oms(max_order_notional=10_000_000.0, per_trade_risk_pct=0.02)
+    tight, _ = _oms(max_order_notional=5_000.0, per_trade_risk_pct=0.02)
+
+    untrimmed = await generous.submit_order(_candidate(), 1_000_000.0, {}, {})
+    trimmed = await tight.submit_order(_candidate(), 1_000_000.0, {}, {})
+
+    assert trimmed.quantity < untrimmed.quantity
 
 
 @pytest.mark.asyncio
