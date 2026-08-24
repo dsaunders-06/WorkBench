@@ -1898,6 +1898,50 @@ class OMS:
                 declared_by="order-reconciler",
                 excess=divergence.excess,
             )
+
+            if not divergence.flat:
+                # Reported and quarantined, never trimmed. Choosing which OCA
+                # group dies on a HELD symbol is a judgement this application
+                # should not make unattended, and getting it wrong strips the
+                # stop from a real long - the failure `verify_position_stops`
+                # exists to shout about.
+                continue
+            if self.settings is None or not self.settings.resting_order_cancel_enabled:
+                # Off by default (M141, item 23). This is the ONLY code path
+                # that acts on the broker rather than just reporting on it, so
+                # it stays inert until an operator has explicitly turned it on
+                # - the 24 August orphans were discovered by a human reading
+                # logs, and cancelling automatically before this flag existed
+                # would have been a different kind of unattended surprise.
+                continue
+            for leg in divergence.legs:
+                try:
+                    await self.broker.cancel_order(leg.order_id)
+                except Exception as exc:  # noqa: BLE001 - one refusal must not stop the rest
+                    # IBKR error 10147's shape exactly: an order visible via
+                    # reqAllOpenOrders can still be UNCANCELLABLE from this
+                    # client connection (e.g. it belongs to another client id
+                    # or TWS session). A raise here must not silently leave
+                    # every leg after this one resting - so it is logged,
+                    # attributed to the owning client, and the loop moves on.
+                    logger.error(
+                        "Orphaned leg %s on %s could not be cancelled (%s). It is visible via "
+                        "reqAllOpenOrders but owned by client %s, which is error 10147's shape: "
+                        "visible is not cancellable. STILL RESTING.",
+                        leg.order_id,
+                        divergence.symbol,
+                        exc,
+                        leg.owner_client_id,
+                    )
+                    continue
+                logger.warning(
+                    "Cancelled orphaned leg %s on %s (%s %s %g) - the book holds none of it",
+                    leg.order_id,
+                    divergence.symbol,
+                    leg.side,
+                    leg.order_type,
+                    leg.quantity,
+                )
         return divergences
 
     def record_unsized_signal(

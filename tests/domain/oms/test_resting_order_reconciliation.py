@@ -195,3 +195,50 @@ async def test_detection_can_be_switched_off(oms_factory, monkeypatch):
     await monitor.start()
     await monitor.stop()
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_cancel_is_off_by_default(oms_factory):
+    broker = _Broker([_order(1), _order(2)], [])
+    await oms_factory(broker).check_resting_orders()
+    assert broker.cancelled == []
+
+
+@pytest.mark.asyncio
+async def test_with_the_flag_on_a_flat_symbol_is_cancelled(oms_factory):
+    broker = _Broker([_order(1), _order(2)], [])
+    oms = oms_factory(broker, cancel_enabled=True)
+    await oms.check_resting_orders()
+    assert broker.cancelled == ["1", "2"]
+
+
+@pytest.mark.asyncio
+async def test_a_HELD_symbol_is_never_cancelled(oms_factory):
+    """Excess on a held name is reported and quarantined, never trimmed.
+    Choosing which OCA group dies strips the stop from a real long."""
+    broker = _Broker(
+        [_order(1, qty=3076.0), _order(2, qty=3076.0), _order(3, qty=3076.0)],
+        [Position(symbol="TNE.AX", quantity=3076.0, avg_price=32.0)],
+    )
+    oms = oms_factory(broker, cancel_enabled=True)
+    found = await oms.check_resting_orders()
+    assert found and found[0].excess > 0
+    assert broker.cancelled == []
+    assert oms.resting_order_anomalies.is_quarantined("TNE.AX")
+
+
+@pytest.mark.asyncio
+async def test_one_refused_cancel_does_not_abort_the_rest(oms_factory, caplog):
+    """Error 10147: visible via reqAllOpenOrders, not cancellable from here."""
+
+    class _Stubborn(_Broker):
+        async def cancel_order(self, order_id):
+            if order_id == "1":
+                raise RuntimeError("Error 10147: order not found from this client")
+            self.cancelled.append(order_id)
+
+    broker = _Stubborn([_order(1), _order(2), _order(3)], [])
+    with caplog.at_level(logging.ERROR):
+        await oms_factory(broker, cancel_enabled=True).check_resting_orders()
+    assert broker.cancelled == ["2", "3"]
+    assert "10147" in caplog.text or "could not be cancelled" in caplog.text
