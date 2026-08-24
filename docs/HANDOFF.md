@@ -342,7 +342,44 @@ for each gap and is worth reading; the list lives here.
     and a narrowed guard is worse than none because its green result is read as
     evidence. Not urgent; genuinely worth doing.
 
-21. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+21. **Screens render stored UTC as if it were local time.** Spotted by the
+    operator on 24 August: an order created at **13:05:01 AEST** shows on the
+    Blotter as **03:05:01**. `Order.created_at` is `datetime.now(UTC)`, which is
+    right for storage, and `blotter.py:332` formats it with no conversion —
+    `f"{format_display_date(order.created_at)} {order.created_at:%H:%M:%S}"`.
+
+    **Why it bites here specifically.** The Blotter is where a human decides
+    whether to sign an order, and that decision turns on how stale it is. 03:05
+    is a plausible-looking time rather than an obviously broken one, so it reads
+    as a ten-hour-old order rather than a ten-minute-old one. Same family as
+    M111/M120, where a UTC date silently stood in for an exchange date.
+
+    It is also **inconsistent with the date beside it**: `format_display_date`
+    renders that in Australian convention, so the row pairs a locally-formatted
+    date with a UTC time, which implies the time is local too.
+
+    **Swept 24 August — the layer is inconsistent, not uniformly wrong:**
+
+    | Site | State |
+    |---|---|
+    | `blotter.py:332` (`created_at`) | **WRONG** — UTC, unlabelled |
+    | `performance.py:434` (`trade.closed_at`) | **WRONG** — UTC, unlabelled; will misreport the first closed trade |
+    | `regime_monitor.py:300` | honest — labelled `UTC` |
+    | `risk_console.py:341` | honest — labelled `UTC` |
+    | `session_panel.py:135` | correct — `session_for` already returns exchange-local |
+
+    **Fix toward the EXCHANGE timezone** (`market_calendar.MARKET_TIMEZONES`),
+    not the machine's local time: everything else in this application keys on
+    the exchange, and the box happening to sit in Sydney is not a thing to rely
+    on. Nothing currently forces the conversion at any call site, which is why
+    two of five drifted — a helper that returns exchange-local formatted time
+    would make the right thing the easy thing.
+
+    **Not affected:** the log, journal and audit trail all store UTC with
+    explicit offsets (`2026-08-24T03:05:01+00:00`), which is correct and
+    unambiguous. This is display only.
+
+22. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
