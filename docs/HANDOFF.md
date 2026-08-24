@@ -44,7 +44,7 @@ source.
 | Deployed build | **M134 (`2d7777c`)**, installed 21 August 20:05 and read back off its own log |
 | Repository HEAD | Past M134 — evening work of 21 August is **M135**, uncommitted to any build |
 | Deploy gap | **M135.** UI, news and design-system only; **no trading-decision input changed**. Not urgent, and see the warning below about deploying before Monday |
-| Pushed | **Nothing since `14dc257`** — Actions minutes exhausted until September. The count is deliberately not written here; `handoff_state.py` derives it (`vs origin ... [ahead N]`), and a hardcoded one was stale within the hour on 21 August |
+| Pushed | **Up to date as of 24 August.** 43 commits pushed at 13:07 and CI went **green** in 3m57s. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
 | Suite | **2,528 passed, 25 skipped.** ruff, black and mypy clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
@@ -316,14 +316,33 @@ for each gap and is worth reading; the list lives here.
     the trading system. A recommendation that follows the live strategy's rules
     sits closer to that line, not further from it.
 
-18. **Sweep the other guards for the same blindness.** M135 found the colour
+18. **The Dashboard's "Review & Apply" button applies nothing.** Its handler is
+    one line — `self.review_button.setText("Reviewed ✓")`. Nothing else in
+    `src` or `tests` references it. The inertness toward TRADING is deliberate
+    and right (spec §K, "Review & Apply, never auto-apply"), but the label
+    promises an action, and the acknowledgement is not journalled, not logged
+    and not persisted — so it cannot even serve as evidence a human saw a
+    regime change before a trade, and it resets on the next `RegimeEvent`.
+    Either rename it to what it is, or record the acknowledgement with the
+    regime label and a timestamp. Same family as M73's framing that existed
+    only in a docstring and M105's connection test that returned a tick
+    regardless.
+
+19. **Is the CI-goes-red-before-2200-AEST rule real?** Recorded as fact in this
+    file and in a saved memory. On 24 August CI ran at **13:07 AEST and passed**
+    — one clean counter-example. Either a time-dependent test was fixed
+    somewhere in the 43 pushed commits, or the rule was never as deterministic
+    as recorded. Worth one deliberate daytime push to settle rather than
+    carrying forward.
+
+20. **Sweep the other guards for the same blindness.** M135 found the colour
     guard reading every f-string as empty since the 3.12 upgrade, hiding a live
     violation while reporting none. Any pattern- or `tokenize`-based guard in
     this codebase written before that upgrade could have narrowed the same way,
     and a narrowed guard is worse than none because its green result is read as
     evidence. Not urgent; genuinely worth doing.
 
-19. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+21. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
@@ -417,9 +436,22 @@ so it neither confirms nor contradicts any of it.
 ## Standing constraints
 
 * **PowerShell for `%LOCALAPPDATA%`** — see the top of this file.
-* **Do not push until September.** Actions minutes are spent, so **the local
-  suite is the only gate**: run it in full and read the actual summary line,
-  never a piped tail.
+* ~~**Do not push until September.**~~ **TESTED AND FALSE, 24 August.** 43
+  held-back commits were pushed at 13:07 and CI completed **green in 3m57s** on
+  `windows-latest`. Push normally; run the local suite in full anyway and read
+  the actual summary line, never a piped tail.
+
+  **The rule was also the wrong SHAPE, which is the part worth keeping.** A
+  push costs no Actions minutes — only the workflow it triggers does. So even
+  had the minutes genuinely been spent, the push would have succeeded and CI
+  would simply not have run. "Do not push" could never have been the right
+  instruction; "expect CI not to run" would have been. One push of 43 commits
+  is ONE workflow run, not 43.
+
+  Two documented constraints and two saved memories were contradicted by
+  running the thing rather than reading about it. They had been copied forward
+  from document to document since 21 August without anyone testing them — the
+  same failure the account-currency retraction and the UI colour counts were.
 * **Formats with `black`, not `ruff format`.** They agree on nearly everything
   and diverged on exactly one file on 21 August. `black --check .` before
   committing. `invoke lint` shells out to a `ruff` that is not on PATH — run the
@@ -486,10 +518,10 @@ including Python that only READS it, and including anything that builds
 Settings(), which loads that directory's .env whether or not the script
 mentions it. The Bash sandbox serves a frozen July snapshot and does NOT error.
 
-⚠️ DO NOT PUSH. GitHub Actions minutes are exhausted until September. 16
-commits sit unpushed on master and the local suite is the ONLY gate: run it in
-full and read the summary line, never a piped tail. Lint with ruff, format with
-BLACK (they diverged on one file on 21 August).
+PUSH NORMALLY. The "Actions minutes exhausted until September" rule was tested
+on 24 August and is FALSE - 43 commits pushed, CI green in 3m57s. Run the local
+suite in full anyway and read the summary line, never a piped tail. Lint with
+ruff, format with BLACK (they diverged on one file on 21 August).
 
 ⚠️ THE FIRST LAUNCH MUST BE READ BACK. M134 was built clean, signed and
 installed at 20:05 on 21 August, but the app has NOT been launched on it. The
