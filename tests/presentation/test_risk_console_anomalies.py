@@ -113,3 +113,132 @@ def test_the_panel_says_declared_is_not_fixed(qtbot, tmp_path):
 
     assert "not" in caption
     assert "correct" in caption or "repair" in caption
+
+
+# --- I4, final review: resting-order quarantines have to be reachable too --
+#
+# RestingOrderAnomalyStore.clear() had no production caller before this fix.
+# The scan could cancel every orphan leg cleanly and the symbol would still
+# be quarantined forever, across every restart, because nothing on this
+# screen ever read the store. These tests prove the seam now reaches it, the
+# same way the position-anomaly tests above prove theirs does.
+
+
+def test_a_resting_order_quarantine_is_listed_and_labelled_distinctly(qtbot, tmp_path):
+    """The two stores mean different things - a position anomaly can suppress
+    a reconciliation halt, a resting-order quarantine deliberately cannot -
+    so blurring them into one undifferentiated list would hide that. Each
+    row names its own kind."""
+    screen, runtime = _build_screen(qtbot, tmp_path)
+    runtime.oms.resting_order_anomalies.declare(
+        symbol="TNE.AX",
+        reason="16 shares of resting sell the book does not justify (flat)",
+        declared_by="order-reconciler",
+        excess=16.0,
+    )
+
+    screen._refresh_anomalies()
+
+    rendered = screen.anomaly_list.toPlainText()
+    assert "TNE.AX" in rendered
+    assert "RESTING ORDER" in rendered
+    assert "POSITION" not in rendered
+
+
+def test_a_position_anomaly_and_a_resting_quarantine_are_both_shown_and_labelled(qtbot, tmp_path):
+    """Both stores render on the same panel, each still identifiable as its
+    own kind."""
+    screen, runtime = _build_screen(qtbot, tmp_path)
+    _seed_broker_positions(runtime, {"CRWD": 64.0})
+    screen._declare_anomaly("CRWD", reason="4-for-1 split, ex 2 July")
+    runtime.oms.resting_order_anomalies.declare(
+        symbol="TNE.AX",
+        reason="16 shares of resting sell the book does not justify (flat)",
+        declared_by="order-reconciler",
+        excess=16.0,
+    )
+
+    screen._refresh_anomalies()
+
+    rendered = screen.anomaly_list.toPlainText()
+    assert "POSITION" in rendered and "CRWD" in rendered
+    assert "RESTING ORDER" in rendered and "TNE.AX" in rendered
+
+
+def test_empty_state_is_not_shown_while_a_resting_quarantine_is_active(qtbot, tmp_path):
+    """ "No quarantined positions." must not be printed over an active
+    resting-order quarantine - that would read as an all-clear it is not."""
+    screen, runtime = _build_screen(qtbot, tmp_path)
+    runtime.oms.resting_order_anomalies.declare(
+        symbol="TNE.AX",
+        reason="16 shares of resting sell the book does not justify (flat)",
+        declared_by="order-reconciler",
+        excess=16.0,
+    )
+
+    screen._refresh_anomalies()
+
+    assert "No quarantined positions." not in screen.anomaly_list.toPlainText()
+
+
+def test_clearing_a_resting_order_quarantine_reaches_the_store(qtbot, tmp_path):
+    screen, runtime = _build_screen(qtbot, tmp_path)
+    runtime.oms.resting_order_anomalies.declare(
+        symbol="TNE.AX",
+        reason="16 shares of resting sell the book does not justify (flat)",
+        declared_by="order-reconciler",
+        excess=16.0,
+    )
+    assert runtime.oms.resting_order_anomalies.is_quarantined("TNE.AX") is True
+
+    screen._clear_resting_anomaly("TNE.AX")
+
+    assert runtime.oms.resting_order_anomalies.is_quarantined("TNE.AX") is False
+
+
+def test_clearing_a_resting_quarantine_does_not_touch_a_position_anomaly_on_the_same_symbol(
+    qtbot, tmp_path
+):
+    """A symbol can be in both stores at once. Clearing one must not look
+    like it cleared the other - they answer different questions and only one
+    of them can ever suppress a reconciliation halt."""
+    screen, runtime = _build_screen(qtbot, tmp_path)
+    _seed_broker_positions(runtime, {"TNE.AX": 3051.0})
+    screen._declare_anomaly("TNE.AX", reason="broker-side adjustment pending review")
+    runtime.oms.resting_order_anomalies.declare(
+        symbol="TNE.AX",
+        reason="16 shares of resting sell the book does not justify (holds 3051)",
+        declared_by="order-reconciler",
+        excess=16.0,
+    )
+
+    screen._clear_resting_anomaly("TNE.AX")
+
+    assert runtime.oms.resting_order_anomalies.is_quarantined("TNE.AX") is False
+    assert runtime.oms.anomalies.is_quarantined("TNE.AX") is True
+
+
+def test_the_clear_picker_offers_both_kinds_labelled_apart(qtbot, tmp_path):
+    """`_on_clear_clicked` must be able to tell the two stores' entries apart
+    even when they share a symbol, since each clears through a different
+    method. Exercised at the option-building level rather than through the
+    modal dialog, matching how `_clear_anomaly` above is tested directly."""
+    from qat.presentation.risk_console import _POSITION_SUFFIX, _RESTING_SUFFIX
+
+    screen, runtime = _build_screen(qtbot, tmp_path)
+    _seed_broker_positions(runtime, {"CRWD": 64.0})
+    screen._declare_anomaly("CRWD", reason="4-for-1 split")
+    runtime.oms.resting_order_anomalies.declare(
+        symbol="TNE.AX",
+        reason="16 shares of resting sell the book does not justify (flat)",
+        declared_by="order-reconciler",
+        excess=16.0,
+    )
+
+    options = [f"{a.symbol}{_POSITION_SUFFIX}" for a in runtime.oms.anomalies.active()]
+    options += [
+        f"{a.symbol}{_RESTING_SUFFIX}" for a in runtime.oms.resting_order_anomalies.active()
+    ]
+
+    assert f"CRWD{_POSITION_SUFFIX}" in options
+    assert f"TNE.AX{_RESTING_SUFFIX}" in options

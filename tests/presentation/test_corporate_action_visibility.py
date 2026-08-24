@@ -272,7 +272,7 @@ def test_the_corporate_action_line_is_above_the_quarantine_section(qtbot):
         layout.itemAt(i).widget()
         for i in range(layout.count())
         if isinstance(layout.itemAt(i).widget(), type(screen.anomaly_caption))
-        and layout.itemAt(i).widget().text() == "Quarantined positions"
+        and layout.itemAt(i).widget().text() == "Quarantined positions & resting-order flags"
     )
 
     assert index_of(screen.corporate_action_label) < index_of(quarantine_header)

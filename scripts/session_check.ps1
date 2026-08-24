@@ -304,14 +304,43 @@ $unprot = @($rows | Where-Object { $_.message -cmatch 'POSITION UNPROTECTED' })
 Write-Output ("4 unprot   POSITION UNPROTECTED x{0}" -f $unprot.Count)
 # OMS.check_resting_orders() (M141, item 23) nets each one-cancels-all group and
 # compares the net to the position; a leg the book cannot justify logs ERROR
-# with the prefix RESTING ORDER ORPHAN and is quarantined - cancelled only if
+# with the prefix RESTING ORDER ORPHAN, one line per (symbol, side) divergence
+# - NOT one per leg - and is quarantined; cancelled only if
 # resting_order_cancel_enabled is set, and then only on symbols the book is
 # FLAT in. On 24 August a FLAT symbol carried up to 12,304 shares of automatic
 # short risk in sixteen orphaned GTC bracket legs, and nothing was watching.
-# Same shape as checks 2 and 4: count the ERROR line, print it plain - the
-# detail lives in ERRORS AND HALTS below.
-$orphans = @($rows | Where-Object { $_.message -cmatch 'RESTING ORDER ORPHAN' })
-Write-Output ("5 orphans  RESTING ORDER ORPHAN x{0}" -f $orphans.Count)
+#
+# THREE outcomes, not two (M8 / I2, final review), same shape as check 3.
+#
+# M8: a naive "x{0}" of the ERROR-line count reads as a leg count and is not
+# one - 24 August's sixteen orphaned legs on ONE symbol would have printed
+# "x1", understating the incident by 16x. Both numbers are shown: how many
+# (symbol, side) divergences, and how many legs those divergences actually
+# name - counted from "(client " markers in `SymbolOrderDivergence.describe()`,
+# one per leg, rather than re-deriving a leg count from the CSV/log by a
+# second route that could disagree with the ERROR line's own text.
+#
+# I2: the scan now emits an unconditional `RESTING ORDER SCAN:` heartbeat on
+# EVERY poll, clean or not (OMS.check_resting_orders). Before that fix, "ran
+# and found nothing" and "never ran at all" were byte-identical silence, and
+# this check could not tell them apart - it counted an ERROR line that a scan
+# which never ran cannot produce, so a broker with no open_orders(), the scan
+# disabled by settings, or the reconciliation engine failing to start all
+# reported the same reassuring zero as a genuinely clean night. The heartbeat
+# is the proof the scan ran; its absence is now its own alarm, mirroring
+# check 3's "*** NO ADOPTION LINE IN THIS RUN ***" below.
+$orphanLines = @($rows | Where-Object { $_.message -cmatch 'RESTING ORDER ORPHAN' })
+$scanRan = @($rows | Where-Object { $_.message -cmatch '^RESTING ORDER SCAN:' }).Count -gt 0
+if ($orphanLines.Count -gt 0) {
+    $legCount = 0
+    foreach ($o in $orphanLines) { $legCount += ([regex]::Matches($o.message, '\(client ')).Count }
+    Write-Output ("5 orphans  *** RESTING ORDER ORPHAN x{0} divergence(s), {1} leg(s) named ***" `
+        -f $orphanLines.Count, $legCount)
+} elseif ($scanRan) {
+    Write-Output '5 orphans  RESTING ORDER SCAN ran, clean - 0 divergences'
+} else {
+    Write-Output '5 orphans  *** THE RESTING-ORDER SCAN DID NOT RUN *** resting orders are unverified'
+}
 
 # --- failures --------------------------------------------------------------
 Write-Section 'ERRORS AND HALTS'

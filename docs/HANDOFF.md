@@ -509,6 +509,17 @@ for each gap and is worth reading; the list lives here.
     working-status widening this needed is split out as its own item (31,
     below)** by decision, because widening the shared set moves
     `_position_stops`, a sizing input.
+    ⚠️ **Cancelling stays OFF until the TOCTOU fix has been WATCHED, not just
+    landed.** `resting_order_cancel_enabled` re-reads positions immediately
+    before the cancel loop and abandons a symbol that is no longer flat,
+    checked against both the broker's fresh answer and this app's own tracked
+    fills (Task 7b, final review) — that fix IS in as of this pass, closing the
+    gap where a leg filling mid-loop could leave a real short while the loop
+    cancelled its OCA sibling. What is not yet true is that anyone has watched
+    it fire against a live broker. The first live exercise of this rail —
+    turning `resting_order_cancel_enabled` on for real — should be a session
+    the operator is watching, the same rule item 28 applies to resetting the
+    kill switch.
     Original: M139 stops duplicates being
     created; it does nothing about the sixteen orphaned GTC bracket legs an
     interrupted session left at the broker on 24 August, with the application
@@ -792,12 +803,15 @@ Windows run.
 
 THE STATE
 
-  Deployed M139 (f2d0278), verified in production. HEAD is ahead of it by the
-  day's fixes and documentation.
+  Deployed M140 (e432e1f), verified in production - read back off its own log
+  24 August. HEAD is ahead of it by item 23's fix (M141) and the final-review
+  fixes on top of that.
   THE ACCOUNT IS NOT FLAT: it holds TNE.AX 3,051 @ 32.9783, bracketed at 30.69
   and 36.86, carried overnight deliberately. That position is real and correct.
-  THE KILL SWITCH IS TRIPPED, correctly, and MUST STAY tripped until the absorb
-  watermark defect is fixed. Resetting it first re-corrupts the ledger.
+  THE KILL SWITCH IS TRIPPED, correctly. Item 27 (the absorb-watermark defect)
+  is now FIXED (M140), so it is SAFE TO RESET - but only on a launch you are
+  WATCHING (item 28), because the mismatch it caught came from a replay whose
+  first pass now warns rather than being silent.
   closed_trades.csv is back to 0 rows after seven fabricated trades were
   removed. risk_decisions.csv holds 49 real decisions.
 
@@ -808,19 +822,27 @@ WHAT 24 AUGUST ESTABLISHED
   dead across a restart. M138 made the per-order cap a share of CASH that trims
   rather than refuses. M139 stopped an order being transmitted four times.
 
-  Three defects, all in the order path, none caught by any test. One remains.
+  Three defects, all in the order path, none caught by any test. All three are
+  now fixed - M140 closed the last one, the absorb-watermark replay (item 27).
 
 FIRST WORK, IN ORDER
 
-  1. Item 23 - nothing reconciles RESTING ORDERS. A flat TNE carried 12,304
-     shares of automatic short risk on 24 August and nothing was watching. This
-     is now the highest-value item; item 27 was fixed in M140.
+  1. Item 23 is DONE (M141) - OMS.check_resting_orders() reconciles resting
+     orders against the book and quarantines what it cannot justify. Read the
+     final-review fixes before touching it further: cancelling
+     (resting_order_cancel_enabled) stays OFF until its TOCTOU guard (Task 7b,
+     already landed) has been WATCHED against a live broker, not just shipped -
+     its first live exercise should be a session you are watching.
   2. Item 24 - bound total exposure per NAME at transmission time. The
      per-order cap worked perfectly four times over; that is the whole problem.
-  3. Item 25 - preflight's broker view is client-scoped and cannot see orders
-     this app did not place in this session, including its own from the last one.
-  4. Then reset the kill switch and run a session you are WATCHING. M140 must be
-     deployed first - it is committed and NOT yet installed.
+  3. Item 25 - preflight's broker view was never the defect (corrected premise;
+     it already routes through reqAllOpenOrdersAsync). The defect is that
+     `unprotected` is built by walking HELD positions only, so a resting stop
+     on a symbol the book does NOT hold - item 23's own orphan shape - is
+     invisible to preflight. That question is now check_resting_orders's, and
+     preflight should say so rather than imply coverage it does not have.
+  4. Then reset the kill switch on a session you are WATCHING (see THE STATE
+     above) - nothing is blocking this except watching it happen.
 
 TWO HABITS THAT PAID FOR THEMSELVES ON 24 AUGUST
 

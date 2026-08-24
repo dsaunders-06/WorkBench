@@ -43,6 +43,14 @@ _ACTIVE_STYLE = theme.banner(theme.SUCCESS)
 
 _OPERATOR = "operator (risk console)"
 
+# Suffixes distinguishing the two quarantine stores in the "Clear a
+# quarantine..." picker (I4, final review). A symbol can be quarantined in
+# BOTH at once, and each clears independently through a different method -
+# see `_on_clear_clicked` - so a bare symbol list could not say which store
+# an operator meant to clear.
+_POSITION_SUFFIX = "  (position anomaly)"
+_RESTING_SUFFIX = "  (resting-order quarantine)"
+
 logger = logging.getLogger(__name__)
 
 
@@ -170,11 +178,13 @@ class RiskConsoleScreen(QWidget):
         layout.addWidget(self.corporate_action_label)
         self._refresh_corporate_actions()
 
-        layout.addWidget(QLabel("Quarantined positions"))
+        layout.addWidget(QLabel("Quarantined positions & resting-order flags"))
         self.anomaly_caption = QLabel(
             "A declared anomaly explains a difference so the session is not halted. It does "
             "NOT correct the quantity, the entry record, the resting protection or the "
-            "ledger - that is still manual."
+            "ledger - that is still manual. A RESTING ORDER quarantine below is a different "
+            "thing: it flags orders the book cannot justify and does NOT suppress a "
+            "reconciliation halt (M141, item 23)."
         )
         self.anomaly_caption.setWordWrap(True)
         layout.addWidget(self.anomaly_caption)
@@ -330,18 +340,37 @@ class RiskConsoleScreen(QWidget):
         )
 
     def _refresh_anomalies(self) -> None:
-        active = self.runtime.oms.anomalies.active()
-        if not active:
+        """Renders both quarantine stores, clearly labelled apart (I4, final
+        review).
+
+        `PositionAnomalyStore.explains()` can suppress a reconciliation halt;
+        `RestingOrderAnomalyStore` deliberately has no such method and cannot
+        (see its own docstring). Blurring the two into one undifferentiated
+        list would make that distinction invisible on the one screen an
+        operator actually reads it from, so every row names its own kind.
+
+        Before this fix the panel read only `oms.anomalies` - a resting-order
+        quarantine had no screen, no button and no way to tell an operator it
+        existed, so a symbol that got cancelled clean stayed quarantined
+        forever with nothing visible anywhere.
+        """
+        positions = self.runtime.oms.anomalies.active()
+        resting = self.runtime.oms.resting_order_anomalies.active()
+        if not positions and not resting:
             self.anomaly_list.setPlainText("No quarantined positions.")
             return
-        self.anomaly_list.setPlainText(
-            "\n".join(
-                f"{a.symbol}  tracked={a.tracked_quantity:g} broker={a.broker_quantity:g}  "
-                f"{a.reason}  (declared by {a.declared_by}, "
-                f"{format_display_date(a.declared_at)} {a.declared_at:%H:%M} UTC)"
-                for a in active
-            )
-        )
+        lines = [
+            f"POSITION  {a.symbol}  tracked={a.tracked_quantity:g} broker={a.broker_quantity:g}  "
+            f"{a.reason}  (declared by {a.declared_by}, "
+            f"{format_display_date(a.declared_at)} {a.declared_at:%H:%M} UTC)"
+            for a in positions
+        ] + [
+            f"RESTING ORDER  {a.symbol}  {a.excess:g} share(s) unjustified  "
+            f"{a.reason}  (declared by {a.declared_by}, "
+            f"{format_display_date(a.declared_at)} {a.declared_at:%H:%M} UTC)"
+            for a in resting
+        ]
+        self.anomaly_list.setPlainText("\n".join(lines))
 
     def _declare_anomaly(self, symbol: str, reason: str) -> None:
         """Binds the declaration to what the broker reports right now.
@@ -382,6 +411,21 @@ class RiskConsoleScreen(QWidget):
         self.runtime.oms.anomalies.clear(symbol, operator=_OPERATOR)
         self._refresh_anomalies()
 
+    def _clear_resting_anomaly(self, symbol: str) -> None:
+        """Clears a resting-order quarantine (I4, final review).
+
+        `RestingOrderAnomalyStore.clear()` had no production caller at all
+        before this: cancelling could resolve every leg cleanly and the
+        symbol would stay quarantined forever, across every restart, with no
+        screen and no button pointing at the file that held it. Kept as its
+        own method rather than folded into `_clear_anomaly` above, because a
+        symbol can be quarantined in BOTH stores at once and each has to be
+        clearable independently - clearing one must never look like it
+        cleared the other.
+        """
+        self.runtime.oms.resting_order_anomalies.clear(symbol, operator=_OPERATOR)
+        self._refresh_anomalies()
+
     def _on_declare_clicked(self) -> None:
         symbol, ok = QInputDialog.getText(self, "Declare explained", "Symbol:")
         if not ok or not symbol.strip():
@@ -396,13 +440,28 @@ class RiskConsoleScreen(QWidget):
         self._declare_anomaly(symbol.strip().upper(), reason.strip())
 
     def _on_clear_clicked(self) -> None:
-        active = [a.symbol for a in self.runtime.oms.anomalies.active()]
-        if not active:
+        """Offers both stores (I4, final review).
+
+        Suffixed rather than a bare symbol list, because a symbol can carry
+        BOTH kinds of quarantine at once and they clear independently through
+        different methods below - a plain symbol picker could not say which
+        one the operator meant, and picking wrong would leave the other kind
+        silently still in force.
+        """
+        options = [f"{a.symbol}{_POSITION_SUFFIX}" for a in self.runtime.oms.anomalies.active()]
+        options += [
+            f"{a.symbol}{_RESTING_SUFFIX}"
+            for a in self.runtime.oms.resting_order_anomalies.active()
+        ]
+        if not options:
             return
-        symbol, ok = QInputDialog.getItem(self, "Clear quarantine", "Symbol:", active, 0, False)
-        if not ok or not symbol:
+        choice, ok = QInputDialog.getItem(self, "Clear quarantine", "Symbol:", options, 0, False)
+        if not ok or not choice:
             return
-        self._clear_anomaly(symbol)
+        if choice.endswith(_RESTING_SUFFIX):
+            self._clear_resting_anomaly(choice[: -len(_RESTING_SUFFIX)])
+        else:
+            self._clear_anomaly(choice[: -len(_POSITION_SUFFIX)])
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
         """Only buffers the price - recomputing correlations here would run
