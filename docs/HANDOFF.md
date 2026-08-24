@@ -41,7 +41,7 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M141 (`09ab51b`)**, installed 25 August 09:01. Exe SHA256-identical to the signed artefact, signature Valid. **NOT yet read back off its own log** — the app has not been launched since the copy, so this is an observation of the COPY, not of the running build |
+| Deployed build | **M141 (`09ab51b`)**, installed 25 August 09:01. Exe SHA256-identical to the signed artefact, signature Valid. **Read back off its own log 09:09 25 August** — `Build: M141 (09ab51b, built 24/08/2026 22:58 UTC, packaged)`. The startup scan ran in the same launch: `RESTING ORDER SCAN: 2 working leg(s) across 1 symbol(s), nothing unjustified` — both legs of TNE's live bracket seen and correctly not flagged |
 | Repository HEAD | At or just ahead of the deployed build by the deploy record itself. `handoff_state.py` derives the gap; do not read a number from here |
 | Deploy gap | **None of consequence.** M141 is installed. Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M140-20260825-0901` holds the M140 install intact |
 | Pushed | **Up to date.** M141 pushed 24 August evening. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |

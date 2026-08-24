@@ -78,10 +78,21 @@ REPO = Path(__file__).resolve().parent.parent
 # in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
 # C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
 #
-# What is NOT yet verified is the read-back: the app has not been launched
-# since the copy, so no `Build:` line has come off its own log. Until it has,
-# this constant is an intention, not an observation - which is exactly what it
-# was during the M130 deploy.
+# READ BACK OFF ITS OWN LOG at 09:09 on 25 August, so this is an OBSERVATION
+# and not an intention:
+#   Build: M141 (09ab51b, built 24/08/2026 22:58 UTC, packaged)
+#
+# And the rail it carries was verified in the same run, which matters more:
+#   RESTING ORDER SCAN: 2 working leg(s) across 1 symbol(s), nothing unjustified
+# TWO legs, not one. It saw both halves of TNE.AX's live bracket - stop 30.69
+# AND target 36.86 - netted them as one-cancels-all, and correctly declined to
+# flag 6,102 resting sell against a 3,051 long. `from_ib_resting_stop` can only
+# ever see ONE of those, because it drops LIMIT orders by type; the take-profit
+# leg was invisible to this application until this run, and eight of the sixteen
+# orphans on 24 August were exactly that kind.
+#
+# The leg COUNT is why this is evidence. "0 divergences" is what a blind scan
+# prints too.
 #
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
