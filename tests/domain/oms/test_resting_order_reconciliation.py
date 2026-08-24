@@ -190,7 +190,10 @@ async def test_detection_can_be_switched_off(oms_factory, monkeypatch):
 
     oms = oms_factory(_Broker([_order(1)], []))
     monkeypatch.setattr(oms, "check_resting_orders", _scan)
-    monitor = ReconciliationMonitor(oms, settings=Settings(_env_file=None, resting_order_reconcile_enabled=False))  # type: ignore[arg-type]
+    settings = Settings(  # type: ignore[arg-type]
+        _env_file=None, resting_order_reconcile_enabled=False
+    )
+    monitor = ReconciliationMonitor(oms, settings=settings)
     monkeypatch.setattr(monitor, "_run", _never_run)
     await monitor.start()
     await monitor.stop()
