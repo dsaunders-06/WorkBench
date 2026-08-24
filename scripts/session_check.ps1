@@ -208,8 +208,8 @@ if ($standDown) {
 $build = $rows | Where-Object { $_.message -cmatch '^Build:' } | Select-Object -Last 1
 if ($build) { Write-Output ("build       {0}" -f $build.message) }
 
-# --- the four bell checks --------------------------------------------------
-Write-Section 'THE FOUR CHECKS'
+# --- the five bell checks ---------------------------------------------------
+Write-Section 'THE FIVE CHECKS'
 # FOUR outcomes, not two, and the difference is process lifetime versus session.
 #
 # `REGIME x -> y` is logged ONLY WHEN THE LABEL CHANGES (regime_engine/engine.py
@@ -302,6 +302,16 @@ if ($stops) {
 }
 $unprot = @($rows | Where-Object { $_.message -cmatch 'POSITION UNPROTECTED' })
 Write-Output ("4 unprot   POSITION UNPROTECTED x{0}" -f $unprot.Count)
+# OMS.check_resting_orders() (M141, item 23) nets each one-cancels-all group and
+# compares the net to the position; a leg the book cannot justify logs ERROR
+# with the prefix RESTING ORDER ORPHAN and is quarantined - cancelled only if
+# resting_order_cancel_enabled is set, and then only on symbols the book is
+# FLAT in. On 24 August a FLAT symbol carried up to 12,304 shares of automatic
+# short risk in sixteen orphaned GTC bracket legs, and nothing was watching.
+# Same shape as checks 2 and 4: count the ERROR line, print it plain - the
+# detail lives in ERRORS AND HALTS below.
+$orphans = @($rows | Where-Object { $_.message -cmatch 'RESTING ORDER ORPHAN' })
+Write-Output ("5 orphans  RESTING ORDER ORPHAN x{0}" -f $orphans.Count)
 
 # --- failures --------------------------------------------------------------
 Write-Section 'ERRORS AND HALTS'

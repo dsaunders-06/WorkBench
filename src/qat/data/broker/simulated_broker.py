@@ -33,6 +33,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    RestingOrder,
     RestingStopOrder,
 )
 from qat.domain.backtester.costs import CostModel
@@ -224,6 +225,14 @@ class SimulatedBroker:
             for f in self._broker_fills
             if f.filled_at > since and (wanted is None or f.symbol in wanted)
         ]
+
+    async def open_orders(self) -> list[RestingOrder]:
+        """Nothing of this broker's own ever rests unfilled (M141, item 23):
+        entries fill at the next bar's open and protective stops are executed
+        against the bar, not left resting as real orders. An empty list here is
+        exact, not a stand-in for "unknown" - `check_resting_orders` reads it
+        the same way it reads a real broker with nothing open."""
+        return []
 
     async def announcements(self, symbol: str, since: date, until: date) -> list[Announcement]:
         return [

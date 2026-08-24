@@ -521,7 +521,63 @@ from qat.domain.display_dates import format_display_date
 #
 # Also: a restored watermark more than two hours old now WARNS. The replay was
 # never the defect - the silence about its width was.
-MILESTONE = "M140"
+#
+# M141 - orders resting at the broker that the book cannot justify. Closes
+# item 23, the last of 24 August's order-path defects still without a rail.
+#
+# On 24 August an interrupted session left sixteen orphaned GTC bracket legs
+# resting against a FLAT TNE.AX - up to 12,304 shares of automatic short risk
+# that buying power would not have refused, and nothing was watching for it.
+# Every existing order-side check asked "is what I believe still there";
+# none asked "what is there that I do not believe in". `OMS.check_resting_
+# orders()` is the second question: it scans `broker.open_orders()`, nets
+# each one-cancels-all group, compares the net against the position, and
+# logs every unjustified leg at ERROR with the prefix `RESTING ORDER
+# ORPHAN:`.
+#
+# ARITHMETIC, NOT IDENTITY. Order identity does not survive a restart -
+# `_broker_order_ids` and `_orders` are in-memory and empty afterwards
+# (version.py:501, M140's finding) - so "did this app place it" answers no
+# for every order that matters, including the 24 August orphans themselves,
+# which were inherited across a restart. The only durable question is
+# whether the BOOK justifies what is resting, not who placed it.
+#
+# OCA GROUPS NET, NEVER SUM. The live book holds 3,051 TNE.AX bracketed with
+# a stop for 3,051 AND a target for 3,051 - 6,102 shares of resting sell
+# against a 3,051 long. Only one leg can ever fire. A rule that summed would
+# flag the only position this system has ever placed correctly, on its own
+# working stop, which is the most damaging possible false positive.
+#
+# QUARANTINE, NOT `PositionAnomalyStore`. `RestingOrderAnomalyStore` has no
+# `explains()` method, and a test asserts the absence. `PositionAnomalyStore.
+# explains()` suppresses a kill-switch trip inside `check_reconciliation`, so
+# quarantining a FLAT symbol through it (`broker_quantity=0.0`) would have
+# granted that symbol immunity from the position-reconciliation halt at
+# broker=0 - exactly the rail that caught the real 24 August mismatch. Item
+# 23's fix would have partly disabled item 27's: the M31a shape again, two
+# individually correct decisions combining into a defect.
+#
+# THE STATUS WIDENING IS SPLIT OUT, BY DECISION. The netting scan needs a
+# working-status set wider than `ib_translate._IB_WORKING_STATUSES` -
+# ApiPending and ApiUpdate are real ib_async working states that set is
+# missing - so this ships its own, `resting_orders.WORKING_STATUSES`,
+# asserted against ib_async's own ActiveStates by `tests/data/broker/
+# test_working_statuses.py`. `_IB_WORKING_STATUSES` itself is UNCHANGED here:
+# widening the shared one moves `_position_stops`, which is a sizing input,
+# and that is not a change to make inside an orphan-detection build. It
+# ships separately, and is measured before and after on a watched session.
+#
+# CANCELLING IS OFF BY DEFAULT AND FLAT-ONLY. `resting_order_cancel_enabled`
+# defaults False. Even enabled, a HELD symbol carrying excess is only ever
+# reported and quarantined - choosing which OCA leg dies on a position this
+# app still holds is a judgement it must not make unattended, and getting it
+# wrong strips the stop from a real long. Does NOT trip the kill switch: the
+# risk is symbol-local, the switch halts new flow without cancelling
+# anything (24 August's second lesson - stopping the process did not stop
+# the fills), and spending a rail that needs a human reset on a detector
+# with no field history is how the staleness rail ended up suppressed with a
+# 69-hour value.
+MILESTONE = "M141"
 
 _UNKNOWN = "unknown"
 

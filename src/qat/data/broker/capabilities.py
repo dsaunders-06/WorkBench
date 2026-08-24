@@ -63,6 +63,13 @@ OPTIONAL: dict[str, str] = {
         "seen before the ex-date open, and an unadjusted stop through a split "
         "cost this account $375.23 on 11 August"
     ),
+    "open_orders": (
+        "M141/item 23's resting-order scan cannot run: `OMS.check_resting_orders` "
+        "reads an adapter without it as having nothing to report, not as unable "
+        "to answer, so orders resting on this adapter stay invisible to the scan "
+        "- exactly the blind spot that let 24 August's sixteen orphaned GTC legs "
+        "go unwatched"
+    ),
 }
 """Optional by the Protocol's own design - and each entry says what stops
 happening when an adapter does not implement it. A new optional method with no

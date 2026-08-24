@@ -16,6 +16,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    RestingOrder,
     RestingStopOrder,
 )
 from qat.domain.corporate_actions.announcements import Announcement
@@ -164,6 +165,15 @@ class MockBroker:
                 quantity=abs(position.quantity) if position else 0.0,
             )
         return orders
+
+    async def open_orders(self) -> list[RestingOrder]:
+        """The mock has no order-level record of a resting leg (M141, item 23) -
+        `_resting_stops`/`_resting_targets` are position-keyed prices, not
+        orders with an id and status. An empty list is this adapter's "cannot
+        answer" (same convention as `recent_fills`), not a claim that nothing
+        rests - `check_resting_orders` is exercised against the real IBKR shape
+        in `tests/data/broker/test_ib_open_orders.py`, not through this mock."""
+        return []
 
     def resting_stop(self, symbol: str) -> float | None:
         """The protective stop currently resting at the broker, if any."""

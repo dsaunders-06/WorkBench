@@ -346,7 +346,10 @@ class BrokerAdapter(Protocol):
     # neither field.
     async def resting_stop_orders(self) -> dict[str, RestingStopOrder]: ...
 
-    # All open orders at the broker, translated and not judged (M141, item 23).
-    # Unlike `resting_stop_orders`, this returns every order type and status -
-    # filtering is each consumer's own business.
+    # Optional (M141, item 23): all open orders at the broker, translated and
+    # not judged. Unlike `resting_stop_orders`, this returns every order type
+    # and status - filtering is each consumer's own business. Adapters that
+    # cannot answer return an empty list, the same convention `recent_fills`
+    # and `announcements` use above - `OMS.check_resting_orders` treats that
+    # identically to a real broker with nothing open, never as "unknown".
     async def open_orders(self) -> list[RestingOrder]: ...

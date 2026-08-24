@@ -488,7 +488,28 @@ for each gap and is worth reading; the list lives here.
     rail permits what another forbids. The reserve exists to be raised; at
     $50,000 the two diverge properly.
 
-23. **Nothing reconciles RESTING ORDERS.** M139 stops duplicates being
+23. ~~**Nothing reconciles RESTING ORDERS.**~~ **DONE — M141.**
+    `OMS.check_resting_orders()` scans `broker.open_orders()`, nets each
+    one-cancels-all group against the position, and logs every leg the book
+    cannot justify at ERROR with the prefix `RESTING ORDER ORPHAN:`. Arithmetic,
+    not identity — order identity does not survive a restart (item 27's
+    finding), so the only durable question is whether the book justifies what
+    is resting, not who placed it. Netting is MAX within a group, SUM across
+    groups: TNE's own 3,051-share stop and 3,051-share target are one
+    justified position, not 6,102 of unexplained risk — a summing rule would
+    have flagged the only position this system has ever placed correctly.
+    Quarantined through a new `RestingOrderAnomalyStore`, deliberately not
+    `PositionAnomalyStore` — that store's `explains()` suppresses the
+    kill-switch trip inside `check_reconciliation`, so routing a flat symbol
+    through it would grant that symbol immunity from the exact rail that
+    caught 24 August's real mismatch. Cancellation sits behind
+    `resting_order_cancel_enabled`, default **False**, and acts only on
+    symbols the book is FLAT in even when enabled — a held symbol's excess is
+    reported and quarantined, never cancelled automatically. **The
+    working-status widening this needed is split out as its own item (31,
+    below)** by decision, because widening the shared set moves
+    `_position_stops`, a sizing input.
+    Original: M139 stops duplicates being
     created; it does nothing about the sixteen orphaned GTC bracket legs an
     interrupted session left at the broker on 24 August, with the application
     holding no record of any of them. `adopt_broker_positions` adopts
@@ -500,9 +521,17 @@ for each gap and is worth reading; the list lives here.
     The concentration cap is upstream in the sizer and cannot see what has
     already gone out.
 
-25. **`preflight` should use `reqAllOpenOrdersAsync`.** Its current broker view
-    is client-scoped, so it cannot see orders this app did not place in this
-    session — including its own from a previous one.
+25. **`preflight`'s book check derives `unprotected` from held positions only.**
+    Corrected premise: it already routes through `reqAllOpenOrdersAsync`, via
+    `broker.resting_stops()` (`preflight.py:445`) — the client-scoped view was
+    never its defect. The defect is at `preflight.py:450`: `unprotected` is
+    built by walking `held` positions and asking which lack a stop, so a
+    resting stop on a symbol the book does NOT hold — exactly M141's orphan
+    shape — is invisible to this check. It answers "is every position
+    protected" and cannot answer "what is resting that the book does not
+    explain"; that second question is now `check_resting_orders`'s, not
+    preflight's, and preflight should say so rather than imply coverage it
+    does not have.
 
 26. **The IBKR order preset.** Every API sell on DXS.AX threw
     `Error 10349: Order TIF was set to DAY based on order preset` and
@@ -553,6 +582,17 @@ for each gap and is worth reading; the list lives here.
 
 30. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
+
+31. **The working-status set is narrow in `ib_translate`.** `_IB_WORKING_STATUSES`
+    holds three of ib_async's five real working states; `ApiPending` and
+    `ApiUpdate` are missing, so `from_ib_resting_stop` reads a stop in either as
+    no protection and `verify_position_stops` logs `POSITION UNPROTECTED` on a
+    protected position. M141 fixed this for the orphan scan only, in its own
+    set, because widening the shared one moves `_position_stops` — the
+    denominator of every risk-at-stop figure the governor gates entries on.
+    Ship it separately and measure the aggregate before and after on a watched
+    session. `tests/data/broker/test_working_statuses.py` asserts the
+    divergence, so closing it is a deliberate act.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 

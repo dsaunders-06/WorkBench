@@ -37,6 +37,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    RestingOrder,
     RestingStopOrder,
 )
 from qat.data.broker.alpaca_client_protocol import AlpacaClientProtocol
@@ -329,6 +330,16 @@ class AlpacaAdapter:
             if symbol not in resting:
                 resting.update(await self._deep_scan(symbol))
         return resting
+
+    async def open_orders(self) -> list[RestingOrder]:
+        """Unsupported here, honestly (M141, item 23) - the orphan scan this
+        feeds was built and measured against the live IBKR shape only
+        (`tests/data/broker/test_ib_open_orders.py`), the same way
+        `get_market_data`/`get_historical` above are honest about not being a
+        data feed rather than faking one. An empty list is `open_orders`'s own
+        documented "cannot answer" (`adapter.py`'s `BrokerAdapter.open_orders`),
+        not a claim that Alpaca has nothing resting."""
+        return []
 
     async def _order_page(
         self,
