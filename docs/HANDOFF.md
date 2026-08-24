@@ -49,6 +49,7 @@ source.
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **HOLDING TNE.AX 3,051 @ 32.9783**, bracketed 30.69 / 36.86, carried overnight deliberately. NetLiquidation ~1,001,264 AUD. **The app HAS now placed entries on IBKR — 24 August was the first day** |
+| Kill switch | **NOT tripped.** It does not persist — see item 32. Yesterday's trip was cleared by the restart, not by a decision |
 | Ledgers | **0 closed trades** (seven fabricated rows removed 24 August — see the incident above), **49 risk decisions**, journal carries the day's real order flow |
 
 > ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
@@ -604,6 +605,36 @@ for each gap and is worth reading; the list lives here.
     Ship it separately and measure the aggregate before and after on a watched
     session. `tests/data/broker/test_working_statuses.py` asserts the
     divergence, so closing it is a deliberate act.
+
+32. **⚠️ THE KILL SWITCH DOES NOT SURVIVE A RESTART.** `KillSwitch` holds
+    `_tripped` in memory and persists NOTHING (`kill_switch.py` has no path, no
+    file, no load). `runtime.py:523` constructs a bare one on every launch. So a
+    halt that is meant to hold until a human decides holds only until the next
+    time the app starts — and it is then cleared **silently**, with no line in
+    the log saying a halt was discarded.
+
+    Found on 25 August, and found the embarrassing way: this handoff said "THE
+    KILL SWITCH IS TRIPPED … it is SAFE to reset", advice was given on that
+    basis, and the operator pointed at the app reporting it INACTIVE. It had
+    been cleared by the two restarts that morning, not by anyone. The evidence
+    was already on screen — `session_check`'s `kill-switch mentions: 0` — and
+    was read as "nothing happened to it" rather than "it is not tripped".
+
+    This is the M50/M140 family: *this state did not survive a restart*. The
+    codebase already knows the fix, twice — `PositionAnomalyStore` and
+    `RestingOrderAnomalyStore` both persist deliberately, and the latter's
+    docstring says why: the thing it guards against is inherited across a
+    restart. The switch, which is the most consequential state in the
+    application, is the one that does not.
+
+    Two things are needed, and the second matters as much as the first: persist
+    the tripped state with its reason and timestamp, AND log loudly at startup
+    when a persisted halt is restored — or, if a deliberate decision is made
+    that a halt should NOT outlive the process, say so in the log at every
+    launch that discards one. Silence is the defect either way.
+
+    Until then: **a tripped kill switch is not a durable halt.** If the account
+    must not trade, do not rely on the switch alone across a restart.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
