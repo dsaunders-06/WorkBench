@@ -41,11 +41,11 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M139 (`f2d0278`)**, installed 24 August 15:17 and read back off its own log. Verified in production the same minute: one signal, ONE transmission |
-| Repository HEAD | Ahead of the deployed build by the day's fixes and documentation. `handoff_state.py` derives the gap; do not read a number from here |
-| Deploy gap | Documentation and the ledger-repair script only. **No code change is waiting to deploy** — M139 is the running build and is verified |
-| Pushed | **Up to date as of 24 August.** 43 commits pushed at 13:07 and CI went **green** in 3m57s. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
-| Suite | **2,585 passed, 25 skipped.** ruff, black, mypy and bandit clean |
+| Deployed build | **M140 (`e432e1f`)**, installed 24 August and read back off its own log. This table said M139 until 24 August evening, four rows stale at once — which is item 29's whole argument |
+| Repository HEAD | Ahead of the deployed build by **M141**, item 23's resting-order reconciliation. `handoff_state.py` derives the gap; do not read a number from here |
+| Deploy gap | **M141 IS WAITING TO DEPLOY.** Committed and pushed, not installed. It adds the orphan scan, its quarantine, and the Risk Console surface to clear one. Nothing in it has yet run against the live account |
+| Pushed | **Up to date.** M141 pushed 24 August evening. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
+| Suite | **2,666 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **HOLDING TNE.AX 3,051 @ 32.9783**, bracketed 30.69 / 36.86, carried overnight deliberately. NetLiquidation ~1,001,264 AUD. **The app HAS now placed entries on IBKR — 24 August was the first day** |
