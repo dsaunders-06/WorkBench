@@ -449,7 +449,43 @@ from qat.domain.display_dates import format_display_date
 # refusal string it emitted is no longer produced anywhere, while the new one
 # was absent from the taxonomy - which would have classified it as "not
 # recognised" on the Blotter and in the daily report, the M89 defect exactly.
-MILESTONE = "M138"
+#
+# M139 - AN ORDER REACHES THE BROKER ONCE. Found live, the hard way, on the
+# first afternoon this system ever transmitted anything.
+#
+# At 14:04:51 on 24 August the autonomy gate opened and auto-signed two pending
+# orders: TNE.AX 3,076 and DXS.AX 17,067. `AutonomousExecutor.retry_pending`
+# then re-signed and re-transmitted BOTH every sixty seconds, four times each,
+# until the session was stopped by hand. The broker held 68,268 DXS against an
+# intended 17,067 - exactly 4x - and 8,587 TNE, ~$679k of exposure, with NO
+# protective stops resting and no position record in the application at all.
+#
+# ROOT CAUSE: two individually correct decisions combining.
+#   * M31a removed `order.status = "transmitted"` from BEFORE `place_order`,
+#     because a raised call left an order falsely claiming to be live.
+#   * `from_ib_trade` deliberately left IBKR's working states unmapped, on the
+#     stated grounds that they "leave our own already-set transmitted status
+#     alone" - true when written.
+# `place_order` returns `from_ib_trade(...)` and sets no status itself. With the
+# pre-set gone and the states unmapped, NOBODY set it: the order came back
+# reading `pending_signoff`, which is exactly what `OMS.pending_orders` filters
+# on. "Check whether the fix has a sibling", one more time.
+#
+# TWO INDEPENDENT DEFENCES, because a single one failing silently is what this
+# was:
+#   * the adapter maps PendingSubmit/PreSubmitted/Submitted/ApiPending/
+#     PendingCancel and now assigns UNCONDITIONALLY with a "transmitted"
+#     default - mirroring alpaca_adapter, the sibling that had it right;
+#   * the OMS records every order id handed to a broker and refuses a second
+#     transmission whatever the status field says.
+#
+# ⚠️ THE LESSON THAT OUTLIVES THE BUG: the per-order cap worked perfectly. It
+# trimmed 3,468 shares to 3,076 exactly as designed, then was defeated by that
+# same 3,076 going out four times. A PER-ORDER limit is not a PER-POSITION
+# limit, and nothing currently caps the latter - the single-name concentration
+# cap lives in the sizer, upstream of transmission, so it never saw the
+# duplicates either.
+MILESTONE = "M139"
 
 _UNKNOWN = "unknown"
 

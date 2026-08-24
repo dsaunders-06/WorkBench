@@ -36,11 +36,41 @@ class UnrepresentableOrderError(ValueError):
 # were invested.
 _ACCOUNT_TAGS = ("NetLiquidation", "TotalCashValue", "BuyingPower", "GrossPositionValue")
 
+# ⚠️ THE WORKING STATES WERE MISSING, and their absence transmitted four
+# positions on 24 August 2026 instead of one.
+#
+# IBKR reports a live order as PendingSubmit -> PreSubmitted -> Submitted.
+# None of those was here, so `_IB_STATUS_MAP.get(...)` returned None,
+# `from_ib_order` left the status ALONE, and an order that had just been
+# transmitted came back still carrying `pending_signoff`. `OMS.pending_orders`
+# filters on exactly that value, so `AutonomousExecutor.retry_pending` found it
+# again sixty seconds later, the gate allowed it again, and it was transmitted
+# again - four times for TNE.AX and DXS.AX before the session was stopped,
+# leaving 4x the intended quantity at the broker and no position record at all.
+#
+# The comment at the OMS sign-off site was right in principle - "the returned
+# order carries the broker's own status, mapped by the adapter; setting it
+# ourselves would overwrite the one authoritative answer with a guess". It was
+# defeated by a map with four entries, so nobody set it at all.
+#
+# DEFAULTS TO "transmitted", never to leaving the caller's value. This mirrors
+# `alpaca_adapter._STATUS_MAP`, whose own note says "anything unrecognised maps
+# to transmitted rather than a terminal state" - the sibling that had this right
+# all along. After a place_order that did NOT raise, the broker has the order;
+# the only safe unknown is "live at the broker", never "still needs signing".
 _IB_STATUS_MAP: dict[str, OrderStatus] = {
     "Filled": "filled",
     "Cancelled": "cancelled",
     "ApiCancelled": "cancelled",
     "Inactive": "rejected",
+    # Working states. A partial fill reports Submitted with a non-zero filled
+    # quantity, so "transmitted" is right for it too - it is live at the broker
+    # and must not be re-signed.
+    "PendingSubmit": "transmitted",
+    "PreSubmitted": "transmitted",
+    "Submitted": "transmitted",
+    "ApiPending": "transmitted",
+    "PendingCancel": "transmitted",
 }
 
 
@@ -237,9 +267,25 @@ def from_ib_trade(trade: Trade, our_order: Order) -> Order:
     """Updates our Order's status/fill fields from an ib_async Trade, and
     carries the broker's own order identity onto `our_order.order_id` -
     mirroring what AlpacaAdapter does at transmit (three sites).
-    Intermediate IBKR states (Submitted/PreSubmitted/PendingSubmit) aren't
-    in the map - they leave our own already-set "transmitted" status alone
-    rather than guessing at a mapping.
+    ⚠️ THAT LAST SENTENCE USED TO READ: "Intermediate IBKR states
+    (Submitted/PreSubmitted/PendingSubmit) aren't in the map - they leave our
+    own already-set 'transmitted' status alone rather than guessing at a
+    mapping." It was true when written and false by 24 August 2026, and the gap
+    transmitted four positions instead of one.
+
+    **M31a removed the pre-set.** `OMS._sign_off_locked` used to run
+    `order.status = "transmitted"` BEFORE calling `place_order`, and M31a took
+    it out for a good reason - when `place_order` raised, the order kept a
+    status claiming it was live at the broker. But `place_order` returns
+    `from_ib_trade(trade, order)` and never sets the status itself, so with the
+    pre-set gone and the working states unmapped, NOBODY set it: a transmitted
+    order came back still reading `pending_signoff`, and the retry sweep
+    transmitted it again every sixty seconds.
+
+    Two individually correct decisions that combined into a defect - the shape
+    this codebase calls "check whether the fix has a sibling". The working
+    states are mapped now and the assignment is unconditional, so this function
+    no longer depends on any caller having set anything first.
 
     The identity bridge (IBKR move plan, Task 3): `OMS._order_the_broker_calls`
     resolves an incoming fill by comparing `order.order_id` against the raw
@@ -267,9 +313,10 @@ def from_ib_trade(trade: Trade, our_order: Order) -> Order:
     an absent/zero permId leaves `our_order.order_id` exactly as it was
     (the app's own id) rather than write a junk identifier.
     """
-    mapped = _IB_STATUS_MAP.get(trade.orderStatus.status)
-    if mapped is not None:
-        our_order.status = mapped
+    # Unconditional. The old form only assigned when the status was recognised,
+    # which meant an unrecognised one silently preserved `pending_signoff` - see
+    # the note on _IB_STATUS_MAP.
+    our_order.status = _IB_STATUS_MAP.get(trade.orderStatus.status, "transmitted")
     if trade.orderStatus.avgFillPrice:
         our_order.filled_price = trade.orderStatus.avgFillPrice
     perm_id = trade.order.permId or trade.orderStatus.permId

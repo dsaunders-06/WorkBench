@@ -230,6 +230,9 @@ class OMS:
         self.corporate_actions = corporate_actions
         # Explained divergences are logged once per session, not once per poll.
         self._explained_logged: set[str] = set()
+        # Order ids this OMS has handed to a broker. Guards against a second
+        # transmission independently of the status field - see `_sign_off_locked`.
+        self._transmitted: set[str] = set()
 
     def entry_permitted(self, symbol: str) -> str | None:
         """Why an entry in `symbol` would be refused by the allow lists, or None.
@@ -566,6 +569,27 @@ class OMS:
         if order.status != "pending_signoff":
             raise ValueError(f"Order {order_id} is not pending sign-off (status={order.status})")
 
+        # ⚠️ INDEPENDENT OF STATUS, and that is the whole point (24 August 2026).
+        #
+        # The status check above is the primary guard and it was sufficient
+        # right up until the moment an adapter failed to set a status. IBKR's
+        # working states were missing from `_IB_STATUS_MAP`, so a transmitted
+        # order came back still reading `pending_signoff`, sailed through that
+        # check, and was transmitted again every sixty seconds by the retry
+        # sweep - four times, for two symbols, leaving 4x the intended position
+        # at the broker.
+        #
+        # This set does not depend on any adapter getting a mapping right. An
+        # order this OMS has already handed to a broker is never handed over
+        # again, whatever its status field happens to say. Belt and braces
+        # deliberately: the cost of a false positive here is a refused
+        # duplicate; the cost of a false negative is what happened on the 24th.
+        if order_id in self._transmitted:
+            raise ValueError(
+                f"Order {order_id} has already been transmitted to the broker - "
+                "refusing to transmit it a second time"
+            )
+
         if self.kill_switch.tripped:
             order.status = "rejected"
             logger.info("Sign-off blocked by kill-switch: order=%s operator=%s", order_id, operator)
@@ -645,6 +669,10 @@ class OMS:
         # become "transmitted", a same-second fill becomes "filled"). Setting
         # it ourselves would overwrite the one authoritative answer with a
         # guess - which is what the pre-call assignment was.
+        # Recorded the instant the broker accepted it, before anything that
+        # could fail - a duplicate guard that is only written on the happy path
+        # is not a guard.
+        self._transmitted.add(order_id)
         self._orders[order_id] = filled
         # Recorded BEFORE anything else, so an absorb running concurrently can
         # never see this fill as foreign.
