@@ -369,6 +369,26 @@ class Settings(BaseSettings):
     # between self-healing and self-diagnosing.
     protection_sweep_seconds: float = Field(default=300.0, gt=0)
 
+    # Whether resting orders are reconciled against the book at all (M141,
+    # item 23). On by default: it only observes and quarantines.
+    #
+    # The gap it closes is that NOTHING watched open orders. On 24 August an
+    # interrupted session left sixteen orphaned GTC bracket legs at the broker
+    # and a FLAT TNE.AX carried up to 12,304 shares of automatic short risk,
+    # which buying power would not have refused.
+    resting_order_reconcile_enabled: bool = True
+
+    # Whether the reconciler may CANCEL what it finds, and only on symbols the
+    # book is flat in.
+    #
+    # Off by default, for `delever_sweep_enabled`'s reason one step down:
+    # cancelling is a smaller delegation than selling, but it is still this
+    # application acting on the account unattended, on a detector with no field
+    # history. A HELD symbol carrying excess is never trimmed - choosing which
+    # OCA group dies is a judgement made badly without a human, and getting it
+    # wrong strips the stop from a real long.
+    resting_order_cancel_enabled: bool = False
+
     # What the corporate-action monitor is allowed to DO (M39).
     #
     # "shadow" runs everything - the announcements query, the ex-date gating,

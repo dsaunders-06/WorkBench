@@ -59,6 +59,18 @@ class ReconciliationMonitor:
                 exc_info=True,
             )
             self.adopted = {}
+
+        # After adoption and before the first poll, because the orphans this
+        # looks for are INHERITED across a restart - the 24 August case exactly
+        # - and a poll-only rail finds them one interval late.
+        if self.settings.resting_order_reconcile_enabled:
+            try:
+                await self.oms.check_resting_orders()
+            except Exception:  # noqa: BLE001 - a broker blip must not block startup
+                logger.warning(
+                    "Could not scan resting orders at startup - the first poll will retry",
+                    exc_info=True,
+                )
         self._task = asyncio.create_task(self._run())
 
     async def stop(self) -> None:
@@ -87,6 +99,9 @@ class ReconciliationMonitor:
         """
         was_tripped = self.oms.kill_switch.tripped
         mismatch = await self.oms.check_reconciliation()
+
+        if self.settings.resting_order_reconcile_enabled:
+            await self.oms.check_resting_orders()
 
         # KillSwitch.trip() publishes nothing, so without this a reconciliation
         # halt would be real but invisible to every screen - the same gap the

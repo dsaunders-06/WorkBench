@@ -130,3 +130,64 @@ async def test_the_scan_quarantines_the_symbol(oms_factory):
     oms = oms_factory(broker)
     await oms.check_resting_orders()
     assert oms.resting_order_anomalies.get("TNE.AX").excess == 3051.0
+
+
+@pytest.mark.asyncio
+async def test_the_scan_runs_at_startup_before_any_strategy_could_trade(oms_factory, monkeypatch):
+    """The 24 August orphans were INHERITED across a restart. A poll-only rail
+    would have found them one interval late.
+
+    Both stubs must be COROUTINES. `start()` awaits the scan and passes `_run()`
+    to `asyncio.create_task`, so a plain lambda raises rather than failing the
+    assertion, which reads as an unrelated error.
+    """
+    from qat.domain.oms.reconciliation import ReconciliationMonitor
+
+    calls: list[str] = []
+
+    async def _scan():
+        calls.append("scan")
+        return []
+
+    async def _never_run():
+        return None
+
+    oms = oms_factory(_Broker([_order(1)], []))
+    monkeypatch.setattr(oms, "check_resting_orders", _scan)
+    monitor = ReconciliationMonitor(oms)
+    monkeypatch.setattr(monitor, "_run", _never_run)
+    await monitor.start()
+    await monitor.stop()
+    assert calls == ["scan"]
+
+
+def test_the_settings_default_correctly():
+    """Detection on, cancelling off. The second is the one that matters."""
+    from qat.config import Settings
+
+    settings = Settings()
+    assert settings.resting_order_reconcile_enabled is True
+    assert settings.resting_order_cancel_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_detection_can_be_switched_off(oms_factory, monkeypatch):
+    from qat.config import Settings
+    from qat.domain.oms.reconciliation import ReconciliationMonitor
+
+    calls: list[str] = []
+
+    async def _scan():
+        calls.append("scan")
+        return []
+
+    async def _never_run():
+        return None
+
+    oms = oms_factory(_Broker([_order(1)], []))
+    monkeypatch.setattr(oms, "check_resting_orders", _scan)
+    monitor = ReconciliationMonitor(oms, settings=Settings(resting_order_reconcile_enabled=False))
+    monkeypatch.setattr(monitor, "_run", _never_run)
+    await monitor.start()
+    await monitor.stop()
+    assert calls == []

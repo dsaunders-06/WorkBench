@@ -2771,6 +2771,20 @@ def _config_reference(doc: Any) -> None:
                 "How often held positions are re-checked for missing protection " "(Section 8A.2).",
             ),
             (
+                "QAT_RESTING_ORDER_RECONCILE_ENABLED",
+                "true",
+                "Whether orders resting at the broker are checked against what the book "
+                "justifies. On 24 August sixteen orphaned bracket legs rested against a FLAT "
+                "position and nothing was watching. Observes and quarantines; cancels nothing.",
+            ),
+            (
+                "QAT_RESTING_ORDER_CANCEL_ENABLED",
+                "false",
+                "Whether that check may CANCEL what it finds, and only where the book holds "
+                "none of the symbol. Off by default: acting on the account unattended is not "
+                "granted implicitly. A held symbol is never trimmed.",
+            ),
+            (
                 "QAT_EDGE_MIN_TRADES",
                 "20",
                 "Closed trades a strategy needs before its own results size its trades "
