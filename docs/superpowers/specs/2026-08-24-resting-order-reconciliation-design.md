@@ -129,22 +129,36 @@ the broker returned, translated, with `status` carried as a field. Filtering is
 each consumer's own business.
 
 That is not tidiness — it is what makes the operator's separability decision
-hold structurally. `resting_stop_orders()` is rewritten to derive from
-`open_orders()` rather than issuing its own call, and if `open_orders()` did the
-status filtering, `from_ib_resting_stop` would silently inherit the **wide** set
-and the sizing change we just agreed to defer would ship anyway, unannounced,
-inside a change that claims to move no sizing input. Exactly the M31a /
-`from_ib_trade` combination this design already cites twice.
+hold structurally. If `open_orders()` did the status filtering,
+`from_ib_resting_stop` would inherit the **wide** set and the sizing change we
+just agreed to defer would ship anyway, unannounced, inside a change that claims
+to move no sizing input. Exactly the M31a / `from_ib_trade` combination this
+design already cites twice.
 
 So: `open_orders()` filters nothing; `from_ib_resting_stop` keeps applying
 `_IB_WORKING_STATUSES` unchanged; the orphan scan applies its own wide set. A
-test asserts that `resting_stop_orders()` returns the same result before and
-after the derivation, which is what proves the inheritance did not happen.
+test asserts that `resting_stop_orders()` still refuses `ApiPending`, which is
+what proves the inheritance did not happen.
 
-The consolidation itself is not a new idea: `resting_stop_orders`' own docstring
-already argues for it — *"One scan rather than two, because two could disagree
-about what counts as protection."* Leaving both calls in place would create
-precisely the second scan it warns about.
+> **CORRECTED before dispatch, 24 August.** An earlier version of this section
+> said `resting_stop_orders()` would be *"rewritten to derive from
+> `open_orders()` rather than issuing its own call"*, on `resting_stop_orders`'
+> own argument that there should be *"one scan rather than two, because two
+> could disagree about what counts as protection."*
+>
+> **It cannot, and the reason is a type.** `from_ib_resting_stop` consumes the
+> raw ib_async `Trade`; `RestingOrder` deliberately drops it. Deriving one from
+> the other would mean either carrying the raw `Trade` on `RestingOrder` —
+> leaking ib_async toward the domain, which is the boundary M104 exists to keep
+> — or rebuilding the narrow status filter on top of the wide record, which is
+> the precise leak this section exists to prevent.
+>
+> **Both methods therefore keep their own `reqAllOpenOrdersAsync` call.** The
+> cost is one extra round trip per 300s poll. Operator's decision, 24 August:
+> the plan governs and the spec is corrected, rather than contorting the code to
+> preserve a sentence. The one-scan argument still stands *within* a single
+> method, which is where `resting_stop_orders` made it and where it remains
+> true.
 
 ### 2. The rule, as a pure function
 
