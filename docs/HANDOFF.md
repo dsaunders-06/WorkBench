@@ -41,15 +41,15 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M138 (`77b7238`)** installed 24 August 13:03. **M139 is BUILT AND NOT DEPLOYED** — it fixes the duplicate-transmission defect and should go on before the next session |
-| Repository HEAD | Past M134 — evening work of 21 August is **M135**, uncommitted to any build |
-| Deploy gap | **M135.** UI, news and design-system only; **no trading-decision input changed**. Not urgent, and see the warning below about deploying before Monday |
+| Deployed build | **M139 (`f2d0278`)**, installed 24 August 15:17 and read back off its own log. Verified in production the same minute: one signal, ONE transmission |
+| Repository HEAD | Ahead of the deployed build by the day's fixes and documentation. `handoff_state.py` derives the gap; do not read a number from here |
+| Deploy gap | Documentation and the ledger-repair script only. **No code change is waiting to deploy** — M139 is the running build and is verified |
 | Pushed | **Up to date as of 24 August.** 43 commits pushed at 13:07 and CI went **green** in 3m57s. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
-| Suite | **2,528 passed, 25 skipped.** ruff, black and mypy clean |
+| Suite | **2,585 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
-| Account | FLAT, equity 1,003,953.07 **AUD**. No entry has ever been placed by the app on IBKR |
-| Ledgers | **EMPTY.** The Alpaca era was retired to `docs/archive/alpaca-era/`: 0 closed trades, 0 risk decisions, equity samples ASX-only, 6 journal rows |
+| Account | **HOLDING TNE.AX 3,051 @ 32.9783**, bracketed 30.69 / 36.86, carried overnight deliberately. NetLiquidation ~1,001,264 AUD. **The app HAS now placed entries on IBKR — 24 August was the first day** |
+| Ledgers | **0 closed trades** (seven fabricated rows removed 24 August — see the incident above), **49 risk decisions**, journal carries the day's real order flow |
 
 > ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
 > clean tree, stamped `M134 (2d7777c, built 21/08/2026 10:00 UTC)` with no
@@ -63,17 +63,6 @@ source.
 > 20:09:43, stood down 20:10:51 with the account FLAT and nothing to adopt, zero
 > ERROR/CRITICAL, three equity samples written. The deployed build is an
 > observation, not an intention.
-
-### ⚠️ Do not deploy M135 before Monday's open
-
-Nothing in M135 touches a trading-decision input — it is news scope, three
-screens and the design system. But M119's first real test is Monday 10:00, and
-it is more informative read against the build that is actually installed than
-against one that changed five files the night before. Deploy after the open, or
-once the feed has been watched through it.
-
-The app currently installed is M134 and **tonight's work is not in it.** To look
-at any of it, run from source with `invoke run`.
 
 ### The account is AUD-base. Verified, not assumed.
 
@@ -190,6 +179,37 @@ any status field.
 3,076. About $800k of exposure on a $1M account, and **sixteen orphaned GTC
 bracket legs**. Unwound the same afternoon: **NetLiquidation $1,001,287 against
 $1,004,063, so −$2,776, or −0.28%.** Never a P&L event; a position-integrity one.
+
+### 15:19 — M139 CONFIRMED, and a third defect found
+
+M139 was deployed at 15:17 and a signal fired at 15:19:36. **TNE.AX 3,051
+transmitted EXACTLY ONCE**, filled in full, bracketed at 30.69 / 36.86. Under
+yesterday's code it would have gone again at 15:20:36 and every minute after.
+The fix is verified in production, which is the only place today's defects were
+ever going to be found.
+
+**Then the kill switch tripped, correctly**, on
+`Broker reconciliation mismatch: TNE.AX tracked=4382 broker=3051` — the app
+believed it held MORE than it had ever ordered.
+
+**⚠️ THE ABSORB PATH REPLAYS ACROSS A CRASH BOUNDARY. Found, NOT fixed.**
+`absorbed_fills.json` carried a watermark of `2026-08-24T00:38:09Z`, set before
+the 14:08 kill and never advanced past the session that followed. On restart
+everything after 10:38 looked unabsorbed, so `recent_fills` returned the whole
+afternoon — the duplicate buys, **the operator's manual remediation sells**, and
+the app's own current fills. The manual sells were absorbed as *"a resting
+protective order executed, and this is now a closed trade"* and matched against
+the lot opened at 15:19:36, producing **seven closed trades whose `closed_at`
+precedes their `opened_at` by an hour**, worth −$167.90 that nobody lost, in the
+file the promotion gate reads.
+
+Repaired by `scripts/repair_impossible_closed_trades.py` (backup kept). The one
+test it applies is arithmetic, not judgement: an exit stamped before its entry is
+impossible. **Nothing in the application rejects one**, and it should.
+
+**A property worth knowing before the next manual repair:** to the absorb path, a
+manual sell through TWS is indistinguishable from a resting stop firing. My own
+remediation is what produced the fabricated trades.
 
 ### Four things this taught that outlive the bug
 
@@ -492,7 +512,32 @@ for each gap and is worth reading; the list lives here.
     not size. A manual sell through TWS filled. Find the preset; every order
     this application places goes through the API.
 
-27. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+27. **⚠️ THE ABSORB WATERMARK DOES NOT SURVIVE A CRASH.** Highest priority of
+    everything on this list, because it corrupts the record rather than costing
+    money. `absorbed_fills.json`'s watermark advances during a run; if the
+    process dies, it stays where it was and the next run absorbs everything that
+    happened in between — including fills from orders the app never sent, and
+    manual operator activity — attributing them to whatever lot is open now.
+    Produced seven impossible trades on 24 August. Options: advance the
+    watermark on every absorb rather than periodically; or refuse to absorb a
+    fill older than the current run's start; or both. **And reject an
+    `opened_at`/`closed_at` inversion outright** — it is arithmetic, and nothing
+    checks it today.
+
+28. **The kill switch is TRIPPED and should stay tripped** until item 27 is
+    fixed. It caught the mismatch correctly. Resetting it first only invites the
+    same corruption on the next launch.
+
+29. **Make deploying update `DEPLOYED` itself.** `handoff_state.py`'s hand-
+    maintained constant has now been wrong three times: for a day after M104,
+    across the whole M130 deploy, and for two hours after M139 on 24 August —
+    that last one in the rush to get a session running before the close. Its own
+    comment says the figure must change in the same minute as the copy, and
+    exhortation has now failed three times. An `invoke deploy` that expands the
+    zip AND rewrites the line would remove the only step a human has to
+    remember.
+
+30. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 ### Audited 21 August and found SOUND — do not re-audit without a reason
@@ -677,79 +722,61 @@ READ THE STATE FIRST, and trust it over anything in this prompt:
     & "C:\Claude Programming\scripts\session_check.ps1"   (NO ARGUMENTS, EVER)
     .\.venv\Scripts\python.exe scripts\handoff_state.py
 
-Then read docs\HANDOFF.md. It is short and current as at 21 August evening.
+Then read docs\HANDOFF.md, and read the 24 AUGUST incident section BEFORE
+touching the order path. It is the most instructive thing this project has
+produced and none of it was caught by a test.
 
 ⚠️ POWERSHELL for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal -
-including Python that only READS it, and including anything that builds
-Settings(), which loads that directory's .env whether or not the script
-mentions it. The Bash sandbox serves a frozen July snapshot and does NOT error.
+including Python that only READS it, and anything that builds Settings(), which
+loads that directory's .env whether or not the script mentions it. The Bash
+sandbox serves a frozen snapshot and does NOT error.
 
-PUSH NORMALLY. The "Actions minutes exhausted until September" rule was tested
-on 24 August and is FALSE - 43 commits pushed, CI green in 3m57s. Run the local
-suite in full anyway and read the summary line, never a piped tail. Lint with
-ruff, format with BLACK (they diverged on one file on 21 August).
-
-⚠️ THE FIRST LAUNCH MUST BE READ BACK. M134 was built clean, signed and
-installed at 20:05 on 21 August, but the app has NOT been launched on it. The
-first session_check must print `Build: M134 (2d7777c, ..., packaged)`. If it
-still says M130, the copy did not take and nothing downstream is trustworthy.
+PUSH NORMALLY - the "Actions minutes exhausted" rule was tested on 24 August and
+is false. But the repo is PRIVATE and CI runs on windows-latest at a 2x
+multiplier, so BATCH commits and push once. A docs-only commit still buys a full
+Windows run.
 
 THE STATE
 
-  Deployed M134 (2d7777c), read back off its own log at 20:10 on 21 August.
-  HEAD is past it: the evening's work is M135 and is NOT in the installed
-  build, so run from source (`invoke run`) to see any of it.
-  DO NOT DEPLOY M135 BEFORE THE OPEN - nothing in it touches a trading-decision
-  input, and M119's first test is worth reading against the build that has been
-  running rather than one changed the night before.
-  Account FLAT, ~1,003,953 AUD. NO ENTRY HAS EVER BEEN PLACED BY THE APP ON
-  IBKR. Ledgers are EMPTY: the Alpaca era was retired to
-  docs/archive/alpaca-era/ on 21 August, so the first fill will be row one.
-  Watchlist is 94 ASX megacaps + STW.AX and the entry allow list is CLEARED.
-  Autonomous execution is ON with 10 free slots.
+  Deployed M139 (f2d0278), verified in production. HEAD is ahead of it by the
+  day's fixes and documentation.
+  THE ACCOUNT IS NOT FLAT: it holds TNE.AX 3,051 @ 32.9783, bracketed at 30.69
+  and 36.86, carried overnight deliberately. That position is real and correct.
+  THE KILL SWITCH IS TRIPPED, correctly, and MUST STAY tripped until the absorb
+  watermark defect is fixed. Resetting it first re-corrupts the ledger.
+  closed_trades.csv is back to 0 rows after seven fabricated trades were
+  removed. risk_decisions.csv holds 49 real decisions.
 
-MONDAY'S OPEN IS THE THING THAT MATTERS
+WHAT 24 AUGUST ESTABLISHED
 
-  M119 - the fix that stops the feed dying at the bell - is DEPLOYED and has
-  NEVER been exercised. Friday's session started at 12:10, after the 20-minute
-  delay window that killed the 10:00 one. Monday 10:00 is its first real test.
-  Watch the first six minutes: five empty 60s polls used to end the stream
-  permanently, with nothing halting, because MARKET DATA DOWN is deliberately
-  not a kill-switch trigger.
+  M119 passed - the feed hit five empty polls, retried with backoff, recovered
+  on its own. M137 fixed a log that died silently at its rotation cap and stayed
+  dead across a restart. M138 made the per-order cap a share of CASH that trims
+  rather than refuses. M139 stopped an order being transmitted four times.
 
-  An entry can only happen in 57% of the session. Blocked during Opening
-  Volatility (10:00-10:28) and Midday Lull (11:59-14:04). With the feed's
-  ~20-minute delay the last usable moment is about 15:40, so a trigger must
-  land inside 10:29-11:58 or 14:05-15:40. A quiet morning is not a quiet day.
-
-  EXPECT THE FIRST ASX STALENESS EXCLUSION and do not read it as a fault. The
-  rail fired 1,589 times on the US feed and has NEVER fired on ASX, because
-  ts=now made price age unmeasurable until M128. The first one is it working.
+  Three defects, all in the order path, none caught by any test. One remains.
 
 FIRST WORK, IN ORDER
 
-  1. Watch the open. Sweep with session_check every 20-30 minutes. Escalate on
-     ERROR/CRITICAL by CONTENT (ib_async logs the 1102 RECOVERY at ERROR), on
-     the process dying, a kill-switch trip, a reconciliation mismatch, or any
-     order at the broker.
-  2. If a fill happens, report it in detail. recent_fills, M71 and post-fill
-     reconciliation have never run. The first-fill path was audited on
-     21 August and found sound - see "Audited 21 August" in the handoff, and do
-     not re-walk it without a reason.
-  3. Otherwise the agreed order is item 16 (one symbol, one recommendation -
-     needs a design pass, and M73's "analyst, never a trader" framing has to
-     survive it), then item 9, whose spec and plan are already written and
-     whose measurement is already committed. Items 8, 10, 11, 12, 14 and 15
-     were cleared on 21 August.
+  1. Item 27 - the absorb watermark does not survive a crash. Highest priority
+     because it corrupts the RECORD rather than costing money, and the promotion
+     gate reads that record. Also reject an opened_at/closed_at inversion; it is
+     arithmetic and nothing checks it.
+  2. Item 23 - nothing reconciles RESTING ORDERS. A flat TNE carried 12,304
+     shares of automatic short risk on 24 August and nothing was watching.
+  3. Item 24 - bound total exposure per NAME at transmission time. The per-order
+     cap worked perfectly four times over; that is the whole problem.
+  4. Only then reset the kill switch and run a session.
 
-TWO HABITS THAT EARNED THEIR KEEP ON 21 AUGUST
+TWO HABITS THAT PAID FOR THEMSELVES ON 24 AUGUST
 
-  Verify the artefact, not the exit code. `invoke build` returned 0 having
-  built nothing; three PowerShell string-replacements silently did not match;
-  the liquidity filter screens on a random number. None of them FAILED.
+  Run it, do not reason about it. Every defect found came from a live session.
+  Two documented constraints and two saved memories were also disproved by
+  simply executing them.
 
-  Query the system, do not read the document. Two documents asserted things the
-  running system contradicted - the UI/UX colour counts, and the account's
-  currency. The second produced a confident wrong finding that had to be
-  retracted the same evening.
+  A green result from an incomplete query is not evidence. ib.openTrades() is
+  CLIENT-SCOPED - it reported no protective stops while sixteen were resting.
+  Use reqAllOpenOrdersAsync, and prefer the async form of any ib_async call: the
+  sync ones wrap util.run and raise "event loop is already running" inside the
+  app. That trap was hit three times in one afternoon.
 ```

@@ -44,6 +44,17 @@ REPO = Path(__file__).resolve().parent.parent
 # M134 was deployed 21 August at 20:05 local, market shut, app stopped, broker
 # flat, ledgers empty, and this line was changed in the same minute as the copy.
 #
+# M139 was deployed 24 August at 15:17, read back at 15:19:02: Build: M139
+# (f2d0278, built 24/08/2026 04:23 UTC, packaged). Verified in production the
+# same minute - one signal, ONE transmission, correctly bracketed.
+#
+# ⚠️ AND THIS CONSTANT WAS LEFT AT M138 FOR TWO HOURS, which is the third time
+# in the record. The rule this comment block sets - change it in the same minute
+# as the copy - was broken again, this time in the rush to get a session running
+# before the close. The lesson is not "remember harder": it is that a figure
+# only a human can supply will be missed at exactly the moments that matter
+# most. Worth making `invoke deploy` do the copy AND this line together.
+#
 # M138 was deployed 24 August at 13:03, read back at 13:04:30: Build: M138
 # (77b7238, built 24/08/2026 02:59 UTC, packaged). Installed exe
 # SHA256-identical to the signed artefact, signature Valid. ⚠️ THIS ONE CHANGES
@@ -64,7 +75,7 @@ REPO = Path(__file__).resolve().parent.parent
 # launched since the copy, so no `Build:` line has come off its own log. Until
 # it has, this constant is an intention, not an observation - which is exactly
 # what it was during the M130 deploy.
-DEPLOYED = "77b7238"
+DEPLOYED = "f2d0278"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
