@@ -100,6 +100,11 @@ def _absorbed_from_json(entry: object) -> _AbsorbedFill:
 
 _FILL_STATE_FILENAME = "absorbed_fills.json"
 # How long an absorbed fill's id is remembered. Only needs to outlast the gap
+# How old a restored watermark can be before the replay it implies is worth a
+# warning. Two hours: long enough that a normal overnight gap does not fire it
+# on a market that closes at 16:00 and opens at 10:00, short enough that the
+# four-and-a-half-hour replay of 24 August would have announced itself.
+_WIDE_REPLAY_WARNING = timedelta(hours=2)
 # between the watermark and now - days, not weeks - but the file is tiny and a
 # generous window costs nothing against the risk of recording a trade twice.
 _ABSORBED_ID_RETENTION = timedelta(days=30)
@@ -1237,6 +1242,31 @@ class OMS:
             watermark.isoformat(timespec="seconds"),
             len(absorbed),
         )
+        # A WIDE window is legitimate and a SILENT wide window is not.
+        #
+        # On 24 August this restored a watermark from 10:38 into a process that
+        # started at 15:18, so the first absorb pass replayed four and a half
+        # hours - the duplicate buys from the M139 incident, the operator's
+        # manual remediation sells, and the app's own fills. Every one read as
+        # foreign, because `_is_foreign_unrecorded` tests in-memory sets that do
+        # not survive a restart.
+        #
+        # The replay itself is what M50 exists for: a stop that fired while this
+        # was down arrives no other way. What was missing is anyone being TOLD
+        # the window was that wide, so a four-hour replay looked identical to a
+        # four-minute one. `_close_against_lots` now refuses an exit that
+        # precedes its lot, which is the arithmetic backstop; this is the line
+        # that makes the condition visible before it gets that far.
+        age = self._now() - watermark
+        if age > _WIDE_REPLAY_WARNING:
+            logger.warning(
+                "The broker-fill watermark is %.1f hours old, so this run will replay every "
+                "execution since %s. That is correct after a clean shutdown and SUSPECT after "
+                "a crash: order identity does not survive a restart, so fills from orders this "
+                "app itself sent will read as foreign. Check closed_trades.csv afterwards.",
+                age.total_seconds() / 3600.0,
+                watermark.isoformat(timespec="seconds"),
+            )
         return watermark
 
     def _save_fill_state(self) -> None:

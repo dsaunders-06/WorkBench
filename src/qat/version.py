@@ -485,7 +485,43 @@ from qat.domain.display_dates import format_display_date
 # limit, and nothing currently caps the latter - the single-name concentration
 # cap lives in the sizer, upstream of transmission, so it never saw the
 # duplicates either.
-MILESTONE = "M139"
+#
+# M140 - a trade cannot close before it opens. Closes item 27, the last of the
+# three order-path defects 24 August produced. RECORD-CORRECTNESS ONLY: no
+# trading decision changes, and no rail decides anything differently.
+#
+# Seven rows reached closed_trades.csv whose closed_at preceded their opened_at
+# by an hour - -$167.90 nobody lost, attributed to `swing`, in the file the
+# promotion gate reads and the sizer sizes from below 20 trades.
+#
+# `absorbed_fills.json` restored a watermark of 10:38 into a process that
+# started at 15:18, so the first absorb pass replayed four and a half hours: the
+# M139 duplicate buys, the operator's MANUAL remediation sells, and the app's own
+# fills. All read as foreign, because `_is_foreign_unrecorded` tests
+# `_broker_order_ids` and `_orders` - both in memory, both empty after a restart.
+# ORDER IDENTITY DOES NOT SURVIVE A RESTART, and that is the deeper fact.
+#
+# THE GUARD IS AT THE MATCH, NOT THE WATERMARK, deliberately. The wide replay is
+# what M50 exists for - a stop that fired while this was down arrives no other
+# way - so narrowing the window would break a feature that was working. The
+# discriminator is arithmetic: in M50's case the lot was opened in a PREVIOUS
+# session and its opened_at precedes the exit; in the corruption the lot was
+# opened by THIS session, after the exit matched to it.
+#
+# NARROWED BY AN EXISTING TEST, which is worth recording. The first version
+# compared timestamps alone and broke three tests in
+# test_live_exit_price_correction, which absorbs an exit against an ADOPTED lot.
+# An adopted lot has no strategy and its opened_at is a placeholder stamped at
+# adoption, so comparing a real exit against it proves nothing - and refusing
+# would discard the legitimate case of a position partially closed while down.
+# The guard now fires only on a lot this app opened itself (`strategy is not
+# None`). That fixture also turned out to run TWO clocks, the OMS pinned to an
+# epoch and the ledger on the wall clock, so its entry was stamped eight months
+# after the exit closing it; the fixture was corrected, not the guard.
+#
+# Also: a restored watermark more than two hours old now WARNS. The replay was
+# never the defect - the silence about its width was.
+MILESTONE = "M140"
 
 _UNKNOWN = "unknown"
 

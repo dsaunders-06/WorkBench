@@ -993,6 +993,57 @@ class TradeLedger:
 
         while remaining > 1e-9 and lots:
             lot = lots[0]
+            # ⚠️ AN EXIT CANNOT PRECEDE THE LOT IT CLOSES (24 August 2026).
+            #
+            # This is arithmetic, not a plausibility judgement, and nothing
+            # checked it until seven such trades reached `closed_trades.csv`.
+            #
+            # How they got there: `absorbed_fills.json`'s watermark advances
+            # during a run, so when the process was killed at 14:08 it stayed at
+            # 10:38. The next run replayed the whole interval - including the
+            # operator's MANUAL remediation sells at 14:24 - and, because
+            # `_is_foreign_unrecorded` tests in-memory sets that do not survive
+            # a restart, every one of them read as a foreign fill. They were
+            # matched against the lot opened at 15:19:36, producing trades that
+            # closed an hour before they opened, worth -$167.90 nobody lost, in
+            # the file the promotion gate reads.
+            #
+            # Refused rather than repaired, and LOUDLY: the lot is left intact
+            # and the fill is dropped from the match. A fill this old belongs to
+            # a position this process never opened, so there is no correct lot
+            # for it here - inventing one is what produced the corruption.
+            #
+            # NARROWED, and an existing test is what narrowed it. The first
+            # version refused on the timestamps alone and broke
+            # test_live_exit_price_correction, which absorbs an exit against an
+            # ADOPTED lot. That is the distinction that matters:
+            #
+            #   * a lot with a STRATEGY was opened by this app from its own entry
+            #     fill, so `opened_at` is a real observation and an earlier exit
+            #     is impossible;
+            #   * a lot with NO strategy was adopted from the broker, where
+            #     `opened_at` is a placeholder stamped at adoption time because
+            #     no entry record existed. Comparing a real exit stamp against a
+            #     placeholder proves nothing, and refusing on it would discard
+            #     the legitimate M50 case - a position partially closed while
+            #     this was down, whose remainder is adopted at restart and whose
+            #     exit is genuinely older than the adoption.
+            #
+            # Today's corruption was the first kind: strategy "swing", opened
+            # 15:19:36, matched against an exit at 14:24:45.
+            if lot.strategy is not None and event.ts < lot.opened_at:
+                logger.error(
+                    "REFUSED an impossible closed trade: %s exit at %s precedes the lot "
+                    "it would close, opened %s. Dropping %g shares from the match rather "
+                    "than recording a trade that closed before it opened. This is the "
+                    "24 August absorb-replay signature - check the fill watermark in "
+                    "absorbed_fills.json against when this process started.",
+                    event.symbol,
+                    event.ts.isoformat(timespec="seconds"),
+                    lot.opened_at.isoformat(timespec="seconds"),
+                    remaining,
+                )
+                return
             matched = min(remaining, lot.quantity)
             trade = ClosedTrade(
                 symbol=event.symbol,

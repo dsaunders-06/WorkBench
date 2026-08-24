@@ -137,6 +137,15 @@ async def _opened_position(tmp_path, broker: _ExitAcknowledgingBroker, quantity:
             price=_ENTRY,
             stop_price=_STOP,
             strategy="swing",
+            # Stamped from the SAME clock the OMS is pinned to (line above:
+            # `clock=lambda: _WATERMARK_EPOCH`). This fixture ran two clocks -
+            # the OMS at the epoch and the ledger at the wall clock - so its
+            # entry was stamped eight months AFTER the exit that closes it.
+            # Harmless until `_close_against_lots` began refusing an exit that
+            # precedes its lot (24 August 2026), which is a real guard that this
+            # fixture was accidentally violating. The scenario under test - a
+            # late exit price being corrected on disk - is unchanged.
+            ts=_WATERMARK_EPOCH,
         )
     )
     assert ledger.open_lots("AAA"), "the lot must exist before the sell can close it"
