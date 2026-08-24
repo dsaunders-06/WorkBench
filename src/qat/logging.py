@@ -61,6 +61,9 @@ class ResilientRotatingFileHandler(RotatingFileHandler):
         super().__init__(*args, **kwargs)
         self._rollover_blocked_until = 0.0
         self.rollover_failures = 0
+        # Failures we could not even announce. Should stay zero; if it does
+        # not, the log is unwritable rather than merely unrotatable.
+        self.unannounced_failures = 0
 
     def shouldRollover(self, record: logging.LogRecord) -> int:  # noqa: N802 - stdlib spelling
         if time.monotonic() < self._rollover_blocked_until:
@@ -119,7 +122,12 @@ class ResilientRotatingFileHandler(RotatingFileHandler):
                 self.stream.write(self.format(record) + self.terminator)
                 self.stream.flush()
         except Exception:  # noqa: BLE001 - a failed alarm must not raise into emit
-            pass
+            # COUNTED, not passed. If even the alarm cannot be written then the
+            # log is beyond saving for now, and a bare `pass` would leave that
+            # fact nowhere at all - which is the exact shape of the defect this
+            # whole class exists to fix. The counter is at least readable from
+            # a debugger or a test.
+            self.unannounced_failures += 1
 
 
 class RedactSecretsFilter(logging.Filter):
