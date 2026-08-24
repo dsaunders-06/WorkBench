@@ -118,46 +118,89 @@ def main() -> int:
     tally: Counter[str] = Counter()
     last_summary = time.monotonic()
 
-    with args.log.open("r", encoding="utf-8", errors="replace") as handle:
-        if not args.from_start:
-            handle.seek(0, os.SEEK_END)
-        while True:
-            line = handle.readline()
-            if not line:
-                if args.no_follow:
-                    if tally:
-                        parts = ", ".join(f"{k} {v}" for k, v in sorted(tally.items()))
-                        print("")
-                        print(f"  totals: {parts}")
-                    return 0
-                now = time.monotonic()
-                if tally and now - last_summary >= args.summary_every:
+    # POLLED, never held open, and that is a correctness requirement rather
+    # than a style choice (24 August 2026).
+    #
+    # This used to be `with args.log.open(...)` around the whole loop, holding
+    # the file for the watcher's entire run. On Windows a plain open() does not
+    # grant delete-sharing, so `RotatingFileHandler.doRollover()`'s os.rename
+    # fails with WinError 32 - and the handler's rollover leaves `stream=None`
+    # and swallows the error, so THE APPLICATION'S LOG STOPS FOR EVER, silently.
+    #
+    # It happened live: the log froze at 5,242,781 bytes - 99 short of the
+    # 5 MiB cap - at 10:06:27 on Monday's open, and stayed frozen across a full
+    # application restart, because this process still held the handle. The tool
+    # whose only purpose is to watch a session is what blinded it, and it went
+    # on displaying nothing while doing so.
+    #
+    # Opening per poll costs one syscall every 0.4s and cannot lock anything.
+    offset = 0
+    if not args.from_start and args.log.exists():
+        offset = args.log.stat().st_size
+
+    def _read_new() -> list[str]:
+        """New lines since `offset`, reopening each time so nothing is held.
+
+        A file SHORTER than the offset has been rotated out from under us, so
+        the offset restarts at zero rather than seeking past the end of the new
+        file and going quiet - which would reproduce the very blindness this
+        function was rewritten to prevent.
+        """
+        nonlocal offset
+        try:
+            size = args.log.stat().st_size
+        except OSError:
+            return []
+        if size < offset:
+            offset = 0
+        if size == offset:
+            return []
+        with args.log.open("r", encoding="utf-8", errors="replace") as handle:
+            handle.seek(offset)
+            lines = handle.readlines()
+            offset = handle.tell()
+        return lines
+
+    pending: list[str] = []
+    while True:
+        if not pending:
+            pending = _read_new()
+        line = pending.pop(0) if pending else ""
+        if not line:
+            if args.no_follow:
+                if tally:
                     parts = ", ".join(f"{k} {v}" for k, v in sorted(tally.items()))
-                    print(f"    -- {datetime.now(UTC):%H:%M:%S} tally: {parts}")
-                    last_summary = now
-                time.sleep(0.4)
-                continue
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
+                    print("")
+                    print(f"  totals: {parts}")
+                return 0
+            now = time.monotonic()
+            if tally and now - last_summary >= args.summary_every:
+                parts = ", ".join(f"{k} {v}" for k, v in sorted(tally.items()))
+                print(f"    -- {datetime.now(UTC):%H:%M:%S} tally: {parts}")
+                last_summary = now
+            time.sleep(0.4)
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
 
-            message = str(event.get("message", ""))
-            label = _classify(message, str(event.get("level", "")))
-            if label is None:
-                continue
-            tally[label] += 1
-            if label in _QUIET:
-                continue
+        message = str(event.get("message", ""))
+        label = _classify(message, str(event.get("level", "")))
+        if label is None:
+            continue
+        tally[label] += 1
+        if label in _QUIET:
+            continue
 
-            stamp = str(event.get("ts", ""))[11:19]
-            # The traceback is the point on a crash, and noise everywhere else.
-            detail = message.strip().replace("\n", " ")
-            if label == "CRASH":
-                exc = str(event.get("exc_info", "")).strip().splitlines()
-                if exc:
-                    detail = f"{detail} | {exc[-1][:100]}"
-            print(f"  {stamp}  {label:<9} {detail[:150]}")
+        stamp = str(event.get("ts", ""))[11:19]
+        # The traceback is the point on a crash, and noise everywhere else.
+        detail = message.strip().replace("\n", " ")
+        if label == "CRASH":
+            exc = str(event.get("exc_info", "")).strip().splitlines()
+            if exc:
+                detail = f"{detail} | {exc[-1][:100]}"
+        print(f"  {stamp}  {label:<9} {detail[:150]}")
 
 
 if __name__ == "__main__":

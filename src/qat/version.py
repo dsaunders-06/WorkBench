@@ -365,7 +365,39 @@ from qat.domain.display_dates import format_display_date
 # Alpaca field and `_ACCOUNT_TAGS` requests no previous close, so `day_pnl_pct`
 # is None on the real broker always. Sourcing it is the operator's chosen next
 # step and is blocked on a running Gateway.
-MILESTONE = "M136"
+#
+# M137 - the log stopped, and nothing said so. Found live on Monday's open.
+#
+# The application's log froze at 5,242,781 bytes - 99 short of the 5 MiB cap -
+# at 10:06:27, five minutes into the ASX session, and stayed frozen across a
+# full restart while the app went on trading, evaluating fourteen sizing
+# decisions and writing every one to risk_decisions.csv. session_check went on
+# reporting a stale session without saying it was stale.
+#
+# TWO HALVES, NEITHER WRONG ALONE. `scripts/watch_session.py` held the log open
+# for its whole run, and on Windows a plain open() does not grant
+# delete-sharing - so `RotatingFileHandler.doRollover`'s os.rename failed with
+# WinError 32. doRollover closes the stream BEFORE the rename it fails on, so
+# `stream` was left None, and `emit`'s except clause handed the record to
+# `handleError`, which says nothing anywhere an operator looks.
+#
+# The tool whose only purpose is to watch a session is what blinded it, and it
+# displayed nothing while doing so.
+#
+# WHAT IT COST: a wrong diagnosis. A market-data feed that had recovered on its
+# own at 10:21 looked hung, because the only evidence either way was a log that
+# had stopped - and the app was restarted on that mistaken reading.
+#
+# * `ResilientRotatingFileHandler` reopens the stream and keeps appending when a
+#   rotation fails, announcing the failure in the log itself, once per 60s
+#   cooldown rather than once per record. **A log that grows past its cap is a
+#   far smaller problem than a log that stops.**
+# * `watch_session.py` polls - open, read, close - instead of holding a handle,
+#   and resets its offset when the file shrinks under it.
+#
+# Verified by reproducing the failure: with the stock handler the same scenario
+# writes 13 lines and silently loses 28; with this one all 40 arrive.
+MILESTONE = "M137"
 
 _UNKNOWN = "unknown"
 
