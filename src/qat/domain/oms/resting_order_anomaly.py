@@ -155,5 +155,10 @@ class RestingOrderAnomalyStore:
                 for a in self.active()
             ]
         }
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            logger.exception(
+                "Could not write %s - the quarantine will not survive a restart", self._path
+            )

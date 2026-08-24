@@ -14,7 +14,10 @@ way.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+import pytest
 
 from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
 
@@ -72,3 +75,21 @@ def test_no_data_dir_is_tolerated(tmp_path: Path) -> None:
     store = RestingOrderAnomalyStore(None)
     store.declare(symbol="TNE.AX", reason="r", declared_by="d", excess=1.0)
     assert store.is_quarantined("TNE.AX")
+
+
+def test_a_write_failure_does_not_abort_the_caller(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """`declare` is called in a loop over every divergent symbol. An OSError
+    escaping the first one would abandon the rest of the scan, so a failed
+    write degrades to an in-memory quarantine and a logged error."""
+    store = RestingOrderAnomalyStore(tmp_path)
+
+    def _boom(*args, **kwargs):  # type: ignore[no-untyped-def]
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "write_text", _boom)
+    with caplog.at_level(logging.ERROR):
+        store.declare(symbol="TNE.AX", reason="r", declared_by="d", excess=1.0)
+    assert store.is_quarantined("TNE.AX")
+    assert "Could not write" in caplog.text
