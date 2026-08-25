@@ -671,7 +671,15 @@ for each gap and is worth reading; the list lives here.
     orders to this application — it is the obvious candidate, and the reason
     yfinance is still the price source is history rather than a decision.
 
-34. **⚠️ THE RECONCILIATION POLL WEDGED SILENTLY AND NEVER RECOVERED.** Observed
+34. ~~**⚠️ THE RECONCILIATION POLL WEDGED SILENTLY AND NEVER RECOVERED.**~~
+    **BACKSTOP FIXED 25 Aug (`e9a180b`) — ROOT CAUSE STILL OPEN.** `poll()` now
+    runs under `asyncio.wait_for` (120s default) and logs what is at stake;
+    CRITICAL after three in a row; it does NOT trip the kill switch, which
+    stays the operator's open decision. **The real cause is that the IBKR
+    adapter has no timeout on ANY of its eight awaits on the client** —
+    `reqExecutionsAsync`, reached first via `absorb_broker_fills`, resolves
+    only on `execDetailsEnd` and hangs forever if that is lost. THAT is not
+    fixed and should be the next thing done. Observed
     live on 25 August. `ReconciliationMonitor` started at 09:09:52, adopted
     positions, ran the startup orphan scan — and then completed **not one** of
     the ~20 polls due in the following 110 minutes. The app was otherwise
@@ -978,8 +986,12 @@ for each gap and is worth reading; the list lives here.
     from a signal that never fired — and this project has already spent a day on
     that distinction.
 
-44. **⚠️⚠️ THE SECTOR CONCENTRATION RAIL HAS NEVER RUN. IT IS ONE MISSING
-    ARGUMENT.** Found 25 August because the operator looked at ten holdings and
+44. ~~**⚠️⚠️ THE SECTOR CONCENTRATION RAIL HAS NEVER RUN.**~~ **FIXED 25 Aug
+    (`7ba68ab`).** Both halves wired — `OrderCandidate.sector` and
+    `sector_by_symbol` — because `governor.py` needs both and either alone is
+    inert. Falsification observed: with either missing the candidate sizes in
+    full. Five tests, including one proving a diversified book is NOT trimmed,
+    so the trim provably comes from the sector branch. Original finding: Found 25 August because the operator looked at ten holdings and
     said "there seem to be a lot of banks".
 
     There were. **Six of the ten were Financials** — ANZ, ASX, BOQ, IAG, PNI,
@@ -1058,8 +1070,11 @@ for each gap and is worth reading; the list lives here.
     matching `final_shares` 640.2276 exactly. It was the aggregate risk cap,
     biting on the last order of the day.
 
-45. **THE POSITIONS PANEL HAS NO PRICES BECAUSE THE ADAPTER USES THE WRONG IBKR
-    CALL.** Every row on 25 August showed `Last ($) —`, `P&L —`, `To stop —` and
+45. ~~**THE POSITIONS PANEL HAS NO PRICES.**~~ **FIXED 25 Aug (`d494cb6`).**
+    `positions()` is now enriched from `ib.portfolio()`; `positions()` stays
+    authoritative for QUANTITY because reconciliation feeds the kill switch
+    from it. Zero and nan marks are refused, both pinned by tests. Original
+    finding: Every row on 25 August showed `Last ($) —`, `P&L —`, `To stop —` and
     `(escape unknown)`, for all ten holdings.
 
     **`(escape unknown)` is not the defect — it is the honesty marker working.**
