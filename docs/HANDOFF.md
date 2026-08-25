@@ -750,6 +750,48 @@ for each gap and is worth reading; the list lives here.
     capability nothing implements. It was believed here by the same session
     that was auditing other docstrings for exactly this.
 
+37. **⚠️ THE DRIFT GUARD ON PARKED ORDERS MAY NEVER RUN.** An order the autonomy
+    gate blocks on phase is not rejected — it parks in `pending_signoff` and is
+    retried every 60 seconds (M31b, and that retry is right: without it a
+    blocked exit sat for a hundred sessions and a position was never closed).
+    Observed live on 25 August: IAG.AX and RHC.AX parked at ~12:47 and were
+    still being retried at 13:00, waiting for Midday Lull to end at 14:04.
+
+    `AutonomousExecutor._retry_loop`'s docstring says parking is safe because
+    *"the gate re-reads the current price and refuses anything that has drifted
+    past `autonomous_price_drift_limit_pct`… An order that sat too long fails on
+    drift rather than being signed at a price nobody chose."*
+
+    **That guard is conditional and fails open.** `gate.py:200` reads
+    `if current_price is not None and order.reference_price:` — a `None` price
+    skips the check entirely, with no block and no log. And `current_price`
+    comes from `AutonomousExecutor._current_price`, which asks
+    `broker.get_market_data()`; `IBAdapter.get_market_data` issues `reqMktData`
+    and then yields exactly ONCE (`await asyncio.sleep(0)`) before reading the
+    ticker, whose fields default to `nan`. In `_current_price`,
+    `float(quote.get("last") or …)` returns `nan` because **`nan` is truthy**,
+    and `nan > 0` is False — so it returns `None`, and the guard is skipped.
+
+    `_current_price`'s own docstring blesses this: *"None means the drift check
+    is skipped rather than failed - an execution-only adapter never quoting is a
+    known configuration."* True for Alpaca. IBKR is not execution-only, and the
+    result is that the one guard protecting a stale parked order is off.
+
+    **No `has drifted` line exists in ANY log**, including every rotated backup
+    and pre-deploy archive back to 12 August. That is not proof — the phase
+    check precedes the drift check and short-circuits it, and nothing may ever
+    have drifted 3% — but combined with the code path it is not reassuring.
+
+    Wanted: `get_market_data` must actually WAIT for a tick (or use
+    `reqTickersAsync`), `_current_price` must treat `nan` as absent explicitly
+    rather than by accident, and a skipped drift check must LOG that it was
+    skipped. A guard that silently does nothing when its input is missing is the
+    fabricated-all-clear shape this project keeps rediscovering — item 34, the
+    `open_orders` docstrings, and now this.
+
+    Also note the ordering: the phase block precedes the drift block, so a
+    parked order's staleness is never even evaluated until the window reopens.
+
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
 The first-fill path was walked end to end looking for another M123. Nothing
