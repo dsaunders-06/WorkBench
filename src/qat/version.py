@@ -644,6 +644,21 @@ from qat.domain.display_dates import format_display_date
 # half). M142 relabelled inside `_render_result` only, so a chart that had not
 # re-rendered since the deploy still said so - which is exactly what the
 # operator saw and reported.
+#
+# AND THE AI SYMBOL VERDICT COULD NEVER RENDER ON IBKR (item 47). Asked
+# whether the AI work was finished, it was not: `_build_verdict` requires
+# `day_pnl_pct`, which derives from `last_equity` - an Alpaca-era "previous
+# close" that `from_ib_account_values` never sets - so on this broker the
+# value is ALWAYS None and the verdict has been silently absent since item 16
+# shipped, across two live sessions. It now falls back to `EquityMonitor`'s
+# figure, the one `AutonomyGate` already gates on.
+#
+# The FIRST version of that fix shipped the bug the guard exists to prevent,
+# and an existing test caught it: `EquityMonitor.day_pnl_pct()` returns 0.0
+# rather than None when it has no state - right for the gate, fatal for a
+# verdict, because a fabricated 0.0 can never trip an always-negative
+# threshold. The monitor's figure is now used only when it genuinely has a
+# basis.
 MILESTONE = "M143"
 
 _UNKNOWN = "unknown"
