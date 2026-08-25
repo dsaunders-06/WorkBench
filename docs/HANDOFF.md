@@ -45,11 +45,11 @@ source.
 | Repository HEAD | **WELL ahead of the deployed build** — ten fixes landed after the close on 25 August (items 32, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45). `handoff_state.py` derives the gap; do not read a number from here |
 | Deploy gap | **ZERO — M142 is installed.** But NONE of its ten fixes has run live yet, and several touch the risk and order paths: the sector rail now BINDS, positions carry marks (re-enabling the minimum-hold loss escape), every IBKR call can now time out, and the kill switch persists across restarts. **The next launch is the first test of all of it.** Previously: **⚠️ LARGE, and NONE OF IT HAS RUN LIVE.** M141 (`09ab51b`) is what is installed; every fix below it is committed and pushed but NOT deployed. Several touch the risk and order paths — the sector rail, position marks, IBKR call timeouts, the drift guard, kill-switch persistence. **Build, deploy and run a WATCHED session before trusting any of it.** Rollback from M141 is still a rename: `C:\QuantAdvisoryTerminal.bak-M140-20260825-0901` |
 | Pushed | **Up to date.** M141 pushed 24 August evening. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
-| Suite | **2,715 passed, 25 skipped.** ruff, black, mypy and bandit clean |
+| Suite | **2,740 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
-| Account | **HOLDING TNE.AX 3,051 @ 32.9783**, bracketed 30.69 / 36.86, carried overnight deliberately. NetLiquidation ~1,001,264 AUD. **The app HAS now placed entries on IBKR — 24 August was the first day** |
-| Kill switch | **NOT tripped.** It does not persist — see item 32. Yesterday's trip was cleared by the restart, not by a decision |
+| Account | **TEN POSITIONS, all bracketed, 20 resting legs** — A2M ANZ ASX BOQ IAG LOV PNI RHC SUN TNE, verified against the broker. **SIX ARE FINANCIALS (60%) against a 30% cap** — see item 44. Equity ~1,006,820 AUD. **Nothing has ever closed**, so `closed_trades.csv` is 0 rows and that is correct, not a display fault |
+| Kill switch | **NOT tripped — and it now PERSISTS across restarts (item 32, fixed).** Trip it and it stays tripped, logging CRITICAL on restore. New behaviour as of M144 |
 | Ledgers | **0 closed trades** (seven fabricated rows removed 24 August — see the incident above), **49 risk decisions**, journal carries the day's real order flow |
 
 > ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
@@ -1413,72 +1413,95 @@ READ THE STATE FIRST, and trust it over anything in this prompt:
     & "C:\Claude Programming\scripts\session_check.ps1"   (NO ARGUMENTS, EVER)
     .\.venv\Scripts\python.exe scripts\handoff_state.py
 
-Then read docs\HANDOFF.md, and read the 24 AUGUST incident section BEFORE
-touching the order path. It is the most instructive thing this project has
-produced and none of it was caught by a test.
+Then read docs\HANDOFF.md. Read the 24 AUGUST incident section before touching
+the order path, and items 32-49 before touching anything else - they are all
+from 25 August and most of them are rails that existed, passed their tests, and
+had never once run.
 
 ⚠️ POWERSHELL for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal -
 including Python that only READS it, and anything that builds Settings(), which
 loads that directory's .env whether or not the script mentions it. The Bash
 sandbox serves a frozen snapshot and does NOT error.
 
-PUSH NORMALLY - the "Actions minutes exhausted" rule was tested on 24 August and
-is false. But the repo is PRIVATE and CI runs on windows-latest at a 2x
-multiplier, so BATCH commits and push once. A docs-only commit still buys a full
-Windows run.
+PUSH NORMALLY. The repo is PRIVATE and CI runs on windows-latest at a 2x
+multiplier, so BATCH commits and push once. A docs-only commit still buys a
+full Windows run.
 
 THE STATE
 
-  Deployed M140 (e432e1f), verified in production - read back off its own log
-  24 August. HEAD is ahead of it by item 23's fix (M141) and the final-review
-  fixes on top of that.
-  THE ACCOUNT IS NOT FLAT: it holds TNE.AX 3,051 @ 32.9783, bracketed at 30.69
-  and 36.86, carried overnight deliberately. That position is real and correct.
-  THE KILL SWITCH IS TRIPPED, correctly. Item 27 (the absorb-watermark defect)
-  is now FIXED (M140), so it is SAFE TO RESET - but only on a launch you are
-  WATCHING (item 28), because the mismatch it caught came from a replay whose
-  first pass now warns rather than being silent.
-  closed_trades.csv is back to 0 rows after seven fabricated trades were
-  removed. risk_decisions.csv holds 49 real decisions.
+  Deployed M144 (543a978 -> f81d2d4 -> 9e168dd across four deploys on 25 Aug).
+  Installed exe SHA256-verified, signature Valid. Deploy gap ZERO, tree clean,
+  everything pushed.
+  ⚠️ M144 HAS NOT BEEN READ BACK off its own log and NONE of the 25 August work
+  has been exercised live. The next launch is the first test of all of it.
+  Suite 2,740 passed / 25 skipped. ruff, black, mypy, bandit clean.
 
-WHAT 24 AUGUST ESTABLISHED
+  THE ACCOUNT HOLDS TEN POSITIONS, all bracketed, 20 resting legs, verified
+  against the broker: A2M ANZ ASX BOQ IAG LOV PNI RHC SUN TNE. Nothing has ever
+  closed - closed_trades.csv is 0 rows and that is CORRECT, not a display fault.
+  SIX OF THE TEN ARE FINANCIALS (60%) against a 30% sector cap. See item 44.
 
-  M119 passed - the feed hit five empty polls, retried with backoff, recovered
-  on its own. M137 fixed a log that died silently at its rotation cap and stayed
-  dead across a restart. M138 made the per-order cap a share of CASH that trims
-  rather than refuses. M139 stopped an order being transmitted four times.
+  THE KILL SWITCH IS NOT TRIPPED - and it now PERSISTS across restarts (item
+  32), which is new. Trip it tonight and it is still tripped tomorrow, logging
+  CRITICAL on restore. That is the opposite of how it behaved on 25 August.
 
-  Three defects, all in the order path, none caught by any test. All three are
-  now fixed - M140 closed the last one, the absorb-watermark replay (item 27).
+WHAT 25 AUGUST ESTABLISHED
+
+  Fourteen findings from ONE live session. The suite went 2,666 -> 2,740 and
+  caught none of them. Every one came from watching the app run or from the
+  operator reading a screen and asking why it looked odd.
+
+  THREE OF THOSE FINDINGS WERE WRONG (items 41, 42, and 43's first version),
+  all the same way: written from reading code structure without checking the
+  recorded data, while risk_decisions.csv and decision_journal.csv held the
+  answer - the same files that PROVED item 44. Reading a call site tells you
+  what COULD happen; the audit trail tells you what DID. Check the data BEFORE
+  writing the finding.
+
+  The pattern in the real ones: something fails or is absent and the result is
+  indistinguishable from success. A rail with no data (44). A wedged loop that
+  logs nothing (34). A guard skipped on a None (37). A price that never arrives
+  (45). A verdict suppressed by a field the broker never sets (47). An earnings
+  calendar asking the one API that does not answer for ASX (49).
 
 FIRST WORK, IN ORDER
 
-  1. Item 23 is DONE (M141) - OMS.check_resting_orders() reconciles resting
-     orders against the book and quarantines what it cannot justify. Read the
-     final-review fixes before touching it further: cancelling
-     (resting_order_cancel_enabled) stays OFF until its TOCTOU guard (Task 7b,
-     already landed) has been WATCHED against a live broker, not just shipped -
-     its first live exercise should be a session you are watching.
-  2. Item 24 - bound total exposure per NAME at transmission time. The
-     per-order cap worked perfectly four times over; that is the whole problem.
-  3. Item 25 - preflight's broker view was never the defect (corrected premise;
-     it already routes through reqAllOpenOrdersAsync). The defect is that
-     `unprotected` is built by walking HELD positions only, so a resting stop
-     on a symbol the book does NOT hold - item 23's own orphan shape - is
-     invisible to preflight. That question is now check_resting_orders's, and
-     preflight should say so rather than imply coverage it does not have.
-  4. Then reset the kill switch on a session you are WATCHING (see THE STATE
-     above) - nothing is blocking this except watching it happen.
+  1. LAUNCH AND WATCH. In order: the build stamp reads M144 (9e168dd); the AI
+     Advisor produces an actual verdict (item 47 - it could NEVER render before,
+     across two live sessions); RESTING ORDER SCAN reports 20 legs across 10
+     symbols; reconciliation heartbeats REPEAT every 300s (item 34 - there was
+     exactly one all day on 25 August).
+  2. WATCH THE SECTOR RAIL HARDEST (item 44). It has never run in this
+     system's life and the book is 60% financials against a 30% cap. The next
+     financial candidate should be visibly trimmed or refused, and sector_pct
+     in risk_decisions.csv should stop reading null. If it refuses EVERYTHING,
+     stop - that is the rail over-binding.
+  3. Item 33 - make never-ticked-this-session its own refusal, distinct from
+     stale. It adds a refusal to the entry path, so it wants a plan and a
+     watched session, not a quick fix.
+  4. Item 31 - the _IB_WORKING_STATUSES widening, still deliberately split out
+     because it moves _position_stops, a sizing input.
+  5. The macro layer - docs/superpowers/specs/2026-08-25-macro-layer-research.md
+     has the research (all MEASURED) and a three-phase plan. Three decisions
+     are listed at the end and none has been made.
 
-TWO HABITS THAT PAID FOR THEMSELVES ON 24 AUGUST
+  resting_order_cancel_enabled stays OFF until its TOCTOU guard has been
+  WATCHED live, not merely shipped.
 
-  Run it, do not reason about it. Every defect found came from a live session.
-  Two documented constraints and two saved memories were also disproved by
-  simply executing them.
+FOUR HABITS THAT PAID FOR THEMSELVES
 
-  A green result from an incomplete query is not evidence. ib.openTrades() is
-  CLIENT-SCOPED - it reported no protective stops while sixteen were resting.
-  Use reqAllOpenOrdersAsync, and prefer the async form of any ib_async call: the
-  sync ones wrap util.run and raise "event loop is already running" inside the
-  app. That trap was hit three times in one afternoon.
+  Check the audit trail before writing a finding. Three of fourteen were wrong
+  without it, and the file that disproved them was the one that had proved the
+  biggest one.
+
+  Run it, do not reason about it. Fourteen findings from one session against a
+  green suite.
+
+  A test that has never been seen to FAIL is not evidence. Four timeout tests
+  passed against the unfixed adapter because their own asyncio.wait_for raised
+  the TimeoutError they asserted.
+
+  When a new guard breaks an old test, check the FIXTURE first - but be ready
+  for the test to be right. On 25 August a suppression test caught a fix that
+  would have shipped the exact bug the guard existed to prevent.
 ```
