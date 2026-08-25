@@ -707,6 +707,23 @@ for each gap and is worth reading; the list lives here.
     interval, that is an ERROR and a kill-switch candidate, because the rails
     are off. `asyncio.wait_for` around `poll()` would do it.
 
+    **AND check 5 of `session_check.ps1` reported a reassuring green all day**,
+    which is a defect in M141's own operator surface. It reads
+    `5 orphans  RESTING ORDER SCAN ran, clean - 0 divergences` — true, and
+    misleading: the scan ran ONCE, at 09:09:52, and the rail was dead for the
+    remaining 6h50m. The check distinguishes "did not run" from "ran clean",
+    which was the point of I2, but NOT "running every poll" from "ran once at
+    startup seven hours ago".
+
+    Fix it with the same change: report the LAST scan time and the COUNT, and
+    flag when the newest heartbeat is older than a small multiple of
+    `reconciliation_poll_seconds`. A freshness check is the only kind that can
+    catch a rail that stopped rather than one that never started.
+
+    Closing the loop on the day: no bracket fired on 25 August, so the worst
+    case never materialised — nothing closed unrecorded and the ledger is not
+    short. That was luck, not design.
+
 35. **`ib_async` logs each `orderStatus` at INFO with the entire `Trade` repr**,
     including the full `TradeLogEntry` history — kilobytes per line, growing as
     each order accumulates status changes. On 25 August this rotated the 5 MiB
