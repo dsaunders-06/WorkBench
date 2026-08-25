@@ -1029,7 +1029,32 @@ for each gap and is worth reading; the list lives here.
 
     Wanted: evaluate the parked queue as a SET at release, not one at a time.
 
-43. **A rejected order's reason reaches neither the log nor the Blotter.**
+43. ~~**A rejected order's reason reaches neither the log nor the Blotter.**~~
+    **CORRECTED AND FIXED 25 Aug. The original claim was wrong; the real
+    defect was one code path, and it is now closed.**
+
+    > **Wrong:** refusals ARE journalled and DO reach the Blotter, which reads
+    > reasons from the decision journal by order id. Seven rejections on 25
+    > August carry full text - `kill-switch tripped`, `already at the
+    > 10-position limit (10 held or pending)`. I wrote the finding from the
+    > absence of a `reason` field on `Order` without checking the journal.
+    >
+    > **Right, and narrower:** there are two kill-switch refusals.
+    > `submit_order` (`oms.py:334`) goes through `_new_rejected_order`, which
+    > records. `_sign_off_locked` (`oms.py:633`) set the status, logged INFO
+    > and RETURNED - while its two neighbours in the same method, "no price
+    > available" and "broker refused", both call `_record`. Only that one did
+    > not, so an order refused at sign-off showed on the Blotter with an empty
+    > reason and no journal row at all.
+    >
+    > Observed: order `ab701dff`, RHC.AX, 12:37:35, refused inside the
+    > kill-switch window and absent from the journal entirely, while three
+    > other kill-switch refusals in the same window were recorded.
+    >
+    > Fixed: that path now journals `kill-switch tripped: <reason>`, carrying
+    > the switch's own cause rather than a generic string.
+
+    ORIGINAL FINDING (wrong):
     Blotter row 40 on 25 August: `RHC.AX buy 0 … rejected` with the reason
     column showing `-`. Quantity zero and status rejected are correct — that is
     `oms.py:335`'s `_new_rejected_order(candidate, 0.0, "kill-switch tripped")`,

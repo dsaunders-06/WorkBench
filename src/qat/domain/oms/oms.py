@@ -632,6 +632,17 @@ class OMS:
         if self.kill_switch.tripped:
             order.status = "rejected"
             logger.info("Sign-off blocked by kill-switch: order=%s operator=%s", order_id, operator)
+            # Journalled, like every other refusal in this method (item 43).
+            # This one alone returned without recording, so an order refused
+            # here appeared on the Blotter with an EMPTY reason column and no
+            # journal row at all - the Blotter reads reasons from the journal
+            # by order id. Observed on 25 August: order ab701dff, RHC.AX,
+            # refused during the kill-switch window and absent from the journal
+            # entirely, while three other kill-switch refusals the same window
+            # - raised in `submit_order`, which does record - were all there.
+            self._record(
+                order, "rejected", f"kill-switch tripped: {self.kill_switch.reason}", operator
+            )
             return order
 
         # Re-check cash against the CURRENT balance, not the balance at
