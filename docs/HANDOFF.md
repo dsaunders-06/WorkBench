@@ -671,6 +671,26 @@ for each gap and is worth reading; the list lives here.
     orders to this application — it is the obvious candidate, and the reason
     yfinance is still the price source is history rather than a decision.
 
+    **NARROWED 25 Aug, after checking what already exists** — the lesson of
+    three wrong findings earlier the same day. A staleness rail IS in place:
+    `MarketDataFeed` publishes `DataStaleEvent` once a symbol stops updating
+    for `data_staleness_seconds` (900s) BEYOND the feed's own known delay, and
+    `refusals.py` carries a "Stale market data" reason, so the entry path can
+    already refuse on staleness.
+
+    The gap is narrower and more specific: **a symbol that has never ticked
+    this session is not stale, it is ABSENT** — and absence is not refused. At
+    the bell nothing has ticked today, so nothing can read as stale; the
+    strategy works from warm-start history, which is yesterday's close. That is
+    the case the 10:29 entry gate happens to cover by coincidence, and nothing
+    asserts it.
+
+    So the work is *"treat never-ticked-this-session as its own refusal,
+    distinct from stale"*, not *"add a staleness rail"*. It adds a refusal to
+    the entry path, so it wants a plan and a watched session rather than being
+    appended to a long day of other changes. **Deliberately NOT done on 25
+    August for that reason** — it is the natural next piece of work.
+
 34. ~~**⚠️ THE RECONCILIATION POLL WEDGED SILENTLY AND NEVER RECOVERED.**~~
     **BACKSTOP FIXED 25 Aug (`e9a180b`) — ROOT CAUSE STILL OPEN.** `poll()` now
     runs under `asyncio.wait_for` (120s default) and logs what is at stake;
