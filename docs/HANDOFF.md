@@ -792,6 +792,77 @@ for each gap and is worth reading; the list lives here.
     Also note the ordering: the phase block precedes the drift block, so a
     parked order's staleness is never even evaluated until the window reopens.
 
+38. **⚠️ THE RISK CONSOLE CALLS A PARKED ORDER "approved".** Observed 25 August:
+    RHC.AX, IAG.AX and PNI.AX all render as `approved  approved` in the Risk
+    Console's audit panel while the Blotter shows them `pending_signoff -
+    session phase 'Midday Lull' is not eligible`. The headline above reads
+    *"7 candidate(s) considered, none refused."*
+
+    The panel is not lying, it is answering a different question in a word that
+    reads as this one. `risk_console.py:333` renders
+    `runtime.risk_engine.audit_log.entries()`, where `approved` means **the risk
+    engine approved the sizing** — not that the order was signed off, and
+    certainly not that it reached the broker. An order can be risk-approved and
+    then blocked by the autonomy gate, which is exactly what these three are.
+
+    **This ambiguity is already documented elsewhere in the codebase**, which is
+    what makes it a defect rather than a wording preference: `approvals.py:9`
+    says of a different surface *"the trade ledger cannot tell them apart. Both
+    read `approved`."* The same collision, reproduced on the screen an operator
+    checks to find out what happened.
+
+    The operator-facing consequence is direct: this screen is where you look to
+    answer "did my orders go out", and today it said yes for three that had not.
+
+    Wanted: say which approval it is. `risk-approved` versus `signed off`, or
+    render the order's actual status beside it. The audit log is the right data;
+    the label is the bug.
+
+39. **The Equity vs Benchmark chart's x-axis renders bar indices, not dates.**
+    Strategy Workbench, observed 25 August: the axis is labelled *"Date
+    (synthetic daily bars)"* and its ticks read `00.550, 00.600 … 01.450`. Those
+    are fractional positions along a one-element series, formatted as if they
+    were numbers on a continuous scale. With a single closed trade the series
+    has one point, so the axis has nothing to span and falls back to decimals
+    around it.
+
+    Reported before and still present. It is cosmetic only in the sense that no
+    decision reads it — but it is on the screen used to judge a strategy, and an
+    axis that says "Date" and shows `01.150` teaches the reader to distrust the
+    chart.
+
+40. **UTC is still rendered where AEST is meant — more instances found.**
+    Extends item 21, which is NOT fully closed. Seen on 25 August:
+    the Balances panel's *"as of 03:21:34"* (a 13:21 AEST event), the Regime
+    Monitor's transition history *"25/08/2026 00:03:00 UTC -> sideways"*, and
+    the Blotter's timestamp column showing `02:38:39` for a 12:38 AEST order.
+
+    The Risk Console's anomaly rows are NOT affected — they label the zone
+    explicitly (`… 14:22 UTC`), which is the pattern the rest should follow:
+    either convert to session-local or say which zone it is. Silent UTC on a
+    screen whose other fields are session-local is the failure, not UTC itself.
+
+41. **Brokerage is not captured on live trades.** IBKR charges roughly **$6.60**
+    per ASX trade; the Performance tab reflects none of it.
+
+    The seam already exists and is unwired, so this is plumbing rather than
+    design: `ClosedTrade` carries `entry_cost` and `exit_cost`
+    (`performance/trades.py:220`), and the backtester fills them from
+    `backtester/costs.py`'s commission-with-a-floor model — whose own docstring
+    warns that a flat fee is *"trivial on a large position and ruinous on a
+    small one"*. **Nothing in `ib_adapter.py` or `oms.py` mentions commission at
+    all**, so every live closed trade records 0.00 both sides.
+
+    ib_async supplies it: `Fill.commissionReport` carries `commission` and
+    `currency`, delivered on the `commissionReport` event. Absorbing it where
+    fills are absorbed would populate the fields that already exist.
+
+    Until then every live P&L figure, expectancy, profit factor and promotion
+    decision is computed gross — and the promotion gate needs 30 closed trades,
+    so the error compounds into the decision about whether a strategy earns its
+    keep. On a $6.60 round trip that is ~$13 per trade against an expectancy
+    the gate measures in dollars.
+
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
 The first-fill path was walked end to end looking for another M123. Nothing
