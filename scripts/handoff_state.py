@@ -78,6 +78,19 @@ REPO = Path(__file__).resolve().parent.parent
 # in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
 # C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
 #
+# M142 DEPLOYED 25 August 17:52, updated in the same minute as the copy.
+# Built from a clean tree at 543a978, stamped "M142 (543a978, built 25/08/2026
+# 07:49 UTC)" with no -dirty marker, signed and timestamp-verified. Installed
+# exe SHA256-identical to the signed artefact (06B14878...B816), signature
+# Valid on the INSTALLED copy. Rollback is a rename:
+# C:\QuantAdvisoryTerminal.bak-M141-20260825-1752.
+#
+# NOT YET READ BACK - the app has not been launched since this copy, so no
+# Build: line has come off its own log. This constant is an INTENTION until it
+# has, which is the distinction that made it wrong three times before.
+#
+# The M141 record below is kept for the read-back it does have.
+#
 # READ BACK OFF ITS OWN LOG at 09:09 on 25 August, so this is an OBSERVATION
 # and not an intention:
 #   Build: M141 (09ab51b, built 24/08/2026 22:58 UTC, packaged)
@@ -97,7 +110,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "09ab51b"
+DEPLOYED = "543a978"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
