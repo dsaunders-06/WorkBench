@@ -34,7 +34,7 @@ Phase 2 of `docs/superpowers/specs/2026-08-25-macro-layer-research.md` is three 
 
 | File | Responsibility |
 |---|---|
-| `src/qat/domain/regime_engine/scaling.py` | **Create.** `ColumnStandardiser` — fit column means/stds once, transform many times, pass constant columns through untouched. |
+| `src/qat/domain/regime_engine/scaling.py` | **Create.** `ColumnStandardiser` — fit column means/stds once, transform many times, never divide a constant column by zero. |
 | `src/qat/domain/regime_engine/hmm_core.py` | **Modify.** `fit()` standardises before hmmlearn; `predict_proba()` reuses the stored transform; `_characterize_states` keeps reading RAW. |
 | `src/qat/domain/regime_engine/engine.py` | **Modify.** Log the per-column spread share at refit, so scale dominance is visible rather than inferred. |
 | `tests/domain/regime_engine/test_feature_scaling.py` | **Create.** The standardiser's own contract. |
@@ -99,19 +99,30 @@ def test_no_column_dominates_after_standardising():
     assert shares.max() < 0.55, f"a column still dominates after scaling: {shares}"
 
 
-def test_a_constant_column_passes_through_untouched():
+def test_a_constant_column_survives_without_NaN():
     """Constant columns are a KNOWN live condition, not a hypothetical.
 
     `engine.py:_fit` already logs them by name: a macro series that fails to
     load leaves its feature at a default for the whole session. Dividing by a
     zero standard deviation would turn that logged, survivable warning into a
     matrix full of NaN and a dead classifier.
+
+    The column is CENTRED but not scaled, so it lands on 0.0 rather than
+    keeping its raw value. That is fine: a constant offset contributes nothing
+    to Euclidean distance, so it cannot bias the KMeans initialisation either
+    way. What matters is that the column stays FINITE, and that it lands where
+    the class docstring says it does.
     """
     matrix = np.array([[1.0, 5.0], [2.0, 5.0], [3.0, 5.0]])
     out = ColumnStandardiser().fit_transform(matrix)
 
     assert np.isfinite(out).all(), out
-    assert np.allclose(out[:, 1], 5.0), "a constant column should be left alone"
+    # The VALUE, not just the variance. `std() == 0.0` holds whether the column
+    # was centred to 0.0 or left at its raw 5.0, so it cannot tell those two
+    # apart - and the whole point of this test is which one happened. Asserting
+    # the value pins the documented behaviour and catches a docstring that
+    # drifts away from it.
+    assert np.allclose(out[:, 1], 0.0), "a constant column should be centred, not rescaled"
 
 
 def test_transform_reuses_the_FITTED_statistics():
@@ -171,11 +182,13 @@ import numpy as np
 class ColumnStandardiser:
     """Per-column z-score, fitted once and reapplied.
 
-    ⚠️ A column with zero spread is passed through UNCHANGED rather than
-    divided by zero. Constant columns are a known live condition - `_fit` in
-    `engine.py` already logs them by name when a macro series fails to load and
-    its feature sits at a default all session. That is a survivable, logged
-    degradation; turning it into a matrix of NaN would not be.
+    ⚠️ A column with zero spread is CENTRED but never divided by zero, so it
+    lands on 0.0 and stays constant. Constant columns are a known live
+    condition - `_fit` in `engine.py` already logs them by name when a macro
+    series fails to load and its feature sits at a default all session. That is
+    a survivable, logged degradation; turning it into a matrix of NaN would not
+    be. A constant offset contributes nothing to Euclidean distance, so leaving
+    it centred rather than raw changes nothing about the initialisation.
     """
 
     def __init__(self) -> None:

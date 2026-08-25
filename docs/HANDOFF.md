@@ -692,6 +692,25 @@ for each gap and is worth reading; the list lives here.
     August for that reason** — it is the natural next piece of work.
 
 34. ~~**⚠️ THE RECONCILIATION POLL WEDGED SILENTLY AND NEVER RECOVERED.**~~
+    **ROOT CAUSE FOUND, FIXED, AND CONFIRMED LIVE 26 Aug.**
+
+    ✅ **CONFIRMED IN PRODUCTION, 26 August, on M145.** Eight consecutive
+    heartbeats, **300 seconds apart to the second**, every one reporting the
+    full book:
+
+        08:54:41  (startup)  RESTING ORDER SCAN: 20 working leg(s) across 10 symbol(s)
+        08:59:41  (+300s)    ... and six more, through 09:29:42
+
+    `ERROR/CRITICAL since the bell: 0` — no `reqAllOpenOrders` timeout, in the
+    same after-hours/pre-open condition that produced two of them at 22:28:22
+    the night before. Set against 25 August, when the scan ran **once**, at
+    09:09:52, and the rail was dead for the following 6h50m.
+
+    Note it was `session_check`'s new freshness line that made this legible:
+    `RESTING ORDER SCAN x8, last 09:29:42`. The old line read
+    `RESTING ORDER SCAN ran, clean` whether it had run once or eight times, so
+    the confirmation and the failure would have looked identical.
+
     **ROOT CAUSE FOUND AND FIXED 26 Aug.** Backstop fixed 25 Aug (`e9a180b`):
     `poll()` runs under `asyncio.wait_for` (120s default) and logs what is at
     stake; CRITICAL after three in a row; it does NOT trip the kill switch,
