@@ -44,7 +44,7 @@ source.
 | Deployed build | **M145 (`08e4dc5`)**, installed 26 August 08:41. Exe SHA256-identical to the signed artefact (`576F9A72…86D65`), signature Valid on the installed copy. Stamped `M145 (08e4dc5, built 26/08/2026 08:38:09 AEST)` — the first stamp to render in AEST rather than UTC (item 50). Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M144-20260826-0841`. ⚠️ **Carries item 34's ROOT CAUSE fix, NOT yet read back and NOT yet exercised live** — the next launch is its first test, and the thing to watch is whether the reconciliation heartbeat now REPEATS every 300s instead of appearing once. Previous: **M144 (`9e168dd`)**, installed 25 August 22:04. Exe SHA256-verified, signature Valid. **READ BACK off its own log 22:21:05 on 25 August** — `Build: M144 (9e168dd, built 25/08/2026 12:01 UTC, packaged)`, operator-confirmed on screen, so this is an observation and not an intention. That run adopted 10 positions and its startup scan saw `20 working leg(s) across 10 symbol(s), nothing unjustified`. ⚠️ **It also exercised M144's IBKR call deadline for the first time, and the deadline WORKED** — `reqAllOpenOrders` timed out loudly at 22:28:22 instead of hanging forever, which is how item 34's root cause became findable. Previous: **M143 (`f81d2d4`)**, installed 25 August 21:33 (`192A9E9A…`). Rollback: `C:\QuantAdvisoryTerminal.bak-M142-20260825-2133`. Previous: **M142 (`543a978`)**, installed 25 August 17:52. Exe SHA256-identical to the signed artefact (`06B14878…B816`), signature Valid on the installed copy. **NOT yet read back off its own log.** Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M141-20260825-1752`. Previous entry: **M141 (`09ab51b`)**, installed 25 August 09:01. Exe SHA256-identical to the signed artefact, signature Valid. **Read back off its own log 09:09 25 August** — `Build: M141 (09ab51b, built 24/08/2026 22:58 UTC, packaged)`. The startup scan ran in the same launch: `RESTING ORDER SCAN: 2 working leg(s) across 1 symbol(s), nothing unjustified` — both legs of TNE's live bracket seen and correctly not flagged |
 | Repository HEAD | **Level with the deployed build.** `handoff_state.py` derives the gap; do not read a number from here |
 | Deploy gap | **ZERO — M145 is installed.** Previously: **ZERO — M142 is installed.** But NONE of its ten fixes has run live yet, and several touch the risk and order paths: the sector rail now BINDS, positions carry marks (re-enabling the minimum-hold loss escape), every IBKR call can now time out, and the kill switch persists across restarts. **The next launch is the first test of all of it.** Previously: **⚠️ LARGE, and NONE OF IT HAS RUN LIVE.** M141 (`09ab51b`) is what is installed; every fix below it is committed and pushed but NOT deployed. Several touch the risk and order paths — the sector rail, position marks, IBKR call timeouts, the drift guard, kill-switch persistence. **Build, deploy and run a WATCHED session before trusting any of it.** Rollback from M141 is still a rename: `C:\QuantAdvisoryTerminal.bak-M140-20260825-0901` |
-| Pushed | **Up to date.** M141 pushed 24 August evening. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
+| Pushed | **Up to date** through `35db537`. ⚠️ **CI IS BLOCKED** — the Actions allowance ran out during the 25 August session; runs now fail in ~4s at the billing wall with zero steps, likely until September. Pushes still work and cost nothing. **The local suite is the only verification now** — see the standing constraints |
 | Suite | **2,746 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
@@ -1400,6 +1400,38 @@ so it neither confirms nor contradicts any of it.
   held-back commits were pushed at 13:07 and CI completed **green in 3m57s** on
   `windows-latest`. Run the local suite in full anyway and read the actual
   summary line, never a piped tail.
+
+  ⚠️⚠️ **AND NOW IT IS EXHAUSTED — 26 August. CI IS BLOCKED.** The allowance ran
+  out during the 25 August session. Runs fail in **3–4 seconds with zero steps
+  executed**, annotated *"The job was not started because recent account
+  payments have failed or your spending limit needs to be increased."* Operator's
+  read: blocked until **September**.
+
+  From `gh run list`: everything up to **25 Aug 12:23 UTC** succeeded at ~4m19s;
+  both runs after it (25 Aug 22:43 and 23:01 UTC) hit the wall. The 25 August
+  session pushed **eight times** — at the 2× multiplier that is roughly 8
+  minutes each.
+
+  **Pushing still works and still costs nothing** — a push consumes no minutes,
+  only the workflow does. So `git push` succeeds and the workflow simply never
+  starts. **Batching no longer saves anything**, because there is nothing left
+  to spend.
+
+  **The consequence is the part that matters: the local suite is now the ONLY
+  verification.** There is no second instrument left to disagree with it — which
+  is precisely the safety net that caught seven consecutive red pushes against a
+  green local suite on 19 August. Run all four checks and the suite before every
+  commit and treat them as final. After pushing, still run `gh run list
+  --limit 3`, but expect `failure` in ~4s and read it as the wall, not a
+  regression — confirm by checking the run has zero steps, and do not spend time
+  debugging it.
+
+  **Note the shape, which outlives the outage.** This rule has now been wrong in
+  BOTH directions inside three days: recorded as "exhausted, do not push",
+  tested on 24 August and found false, rewritten as "CI works" — and true again
+  today because the conditions moved underneath it. A rule about a FINITE
+  RESOURCE was written as though it described a permanent property. Check the
+  state; do not recall it.
 
   ⚠️ **NOT "push freely" — corrected the same afternoon.** The repo is
   **PRIVATE**, so minutes come from a finite monthly allowance, and that
