@@ -350,10 +350,18 @@ Phase 2.2 says *"measure the regime label and the governor's aggregate before
 and after."* Right, and incomplete: it does not say what result would cause a
 feature to be REJECTED. Without that, every measured feature gets kept.
 
-The instrument already exists —
-`2026-08-13-ablation-switch-and-run-manifest-design.md` — and item 30 (Stage 4
-regime re-sourcing) is explicitly gated on the ablation question. This plan
-should not build a second way to answer it.
+The instrument mostly exists — `scripts/research/run_ablation.py`, built and
+tested, with a run manifest, a frozen macro cache, and a guard that suppresses
+the comparison when a rail never bound in the baseline rather than printing a
+misleading zero. Item 30 (Stage 4 regime re-sourcing) is explicitly gated on it.
+
+⚠️ **But it ablates RAILS, not regime FEATURES.** Its arm is `--rail
+cost_to_risk`; there is no `--feature vix_level`. So "use the existing harness"
+is right in principle and is not free: it needs a second ablation dimension
+added — hold the feature column out, refit, and compare. That is an extension
+of a mature tool rather than a new build, and it is still far cheaper than a
+parallel mechanism. **Corrected the same day it was written**, after checking
+what the script actually does rather than what its design document promised.
 
 **Wanted:** each candidate is admitted only on an ablation run showing it
 changes the label materially AND improves a stated metric; anything else is
