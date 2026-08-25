@@ -980,6 +980,37 @@ for each gap and is worth reading; the list lives here.
     defect: `existing_weights` and `existing_returns` ARE passed, but anything
     else defaulting quietly deserves the same look.
 
+    **CONFIRMED IN THE PRODUCTION AUDIT TRAIL, not just by reading code.**
+    `risk_decisions.csv`'s `inputs` column records the governor's own view at
+    each decision. Across all nine buys on 25 August:
+
+    | Sym | AggRisk | Headroom | GrossExp | held_in_sector_dollars | sector_pct |
+    |---|---|---|---|---|---|
+    | LOV | 0.70% | 43,052 | 10.1% | **0.0** | null |
+    | BOQ | 0.99% | 40,154 | 13.1% | **0.0** | null |
+    | ASX | 1.87% | 31,351 | 26.5% | **0.0** | null |
+    | A2M | 2.56% | 24,362 | 34.0% | **0.0** | null |
+    | SUN | 3.28% | 17,227 | 40.6% | **0.0** | null |
+    | RHC | 3.74% | 12,660 | 46.4% | **0.0** | null |
+    | IAG | 3.99% | 10,158 | 51.7% | **0.0** | null |
+    | PNI | 4.44% |  5,612 | 57.1% | **0.0** | null |
+    | ANZ | 4.87% |  1,278 | 62.4% | **0.0** | null |
+
+    Financials arrived 2nd, 3rd, 5th, 7th, 8th and 9th, and the governor
+    recorded zero dollars held in sector every time. The evidence to catch this
+    has existed since the first trade this system ever placed; nothing read it.
+
+    **What DID limit the book was the aggregate risk cap alone** — headroom
+    drained 43,052 → 1,278 and the last two were `resized_by_governor: true`.
+    That rail worked correctly. But aggregate risk is indifferent to whether
+    nine positions are nine sectors or one, which is exactly why the sector cap
+    exists. The account finished at 62.4% gross exposure and 60% Financials.
+
+    Answers a question asked on the day - why ANZ was only 640 shares. Not the
+    sector rail: `headroom_dollars 1278.17 / per_share_risk 1.9964 = 640.2`,
+    matching `final_shares` 640.2276 exactly. It was the aggregate risk cap,
+    biting on the last order of the day.
+
 45. **THE POSITIONS PANEL HAS NO PRICES BECAUSE THE ADAPTER USES THE WRONG IBKR
     CALL.** Every row on 25 August showed `Last ($) —`, `P&L —`, `To stop —` and
     `(escape unknown)`, for all ten holdings.
