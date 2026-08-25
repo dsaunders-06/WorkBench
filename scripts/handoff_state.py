@@ -78,6 +78,19 @@ REPO = Path(__file__).resolve().parent.parent
 # in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
 # C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
 #
+# M143 DEPLOYED 25 August 21:33, updated in the same minute as the copy.
+# Clean tree at f81d2d4, stamped "M143 (f81d2d4, built 25/08/2026 11:30 UTC)",
+# signed and timestamp-verified. Installed exe SHA256-identical to the signed
+# artefact (192A9E9A...), signature Valid on the INSTALLED copy. Rollback is a
+# rename: C:\QuantAdvisoryTerminal.bak-M142-20260825-2133.
+#
+# NOT YET READ BACK - not launched since the copy.
+#
+# Carries item 47: the AI symbol verdict could never render on IBKR because it
+# required day_pnl_pct, derived from last_equity, which this broker never
+# supplies. Two live sessions ran with item 16's centrepiece silently absent.
+# Tomorrow is its FIRST real test, not a re-check.
+#
 # M142 DEPLOYED 25 August 17:52, updated in the same minute as the copy.
 # Built from a clean tree at 543a978, stamped "M142 (543a978, built 25/08/2026
 # 07:49 UTC)" with no -dirty marker, signed and timestamp-verified. Installed
@@ -110,7 +123,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "543a978"
+DEPLOYED = "f81d2d4"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
