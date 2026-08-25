@@ -720,6 +720,36 @@ for each gap and is worth reading; the list lives here.
     hides exactly the app-level lines a live incident needs. Quiet the
     `ib_async.wrapper` logger to WARNING, or raise the cap and the backup count.
 
+36. **`poll()`'s docstring promises a control that does not exist, and the
+    kill-switch button is what sits where it would be.**
+    `ReconciliationMonitor.poll` says it is *"Public so a test or the Risk
+    Console can force a check without waiting on the interval."* **The Risk
+    Console cannot.** That screen has exactly three buttons — the kill switch
+    (`risk_console.py:126`), "Declare a difference explained…", and "Clear a
+    quarantine…". Nothing anywhere calls `poll()` outside tests.
+
+    On 25 August that sentence was read as fact and the operator was told to
+    force a reconciliation from the Risk Console while diagnosing item 34.
+    There was no such control. The kill switch was tripped at 12:09:27 with
+    `Manual trigger by operator (risk console)` — the only code path that can
+    produce that message — and the operator reports not pressing it.
+    `_on_kill_switch_clicked` is a TOGGLE bound to Qt's `clicked`, which fires
+    on **Space or Enter when the button has focus**, and it is the first
+    widget constructed on that screen. Halting the account was one stray
+    keystroke away from an instruction to do something else entirely.
+
+    Two fixes, and the second is the real one. **Build the force-check button**
+    — it is genuinely wanted, item 34 is precisely the case for it, and the
+    docstring has been promising it for long enough that someone believed it.
+    And **make the kill-switch button hard to hit by accident**: a confirm step
+    on TRIP (not on reset — de-risking must stay one click), or at minimum
+    remove it from the default focus chain. A control whose whole purpose is to
+    stop the account should not be the thing a stray Enter finds first.
+
+    The general form is the M110 family again: a docstring asserting a
+    capability nothing implements. It was believed here by the same session
+    that was auditing other docstrings for exactly this.
+
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
 The first-fill path was walked end to end looking for another M123. Nothing
