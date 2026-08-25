@@ -20,11 +20,13 @@ import numpy as np
 class ColumnStandardiser:
     """Per-column z-score, fitted once and reapplied.
 
-    ⚠️ A column with zero spread is passed through UNCHANGED rather than
-    divided by zero. Constant columns are a known live condition - `_fit` in
-    `engine.py` already logs them by name when a macro series fails to load and
-    its feature sits at a default all session. That is a survivable, logged
-    degradation; turning it into a matrix of NaN would not be.
+    ⚠️ A column with zero spread is CENTRED but never divided by zero, so it
+    lands on 0.0 and stays constant. Constant columns are a known live
+    condition - `_fit` in `engine.py` already logs them by name when a macro
+    series fails to load and its feature sits at a default all session. That is
+    a survivable, logged degradation; turning it into a matrix of NaN would not
+    be. A constant offset contributes nothing to Euclidean distance, so leaving
+    it centred rather than raw changes nothing about the initialisation.
     """
 
     def __init__(self) -> None:

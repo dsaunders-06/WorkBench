@@ -48,17 +48,21 @@ def test_a_constant_column_survives_without_NaN():
     matrix full of NaN and a dead classifier.
 
     The column is CENTRED but not scaled, so it lands on 0.0 rather than
-    keeping its raw value. That is fine and is not what this guards: a constant
-    offset contributes nothing to Euclidean distance, so it cannot bias the
-    KMeans initialisation either way. What matters is that the column stays
-    FINITE and stays CONSTANT - the standardiser must never fabricate variance
-    the data does not have.
+    keeping its raw value. That is fine: a constant offset contributes nothing
+    to Euclidean distance, so it cannot bias the KMeans initialisation either
+    way. What matters is that the column stays FINITE, and that it lands where
+    the class docstring says it does.
     """
     matrix = np.array([[1.0, 5.0], [2.0, 5.0], [3.0, 5.0]])
     out = ColumnStandardiser().fit_transform(matrix)
 
     assert np.isfinite(out).all(), out
-    assert out[:, 1].std() == 0.0, "the standardiser must not fabricate variance"
+    # The VALUE, not just the variance. `std() == 0.0` holds whether the column
+    # was centred to 0.0 or left at its raw 5.0, so it cannot tell those two
+    # apart - and the whole point of this test is which one happened. Asserting
+    # the value pins the documented behaviour and catches a docstring that
+    # drifts away from it.
+    assert np.allclose(out[:, 1], 0.0), "a constant column should be centred, not rescaled"
 
 
 def test_transform_reuses_the_FITTED_statistics():
