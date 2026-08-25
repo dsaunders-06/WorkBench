@@ -863,6 +863,61 @@ for each gap and is worth reading; the list lives here.
     keep. On a $6.60 round trip that is ~$13 per trade against an expectancy
     the gate measures in dollars.
 
+42. **⚠️ PARKED ORDERS ACCUMULATE AND RELEASE TOGETHER, EACH SIZED AGAINST A
+    DIFFERENT ACCOUNT.** By 13:22 on 25 August three orders were parked in
+    `pending_signoff` waiting for Midday Lull to end — RHC.AX (12:38), IAG.AX
+    (12:39), PNI.AX (13:22). All three release in the same retry pass at 14:05.
+
+    Each was sized independently, against the cash and exposure that existed at
+    the moment it was created. RHC's own trim line records this:
+    *"trimmed from 1971 to 1194 shares by the per-order cap of 10.0% of cash
+    (53259 of 532591)"* — 10% of the cash **as it was at 12:38**. IAG and PNI
+    each did the same arithmetic against a different balance, and none of the
+    three has ever been evaluated against the other two.
+
+    So the per-order cap is applied three times and the *combined* draw at the
+    moment of release is applied never. This is outstanding item 24 —
+    *"bound total exposure per NAME at transmission time"* — generalised from
+    one symbol to the portfolio, and it is the same failure that item 24 was
+    raised for: **the per-order cap works perfectly, several times over, and
+    that is precisely the problem.**
+
+    There IS a fail-closed cash re-check at sign-off (`_sign_off_locked`,
+    documented against exactly this: *"ten orders each individually affordable
+    when submitted can collectively overdraw"*), and sign-off is serialised. So
+    cash is defended. **Exposure and concentration are not** — those are
+    evaluated at sizing, not at release.
+
+    Compounding it, item 37: the drift guard that should refuse a stale parked
+    order appears not to run. Three orders sized 80+ minutes earlier, released
+    at once, with the staleness check off, and only cash re-checked.
+
+    Wanted: evaluate the parked queue as a SET at release, not one at a time.
+
+43. **A rejected order's reason reaches neither the log nor the Blotter.**
+    Blotter row 40 on 25 August: `RHC.AX buy 0 … rejected` with the reason
+    column showing `-`. Quantity zero and status rejected are correct — that is
+    `oms.py:335`'s `_new_rejected_order(candidate, 0.0, "kill-switch tripped")`,
+    created at 12:37:35 while the switch was tripped, and the reason is true.
+
+    It is simply not carried anywhere an operator can read it. **The log never
+    names that order at all** — searched every rotated file, no line mentions
+    its id — and `Order` is `slots=True` with neither a `rejection_reason` nor a
+    `reason` field, so the refusal text only ever reaches the DecisionJournal.
+    Parked orders DO show their reason on the Blotter because the autonomy
+    gate's block text travels a different route entirely.
+
+    The result is backwards: the Blotter explains why an order is *waiting* but
+    not why one was *refused*, and refusal is the more consequential outcome.
+    Note this is NOT the classifier's fault — `refusals.py:122` carries
+    `("kill-switch", RefusalFamily.STATE, "Kill-switch active")`, so the reason
+    would render correctly if it arrived. It never arrives.
+
+    Wanted: carry the refusal reason on the order, and log a rejection at INFO
+    naming the order and the reason. A refusal nobody can see is indistinguishable
+    from a signal that never fired — and this project has already spent a day on
+    that distinction.
+
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
 The first-fill path was walked end to end looking for another M123. Nothing
