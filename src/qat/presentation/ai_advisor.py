@@ -334,7 +334,31 @@ class AiAdvisorScreen(QWidget):
         try:
             equity = account_snapshot.balances.equity
             cash = account_snapshot.balances.cash
-            day_pnl_pct = account_snapshot.balances.day_pnl_pct
+            # Item 47. This read `balances.day_pnl_pct` alone, which derives
+            # from `last_equity` - a field IBKR never supplies - so the value
+            # was ALWAYS None on this broker and the verdict below has never
+            # rendered in production. The guard is right and stays; the input
+            # was wrong. `EquityMonitor.day_pnl_pct()` is a real measured
+            # figure and is what `AutonomyGate` gates on, so the verdict now
+            # agrees with the rail it reports.
+            monitor = getattr(self.runtime, "equity_monitor", None)
+            state = getattr(monitor, "state", None)
+            # ONLY when the monitor genuinely has a basis. `day_pnl_pct()`
+            # returns 0.0 rather than None when it does not - deliberately, so
+            # that a just-started app does not read as a loss and pause buys.
+            # That is right for the GATE and fatal here: a fabricated 0.0 can
+            # never trip the always-negative pause threshold, so the verdict
+            # would state "no rail here would refuse it" on nothing. The first
+            # version of this fix did exactly that and the existing
+            # suppression test caught it.
+            monitor_pct: float | None = None
+            if monitor is not None and state is not None:
+                if getattr(state, "day_start_equity", 0.0) > 0:
+                    monitor_pct = monitor.day_pnl_pct(equity)
+            day_pnl_pct = resolve_day_pnl_pct(
+                broker_pct=account_snapshot.balances.day_pnl_pct,
+                monitor_pct=monitor_pct,
+            )
             if equity is None or cash is None or day_pnl_pct is None:
                 # The Dashboard's own `_refresh` bails identically when equity
                 # is unknown - a verdict computed from an assumed figure would
@@ -548,3 +572,25 @@ class AiAdvisorScreen(QWidget):
             )
         finally:
             self.ask_button.setEnabled(True)
+
+
+def resolve_day_pnl_pct(*, broker_pct: float | None, monitor_pct: float | None) -> float | None:
+    """The day's P&L for the verdict, from whichever source can answer (item 47).
+
+    The verdict's guard - suppress rather than assume - is right and stays:
+    a substituted 0.0 could never trip the always-negative pause threshold, so
+    an unreported -6% day would read as "no rail here would refuse it".
+
+    What was wrong was the input. `balances.day_pnl_pct` derives from
+    `last_equity`, an Alpaca-era "previous close" that IBKR never supplies, so
+    on this broker it is ALWAYS None and the verdict had never rendered in
+    production. `EquityMonitor.day_pnl_pct()` measures against a persisted
+    `day_start_equity`, works on any broker, and is what `AutonomyGate`
+    actually gates on - so the verdict now agrees with the rail it reports.
+
+    A monitor figure of exactly 0.0 is a MEASURED zero and must survive; only
+    None means unknown. `is not None`, never truthiness.
+    """
+    if broker_pct is not None:
+        return broker_pct
+    return monitor_pct

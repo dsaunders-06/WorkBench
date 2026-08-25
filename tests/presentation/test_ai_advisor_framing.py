@@ -215,6 +215,11 @@ def test_an_unknown_day_pnl_produces_no_verdict_rather_than_a_permissive_one(qtb
     screen = _screen(qtbot)
     balances = AccountBalances(equity=100_000.0, cash=50_000.0)  # no last_equity
     assert balances.day_pnl_pct is None
+    # BOTH sources must be unknown for this to test what it claims (item 47).
+    # The verdict now falls back to EquityMonitor.day_pnl_pct(), which works on
+    # IBKR where `last_equity` never does; nulling only the broker would leave
+    # a real figure available and assert the wrong thing.
+    screen.runtime.equity_monitor.state = None  # type: ignore[union-attr]
     snapshot = AccountSnapshot(
         summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
     )
@@ -223,6 +228,42 @@ def test_an_unknown_day_pnl_produces_no_verdict_rather_than_a_permissive_one(qtb
 
     assert verdict is None
     assert view is None
+
+
+def test_the_monitors_day_pnl_is_enough_to_produce_a_verdict(qtbot):
+    """The other half of item 47, and the reason the verdict never rendered.
+
+    `AccountBalances.day_pnl_pct` derives from `last_equity`, which IBKR never
+    supplies, so on the live broker it is ALWAYS None - and the guard above
+    suppressed the verdict every single time, across two live sessions.
+    `EquityMonitor.day_pnl_pct()` is a real measured figure and is what
+    `AutonomyGate` gates on. With it, the verdict renders.
+    """
+    screen = _screen(qtbot)
+    balances = AccountBalances(equity=100_000.0, cash=50_000.0)  # no last_equity
+    assert balances.day_pnl_pct is None, "fixture must reproduce the IBKR shape"
+
+    # A REAL basis, not a patched method. `day_pnl_pct()` returns 0.0 rather
+    # than None when it has no state, so patching the method alone would prove
+    # nothing about whether a genuine figure reaches the verdict - and a
+    # fabricated 0.0 is precisely what the guard above exists to refuse.
+    from qat.domain.autonomy.equity_monitor import EquityState
+
+    monitor = screen.runtime.equity_monitor
+    monitor.state = EquityState(  # type: ignore[union-attr]
+        day="2026-08-25", day_start_equity=101_250.0, high_water_mark=101_250.0
+    )
+
+    snapshot = AccountSnapshot(
+        summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
+    )
+
+    verdict, _view = screen._build_verdict("AMD", [], snapshot)
+
+    assert verdict is not None, (
+        "the verdict is still suppressed - the monitor's figure is not reaching "
+        "it, which is item 47 exactly"
+    )
 
 
 def test_a_fully_known_account_still_produces_a_verdict(qtbot):
