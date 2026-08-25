@@ -161,6 +161,27 @@ class RiskConsoleScreen(QWidget):
         self.refusal_detail.setVisible(self.level.shows_advanced())
         layout.addWidget(self.refusal_detail)
 
+        # Item 38. This panel renders the RISK ENGINE's verdicts, and
+        # `RiskDecision` carries no order id, so it cannot know whether an
+        # order later reached the broker. On 25 August three orders parked in
+        # `pending_signoff` on session phase rendered here as "approved" under
+        # a headline reading "none refused", on the screen an operator checks
+        # to answer "did my orders go out". It answered yes for three that had
+        # not.
+        #
+        # `approvals.py` already documents this exact collision elsewhere -
+        # "the trade ledger cannot tell them apart. Both read `approved`" - so
+        # the caption says what the verdict is NOT, rather than trusting a
+        # hyphenated label to carry it alone.
+        self.audit_caption = QLabel(
+            "Risk engine sizing verdicts - NOT whether the order reached the "
+            "broker. An order can be risk-approved and then held by the "
+            "autonomy gate; check the Order Blotter for what actually happened."
+        )
+        self.audit_caption.setWordWrap(True)
+        self.audit_caption.setVisible(self.level.prefers_density())
+        layout.addWidget(self.audit_caption)
+
         self.audit_log = QPlainTextEdit()
         self.audit_log.setReadOnly(True)
         self.audit_log.setMaximumHeight(130)
@@ -333,7 +354,9 @@ class RiskConsoleScreen(QWidget):
         entries = self.runtime.risk_engine.audit_log.entries()
         self.audit_log.setPlainText(
             "\n".join(
-                f"{entry.symbol}  {'approved' if entry.approved else 'refused'}  {entry.reason}"
+                f"{entry.symbol}  "
+                f"{'risk-approved' if entry.approved else 'risk-refused'}  "
+                f"{entry.reason}"
                 for entry in entries[-40:]
             )
             or "No audit entries yet."
