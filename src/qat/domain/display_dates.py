@@ -30,7 +30,8 @@ formatter lives somewhere both layers can reach.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
+from zoneinfo import ZoneInfo
 
 # DD/MM/YYYY - the Australian convention, and the reason this module exists.
 # `datetime` is accepted as well as `date` because `strftime` does not care,
@@ -52,3 +53,36 @@ def format_display_date(value: date | datetime) -> str:
 
 
 __all__ = ["format_display_date"]
+
+
+def format_session_time(value: datetime, market: str = "ASX") -> str:
+    """`HH:MM:SS ZONE` in the MARKET's timezone (item 40).
+
+    Times shown to a human must not be silent UTC. On 25 August four surfaces
+    rendered UTC among fields that were session-local, the worst being
+    `watch_session.py`'s live console line, which carried no zone label at all
+    - read 03:21:34 off it at 13:21 AEST and a ten-hour error lands in the
+    middle of an incident, which is the only time anyone reads it.
+
+    The zone is ALWAYS named. Converting without saying so just moves the
+    ambiguity; the Risk Console's anomaly rows were never confusing precisely
+    because they said "UTC" out loud.
+
+    A naive timestamp is treated as UTC rather than as local. Records written
+    before this existed carry naive UTC, and guessing local would shift every
+    one of them by ten hours.
+
+    This is for DISPLAY only. The log's own `ts` field stays UTC-with-offset:
+    machine records want a single zone.
+    """
+    from qat.domain.market_calendar import MARKET_TIMEZONES
+
+    # Widened to str keys deliberately: `market` arrives from settings and from
+    # display code, and an unknown value must fall back rather than raise. A
+    # clock that throws is worse than one showing the wrong exchange's zone,
+    # because this is only ever rendering a label.
+    zones: dict[str, ZoneInfo] = {str(k): v for k, v in MARKET_TIMEZONES.items()}
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    local = value.astimezone(zones.get(market, zones["ASX"]))
+    return f"{local:%H:%M:%S} {local:%Z}"

@@ -36,6 +36,7 @@ from qat.data.broker.adapter import (
     Position,
     balances_from_summary,
 )
+from qat.domain.display_dates import format_session_time
 
 logger = logging.getLogger(__name__)
 
@@ -63,11 +64,17 @@ class AccountSnapshot:
         return self.age_seconds > STALE_AFTER_SECONDS
 
     def age_line(self) -> str:
+        """Item 40: session-local with the zone named, not silent UTC.
+
+        This sits beside figures an operator reads against the wall clock, and
+        rendered 03:21:34 at 13:21 AEST with nothing to say which it was.
+        """
+        shown = format_session_time(self.taken_at)
         if self.error:
-            return f"last good reading {self.taken_at:%H:%M:%S} - {self.error}"
+            return f"last good reading {shown} - {self.error}"
         if self.is_stale:
-            return f"STALE - as of {self.taken_at:%H:%M:%S}"
-        return f"as of {self.taken_at:%H:%M:%S}"
+            return f"STALE - as of {shown}"
+        return f"as of {shown}"
 
 
 @dataclass

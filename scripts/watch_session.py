@@ -22,6 +22,8 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
+from qat.domain.display_dates import format_session_time
+
 # What to surface, and how to label it. Ordered: the first pattern that matches
 # a message wins, so the specific sits above the general.
 _RULES: tuple[tuple[str, str], ...] = (
@@ -176,7 +178,12 @@ def main() -> int:
             now = time.monotonic()
             if tally and now - last_summary >= args.summary_every:
                 parts = ", ".join(f"{k} {v}" for k, v in sorted(tally.items()))
-                print(f"    -- {datetime.now(UTC):%H:%M:%S} tally: {parts}")
+                # Item 40. This printed a bare UTC clock with NO zone label into the
+                # live console an operator reads during a session. Read
+                # 03:21:34 off it at 13:21 AEST, correlate against the
+                # Blotter or your own watch, and a ten-hour error lands in
+                # the middle of an incident.
+                print(f"    -- {format_session_time(datetime.now(UTC))} tally: {parts}")
                 last_summary = now
             time.sleep(0.4)
             continue

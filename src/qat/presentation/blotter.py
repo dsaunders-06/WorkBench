@@ -40,7 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat.data.broker.adapter import Order
-from qat.domain.display_dates import format_display_date
+from qat.domain.display_dates import format_display_date, format_session_time
 from qat.domain.evaluation import refusals
 from qat.presentation import theme
 from qat.presentation.runtime import Runtime
@@ -329,7 +329,8 @@ class BlotterScreen(QWidget):
                     order.strategy or "-",
                     order.status,
                     reason_text,
-                    f"{format_display_date(order.created_at)} {order.created_at:%H:%M:%S}",
+                    f"{format_display_date(order.created_at)} "
+                    f"{format_session_time(order.created_at, self.runtime.settings.market)}",
                 )
                 for col, value in enumerate(values):
                     item = self.orders_table.item(row, col)
