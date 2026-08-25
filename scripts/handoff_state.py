@@ -78,6 +78,15 @@ REPO = Path(__file__).resolve().parent.parent
 # in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
 # C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
 #
+# M145 DEPLOYED 26 August 08:41, updated in the same minute as the copy.
+# Clean tree at 08e4dc5, stamped "M145 (08e4dc5, built 26/08/2026 08:38:09
+# AEST)" - the first stamp to render in AEST rather than UTC (item 50) - signed
+# and timestamp-verified, installed exe SHA256-identical to the signed artefact
+# (576F9A72...86D65), signature Valid on the INSTALLED copy. Rollback is a
+# rename: C:\QuantAdvisoryTerminal.bak-M144-20260826-0841.
+# Carries item 34's ROOT CAUSE fix, which has NOT been read back or exercised
+# live yet - the next launch is its first test.
+#
 # M144 DEPLOYED 25 August 22:04, updated in the same minute as the copy.
 # Clean tree at 9e168dd, stamped "M144 (9e168dd, built 25/08/2026 12:01 UTC)",
 # signed and timestamp-verified, installed exe SHA256-identical to the signed
@@ -139,7 +148,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "9e168dd"
+DEPLOYED = "08e4dc5"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
