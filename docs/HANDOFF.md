@@ -880,7 +880,39 @@ for each gap and is worth reading; the list lives here.
     field and should stay that way — machine records want one zone. This is
     about what is rendered to a human.
 
-41. **Brokerage is not captured on live trades.** IBKR charges roughly **$6.60**
+41. **CORRECTED 25 Aug — this item was OVERSTATED. Costs ARE applied to live
+    closed trades; what is missing is only the ACTUAL per-fill commission.**
+
+    > The original wording below claimed every live closed trade records 0.00
+    > both sides, and quantified "$1,138.75 of invisible brokerage" and
+    > "~$3,400 the promotion gate cannot see". **All of that is wrong.**
+    >
+    > `trades.py:487` sets `self._costs = CostModel.from_settings(...) if
+    > apply_costs_in_paper or is_live else None`, and
+    > `apply_costs_in_paper` defaults **True**. So `entry_cost` and
+    > `exit_cost` ARE populated on live closed trades, from the model — which
+    > is calibrated to IBKR's published ASX Fixed rates (8.8 bps, $6.60
+    > floor). The promotion gate is NOT blind to costs.
+    >
+    > The comment immediately above that line already said so plainly: *"Real
+    > per-fill commissions from a live broker are not read back yet."* The
+    > finding was written from the absence of the word `commission` in
+    > `ib_adapter.py` and `oms.py`, without checking whether the LEDGER
+    > applied the model. Grepping for a word is not reading the path.
+    >
+    > **What remains true, and is all that remains:** the figures are
+    > MODELLED, not actual. `ib_async` delivers the real charge on
+    > `Fill.commissionReport` (`commission`, `currency`), and `BrokerFill`
+    > carries no field for it. Reading it back would replace a good estimate
+    > with the truth, and would surface any drift between IBKR's actual
+    > billing and the published rates the profile encodes.
+    >
+    > **Priority accordingly: LOW.** Model-versus-actual on a well-calibrated
+    > profile, not costs-versus-zero. Everything below is the original,
+    > overstated finding, kept so the error is legible rather than tidied
+    > away.
+
+    ORIGINAL FINDING (overstated): **Brokerage is not captured on live trades.** IBKR charges roughly **$6.60**
     per ASX trade; the Performance tab reflects none of it.
 
     The seam already exists and is unwired, so this is plumbing rather than
