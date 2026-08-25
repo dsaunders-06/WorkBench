@@ -11,8 +11,10 @@ events.py since M1) and trips the shared KillSwitch instance.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
+from pathlib import Path
 
 from qat.domain.bus import EventBus
 from qat.domain.events import KillSwitchEvent
@@ -20,11 +22,85 @@ from qat.domain.events import KillSwitchEvent
 logger = logging.getLogger(__name__)
 
 
+_FILENAME = "kill_switch.json"
+
+
 class KillSwitch:
-    def __init__(self) -> None:
+    """The halt, and it now SURVIVES A RESTART (item 32).
+
+    It did not until 25 August. `_tripped` lived in memory and `runtime`
+    constructed a bare one every launch, so a halt meant to hold until a human
+    decided held only until the next start - and was then cleared **silently**,
+    with no line anywhere saying a halt had been discarded. It was found the
+    embarrassing way: the handoff said the switch was tripped, advice was given
+    on that basis, and the operator pointed at the app reporting INACTIVE. Two
+    restarts that morning had cleared it.
+
+    The M50/M140 family: *this state did not survive a restart*. Both
+    `PositionAnomalyStore` and `RestingOrderAnomalyStore` already persist for
+    exactly this reason. The most consequential state in the application was
+    the one that did not.
+
+    `data_dir=None` keeps the old in-memory behaviour, so every existing test
+    and the replay session are untouched.
+    """
+
+    def __init__(self, data_dir: str | Path | None = None) -> None:
         self._tripped = False
         self._reason: str | None = None
         self._listeners: list[Callable[[], None]] = []
+        self._path = Path(data_dir) / _FILENAME if data_dir is not None else None
+        self._load()
+
+    def _load(self) -> None:
+        """Restore a halt, LOUDLY, or say nothing if there was none.
+
+        CRITICAL rather than WARNING: an operator who does not notice this
+        believes the account is trading when it is halted, which is the
+        mirror of the failure that created this item.
+
+        An unreadable file leaves the switch clear - the wrong direction, so
+        it is logged at ERROR - but refusing to start protects nothing at all.
+        """
+        if self._path is None or not self._path.exists():
+            return
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            tripped = bool(raw.get("tripped"))
+            reason = raw.get("reason")
+        except (OSError, ValueError, TypeError) as exc:
+            logger.error(
+                "Could not read %s (%s) - starting with the kill-switch CLEAR. If a halt "
+                "was in force it has just been lost; check why the account was halted "
+                "before trading.",
+                self._path,
+                exc,
+            )
+            return
+        if not tripped:
+            return
+        self._tripped = True
+        self._reason = str(reason) if reason else "restored from a previous session"
+        logger.critical(
+            "KILL-SWITCH RESTORED FROM THE PREVIOUS SESSION: %s. The halt was NOT cleared "
+            "by this restart - order flow is still halted and stays halted until a human "
+            "resets it.",
+            self._reason,
+        )
+
+    def _save(self) -> None:
+        """Written on every change, not at shutdown: the restart this exists
+        for is the one nobody planned."""
+        if self._path is None:
+            return
+        payload = {"tripped": self._tripped, "reason": self._reason}
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError:
+            logger.exception(
+                "Could not write %s - this halt will NOT survive a restart", self._path
+            )
 
     def add_listener(self, listener: Callable[[], None]) -> None:
         """Called synchronously whenever the switch trips or is reset.
@@ -72,6 +148,7 @@ class KillSwitch:
         self._tripped = True
         self._reason = reason
         logger.warning("KILL-SWITCH TRIPPED: %s. All new order flow is halted.", reason)
+        self._save()
         self._notify()
 
     def check_daily_loss(
@@ -106,6 +183,7 @@ class KillSwitch:
             )
         self._tripped = False
         self._reason = None
+        self._save()
         self._notify()
 
 

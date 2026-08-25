@@ -14,6 +14,7 @@ genuinely wants a specific directory still passes data_dir explicitly.
 from __future__ import annotations
 
 import os
+import pathlib
 from collections.abc import Iterator
 
 import pytest
@@ -39,6 +40,25 @@ def advisory_runtime(tmp_path):
             self.signal_bridge = _Bridge()
 
     return _Runtime()
+
+
+@pytest.fixture(autouse=True)
+def clear_persisted_halt() -> None:
+    """Remove any persisted kill-switch state before each test (item 32).
+
+    The switch now survives a restart, which is the point of item 32 - a halt
+    that evaporates on the next launch is not a halt. But `isolate_data_dir`
+    above is SESSION scoped, so every test shares one data directory, and
+    without this a test that trips the switch halts every test that runs after
+    it. Observed exactly that: three regime-banner tests and a Risk Console
+    test began failing with "EXECUTION HALTED - KILL-SWITCH: Manual trigger by
+    operator", a trip none of them made.
+
+    Function scoped and autouse, so no test has to remember. Deleting the file
+    rather than resetting a switch object, because each test builds its own.
+    """
+    state = pathlib.Path(os.environ["QAT_DATA_DIR"]) / "kill_switch.json"
+    state.unlink(missing_ok=True)
 
 
 @pytest.fixture(scope="session", autouse=True)

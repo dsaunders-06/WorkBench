@@ -521,7 +521,8 @@ class Runtime:
         bus = EventBus()
         orchestrator = Orchestrator(bus)
 
-        kill_switch = KillSwitch()
+        # data_dir, so a halt survives a restart and says so (item 32).
+        kill_switch = KillSwitch(settings.data_dir)
         kill_switch_engine = KillSwitchEngine(bus, kill_switch)
 
         risk_engine = RiskEngine(bus, kill_switch, settings=settings)
