@@ -671,6 +671,55 @@ for each gap and is worth reading; the list lives here.
     orders to this application — it is the obvious candidate, and the reason
     yfinance is still the price source is history rather than a decision.
 
+34. **⚠️ THE RECONCILIATION POLL WEDGED SILENTLY AND NEVER RECOVERED.** Observed
+    live on 25 August. `ReconciliationMonitor` started at 09:09:52, adopted
+    positions, ran the startup orphan scan — and then completed **not one** of
+    the ~20 polls due in the following 110 minutes. The app was otherwise
+    healthy throughout: macro fetched, feed recovered, regime refit twice, and
+    five bracketed entries placed correctly.
+
+    **Nothing said so.** No `Reconciliation poll failed` line — `_run`'s handler
+    never fired, so nothing raised. The signature is a hung `await` inside
+    `poll()`: no exception, no log, the loop simply never comes back round.
+    `check_reconciliation` calls `absorb_broker_fills()` first, which talks to
+    IBKR, and that is the most likely place to be stuck.
+
+    **It was only visible because M141's scan logs a heartbeat on every poll.**
+    `check_reconciliation` is silent on a clean pass, so for as long as this
+    project has existed a dead reconciliation loop and a healthy one have
+    produced identical logs. This may well have happened before and gone
+    unnoticed. The heartbeat existed because the final code review insisted on
+    it (finding I2) over a version that logged only on divergence.
+
+    **What it costs while wedged:** nothing compares book against broker,
+    nothing verifies a stop still rests, the orphan scan does not run, and —
+    worst — `absorb_broker_fills` does not run, so a stop or target firing is
+    never recorded. The app would go on believing it holds a position it has
+    already exited. That is M140's shape with a different cause.
+
+    Not diagnosed as of this writing. What IS established: a read-only probe on
+    clientId 99 got `reqAllOpenOrders`, `positions`, `fills` and `executions`
+    back in **1.07 seconds**, so IBKR was fully responsive and the wedge is
+    inside the application.
+
+    Wanted: a watchdog on the poll itself. A loop whose failure mode is silence
+    needs a deadline — if a poll has not COMPLETED within some multiple of its
+    interval, that is an ERROR and a kill-switch candidate, because the rails
+    are off. `asyncio.wait_for` around `poll()` would do it.
+
+35. **`ib_async` logs each `orderStatus` at INFO with the entire `Trade` repr**,
+    including the full `TradeLogEntry` history — kilobytes per line, growing as
+    each order accumulates status changes. On 25 August this rotated the 5 MiB
+    log **three times in under three minutes** (10:30:27, 10:32:20, 10:32:55)
+    during ordinary order activity. With five backups, an entire session's
+    app-level diagnostics can be evicted within the hour: the lines recording
+    the day's five entries were one rotation from deletion when they were read.
+
+    Same consequence as M137 — no log to diagnose from — by the opposite
+    mechanism. M137 was rotation FAILING; this is rotation THRASHING, and it
+    hides exactly the app-level lines a live incident needs. Quiet the
+    `ib_async.wrapper` logger to WARNING, or raise the cap and the backup count.
+
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
 The first-fill path was walked end to end looking for another M123. Nothing
