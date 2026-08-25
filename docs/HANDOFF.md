@@ -636,6 +636,41 @@ for each gap and is worth reading; the list lives here.
     Until then: **a tripped kill switch is not a durable halt.** If the account
     must not trade, do not rely on the switch alone across a restart.
 
+33. **The feed's blind window and the entry gate line up by COINCIDENCE, and
+    nothing checks that they do.** yfinance publishes ASX intraday roughly 20
+    minutes late, so the application is structurally blind from the bell until
+    about 10:21. The autonomy gate happens to block entries until 10:29. The
+    seven-minute margin is the only thing standing between "no entry can be
+    sized on absent data" and "one can", and it is not enforced, asserted or
+    even mentioned anywhere in the code.
+
+    Measured on two consecutive sessions, and the timing is deterministic from
+    activation rather than lucky: activation 10:00:12, five empty polls, backoff
+    at **10:04:26 on both 24 and 25 August to the second**, recovery on its own
+    at 10:21.
+
+    Two ways this stops being safe, neither of them exotic. Widen the entry
+    window — move Morning Trend earlier, or let Opening Volatility trade — and
+    entries become possible while the feed still has nothing for today. Or let
+    the delay run longer than usual on one morning, and the same thing happens
+    with no configuration change at all. In both cases the failure is silent:
+    the strategy sees stale bars, not missing ones, because the last data it has
+    is yesterday's close.
+
+    The same delay is already documented biting at the OTHER end — the last
+    usable moment is about 15:40, because a move after that never reaches the
+    strategy before stand-down. That end is written down; this end is not.
+
+    What is wanted is not a bigger margin but an ASSERTION: the entry gate
+    should refuse to open on a symbol whose most recent tick predates the
+    session, and say so. That turns an accident of the calendar into a rail,
+    and it holds however the windows or the delay move.
+
+    The deeper fix is a feed that is not 20 minutes late at all. IBKR is
+    already connected, already authenticated, and already serving positions and
+    orders to this application — it is the obvious candidate, and the reason
+    yfinance is still the price source is history rather than a decision.
+
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
 The first-fill path was walked end to end looking for another M123. Nothing
