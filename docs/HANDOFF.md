@@ -871,10 +871,40 @@ for each gap and is worth reading; the list lives here.
     fills are absorbed would populate the fields that already exist.
 
     Until then every live P&L figure, expectancy, profit factor and promotion
-    decision is computed gross — and the promotion gate needs 30 closed trades,
-    so the error compounds into the decision about whether a strategy earns its
-    keep. On a $6.60 round trip that is ~$13 per trade against an expectancy
-    the gate measures in dollars.
+    decision is computed gross.
+
+    **QUANTIFIED on the 25 August book, and the $6.60 figure is the FLOOR, not
+    the fee.** The ASX profile is `IBKR Australia - Fixed (inc GST)`,
+    `commission_bps=8.8` — 0.088% of trade value — with `min_commission=6.60`,
+    which only binds below about $7,500 of notional. Every trade this system
+    has placed is far above that. Round-tripping the ten open positions at the
+    modelled rate:
+
+        brokerage        1,138.75 AUD
+        slippage           647.02 AUD  (modelled impact, not a charge)
+        total friction   1,785.77 AUD   = 0.113% of equity in brokerage alone
+
+    For scale, the quiet session of 21 August moved equity **+$109.93**. The
+    brokerage on this book is ten times that, and none of it reaches a closed
+    trade.
+
+    The promotion gate is where this bites hardest: it needs **30 closed trades
+    with net P&L positive** to decide whether a strategy keeps trading
+    unattended. At ~$114 of brokerage per average round trip here, thirty trades
+    is **~$3,400 of real cost the gate cannot see** — so it would judge an edge
+    with the costs deleted, and keep an unprofitable strategy running on that
+    basis.
+
+    Note `risk_decisions.csv` ALREADY records `round_trip_cost` and
+    `cost_to_risk_pct` per decision (ANZ: 65.80 and 5.15%) — reproduced exactly
+    from the model, `2 × (commission 20.97 + slippage 11.92)`. So the system
+    estimates the cost when deciding to trade and then never records what it
+    actually paid. The estimate exists; the actual does not.
+
+    Be fair to the model: it is market-aware, distinguishes IBKR Fixed from
+    Tiered, implements the floor, and keeps third-party fees separate with a
+    documented reason. This item is ONLY about the live path not recording
+    actuals.
 
 42. **⚠️ PARKED ORDERS ACCUMULATE AND RELEASE TOGETHER, EACH SIZED AGAINST A
     DIFFERENT ACCOUNT.** By 13:22 on 25 August three orders were parked in
