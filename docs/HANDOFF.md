@@ -963,8 +963,43 @@ for each gap and is worth reading; the list lives here.
     documented reason. This item is ONLY about the live path not recording
     actuals.
 
-42. **⚠️ PARKED ORDERS ACCUMULATE AND RELEASE TOGETHER, EACH SIZED AGAINST A
-    DIFFERENT ACCOUNT.** By 13:22 on 25 August three orders were parked in
+42. **CORRECTED 25 Aug — this item was WRONG on its main claim. The governor
+    DOES evaluate the parked set. Only the per-order CASH cap repeats.**
+
+    > The original below claimed each parked order "was sized independently"
+    > and "none of the three has ever been evaluated against the other two",
+    > with a table projecting the fourth release at 14.3% of remaining cash.
+    > **The exposure half of that is wrong.**
+    >
+    > `oms.py:369` passes `pending_orders=self.pending_orders()` into the risk
+    > engine, and `governor.py:136` folds them into its snapshot. Verified
+    > against `risk_decisions.csv` for 25 August — `position_count` climbs
+    > 1→9, one per order, while only FIVE positions were ever held before
+    > 14:05:
+    >
+    > | Time | Sym | PosCount | GrossExp | AggRisk |
+    > |---|---|---|---|---|
+    > | 12:38 | RHC | 6 | 46.4% | 3.74% |
+    > | 12:39 | IAG | 7 | 51.7% | 3.99% |
+    > | 13:22 | PNI | 8 | 57.1% | 4.44% |
+    > | 13:34 | ANZ | 9 | 62.4% | 4.87% |
+    >
+    > IAG's count of 7 is five held plus RHC parked plus itself. So aggregate
+    > risk, gross exposure and concentration all accumulated ACROSS the parked
+    > set, and ANZ was resized to 640 shares by exactly the headroom that
+    > accounting produced. The set was bounded.
+    >
+    > **What survives, and it is narrower:** the per-order cash cap (M138, 10%
+    > of cash) used the same 532,591 balance for RHC, IAG and PNI, because
+    > cash does not move until a fill. Each was trimmed to 53,259. That is a
+    > PER-ORDER cap behaving as specified rather than a defect, and the
+    > portfolio-level question it raises is already outstanding item 24.
+    >
+    > **Priority: LOW, and arguably a duplicate of item 24.** The original is
+    > kept below so the error is legible.
+
+    ORIGINAL FINDING (wrong on exposure): **PARKED ORDERS ACCUMULATE AND
+    RELEASE TOGETHER.** By 13:22 on 25 August three orders were parked in
     `pending_signoff` waiting for Midday Lull to end — RHC.AX (12:38), IAG.AX
     (12:39), PNI.AX (13:22). All three release in the same retry pass at 14:05.
 
