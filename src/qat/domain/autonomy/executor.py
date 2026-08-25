@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 
 from qat.config import Settings
 from qat.data import instruments
@@ -205,9 +206,39 @@ class AutonomousExecutor:
         try:
             quote = await self.oms.broker.get_market_data(symbol)
         except Exception:  # noqa: BLE001 - adapters without quotes are expected
-            return None
-        price = float(quote.get("last") or quote.get("ask") or 0.0)
-        return price if price > 0 else None
+            quote = {}
+
+        # Explicit, because the obvious spelling is broken (item 37).
+        # `float(quote.get("last") or quote.get("ask") or 0.0)` looks like a
+        # three-way fallback and is not one: **`nan` is truthy**, so a `nan`
+        # last short-circuits the `or` chain and the ask is UNREACHABLE. It
+        # then fails `> 0` and the whole thing returns None - which silently
+        # skips the drift check on a parked order, the one guard protecting an
+        # order signed 80 minutes after it was sized.
+        price: float | None = None
+        for field in ("last", "ask", "bid"):
+            value = quote.get(field)
+            if value is None:
+                continue
+            candidate = float(value)
+            if math.isfinite(candidate) and candidate > 0:
+                price = candidate
+                break
+
+        if price is None:
+            # Logged, because a skipped drift check and a passed one were
+            # indistinguishable in every log and on every screen. No
+            # `has drifted` line exists in any log back to 12 August, and this
+            # is why nobody could tell whether that meant "never drifted" or
+            # "never checked".
+            logger.warning(
+                "No usable quote for %s, so the price-drift check is SKIPPED for this "
+                "order - it is not passing that check, it is not taking it. An order "
+                "parked since it was sized can be signed at a price nobody chose "
+                "(item 37).",
+                symbol,
+            )
+        return price
 
     def _journal(
         self,

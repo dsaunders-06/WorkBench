@@ -87,6 +87,16 @@ class FakeIBClient:
     ) -> _FakeTicker:
         return _FakeTicker()
 
+    async def reqTickersAsync(
+        self, *contracts: Any, regulatorySnapshot: bool = False
+    ) -> list[_FakeTicker]:
+        """Item 37. `get_market_data` no longer calls `reqMktData` and then
+        yields once - a single event-loop yield never gave IBKR time to deliver
+        a tick, so the caller read `nan` on every field and the autonomy gate's
+        price-drift check was skipped in silence. It now WAITS via
+        `reqTickersAsync`, so the fake grows the same method."""
+        return [self.reqMktData(c) for c in contracts]
+
 
 def _candidate_order(symbol: str = "AAPL") -> Order:
     return Order(symbol=symbol, side="buy", quantity=10, order_id="order-1")

@@ -266,9 +266,31 @@ class IBAdapter:
             )
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
+        """A quote, actually WAITED for (item 37).
+
+        This used to call `reqMktData` and then `await asyncio.sleep(0)` - a
+        single event-loop yield - before reading a `Ticker` whose fields default
+        to `nan`. One yield is nowhere near enough for IBKR to deliver a tick,
+        so the caller almost always got `nan` on every field.
+
+        That is not a cosmetic miss. `AutonomousExecutor._current_price` is the
+        only consumer, and its `None` return SKIPS the autonomy gate's
+        price-drift check - the one guard standing between an order parked for
+        eighty minutes and being signed at a price nobody chose. No
+        `has drifted` line exists in any log back to 12 August.
+
+        `reqTickersAsync` waits for the ticker to be populated rather than
+        hoping, and is bounded by `_call`'s deadline like every other request
+        here, so "no data" now costs a timeout rather than an eternity.
+        """
         contract = to_ib_contract(symbol, self.settings.market)
-        ticker = self.ib_client.reqMktData(contract)
-        await asyncio.sleep(0)  # yield once so a just-arrived tick can populate the ticker
+        request = getattr(self.ib_client, "reqTickersAsync", None)
+        if not callable(request):
+            return {}
+        tickers = await self._call(request(contract), f"reqTickers({symbol})")
+        if not tickers:
+            return {}
+        ticker = tickers[0]
         return {
             "bid": getattr(ticker, "bid", float("nan")),
             "ask": getattr(ticker, "ask", float("nan")),
