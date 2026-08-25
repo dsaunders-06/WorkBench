@@ -49,6 +49,7 @@ from qat.data.bars import MultiSymbolAggregator
 from qat.data.broker.adapter import Position
 from qat.data.earnings import EarningsCalendar, NullEarningsCalendar
 from qat.data.features import compute_atr
+from qat.data.sectors import SECTOR_BY_SYMBOL
 from qat.domain.bus import EventBus
 from qat.domain.events import (
     EntryPriceCorrectedEvent,
@@ -367,6 +368,9 @@ class SignalToOrderBridge:
         # a restart silently disarmed both rails on everything already held.
         self._entries_path = Path(self.settings.data_dir) / _ENTRIES_FILENAME
         self._entries: dict[str, _Entry] = self._load_entries()
+        # Symbols warned about for having no sector mapping (item 44),
+        # so the warning is once a session rather than once a signal.
+        self._unmapped_sectors_logged: set[str] = set()
         self._entry_times: list[datetime] = []
         self._time_stopped: set[str] = set()
         self._hold_blocked: set[str] = set()
@@ -1311,7 +1315,26 @@ class SignalToOrderBridge:
             take_profit_price=take_profit_price,
             days_to_earnings=self._days_to_earnings(symbol),
             earnings_date=self._earnings_date(symbol),
+            # Item 44. The governor's sector cap needs BOTH this and the map
+            # below - `if candidate_sector and sector_by_symbol:` - so either
+            # one alone leaves the rail dark while looking wired. It was dark
+            # for every order this system placed before 25 August.
+            #
+            # `.get`, deliberately, NOT `sectors.sector_for`: that returns
+            # "Unknown" for an unmapped symbol, which would put every unmapped
+            # name in one bucket and have them constrain each other as though
+            # they were a sector. None means the cap does not apply, which is
+            # honest; a shared "Unknown" would be an invented relationship.
+            sector=SECTOR_BY_SYMBOL.get(symbol),
         )
+        if symbol not in SECTOR_BY_SYMBOL and symbol not in self._unmapped_sectors_logged:
+            self._unmapped_sectors_logged.add(symbol)
+            logger.warning(
+                "%s has no sector mapping, so the %.0f%% sector concentration cap cannot "
+                "apply to it (item 44). Add it to qat.data.sectors.SECTOR_BY_SYMBOL.",
+                symbol,
+                self.settings.max_sector_concentration_pct * 100,
+            )
 
         # A broker blip must REFUSE the signal, not throw it (M54).
         #
@@ -1361,6 +1384,15 @@ class SignalToOrderBridge:
             if not series.empty:
                 existing_returns[position.symbol] = series
 
+        # `sector_by_symbol` is item 44: this call passed four positional
+        # arguments and the fifth defaulted to None, so the sector cap received
+        # nothing on every order ever placed. Note the comment above about
+        # `existing_returns` - the SAME call site, the same failure, already
+        # fixed once. A parameter with a None default is invisible when missing.
         await self.oms.submit_order(
-            candidate, account.net_liquidation, existing_weights, existing_returns
+            candidate,
+            account.net_liquidation,
+            existing_weights,
+            existing_returns,
+            SECTOR_BY_SYMBOL,
         )
