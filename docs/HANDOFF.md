@@ -980,6 +980,52 @@ for each gap and is worth reading; the list lives here.
     defect: `existing_weights` and `existing_returns` ARE passed, but anything
     else defaulting quietly deserves the same look.
 
+45. **THE POSITIONS PANEL HAS NO PRICES BECAUSE THE ADAPTER USES THE WRONG IBKR
+    CALL.** Every row on 25 August showed `Last ($) —`, `P&L —`, `To stop —` and
+    `(escape unknown)`, for all ten holdings.
+
+    **`(escape unknown)` is not the defect — it is the honesty marker working.**
+    `signal_bridge.py:222` defines `escape_evaluated` as false *"only when there
+    is a stop capable of an escape but no price was supplied to measure the loss
+    against"*, and `position_view.py:143` appends the suffix so the panel says
+    "we could not check" instead of asserting the minimum hold is definitely on.
+    That is precisely the behaviour most of the rest of this list wishes it had.
+    It appearing on ALL TEN rows is the signal, and the signal is: there is no
+    price for any position.
+
+    `_last_price` reads `Position.current_price` and deliberately refuses to
+    fall back to `avg_price` — its docstring is right that a cost basis under a
+    column headed "Last" is worse than a blank. **The IBKR adapter never
+    populates `current_price`.** Grep it: `current_price` appears nowhere in
+    `ib_adapter.py` or `ib_translate.py`. The field is M66's and its own comment
+    discusses *Alpaca's* consolidated tape — it was built before the IBKR move
+    and never carried across. M104's shape again: the boundary that was missed.
+
+    **The fix is one call.** Measured against the installed ib_async 2.1.0:
+
+        ib.positions()  -> Position(account, contract, position, avgCost)
+        ib.portfolio()  -> PortfolioItem(contract, position, marketPrice,
+                                         marketValue, averageCost,
+                                         unrealizedPNL, realizedPNL, account)
+
+    `ib_adapter.py:752` uses `positions()`, which carries no price.
+    `portfolio()` carries the mark, the market value AND the unrealised P&L, is
+    already populated by the `updatePortfolio` events filling the log, and costs
+    no extra request.
+
+    That one call would fill `Last`, `P&L`, `To stop`, `Long market value` in
+    Balances — blank for the same reason — and retire `(escape unknown)` on
+    every row. It would also give the minimum-hold loss escape a price to
+    evaluate against, which is a RAIL, not a display: right now every position
+    is conservatively held because nothing can check whether the escape should
+    release it.
+
+    NOTE this is a sibling of item 37 but NOT the same bug. That one is
+    `broker.get_market_data()` / `reqMktData` returning `nan`. This one is
+    `positions()` carrying no mark. Both are "no price reaches the app from
+    IBKR", by two independent routes, and both fail silently. Fix them together
+    and check whether any third consumer is quietly priceless too.
+
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
 The first-fill path was walked end to end looking for another M123. Nothing
