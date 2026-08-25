@@ -1402,6 +1402,27 @@ shares its shape.
 
 ---
 
+50. **The build stamp renders its date in UTC.** Seen on M144: `built
+    25/08/2026 12:01 UTC` on the Settings screen, where 12:01 UTC is 22:01
+    AEST. Reported by the operator on 25 August and deferred to the next
+    session.
+
+    **This is the LABELLED kind, not the dangerous kind.** It says "UTC" out
+    loud, so unlike `watch_session.py`'s bare clock (item 40) nobody can
+    misread it by ten hours without noticing. But it is rendered to a human on
+    a screen whose other fields are session-local, which is the boundary item
+    40 drew: convert it, or at minimum keep saying which zone it is.
+
+    `format_session_time` already exists and does exactly this. The stamp is
+    written by `_write_build_stamp` in `tasks.py` at package time, so the fix
+    is at the point of WRITING it rather than of displaying it - which means
+    the stamp is baked into the artefact and a rebuilt build is needed to see
+    the change, not merely a redeploy.
+
+    Note the deliberate exception recorded under item 40: the LOG's `ts` field
+    stays UTC-with-offset. Machine records want one zone. Do not "finish the
+    job" by converting those.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```

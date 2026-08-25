@@ -82,7 +82,12 @@ REPO = Path(__file__).resolve().parent.parent
 # Clean tree at 9e168dd, stamped "M144 (9e168dd, built 25/08/2026 12:01 UTC)",
 # signed and timestamp-verified, installed exe SHA256-identical to the signed
 # artefact (AC0E87CE...), signature Valid on the INSTALLED copy. Rollback is a
-# rename: C:\QuantAdvisoryTerminal.bak-M143-20260825-2204. NOT read back yet.
+# rename: C:\QuantAdvisoryTerminal.bak-M143-20260825-2204.
+#
+# READ BACK by the operator on 25 August: M144 confirmed running. So this
+# constant is an OBSERVATION, not an intention - the distinction that made
+# it wrong for a day after M104, across the whole M130 deploy, and for two
+# hours after M139.
 #
 # Carries company reported results (item 48), an earnings calendar that finally
 # answers for ASX (item 49), and ASX announcement dates read in AEST rather
