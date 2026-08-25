@@ -27,6 +27,24 @@ LOG_FILENAME = "qat.log"
 # what happened, without letting a chatty loop fill the disk.
 LOG_MAX_BYTES = 5 * 1024 * 1024
 LOG_BACKUP_COUNT = 10
+
+# Library loggers quietened to WARNING (item 35).
+#
+# `ib_async.wrapper` logs every `orderStatus` at INFO with the entire `Trade`
+# repr INCLUDING its full `TradeLogEntry` history - kilobytes a line, growing
+# as each order accumulates status changes. On 25 August ordinary order
+# activity rotated this 5 MiB log three times in under three minutes
+# (10:30:27, 10:32:20, 10:32:55) and the lines recording the day's five
+# entries were one rotation from deletion when they were read.
+#
+# The same consequence as M137 - no log to diagnose from - by the opposite
+# mechanism: rotation THRASHING rather than rotation failing. The noise scales
+# with the number of live brackets, so it is loudest exactly when a session is
+# most worth diagnosing.
+#
+# WARNING, not silence: the library's 1100/1102 disconnects and order
+# rejections are precisely what IS wanted.
+NOISY_LIBRARY_LOGGERS = ("ib_async.wrapper", "ib_async.client", "ib_async.ib")
 # How long to stop attempting a rename after one fails. Without this the
 # handler retries a rename it already knows is failing on EVERY record.
 ROLLOVER_RETRY_SECONDS = 60.0
@@ -203,6 +221,12 @@ def configure_logging(level: str = "INFO", data_dir: str | Path | None = None) -
     root = logging.getLogger()
     root.setLevel(level)
     root.handlers.clear()
+
+    # Item 35. Set on the named loggers rather than filtered at the handler,
+    # so the records are never created - a filter would still pay the cost of
+    # formatting a multi-kilobyte Trade repr for every status update.
+    for name in NOISY_LIBRARY_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(JsonFormatter())
