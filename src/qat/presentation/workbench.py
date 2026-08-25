@@ -504,7 +504,17 @@ class WorkbenchScreen(QWidget):
         # chart.
         equity_x = _epoch_seconds(result.equity_curve)
         benchmark_x = _epoch_seconds(benchmark_equity)
-        if equity_x is None or benchmark_x is None:
+        dated, bottom_label = equity_axis_mode(
+            has_dates=equity_x is not None and benchmark_x is not None
+        )
+        # Item 39: the AXIS moves with the data. Falling back to the bar index
+        # while leaving a DateAxisItem in place is what rendered 0 and 1 as
+        # "00.550 ... 01.450" under a label saying "Date".
+        self.equity_plot.setAxisItems(
+            {"bottom": pg.DateAxisItem() if dated else pg.AxisItem("bottom")}
+        )
+        theme.label_axes(self.equity_plot, bottom=bottom_label, left="Equity ($)")
+        if not dated:
             # No usable date index on one of them. Fall back to the bar index
             # both series always have, rather than drawing on a date axis with
             # made-up dates.
@@ -564,6 +574,24 @@ class WorkbenchScreen(QWidget):
             f"[{recommendation.recommendation.upper()}, confidence={confidence_pct}] "
             f"{recommendation.rationale} (risk flags: {flags})"
         )
+
+
+def equity_axis_mode(*, has_dates: bool) -> tuple[bool, str]:
+    """Whether the equity chart's x-axis is a date axis, and its label (item 39).
+
+    The chart is built with a `pg.DateAxisItem` and falls back to plotting
+    against the BAR INDEX when a result carries no usable date index. That
+    fallback is right - "a chart that cannot be dated should say less, not
+    fail" - but it used to change only the data, leaving a date axis to render
+    the integers 0 and 1 as `00.550 ... 01.450` beneath the word "Date".
+
+    Returned as a pair rather than set inline so the decision is testable
+    without a Qt widget, and so the axis and the label can never disagree -
+    which is exactly how they came to disagree.
+    """
+    if has_dates:
+        return True, "Date (synthetic daily bars)"
+    return False, "Bar (this result carries no dates)"
 
 
 def _epoch_seconds(series: pd.Series) -> np.ndarray | None:
