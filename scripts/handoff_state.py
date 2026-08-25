@@ -78,6 +78,17 @@ REPO = Path(__file__).resolve().parent.parent
 # in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
 # C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
 #
+# M144 DEPLOYED 25 August 22:04, updated in the same minute as the copy.
+# Clean tree at 9e168dd, stamped "M144 (9e168dd, built 25/08/2026 12:01 UTC)",
+# signed and timestamp-verified, installed exe SHA256-identical to the signed
+# artefact (AC0E87CE...), signature Valid on the INSTALLED copy. Rollback is a
+# rename: C:\QuantAdvisoryTerminal.bak-M143-20260825-2204. NOT read back yet.
+#
+# Carries company reported results (item 48), an earnings calendar that finally
+# answers for ASX (item 49), and ASX announcement dates read in AEST rather
+# than New York - which was a sizing error waiting to happen, since that date
+# sets the earnings blackout.
+#
 # M143 DEPLOYED 25 August 21:33, updated in the same minute as the copy.
 # Clean tree at f81d2d4, stamped "M143 (f81d2d4, built 25/08/2026 11:30 UTC)",
 # signed and timestamp-verified. Installed exe SHA256-identical to the signed
@@ -123,7 +134,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "f81d2d4"
+DEPLOYED = "9e168dd"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
