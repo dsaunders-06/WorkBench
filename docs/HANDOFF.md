@@ -1497,6 +1497,65 @@ shares its shape.
     stays UTC-with-offset. Machine records want one zone. Do not "finish the
     job" by converting those.
 
+51. **A refused Gateway connection kills the app with a raw PyInstaller
+    dialog, and the log's last line says the shutdown was NORMAL.** Seen on the
+    first M145 launch, 26 August 08:44:28, with IB Gateway not logged in.
+
+    The adapter's own handling is good and the message is exactly right:
+
+        IBKR refused the connection 6 times - giving up. Check that the Gateway
+        is logged in and that its API port (4002) is open.
+
+    Then the exception propagates out of the entrypoint uncaught, and what the
+    operator actually SEES is a `#32770` message box titled *"Unhandled
+    exception in script"* reading `Failed to execute script 'app' due to
+    unhandled exception: [WinError 1225] The remote computer refused the
+    network connection` — strictly less useful than the line the app had
+    already written, and it never reaches the log at all.
+
+    Worse, the log's final line is `Quant Advisory Terminal stopped - shutdown
+    reached normally`, written at the same second. **The record says clean exit
+    while a crash dialog is on screen.** That is this project's recurring shape
+    pointed at the operator surface: the record and the reality disagree, and
+    the record is the reassuring one. Anything reading the log to decide
+    whether the last run ended cleanly — `session_check` included — is told yes.
+
+    The GUI stayed up behind the dialog, fully rendered and entirely dead, with
+    every Balances field on `—`, which is how it was mistaken for a live window.
+
+    Wanted: catch the connect failure at the entrypoint and exit deliberately —
+    the operator-facing text should be the adapter's sentence, not PyInstaller's
+    — and do not log "shutdown reached normally" on a path that is ending
+    because of an unhandled exception.
+
+52. **`SessionController.active` is constructed True, so a controller that
+    never runs its first check asserts the market is OPEN.** Same launch:
+    the Dashboard read `Session: ACTIVE - ASX is open` at 08:45, three
+    columns away from its own `ASX closed` / `opens in 01:14:28 (Wed 10:00)`.
+
+    **The default is deliberate and its reasoning is sound** —
+    `session_controller.py:81`, because the orchestrator starts the feed before
+    this engine, so the session begins active and the first `apply_once` stands
+    it down. That is correct on every launch that reaches the engine. This one
+    died in broker-connect, several engines earlier, so `apply_once` never ran
+    and nothing ever corrected the assumption.
+
+    **Bounded honestly: in THIS instance the cost was a wrong label on a dead
+    app, not a trading action.** The only consumers of `.active` outside the
+    controller are `status_line()` and `session_panel.py:339`; the trading gate
+    works by the controller starting and stopping the feed and strategy engine,
+    and neither was running. So this is a display defect today.
+
+    It is recorded because of its SHAPE, which is the one this list keeps
+    finding: a flag that asserts the permissive state before anything has
+    checked, corrected only by a step that may never execute. Item 45 praised
+    `(escape unknown)` for saying "we could not check" instead of asserting;
+    this is the same question answered the other way.
+
+    Wanted: a third state. Until `apply_once` has run once, the line should say
+    so rather than pick a side — and it should be UNKNOWN, not ACTIVE, that it
+    falls back to.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```
