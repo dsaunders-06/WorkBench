@@ -931,6 +931,55 @@ for each gap and is worth reading; the list lives here.
     from a signal that never fired — and this project has already spent a day on
     that distinction.
 
+44. **⚠️⚠️ THE SECTOR CONCENTRATION RAIL HAS NEVER RUN. IT IS ONE MISSING
+    ARGUMENT.** Found 25 August because the operator looked at ten holdings and
+    said "there seem to be a lot of banks".
+
+    There were. **Six of the ten were Financials** — ANZ, ASX, BOQ, IAG, PNI,
+    SUN — against a configured cap of **30%**.
+
+    Everything needed is present and correct:
+    * `max_sector_concentration_pct` = 0.30 (`config.py:189`), with a comment
+      explaining the value was chosen deliberately: *"40% never bound before the
+      third position in a sector was already on; 30% bites at two-and-a-bit,
+      which is the point"*.
+    * `governor.py:358` implements it, trimming rather than refusing (M31c).
+    * `sectors.py` carries 102 ASX classifications, and all six of the symbols
+      above are correctly mapped to `Financials`.
+    * The parameter is threaded the whole way: `oms.submit_order(…,
+      sector_by_symbol)` at `oms.py:293` → `:365` → `engine.py:306` →
+      `governor.py:358`.
+
+    And the live path does not pass it. `signal_bridge.py:1364`:
+
+        await self.oms.submit_order(
+            candidate, account.net_liquidation, existing_weights, existing_returns
+        )
+
+    Four positional arguments. `sector_by_symbol` defaults to `None`, so the
+    rail receives no data on **every order this system has ever placed**, and
+    silently does nothing. The parameter's presence in four signatures is what
+    makes it invisible: every layer looks correctly wired, because every layer
+    IS correctly wired except the one that starts the chain.
+
+    This is the day's recurring shape at its most consequential — a guard that
+    fails open on missing input and says nothing — but unlike the others the
+    damage is already on the book: a 60% single-sector concentration that the
+    system was explicitly configured to hold to 30%, accumulated over a single
+    morning without one line of complaint.
+
+    Note it would ALSO have bound today for the right reason. Six financials
+    arrived across two windows; the cap "bites at two-and-a-bit", so it should
+    have trimmed from roughly the third onward.
+
+    Wanted: pass `SECTOR_BY_SYMBOL` at the call site. Then a test that asserts
+    the rail BINDS on a constructed over-concentrated book — because a rail
+    whose test only proves it can be called is what allowed this.
+
+    Check the other optional risk arguments at the same call site for the same
+    defect: `existing_weights` and `existing_returns` ARE passed, but anything
+    else defaulting quietly deserves the same look.
+
 ### Audited 21 August and found SOUND — do not re-audit without a reason
 
 The first-fill path was walked end to end looking for another M123. Nothing
