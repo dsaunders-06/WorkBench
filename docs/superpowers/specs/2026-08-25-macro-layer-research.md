@@ -228,7 +228,143 @@ on the same data. A changed label with no stated reason is not an improvement.
 3. **Whether ABS is worth establishing** for Australian CPI and employment at
    source, or whether FRED's monthly lagged versions suffice for narrative.
 
+⚠️ **Three MORE decisions were added on 26 August — see the REVISION below,
+which is where the Phase 2 blockers are.** In short: (4) the transformation and
+standardisation policy for the feature matrix, which is a prerequisite to any
+new regime feature and a sizing change in its own right; (5) whether `BAA10Y`
+is replaced by `BAMLH0A0HYM2`, on measured evidence that it carries no forward
+information for this book; (6) the decision rule that admits or rejects a
+feature, which should be the existing ablation harness rather than a second
+mechanism.
+
 ---
+
+
+---
+
+# REVISION — 26 August 2026: what this plan did NOT address
+
+Asked: *"now that we are trading ASX, are VIXCLS, BAA10Y, DGS10, DGS3MO and
+T10Y3M still relevant for determining market regime?"* Answering it found four
+gaps in the plan above. All four are recorded here rather than by editing the
+original, so the original's reasoning stays readable.
+
+**Everything below marked MEASURED was computed on this machine on 26 August
+2026**, over 300 daily bars — the same window the engine actually fits
+(`2025-06-20 -> 2026-08-25`, matching the startup log).
+
+## Gap 1 — section 1 is WRONG about what feeds the regime
+
+Section 1 says the five FRED series feed *"both the macro read and the regime
+engine's feature matrix."* Only **three** do. `RegimeFeatureBuilder.update_macro`
+(`feature_matrix.py:46`) handles `VIXCLS`, `T10Y3M` and `BAA10Y` and nothing
+else. **`DGS3MO` and `DGS10` never reach the feature matrix** — they are
+fetched, published and displayed only.
+
+That matters for this plan specifically: any before/after on the regime label
+that treats all five as regime inputs would be measuring two series that cannot
+move it.
+
+## Gap 2 — the plan only ADDS features; it never reviews the incumbents
+
+Phase 2 says *"add the chosen daily series to `feature_matrix.py`."* No step
+anywhere asks whether an existing feature has earned its place. MEASURED,
+correlation against ASX 200 realised volatility, contemporaneous and 20 days
+forward — forward being what a regime label is FOR:
+
+| Feature | vs ASX vol | vs ASX vol **+20d** |
+|---|---|---|
+| `^AXVI` ASX 200 VIX — *not used* | +0.563 | **+0.403** |
+| `VIXCLS` -> `vix_level` | +0.560 | +0.289 |
+| `BAMLH0A0HYM2` US high-yield OAS — *not used* | +0.555 | +0.160 |
+| `BAA10Y` -> `credit_spread` | +0.344 | **+0.004** |
+| `T10Y3M` -> `yield_curve_slope` | +0.207 | +0.129 |
+
+**`VIXCLS` earns its place** — it tracks ASX volatility as well as Australia's
+own VIX does contemporaneously. "It is American" is not by itself an argument
+against it; global risk appetite is shared. Forward, `^AXVI` is clearly better,
+which argues for ADDING it, not for dropping `VIXCLS`.
+
+**`BAA10Y` is the weak one**: +0.004 against forward ASX vol is no forward
+information at all, and `BAMLH0A0HYM2` beats it on both measures using the same
+FRED key and no new integration.
+
+**`T10Y3M` is not fairly judged by this test** and should not be dropped on it.
+A curve slope is a slow recession signal, not a 20-day volatility predictor.
+
+⚠️ **This measures MARGINAL PAIRWISE association only.** The engine is an HMM
+using joint structure; a feature can contribute through interaction while
+looking weak alone. This is evidence for a hypothesis, not a verdict.
+
+## Gap 3 — ⚠️ THE BIG ONE. No scaling step, and the incumbent VIX already dominates
+
+`GaussianHMM` initialises its state means with `cluster.KMeans` **on the raw
+matrix** (`hmm.py:311`). KMeans is Euclidean, so the largest-spread column
+decides where the states are first placed. **Nothing in this codebase
+standardises the feature matrix.** MEASURED, over the fitted window:
+
+| feature | mean | std | share of total spread |
+|---|---|---|---|
+| `log_return` | 0.0004 | 0.0074 | 0.2% |
+| `realized_vol` | 0.1126 | 0.0338 | 1.0% |
+| **`vix_level`** | 17.86 | **3.0991** | **87.8%** |
+| `yield_curve_slope` | 0.3948 | 0.3126 | 8.9% |
+| `credit_spread` | 1.6864 | 0.0781 | 2.2% |
+
+`vix_level`'s spread is **420x** that of `log_return` — the market's own return.
+So the answer to *"is the US VIX still relevant?"* is sharper than expected:
+**it is not merely relevant, it very likely dominates the fit, by accident of
+scale rather than by design.**
+
+*Stated honestly:* KMeans sets only the INITIALISATION. EM then re-estimates
+per-feature variances under `covariance_type="diag"`, which partly rescales
+influence. The defensible claim is that state placement is strongly conditioned
+on `vix_level`, not that the final label is 88% VIX-driven. `breadth` was held
+constant in this reconstruction (the 94-symbol panel was not rebuilt), so its
+real spread is excluded; including a plausible one leaves `vix_level` near 84%.
+
+**The consequence for Phase 2 is disqualifying as written.** Its candidate list
+includes `AUDUSD=X` (~0.72) and `TIO=F` (~95), and Tier A also offers `^AXJO`
+(~9,164). Feeding raw levels of those into a KMeans-initialised, unstandardised
+matrix would let a single index level decide every state boundary. **Phase 2
+cannot proceed as "add the chosen series to `feature_matrix.py`."**
+
+### Phase 2.0 — a prerequisite, before any new feature is added
+
+1. **Decide and implement a transformation policy**, stated per feature: raw
+   level, log return, change, or rolling z-score. Levels of unbounded price
+   series (`^AXJO`, `TIO=F`) must never enter as levels.
+2. **Standardise the matrix before `fit`** — z-score each column on the fitting
+   window, or state explicitly why not. This changes the CURRENT label too, so
+   it is its own before/after and its own milestone, ahead of any new series.
+3. **Pin it with a test** asserting no column dominates the spread beyond a
+   stated bound. A test that only proves the matrix has six columns is what let
+   this sit unnoticed.
+
+⚠️ Note 2 is a change to a SIZING input on its own — the label sets the exposure
+scalar. It ships alone and watched, exactly like item 31.
+
+## Gap 4 — no decision rule, and no link to the ablation harness
+
+Phase 2.2 says *"measure the regime label and the governor's aggregate before
+and after."* Right, and incomplete: it does not say what result would cause a
+feature to be REJECTED. Without that, every measured feature gets kept.
+
+The instrument already exists —
+`2026-08-13-ablation-switch-and-run-manifest-design.md` — and item 30 (Stage 4
+regime re-sourcing) is explicitly gated on the ablation question. This plan
+should not build a second way to answer it.
+
+**Wanted:** each candidate is admitted only on an ablation run showing it
+changes the label materially AND improves a stated metric; anything else is
+rejected and the rejection recorded. Run the same test on the three incumbents,
+so `BAA10Y` is judged by the same rule as its replacement.
+
+## What this does NOT change
+
+Phase 1 stands as written and stays first. It is narrative-only, changes no
+rail, and none of the four gaps above touch it — they are all about the regime
+feature matrix, which Phase 1 deliberately does not enter.
 
 ## Sources
 
