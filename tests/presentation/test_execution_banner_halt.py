@@ -63,6 +63,9 @@ def test_risk_console_button_moves_the_main_banner(qtbot):
     console = RiskConsoleScreen(window.runtime)
     qtbot.addWidget(console)
 
+    # Halting asks first (item 36); the reset click below deliberately
+    # does NOT, which is the asymmetry this button is built around.
+    console._confirm_trip = lambda: True  # type: ignore[assignment]
     qtbot.mouseClick(console.kill_switch_button, Qt.MouseButton.LeftButton)
     assert "EXECUTION HALTED" in window.execution_banner.text()
     assert "Manual trigger" in window.execution_banner.text()

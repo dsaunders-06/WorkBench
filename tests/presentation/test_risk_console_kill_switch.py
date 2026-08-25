@@ -24,6 +24,11 @@ def test_kill_switch_button_trips_the_real_kill_switch(qtbot):
     screen, runtime = _build_screen(qtbot)
     assert not runtime.kill_switch.tripped
 
+    # Halting now asks first (item 36), because this button is a toggle bound
+    # to Qt's `clicked` - which fires on Space or Enter when focused - and it
+    # is the first widget on the screen. The test answers yes; that the
+    # confirmation EXISTS is covered by test_risk_console_force_check.py.
+    screen._confirm_trip = lambda: True  # type: ignore[assignment]
     qtbot.mouseClick(screen.kill_switch_button, Qt.MouseButton.LeftButton)
 
     assert runtime.kill_switch.tripped

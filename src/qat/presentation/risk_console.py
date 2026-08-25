@@ -6,7 +6,10 @@ layer and cannot be hidden.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Coroutine
+from typing import Any
 
 import pandas as pd
 from PySide6.QtCore import QTimer
@@ -15,6 +18,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTableWidget,
@@ -222,6 +226,15 @@ class RiskConsoleScreen(QWidget):
         anomaly_row = QHBoxLayout()
         self.declare_anomaly_button = QPushButton("Declare a difference explained...")
         self.declare_anomaly_button.clicked.connect(self._on_declare_clicked)
+        # Item 36. ReconciliationMonitor.poll's docstring promised this
+        # control - "Public so a test or the Risk Console can force a
+        # check" - and it did not exist. On 25 August that sentence was
+        # read as fact, the operator was sent here to force a check while
+        # diagnosing a wedged poll, and the kill switch was tripped instead.
+        self.force_check_button = QPushButton("Force a reconciliation check")
+        self.force_check_button.clicked.connect(self._on_force_check_clicked)
+        anomaly_row.addWidget(self.force_check_button)
+
         self.clear_anomaly_button = QPushButton("Clear a quarantine...")
         self.clear_anomaly_button.clicked.connect(self._on_clear_clicked)
         anomaly_row.addWidget(self.declare_anomaly_button)
@@ -566,6 +579,31 @@ class RiskConsoleScreen(QWidget):
             self.kill_switch_button.setText("KILL-SWITCH: inactive - click to halt trading")
             self.kill_switch_button.setStyleSheet(_ACTIVE_STYLE)
 
+    def _schedule(self, coro: Coroutine[Any, Any, Any]) -> None:
+        """Run an awaitable from a Qt slot, which cannot await. Separated
+        so a test can drive the handler without a running qasync loop."""
+        asyncio.ensure_future(coro)
+
+    def _on_force_check_clicked(self) -> None:
+        self._schedule(self.runtime.reconciliation_monitor.poll())
+
+    def _confirm_trip(self) -> bool:
+        """Ask before HALTING. Separated so a test can answer it.
+
+        On trip only. Clearing a halt stays one click: a confirmation in
+        front of de-risking is a worse failure than the accident this
+        prevents."""
+        answer = QMessageBox.question(
+            self,
+            "Halt trading?",
+            "Halt ALL new order flow, including exits and protective-stop "
+            "re-arming, until reset by hand? Resting orders already at the "
+            "broker are NOT cancelled and can still fill.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _on_kill_switch_clicked(self) -> None:
         """Toggle the switch AND announce it.
 
@@ -576,8 +614,15 @@ class RiskConsoleScreen(QWidget):
         """
         operator = "operator (risk console)"
         if self.runtime.kill_switch.tripped:
+            # No confirmation: de-risking stays one click, deliberately.
             self.runtime.kill_switch.reset(operator)
         else:
+            # Item 36. A TOGGLE bound to Qt's clicked, which fires on Space
+            # or Enter when focused - and it is the first widget on this
+            # screen. Halting a live account was one stray keystroke away
+            # from an unrelated instruction.
+            if not self._confirm_trip():
+                return
             self.runtime.kill_switch.trigger_manual(operator)
         # Every other view of the switch now updates through its listeners, so
         # this screen no longer has to remember to announce what it did.
