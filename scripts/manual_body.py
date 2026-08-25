@@ -2771,6 +2771,15 @@ def _config_reference(doc: Any) -> None:
                 "How often held positions are re-checked for missing protection " "(Section 8A.2).",
             ),
             (
+                "QAT_RECONCILIATION_POLL_TIMEOUT_SECONDS",
+                "120",
+                "How long one reconciliation poll may take before it is declared hung. A "
+                "healthy poll takes about a second. On 25 August the poll wedged and "
+                "completed none of the twenty due in the next seven hours, saying nothing, "
+                "because a hung await raises nothing - and every rail behind it was off "
+                "meanwhile, including the absorbing of broker-side fills.",
+            ),
+            (
                 "QAT_RESTING_ORDER_RECONCILE_ENABLED",
                 "true",
                 "Whether orders resting at the broker are checked against what the book "

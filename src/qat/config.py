@@ -358,6 +358,21 @@ class Settings(BaseSettings):
     delever_sweep_enabled: bool = False
 
     reconciliation_poll_seconds: float = Field(default=300.0, gt=0)
+
+    # How long ONE reconciliation poll may take before it is declared hung
+    # (item 34). A healthy poll takes about a second; this is generous by two
+    # orders of magnitude and still bounded, which is the point.
+    #
+    # On 25 August the poll wedged at 09:09:52 and completed none of the ~20
+    # due in the next 6h50m. Nothing raised, so nothing was logged, and a dead
+    # reconciliation loop looked exactly like a healthy one. The IBKR adapter
+    # has no timeout on any of its awaits: `reqExecutionsAsync`, reached first
+    # through `absorb_broker_fills`, resolves only when IBKR sends
+    # `execDetailsEnd`, and a lost one hangs the caller forever.
+    #
+    # A loop whose only failure mode is silence cannot be monitored by reading
+    # its log. It needs a deadline.
+    reconciliation_poll_timeout_seconds: float = Field(default=120.0, gt=0)
     # How often to re-check that every held position still has protection
     # resting, and to propose it where it does not (M33e).
     #

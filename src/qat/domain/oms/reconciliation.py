@@ -26,6 +26,11 @@ from qat.domain.oms.oms import OMS
 
 logger = logging.getLogger(__name__)
 
+# Consecutive timed-out polls before the log escalates from ERROR to
+# CRITICAL. Three at the default interval is a quarter of an hour with
+# every reconciliation rail off, which is no longer a blip.
+_TIMEOUTS_BEFORE_CRITICAL = 3
+
 
 class ReconciliationMonitor:
     """Engine (per domain.orchestrator.Engine protocol)."""
@@ -44,6 +49,7 @@ class ReconciliationMonitor:
         self.bus = bus
         self.poll_seconds = poll_seconds or self.settings.reconciliation_poll_seconds
         self.adopted: dict[str, float] = {}
+        self._consecutive_timeouts = 0
         self._task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
@@ -92,11 +98,58 @@ class ReconciliationMonitor:
                 logger.exception("Reconciliation poll failed; continuing")
 
     async def poll(self) -> bool:
-        """One reconciliation check. Returns True if a mismatch was found.
+        """One reconciliation check, under a DEADLINE. True if a mismatch was
+        found; False if the poll did not complete in time.
 
-        Public so a test or the Risk Console can force a check without waiting
-        on the interval.
+        Public so a test or a caller can force a check without waiting on the
+        interval. (The Risk Console cannot yet - see item 36; this docstring
+        used to claim it could, and that claim was believed.)
+
+        **The deadline is item 34.** On 25 August this poll wedged at 09:09:52
+        and completed none of the ~20 due in the following 6h50m, while the app
+        traded normally. Nothing raised, so `_run`'s handler never fired and
+        not one line was written: a dead reconciliation loop and a healthy one
+        produced identical logs.
+
+        A timeout does NOT trip the kill-switch. Deliberately: a false timeout
+        would halt a live account, and this guard has no field history. It logs
+        ERROR, and CRITICAL once the rails have been off for several intervals
+        running - whether that should escalate to a halt is the operator's call
+        and is recorded as an open question on item 34.
         """
+        timeout = self.settings.reconciliation_poll_timeout_seconds
+        try:
+            result = await asyncio.wait_for(self._poll_once(), timeout=timeout)
+        except TimeoutError:
+            self._consecutive_timeouts += 1
+            logger.error(
+                "Reconciliation poll DID NOT COMPLETE within %.0fs (%d in a row). Every rail "
+                "behind it is off while this persists: nothing compares the book to the "
+                "broker, nothing verifies a stop still rests, the resting-order scan does not "
+                "run, and broker-side fills are NOT absorbed - so a stop firing now would go "
+                "unrecorded and the app would keep believing it holds the position.",
+                timeout,
+                self._consecutive_timeouts,
+            )
+            if self._consecutive_timeouts >= _TIMEOUTS_BEFORE_CRITICAL:
+                logger.critical(
+                    "Reconciliation has not completed a poll in %d consecutive attempts. The "
+                    "account is trading with its reconciliation rails DOWN. Investigate or "
+                    "halt.",
+                    self._consecutive_timeouts,
+                )
+            return False
+        if self._consecutive_timeouts:
+            logger.warning(
+                "Reconciliation poll completed again after %d timed-out attempt(s).",
+                self._consecutive_timeouts,
+            )
+            self._consecutive_timeouts = 0
+        return result
+
+    async def _poll_once(self) -> bool:
+        """The check itself. Wrapped by `poll` so the deadline cannot be
+        bypassed by a caller that forgets it."""
         was_tripped = self.oms.kill_switch.tripped
         mismatch = await self.oms.check_reconciliation()
 
