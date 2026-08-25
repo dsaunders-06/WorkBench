@@ -202,14 +202,33 @@ class YFinanceEarningsCalendar:
         return cached
 
     def _fetch(self, symbol: str) -> date | None:
+        """Ask BOTH of yfinance's earnings surfaces (item 49).
+
+        `Ticker.calendar` alone was asked, and on ASX it answers
+        `{'Earnings Date': [], ...}` - an empty list, measured against the live
+        vendor for TNE.AX and ANZ.AX on 25 August 2026 - while
+        `get_earnings_dates()` returns a real date for each. So this rail
+        abstained for every ASX symbol on a fact the vendor could have
+        supplied, and every consumer correctly reported "unknown".
+
+        The original ShareTrader app used `get_earnings_dates()`, which is why
+        this was visible in the first iteration of the project and not in this
+        one.
+        """
+        calendar: object = None
+        frame: object = None
         try:
             import yfinance as yf  # type: ignore[import-untyped]
 
-            calendar = yf.Ticker(symbol).calendar
+            ticker = yf.Ticker(symbol)
+            calendar = ticker.calendar
         except Exception:  # noqa: BLE001 - an optional rail must never raise
-            logger.debug("No earnings date available for %s", symbol, exc_info=True)
-            return None
-        return _first_future_date(calendar, self.market)
+            logger.debug("No earnings calendar available for %s", symbol, exc_info=True)
+        try:
+            frame = ticker.get_earnings_dates(limit=8)
+        except Exception:  # noqa: BLE001 - the fallback is best-effort too
+            logger.debug("No earnings dates available for %s", symbol, exc_info=True)
+        return earnings_date_from_sources(calendar, frame, market=self.market)
 
     def trading_days_until(self, symbol: str, as_of: date | None = None) -> int | None:
         announcement = self.next_earnings(symbol)
@@ -274,3 +293,35 @@ __all__ = [
     "YFinanceEarningsCalendar",
     "trading_days_between",
 ]
+
+
+def earnings_date_from_sources(
+    calendar: object,
+    frame: object,
+    market: mc.Market = "US",
+    now: datetime | None = None,
+) -> date | None:
+    """The next announcement from either yfinance surface (item 49).
+
+    `Ticker.calendar` is preferred where it answers, because it is the
+    vendor's own "next scheduled" field. `get_earnings_dates()` is the
+    fallback and is what actually answers on ASX.
+
+    Returns None when neither can answer. The rail abstaining on an unknown
+    date is correct and stays - what was wrong was never asking the surface
+    that knew.
+    """
+    from_calendar = _first_future_date(calendar, market, now)
+    if from_calendar is not None:
+        return from_calendar
+
+    index = getattr(frame, "index", None)
+    if index is None:
+        return None
+    reference = (now or datetime.now(UTC)).date()
+    future: list[date] = []
+    for value in list(index):
+        as_date = value.date() if hasattr(value, "date") else None
+        if as_date is not None and as_date >= reference:
+            future.append(as_date)
+    return min(future) if future else None

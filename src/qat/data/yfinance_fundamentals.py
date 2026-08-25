@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import dataclass
+from datetime import date
 from typing import Any, Protocol
 
 from qat.data import sectors
@@ -122,6 +124,9 @@ class YFinanceFundamentalsSource:
             sector=sectors.sector_for(symbol),
             eps_growth_yoy=_as_float(info.get("earningsGrowth")),
             eps_growth_accelerating=_eps_accelerating(financials),
+            # Item 48. The frame was already here and discarded - only EBIT
+            # and the tax rate were taken from it.
+            **_reported_kwargs(financials),
             peg_ratio=_positive(_as_float(info.get("trailingPegRatio"))),
             roe=_as_float(info.get("returnOnEquity")),
             roic=_roic(
@@ -361,3 +366,113 @@ def _with_rank(snapshot: FundamentalSnapshot, rank: float | None) -> Fundamental
         relative_strength_rank=rank,
         is_synthetic=snapshot.is_synthetic,
     )
+
+
+# Reported results rows, in the order yfinance names them (item 48).
+#
+# Carried RAW alongside the ratios, because a ratio answers "is this cheap"
+# and a result answers "what did the business actually do". The advisory
+# context could reason about a P/E and never about "revenue up 8%, profit
+# down 3%".
+#
+# The frame was already being fetched and discarded: `get_fundamentals` pulls
+# the whole income statement and takes only EBIT and the tax rate.
+_REVENUE_ROWS = ("Total Revenue", "Operating Revenue")
+_NET_INCOME_ROWS = ("Net Income", "Net Income Common Stockholders")
+_EBITDA_ROWS = ("EBITDA", "Normalized EBITDA")
+_EPS_ROWS = ("Diluted EPS", "Basic EPS")
+
+
+@dataclass(frozen=True, slots=True)
+class ReportedResults:
+    """What a company actually reported, with the period it covers.
+
+    The period end is not decoration. A growth figure whose period is unknown
+    cannot be checked against anything, and this application has been bitten
+    repeatedly by numbers that could not be traced to what produced them.
+    """
+
+    period_end: date | None = None
+    revenue: float | None = None
+    net_income: float | None = None
+    ebitda: float | None = None
+    diluted_eps: float | None = None
+    revenue_growth: float | None = None
+    net_income_growth: float | None = None
+
+
+def _first_row(frame: Any, rows: tuple[str, ...], column: int) -> float | None:
+    """The first of `rows` the vendor actually answered, in that column.
+
+    yfinance names the same line differently between filers - "Total Revenue"
+    and "Operating Revenue" are both revenue - so the alternatives are tried in
+    order rather than one being assumed.
+    """
+    for name in rows:
+        try:
+            value = frame.loc[name].iloc[column]
+        except (KeyError, IndexError):
+            continue
+        parsed = _as_float(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _growth(latest: float | None, prior: float | None) -> float | None:
+    """Period-on-period change, or None when it cannot be measured.
+
+    A zero or absent prior yields None rather than a division or a fabricated
+    0.0 - the same rule the rest of this module follows, and the reason a
+    single-period frame reports figures with no growth rather than inventing
+    one.
+    """
+    if latest is None or not prior:
+        return None
+    return (latest - prior) / abs(prior)
+
+
+def reported_results(frame: Any) -> ReportedResults:
+    """The latest reported figures and their period, from an income statement.
+
+    Answers `None` per field rather than zero. A row the vendor did not supply
+    must not read as a company that earned nothing.
+    """
+    if frame is None or getattr(frame, "empty", True):
+        return ReportedResults()
+
+    columns = list(frame.columns)
+    period = columns[0] if columns else None
+    period_end: date | None = None
+    if period is not None and hasattr(period, "date"):
+        period_end = period.date()
+
+    latest_revenue = _first_row(frame, _REVENUE_ROWS, 0)
+    latest_income = _first_row(frame, _NET_INCOME_ROWS, 0)
+    has_prior = len(columns) > 1
+    prior_revenue = _first_row(frame, _REVENUE_ROWS, 1) if has_prior else None
+    prior_income = _first_row(frame, _NET_INCOME_ROWS, 1) if has_prior else None
+
+    return ReportedResults(
+        period_end=period_end,
+        revenue=latest_revenue,
+        net_income=latest_income,
+        ebitda=_first_row(frame, _EBITDA_ROWS, 0),
+        diluted_eps=_first_row(frame, _EPS_ROWS, 0),
+        revenue_growth=_growth(latest_revenue, prior_revenue),
+        net_income_growth=_growth(latest_income, prior_income),
+    )
+
+
+def _reported_kwargs(frame: Any) -> dict[str, Any]:
+    """The reported figures as snapshot kwargs (item 48)."""
+    r = reported_results(frame)
+    return {
+        "results_period_end": r.period_end,
+        "revenue": r.revenue,
+        "net_income": r.net_income,
+        "ebitda": r.ebitda,
+        "diluted_eps": r.diluted_eps,
+        "revenue_growth": r.revenue_growth,
+        "net_income_growth": r.net_income_growth,
+    }

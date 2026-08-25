@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, fields
+from datetime import date
 from typing import Protocol
 
 from qat.data import sectors
@@ -48,6 +49,21 @@ class FundamentalSnapshot:
     payout_ratio: float | None
     institutional_ownership_pct: float | None
     relative_strength_rank: float | None  # 0-100 percentile
+    # --- what the company actually REPORTED (item 48) ---------------------
+    # Ratios answer "is this cheap"; these answer "what did the business do".
+    # Flattened rather than nested so `available_figures` keeps working - it
+    # omits whatever is None, which is how a field the vendor could not answer
+    # stays absent instead of reading as zero.
+    #
+    # `results_period_end` travels WITH them. A growth figure whose period is
+    # unknown cannot be checked against anything.
+    results_period_end: date | None = None
+    revenue: float | None = None
+    net_income: float | None = None
+    ebitda: float | None = None
+    diluted_eps: float | None = None
+    revenue_growth: float | None = None
+    net_income_growth: float | None = None
     # True only for figures a source invented. Carried on the snapshot rather
     # than inferred from the source's type, so anything downstream that
     # displays or reasons about a number can say where it came from.
