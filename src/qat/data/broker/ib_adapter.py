@@ -749,7 +749,48 @@ class IBAdapter:
         return balances_from_summary(await self.account())
 
     async def positions(self) -> list[Position]:
-        return [from_ib_position(pos, self.settings.market) for pos in self.ib_client.positions()]
+        """Held positions, carrying the broker's mark (item 45).
+
+        `IB.positions()` returns `Position(account, contract, position,
+        avgCost)` and no price. `IB.portfolio()` returns `PortfolioItem` with
+        `marketPrice`, is already populated by the `updatePortfolio` events the
+        Gateway pushes, and costs no extra request. Before this, every row of
+        the Positions panel showed a blank Last, P&L and To stop, and every one
+        read `(escape unknown)` - because the minimum-hold loss escape had no
+        price to measure a loss against. That is a rail, not a display.
+
+        **`positions()` stays the source of truth for QUANTITY.**
+        `check_reconciliation` builds its kill-switch input from this set, so
+        the portfolio is used ONLY to enrich the price. A portfolio item that
+        disagreed about size must not silently redefine the book.
+        """
+        marks = self._portfolio_marks()
+        return [
+            from_ib_position(pos, self.settings.market, marks.get(pos.contract.symbol))
+            for pos in self.ib_client.positions()
+        ]
+
+    def _portfolio_marks(self) -> dict[str, float]:
+        """Raw-symbol -> broker mark, for whatever the portfolio reports.
+
+        Keyed on the RAW IBKR symbol because that is what both calls carry;
+        translation happens once, downstream. A client without `portfolio` -
+        an older fake, or an adapter that predates this - yields no marks
+        rather than an error.
+
+        A mark of zero or less is dropped: IBKR reports 0.0 for an instrument
+        it has no data on, and a position marked at zero measures as a total
+        loss.
+        """
+        portfolio = getattr(self.ib_client, "portfolio", None)
+        if not callable(portfolio):
+            return {}
+        marks: dict[str, float] = {}
+        for item in portfolio():
+            price = float(getattr(item, "marketPrice", 0.0) or 0.0)
+            if price > 0:
+                marks[item.contract.symbol] = price
+        return marks
 
     async def account(self) -> AccountSummary:
         """The account summary, asked through the form that works in a loop.

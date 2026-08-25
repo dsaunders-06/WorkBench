@@ -466,7 +466,9 @@ def tighter_stop(
     return left if left.stop_price <= right.stop_price else right
 
 
-def from_ib_position(position: IBPosition, market: str = "US") -> Position:
+def from_ib_position(
+    position: IBPosition, market: str = "US", market_price: float | None = None
+) -> Position:
     """One IBKR position, in the app's own symbol form (M104).
 
     The fourth and last boundary where an IBKR symbol enters the application,
@@ -489,6 +491,12 @@ def from_ib_position(position: IBPosition, market: str = "US") -> Position:
         symbol=from_ibkr(position.contract.symbol, market),
         quantity=position.position,
         avg_price=position.avgCost,
+        # Item 45. `IB.positions()` carries no price at all - the mark comes
+        # from `IB.portfolio()` and is passed in rather than fetched here, so
+        # this stays a pure translation. `None` when the caller has no mark,
+        # which is a DIFFERENT claim from zero: read as zero, every position
+        # would measure as risk-free.
+        current_price=market_price,
     )
 
 
