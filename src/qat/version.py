@@ -626,7 +626,25 @@ from qat.domain.display_dates import format_display_date
 # from reading code structure without checking the recorded data - while the
 # audit trail held the answer, as it had for item 44. Reading a call site
 # tells you what COULD happen; the audit trail tells you what DID.
-MILESTONE = "M142"
+#
+# M143 - two found by looking at the M142 screens, minutes after deploying it.
+#
+# TODAY'S P/L RENDERED NOTHING WHILE THE RAILS HAD A FIGURE (item 46). Two
+# day-P&L computations existed and the panel used the dead one.
+# `EquityMonitor.day_pnl_pct()` measures against a persisted
+# `day_start_equity`, works, and is what `AutonomyGate` gates on - the journal
+# recorded 0.0031 the same session the panel showed "-".
+# `AccountBalances.day_pnl` measures against `last_equity`, an Alpaca-era
+# "previous close" that `from_ib_account_values` never sets. The panel now
+# falls back to the day-start basis and NAMES which basis it used, because the
+# two are different measures and showing one under the other's label would be
+# a smaller version of the same failure.
+#
+# And the equity chart's constructor still claimed "Date" (item 39's other
+# half). M142 relabelled inside `_render_result` only, so a chart that had not
+# re-rendered since the deploy still said so - which is exactly what the
+# operator saw and reported.
+MILESTONE = "M143"
 
 _UNKNOWN = "unknown"
 
