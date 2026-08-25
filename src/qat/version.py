@@ -577,7 +577,56 @@ from qat.domain.display_dates import format_display_date
 # the fills), and spending a rail that needs a human reset on a detector
 # with no field history is how the staleness rail ended up suppressed with a
 # 69-hour value.
-MILESTONE = "M141"
+#
+# M142 - ten fixes from the first full day of watching this system trade. The
+# suite was green at 2,666 throughout and caught none of them; every one came
+# from a live session or from the operator reading a screen and asking why it
+# looked odd.
+#
+# THE SECTOR RAIL HAD NEVER RUN (item 44). `signal_bridge` called
+# `submit_order` with four positional arguments, so `sector_by_symbol`
+# defaulted to None, and nothing anywhere set `OrderCandidate.sector` -
+# `governor.py` needs BOTH, so either alone leaves it dark. The cap was 30%;
+# the book closed 60% Financials. `risk_decisions.csv` had recorded
+# `held_in_sector_dollars: 0.0` on every decision since the first trade this
+# system ever placed. Found because the operator looked at ten symbols and
+# said "there seem to be a lot of banks".
+#
+# NO IBKR CALL COULD TIME OUT (item 34). The adapter had eight awaits on the
+# client and zero timeouts. `reqExecutionsAsync`, reached first through
+# `absorb_broker_fills`, resolves only on `execDetailsEnd`; a lost one hangs
+# the caller for the life of the process. That wedged reconciliation for
+# 6h50m across nine new positions and said NOTHING, because a hung await
+# raises nothing. Every call is now bounded, and `poll()` carries its own
+# deadline as a backstop for hangs nobody has found yet.
+#
+# POSITIONS CARRIED NO PRICE (item 45). `ib.positions()` has no mark;
+# `ib.portfolio()` does, is already populated, and costs no extra request.
+# Not cosmetic: without a price the minimum-hold LOSS ESCAPE cannot be
+# evaluated, so every position was conservatively held and one falling hard
+# enough to escape its hold could not be detected.
+#
+# THE KILL SWITCH DID NOT SURVIVE A RESTART (item 32). A halt meant to hold
+# until a human decided held until the next launch, then cleared silently.
+# Found the embarrassing way: the handoff said it was tripped, advice was
+# given on that basis, and the operator pointed at the app reporting INACTIVE.
+#
+# Also: the drift guard on parked orders failed open on a `nan` (item 37);
+# the console called a parked order "approved" (item 38); one sign-off path
+# never journalled its refusal (item 43); the Risk Console gained the
+# force-check button its docstring had promised, and a confirmation before
+# HALTING but never before resetting (item 36); four surfaces stopped showing
+# silent UTC (item 40); `ib_async` stopped rotating a 5 MiB log three times in
+# three minutes and evicting the evidence (item 35); and the equity chart's
+# axis now follows its data (item 39).
+#
+# THREE FINDINGS WERE WRONG and are corrected in the handoff rather than
+# deleted: costs ARE applied to live trades, the governor DOES evaluate the
+# parked set, and a staleness rail already exists. All three were written
+# from reading code structure without checking the recorded data - while the
+# audit trail held the answer, as it had for item 44. Reading a call site
+# tells you what COULD happen; the audit trail tells you what DID.
+MILESTONE = "M142"
 
 _UNKNOWN = "unknown"
 
