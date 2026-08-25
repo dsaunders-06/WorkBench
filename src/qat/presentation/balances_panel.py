@@ -210,10 +210,13 @@ class BalancesPanel(QFrame):
             "Equity: cash plus market value.",
             "Everything the account is worth: cash plus what the positions are " "currently worth.",
         )
+        self._day_start_equity: float | None = None
         self.day_pnl = _Cell(
             "Today's P/L",
-            "Equity against the previous close, per the broker.",
-            "Change since the previous close, as the broker reports it.",
+            "Equity against the previous close, or this session's first reading.",
+            "Change since the previous close where the broker reports one. IBKR "
+            "does not, so this falls back to the session's first equity reading "
+            "- the same basis the autonomy gate uses. The tooltip says which.",
         )
         self.cash = _Cell(
             "Cash",
@@ -365,6 +368,12 @@ class BalancesPanel(QFrame):
         reading the panel rather than looking at it."""
         return self._cells_by_label[label].caption
 
+    def set_day_start_equity(self, equity: float | None) -> None:
+        """The fallback basis, supplied by the dashboard from the equity
+        monitor (item 46). The panel has no business reaching for a domain
+        engine itself."""
+        self._day_start_equity = equity
+
     def update_from(self, snapshot: AccountSnapshot) -> None:
         balances = snapshot.balances
         currency = balances.currency
@@ -382,14 +391,21 @@ class BalancesPanel(QFrame):
         self.freshness.setStyleSheet(theme.text(_NEGATIVE if stale else _MUTED, size=theme.CAPTION))
 
     def _render_day_pnl(self, balances: AccountBalances) -> None:
-        change = balances.day_pnl
+        change, pct, basis = day_pnl_from(
+            broker_change=balances.day_pnl,
+            broker_pct=balances.day_pnl_pct,
+            equity=balances.equity,
+            day_start_equity=self._day_start_equity,
+        )
         if change is None:
             self.day_pnl.set(NOT_REPORTED)
             return
-        pct = balances.day_pnl_pct
         suffix = f" ({pct:+.2%})" if pct is not None else ""
         colour = _POSITIVE if change >= 0 else _NEGATIVE
         self.day_pnl.set(f"{change:+,.2f}{suffix}", colour)
+        # The basis is on the cell, not assumed by the label: previous close
+        # and this session's first reading are different measures (item 46).
+        self.day_pnl.setToolTip(f"Today's P/L {basis}.")
 
     def _render_spendable(self, balances: AccountBalances, currency: str | None) -> None:
         spendable = balances.spendable_cash(self.min_cash_reserve)
@@ -408,3 +424,36 @@ class BalancesPanel(QFrame):
             self.account_status.set("BLOCKED", _NEGATIVE)
             return
         self.account_status.set(balances.status or NOT_REPORTED)
+
+
+def day_pnl_from(
+    *,
+    broker_change: float | None,
+    broker_pct: float | None,
+    equity: float | None,
+    day_start_equity: float | None,
+) -> tuple[float | None, float | None, str]:
+    """Today's P/L, its percentage, and WHICH BASIS produced it (item 46).
+
+    Two computations existed and the panel used the dead one. IBKR never
+    populates `AccountBalances.last_equity` - the field's own comment calls it
+    "previous close", an Alpaca-era idea - so `balances.day_pnl` was always
+    None on this broker, while `EquityMonitor.day_pnl_pct()` worked and was
+    what the autonomy gate actually gated on.
+
+    The broker's own figure still wins where it exists, because "since the
+    previous close" is the better measure. The day-start basis is the
+    fallback, and the basis is RETURNED rather than assumed: the two are
+    different measures - previous close versus this session's first equity
+    sample - and showing one under the other's label is the failure being
+    fixed, not a smaller version of it.
+
+    Returns (None, None, ...) when neither source can answer. A day P&L of
+    0.00 is a claim, and not knowing is not that claim.
+    """
+    if broker_change is not None:
+        return broker_change, broker_pct, "since the previous close, per the broker"
+    if equity is None or not day_start_equity or day_start_equity <= 0:
+        return None, None, "no basis available"
+    change = equity - day_start_equity
+    return change, change / day_start_equity, "since this session's first equity reading"

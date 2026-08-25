@@ -165,7 +165,13 @@ class WorkbenchScreen(QWidget):
         # timestamps on a per-symbol random walk, not real market dates, and a
         # bare "Date" would invite the reader to compare a run against what the
         # market actually did on those days.
-        theme.label_axes(self.equity_plot, bottom="Date (synthetic daily bars)", left="Equity ($)")
+        # Item 39. Neutral until a result is rendered: before one exists
+        # there are no dates to claim, and the label used to say "Date"
+        # from construction onward regardless of what was plotted.
+        # `_render_result` sets the real label via `equity_axis_mode`.
+        theme.label_axes(
+            self.equity_plot, bottom=equity_axis_mode(has_dates=False)[1], left="Equity ($)"
+        )
         self.equity_curve_item = self.equity_plot.plot(pen=theme.SERIES_PRIMARY, name="strategy")
         self.benchmark_curve_item = self.equity_plot.plot(
             pen=theme.SERIES_BENCHMARK, name="benchmark"

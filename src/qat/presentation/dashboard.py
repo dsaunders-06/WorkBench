@@ -366,6 +366,14 @@ class DashboardScreen(QWidget):
         # This screen's two-second timer was spending sixty requests a minute
         # of a two-hundred-per-minute budget on repainting.
         snapshot = await self.runtime.account_poller.snapshot()
+        # Item 46: IBKR never reports a previous close, so the panel needs
+        # the equity monitor's day-start basis or it renders nothing while
+        # the autonomy gate is happily using a figure of its own.
+        monitor = getattr(self.runtime, "equity_monitor", None)
+        state = getattr(monitor, "state", None)
+        self.balances_panel.set_day_start_equity(
+            getattr(state, "day_start_equity", None) if state is not None else None
+        )
         self.balances_panel.update_from(snapshot)
         self._refresh_corporate_actions()
 
