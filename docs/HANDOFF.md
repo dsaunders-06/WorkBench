@@ -1556,6 +1556,38 @@ shares its shape.
     so rather than pick a side — and it should be UNKNOWN, not ACTIVE, that it
     falls back to.
 
+53. ~~**The watcher would not start, and its own usage line is what failed.**~~
+    **FIXED 26 Aug.** Reported by the operator mid-session. `watch_session.py`
+    documents `python scripts/watch_session.py`, and that command answered
+    `ModuleNotFoundError: No module named 'qat'` — `qat` lives under `src/` and
+    is importable only from an interpreter it has been installed into, so a
+    bare `python` (which is what the docstring tells you to type) could never
+    work. The venv python did.
+
+    **Nine sibling scripts already carry the fix** — `preflight`, `ibkr_probe`,
+    `flatten_positions`, `unwind_in_tranches` and the rest all do
+    `sys.path.insert(0, .../"src")`. The one tool an operator reaches for
+    *while a session is running* was the one without it. Nothing in it needs a
+    third-party package, so with `src` on the path any interpreter runs it.
+
+    ⚠️ **AND item 40 was only half fixed, in the file its own test calls the
+    WORST offender.** With the watcher finally running, every event line read
+    ten hours out: an app launch at **08:53:34 AEST printed as `22:53:34`**,
+    bare, with no zone label. `stamp = str(event.get("ts",""))[11:19]` — a raw
+    slice of the log's UTC-with-offset field, throwing the offset away.
+
+    M144 converted the TALLY line in this same file, twenty lines below, and
+    left the PER-EVENT line alone. Two printers, one file, one fixed. That is
+    exactly what *"check whether the fix has a sibling"* exists to catch, and
+    it was missed on the file the habit was written about.
+
+    It is also the worst place for it to survive: the event line is the one
+    that repeats hundreds of times during an incident, which is the only time
+    anyone reads this tool — the precise scenario item 40's test file
+    describes. Now rendered through `format_session_time`, zone named, with a
+    fallback that cannot raise, because a monitor that dies on one malformed
+    line is worse than one showing an awkward stamp.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```

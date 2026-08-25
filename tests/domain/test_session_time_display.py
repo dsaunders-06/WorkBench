@@ -97,3 +97,46 @@ def test_the_build_stamp_composition_is_the_one_tasks_py_actually_writes():
     assert (
         'UTC"' not in source.split("built_at =")[1].split("\n")[0]
     ), "the build stamp is rendering UTC again (item 50)"
+
+
+def _watcher_module():
+    """Load `scripts/watch_session.py`, which is a script rather than a package.
+
+    Imported by path deliberately: the point is to test the code the operator
+    actually runs, not a copy of its logic.
+    """
+    import importlib.util
+    import pathlib
+
+    path = pathlib.Path("scripts/watch_session.py").resolve()
+    spec = importlib.util.spec_from_file_location("qat_watch_session", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_watcher_event_line_renders_the_market_zone_not_bare_utc():
+    """The half of item 40 that M144 missed, in the file it called the WORST.
+
+    The tally line in `watch_session.py` was converted; the PER-EVENT line
+    twenty lines above it was not - it was `str(ts)[11:19]`, a raw slice of the
+    log's UTC-with-offset field that discarded the offset and printed a bare
+    UTC clock. Observed 26 August: an app launch at 08:53:34 AEST printed as
+    `22:53:34`.
+
+    This is the line that repeats hundreds of times during an incident, which
+    is the only time anyone reads this tool.
+    """
+    watcher = _watcher_module()
+    shown = watcher._event_time("2026-08-25T22:53:34.123456+00:00")
+    assert shown.startswith("08:53:34"), shown
+    assert "AEST" in shown or "AEDT" in shown, shown
+
+
+def test_the_watcher_never_dies_on_a_malformed_timestamp():
+    """It runs unattended for a whole session. A monitoring tool that raises on
+    one bad line is worse than one showing an awkward stamp."""
+    watcher = _watcher_module()
+    for bad in (None, "", "garbage", 12345, "2026-13-45T99:99:99"):
+        assert isinstance(watcher._event_time(bad), str)

@@ -17,12 +17,23 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 import time
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
-from qat.domain.display_dates import format_session_time
+# The usage line above is `python scripts/watch_session.py`, and until 26 August
+# that command did not work: `qat` lives under src/ and is importable only from
+# an interpreter it has been installed into, so a bare `python` answered
+# `ModuleNotFoundError: No module named 'qat'`. Nine sibling scripts already
+# carry this line - preflight, ibkr_probe, flatten_positions and the rest - and
+# the one tool an operator reaches for WHILE a session is running was the one
+# without it. Nothing here needs a third-party package, so with src on the path
+# any interpreter can run it.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+
+from qat.domain.display_dates import format_session_time  # noqa: E402
 
 # What to surface, and how to label it. Ordered: the first pattern that matches
 # a message wins, so the specific sits above the general.
@@ -92,6 +103,32 @@ def _classify(message: str, level: str) -> str | None:
 def _default_log() -> Path:
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())
     return Path(base) / "QuantAdvisoryTerminal" / "data" / "logs" / "qat.log"
+
+
+def _event_time(ts: object) -> str:
+    """The event's own time, in the market's zone and NAMED (item 40).
+
+    This was `str(ts)[11:19]` - a raw slice of the log's UTC-with-offset `ts`,
+    which threw the offset away and printed a bare UTC clock with no zone. An
+    08:43:40 AEST event rendered as `22:43:40`, ten hours out and nothing on
+    the line to say so.
+
+    That is precisely the failure item 40 was written about: *read 03:21:34 off
+    it at 13:21 AEST and a ten-hour error lands in the middle of an incident,
+    which is the only time anyone reads it.* M144 converted every human-facing
+    time - including the tally line **in this same file**, twenty lines below -
+    and missed this one. One of two printers in one file, which is the sibling
+    check that habit exists for.
+
+    Falls back to the raw slice rather than raising. A monitoring tool that
+    dies on a malformed line is worse than one showing an awkward timestamp,
+    and this runs unattended for a whole session.
+    """
+    text = str(ts or "")
+    try:
+        return format_session_time(datetime.fromisoformat(text))
+    except (TypeError, ValueError):
+        return text[11:19]
 
 
 def main() -> int:
@@ -200,7 +237,7 @@ def main() -> int:
         if label in _QUIET:
             continue
 
-        stamp = str(event.get("ts", ""))[11:19]
+        stamp = _event_time(event.get("ts"))
         # The traceback is the point on a crash, and noise everywhere else.
         detail = message.strip().replace("\n", " ")
         if label == "CRASH":
