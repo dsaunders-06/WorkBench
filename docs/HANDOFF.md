@@ -42,10 +42,10 @@ source.
 | | |
 |---|---|
 | Deployed build | **M141 (`09ab51b`)**, installed 25 August 09:01. Exe SHA256-identical to the signed artefact, signature Valid. **Read back off its own log 09:09 25 August** — `Build: M141 (09ab51b, built 24/08/2026 22:58 UTC, packaged)`. The startup scan ran in the same launch: `RESTING ORDER SCAN: 2 working leg(s) across 1 symbol(s), nothing unjustified` — both legs of TNE's live bracket seen and correctly not flagged |
-| Repository HEAD | At or just ahead of the deployed build by the deploy record itself. `handoff_state.py` derives the gap; do not read a number from here |
-| Deploy gap | **None of consequence.** M141 is installed. Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M140-20260825-0901` holds the M140 install intact |
+| Repository HEAD | **WELL ahead of the deployed build** — ten fixes landed after the close on 25 August (items 32, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45). `handoff_state.py` derives the gap; do not read a number from here |
+| Deploy gap | **⚠️ LARGE, and NONE OF IT HAS RUN LIVE.** M141 (`09ab51b`) is what is installed; every fix below it is committed and pushed but NOT deployed. Several touch the risk and order paths — the sector rail, position marks, IBKR call timeouts, the drift guard, kill-switch persistence. **Build, deploy and run a WATCHED session before trusting any of it.** Rollback from M141 is still a rename: `C:\QuantAdvisoryTerminal.bak-M140-20260825-0901` |
 | Pushed | **Up to date.** M141 pushed 24 August evening. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
-| Suite | **2,666 passed, 25 skipped.** ruff, black, mypy and bandit clean |
+| Suite | **2,715 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **HOLDING TNE.AX 3,051 @ 32.9783**, bracketed 30.69 / 36.86, carried overnight deliberately. NetLiquidation ~1,001,264 AUD. **The app HAS now placed entries on IBKR — 24 August was the first day** |
