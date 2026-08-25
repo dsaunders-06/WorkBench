@@ -837,10 +837,23 @@ for each gap and is worth reading; the list lives here.
     Monitor's transition history *"25/08/2026 00:03:00 UTC -> sideways"*, and
     the Blotter's timestamp column showing `02:38:39` for a 12:38 AEST order.
 
+    **`watch_session.py:179` is the worst of them** and is not a screen at all:
+    `print(f"    -- {datetime.now(UTC):%H:%M:%S} tally: {parts}")` prints a UTC
+    clock with **no zone label whatsoever**, into the live console an operator
+    watches during a session. The others at least say "UTC" or sit in a field
+    you might think to question; this one simply looks like the time. Read
+    `03:21:34` off the watcher at 13:21 AEST and correlate it against the
+    Blotter, the log, or your own watch, and the ten-hour error lands in the
+    middle of an incident — which is the only time anyone is reading it.
+
     The Risk Console's anomaly rows are NOT affected — they label the zone
     explicitly (`… 14:22 UTC`), which is the pattern the rest should follow:
     either convert to session-local or say which zone it is. Silent UTC on a
-    screen whose other fields are session-local is the failure, not UTC itself.
+    surface whose other fields are session-local is the failure, not UTC itself.
+
+    Note the log files themselves are correctly UTC-with-offset in their `ts`
+    field and should stay that way — machine records want one zone. This is
+    about what is rendered to a human.
 
 41. **Brokerage is not captured on live trades.** IBKR charges roughly **$6.60**
     per ASX trade; the Performance tab reflects none of it.
