@@ -53,3 +53,47 @@ def test_a_naive_timestamp_is_treated_as_utc_rather_than_guessed():
     would move them by ten hours; assuming UTC is what they actually are."""
     naive = datetime(2026, 8, 25, 3, 21, 34)
     assert format_session_time(naive, "ASX").startswith("13:21:34")
+
+
+def test_the_build_stamp_takes_its_DATE_from_the_converted_value_too(monkeypatch):
+    """Item 50, and the half that is easy to get wrong.
+
+    The stamp read `built 25/08/2026 12:01 UTC` on M144's Settings screen,
+    where 12:01 UTC is 22:01 AEST - the labelled kind of the item 40 defect
+    rather than the dangerous kind, but rendered to a human among fields that
+    are session-local.
+
+    Converting only the TIME would be worse than leaving it in UTC: a build at
+    14:30 UTC is already the next day in Sydney, so the stamp would claim
+    00:30 AEST on the PREVIOUS date and the two halves would disagree about
+    which zone they were in. This pins the composition `_write_build_stamp`
+    uses, so that cannot regress silently into the artefact - where it is baked
+    at package time and a redeploy alone will not correct it.
+    """
+    from qat.domain.display_dates import format_display_date
+    from qat.domain.market_calendar import MARKET_TIMEZONES
+
+    def stamp_for(moment: datetime) -> str:
+        local = moment.astimezone(MARKET_TIMEZONES["ASX"])
+        return f"{format_display_date(local)} {format_session_time(moment)}"
+
+    assert stamp_for(datetime(2026, 8, 25, 12, 1, tzinfo=UTC)) == "25/08/2026 22:01:00 AEST"
+    # The rollover: same UTC date, next Sydney date.
+    assert stamp_for(datetime(2026, 8, 25, 14, 30, tzinfo=UTC)) == "26/08/2026 00:30:00 AEST"
+
+
+def test_the_build_stamp_composition_is_the_one_tasks_py_actually_writes():
+    """The test above is only worth having if it pins the REAL call site.
+
+    A test that reimplements the code it guards agrees with itself and with
+    nothing shipped - which is exactly how the sector rail passed its tests
+    while never running (item 44). So read `tasks.py` and assert the line.
+    """
+    import pathlib
+
+    source = pathlib.Path("tasks.py").read_text(encoding="utf-8")
+    assert 'local = now.astimezone(MARKET_TIMEZONES["ASX"])' in source
+    assert 'built_at = f"{format_display_date(local)} {format_session_time(now)}"' in source
+    assert (
+        'UTC"' not in source.split("built_at =")[1].split("\n")[0]
+    ), "the build stamp is rendering UTC again (item 50)"

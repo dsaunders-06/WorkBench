@@ -686,7 +686,43 @@ from qat.domain.display_dates import format_display_date
 #
 # Every human-facing time now renders in the market's zone and NAMES it - the
 # Performance tab's closed-trade times were raw UTC with no zone at all.
-MILESTONE = "M144"
+#
+# M145 - item 34's ROOT CAUSE, after two days of it being attributed to the
+# wrong call. Found by reading the audit trail the app had already written,
+# which is the habit items 41, 42 and 43 were written without.
+#
+# TWO CALLERS, ONE SHARED FUTURE KEY, IDENTICAL TIMERS.
+# `reqAllOpenOrdersAsync` keys its future on the LITERAL string "openOrders",
+# and `Wrapper.startReq` overwrites that key without resolving or cancelling
+# what was there. `openOrderEnd` resolves whichever future survived, so of N
+# concurrent readers exactly one is answered and the rest await a future
+# nobody will ever complete. `reqExecutionsAsync` - the call this was blamed
+# on - uses `client.getReqId()` and is unique per request, so it was never a
+# candidate.
+#
+# `reconciliation_poll_seconds` and `protection_sweep_seconds` are BOTH 300.0
+# and both engines start in the same second, so the two readers are
+# phase-locked and collide on EVERY tick for the life of the process. That is
+# what the old hypothesis could never explain: why the startup scan always
+# succeeded. The orchestrator awaits each engine's `start()` in turn, so
+# nothing overlaps at launch - and everything after it does.
+#
+# The lock is taken BEFORE `request()` is called, and that ordering is the fix:
+# the method is a plain `def` that registers its future when CALLED, not when
+# awaited, so a lock inside the timeout helper would serialise nothing.
+#
+# The existing timeout tests could not have caught it. Their fakes are
+# `async def`, whose body runs at await rather than at call - a fake with the
+# wrong call semantics tests the fake.
+#
+# AND check 5 of `session_check.ps1` now reports FRESHNESS. It read a
+# reassuring green all day on 25 August while the rail was dead: the scan ran
+# ONCE, at 09:09:52, and nothing told that apart from running every poll.
+#
+# THE BUILD STAMP RENDERS IN AEST (item 50). It read "built 25/08/2026 12:01
+# UTC" among Settings fields that are session-local. The DATE is taken from the
+# converted value too - a 14:30 UTC build is already the next day in Sydney.
+MILESTONE = "M145"
 
 _UNKNOWN = "unknown"
 

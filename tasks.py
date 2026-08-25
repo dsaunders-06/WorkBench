@@ -111,13 +111,24 @@ def _write_build_stamp(c) -> pathlib.Path:
     see that on the Settings screen instead of trusting a label.
     """
     sys.path.insert(0, str(pathlib.Path(__file__).parent / "src"))
-    from qat.domain.display_dates import format_display_date
+    from qat.domain.display_dates import format_display_date, format_session_time
+    from qat.domain.market_calendar import MARKET_TIMEZONES
     from qat.version import MILESTONE, stamp_module_source
 
     described = c.run("git describe --tags --always --dirty", hide=True, warn=True)
     commit = (described.stdout or "").strip() or "unknown"
+    # Item 50: this used to render UTC on the Settings screen, among fields that
+    # are session-local - "built 25/08/2026 12:01 UTC" for a build made at 22:01
+    # AEST. The labelled kind rather than the dangerous kind, but it is the same
+    # boundary item 40 drew, so it is converted rather than merely labelled.
+    #
+    # The DATE is taken from the converted value too, not just the time. A build
+    # at 14:00 UTC is the following day in Sydney, and a stamp whose date and
+    # time disagreed about which zone they were in would be worse than the UTC
+    # it replaced.
     now = datetime.now(UTC)
-    built_at = f"{format_display_date(now)} {now:%H:%M} UTC"
+    local = now.astimezone(MARKET_TIMEZONES["ASX"])
+    built_at = f"{format_display_date(local)} {format_session_time(now)}"
 
     stamp = pathlib.Path("src/qat/_build_stamp.py")
     stamp.write_text(stamp_module_source(MILESTONE, commit, built_at), encoding="utf-8")
