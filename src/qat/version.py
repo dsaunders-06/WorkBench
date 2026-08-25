@@ -659,7 +659,34 @@ from qat.domain.display_dates import format_display_date
 # verdict, because a fabricated 0.0 can never trip an always-negative
 # threshold. The monitor's figure is now used only when it genuinely has a
 # basis.
-MILESTONE = "M143"
+#
+# M144 - company results, when the next ones are due, and every human-facing
+# time in AEST. All three came from one operator question: "I'm not seeing any
+# trading results information - this was available in the very first iteration".
+#
+# REPORTED RESULTS WERE FETCHED AND THROWN AWAY (item 48).
+# `FundamentalSnapshot` carried only ratios - ROE, ROIC, EPS growth, yields -
+# so the advisory context could reason about a P/E and never about "revenue up
+# 8%, profit down 3%". `yfinance_fundamentals` already pulled the whole income
+# statement and took only EBIT and the tax rate from it. Now carried raw WITH
+# the period end-date, because a growth figure whose period is unknown cannot
+# be checked. Live: ANZ revenue 22.31bn +9.6% with net income 5.89bn DOWN 9.9%.
+#
+# THE EARNINGS CALENDAR NEVER ANSWERED FOR ASX (item 49). `_fetch` asked
+# `Ticker.calendar`, which returns `{'Earnings Date': []}` for every ASX symbol
+# while `get_earnings_dates()` answers fine. So the rail abstained on a fact
+# the vendor could supply, and every consumer correctly said "unknown".
+# The ORIGINAL ShareTrader app used `get_earnings_dates()` - which is exactly
+# why the operator remembered seeing this and this iteration did not have it.
+#
+# AND yfinance stamps ASX announcements in America/New_York. Taking `.date()`
+# off that yields the NEW YORK day: 21:00 in New York is the NEXT day in
+# Sydney. That date sets the earnings blackout the risk engine sizes against,
+# so it was a sizing error waiting to happen, not a display one.
+#
+# Every human-facing time now renders in the market's zone and NAMES it - the
+# Performance tab's closed-trade times were raw UTC with no zone at all.
+MILESTONE = "M144"
 
 _UNKNOWN = "unknown"
 

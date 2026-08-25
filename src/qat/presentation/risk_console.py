@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat.domain import market_calendar as mc
-from qat.domain.display_dates import format_display_date
+from qat.domain.display_dates import format_display_date, format_session_time
 from qat.domain.evaluation.refusals import load_risk_decisions, summarise_refusals
 from qat.domain.events import MarketDataEvent
 from qat.presentation import theme
@@ -398,12 +398,14 @@ class RiskConsoleScreen(QWidget):
         lines = [
             f"POSITION  {a.symbol}  tracked={a.tracked_quantity:g} broker={a.broker_quantity:g}  "
             f"{a.reason}  (declared by {a.declared_by}, "
-            f"{format_display_date(a.declared_at)} {a.declared_at:%H:%M} UTC)"
+            f"{format_display_date(a.declared_at)} "
+            f"{format_session_time(a.declared_at, self.runtime.settings.market)})"
             for a in positions
         ] + [
             f"RESTING ORDER  {a.symbol}  {a.excess:g} share(s) unjustified  "
             f"{a.reason}  (declared by {a.declared_by}, "
-            f"{format_display_date(a.declared_at)} {a.declared_at:%H:%M} UTC)"
+            f"{format_display_date(a.declared_at)} "
+            f"{format_session_time(a.declared_at, self.runtime.settings.market)})"
             for a in resting
         ]
         self.anomaly_list.setPlainText("\n".join(lines))

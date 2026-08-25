@@ -55,3 +55,42 @@ def test_neither_source_answering_is_still_None():
     """The rail must keep abstaining rather than inventing a date."""
     assert earnings_date_from_sources({"Earnings Date": []}, None, now=_NOW) is None
     assert earnings_date_from_sources(None, pd.DataFrame(), now=_NOW) is None
+
+
+def test_a_new_york_stamped_date_is_read_in_the_MARKET_timezone():
+    """yfinance returns ASX announcement times stamped America/New_York -
+    measured: Timestamp('2026-11-17 01:00:00-0500', tz='America/New_York') for
+    TNE.AX. Taking `.date()` off that yields the NEW YORK calendar date.
+
+    An ASX company announces on an ASX day. 2026-11-17 21:00 New York is
+    2026-11-18 in Sydney, so reading it raw puts the announcement a session
+    early - and this date sets the earnings blackout the risk engine sizes
+    against.
+    """
+    import pandas as pd
+
+    ny_evening = pd.Timestamp("2026-11-17 21:00:00", tz="America/New_York")
+    frame = pd.DataFrame(index=pd.DatetimeIndex([ny_evening]))
+
+    assert earnings_date_from_sources(
+        {"Earnings Date": []}, frame, market="ASX", now=_NOW
+    ) == date(2026, 11, 18), "the ASX date, not the New York one"
+
+
+def test_the_same_instant_reads_as_the_new_york_date_for_a_US_symbol():
+    """The conversion follows the MARKET, it is not a blanket shift to Sydney."""
+    import pandas as pd
+
+    ny_evening = pd.Timestamp("2026-11-17 21:00:00", tz="America/New_York")
+    frame = pd.DataFrame(index=pd.DatetimeIndex([ny_evening]))
+
+    assert earnings_date_from_sources(
+        {"Earnings Date": []}, frame, market="US", now=_NOW
+    ) == date(2026, 11, 17)
+
+
+def test_a_naive_date_is_left_alone():
+    """A plain date carries no time and must not be shifted by a conversion."""
+    assert earnings_date_from_sources(
+        {"Earnings Date": [date(2026, 11, 17)]}, None, market="ASX", now=_NOW
+    ) == date(2026, 11, 17)

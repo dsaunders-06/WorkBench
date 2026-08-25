@@ -269,15 +269,31 @@ def _first_future_date(
     today = mc.trading_date(market, now)
     found: list[date] = []
     for value in values:
-        parsed = _as_date(value)
+        parsed = _as_date(value, market)
         if parsed is not None and parsed >= today:
             found.append(parsed)
     return min(found) if found else None
 
 
-def _as_date(value: object) -> date | None:
+def _as_date(value: object, market: mc.Market = "US") -> date | None:
+    """The announcement's calendar date IN THE MARKET'S OWN TIMEZONE.
+
+    yfinance stamps announcement times in America/New_York even for ASX
+    symbols - measured: `Timestamp('2026-11-17 01:00:00-0500',
+    tz='America/New_York')` for TNE.AX. Taking `.date()` off that yields the
+    NEW YORK date, and 2026-11-17 21:00 in New York is 2026-11-18 in Sydney.
+
+    An ASX company announces on an ASX day, and this date sets the earnings
+    blackout the risk engine sizes against, so being a session out is a sizing
+    error rather than a display one.
+
+    A NAIVE datetime or a plain `date` is left alone: it carries no zone to
+    convert from, and shifting it would invent a change of day.
+    """
     if isinstance(value, datetime):
-        return value.date()
+        if value.tzinfo is None:
+            return value.date()
+        return value.astimezone(mc.MARKET_TIMEZONES[market]).date()
     if isinstance(value, date):
         return value
     try:
@@ -318,10 +334,12 @@ def earnings_date_from_sources(
     index = getattr(frame, "index", None)
     if index is None:
         return None
-    reference = (now or datetime.now(UTC)).date()
+    reference = mc.trading_date(market, now)
     future: list[date] = []
     for value in list(index):
-        as_date = value.date() if hasattr(value, "date") else None
+        # Through `_as_date` so the fallback reads the market's own calendar
+        # date too - yfinance stamps ASX announcements in New York.
+        as_date = _as_date(value, market)
         if as_date is not None and as_date >= reference:
             future.append(as_date)
     return min(future) if future else None
