@@ -329,15 +329,42 @@ Write-Output ("4 unprot   POSITION UNPROTECTED x{0}" -f $unprot.Count)
 # reported the same reassuring zero as a genuinely clean night. The heartbeat
 # is the proof the scan ran; its absence is now its own alarm, mirroring
 # check 3's "*** NO ADOPTION LINE IN THIS RUN ***" below.
+#
+# ⚠️ FRESHNESS, added 26 August, and it is the half that matters. On 25 August
+# this line read "RESTING ORDER SCAN ran, clean - 0 divergences" all day while
+# the rail was DEAD: the scan ran ONCE, at 09:09:52, and the reconciliation
+# poll was wedged for the following 6h50m. I2 taught this check to tell "ran
+# clean" from "never ran"; it still could not tell "running every poll" from
+# "ran once at startup seven hours ago", which is the failure that actually
+# happened. Report the COUNT and the LAST one, and say so when the newest
+# heartbeat is older than a small multiple of the poll interval. A freshness
+# check is the only kind that catches a rail which STOPPED rather than one
+# that never started.
 $orphanLines = @($rows | Where-Object { $_.message -cmatch 'RESTING ORDER ORPHAN' })
-$scanRan = @($rows | Where-Object { $_.message -cmatch '^RESTING ORDER SCAN:' }).Count -gt 0
+$scans = @($rows | Where-Object { $_.message -cmatch '^RESTING ORDER SCAN:' })
 if ($orphanLines.Count -gt 0) {
     $legCount = 0
     foreach ($o in $orphanLines) { $legCount += ([regex]::Matches($o.message, '\(client ')).Count }
     Write-Output ("5 orphans  *** RESTING ORDER ORPHAN x{0} divergence(s), {1} leg(s) named ***" `
         -f $orphanLines.Count, $legCount)
-} elseif ($scanRan) {
-    Write-Output '5 orphans  RESTING ORDER SCAN ran, clean - 0 divergences'
+} elseif ($scans.Count -gt 0) {
+    $lastScan = ([datetime]$scans[-1].ts).ToLocalTime()
+    # The window ends NOW if the app is up, and otherwise at the last line the
+    # run ever wrote - measuring a finished run against the wall clock would
+    # call every past session stale. Deliberately NOT stand-down: the
+    # reconciliation poll keeps running after the session stands down, and the
+    # 25 August collision was observed at 22:27, five minutes past it.
+    $scanWindowEnd = if ($app) { Get-Date } else { ([datetime]$rows[-1].ts).ToLocalTime() }
+    $scanAge = ($scanWindowEnd - $lastScan).TotalSeconds
+    # 300s is reconciliation_poll_seconds; three of them is late beyond doubt
+    # without firing on one slow poll.
+    if ($scanAge -gt 900) {
+        Write-Output ("5 orphans  *** THE SCAN HAS STOPPED *** x{0}, last {1}, {2:N0} min ago - it ran and then stopped, so resting orders are unverified since then (item 34)" `
+            -f $scans.Count, $lastScan.ToString('HH:mm:ss'), ($scanAge / 60))
+    } else {
+        Write-Output ("5 orphans  RESTING ORDER SCAN x{0}, last {1}, clean - 0 divergences" `
+            -f $scans.Count, $lastScan.ToString('HH:mm:ss'))
+    }
 } else {
     Write-Output '5 orphans  *** THE RESTING-ORDER SCAN DID NOT RUN *** resting orders are unverified'
 }

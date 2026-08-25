@@ -41,11 +41,11 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M143 (`f81d2d4`)**, installed 25 August 21:33. Exe SHA256-identical to the signed artefact (`192A9E9A…`), signature Valid on the installed copy. **NOT yet read back.** Carries item 47 — the AI symbol verdict, which could NEVER render on IBKR before it. Rollback: `C:\QuantAdvisoryTerminal.bak-M142-20260825-2133`. Previous: **M142 (`543a978`)**, installed 25 August 17:52. Exe SHA256-identical to the signed artefact (`06B14878…B816`), signature Valid on the installed copy. **NOT yet read back off its own log.** Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M141-20260825-1752`. Previous entry: **M141 (`09ab51b`)**, installed 25 August 09:01. Exe SHA256-identical to the signed artefact, signature Valid. **Read back off its own log 09:09 25 August** — `Build: M141 (09ab51b, built 24/08/2026 22:58 UTC, packaged)`. The startup scan ran in the same launch: `RESTING ORDER SCAN: 2 working leg(s) across 1 symbol(s), nothing unjustified` — both legs of TNE's live bracket seen and correctly not flagged |
+| Deployed build | **M144 (`9e168dd`)**, installed 25 August 22:04. Exe SHA256-verified, signature Valid. **READ BACK off its own log 22:21:05 on 25 August** — `Build: M144 (9e168dd, built 25/08/2026 12:01 UTC, packaged)`, operator-confirmed on screen, so this is an observation and not an intention. That run adopted 10 positions and its startup scan saw `20 working leg(s) across 10 symbol(s), nothing unjustified`. ⚠️ **It also exercised M144's IBKR call deadline for the first time, and the deadline WORKED** — `reqAllOpenOrders` timed out loudly at 22:28:22 instead of hanging forever, which is how item 34's root cause became findable. Previous: **M143 (`f81d2d4`)**, installed 25 August 21:33 (`192A9E9A…`). Rollback: `C:\QuantAdvisoryTerminal.bak-M142-20260825-2133`. Previous: **M142 (`543a978`)**, installed 25 August 17:52. Exe SHA256-identical to the signed artefact (`06B14878…B816`), signature Valid on the installed copy. **NOT yet read back off its own log.** Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M141-20260825-1752`. Previous entry: **M141 (`09ab51b`)**, installed 25 August 09:01. Exe SHA256-identical to the signed artefact, signature Valid. **Read back off its own log 09:09 25 August** — `Build: M141 (09ab51b, built 24/08/2026 22:58 UTC, packaged)`. The startup scan ran in the same launch: `RESTING ORDER SCAN: 2 working leg(s) across 1 symbol(s), nothing unjustified` — both legs of TNE's live bracket seen and correctly not flagged |
 | Repository HEAD | **WELL ahead of the deployed build** — ten fixes landed after the close on 25 August (items 32, 34, 35, 36, 37, 38, 39, 40, 43, 44, 45). `handoff_state.py` derives the gap; do not read a number from here |
 | Deploy gap | **ZERO — M142 is installed.** But NONE of its ten fixes has run live yet, and several touch the risk and order paths: the sector rail now BINDS, positions carry marks (re-enabling the minimum-hold loss escape), every IBKR call can now time out, and the kill switch persists across restarts. **The next launch is the first test of all of it.** Previously: **⚠️ LARGE, and NONE OF IT HAS RUN LIVE.** M141 (`09ab51b`) is what is installed; every fix below it is committed and pushed but NOT deployed. Several touch the risk and order paths — the sector rail, position marks, IBKR call timeouts, the drift guard, kill-switch persistence. **Build, deploy and run a WATCHED session before trusting any of it.** Rollback from M141 is still a rename: `C:\QuantAdvisoryTerminal.bak-M140-20260825-0901` |
 | Pushed | **Up to date.** M141 pushed 24 August evening. The "Actions minutes exhausted until September" rule was TESTED and is false — see the standing constraints |
-| Suite | **2,740 passed, 25 skipped.** ruff, black, mypy and bandit clean |
+| Suite | **2,744 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **TEN POSITIONS, all bracketed, 20 resting legs** — A2M ANZ ASX BOQ IAG LOV PNI RHC SUN TNE, verified against the broker. **SIX ARE FINANCIALS (60%) against a 30% cap** — see item 44. Equity ~1,006,820 AUD. **Nothing has ever closed**, so `closed_trades.csv` is 0 rows and that is correct, not a display fault |
@@ -692,14 +692,86 @@ for each gap and is worth reading; the list lives here.
     August for that reason** — it is the natural next piece of work.
 
 34. ~~**⚠️ THE RECONCILIATION POLL WEDGED SILENTLY AND NEVER RECOVERED.**~~
-    **BACKSTOP FIXED 25 Aug (`e9a180b`) — ROOT CAUSE STILL OPEN.** `poll()` now
-    runs under `asyncio.wait_for` (120s default) and logs what is at stake;
-    CRITICAL after three in a row; it does NOT trip the kill switch, which
-    stays the operator's open decision. **The real cause is that the IBKR
-    adapter has no timeout on ANY of its eight awaits on the client** —
-    `reqExecutionsAsync`, reached first via `absorb_broker_fills`, resolves
-    only on `execDetailsEnd` and hangs forever if that is lost. THAT is not
-    fixed and should be the next thing done. Observed
+    **ROOT CAUSE FOUND AND FIXED 26 Aug.** Backstop fixed 25 Aug (`e9a180b`):
+    `poll()` runs under `asyncio.wait_for` (120s default) and logs what is at
+    stake; CRITICAL after three in a row; it does NOT trip the kill switch,
+    which stays the operator's open decision.
+
+    **⚠️ THE RECORDED CAUSE WAS WRONG, and wrong the familiar way.** This item
+    said the culprit was `reqExecutionsAsync` losing an `execDetailsEnd`. That
+    was written from reading a call site — the fourth time on this project that
+    a finding came from code structure rather than from the recorded evidence,
+    after items 41, 42 and 43. It is falsifiable in one line of the library:
+    `reqExecutionsAsync` keys its future on `client.getReqId()`, which is
+    **unique per request**, so two of them cannot interfere at all.
+
+    **The real cause is a SHARED FUTURE KEY, and two callers on identical
+    timers.** Measured against the installed ib_async 2.1.0:
+
+        def reqAllOpenOrdersAsync(self):
+            future = self.wrapper.startReq("openOrders")   # a LITERAL key
+            self.client.reqAllOpenOrders()
+            return future
+
+        def startReq(self, key, ...):
+            future = asyncio.Future()
+            self._futures[key] = future                    # OVERWRITES, silently
+
+    `openOrderEnd` resolves whichever future is in the dict at that moment. A
+    second call while the first is in flight **replaces the first future
+    without resolving or cancelling it**, so of N concurrent readers exactly
+    one is answered and the rest await a future nobody will ever complete.
+    Proven offline, deterministically, with no Gateway: the orphaned future
+    never completes.
+
+    Two independent asyncio tasks in this application reach it, and
+    `reconciliation_poll_seconds` and `protection_sweep_seconds` are **both
+    300.0**, with both engines started in the same second:
+
+    * `ReconciliationMonitor.poll` → `check_resting_orders` → `open_orders()`
+    * `CorporateActionMonitor.refresh` → `resting_stop_orders()`
+
+    So the two timers are **phase-locked and collide on every tick for the life
+    of the process** — not occasionally. That is the whole shape of the bug,
+    and it explains the one thing the old hypothesis never could: **why the
+    startup scan ALWAYS succeeded.** The orchestrator awaits each engine's
+    `start()` in turn, so nothing overlaps at launch; every poll after it does.
+
+    **The production evidence was already on disk and says so.** At 18:02:43 on
+    25 August the poll's own log line reads *"the broker reconciliation result
+    above is unaffected and already published"* — `check_reconciliation`
+    COMPLETED, positions and executions both came back, and only
+    `reqAllOpenOrders` hung. A dead connection cannot produce that. At 22:27:22
+    both readers fired within 15ms of each other and both timed out at exactly
+    60s, five minutes after a startup scan on the same connection had returned
+    20 legs across 10 symbols.
+
+    **Fixed:** an `asyncio.Lock` in `IBAdapter` serialising every
+    `reqAllOpenOrders` through one helper, `_all_open_orders`. ⚠️ The lock is
+    taken **before** `request()` is called, and that ordering IS the fix —
+    `reqAllOpenOrdersAsync` is a plain `def` that registers its future the
+    moment it is CALLED, not when awaited, so a lock inside `_call` would let
+    both callers clobber the key first and serialise nothing. Four tests,
+    including a structural sweep that fails if a fourth call site ever reaches
+    the client directly, and a tripwire on the two intervals still being equal.
+
+    ⚠️ **The existing timeout tests could not have caught this**, and the
+    reason generalises: their fakes are `async def`, and calling a coroutine
+    function runs none of its body, so no `startReq` happens until the await.
+    The real method is a plain `def`. **A fake with the wrong call semantics
+    tests the fake.**
+
+    **Also fixed: check 5 of `session_check.ps1` now reports FRESHNESS.** It
+    read a reassuring `RESTING ORDER SCAN ran, clean - 0 divergences` all day
+    on 25 August while the rail was dead — the scan ran ONCE, at 09:09:52, and
+    nothing distinguished that from running every poll. It now prints the COUNT
+    and the LAST scan time, and flags `*** THE SCAN HAS STOPPED ***` when the
+    newest heartbeat is more than 900s (three poll intervals) old. Verified to
+    FIRE, not merely to pass: against the 25 August morning shape it prints
+    `x1, last 09:09:52, 410 min ago`. The window ends at the app's last log
+    line rather than at stand-down, deliberately — the poll keeps running after
+    the session stands down, which is exactly where the 22:27 collision was
+    seen. Observed
     live on 25 August. `ReconciliationMonitor` started at 09:09:52, adopted
     positions, ran the startup orphan scan — and then completed **not one** of
     the ~20 polls due in the following 110 minutes. The app was otherwise
@@ -730,10 +802,12 @@ for each gap and is worth reading; the list lives here.
     back in **1.07 seconds**, so IBKR was fully responsive and the wedge is
     inside the application.
 
-    Wanted: a watchdog on the poll itself. A loop whose failure mode is silence
-    needs a deadline — if a poll has not COMPLETED within some multiple of its
-    interval, that is an ERROR and a kill-switch candidate, because the rails
-    are off. `asyncio.wait_for` around `poll()` would do it.
+    ~~Wanted: a watchdog on the poll itself.~~ **DONE 25 Aug** — `poll()` runs
+    under `asyncio.wait_for`. Worth keeping the reasoning: a loop whose failure
+    mode is silence needs a deadline. Note the backstop is what made the root
+    cause findable at all — before it, the collision produced no log line of
+    any kind, and the two ERROR pairs it emitted on 25 August are the entire
+    evidence trail this diagnosis rests on.
 
     **AND check 5 of `session_check.ps1` reported a reassuring green all day**,
     which is a defect in M141's own operator surface. It reads
@@ -743,10 +817,10 @@ for each gap and is worth reading; the list lives here.
     which was the point of I2, but NOT "running every poll" from "ran once at
     startup seven hours ago".
 
-    Fix it with the same change: report the LAST scan time and the COUNT, and
-    flag when the newest heartbeat is older than a small multiple of
-    `reconciliation_poll_seconds`. A freshness check is the only kind that can
-    catch a rail that stopped rather than one that never started.
+    ~~Fix it with the same change~~ — **DONE 26 Aug**, as described above: the
+    COUNT and the LAST scan time, and an alarm past three poll intervals. A
+    freshness check is the only kind that can catch a rail that stopped rather
+    than one that never started.
 
     Closing the loop on the day: no bracket fired on 25 August, so the worst
     case never materialised — nothing closed unrecorded and the ledger is not

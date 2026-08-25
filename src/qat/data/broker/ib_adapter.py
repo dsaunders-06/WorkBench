@@ -23,7 +23,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable
 from datetime import datetime
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from ib_async import ExecutionFilter
 
@@ -440,10 +440,9 @@ class IBAdapter:
         `open_orders` attribute at all, which is a different failure than the
         one handled here.
         """
-        request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
-        if not callable(request):
+        trades = await self._all_open_orders()
+        if trades is None:
             return []
-        trades = await self._call(request(), "reqAllOpenOrders")
         return [from_ib_open_order(trade, self.settings.market) for trade in trades]
 
     async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:
@@ -467,12 +466,12 @@ class IBAdapter:
         `OMS.verify_position_stops` reads as "no protection found" - and it
         means we went and looked, not that a page ran out.
         """
-        request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
-        if not callable(request):
+        trades = await self._all_open_orders()
+        if trades is None:
             return {}
 
         resting: dict[str, RestingStopOrder] = {}
-        for trade in await self._call(request(), "reqAllOpenOrders"):
+        for trade in trades:
             stop = from_ib_resting_stop(trade, self.settings.market)
             if stop is None:
                 continue
@@ -603,11 +602,11 @@ class IBAdapter:
 
         Registers what it finds, so a second call does not re-scan.
         """
-        request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
-        if not callable(request):
+        trades = await self._all_open_orders()
+        if trades is None:
             return None
 
-        for trade in await self._call(request(), "reqAllOpenOrders"):
+        for trade in trades:
             ib_order = trade.order
             if order_id not in {str(ib_order.permId), str(ib_order.orderId)}:
                 continue
@@ -805,6 +804,54 @@ class IBAdapter:
                 timeout,
             )
             raise
+
+    def _open_orders_gate(self) -> asyncio.Lock:
+        """Serialises every `reqAllOpenOrders` (item 34, ROOT CAUSE).
+
+        `reqAllOpenOrdersAsync` registers its future under the LITERAL key
+        `"openOrders"`, and `Wrapper.startReq` OVERWRITES that key without
+        resolving or cancelling what was there. `openOrderEnd` then resolves
+        whichever future survived, so of N concurrent readers exactly one is
+        answered and the rest await a future nobody will ever complete.
+
+        Two independent tasks in this application reach it, and their intervals
+        are BOTH 300.0 - `reconciliation_poll_seconds` and
+        `protection_sweep_seconds` - with the engines started in the same
+        second. So the timers are phase-locked and collide on EVERY tick, which
+        is why the startup scan always succeeded (the orchestrator awaits each
+        `start()` in turn, so nothing overlaps) and every poll after it did not.
+
+        Built lazily, not in `__init__`, because an `asyncio.Lock` wants the
+        running loop and much of the suite constructs adapters through
+        `__new__`. The check-and-set has no `await` between its halves, so on a
+        single event loop it cannot interleave.
+        """
+        gate = getattr(self, "_all_open_orders_lock", None)
+        if gate is None:
+            gate = asyncio.Lock()
+            self._all_open_orders_lock = gate
+        return gate
+
+    async def _all_open_orders(self) -> list[Any] | None:
+        """Every order working at the broker, or None if the client cannot ask.
+
+        ⚠️ The lock is taken BEFORE `request()` is called, and that ordering is
+        the whole fix. `reqAllOpenOrdersAsync` is a plain `def` that returns a
+        future, so it registers itself the moment it is CALLED - not when it is
+        awaited. Wrapping only the await (inside `_call`) would let both
+        callers clobber the key first and serialise nothing.
+
+        The deadline stays INSIDE the lock so a stalled call is bounded by
+        `ibkr_call_timeout_seconds` and releases; a waiter behind it then makes
+        its own request. Two stalled reads therefore cost up to two timeouts in
+        series, which `poll()`'s own 120s deadline will notice and log - loud
+        and recoverable, which is the trade this whole item is about.
+        """
+        request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
+        if not callable(request):
+            return None
+        async with self._open_orders_gate():
+            return await self._call(request(), "reqAllOpenOrders")
 
     async def positions(self) -> list[Position]:
         """Held positions, carrying the broker's mark (item 45).
