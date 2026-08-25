@@ -104,10 +104,23 @@ class _FakeIB:
         return self._trades
 
 
+def _settings():
+    """A REAL Settings, not a SimpleNamespace stub.
+
+    The stub carried only `market` and broke the moment the adapter needed
+    `ibkr_call_timeout_seconds` (item 34's timeout guard). A hand-built stand-in
+    for a config object drifts from it silently; the real thing cannot.
+    `_env_file=None` keeps %LOCALAPPDATA%'s .env out of it.
+    """
+    from qat.config import Settings
+
+    return Settings(_env_file=None, market="ASX")  # type: ignore[arg-type]
+
+
 def _adapter(trades, monkeypatch):
     adapter = IBAdapter.__new__(IBAdapter)
     adapter.ib_client = _FakeIB(trades)
-    adapter.settings = SimpleNamespace(market="ASX")
+    adapter.settings = _settings()
     return adapter
 
 
@@ -150,5 +163,5 @@ async def test_a_take_profit_leg_is_not_a_resting_stop(monkeypatch):
 async def test_no_capability_means_no_orders(monkeypatch):
     adapter = IBAdapter.__new__(IBAdapter)
     adapter.ib_client = SimpleNamespace()
-    adapter.settings = SimpleNamespace(market="ASX")
+    adapter.settings = _settings()
     assert await adapter.open_orders() == []

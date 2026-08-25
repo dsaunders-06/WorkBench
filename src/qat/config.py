@@ -373,6 +373,18 @@ class Settings(BaseSettings):
     # A loop whose only failure mode is silence cannot be monitored by reading
     # its log. It needs a deadline.
     reconciliation_poll_timeout_seconds: float = Field(default=120.0, gt=0)
+
+    # How long any single IBKR request may take before it is abandoned
+    # (item 34, root cause). Before this the adapter had EIGHT awaits on the
+    # client and ZERO timeouts, so a lost response hung whatever loop made the
+    # call for the life of the process. `reqExecutionsAsync` resolves only when
+    # IBKR sends `execDetailsEnd`; that is what wedged reconciliation for a
+    # whole session on 25 August, silently, because a hung await raises
+    # nothing.
+    #
+    # Generous against calls measured at about a second, because the purpose is
+    # to bound the failure rather than to police latency.
+    ibkr_call_timeout_seconds: float = Field(default=60.0, gt=0)
     # How often to re-check that every held position still has protection
     # resting, and to propose it where it does not (M33e).
     #

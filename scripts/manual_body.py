@@ -2771,6 +2771,14 @@ def _config_reference(doc: Any) -> None:
                 "How often held positions are re-checked for missing protection " "(Section 8A.2).",
             ),
             (
+                "QAT_IBKR_CALL_TIMEOUT_SECONDS",
+                "60",
+                "How long any single request to IBKR may take before it is abandoned. The "
+                "adapter previously had no timeout on any of its calls, so a lost response "
+                "hung whatever rail made it for the life of the process - which is what "
+                "silently stopped reconciliation for a whole session on 25 August.",
+            ),
+            (
                 "QAT_RECONCILIATION_POLL_TIMEOUT_SECONDS",
                 "120",
                 "How long one reconciliation poll may take before it is declared hung. A "

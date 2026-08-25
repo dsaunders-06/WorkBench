@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable
 from datetime import datetime
+from typing import TypeVar
 
 from ib_async import ExecutionFilter
 
@@ -57,6 +59,8 @@ from qat.domain.bus import EventBus
 from qat.domain.events import KillSwitchEvent
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 _LIVE_PORTS = {4001, 7496}
 _PAPER_PORTS = {4002: "Gateway", 7497: "TWS"}
@@ -224,7 +228,7 @@ class IBAdapter:
         if not self.ib_client.isConnected():
             return False
         try:
-            await self.ib_client.reqCurrentTimeAsync()
+            await self._call(self.ib_client.reqCurrentTimeAsync(), "reqCurrentTime")
         except Exception:  # noqa: BLE001 - any failure here means "unhealthy"
             return False
         return True
@@ -273,13 +277,16 @@ class IBAdapter:
 
     async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
         contract = to_ib_contract(symbol, self.settings.market)
-        bar_data = await self.ib_client.reqHistoricalDataAsync(
-            contract,
-            endDateTime=None,
-            durationStr=f"{bars} D",
-            barSizeSetting="1 day",
-            whatToShow="TRADES",
-            useRTH=True,
+        bar_data = await self._call(
+            self.ib_client.reqHistoricalDataAsync(
+                contract,
+                endDateTime=None,
+                durationStr=f"{bars} D",
+                barSizeSetting="1 day",
+                whatToShow="TRADES",
+                useRTH=True,
+            ),
+            "reqHistoricalData",
         )
         return [{"close": float(bar.close)} for bar in bar_data]  # type: ignore[attr-defined]
 
@@ -373,7 +380,7 @@ class IBAdapter:
         request = getattr(self.ib_client, "reqExecutionsAsync", None)
         if not callable(request):
             return []
-        executions = await request(ExecutionFilter())
+        executions = await self._call(request(ExecutionFilter()), "reqExecutions")
 
         wanted = set(symbols) if symbols else None
         fills: list[BrokerFill] = []
@@ -414,7 +421,8 @@ class IBAdapter:
         request = getattr(self.ib_client, "reqAllOpenOrdersAsync", None)
         if not callable(request):
             return []
-        return [from_ib_open_order(trade, self.settings.market) for trade in await request()]
+        trades = await self._call(request(), "reqAllOpenOrders")
+        return [from_ib_open_order(trade, self.settings.market) for trade in trades]
 
     async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:
         """Protective stops actually working at the broker, with enough to
@@ -442,7 +450,7 @@ class IBAdapter:
             return {}
 
         resting: dict[str, RestingStopOrder] = {}
-        for trade in await request():
+        for trade in await self._call(request(), "reqAllOpenOrders"):
             stop = from_ib_resting_stop(trade, self.settings.market)
             if stop is None:
                 continue
@@ -577,7 +585,7 @@ class IBAdapter:
         if not callable(request):
             return None
 
-        for trade in await request():
+        for trade in await self._call(request(), "reqAllOpenOrders"):
             ib_order = trade.order
             if order_id not in {str(ib_order.permId), str(ib_order.orderId)}:
                 continue
@@ -747,6 +755,34 @@ class IBAdapter:
         map margin or day-trade fields, so those stay None rather than being
         guessed at from the three figures that are mapped."""
         return balances_from_summary(await self.account())
+
+    async def _call(self, coro: Awaitable[_T], what: str) -> _T:
+        """Every IBKR request, under a deadline (item 34, root cause).
+
+        The adapter previously had eight awaits on the client and no timeout on
+        any of them. `reqExecutionsAsync` resolves only when IBKR sends
+        `execDetailsEnd`, and if that message is lost - a known failure after a
+        reconnect - the future never completes. On 25 August that wedged the
+        reconciliation poll for 6h50m across nine new positions, and said
+        nothing, because a hung await raises nothing.
+
+        RAISES rather than returning a default, deliberately. A timeout means
+        "we could not look", and every caller here has a consumer that reads an
+        empty result as "there is nothing there" - which would turn a dead
+        broker connection into a fabricated all-clear. Losing one poll loudly
+        is recoverable; losing every future poll silently is what happened.
+        """
+        timeout = self.settings.ibkr_call_timeout_seconds
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        except TimeoutError:
+            logger.error(
+                "IBKR did not answer %s within %.0fs. The call is abandoned so the caller "
+                "can fail and retry rather than hang forever (item 34).",
+                what,
+                timeout,
+            )
+            raise
 
     async def positions(self) -> list[Position]:
         """Held positions, carrying the broker's mark (item 45).
