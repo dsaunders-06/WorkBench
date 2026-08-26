@@ -301,12 +301,100 @@ Gateway.
   10/15/26/323 are exactly M53's cumulative-quantity arithmetic working. It
   simply stopped after four.
 
-**⚠️ NOT ESTABLISHED: which layer dropped the other 179.** Recorded as unknown
-rather than guessed at — this project has spent a day on findings written from
+**⚠️ NOT ESTABLISHED at the time of writing: which layer dropped the other 179.
+FOUND AND PROVEN at 13:10 the same day - see the section immediately below.**
+It was recorded as unknown rather than guessed at — this project has spent a day on findings written from
 call sites while the recorded data held the answer. The next step is to
 instrument the absorb pass and count what `recent_fills` actually RETURNS for
 LOV.AX versus what `_is_foreign_unrecorded` accepts. The evidence needed is a
 count at each boundary, not another reading of the code.
+
+### ✅ ROOT CAUSE FOUND AND PROVEN — 26 August, 13:10. A units mismatch at the Alpaca→IBKR boundary.
+
+**`BrokerFill.quantity` means CUMULATIVE to the OMS and PER-EXECUTION from IBKR.**
+
+`oms.py:1394`, deciding whether anything new has executed:
+
+    return fill.quantity > prior.quantity + 1e-9
+
+and its own comment states the contract: *"an order that is still filling
+reports the SAME id with a larger **filled_qty**"*. `filled_qty` is **Alpaca's**
+field, and Alpaca returns ONE order object per order carrying a **cumulative**
+quantity. The design is correct for Alpaca.
+
+`ib_translate.py:363` supplies the other side:
+
+    quantity=float(execution.shares),
+
+IBKR does not return one object per order. It returns **one `Fill` per
+execution**, each carrying that execution's OWN `shares`. So the OMS compares a
+per-execution count against a stored cumulative.
+
+**The consequence, stated exactly:** only an execution whose own share count
+sets a NEW RUNNING MAXIMUM is ever absorbed, and the total absorbed therefore
+equals **the largest single execution**. Everything else is silently discarded
+as "already seen".
+
+**PROVEN by replaying the real executions through the real translation
+function** (read-only, clientId 99, nothing written):
+
+    executions returned for LOV.AX order 1216552509: 183
+    sum of BrokerFill.quantity        : 3,217
+    largest single BrokerFill.quantity:   374
+
+    what the CURRENT code absorbs:
+       delta      10   stored      10   00:06:31
+       delta      15   stored      25   00:06:44
+       delta      26   stored      51   00:06:45
+       delta     323   stored     374   00:06:56
+
+    TOTAL ABSORBED  :   374
+    ACTUALLY FILLED : 3,217
+    LOST            : 2,843
+
+Those are the live deltas — 10, 15, 26, 323 — and the live tracked remainder of
+2,843, reproduced offline from the broker's own records. Not a hypothesis.
+
+**This is M104's shape again: the boundary that was missed when the broker
+changed.** Every layer is individually correct. `from_ib_fill` faithfully
+reports what one execution did; `_is_foreign_unrecorded` correctly implements
+cumulative-delta arithmetic. They disagree about what the number MEANS, and
+nothing typed or asserted the contract.
+
+⚠️ **It is not LOV-specific and it is not rare.** It fires on any order that
+fills in more than one execution where a later execution is smaller than an
+earlier one — which is ordinary for a large ASX order. The four entries that
+DID reach the ledger are the four ascending executions; the 179 that did not
+are simply the ones that happened to be smaller.
+
+**Why no test caught it:** every fixture in the suite fills an order in ONE
+execution, so per-execution and cumulative are the same number and the two
+readings of `quantity` are indistinguishable. The first order to fill in 183
+pieces was the first to tell them apart.
+
+### The fix is NOT a one-liner, and here is the trap
+
+The obvious change is `quantity=float(execution.cumQty)` — IBKR supplies
+`cumQty` and it is exactly the "filled_qty" the OMS comment means. Measured on
+this order it runs 10, 35, 39 … 3,217 monotonically, so the delta arithmetic
+would then be correct and would recover all 3,217.
+
+⚠️ **But it would produce up to 183 rows in `closed_trades.csv` for one exit.**
+Today's four rows are already four rows for one logical trade (see item 3's
+note). One delta per execution makes that 183. The promotion gate counts closed
+trades toward 20 and 30; at that rate a single exit clears the gate on its own,
+which would make the gate meaningless.
+
+So the fix wants BOTH halves, and shipping only the first would be worse than
+the bug:
+1. `from_ib_fill` carries the cumulative quantity, so no execution is lost; and
+2. the absorb pass **groups by order id within a pass**, takes the max
+   cumulative, and emits ONE fill event for the delta since the last pass — so
+   one exit is one ledger row, whatever the broker's execution count.
+
+That is a risk-path change to the only exit path this system has. It wants its
+own plan, its own tests built on a MULTI-execution fixture, and a watched
+session — not a quick patch while a position is open and the switch is tripped.
 
 ### The state this leaves, and why it is safe to leave
 
