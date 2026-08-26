@@ -48,8 +48,8 @@ source.
 | Suite | **2,746 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
-| Account | **NINE POSITIONS, all bracketed, 18 resting legs** — A2M ANZ ASX BOQ IAG PNI RHC SUN TNE. **LOV.AX exited 26 Aug at target** (+17%), and the app still believes it holds 2,843 phantom LOV shares the broker does not have. `4 unprot x0` — every remaining position is protected. Previously: **TEN POSITIONS, all bracketed, 20 resting legs** — A2M ANZ ASX BOQ IAG LOV PNI RHC SUN TNE, verified against the broker. **SIX ARE FINANCIALS (60%) against a 30% cap** — see item 44. Equity ~1,006,820 AUD. **Nothing has ever closed**, so `closed_trades.csv` is 0 rows and that is correct, not a display fault |
-| Kill switch | ⚠️⚠️ **TRIPPED 26 August 10:09:42** — `Broker reconciliation mismatch: LOV.AX tracked=2843 broker=0`, and it was RIGHT. **Do NOT reset until the 2,843 phantom shares are absorbed or the ledger is deliberately repaired** — see the 26 August incident above. It also PERSISTS across restarts now (item 32), so a restart clears nothing and additionally replays a ~10h watermark window. Previously: **NOT tripped — and it now PERSISTS across restarts (item 32, fixed).** Trip it and it stays tripped, logging CRITICAL on restore. New behaviour as of M144 |
+| Account | **ELEVEN POSITIONS, all bracketed, 22 resting legs** — A2M ANZ ASX BOQ IAG PNI RHC SUN TNE, plus **WOW.AX 1098 and SEK.AX 2978 opened 26 Aug 15:15**. `4 unprot x0`. ⚠️ **The app's BOOK is DOUBLED on WOW and SEK** (`tracked=2196/5956` against `broker=1098/2978`) — see item 56. The BROKER quantities are correct and no over-buying occurred; a restart re-adopts and clears it. Both are quarantined by the resting-order reconciler, which **cannot cancel** (`resting_order_cancel_enabled: False`). Previously: **NINE POSITIONS, all bracketed, 18 resting legs** — A2M ANZ ASX BOQ IAG PNI RHC SUN TNE. **LOV.AX exited 26 Aug at target** (+17%), and the app still believes it holds 2,843 phantom LOV shares the broker does not have. `4 unprot x0` — every remaining position is protected. Previously: **TEN POSITIONS, all bracketed, 20 resting legs** — A2M ANZ ASX BOQ IAG LOV PNI RHC SUN TNE, verified against the broker. **SIX ARE FINANCIALS (60%) against a 30% cap** — see item 44. Equity ~1,006,820 AUD. **Nothing has ever closed**, so `closed_trades.csv` is 0 rows and that is correct, not a display fault |
+| Kill switch | ⚠️⚠️ **TRIPPED 26 August 15:17:42** on `SEK.AX tracked=5956 broker=2978, WOW.AX tracked=2196 broker=1098` — the double-count of item 56, and it was RIGHT. Reset by the operator at 15:15:05 and re-tripped 126 seconds later by the first entry. ⚠️ **DO NOT read the Risk Console button** — it said `inactive - click to halt` while the switch was tripped, and clicking it would have RESET without a confirmation prompt (item 57). Trust the banner or `session_check`. **Every new entry will double-count and re-trip within ~300s until item 56 is fixed.** Earlier the same day: **TRIPPED 10:09:42** — `Broker reconciliation mismatch: LOV.AX tracked=2843 broker=0`, and it was RIGHT. **Do NOT reset until the 2,843 phantom shares are absorbed or the ledger is deliberately repaired** — see the 26 August incident above. It also PERSISTS across restarts now (item 32), so a restart clears nothing and additionally replays a ~10h watermark window. Previously: **NOT tripped — and it now PERSISTS across restarts (item 32, fixed).** Trip it and it stays tripped, logging CRITICAL on restore. New behaviour as of M144 |
 | Ledgers | **5 closed trades — the FIRST in this system's life**, all LOV.AX, covering the **full 3,217 shares** after the 26 August repair. ⚠️ The fifth row is a REPAIR (`scripts/repair_lov_partial_absorb.py`, applied 15:09 with the app stopped) and carries **empty `entry_cost`, `exit_cost`, `net_pnl` and `r_multiple`** — IBKR's commission on the unabsorbed portion is not knowable after the fact, and its `exit_reason` says so. Backups: `*.bak-20260826-150939-PRE-LOV-REPAIR`. **So net P&L across LOV is NOT summable from this file** — the four original rows carry costs, the repair row does not. Previously: **4 closed trades**, all LOV.AX, +1,535.78 AUD net, `exit_reason: target`, arithmetic sound (`closed_at` after `opened_at`). ⚠️ They cover only 374 of the 3,217 shares that actually executed — ~$12,000 of realised gain is missing from the file. Previously: **0 closed trades** (seven fabricated rows removed 24 August — see the incident above), **49 risk decisions**, journal carries the day's real order flow |
 
 > ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
@@ -1891,6 +1891,115 @@ shares its shape.
     summary line already reports once. Suppress it while the feed is inside its
     known delay, or collapse it to a single line naming the count — not by
     turning the logger off.
+
+56. **⚠️⚠️ THE APP COUNTS ITS OWN ENTRIES TWICE. The identity bridge has NEVER
+    worked.** Found live 26 August at 15:17:11, twenty seconds of trading after
+    the kill switch was reset.
+
+    Two entries went out at 15:15:24-25 — WOW.AX 1098 and SEK.AX 2978, each
+    **transmitted exactly once** (M139 held) and correctly bracketed. 107
+    seconds later:
+
+        BROKER-SIDE FILL absorbed: buy 1098 WOW.AX at 40.04 (order 550634674)
+          - a position was OPENED at the broker that this application did not send
+        Broker reconciliation mismatch: SEK.AX tracked=5956 broker=2978,
+                                        WOW.AX tracked=2196 broker=1098
+
+    Exactly 2x on both. The app sent those orders and then absorbed them as
+    foreign.
+
+    **THE CAUSE, and it is documented at the very line that causes it.**
+    `from_ib_trade`'s own docstring:
+
+    > permId can be legitimately absent (0) here: `IB.placeOrder` returns a
+    > `Trade` before TWS has acknowledged the order... an absent/zero permId
+    > leaves `our_order.order_id` exactly as it was (the app's own id)
+
+    So `oms.py:730` registers the order under the app's **UUID**, the execution
+    arrives keyed on IBKR's **permId**, `_is_foreign_unrecorded` compares the
+    two, and they can never match.
+
+    **It is not a race and it does not sometimes win.** Every
+    `Order signed off and transmitted` line in the entire log history — back to
+    1 August, across Alpaca and IBKR, every session — carries a UUID and never a
+    permId. The bridge has not once succeeded.
+
+    ### ⚠️ It fired on 25 August too, and NOTHING could see it
+
+        17:56:43  BROKER-SIDE FILL absorbed: buy 99 LOV.AX ... 11674 BOQ.AX
+                  ... 9227 A2M.AX ... 2802 IAG.AX ... 237 ANZ.AX   [14 of them]
+
+    Those are that day's own nine entries, absorbed as foreign — and **zero
+    reconciliation mismatches were logged on 25 August**. The reason is item 34:
+    the poll was wedged, and only **3 scans** ran that day against **78** on 26
+    August. The book was silently doubled and every subsequent restart
+    re-adopted from the broker and quietly corrected it.
+
+    **So item 34's fix did not cause this — it made a months-old defect visible
+    for the first time.** That is precisely what the fix was for, and it is the
+    strongest argument yet that a rail whose failure mode is silence is worse
+    than no rail.
+
+    ### What it costs, and what it does NOT
+
+    **The broker quantity is always correct.** WOW held 1098 and SEK held 2978 —
+    exactly what was ordered. **No over-buying: this is NOT 24 August.** The
+    damage is confined to the app's book, and a restart re-adopts from the
+    broker and clears it.
+
+    While the book IS doubled it is not harmless: tracked quantities feed the
+    aggregate-risk and sizing calculations, the resting-order scan reads the
+    brackets as unjustified and quarantines them, and the kill switch trips —
+    halting trading for the rest of the session.
+
+    **Every rail behaved correctly.** Transmission once, brackets placed,
+    mismatch detected, switch tripped, `resting_order_cancel_enabled: False`
+    so the quarantine could not cancel real protection, `4 unprot x0`
+    throughout. The detection worked; the arithmetic underneath it did not.
+
+    Wanted: the app must learn its own order's permId when TWS acknowledges it,
+    rather than only at `placeOrder` when it is still 0 — and `_broker_order_ids`
+    must be updated at that moment. Until then EVERY new entry double-counts and
+    halts the session ~300s later.
+
+57. **The Risk Console's kill-switch button reports a state it has not
+    checked, and clicking it does the OPPOSITE of what it says.** Found by the
+    operator on 26 August, who saw the main banner reading `Execution halted`
+    while the Risk Console button read `KILL-SWITCH: inactive - click to halt
+    trading`, and **stopped rather than clicking**. That caution is the only
+    reason order flow stayed halted.
+
+    `_refresh_kill_switch_button()` is called from exactly TWO places:
+    construction (`risk_console.py:133`) and the end of the click handler
+    (`:631`). The panel's 2-second `QTimer` never calls it. So the label
+    reflects the state at build time or at the operator's last click, and **a
+    switch tripped by anything else — reconciliation, the equity rails, the
+    restore-on-startup path — never updates it.**
+
+    ⚠️ **The dangerous part is the handler.** `_on_kill_switch_clicked` reads
+    `self.runtime.kill_switch.tripped` — the TRUE state, not the label — and:
+
+        if self.runtime.kill_switch.tripped:
+            # No confirmation: de-risking stays one click, deliberately.
+            self.runtime.kill_switch.reset(operator)
+
+    So clicking a button labelled *"click to halt trading"* **resets the switch
+    and resumes order flow, with no confirmation prompt** — because the
+    no-confirm path is deliberately reserved for de-risking, and item 36's
+    `_confirm_trip` guards only the other direction. The one screen an operator
+    reaches for in an incident invites the opposite of the intended action.
+
+    **This is the sibling of a fix that was already made here.** The handler's
+    own docstring records it: *"halting from here left the main window's banner
+    reading AUTO-TRADE ACTIVE and resetting left it reading HALTED. The state
+    was right and every other view of it was wrong."* That fix made this screen
+    ANNOUNCE outward. Nobody made it LISTEN. Same shape as `BrokerFill.price`
+    and item 40's watcher clock, both found the same day.
+
+    Wanted: refresh the button from the same listener every other view already
+    uses, so the label is derived rather than remembered. Until then, **trust
+    the banner or `session_check`, never that button**, and reset via a restart
+    rather than the console.
 
 ## 📋 PROMPT TO PASTE — next session
 
