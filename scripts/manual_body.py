@@ -2779,6 +2779,16 @@ def _config_reference(doc: Any) -> None:
                 "silently stopped reconciliation for a whole session on 25 August.",
             ),
             (
+                "QAT_IBKR_PERMID_WAIT_SECONDS",
+                "5",
+                "How long placing an order waits for TWS to report the order's permanent "
+                "id before giving up and keeping the app's own id. IBKR's own placeOrder "
+                "call returns before TWS has acknowledged, so the permId is briefly absent; "
+                "without this wait the app's own id stayed on the order and its fill later "
+                "arrived under the permId instead, unrecognised - the cause of the 26 August "
+                "double-count. Zero switches the wait off entirely.",
+            ),
+            (
                 "QAT_RECONCILIATION_POLL_TIMEOUT_SECONDS",
                 "120",
                 "How long one reconciliation poll may take before it is declared hung. A "

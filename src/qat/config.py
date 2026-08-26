@@ -385,6 +385,22 @@ class Settings(BaseSettings):
     # Generous against calls measured at about a second, because the purpose is
     # to bound the failure rather than to police latency.
     ibkr_call_timeout_seconds: float = Field(default=60.0, gt=0)
+
+    # How long `place_order` waits, after transmitting, for TWS to report the
+    # order's permId (item 56). `IB.placeOrder` returns a LIVE Trade before
+    # TWS has acknowledged it, so permId is 0 at that exact instant and
+    # `from_ib_trade` correctly leaves the app's own id in place rather than
+    # write a junk one. Nothing ever revisited it: `_broker_order_ids` kept
+    # the app's UUID, the execution arrived keyed on the permId, and
+    # `_is_foreign_unrecorded` absorbed the app's own entry as foreign. On
+    # 26 August that doubled the book on two symbols and halted the session.
+    #
+    # The order is already live at the broker while this runs - it costs
+    # nothing there. `ge=0`, not `gt=0`: zero is a legal way to switch the
+    # wait off entirely without editing code, at the cost of returning to
+    # today's silent failure.
+    ibkr_permid_wait_seconds: float = Field(default=5.0, ge=0)
+
     # How often to re-check that every held position still has protection
     # resting, and to propose it where it does not (M33e).
     #

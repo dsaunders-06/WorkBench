@@ -335,6 +335,10 @@ class IBAdapter:
 
         app_order_id = order.order_id
         self._register(order, parent, group)
+        # The 26 August incident was TWO BRACKETS (item 56) - the parent here
+        # carries exactly the same permId=0-at-return shape as the plain path,
+        # so it gets exactly the same wait.
+        await self._await_perm_id(parent_trade, app_order_id)
         result = from_ib_trade(parent_trade, order)
         if result.order_id != app_order_id:
             self._register(result, parent, group)
@@ -354,6 +358,9 @@ class IBAdapter:
         # The STOP leg's identity is the one worth carrying: it is the
         # protection, and it is what `resting_stops` will later have to match.
         stop_trade = trades[pair.index(stop_leg)]
+        # Same permId=0-at-return shape as the other two paths (item 56): the
+        # wait belongs on the leg whose identity is actually carried forward.
+        await self._await_perm_id(stop_trade, app_order_id)
         result = from_ib_trade(stop_trade, order)
         if result.order_id != app_order_id:
             self._register(result, stop_leg, list(pair))
@@ -564,6 +571,7 @@ class IBAdapter:
         app_order_id = order.order_id
         self._orders[app_order_id] = order
         self._ib_orders[app_order_id] = ib_order
+        await self._await_perm_id(trade, order.order_id)
         result = from_ib_trade(trade, order)
         # `from_ib_trade` may have overwritten `order.order_id` with IBKR's
         # permId (see its docstring - the Task 3 identity bridge). Both
@@ -776,6 +784,41 @@ class IBAdapter:
         map margin or day-trade fields, so those stay None rather than being
         guessed at from the three figures that are mapped."""
         return balances_from_summary(await self.account())
+
+    async def _await_perm_id(self, trade: object, app_order_id: str) -> None:
+        """Give TWS its moment to acknowledge, so we learn our own order's id.
+
+        `IB.placeOrder` returns a LIVE `Trade` before TWS has acknowledged it,
+        so `permId` is 0 at that instant and `from_ib_trade` correctly declines
+        to write a junk id. Nothing then ever revisited it: `_broker_order_ids`
+        held the app's UUID, the execution arrived keyed on the permId, and
+        `_is_foreign_unrecorded` absorbed the app's own entry as foreign. On
+        26 August that doubled the book on two symbols and halted the session.
+
+        The order is ALREADY LIVE at the broker when this runs - this waits to
+        learn its name, not to send it. `_adopt_from_broker`'s docstring
+        records that the permId arrives "moments later", which is what makes a
+        short wait the whole fix rather than a new identity scheme.
+        """
+        deadline = self.settings.ibkr_permid_wait_seconds
+        if deadline <= 0:
+            return
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        while loop.time() - started < deadline:
+            order_obj = getattr(trade, "order", None)
+            status = getattr(trade, "orderStatus", None)
+            if getattr(order_obj, "permId", 0) or getattr(status, "permId", 0):
+                return
+            # Yields to the event loop so ib_async can process the ack.
+            await asyncio.sleep(0.05)
+        logger.warning(
+            "IBKR did not report a permId for order %s within %.1fs, so it keeps the "
+            "app's own id. Its fill will arrive under a permId this process does not "
+            "recognise and WILL be absorbed as foreign, doubling the book (item 56).",
+            app_order_id,
+            deadline,
+        )
 
     async def _call(self, coro: Awaitable[_T], what: str) -> _T:
         """Every IBKR request, under a deadline (item 34, root cause).
