@@ -447,8 +447,22 @@ for each gap and is worth reading; the list lives here.
 1. **The first fill, and everything behind it:** `recent_fills` on IBKR, M71
    (built, never exercised — an app-transmitted sell has never happened), and how
    far back IBKR executions go. M123 removed one reason it could not happen;
-   nothing proves it was the only one. The ledger is now EMPTY, so the first fill
-   will be row one.
+   nothing proves it was the only one. ~~The ledger is now EMPTY, so the first
+   fill will be row one.~~
+
+   ✅ **PARTLY ANSWERED 26 August.** A broker-side exit DID reach
+   `closed_trades.csv` through `absorb_broker_fills` - four rows, arithmetic
+   sound - so the path works end to end. It also lost 179 of 183 executions;
+   see the 26 August incident above.
+
+   ✅ **AND "how far back IBKR executions go" is now MEASURED: SAME DAY ONLY.**
+   At 13:14 on 26 August `reqExecutions(ExecutionFilter())` returned **183
+   executions, every one from 26 August**, and none of the 25 August orders
+   that `absorbed_fills.json` still lists. That is not a small operational
+   detail: **a broker-side fill not absorbed on the day it happens can never be
+   absorbed**, because the executions are gone. Any repair that depends on
+   re-reading them has until the end of the trading day, and the automatic
+   re-absorb path in the absorb-fix plan inherits that deadline.
 2. **M119 is deployed but unexercised.** Friday's session started at 12:10, after
    the delay window that killed the 10:00 one. Monday's open is its first real
    test and the highest-value thing to watch.
