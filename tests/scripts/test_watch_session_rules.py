@@ -79,6 +79,16 @@ _REAL_LINES: tuple[tuple[str, str, str], ...] = (
         "WARNING",
         "AGGRISK",
     ),
+    # M119's three lines. The recovery is the only POSITIVE evidence the retry
+    # worked, it fires once, and it is WARNING - so it was invisible.
+    ("yfinance market data has recovered", "WARNING", "FEED"),
+    (
+        "yfinance has returned no data 5 times consecutively - market data is down. "
+        "Retrying with backoff.",
+        "ERROR",
+        "FEED",
+    ),
+    ("yfinance poll produced no ticks (3/5)", "WARNING", "FEED"),
     # Regressions - these worked before and must keep working.
     (
         "Build: M148 (0b1ecd6, built 26/08/2026 19:02:41 AEST, packaged)",

@@ -113,6 +113,23 @@ _RULES: tuple[tuple[str, str], ...] = (
     ("duplicate timestamp", "DUPLICATE"),
     ("EventBus handler failed", "CRASH"),
     ("MARKET DATA DOWN", "FEED"),
+    # ⚠️ M119's THREE lines, and none of them was surfaced. Its whole purpose is
+    # surviving the open: before it, five empty 60s polls ENDED the stream
+    # permanently and the account sat flat and blind on an open market until it
+    # was restarted by hand. Yahoo publishes ASX intraday ~20 minutes late, so
+    # every poll from the bell lands inside the delay window.
+    #
+    # "has recovered" is the SUCCESS signal and the only positive evidence M119
+    # worked. It is WARNING, it fires exactly once per outage, and it matched no
+    # rule - so the live view would have been silent about the one thing the
+    # 10:00 open exists to test.
+    #
+    # Bounded, checked in `yfinance_source.py:243-271` rather than assumed: the
+    # empty-poll warning fires at most `max_consecutive_failures - 1` times per
+    # outage, then the loop goes quiet and backs off.
+    ("yfinance market data has recovered", "FEED"),
+    ("market data is down", "FEED"),
+    ("produced no ticks", "FEED"),
     # The rail that decides whether an entry is possible at all. On 27 August it
     # sat at 5.03% against a 5.00% cap - blocking every entry - and said so only
     # in qat.log, every 300s, where the live view never looked.
