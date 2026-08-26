@@ -48,9 +48,9 @@ source.
 | Suite | **2,746 passed, 25 skipped.** ruff, black, mypy and bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
-| Account | **TEN POSITIONS, all bracketed, 20 resting legs** — A2M ANZ ASX BOQ IAG LOV PNI RHC SUN TNE, verified against the broker. **SIX ARE FINANCIALS (60%) against a 30% cap** — see item 44. Equity ~1,006,820 AUD. **Nothing has ever closed**, so `closed_trades.csv` is 0 rows and that is correct, not a display fault |
-| Kill switch | **NOT tripped — and it now PERSISTS across restarts (item 32, fixed).** Trip it and it stays tripped, logging CRITICAL on restore. New behaviour as of M144 |
-| Ledgers | **0 closed trades** (seven fabricated rows removed 24 August — see the incident above), **49 risk decisions**, journal carries the day's real order flow |
+| Account | **NINE POSITIONS, all bracketed, 18 resting legs** — A2M ANZ ASX BOQ IAG PNI RHC SUN TNE. **LOV.AX exited 26 Aug at target** (+17%), and the app still believes it holds 2,843 phantom LOV shares the broker does not have. `4 unprot x0` — every remaining position is protected. Previously: **TEN POSITIONS, all bracketed, 20 resting legs** — A2M ANZ ASX BOQ IAG LOV PNI RHC SUN TNE, verified against the broker. **SIX ARE FINANCIALS (60%) against a 30% cap** — see item 44. Equity ~1,006,820 AUD. **Nothing has ever closed**, so `closed_trades.csv` is 0 rows and that is correct, not a display fault |
+| Kill switch | ⚠️⚠️ **TRIPPED 26 August 10:09:42** — `Broker reconciliation mismatch: LOV.AX tracked=2843 broker=0`, and it was RIGHT. **Do NOT reset until the 2,843 phantom shares are absorbed or the ledger is deliberately repaired** — see the 26 August incident above. It also PERSISTS across restarts now (item 32), so a restart clears nothing and additionally replays a ~10h watermark window. Previously: **NOT tripped — and it now PERSISTS across restarts (item 32, fixed).** Trip it and it stays tripped, logging CRITICAL on restore. New behaviour as of M144 |
+| Ledgers | **4 closed trades — the FIRST in this system’s life**, all LOV.AX, +1,535.78 AUD net, `exit_reason: target`, arithmetic sound (`closed_at` after `opened_at`). ⚠️ They cover only 374 of the 3,217 shares that actually executed — ~$12,000 of realised gain is missing from the file. Previously: **0 closed trades** (seven fabricated rows removed 24 August — see the incident above), **49 risk decisions**, journal carries the day's real order flow |
 
 > ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
 > clean tree, stamped `M134 (2d7777c, built 21/08/2026 10:00 UTC)` with no
@@ -230,6 +230,121 @@ remediation is what produced the fabricated trades.
 4. **A flat position can still carry short risk.** TNE was flat with eight legs
    resting on it — up to 12,304 shares of automatic short, and buying power
    would not have refused it.
+
+## ⚠️ 26 AUGUST: THE FIRST EXIT THIS SYSTEM EVER MADE, AND THE 88% THAT NEVER REACHED THE LEDGER
+
+**Read this before touching the absorb path.** Live, on M145, market open.
+Everything below is MEASURED — from the log, the ledger files, and a read-only
+IBKR probe on clientId 99 taken at 10:20.
+
+### What happened, to the second
+
+| Time (AEST) | Event |
+|---|---|
+| 10:06:31 | First execution on LOV.AX order permId `1216552509` (orderId 147, clientId 1) — the **take-profit** leg |
+| 10:06:31–10:08:30 | **183 separate executions**, summing to exactly **3,217 shares** at 28.45. Final `cumQty` 3,217 — the entire position |
+| 10:08:30 | `Error 202, reqId 148: Order Canceled` ×2 — IBKR's OCA cancelling the sibling stop leg. **Not a fault** |
+| 10:09:42 | Absorb pass ran. Booked **4 fills** (deltas 10, 15, 26, 323 = cumulative **374**) and stopped |
+| 10:09:42 | `Broker reconciliation mismatch: LOV.AX tracked=2843 broker=0` |
+| 10:09:42 | `KILL-SWITCH TRIPPED: Broker reconciliation mismatch. All new order flow is halted.` |
+| 10:09:42 | `RESTING ORDER SCAN: 18 working leg(s) across 9 symbol(s)` — was 20 across 10, so LOV's two legs are correctly gone |
+| 10:14:42 | Next poll: **absorbed nothing**, same mismatch, still 4 ledger rows |
+
+**The kill switch was RIGHT.** `tracked=2843 broker=0` is a real disagreement,
+and the halt is the only thing preventing the app managing a position it does
+not hold. Leave it tripped.
+
+### ✅ The good half — and it is genuinely good
+
+**This is the first exit in this system's life**, and it was a winner.
+`closed_trades.csv` went 0 rows → 4:
+
+| qty | entry | exit | net P&L | r_multiple |
+|---|---|---|---|---|
+| 10 | 24.2214 | 28.45 | +35.21 | 1.53 |
+| 15 | 24.2214 | 28.45 | +56.11 | 1.63 |
+| 26 | 24.2214 | 28.45 | +102.10 | 1.71 |
+| 323 | 24.2214 | 28.45 | +1,342.36 | 1.81 |
+
+**+1,535.78 AUD net**, `exit_reason: target`, ~+17%. And the arithmetic is
+sound: `closed_at` (10:06:31…) is AFTER `opened_at` (25 Aug 10:28:52),
+`holding_days` 0.984. **No repeat of the 24 August impossible-trades bug.**
+
+### ⚠️ The defect: 179 of 183 executions never reached the ledger
+
+The app booked cumulative 374 and believes it still holds **2,843 phantom
+shares**. At roughly $4.23/share that is about **$12,000 of realised gain
+absent from `closed_trades.csv`**. NetLiquidation is unaffected — the broker is
+the truth — but the RECORD is wrong, and the promotion gate reads the record.
+
+`absorbed_fills.json` holds, for that order:
+
+    "1216552509": {"filled_at": "2026-08-26T10:06:56+10:00",
+                   "quantity": 374.0, "price": 28.45, "quantity_known": true}
+
+with the watermark advanced to `10:09:42`.
+
+**This is NOT a timing race, and that was checked rather than assumed.** The
+last execution landed at 10:08:30; the absorb ran at 10:09:42, seventy-two
+seconds later. Every one of the 183 executions existed and was queryable when
+the app looked — the probe retrieved all of them afterwards from the same
+Gateway.
+
+**Ruled out by reading the code, not by guessing:**
+* `IBAdapter.recent_fills` does not truncate or aggregate. It returns
+  everything `reqExecutions(ExecutionFilter())` gives, filtered only by
+  `fill.filled_at <= since` and by symbol.
+* The query floor is not the cause. `_fill_query_floor` (M53) deliberately
+  reaches back past every remembered fill, and the prior watermark was
+  25 Aug 12:27:22 UTC — all 183 executions are well above it.
+* Partial fills are a DESIGNED-FOR case, not an unhandled one. The deltas
+  10/15/26/323 are exactly M53's cumulative-quantity arithmetic working. It
+  simply stopped after four.
+
+**⚠️ NOT ESTABLISHED: which layer dropped the other 179.** Recorded as unknown
+rather than guessed at — this project has spent a day on findings written from
+call sites while the recorded data held the answer. The next step is to
+instrument the absorb pass and count what `recent_fills` actually RETURNS for
+LOV.AX versus what `_is_foreign_unrecorded` accepts. The evidence needed is a
+count at each boundary, not another reading of the code.
+
+### The state this leaves, and why it is safe to leave
+
+* **Kill switch TRIPPED** — no new order flow. ⚠️ And per item 32 it now
+  PERSISTS across restarts, logging CRITICAL on restore. **A restart clears
+  nothing** and would additionally replay a ~10-hour watermark window, which
+  `_load_fill_state` itself warns is *"correct after a clean shutdown and
+  SUSPECT after a crash"*.
+* **Nine positions, eighteen legs, every one protected.** `4 unprot ... x0`.
+* The phantom LOV long cannot be acted on while the halt stands.
+* The mismatch will re-log every 300s. That is the rail working, not a
+  deterioration.
+
+**Do not reset the switch until the 2,843 is either absorbed or the ledger is
+repaired deliberately.** Resetting it hands the app a position that does not
+exist.
+
+### What this answers on the outstanding list
+
+Item 1 — *"the first fill, and everything behind it"* — is **partly answered**.
+A broker-side protective exit did reach `closed_trades.csv` through
+`absorb_broker_fills`, and the ledger arithmetic held. What it also shows is
+that the path is correct for the first few executions of an order and loses the
+rest, which no test covered because no test has ever had a 183-execution fill.
+
+**And note the shape for the promotion gate (item 3):** one logical exit
+produced FOUR ledger rows. The gate counts closed trades toward 20 and 30, so
+partial fills inflate that count several-fold per exit. Twenty rows may be five
+trades. That needs deciding before the gate is read.
+
+## Minor, found while diagnosing the above
+
+`scripts/ibkr_probe.py` **overwrites a dated spec file** — it wrote its output
+into `docs/superpowers/specs/2026-08-19-ibkr-capability-measurement-raw.md`,
+replacing the 19 August measurement with today's. Restored with
+`git checkout --`. A dated measurement artefact should not be the default
+output path of a tool that gets re-run; the probe should write to a new dated
+file, or to the scratchpad.
 
 ## OUTSTANDING, IN ORDER
 
@@ -1638,6 +1753,42 @@ shares its shape.
     describes. Now rendered through `format_session_time`, zone named, with a
     fallback that cannot raise, because a monitor that dies on one malformed
     line is worse than one showing an awkward stamp.
+
+54. **The known blind window logs 570 ERRORs a session, from a library logger
+    nobody tamed.** Observed live 26 August at the open. From 10:00:02,
+    yfinance logged `<SYM>: possibly delisted; no price data found` once per
+    symbol per poll — 95 symbols × 6 polls = **570 ERROR lines**, plus six
+    multi-line `95 Failed downloads` blocks. **582 of the 591 log lines written
+    since the bell came from the `yfinance` logger.**
+
+    **None of it is a fault.** It is the documented 20-minute ASX delay: there
+    is no data for today until about 10:21, and M119 handled it exactly right,
+    logging `yfinance has returned no data 5 times consecutively - market data
+    is down. Retrying with backoff.` once, and `MARKET DATA DOWN` once. Our own
+    code said the right thing, once. The library said it 570 times.
+
+    The `$` prefix on those symbols (`$CIA.AX`) is yfinance's own error
+    formatting, not our symbol construction — the lines come from the
+    `yfinance` logger, not from `qat.data.yfinance_source`.
+
+    **Two costs, and the second is the one that bites.** `session_check` now
+    reports `ERROR/CRITICAL since the bell: 584` on a completely healthy
+    session, which trains the operator to ignore that number — and it is the
+    number that would carry a real fault. And this is item 35's family: log
+    volume evicts diagnostics, and 570 lines a session is a rotation budget
+    spent on a non-event.
+
+    `NOISY_LIBRARY_LOGGERS` already exists for exactly this (`logging.py:47`)
+    and carries only `ib_async.wrapper`, `ib_async.client` and `ib_async.ib`.
+    yfinance is not in it — **and adding it there would not work**, because
+    that mechanism raises a logger to WARNING and yfinance is logging at ERROR.
+
+    ⚠️ Wanted, but NOT a blanket silence: a genuinely delisted symbol is a real
+    event and must stay visible. What is redundant is the per-symbol repetition
+    during a window the app already knows it is blind in, and which its own
+    summary line already reports once. Suppress it while the feed is inside its
+    known delay, or collapse it to a single line naming the count — not by
+    turning the logger off.
 
 ## 📋 PROMPT TO PASTE — next session
 

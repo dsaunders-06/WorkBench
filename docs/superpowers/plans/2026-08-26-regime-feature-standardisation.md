@@ -435,6 +435,213 @@ git commit -m "Phase 2.0: fit and predict on standardised features, characterise
 
 ---
 
+---
+
+## Task 2a: Fail a degenerate fit loudly, by name
+
+**Added 26 August, mid-execution.** Task 2's implementer applied the brief verbatim, its own tests passed, and two PRE-EXISTING tests then failed — proved by git-stash bisection to pass on baseline and fail only with the change. This task and Task 2b are that finding's resolution.
+
+**Files:**
+- Modify: `src/qat/domain/regime_engine/hmm_core.py` — add the exception type and the post-fit check
+- Test: `tests/domain/regime_engine/test_hmm_scaling_integration.py` (append)
+
+**Interfaces:**
+- Consumes: `ColumnStandardiser` (Task 1); the Task 2 edits to `fit`.
+- Produces: `DegenerateRegimeFitError(RuntimeError)`, raised from `HMMRegimeModel.fit`.
+
+**What happens without it.** hmmlearn leaves a never-visited state's `transmat_` row at all zeros, and its own `_check()` raises `ValueError: transmat_ rows must sum to 1` later, from `predict()` — far from the cause, with nothing naming it. `_fit` in `engine.py` already catches everything `fit` raises and logs `Regime HMM fit FAILED` with per-feature ranges, so raising here lands in a good handler. The point of this task is that the message says WHY.
+
+⚠️ **Raise BEFORE `self._model` is assigned.** A failed fit must leave the previous model untouched. `_fit` returning False also skips `self._bars_since_fit = 0`, so the engine retries the fit on the next bar and never reaches `predict_proba` with a degenerate model. That is the behaviour we want: no regime published, retried every bar, loudly.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/domain/regime_engine/test_hmm_scaling_integration.py`:
+
+```python
+def test_a_collapsed_state_fails_the_fit_by_name():
+    """Structureless data cannot support four states, and must say so.
+
+    Asking for more states than the data contains leaves one of them visited by
+    no observation. hmmlearn then leaves that state's transmat_ row at zero and
+    raises "transmat_ rows must sum to 1" later, from predict() - far from the
+    cause and naming nothing. The fit is what failed, so the fit is what should
+    say so.
+    """
+    import pytest
+
+    from qat.domain.regime_engine.hmm_core import DegenerateRegimeFitError
+
+    rng = np.random.default_rng(11)
+    noise = rng.normal(0.0, 1.0, size=(120, 3))   # one cloud, no regimes
+
+    model = HMMRegimeModel(n_states=8)            # far more states than structure
+    with pytest.raises(DegenerateRegimeFitError) as excinfo:
+        model.fit(noise)
+
+    assert "state" in str(excinfo.value).lower(), excinfo.value
+    assert not model.is_fitted, "a failed fit must not leave a half-built model behind"
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `.venv/Scripts/python.exe -m pytest tests/domain/regime_engine/test_hmm_scaling_integration.py::test_a_collapsed_state_fails_the_fit_by_name -q`
+
+Expected: FAIL with an `ImportError` on `DegenerateRegimeFitError`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `hmm_core.py`, add above `class HMMRegimeModel`:
+
+```python
+class DegenerateRegimeFitError(RuntimeError):
+    """A state the fit never visited, so the model cannot classify.
+
+    Raised where it is DIAGNOSABLE. Left to hmmlearn, this surfaces as
+    `ValueError: transmat_ rows must sum to 1` out of `predict()`, one layer
+    down and several calls later, naming neither the state nor the cause.
+    """
+```
+
+In `fit`, immediately after `model.fit(scaled)` completes and BEFORE `self._model = model`:
+
+```python
+        # hmmlearn leaves a never-visited state's transmat_ row at all zeros
+        # and only complains later, from predict(). Standardising makes this
+        # reachable: vix_level's raw scale was what spread the KMeans
+        # initialisation across all four states, so removing it can leave one
+        # empty on data that does not support n_states distinct regimes.
+        empty = [
+            index for index, total in enumerate(model.transmat_.sum(axis=1)) if total == 0.0
+        ]
+        if empty:
+            raise DegenerateRegimeFitError(
+                f"{len(empty)} of {self.n_states} states were visited by no observation "
+                f"(state indices {empty}) across {len(feature_matrix)} bars, so the "
+                "transition matrix has an empty row and the model cannot classify. The "
+                "data does not support this many distinct regimes."
+            )
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `.venv/Scripts/python.exe -m pytest tests/domain/regime_engine/ -q`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/qat/domain/regime_engine/hmm_core.py tests/domain/regime_engine/test_hmm_scaling_integration.py
+git commit -m "Phase 2.0: a collapsed regime state fails the fit by name"
+```
+
+---
+
+## Task 2b: Give the regime fixtures actual regimes
+
+**The fixture was the problem, and the test was passing for the wrong reason.**
+`_daily_bars` is `price *= 1 + rng.normal(0.0005, 0.01)` — a single random walk. `_macro_history` is `level + rng.normal(0, scale)` — i.i.d. noise around a constant. **There are no four regimes in that data; there is one.** A 4-state HMM fitted on it was fitting noise, and it only "worked" because `vix_level`'s raw scale dominated the Euclidean k-means and carved the cloud into four arbitrary spatial clusters.
+
+⚠️ **This is a fixture fix, NOT a retuned assertion.** `test_a_seeded_engine_classifies_on_the_first_live_bar` asserts something legitimate and its assertion does not change. What changes is that the data now contains what the test presumes. This project's rule is *check the FIXTURE first, but be ready for the test to be right* — here the test is right and the fixture is not.
+
+**Files:**
+- Modify: `tests/domain/regime_engine/test_regime_engine.py` — `_daily_bars` and `_macro_history`
+
+- [ ] **Step 1: Confirm the two tests fail before the fixture changes**
+
+With Task 2 and 2a applied, run: `.venv/Scripts/python.exe -m pytest tests/domain/regime_engine/test_regime_engine.py -q`
+
+Expected: `test_a_seeded_engine_classifies_on_the_first_live_bar` and `test_health_is_published_on_change_not_on_every_bar` FAIL. Record the failure text — it is the evidence that the fixture change is what fixes them.
+
+- [ ] **Step 2: Give the bars regime structure**
+
+Replace `_daily_bars`'s body, keeping its signature, seed argument and returned columns exactly as they are:
+
+```python
+def _daily_bars(days: int, seed: int = 11, start_price: float = 500.0) -> pd.DataFrame:
+    """Bars that actually contain regimes.
+
+    Was a single random walk - one set of parameters for every bar - so no
+    amount of fitting could find four states in it. The engine's own tests
+    presume a classifiable series, so the fixture has to contain one.
+    Alternating calm and stressed blocks give drift and volatility that
+    genuinely differ, which is what a regime IS.
+    """
+    rng = np.random.default_rng(seed)
+    first = datetime(2026, 1, 2, 4, 0, tzinfo=UTC)  # Alpaca stamps daily bars at 04:00 UTC
+    rows = []
+    price = start_price
+    for i in range(days):
+        # 40-bar blocks, alternating. Long enough that realized_vol's 20-bar
+        # window sees a block rather than straddling two of them.
+        stressed = (i // 40) % 2 == 1
+        drift, vol = (-0.0015, 0.025) if stressed else (0.0010, 0.006)
+        price *= 1 + rng.normal(drift, vol)
+        rows.append(
+            {
+                "ts": first + timedelta(days=i),
+                "open": price * 0.995,
+                "high": price * 1.01,
+                "low": price * 0.99,
+                "close": price,
+                "volume": 1_000_000.0,
+            }
+        )
+    return pd.DataFrame(rows)
+```
+
+- [ ] **Step 3: Make the macro move WITH the bars**
+
+A regime is a joint state. Macro that is pure noise while price alternates hands the HMM three columns of contradiction:
+
+```python
+def _macro_history(days: int) -> MacroHistory:
+    """Real FRED shape, and correlated with the bars' regimes.
+
+    Uncorrelated noise here is worse than nothing: it tells the model the macro
+    columns carry no information about the state, which is the opposite of why
+    they are features at all.
+    """
+    rng = np.random.default_rng(3)
+    first = datetime(2026, 1, 1, tzinfo=UTC)
+    observations = {}
+    for series, calm, stressed, scale in (
+        ("VIXCLS", 14.0, 26.0, 1.0),
+        ("T10Y3M", 0.90, 0.20, 0.04),
+        ("BAA10Y", 1.55, 2.30, 0.03),
+    ):
+        observations[series] = [
+            MacroObservation(
+                series=series,
+                ts=first + timedelta(days=i),
+                value=float((stressed if (i // 40) % 2 == 1 else calm) + rng.normal(0, scale)),
+            )
+            for i in range(days)
+        ]
+    return MacroHistory(observations)
+```
+
+⚠️ The macro blocks use the same `i // 40` boundary as the bars deliberately. `_macro_history` starts one day earlier than `_daily_bars` (1 Jan vs 2 Jan) and the as-of join forward-fills, so the alignment is off by about one bar. That is realistic and is not worth engineering away.
+
+- [ ] **Step 4: Run the full regime directory**
+
+Run: `.venv/Scripts/python.exe -m pytest tests/domain/regime_engine/ -q`
+
+Expected: all pass, including the two that failed at Step 1.
+
+⚠️ **If a DIFFERENT test now fails, STOP and report it.** Several tests share these two fixtures, and one may encode an assumption about the old structureless data. That is a finding, not a nuisance — do not adjust it without saying so.
+
+- [ ] **Step 5: Run the whole suite**
+
+Run: `.venv/Scripts/python.exe -m pytest -q`
+
+These fixtures are local to one file, but confirm nothing else regressed.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tests/domain/regime_engine/test_regime_engine.py
+git commit -m "Phase 2.0: give the regime fixtures actual regimes"
+```
+
 ## Task 3: Make scale dominance visible at every refit
 
 **Files:**
