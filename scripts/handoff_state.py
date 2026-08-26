@@ -78,6 +78,23 @@ REPO = Path(__file__).resolve().parent.parent
 # in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
 # C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
 #
+# M148 DEPLOYED 26 August 19:05, updated in the same minute as the copy.
+# Clean tree at 0b1ecd6, stamped "M148 (0b1ecd6, built 26/08/2026 19:02:41
+# AEST)", signed and timestamp-verified, installed exe SHA256-identical to the
+# signed artefact (2CF98E9F...9706), signature Valid on the INSTALLED copy.
+# Rollback: C:\QuantAdvisoryTerminal.bak-M147-20260826-1905.
+#
+# Carries items 56 and 57. Deployed AFTER the close, unlike the day's earlier
+# two.
+#
+# ⚠️ A KILLED BUILD LEAVES src/qat/_build_stamp.py BEHIND, and it breaks the
+# suite. `invoke build` unlinks the stamp in a `finally`, which does not run if
+# the process is killed - and a leftover stamp makes the app report itself as a
+# PACKAGED build of the last frozen commit while running from source. Four
+# version tests failed on the next build until it was deleted by hand. The
+# stamp's own comment predicts exactly this; what it does not say is that
+# recovery is `rm src/qat/_build_stamp.py`.
+#
 # M147 DEPLOYED 26 August 15:10, updated in the same minute as the copy.
 # Clean tree at 0c81b8b, signed and timestamp-verified, installed exe
 # SHA256-identical to the signed artefact (08CB73D6...143B), signature Valid on
@@ -194,7 +211,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "0c81b8b"
+DEPLOYED = "0b1ecd6"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
