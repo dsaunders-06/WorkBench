@@ -722,7 +722,48 @@ from qat.domain.display_dates import format_display_date
 # THE BUILD STAMP RENDERS IN AEST (item 50). It read "built 25/08/2026 12:01
 # UTC" among Settings fields that are session-local. The DATE is taken from the
 # converted value too - a 14:30 UTC build is already the next day in Sydney.
-MILESTONE = "M145"
+#
+# M146 - the regime HMM fits on a SCALE-NEUTRAL matrix (Phase 2.0, milestone A).
+#
+# GaussianHMM initialises its state means with cluster.KMeans on the RAW matrix
+# and KMeans is Euclidean, so the widest-spread column decided where the states
+# were first placed. Nothing standardised the features. Measured on the real
+# 300-bar window the engine fits, with real breadth:
+#
+#     log_return 0.2%   realized_vol 1.2%   vix_level 85.0%
+#     yield_curve_slope 8.6%   credit_spread 2.1%   breadth 3.0%
+#     widest share   raw 85.0%  ->  standardised 16.7%
+#
+# So the regime that sets position size was being initialised almost entirely
+# off one US series, by accident of scale rather than by design.
+#
+# THE LABEL DOES NOT MOVE, and that is the evidence this ships on. Both arms run
+# through the real fusion path - RegimeFusion.compute, HysteresisGate,
+# exposure_scalar_for - on the same matrix:
+#
+#     before (raw fit)      label=bull  scalar=1.00
+#     after  (standardised) label=bull  scalar=1.00
+#
+# The raw posteriors differ ([1,0,0,0] vs [0,1,0,0]) and that difference means
+# NOTHING - hmmlearn numbers states arbitrarily. The first version of the
+# comparison printed only those posteriors and was rejected in review for
+# exactly that: it invited being read as "the state changed".
+#
+# A COLLAPSED STATE NOW FAILS THE FIT BY NAME (DegenerateRegimeFitError), raised
+# before self._model is assigned so a failed fit leaves the previous model
+# untouched. Without it, hmmlearn leaves a never-visited state's transmat_ row
+# at zero and raises "transmat_ rows must sum to 1" later, from predict(), far
+# from the cause.
+#
+# AND THE TEST FIXTURES NOW CONTAIN REGIMES. _daily_bars was a single random
+# walk and _macro_history was i.i.d. noise - there were never four regimes in
+# that data, and a 4-state fit on it was fitting noise that the raw VIX scale
+# happened to carve into four arbitrary clusters. That is why standardising
+# broke two passing tests: they had been passing for the wrong reason.
+#
+# State characterisation deliberately still reads the RAW matrix, so
+# StateSignature.mean_return keeps meaning a return rather than a z-score.
+MILESTONE = "M146"
 
 _UNKNOWN = "unknown"
 
