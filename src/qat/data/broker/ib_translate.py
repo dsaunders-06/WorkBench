@@ -345,6 +345,15 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
     **The symbol is translated BACK** into the app's own form. The app tracks
     `BHP.AX` and IBKR answers `BHP`; a fill returned unqualified matches no
     tracked position, so the stop that fired still goes unrecorded (M26, M96).
+
+    **`cumQty`, NOT `shares`.** `BrokerFill.quantity` is the order's cumulative
+    filled quantity; `shares` is what THIS execution moved. IBKR returns one
+    Fill per execution, so supplying `shares` gave the OMS a per-execution
+    number where it subtracts a stored cumulative - and only executions setting
+    a new running maximum were ever absorbed. Measured 26 August 2026 on LOV.AX
+    order 1216552509: 183 executions, 3,217 shares, of which 374 reached the
+    ledger. `cumQty` runs 10, 35, 39 ... 3,217 monotonically across those same
+    executions.
     """
     execution = fill.execution
     side = _IB_EXECUTION_SIDE.get(str(execution.side).upper())
@@ -360,7 +369,7 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
         order_id=str(execution.permId),
         symbol=from_ibkr(fill.contract.symbol, market),
         side=side,  # type: ignore[arg-type]
-        quantity=float(execution.shares),
+        quantity=float(execution.cumQty),
         price=float(execution.price),
         filled_at=execution.time,
     )
