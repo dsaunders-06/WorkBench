@@ -1999,6 +1999,46 @@ shares its shape.
     and the way to find it is to look for anything else keyed on
     `order.order_id`.
 
+    ### ⚠️ THAT LEAD WAS FOLLOWED, AND IT FOUND A SECOND DARK CONSUMER
+
+    **`_own_partial_fill_stamps` has been empty for the entire life of the IBKR
+    integration**, and M148 is about to fill it for the first time.
+
+    It is written in exactly one place — `_correct_announced_price`
+    (`oms.py:1761`), *after* `_order_the_broker_calls` resolves. That call never
+    resolved, so the dict never gained an entry. It is read in exactly one
+    place, `_fill_query_floor` (`oms.py:1451`), whose own docstring says why it
+    exists:
+
+    > **The app's OWN partials need the same reach, and were not getting it
+    > (M70).** `_absorbed_fills` holds foreign executions only … an entry still
+    > filling was covered by neither term.
+
+    M70 added that reach deliberately. **On IBKR it has never once applied**, because
+    the term that feeds it was always empty — the same single broken identity,
+    two rails downstream, and neither of them erroring.
+
+    ⚠️ **So the first entry changes the absorb query floor for the first time.**
+    Once a partially-filled own entry stamps that dict, `_fill_query_floor`
+    starts reaching back further than it ever has on this broker. The reasoning
+    says that is safe — a re-read of a completed fill has a zero delta and is
+    skipped, `_absorbed_fills` is pruned to 30 days and the query is bounded by
+    symbol — but **safe by argument is not the same as observed**, and this is
+    the absorb path, on the day its other half is also unproven.
+
+    ### ✅ AND IT GIVES THE WATCH A SECOND, INDEPENDENT SIGNAL
+
+    `Corrected the recorded entry price for <SYM> -> <price> to what the broker
+    charged` is now expected on an entry that fills away from its sized price.
+    That line **cannot appear unless the identity bridge resolved**, so it
+    confirms the item 56 fix from a completely different direction than the
+    numeric permId does. Two independent confirmations beat one, and this one
+    also says the price in the record is what was actually paid.
+
+    ⚠️ Absence is NOT failure here: the line is suppressed when the fill lands
+    within `_ANNOUNCED_PRICE_TOLERANCE` of the announced price, which is the
+    ordinary case. **The permId remains the signal that must be there.**
+
 57. ~~**The Risk Console's kill-switch button reports a state it has not
     checked, and clicking it does the OPPOSITE of what it says.**~~
     **FIXED AND CONFIRMED LIVE 26 August.** Shipped in M148. The label is now
