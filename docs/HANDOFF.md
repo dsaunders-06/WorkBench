@@ -2169,6 +2169,71 @@ shares its shape.
     re-checked against the book at sign-off — which is where the order becomes
     real anyway, and where the price-drift check (item 37) already sits.
 
+59. **⚠️ A RESTING-ORDER QUARANTINE CAN ONLY EVER BE DECLARED, NEVER LIFTED —
+    AND TWO ARE LIVE RIGHT NOW ON A CONDITION THAT NO LONGER EXISTS.** Found
+    27 August at launch, from the app's own startup line.
+
+        09:16:31 WARNING Restored 2 resting-order quarantine(s) from
+                 resting_order_anomalies.json: SEK.AX, WOW.AX
+        09:17:41 INFO    RESTING ORDER SCAN: 22 working leg(s) across
+                 11 symbol(s), nothing unjustified
+
+    **The scan and the store disagree, and nothing reconciles them.** The stored
+    reason is dated `2026-08-26T05:17:11` — the doubled book of item 56, fixed
+    in M148 that evening.
+
+    ### The mechanism, and it is not subtle
+
+    `_reconcile_resting_orders` (`oms.py:1991-2009`) iterates
+    **`for divergence in divergences:`** and calls `declare()` inside that loop.
+    A CLEAN scan has no divergences, so the loop body never runs — **there is no
+    symmetric clear.** The store's own comment says *"`declare()` below still
+    runs every scan regardless, because the anomaly store must stay current even
+    when the log stays quiet"* — but "current" only ever means *more*.
+
+    `clear()` has exactly ONE caller in the whole codebase:
+    `risk_console.py:477`, an operator button. **So a quarantine outlives its
+    cause until a human notices and clicks.**
+
+    ### What it costs
+
+    `submit_order` refuses a quarantined symbol at `oms.py:325`, naming it
+    `resting order anomaly - ...`. **SEK.AX and WOW.AX cannot be entered**,
+    today or in any later session, until someone clears them by hand.
+
+    ✅ **Entries only, and that is verified rather than assumed.** The check sits
+    in `submit_order(candidate: OrderCandidate, ...)`, the entry sizing path.
+    Protective exits are the brackets already resting AT THE BROKER — all 22
+    legs, `4 unprot x0` — so nothing about this can stop the account
+    de-risking. The rail fails in the SAFE direction.
+
+    ⚠️ **But safe is not the same as right.** It refuses two symbols for a
+    reason that stopped being true, says so only in a startup line nobody reads
+    twice, and would be invisible the moment entries resume. It is the silent
+    narrowing this project has now been bitten by three times.
+
+    ### ⚠️ A CORRECTION: `5a34fa5` claimed these cleared. They did not.
+
+    That commit recorded *"both quarantines cleared on their own."* **Wrong, and
+    worth stating plainly because a future reader would trust it.** What cleared
+    was the resting-order SCAN, which stopped reporting divergences. The
+    QUARANTINE is a different store with no automatic clear, and it survived the
+    restart into the next session. Two stores, one checked, the other assumed to
+    have followed.
+
+    ### Minor, in the same place
+
+    The stored text reads *"2978 shares of resting sell the book does not
+    justify (holds 2978)"* — an excess of 2978 while holding 2978, which is
+    self-contradictory as an English sentence. It comes of summing BOTH OCA
+    bracket legs against a single position. Whatever the arithmetic intends, an
+    operator reading that line in an incident cannot act on it.
+
+    Wanted: a clean scan should clear a quarantine whose divergence has gone —
+    or, if automatic clearing is judged too permissive for a risk store, the
+    startup line must say **how old** the quarantine is and that the current
+    scan disagrees with it, so the staleness is impossible to miss.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```
