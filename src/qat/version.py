@@ -797,7 +797,57 @@ from qat.domain.display_dates import format_display_date
 # event, 2,843 recovered, ledger 3,217 of 3,217. The price tests were confirmed
 # to fail pre-fix at exactly the predicted blended averages, 30.0 against 28.75
 # and 33.29 against 30.0.
-MILESTONE = "M147"
+#
+# M148 - the app stops counting its own entries twice, and the console button
+# stops lying about the halt.
+#
+# ITEM 56. On 26 August, twenty seconds after the kill switch was reset, two
+# entries went out (WOW.AX 1098, SEK.AX 2978), each transmitted exactly once and
+# correctly bracketed. 107 seconds later the app absorbed both as foreign and
+# the book doubled - tracked=2196/5956 against broker=1098/2978 - and the switch
+# tripped again.
+#
+# The cause is documented at the line that causes it. IB.placeOrder returns
+# before TWS acknowledges, so permId is 0, and from_ib_trade correctly declines
+# to write a junk id and leaves the app's own UUID. Nothing ever revisited it,
+# so _broker_order_ids held a UUID while the execution arrived keyed on the
+# permId. It is not a race: EVERY "Order signed off and transmitted" line in the
+# whole log history, back to 1 August and across both brokers, carries a UUID.
+#
+# ⚠️ AND IT HAD BEEN FIRING SINCE AT LEAST 25 AUGUST, INVISIBLY. Fourteen
+# absorbs of that day's own nine entries at 17:56:43, with ZERO reconciliation
+# mismatches logged, because the poll was wedged - 3 scans that day against 78
+# on the 26th. Item 34's fix did not cause this; it made a months-old defect
+# visible. A rail whose failure mode is silence is worse than no rail.
+#
+# Two layers, because one is not enough. place_order now waits, briefly and
+# boundedly, for the permId TWS is about to send - applied to ALL THREE
+# placement paths, plain, _place_bracket and _place_oca, because the orders that
+# caused this were brackets. And when the wait loses to a slow acknowledgement,
+# _adopt_from_broker publishes BrokerOrderIdResolvedEvent and the OMS registers
+# it, following the direction the adapter already uses for KillSwitchEvent.
+#
+# A permId that never arrives still keeps the app's own id - writing 0 would
+# collide every unacknowledged order - but now says so at WARNING. Silence is
+# what let this run since August.
+#
+# ⚠️ THE FIRST REGRESSION GUARD WAS WRITTEN AT THE WRONG LAYER, twice defended,
+# and replaced. It built its OMS over MockBroker and never constructed an
+# IBAdapter, so no path from it reached either fix; two implementers traced that
+# independently rather than forcing it green. The guard now drives the OMS
+# through a real IBAdapter over a fake TWS whose permId arrives late, and was
+# FALSIFIED: with ibkr_permid_wait_seconds=0 it reproduces the 26 August
+# double-count exactly.
+#
+# ITEM 57. The Risk Console's kill-switch button refreshed only at construction
+# and after its own click, so a trip from reconciliation left it stale. The
+# handler reads the TRUE state, not the label, and resets with no confirmation -
+# so a button reading "click to halt trading" would have RESUMED order flow. The
+# operator saw the banner disagree and declined to click. The label is now
+# derived from the 2s timer that already runs, because a derived label cannot go
+# stale where another listener could be missed - which is exactly how the
+# outbound half of this same bug was fixed and the inbound half was not.
+MILESTONE = "M148"
 
 _UNKNOWN = "unknown"
 
