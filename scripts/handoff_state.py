@@ -78,6 +78,23 @@ REPO = Path(__file__).resolve().parent.parent
 # in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
 # C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
 #
+# M146 DEPLOYED 26 August 14:35, updated in the same minute as the copy.
+# Clean tree at 6f965fc, stamped "M146 (6f965fc, built 26/08/2026 14:32:08
+# AEST)", signed and timestamp-verified, installed exe SHA256-identical to the
+# signed artefact (D7718C39...DAAE9), signature Valid on the INSTALLED copy.
+# Rollback is a rename: C:\QuantAdvisoryTerminal.bak-M145-20260826-1435.
+#
+# ⚠️ DEPLOYED MID-SESSION, deliberately and on the operator's instruction. The
+# standing rule is to deploy before the open or after the close. The exception
+# here is that the KILL SWITCH WAS ALREADY TRIPPED, so no order flow was
+# possible in either direction - deploying a sizing-input change into a halted
+# system is safer than deploying it into a live one. The book stayed protected
+# throughout: 18 legs resting AT THE BROKER, independent of the app.
+#
+# Carries Milestone A of the macro Phase 2 plan. Its own evidence is why this
+# was safe to ship into an open market at all: the label does NOT move,
+# label=bull scalar=1.00 before and after, through the real fusion path.
+#
 # M145 DEPLOYED 26 August 08:41, updated in the same minute as the copy.
 # Clean tree at 08e4dc5, stamped "M145 (08e4dc5, built 26/08/2026 08:38:09
 # AEST)" - the first stamp to render in AEST rather than UTC (item 50) - signed
@@ -148,7 +165,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "08e4dc5"
+DEPLOYED = "6f965fc"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
