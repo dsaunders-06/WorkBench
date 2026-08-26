@@ -763,7 +763,41 @@ from qat.domain.display_dates import format_display_date
 #
 # State characterisation deliberately still reads the RAW matrix, so
 # StateSignature.mean_return keeps meaning a return rather than a z-score.
-MILESTONE = "M146"
+#
+# M147 - the absorb path records the WHOLE exit, at the RIGHT price, in ONE row.
+#
+# On 26 August a LOV.AX take-profit filled 3,217 shares in 183 executions. The
+# app absorbed 374 and tripped the kill switch on tracked=2843 broker=0. The
+# absorbed total equalled the LARGEST SINGLE EXECUTION, which is the signature.
+#
+# BrokerFill.quantity and BrokerFill.price are BOTH the order's cumulative
+# figures - _unabsorbed_part's own docstring names them as Alpaca's filled_qty
+# and filled_avg_price, and its delta arithmetic is cumulative-average
+# arithmetic. from_ib_fill was supplying execution.shares and execution.price,
+# which are PER-EXECUTION, because IBKR returns one Fill per execution where
+# Alpaca returns one order object per order. Every layer was individually
+# correct and they disagreed about what the numbers MEANT.
+#
+# I fixed the quantity and missed the sibling. The review caught it, and the
+# reason it was invisible is worth keeping: every fixture used a CONSTANT
+# price, exactly as single-execution fixtures had hidden the quantity bug.
+# A wrong price does not lose shares - it silently misstates realised P&L in
+# the file the promotion gate reads.
+#
+# Three parts: cumQty so no execution is lost; avgPrice so P&L survives an
+# order filling across a price range; and a per-order collapse within a pass,
+# so one exit is ONE closed-trade row rather than up to 183. The last is not
+# cosmetic - the gate counts rows toward 20 and 30, so an exit that books
+# itself 183 times clears the gate on its own.
+#
+# Alpaca is unaffected: one order object per order means the collapse finds one
+# entry per key.
+#
+# Verified against the REAL 183 executions, not a fixture: collapse to 1 fill
+# event, 2,843 recovered, ledger 3,217 of 3,217. The price tests were confirmed
+# to fail pre-fix at exactly the predicted blended averages, 30.0 against 28.75
+# and 33.29 against 30.0.
+MILESTONE = "M147"
 
 _UNKNOWN = "unknown"
 
