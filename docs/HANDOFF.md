@@ -2212,30 +2212,76 @@ THE STATE
   net on the four real rows. ⚠️ The FIFTH is a REPAIR row with EMPTY costs, so
   net P&L across LOV is NOT summable from that file.
 
-⚠️ FIRST WORK: BE AT THE SCREEN AT 10:29, NOT 11:00.
+⚠️ FIRST WORK: THE FIRST LIVE EVENT IS AN EXIT, NOT AN ENTRY.
 
-  Item 56's fix is DEPLOYED BUT UNEXERCISED. No entry has happened since M148
-  landed. Three things stack on the first entry tomorrow:
+  ⚠️ CORRECTED 27 August 08:5x, from the record. The previous version of this
+  section told you to be at the screen at 10:29 for the first entry. NO ENTRY
+  CAN HAPPEN. Two independent blocks, either one sufficient:
 
-    - the order-path fix is unproven live;
-    - the regime is BULL at exposure scalar 1.00, against the 0.70 the current
-      book was built at, so entries size ~43% larger;
-    - aggregate risk-at-stop was last read 5.07% against a 5.00% cap.
+    max_concurrent_positions      : 10      book holds ELEVEN   (item 58)
+    max_aggregate_risk_at_stop_pct: 0.05    last read 5.03%
+
+  and the governor has logged the second every 300s since 26 August:
+
+    Aggregate risk-at-stop 5.03% is over the 5.00% cap - sweep is disabled, so
+    nothing will be sold to correct it. It falls as positions close or as
+    equity rises, and rises as equity falls
+
+  So an EXIT must come first. It frees a slot and drops the aggregate under the
+  cap, and only then does the entry watch come alive. Item 56's entry fix stays
+  unexercised until that happens - which may not be today.
+
+  ⚠️ Do NOT clear this by raising either cap. See item 58: the book crossed the
+  line through a sizing race, and widening a rail to fit a race hides the race.
 
   WATCH, IN ORDER:
-    1. The transmit line carries a NUMERIC permId, not a UUID. Every such line
-       since 1 August carried a UUID - that IS the before/after, and it is
-       visible immediately without waiting for an absorb pass.
-    2. The order transmits EXACTLY ONCE (M139).
-    3. NO "BROKER-SIDE FILL absorbed" line names an order the app just sent.
+
+  ON AN EXIT - the likely event, and it tests three unproven things:
+    1. ONE ledger row, FULL quantity (item 56's other half, M147's quantity
+       half). Four rows for one exit is the 26 August shape returning.
+    2. ⚠️ THE PRICE. M147's price half has NO real-wire confirmation, because
+       all 183 LOV executions filled at exactly 28.45 - a blended average and a
+       single price are the same number there, which is the same blindness that
+       hid the quantity bug. RUN THE CHECK:
+
+         & ".\.venv\Scripts\python.exe" scriptserify_exit_on_the_wire.py --symbol <SYM>
+
+       ⚠️⚠️ RUN IT THE SAME DAY. IBKR execution retention is SAME-DAY ONLY and
+       that is measured twice now - 183 executions on 26 August with none from
+       the 25th, and this script correctly returning nothing on 27 August for
+       the 26th's exit. AFTER THE CLOSE THE EVIDENCE IS GONE.
+       ⚠️ If the order has ONE distinct price, it is NOT a confirmation. The
+       script says so itself rather than letting it be quoted as one.
+    3. The absorb query floor moves for the first time on this broker once an
+       own partial stamps `_own_partial_fill_stamps` - see item 56. Safe by
+       argument, never yet observed.
+
+  ON AN ENTRY - only reachable after an exit, and the whole point of M148:
+    4. The transmit line carries a NUMERIC permId, not a UUID. Every such line
+       since 1 August carried a UUID. Confirmed on 27 August that the last one
+       did: `order=6ac52ed8d8284a25a3fa81966e02fafe ... WOW.AX qty=1098.0`.
+       That IS the before/after, in one field, with no absorb pass needed.
+    5. The order transmits EXACTLY ONCE (M139).
+    6. NO "BROKER-SIDE FILL absorbed" line names an order the app just sent.
        ⚠️ If one appears, HALT - that is item 56 surviving its fix.
-    4. sector_pct in risk_decisions.csv stops reading null. The book is 5
-       financials of 11; item 44's rail has still never bound. If it refuses
-       EVERYTHING, stop - that is the rail over-binding.
-    5. If a bracket fires: ONE ledger row, full quantity (item 56's other half).
-       ⚠️ The PRICE half has NO real-wire confirmation - the LOV order filled at
-       a constant 28.45. On the first multi-price exit, cross-check the recorded
-       price against IBKR's own execution report.
+    7. A SECOND, INDEPENDENT confirmation: `Corrected the recorded entry price
+       for <SYM> -> <price> to what the broker charged`. That line cannot appear
+       unless the identity bridge resolved. ⚠️ Its ABSENCE proves nothing - it
+       is suppressed inside the price tolerance - so 4 stays the signal that
+       must be there.
+    8. ⚠️ ITEM 58 IS LIVE: if TWO entries are approved in one cycle they will
+       each see a book without the other, exactly as WOW and SEK did. The book
+       is already at 11 of 10.
+
+  ALSO, ALL SESSION:
+    9. M119 at the 10:00 open - the yfinance retry, deployed and never
+       exercised. Yahoo publishes ASX intraday ~20 min late; on the 26th all
+       five polls from the bell returned empty and the stream ENDED
+       permanently. This is its first real test, and it is free to watch.
+   10. ~~sector_pct in risk_decisions.csv stops reading null.~~ ALREADY TRUE -
+       the last two rows read 0.191 (WOW) and 0.057 (SEK), with
+       held_in_sector_dollars 67,318 on WOW. Item 44's rail IS being fed;
+       whether it ever BINDS is still open.
 
 THEN, IN ORDER
 
