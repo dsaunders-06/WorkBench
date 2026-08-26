@@ -2010,10 +2010,16 @@ shares its shape.
     ANNOUNCE outward. Nobody made it LISTEN. Same shape as `BrokerFill.price`
     and item 40's watcher clock, both found the same day.
 
-    Wanted: refresh the button from the same listener every other view already
-    uses, so the label is derived rather than remembered. Until then, **trust
-    the banner or `session_check`, never that button**, and reset via a restart
-    rather than the console.
+    ~~Wanted: refresh the button from the same listener every other view already
+    uses.~~ **DONE in M148, and better than that.** It is refreshed from the
+    panel's existing 2s timer, so the label is DERIVED rather than announced —
+    deliberately preferred to another listener, because a derived label cannot
+    go stale where a listener can be missed, which is precisely how the
+    outbound half was fixed and the inbound half was not.
+
+    ~~Until then, trust the banner or `session_check`, never that button.~~
+    **No longer true — the button is trustworthy as of M148**, confirmed by the
+    operator at 22:02:22 with both surfaces agreeing.
 
 ## 📋 PROMPT TO PASTE — next session
 
@@ -2026,95 +2032,106 @@ READ THE STATE FIRST, and trust it over anything in this prompt:
     & "C:\Claude Programming\scripts\session_check.ps1"   (NO ARGUMENTS, EVER)
     .\.venv\Scripts\python.exe scripts\handoff_state.py
 
-Then read docs\HANDOFF.md. Read the 24 AUGUST incident section before touching
-the order path, and items 32-49 before touching anything else - they are all
-from 25 August and most of them are rails that existed, passed their tests, and
-had never once run.
+Then read docs\HANDOFF.md. Read the 26 AUGUST incident section before touching
+the order or absorb path, and items 56 and 57 before touching anything else.
 
 ⚠️ POWERSHELL for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal -
 including Python that only READS it, and anything that builds Settings(), which
 loads that directory's .env whether or not the script mentions it. The Bash
 sandbox serves a frozen snapshot and does NOT error.
 
-PUSH NORMALLY. The repo is PRIVATE and CI runs on windows-latest at a 2x
-multiplier, so BATCH commits and push once. A docs-only commit still buys a
-full Windows run.
+⚠️ CI IS BLOCKED at the GitHub billing wall - the Actions allowance ran out
+during 25 August. Pushes still work and cost nothing; the workflow just never
+starts, failing in ~4s with ZERO steps. THE LOCAL SUITE IS THE ONLY
+VERIFICATION. Run all four checks and treat them as final. Expect a red run and
+do not debug it. Re-test in September.
 
 THE STATE
 
-  Deployed M144 (543a978 -> f81d2d4 -> 9e168dd across four deploys on 25 Aug).
-  Installed exe SHA256-verified, signature Valid. Deploy gap ZERO, tree clean,
-  everything pushed.
-  ⚠️ M144 HAS NOT BEEN READ BACK off its own log and NONE of the 25 August work
-  has been exercised live. The next launch is the first test of all of it.
-  Suite 2,740 passed / 25 skipped. ruff, black, mypy, bandit clean.
+  Deployed M148 (0b1ecd6), installed 26 August 19:05, read back 19:06:30.
+  Exe SHA256-verified, signature Valid. Deploy gap ZERO, tree clean, pushed.
+  Suite 2,775 passed / 25 skipped. ruff, black, mypy, bandit clean.
+  App STOPPED - 22:04:42, "shutdown reached normally". Nothing is running.
 
-  THE ACCOUNT HOLDS TEN POSITIONS, all bracketed, 20 resting legs, verified
-  against the broker: A2M ANZ ASX BOQ IAG LOV PNI RHC SUN TNE. Nothing has ever
-  closed - closed_trades.csv is 0 rows and that is CORRECT, not a display fault.
-  SIX OF THE TEN ARE FINANCIALS (60%) against a 30% sector cap. See item 44.
+  ELEVEN POSITIONS, all bracketed, 22 resting legs, 4 unprot x0:
+  A2M ANZ ASX BOQ IAG PNI RHC SEK SUN TNE WOW. LOV.AX exited 26 Aug at TARGET.
 
-  THE KILL SWITCH IS NOT TRIPPED - and it now PERSISTS across restarts (item
-  32), which is new. Trip it tonight and it is still tripped tomorrow, logging
-  CRITICAL on restore. That is the opposite of how it behaved on 25 August.
+  KILL SWITCH IS CLEAR. Reset by the operator at 22:02:22 after the close, on
+  a verified-clean state - 35 consecutive clean scans and no mismatch. So the
+  next session opens with order flow LIVE and autonomous execution enabled.
 
-WHAT 25 AUGUST ESTABLISHED
+  FIVE CLOSED TRADES, all LOV.AX, the first in this system's life. +1,535.78
+  net on the four real rows. ⚠️ The FIFTH is a REPAIR row with EMPTY costs, so
+  net P&L across LOV is NOT summable from that file.
 
-  Fourteen findings from ONE live session. The suite went 2,666 -> 2,740 and
-  caught none of them. Every one came from watching the app run or from the
-  operator reading a screen and asking why it looked odd.
+⚠️ FIRST WORK: BE AT THE SCREEN AT 10:29, NOT 11:00.
 
-  THREE OF THOSE FINDINGS WERE WRONG (items 41, 42, and 43's first version),
-  all the same way: written from reading code structure without checking the
-  recorded data, while risk_decisions.csv and decision_journal.csv held the
-  answer - the same files that PROVED item 44. Reading a call site tells you
-  what COULD happen; the audit trail tells you what DID. Check the data BEFORE
-  writing the finding.
+  Item 56's fix is DEPLOYED BUT UNEXERCISED. No entry has happened since M148
+  landed. Three things stack on the first entry tomorrow:
 
-  The pattern in the real ones: something fails or is absent and the result is
-  indistinguishable from success. A rail with no data (44). A wedged loop that
-  logs nothing (34). A guard skipped on a None (37). A price that never arrives
-  (45). A verdict suppressed by a field the broker never sets (47). An earnings
-  calendar asking the one API that does not answer for ASX (49).
+    - the order-path fix is unproven live;
+    - the regime is BULL at exposure scalar 1.00, against the 0.70 the current
+      book was built at, so entries size ~43% larger;
+    - aggregate risk-at-stop was last read 5.07% against a 5.00% cap.
 
-FIRST WORK, IN ORDER
+  WATCH, IN ORDER:
+    1. The transmit line carries a NUMERIC permId, not a UUID. Every such line
+       since 1 August carried a UUID - that IS the before/after, and it is
+       visible immediately without waiting for an absorb pass.
+    2. The order transmits EXACTLY ONCE (M139).
+    3. NO "BROKER-SIDE FILL absorbed" line names an order the app just sent.
+       ⚠️ If one appears, HALT - that is item 56 surviving its fix.
+    4. sector_pct in risk_decisions.csv stops reading null. The book is 5
+       financials of 11; item 44's rail has still never bound. If it refuses
+       EVERYTHING, stop - that is the rail over-binding.
+    5. If a bracket fires: ONE ledger row, full quantity (item 56's other half).
+       ⚠️ The PRICE half has NO real-wire confirmation - the LOV order filled at
+       a constant 28.45. On the first multi-price exit, cross-check the recorded
+       price against IBKR's own execution report.
 
-  1. LAUNCH AND WATCH. In order: the build stamp reads M144 (9e168dd); the AI
-     Advisor produces an actual verdict (item 47 - it could NEVER render before,
-     across two live sessions); RESTING ORDER SCAN reports 20 legs across 10
-     symbols; reconciliation heartbeats REPEAT every 300s (item 34 - there was
-     exactly one all day on 25 August).
-  2. WATCH THE SECTOR RAIL HARDEST (item 44). It has never run in this
-     system's life and the book is 60% financials against a 30% cap. The next
-     financial candidate should be visibly trimmed or refused, and sector_pct
-     in risk_decisions.csv should stop reading null. If it refuses EVERYTHING,
-     stop - that is the rail over-binding.
-  3. Item 33 - make never-ticked-this-session its own refusal, distinct from
-     stale. It adds a refusal to the entry path, so it wants a plan and a
-     watched session, not a quick fix.
-  4. Item 31 - the _IB_WORKING_STATUSES widening, still deliberately split out
-     because it moves _position_stops, a sizing input.
-  5. The macro layer - docs/superpowers/specs/2026-08-25-macro-layer-research.md
-     has the research (all MEASURED) and a three-phase plan. Three decisions
-     are listed at the end and none has been made.
+THEN, IN ORDER
 
-  resting_order_cancel_enabled stays OFF until its TOCTOU guard has been
-  WATCHED live, not merely shipped.
+  1. MILESTONE C - the "--feature" arm for scripts/research/run_ablation.py.
+     This is the gate on everything macro. Milestone B is planned, measured and
+     CORRECTLY BLOCKED behind it: adding ^AXVI moves the label on 69 of 300
+     bars (23%), ALWAYS toward more defensive, and that may be signal or may be
+     volatility over-representation (three of seven columns would be vol
+     measures under diag covariance). The ablation is what separates them.
+     Plan: docs/superpowers/plans/2026-08-26-macro-milestone-b.md
+  2. Item 33 - never-ticked-this-session as its own refusal, distinct from
+     stale. Adds a refusal to the entry path; wants a plan and a watched session.
+  3. Item 31 - the _IB_WORKING_STATUSES widening, still split out because it
+     moves _position_stops, a sizing input.
+  4. Macro Phase 1 - the narrative Advisory layer. No rail changes at all.
 
-FOUR HABITS THAT PAID FOR THEMSELVES
+WHAT 26 AUGUST ESTABLISHED
 
-  Check the audit trail before writing a finding. Three of fourteen were wrong
-  without it, and the file that disproved them was the one that had proved the
-  biggest one.
+  Three deploys, all read back. Five defects root-caused, four found by running
+  the thing rather than reading it. A live incident handled with no loss - the
+  broker quantities were correct throughout and every position stayed protected.
 
-  Run it, do not reason about it. Fourteen findings from one session against a
-  green suite.
+  THE LESSON THAT OUTLIVES THE DAY: item 34's fix did not CAUSE the
+  double-count, it REVEALED it. That defect had been firing since at least
+  25 August behind a wedged reconciliation poll - 3 scans that day against 78.
+  A rail whose failure mode is silence is worse than no rail, and that is now
+  demonstrated rather than asserted.
 
-  A test that has never been seen to FAIL is not evidence. Four timeout tests
-  passed against the unfixed adapter because their own asyncio.wait_for raised
-  the TimeoutError they asserted.
+FIVE HABITS THAT PAID FOR THEMSELVES TODAY
 
-  When a new guard breaks an old test, check the FIXTURE first - but be ready
-  for the test to be right. On 25 August a suppression test caught a fix that
-  would have shipped the exact bug the guard existed to prevent.
+  Check the audit trail before writing a finding. The absorb root cause came
+  from replaying 183 REAL executions, not from reading the call site.
+
+  Run the gate BEFORE building what it gates. Milestone B's Task 5 was run
+  first and blocked the milestone, saving two data sources and a transform
+  policy.
+
+  A test never seen to FAIL is not evidence. Every fix today was falsified by
+  disabling it and watching the guard go red.
+
+  Check whether the fix has a SIBLING. Missed three times today and caught by
+  review each time: BrokerFill.price after quantity, the watcher's event clock
+  after its tally clock, the console button's inbound half after its outbound.
+
+  PRINT THE DATE RANGE AND CHECK IT. A three-day calendar slip in the ^AXVI
+  measurement understated the effect NINEFOLD - 2.7% against a true 23.0%.
 ```
