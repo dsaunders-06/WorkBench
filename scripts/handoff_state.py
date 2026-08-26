@@ -78,6 +78,35 @@ REPO = Path(__file__).resolve().parent.parent
 # in dist\ (7FFE257D...44A528), signature Valid. Rollback is a rename:
 # C:\QuantAdvisoryTerminal.bak-M140-20260825-0901 is the M140 install, intact.
 #
+# M147 DEPLOYED 26 August 15:10, updated in the same minute as the copy.
+# Clean tree at 0c81b8b, signed and timestamp-verified, installed exe
+# SHA256-identical to the signed artefact (08CB73D6...143B), signature Valid on
+# the INSTALLED copy. Rollback: C:\QuantAdvisoryTerminal.bak-M146-20260826-1509.
+#
+# Carries the absorb fix: BrokerFill.quantity AND price are both the order's
+# CUMULATIVE figures, and one exit is ONE ledger row however many executions it
+# took. Second mid-session deploy of the day, same justification - the kill
+# switch was already tripped, and 18 legs were resting at the broker.
+#
+# THE LEDGER WAS REPAIRED IN THE SAME STOP/START WINDOW.
+# scripts/repair_lov_partial_absorb.py --apply, with the app stopped (it must
+# be: _save_fill_state rewrites absorbed_fills.json after every pass). The
+# 26 August LOV.AX exit now reads 5 rows / 3,217 shares instead of 4 / 374.
+# Backups kept: closed_trades.csv.bak-20260826-150939-PRE-LOV-REPAIR and
+# absorbed_fills.json.bak-20260826-150939-PRE-LOV-REPAIR.
+#
+# ⚠️ The repair row carries EMPTY entry_cost, exit_cost, net_pnl and
+# r_multiple. IBKR's commission on the unabsorbed portion is not knowable after
+# the fact, and an honestly incomplete row beats a confidently wrong one. Its
+# exit_reason says so out loud.
+#
+# ⚠️ The automatic repair route was CLOSED by the M146 restart, and that was an
+# unintended consequence worth recording. Re-adopting from the broker dropped
+# LOV from open_position_entries.json, and _symbols_to_watch_for_fills builds
+# from tracked quantities, in-flight orders and that file - so recent_fills
+# would never have asked about LOV again, no matter how correct the new code
+# is. Restarting after an unabsorbed exit forfeits the chance to absorb it.
+#
 # M146 DEPLOYED 26 August 14:35, updated in the same minute as the copy.
 # Clean tree at 6f965fc, stamped "M146 (6f965fc, built 26/08/2026 14:32:08
 # AEST)", signed and timestamp-verified, installed exe SHA256-identical to the
@@ -165,7 +194,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "6f965fc"
+DEPLOYED = "0c81b8b"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
