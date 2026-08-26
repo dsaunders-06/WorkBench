@@ -140,3 +140,19 @@ async def test_absorbing_after_our_own_entry_does_not_double_the_book(
         f"tracked quantities moved on an absorb of our own fill: "
         f"{before} -> {dict(oms._filled_quantities)}"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_permid_learned_after_transmit_is_registered(oms_that_sent_an_order):
+    """The belt-and-braces path, for when the wait in place_order times out.
+
+    The adapter learns the permId moments later either way - it needs it for
+    modify and cancel to resolve. The OMS's own foreign-fill check must learn it
+    at the same moment, or a slow acknowledgement still doubles the book.
+    """
+    oms, fill_for_our_order = oms_that_sent_an_order
+    assert oms._is_foreign_unrecorded(fill_for_our_order), "fixture should start unregistered"
+
+    oms.register_broker_order_id(fill_for_our_order.order_id)
+
+    assert not oms._is_foreign_unrecorded(fill_for_our_order)

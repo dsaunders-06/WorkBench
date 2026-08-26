@@ -29,6 +29,7 @@ from qat.data.broker.mock_broker import new_order_id
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal, JournalEntry
 from qat.domain.events import (
+    BrokerOrderIdResolvedEvent,
     EntryPriceCorrectedEvent,
     ExitPriceCorrectedEvent,
     OrderFilledEvent,
@@ -261,6 +262,18 @@ class OMS:
         # Order ids this OMS has handed to a broker. Guards against a second
         # transmission independently of the status field - see `_sign_off_locked`.
         self._transmitted: set[str] = set()
+        # Item 56 / Task 3: `place_order`'s bounded permId wait (Task 2) can
+        # still lose to a slow TWS acknowledgement. `IBAdapter._adopt_from_broker`
+        # learns the resolved id moments later regardless - modify and cancel
+        # need it - and publishes BrokerOrderIdResolvedEvent for exactly that
+        # case. Subscribing here, rather than the adapter importing OMS and
+        # calling it directly, follows the direction this dependency already
+        # runs: the adapter holds the bus and publishes domain events on it
+        # (see KillSwitchEvent), and consumers subscribe from their own
+        # constructor. Optional so an OMS built without a bus (every test
+        # predating this) behaves exactly as before.
+        if self.bus is not None:
+            self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_broker_order_id_resolved)
 
     def entry_permitted(self, symbol: str) -> str | None:
         """Why an entry in `symbol` would be refused by the allow lists, or None.
@@ -874,6 +887,20 @@ class OMS:
 
     def orders(self) -> list[Order]:
         return list(self._orders.values())
+
+    def register_broker_order_id(self, order_id: str) -> None:
+        """Record a broker identifier learned AFTER transmit (item 56).
+
+        `place_order` waits briefly for the permId, and a slow acknowledgement
+        can outlast that wait. The adapter learns it either way - it needs it
+        for modify and cancel to resolve - so this is how that knowledge
+        reaches the one check that decides whether a fill is our own.
+        """
+        if order_id:
+            self._broker_order_ids.add(str(order_id))
+
+    async def _on_broker_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
+        self.register_broker_order_id(event.order_id)
 
     async def adopt_broker_positions(self) -> dict[str, float]:
         """Seeds the position baseline from whatever the account already holds.

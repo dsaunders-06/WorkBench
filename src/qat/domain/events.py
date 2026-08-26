@@ -215,6 +215,23 @@ class KillSwitchEvent(Event):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class BrokerOrderIdResolvedEvent(Event):
+    """A broker-native order id was resolved for an order this app placed,
+    at some point after transmit (item 56/M99).
+
+    IBKR's `permId` is 0 when `placeOrder` returns and TWS has not yet
+    acknowledged, so the id `_broker_order_ids` learns at transmit time can
+    be the app's own UUID rather than the id an execution later arrives
+    under. `IBAdapter._adopt_from_broker` resolves the broker-native id
+    moments later anyway - modify and cancel need it - and publishes it here
+    so the OMS's own-fill check learns it at the same moment, rather than
+    only on the next restart's reconciliation sweep.
+    """
+
+    order_id: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MarketDataFeedEvent(Event):
     """The feed as a whole is up or down (spec M26).
 

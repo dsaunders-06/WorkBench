@@ -284,11 +284,15 @@ and add the helper beside `_call`:
 
 - [ ] **Step 5: Run both test files, then the suite**
 
-Run: `.venv\Scripts\python.exe -m pytest tests/data/broker/test_ib_permid_wait.py tests/domain/oms/test_own_fill_identity.py -q`
+Run: `.venv\Scripts\python.exe -m pytest tests/data/broker/test_ib_permid_wait.py -q`
 
 Then: `.venv\Scripts\python.exe -m pytest -q`
 
-Expected: Task 1's two tests now PASS. Suite green.
+Expected: this task's three new tests PASS.
+
+⚠️ **CORRECTED DURING EXECUTION — Task 1's two tests STAY RED after this task, and that is correct.** An earlier version of this step claimed they would go green here. They cannot: Task 1's fixture builds its OMS over `MockBroker`, whose `place_order` never touches `order_id`, so no path from those tests reaches `IBAdapter.place_order` at all. They are closed by **Task 3**'s `register_broker_order_id`, and they are Task 3's acceptance criteria, not this task's.
+
+The two fixes are at different layers and both are needed: this task stops the adapter losing the permId against a real IBKR, and Task 3 makes the OMS able to learn one after transmit. Do not treat the remaining red as a regression, and do not weaken Task 1's fixture to make it green here.
 
 - [ ] **Step 6: Commit**
 

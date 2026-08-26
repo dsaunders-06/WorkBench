@@ -56,7 +56,7 @@ from qat.data.broker.ib_translate import (
 from qat.data.broker.ticks import round_to_tick
 from qat.data.symbols import from_ibkr
 from qat.domain.bus import EventBus
-from qat.domain.events import KillSwitchEvent
+from qat.domain.events import BrokerOrderIdResolvedEvent, KillSwitchEvent
 
 logger = logging.getLogger(__name__)
 
@@ -646,6 +646,14 @@ class IBAdapter:
                 order_type="stop" if order_type.startswith("STP") else "market",
             )
             self._register(adopted, ib_order, [ib_order])
+            # Item 56 / Task 3: this IS the moment the permId-shaped id
+            # resolves to an order the app already knows about - the whole
+            # reason this method exists. Told to the OMS via the bus (the
+            # adapter must not import it, see the module docstring's
+            # KillSwitchEvent precedent) so `_is_foreign_unrecorded` learns
+            # it too, and a slow TWS acknowledgement does not still get
+            # absorbed as a foreign fill and double the book.
+            await self.bus.publish(BrokerOrderIdResolvedEvent(order_id=order_id))
             return adopted
         return None
 
