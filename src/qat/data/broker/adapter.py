@@ -80,6 +80,19 @@ class BrokerFill:
     stop, a target, or the time stop - two of the three are broker-side - so
     the ledger stays empty and the promotion gate never accumulates the
     evidence the whole plan rests on.
+
+    ⚠️ `quantity` is the order's CUMULATIVE filled quantity, not the size of one
+    execution. Every consumer subtracts what it has already absorbed from it,
+    so a per-execution figure here silently discards fills.
+
+    This is not a stylistic preference. On 26 August 2026 an IBKR take-profit
+    filled 3,217 shares in 183 executions; `from_ib_fill` supplied
+    `execution.shares` while `OMS._is_foreign_unrecorded` compared it against a
+    stored cumulative, so only executions setting a new running maximum were
+    absorbed. 374 shares reached the ledger and 2,843 did not, and the kill
+    switch tripped on the difference. Alpaca returns one order object per order
+    carrying a cumulative `filled_qty`, which is where the assumption came from
+    and why it was invisible after the broker changed.
     """
 
     order_id: str
