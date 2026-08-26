@@ -278,6 +278,19 @@ class RiskConsoleScreen(QWidget):
         self._timer.start(_REFRESH_INTERVAL_MS)
 
     def _on_timer_tick(self) -> None:
+        # Item 57. The label is DERIVED here rather than remembered: it was
+        # previously only ever repainted at construction and at the tail of
+        # this screen's own click handler, so a trip via any other route -
+        # reconciliation, the equity rails, the startup restore - left it
+        # reading "inactive - click to halt trading" while the switch was
+        # actually tripped. The click handler resets on that state with no
+        # confirmation (de-risking stays one click, deliberately), so a stale
+        # label invited the opposite of an operator's intent during an
+        # incident. A listener on the switch would have the same gap this
+        # screen already has on the outbound side (see _on_kill_switch_clicked's
+        # docstring); the timer already runs every 2s regardless, so deriving
+        # from it here cannot go stale the same way.
+        self._refresh_kill_switch_button()
         self._refresh_from_audit_log()
         self._refresh_correlation_table()
         self._refresh_anomalies()

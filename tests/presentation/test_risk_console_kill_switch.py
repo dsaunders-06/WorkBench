@@ -45,3 +45,35 @@ def test_kill_switch_button_resets_when_already_tripped(qtbot):
 
     assert not runtime.kill_switch.tripped
     assert "inactive" in screen.kill_switch_button.text()
+
+
+def test_timer_tick_catches_a_trip_from_reconciliation_not_the_button(qtbot):
+    """Item 57. `_refresh_kill_switch_button` was called only from
+    construction and from the click handler's own tail, so a switch tripped
+    by any OTHER route - reconciliation, the equity rails, the startup
+    restore - left the label reading its state from before that trip.
+
+    Observed live 26 August: the banner read "Execution halted" while this
+    button still read "inactive - click to halt trading", and clicking it
+    would have RESET the switch and resumed order flow, because the click
+    handler reads `runtime.kill_switch.tripped` - the true state - not the
+    label. The operator's caution, not the label, was the only thing that
+    stayed the halt.
+
+    `check_reconciliation()` is the route reconciliation itself uses to
+    trip the switch - this test goes through it, never through the button
+    or its handler, so it proves the label is now DERIVED rather than
+    remembered.
+    """
+    screen, runtime = _build_screen(qtbot)
+    assert "inactive" in screen.kill_switch_button.text()
+
+    runtime.kill_switch.check_reconciliation()
+
+    screen._on_timer_tick()
+
+    assert "TRIPPED" in screen.kill_switch_button.text(), (
+        f"the button still reads {screen.kill_switch_button.text()!r} after a trip "
+        "the button never saw - clicking it would reset the switch and resume "
+        "order flow with no confirmation"
+    )
