@@ -354,6 +354,22 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
     order 1216552509: 183 executions, 3,217 shares, of which 374 reached the
     ledger. `cumQty` runs 10, 35, 39 ... 3,217 monotonically across those same
     executions.
+
+    **`avgPrice`, NOT `price` - the sibling of the fix above.** `price` is
+    this execution's own fill price; `avgPrice` is the order's cumulative
+    average, matching what `cumQty` does for quantity. `BrokerFill.price` is
+    documented (`qat.data.broker.adapter.BrokerFill`) as CUMULATIVE for
+    exactly this reason: `OMS._unabsorbed_part` recovers an increment's own
+    price from the DIFFERENCE of two running averages -
+    `(fill.price * fill.quantity) - (prior.price * prior.quantity)`, divided
+    by the delta in quantity - and that arithmetic is only correct if `price`
+    is the order's average at each snapshot. Fed one execution's own price
+    instead, it blends two unrelated numbers: a second piece filled at a
+    different price would be recorded at the wrong figure, silently, because
+    the resulting float looks perfectly plausible on its own. Realised P&L
+    for any IBKR order that fills at more than one price would be wrong by
+    that difference, and `closed_trades.csv` is what the promotion gate
+    reads.
     """
     execution = fill.execution
     side = _IB_EXECUTION_SIDE.get(str(execution.side).upper())
@@ -370,7 +386,7 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
         symbol=from_ibkr(fill.contract.symbol, market),
         side=side,  # type: ignore[arg-type]
         quantity=float(execution.cumQty),
-        price=float(execution.price),
+        price=float(execution.avgPrice),
         filled_at=execution.time,
     )
 

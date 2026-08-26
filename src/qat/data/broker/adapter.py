@@ -93,6 +93,18 @@ class BrokerFill:
     switch tripped on the difference. Alpaca returns one order object per order
     carrying a cumulative `filled_qty`, which is where the assumption came from
     and why it was invisible after the broker changed.
+
+    ⚠️ `price` carries the SAME contract, and for the same reason: it is the
+    order's CUMULATIVE AVERAGE fill price - Alpaca's `filled_avg_price` - not
+    the price one execution filled at. `OMS._unabsorbed_part` recovers an
+    increment's own price from the DIFFERENCE of two running averages
+    (`(fill.price * fill.quantity) - (prior.price * prior.quantity)`, divided
+    by the delta quantity), which is only correct if `price` is the running
+    average at each snapshot. A per-execution price here does not raise or
+    even look wrong - it just blends two unrelated numbers, and a second
+    piece filled at a different price is recorded at the wrong figure. That
+    number reaches `closed_trades.csv`, which is what the promotion gate
+    reads.
     """
 
     order_id: str
