@@ -80,6 +80,31 @@ class BrokerFill:
     stop, a target, or the time stop - two of the three are broker-side - so
     the ledger stays empty and the promotion gate never accumulates the
     evidence the whole plan rests on.
+
+    ⚠️ `quantity` is the order's CUMULATIVE filled quantity, not the size of one
+    execution. Every consumer subtracts what it has already absorbed from it,
+    so a per-execution figure here silently discards fills.
+
+    This is not a stylistic preference. On 26 August 2026 an IBKR take-profit
+    filled 3,217 shares in 183 executions; `from_ib_fill` supplied
+    `execution.shares` while `OMS._is_foreign_unrecorded` compared it against a
+    stored cumulative, so only executions setting a new running maximum were
+    absorbed. 374 shares reached the ledger and 2,843 did not, and the kill
+    switch tripped on the difference. Alpaca returns one order object per order
+    carrying a cumulative `filled_qty`, which is where the assumption came from
+    and why it was invisible after the broker changed.
+
+    ⚠️ `price` carries the SAME contract, and for the same reason: it is the
+    order's CUMULATIVE AVERAGE fill price - Alpaca's `filled_avg_price` - not
+    the price one execution filled at. `OMS._unabsorbed_part` recovers an
+    increment's own price from the DIFFERENCE of two running averages
+    (`(fill.price * fill.quantity) - (prior.price * prior.quantity)`, divided
+    by the delta quantity), which is only correct if `price` is the running
+    average at each snapshot. A per-execution price here does not raise or
+    even look wrong - it just blends two unrelated numbers, and a second
+    piece filled at a different price is recorded at the wrong figure. That
+    number reaches `closed_trades.csv`, which is what the promotion gate
+    reads.
     """
 
     order_id: str

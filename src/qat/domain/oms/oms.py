@@ -1537,6 +1537,26 @@ class OMS:
             logger.exception("Could not read recent broker fills")
             return []
 
+        # IBKR returns one Fill per EXECUTION; Alpaca returns one order object
+        # per order. Both now carry the order's CUMULATIVE quantity, so the
+        # highest one per order is the whole story and the rest are earlier
+        # snapshots of the same order.
+        #
+        # Collapsing here rather than in the adapter is deliberate: the delta
+        # arithmetic below is per ORDER, and feeding it 183 snapshots of one
+        # order emits 183 fill events - which the trade ledger turns into 183
+        # closed trades for a single exit. The promotion gate counts closed
+        # trades toward 20 and 30, so that is not a cosmetic problem.
+        #
+        # Alpaca is unaffected: one entry per order id means the max is that
+        # entry.
+        highest: dict[str, BrokerFill] = {}
+        for raw in fills:
+            seen = highest.get(raw.order_id)
+            if seen is None or raw.quantity > seen.quantity:
+                highest[raw.order_id] = raw
+        fills = sorted(highest.values(), key=lambda f: f.filled_at)
+
         absorbed: list[BrokerFill] = []
         for raw in fills:
             if not self._is_foreign_unrecorded(raw):
