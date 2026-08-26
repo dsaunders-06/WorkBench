@@ -290,12 +290,24 @@ async def test_a_failed_fit_is_reported_and_publishes_nothing(caplog):
 
 
 def _daily_bars(days: int, seed: int = 11, start_price: float = 500.0) -> pd.DataFrame:
+    """Bars that actually contain regimes.
+
+    Was a single random walk - one set of parameters for every bar - so no
+    amount of fitting could find four states in it. The engine's own tests
+    presume a classifiable series, so the fixture has to contain one.
+    Alternating calm and stressed blocks give drift and volatility that
+    genuinely differ, which is what a regime IS.
+    """
     rng = np.random.default_rng(seed)
     first = datetime(2026, 1, 2, 4, 0, tzinfo=UTC)  # Alpaca stamps daily bars at 04:00 UTC
     rows = []
     price = start_price
     for i in range(days):
-        price *= 1 + rng.normal(0.0005, 0.01)
+        # 40-bar blocks, alternating. Long enough that realized_vol's 20-bar
+        # window sees a block rather than straddling two of them.
+        stressed = (i // 40) % 2 == 1
+        drift, vol = (-0.0015, 0.025) if stressed else (0.0010, 0.006)
+        price *= 1 + rng.normal(drift, vol)
         rows.append(
             {
                 "ts": first + timedelta(days=i),
@@ -310,20 +322,25 @@ def _daily_bars(days: int, seed: int = 11, start_price: float = 500.0) -> pd.Dat
 
 
 def _macro_history(days: int) -> MacroHistory:
-    """Real FRED shape: a daily reading per series that actually moves."""
+    """Real FRED shape, and correlated with the bars' regimes.
+
+    Uncorrelated noise here is worse than nothing: it tells the model the macro
+    columns carry no information about the state, which is the opposite of why
+    they are features at all.
+    """
     rng = np.random.default_rng(3)
     first = datetime(2026, 1, 1, tzinfo=UTC)
     observations = {}
-    for series, level, scale in (
-        ("VIXCLS", 18.0, 1.5),
-        ("T10Y3M", 0.84, 0.05),
-        ("BAA10Y", 1.62, 0.03),
+    for series, calm, stressed, scale in (
+        ("VIXCLS", 14.0, 26.0, 1.0),
+        ("T10Y3M", 0.90, 0.20, 0.04),
+        ("BAA10Y", 1.55, 2.30, 0.03),
     ):
         observations[series] = [
             MacroObservation(
                 series=series,
                 ts=first + timedelta(days=i),
-                value=float(level + rng.normal(0, scale)),
+                value=float((stressed if (i // 40) % 2 == 1 else calm) + rng.normal(0, scale)),
             )
             for i in range(days)
         ]

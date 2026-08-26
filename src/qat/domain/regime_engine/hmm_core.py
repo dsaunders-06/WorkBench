@@ -15,6 +15,8 @@ from dataclasses import dataclass
 import numpy as np
 from hmmlearn.hmm import GaussianHMM
 
+from qat.domain.regime_engine.scaling import ColumnStandardiser
+
 _LOG_RETURN_COL = 0
 _REALIZED_VOL_COL = 1
 
@@ -41,6 +43,15 @@ class _NonMonotonicFilter(logging.Filter):
         return True  # count it, never suppress it
 
 
+class DegenerateRegimeFitError(RuntimeError):
+    """A state the fit never visited, so the model cannot classify.
+
+    Raised where it is DIAGNOSABLE. Left to hmmlearn, this surfaces as
+    `ValueError: transmat_ rows must sum to 1` out of `predict()`, one layer
+    down and several calls later, naming neither the state nor the cause.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class StateSignature:
     mean_return: float
@@ -53,6 +64,7 @@ class HMMRegimeModel:
         self.random_state = random_state
         self.n_iter = n_iter
         self._model: GaussianHMM | None = None
+        self._scaler = ColumnStandardiser()
         self._state_signatures: dict[int, StateSignature] | None = None
         # 0, not unset: "no fit has logged the warning" is a legitimate
         # reading of "no fit has happened yet", and this is an observability
@@ -66,6 +78,11 @@ class HMMRegimeModel:
                 f"Need at least {self.n_states * 2} rows to fit a {self.n_states}-state HMM, "
                 f"got {feature_matrix.shape[0]}"
             )
+        # Standardise BEFORE hmmlearn sees it. KMeans initialisation is
+        # Euclidean on the raw matrix, so without this the widest-spread
+        # column decides where the states are placed - measured at 87.8% for
+        # vix_level on 26 August 2026.
+        scaled = self._scaler.fit_transform(feature_matrix)
         model = GaussianHMM(
             n_components=self.n_states,
             covariance_type="diag",
@@ -76,9 +93,22 @@ class HMMRegimeModel:
         warning_filter = _NonMonotonicFilter()
         hmmlearn_logger.addFilter(warning_filter)
         try:
-            model.fit(feature_matrix)
+            model.fit(scaled)
         finally:
             hmmlearn_logger.removeFilter(warning_filter)
+        # hmmlearn leaves a never-visited state's transmat_ row at all zeros
+        # and only complains later, from predict(). Standardising makes this
+        # reachable: vix_level's raw scale was what spread the KMeans
+        # initialisation across all four states, so removing it can leave one
+        # empty on data that does not support n_states distinct regimes.
+        empty = [index for index, total in enumerate(model.transmat_.sum(axis=1)) if total == 0.0]
+        if empty:
+            raise DegenerateRegimeFitError(
+                f"{len(empty)} of {self.n_states} states were visited by no observation "
+                f"(state indices {empty}) across {len(feature_matrix)} bars, so the "
+                "transition matrix has an empty row and the model cannot classify. The "
+                "data does not support this many distinct regimes."
+            )
         # Assigned immediately after `model.fit`, before `_characterize_states`
         # below: that call reads `self._model`, so it must already be set for
         # it to run at all, but if it raises after that, the observability
@@ -86,12 +116,15 @@ class HMMRegimeModel:
         # `is_fitted` already reports the new one.
         self._decreasing_loglik_warnings = warning_filter.count
         self._model = model
+        # ⚠️ RAW, deliberately. StateSignature.mean_return must keep meaning a
+        # return. `_characterize_states` scales internally for its own
+        # `model.predict` call.
         self._state_signatures = self._characterize_states(feature_matrix)
 
     def predict_proba(self, feature_matrix: np.ndarray) -> np.ndarray:
         if self._model is None:
             raise RuntimeError("fit() must be called before predict_proba()")
-        result: np.ndarray = self._model.predict_proba(feature_matrix)
+        result: np.ndarray = self._model.predict_proba(self._scaler.transform(feature_matrix))
         return result
 
     @property
@@ -99,6 +132,17 @@ class HMMRegimeModel:
         if self._state_signatures is None:
             raise RuntimeError("fit() must be called before state_signatures is available")
         return self._state_signatures
+
+    @property
+    def scaler(self) -> ColumnStandardiser:
+        """The transform this model was fitted under.
+
+        Exposed so a caller can see WHETHER scaling happened. Read-only:
+        replacing it after a fit would leave the model reading different units
+        from the ones it was trained on, which is the exact failure
+        `test_predict_proba_uses_the_SAME_scaling_as_the_fit` exists to catch.
+        """
+        return self._scaler
 
     @property
     def is_fitted(self) -> bool:
@@ -130,7 +174,9 @@ class HMMRegimeModel:
         model = self._model
         if model is None:
             raise RuntimeError("fit() must set self._model before characterizing states")
-        states = model.predict(feature_matrix)
+        # predict needs the units the model was fitted in; the MEANS below are
+        # read from the RAW matrix so the signature stays in real units.
+        states = model.predict(self._scaler.transform(feature_matrix))
         signatures: dict[int, StateSignature] = {}
         for state in range(self.n_states):
             mask = states == state
