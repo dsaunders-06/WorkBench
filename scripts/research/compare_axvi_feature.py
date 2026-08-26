@@ -22,16 +22,15 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
 import yfinance as yf  # noqa: E402
 
-ROOT = pathlib.Path(r"C:\Claude Programming")
+ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts" / "research"))
 
-from qat.domain.regime_engine.hmm_core import HMMRegimeModel  # noqa: E402
-
 from compare_standardisation import _label_and_scalar  # noqa: E402
+
+from qat.domain.regime_engine.hmm_core import HMMRegimeModel  # noqa: E402
 
 _N_STATES = 4
 _Z_WINDOW = 60
