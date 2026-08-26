@@ -93,7 +93,17 @@ async def oms_with_lov_position(tmp_path):
 
 @pytest.mark.asyncio
 async def test_every_share_of_a_multi_execution_exit_is_absorbed(oms_with_lov_position):
-    """3,217 filled, 3,217 absorbed. The defect absorbed 374."""
+    """3,217 filled, 3,217 absorbed.
+
+    ⚠️ This assertion passes with the CUMULATIVE-quantity fix alone and does not
+    need the per-order collapse - the delta arithmetic already sums correctly
+    across many entries. It is here as a regression guard, not as the thing that
+    demonstrates this task. The row-count test below is what the collapse fixes.
+
+    The live 374 shortfall was the SHARES half of the defect
+    (`from_ib_fill` supplying per-execution rather than cumulative), which is
+    fixed one task earlier.
+    """
     oms = oms_with_lov_position
     absorbed = await oms.absorb_broker_fills()
 
