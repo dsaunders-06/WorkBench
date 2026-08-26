@@ -435,6 +435,24 @@ class RegimeEngine:
                 ", ".join(flat),
             )
 
+        # Which column would dominate a Euclidean initialisation, and by how
+        # much. The matrix is standardised inside HMMRegimeModel.fit before
+        # hmmlearn sees it, so this is a statement about the RAW features - it
+        # is here so the operator can SEE the shape of the input rather than
+        # infer it. Measured 26 August 2026: vix_level held 87.8% of total
+        # spread, 420x log_return's, and nothing said so.
+        spreads = matrix.std(axis=0)
+        total_spread = float(spreads.sum())
+        if total_spread > 0.0:
+            shares = spreads / total_spread
+            widest = int(shares.argmax())
+            logger.info(
+                "Raw feature spread is led by %s at %.1f%% of the total; the matrix is "
+                "standardised before fitting so this does not bias the states",
+                FEATURE_NAMES[widest],
+                shares[widest] * 100.0,
+            )
+
         logger.info("Refitting the regime HMM on %d bars x %d features", *matrix.shape)
         try:
             self._hmm.fit(matrix)

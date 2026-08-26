@@ -121,3 +121,41 @@ def test_a_collapsed_state_fails_the_fit_by_name():
 
     assert "state" in str(excinfo.value).lower(), excinfo.value
     assert not model.is_fitted, "a failed fit must not leave a half-built model behind"
+
+
+def test_refit_logs_which_raw_column_has_the_widest_spread(caplog):
+    """The dominance that went unnoticed for the life of the project.
+
+    `_fit` already names columns that never MOVED. A column that moves far more
+    than every other one is the same class of fact about the same matrix, and
+    it decided where the states were initialised.
+    """
+    import logging
+
+    from qat.domain.regime_engine.engine import RegimeEngine
+
+    rng = np.random.default_rng(3)
+    matrix = np.column_stack(
+        [
+            rng.normal(0.0, 0.0074, 120),
+            rng.normal(0.11, 0.0338, 120),
+            rng.normal(17.9, 3.0991, 120),
+            rng.normal(0.39, 0.3126, 120),
+            rng.normal(1.69, 0.0781, 120),
+            rng.normal(0.5, 0.05, 120),
+        ]
+    )
+
+    # __new__ deliberately: constructing a RegimeEngine drags in a bus, a
+    # feed and a benchmark, none of which _fit touches. It reads exactly two
+    # attributes, and BOTH must be set or the test fails on an AttributeError
+    # that has nothing to do with what it is checking.
+    engine = RegimeEngine.__new__(RegimeEngine)
+    engine._hmm = HMMRegimeModel(n_states=2)
+    engine._non_monotonic_fits = 0  # read when the fit logs a convergence warning
+
+    with caplog.at_level(logging.INFO, logger="qat.domain.regime_engine.engine"):
+        engine._fit(matrix)
+
+    assert "vix_level" in caplog.text, caplog.text
+    assert "spread" in caplog.text.lower(), caplog.text
