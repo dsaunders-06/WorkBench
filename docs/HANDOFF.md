@@ -1631,6 +1631,12 @@ so it neither confirms nor contradicts any of it.
 
 ## Standing constraints
 
+* ⚠️⚠️ **DO NOT PUSH TO GITHUB.** Standing hold placed by the operator on
+  **27 August 2026**: *"no pushing to GitHub until I advise otherwise."* Commit
+  locally as normal — the hold is on `git push` alone. **Only the operator can
+  lift it**; do not infer it has been lifted from silence, from a new session,
+  or from a change looking safe. When reporting state, say plainly that commits
+  are local and unpushed, so nothing downstream assumes `origin` is level.
 * **PowerShell for `%LOCALAPPDATA%`** — see the top of this file.
 * ~~**Do not push until September.**~~ **TESTED AND FALSE, 24 August.** 43
   held-back commits were pushed at 13:07 and CI completed **green in 3m57s** on
@@ -2097,6 +2103,71 @@ shares its shape.
     ~~Until then, trust the banner or `session_check`, never that button.~~
     **No longer true — the button is trustworthy as of M148**, confirmed by the
     operator at 22:02:22 with both surfaces agreeing.
+
+58. **⚠️ TWO ENTRIES SIZED IN ONE CYCLE EACH SEE A BOOK WITHOUT THE OTHER, AND
+    THE 10-POSITION LIMIT WENT TO 11.** Found 27 August from the audit trail,
+    not from a failure — the book has been over its cap since 26 August 15:15
+    and nothing has said so.
+
+    | | risk decision | signed off | `position_count` |
+    |---|---|---|---|
+    | WOW.AX | 05:15:24Z | 15:15:24.870 | **9.0** |
+    | SEK.AX | 05:15:25Z | 15:15:25.043 | **9.0** |
+
+    Nine held, both approved, book eleven — in 173 milliseconds.
+
+    **The check is not missing and it is not wrong.** `ExposureSnapshot` counts
+    pending buys into `position_count` deliberately (`governor.py:136-148`, and
+    its comment says why a pending SELL is excluded), and `governor.py:304`
+    refuses at `>= max_concurrent_positions`. The rail is built exactly as it
+    should be.
+
+    **What it reads is stale.** Both orders were sized in one evaluation cycle
+    and signed off afterwards — the log's own phrase for them is *"an order
+    parked since it was sized"* — so when the second was sized the first was
+    neither held nor yet pending. The pending term had nothing to see.
+
+    ⚠️ **CONFIRMED: the count, the two audit rows and the resulting book of 11
+    against a cap of 10.** NOT YET PINNED: that a shared snapshot is the
+    mechanism. It is strongly indicated and it should be nailed by a test that
+    sizes two candidates in one cycle and watches the second get approved —
+    which is also the test that would have caught this.
+
+    ### It is the week's shape for the third time
+
+    Item 56: the identity is checked, and the thing checked was never populated.
+    Item 34: the poll is scheduled, and the schedule was wedged. This: the limit
+    counts pending orders, and nothing was pending yet. **A rail reading a stale
+    input is indistinguishable from a rail that agrees with you** — and all
+    three were found by reading the record rather than the call site.
+
+    ### ⚠️ WHAT IT COSTS TODAY, AND IT IS NOT NOTHING
+
+    Eleven positions against a cap of ten is also **why no entry can happen at
+    all** until something closes, which cost 27 August its planned test of item
+    56's entry path:
+
+        max_concurrent_positions      : 10      book holds 11
+        max_aggregate_risk_at_stop_pct: 0.05    last read 5.03%
+
+    and the governor has been saying the second half every 300s since 26 August:
+
+        Aggregate risk-at-stop 5.03% is over the 5.00% cap - sweep is disabled,
+        so nothing will be sold to correct it. It falls as positions close or as
+        equity rises, and rises as equity falls
+
+    Two independent blocks, either one sufficient. **The first live event of the
+    next session will be an EXIT, not an entry**, and the entry watch only comes
+    alive after a position closes.
+
+    ⚠️ **Do NOT "fix" this by raising either cap.** Both are doing their job;
+    the book got over the line through the sizing race above, and widening the
+    rail to accommodate a race would hide the race.
+
+    Wanted: entries sized within one cycle must see each other. Either the cycle
+    sizes candidates against a snapshot it updates as it goes, or a candidate is
+    re-checked against the book at sign-off — which is where the order becomes
+    real anyway, and where the price-drift check (item 37) already sits.
 
 ## 📋 PROMPT TO PASTE — next session
 
