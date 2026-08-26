@@ -64,17 +64,48 @@ _RULES: tuple[tuple[str, str], ...] = (
     # INFO and match no other rule, so the three lines the operator was told to
     # watch for would not have appeared at all.
     ("Broker-fill watermark restored", "RESTORE"),
+    # The AGE warning, which is a different line from the restore above and is
+    # the one that says whether this run will replay a long window - and that
+    # fills from the app's own pre-restart orders will read as FOREIGN.
+    ("watermark is", "RESTORE"),
     ("open lot(s) to the trade ledger", "RESTORE"),
     ("closed trade(s) from", "RESTORE"),
+    # Whether this session can trade without asking. It is logged once, at
+    # startup, at WARNING, and it was not surfaced at all.
+    ("AUTONOMOUS EXECUTION IS ENABLED", "AUTO"),
     ("Replayed ", "REPLAY"),
     ("Protective OCO resting", "PROTECT"),
     ("Protective stop resting", "PROTECT"),
     ("Protective OCO proposed", "PROTECT"),
     ("POSITION UNPROTECTED", "NAKED"),
-    ("carries a stop resting", "ADOPT"),
+    # ⚠️ WAS `"carries a stop resting"` AND MATCHED NOTHING, EVER. `oms.py:961`
+    # logs "%d of %d carry a stop resting" - plural, always, because it is a
+    # count. So the one line naming every adopted position and how many of them
+    # are protected has been invisible in the live view since the rule was
+    # written. Anchored on the phrase that identifies the event rather than on
+    # a verb that can agree with a number.
+    ("pre-existing broker position", "ADOPT"),
+    # The heartbeat that proves the scan RAN. Item 34 was a reconciliation poll
+    # wedged silently - 3 scans in a day against 78 - and nothing on any screen
+    # said so. One line per 300s is the price of never repeating that.
+    ("RESTING ORDER SCAN", "SCAN"),
+    # Item 59: quarantines are restored at startup and cleared only by hand, and
+    # a quarantined symbol cannot be entered. Both halves matter, and they
+    # differ only in the leading capital, so the needle starts after it.
+    ("-order quarantine", "QUARANTINE"),
     ("reconciliation mismatch", "RECONCILE"),
     ("KILL-SWITCH TRIPPED", "KILL"),
     ("Kill-switch active", "KILL"),
+    # ⚠️ THE line for item 56. It carries the order id the app registered, and
+    # the whole before/after of M148 is whether that id is a NUMERIC permId or
+    # a UUID. `Autonomy signed off` below names the same id, so this is not the
+    # only sighting - but this is the one whose wording says "transmitted", and
+    # on the day the fix is first exercised it should not depend on a sibling.
+    ("signed off and transmitted", "TRANSMIT"),
+    # Item 56's SECOND, independent confirmation: it cannot appear unless the
+    # identity bridge resolved. Absence proves nothing - it is suppressed inside
+    # the price tolerance - so it is evidence one way only.
+    ("Corrected the recorded entry price", "PRICEFIX"),
     ("Autonomy signed off", "SIGNED"),
     ("Autonomy blocked", "BLOCKED"),
     ("awaiting sign-off", "PROPOSED"),
@@ -82,6 +113,10 @@ _RULES: tuple[tuple[str, str], ...] = (
     ("duplicate timestamp", "DUPLICATE"),
     ("EventBus handler failed", "CRASH"),
     ("MARKET DATA DOWN", "FEED"),
+    # The rail that decides whether an entry is possible at all. On 27 August it
+    # sat at 5.03% against a 5.00% cap - blocking every entry - and said so only
+    # in qat.log, every 300s, where the live view never looked.
+    ("Aggregate risk-at-stop", "AGGRISK"),
     ("could not be fetched", "MACRO"),
     ("TIME STOP", "TIMESTOP"),
     ("Turnover budget", "BUDGET"),
