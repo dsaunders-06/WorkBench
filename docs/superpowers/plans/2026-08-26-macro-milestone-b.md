@@ -36,6 +36,52 @@ The original research listed `^AXVI`, the AU curve, `AUDUSD=X` and `TIO=F` as ca
 
 ⚠️ **`statsmodels` is NOT installed**, so the stationarity column is a drift proxy — the shift in mean between the first and second half of the window, in standard deviations — not an ADF test. It separates 0.01 from 1.35 clearly enough to decide form, and it should not be quoted as a formal test.
 
+## ⚠️ THE GATE WAS RUN FIRST, AND IT SAYS DO NOT SHIP THIS YET
+
+Task 5 was run **before** Tasks 1-4, because it can reject the feature and
+building two data sources first would have been wasted. Both arms fitted with
+the real `HMMRegimeModel` and carried through the real fusion path, compared on
+every bar rather than only the last:
+
+    six (today)          final: label=bull  scalar=1.00
+    seven (+^AXVI z)     final: label=bull  scalar=1.00
+
+    bars where the LABEL differs   : 69 of 300 (23.0%)
+    bars where the SCALAR differs  : 69 of 300 (23.0%)
+
+    103: low_vol (1.00) -> bear     (0.50)
+    114: bull    (1.00) -> sideways (0.70)
+
+**The label moves on nearly a quarter of days, and ALWAYS toward more
+defensive.** That is not a refinement, it is a different regime model. Twenty-
+three percent of sessions would size differently.
+
+⚠️ **A PLAUSIBLE ARTEFACT, and it must be ruled out before this ships.** The
+matrix already carries `realized_vol` and `vix_level`. Adding `asx_vix_z` makes
+**three of seven columns volatility measures**, and under `covariance_type=
+"diag"` the model treats columns as independent - so correlated columns
+double-count and volatility would get roughly 3/7 of the model's attention. A
+systematic shift toward defensive labels is exactly what that would look like.
+The consistent direction of the difference is evidence FOR that worry, not
+against it.
+
+So the honest position: the feature has a large, real effect, and it is not yet
+established whether that effect is signal or over-representation. **Milestone C's
+ablation is what separates those**, and this milestone should not deploy ahead
+of it.
+
+⚠️ **AND A METHOD WARNING WORTH MORE THAN THE RESULT.** The first run of this
+gate reported **8 bars (2.7%)**. It was wrong. `dropna()` on the intersection of
+the STW.AX and ^AXVI calendars changed the trading-day set - the window started
+2025-06-20 instead of the 2025-06-23 the startup log recorded, while still
+holding 300 rows, so rows were paired with the wrong day's ^AXVI. Aligning onto
+STW.AX's own calendar with a forward-fill, which is what `load_macro_history`'s
+as-of join does in production, moved the answer from 2.7% to 23.0%.
+
+**A three-day calendar slip understated the effect ninefold.** Any later
+measurement here must print its date range and check it against the log before
+its numbers are believed.
+
 ## Global Constraints
 
 - **PowerShell, never the Bash tool**, for anything touching `%LOCALAPPDATA%\QuantAdvisoryTerminal` or constructing `Settings()`.
