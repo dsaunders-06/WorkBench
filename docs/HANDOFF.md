@@ -2244,7 +2244,7 @@ THE STATE
        single price are the same number there, which is the same blindness that
        hid the quantity bug. RUN THE CHECK:
 
-         & ".\.venv\Scripts\python.exe" scriptserify_exit_on_the_wire.py --symbol <SYM>
+         & ".\.venv\Scripts\python.exe" scripts\verify_exit_on_the_wire.py --symbol <SYM>
 
        ⚠️⚠️ RUN IT THE SAME DAY. IBKR execution retention is SAME-DAY ONLY and
        that is measured twice now - 183 executions on 26 August with none from
