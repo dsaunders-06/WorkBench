@@ -48,3 +48,7 @@ src/qat/_build_stamp.py
 # (f5b270e, via `git add -A`), which is why this rule exists.
 QuantAdvisoryTerminal-*.zip
 *.zip
+
+# Snapshot of live market state used by Task 4's before/after comparison -
+# reproducible from the app's own code, never a fact worth versioning.
+scripts/research/regime_matrix.npy
