@@ -1962,8 +1962,22 @@ shares its shape.
     must be updated at that moment. Until then EVERY new entry double-counts and
     halts the session ~300s later.
 
-57. **The Risk Console's kill-switch button reports a state it has not
-    checked, and clicking it does the OPPOSITE of what it says.** Found by the
+57. ~~**The Risk Console's kill-switch button reports a state it has not
+    checked, and clicking it does the OPPOSITE of what it says.**~~
+    **FIXED AND CONFIRMED LIVE 26 August.** Shipped in M148. The label is now
+    recomputed from the panel's existing 2s timer rather than remembered, so it
+    is DERIVED and cannot go stale — deliberately preferred to another
+    listener, because the outbound half of this same bug was fixed once and the
+    inbound half was missed.
+
+    ✅ **Confirmed by the operator at 22:02:22**, on the first click after the
+    fix: *"Reset pressed, both messages agree."* The banner and the button said
+    the same thing, and the reset did what its label promised. Seven hours
+    earlier the same click would have reset the switch while reading *"click to
+    halt trading"*. Logged as `Kill-switch reset by operator (risk console) -
+    order flow resumes (was: Broker reconciliation mismatch)`.
+
+    ORIGINAL FINDING. Found by the
     operator on 26 August, who saw the main banner reading `Execution halted`
     while the Risk Console button read `KILL-SWITCH: inactive - click to halt
     trading`, and **stopped rather than clicking**. That caution is the only
