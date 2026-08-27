@@ -2342,10 +2342,22 @@ shares its shape.
     startup line must say **how old** the quarantine is and that the current
     scan disagrees with it, so the staleness is impossible to miss.
 
-61. ~~**⚠️ THE WORKBENCH'S AI NOTE BELIEVES THE ACCOUNT IS FLAT.**~~ **FIXED IN
-    M149 (`fbcf8a3`), installed 27 August 16:22, SHA256-verified and signature
-    Valid on the installed copy. ⚠️ NOT YET READ BACK** — the Workbench note on
-    a held symbol has not been re-run, so the fix is deployed and unconfirmed.
+61. ~~**⚠️ THE WORKBENCH'S AI NOTE BELIEVES THE ACCOUNT IS FLAT.**~~ **FIXED IN M149, ✅ CONFIRMED
+    28 August 08:56:28** — by an audit line that had to be built first (M153):
+
+        Advisory context for SUN.AX: 10 position(s), IS held,
+        risk metrics ABSENT, verdict built, 0 corporate-action note(s)
+
+    All ten positions reached the model, SUN.AX flagged held, the verdict built,
+    no WARNING. ⚠️ **The note still did not MENTION the holding** — that is the
+    model's choice, not missing data, and the two were indistinguishable until
+    the line existed. `risk metrics ABSENT` is correct pre-open.
+
+    ⚠️ **A SEPARATE, SMALLER ITEM FALLS OUT.** `build_regime_narrative_prompt`
+    says *"Summarise the current market regime and what it implies for
+    positioning, citing the supplied context only"* and never directs the model
+    to WEIGH existing exposure. It has the position and no instruction to use
+    it. That is a PROMPT question, not a data one — see item 65.
     ORIGINAL: **The Workbench's AI note believes the account is flat. It is the
     SIBLING of the regime gap that was fixed three lines above it.** Found by
     the operator on 27 August, who ran a backtest and a walk-forward on SUN.AX
@@ -2644,6 +2656,27 @@ shares its shape.
     'risk-approved'". Not every item can be pinned, and the ones that can should
     be, the way `test_corporate_action_has_every_reader` pins its own claim
     rather than trusting a sentence.
+
+65. **The Workbench's note receives the account and is never told to use it.**
+    Falls out of item 61's confirmation on 28 August: the context provably
+    carried all ten positions and `SUN.AX ... IS held`, and the note still made
+    no reference to the holding.
+
+    `build_regime_narrative_prompt` asks for a summary of the regime and what it
+    implies for positioning, "citing the supplied context only". Nothing asks
+    the model to weigh EXISTING exposure — concentration, correlation, or the
+    fact that the symbol under test is already held.
+
+    ⚠️ **Not urgent and not a rail.** The one real action on that screen is
+    Deploy to Paper, and the operator can see their own book. Recorded because
+    the fix for item 61 was justified partly on the model being able to temper a
+    recommendation with exposure — and it demonstrably has the facts and no
+    instruction to.
+
+    Wanted: name the holding in the prompt when the symbol is held, the way the
+    macro prompt now names `exposure_hint`. ⚠️ **Verify with the audit line, not
+    by reading the note** — a note that mentions a holding proves the model
+    chose to, and one that does not proves nothing without the line.
 
 ## 📋 PROMPT TO PASTE — next session
 
