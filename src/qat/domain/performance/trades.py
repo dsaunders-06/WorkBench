@@ -39,7 +39,7 @@ import os
 import shutil
 import threading
 from collections import defaultdict, deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -114,6 +114,75 @@ _FIELDS = (
     # `from_row` reads it with `.get()` for exactly that reason.
     "order_id",
 )
+
+
+def repair_csv_header(path: Path, fields: Sequence[str]) -> bool:
+    """Rewrite `path`'s header to `fields` when it has fallen behind.
+
+    Returns True if the file was rewritten. Item 63: `_record` writes a
+    header only when the file is NEW and then appends under the current
+    `fields` forever, so every field added after creation is WRITTEN into
+    rows and never NAMED. Found on the live ledger as a 30-field header over
+    32-field rows, which made `market`, `currency` and `order_id` unreadable
+    - and `EdgeEstimator` filters on `market`, so it matched nothing and
+    would have matched nothing at any trade count.
+
+    ⚠️ **Rows are read POSITIONALLY, never through `DictReader`.** Under a
+    stale header the surplus values land in the restkey and a
+    `DictWriter`-driven rewrite drops them, turning a mislabelling into
+    data loss. Values are never re-keyed here: the rows are written back
+    byte-for-byte in the columns they already occupy, and only the header
+    line changes.
+
+    ⚠️ **This is only safe because `fields` has only ever GROWN by
+    appending**, which makes a short row a prefix of the current schema. A
+    row WIDER than `fields` means that stopped being true - a field was
+    removed or reordered - and a positional remap would move values between
+    columns, so it raises rather than guessing.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+    if not rows:
+        return False
+    header, data = rows[0], rows[1:]
+    if header == list(fields):
+        # Untouched rather than rewritten-identically. This is the only
+        # record of realised P&L there is, and a rewrite it does not need
+        # is risk it does not need either.
+        return False
+    widest = max((len(row) for row in data), default=0)
+    if widest > len(fields):
+        raise ValueError(
+            f"{path.name} has a row {widest} fields wider than the {len(fields)}-field "
+            f"schema, so columns were removed or reordered rather than appended. "
+            f"Refusing to remap positionally - this needs a human."
+        )
+    tmp_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+    try:
+        with tmp_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(list(fields))
+            writer.writerows(data)
+        os.replace(tmp_path, path)
+    except OSError:
+        logger.exception("Could not repair the header of %s", path)
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+    logger.warning(
+        "Repaired the header of %s: it named %d field(s) while rows carried up to %d, so "
+        "%s %s unreadable (item 63)",
+        path.name,
+        len(header),
+        widest,
+        ", ".join(f for f in fields if f not in header) or "no field",
+        "were" if len([f for f in fields if f not in header]) != 1 else "was",
+    )
+    return True
 
 
 def _share_of(total_cost: float, matched: float, whole: float) -> float:
@@ -522,6 +591,10 @@ class TradeLedger:
         trades: list[ClosedTrade] = []
         skipped = 0
         try:
+            # Item 63, BEFORE the DictReader runs: a header that has fallen
+            # behind `_FIELDS` makes every field added since unreadable, and
+            # `market` is what `EdgeEstimator` filters on.
+            repair_csv_header(self.path, _FIELDS)
             with self.path.open(newline="", encoding="utf-8") as handle:
                 for row in csv.DictReader(handle):
                     trade = ClosedTrade.from_row(row)
@@ -1115,6 +1188,11 @@ class TradeLedger:
                 remaining,
             )
 
+    @staticmethod
+    def repair_header(path: Path) -> bool:
+        """`repair_csv_header` for the closed-trade schema. See item 63."""
+        return repair_csv_header(path, _FIELDS)
+
     def _record(self, trade: ClosedTrade) -> None:
         try:
             with self._lock:
@@ -1229,6 +1307,12 @@ class EquityCurve:
         A missing or damaged file is not fatal. Losing history is bad; failing
         to start because history is unreadable is worse.
         """
+        # Item 63, the same defect as the trade ledger and found by
+        # CHECKING rather than assuming this file was clean: the
+        # header named 4 fields while rows carried 5, so M133's
+        # `position_value` was written on every sample and readable on
+        # none - and "unknown" is not "nothing held".
+        repair_csv_header(self.path, self._FIELDS)
         if not self.path.exists():
             return []
         points: list[EquityPoint] = []
