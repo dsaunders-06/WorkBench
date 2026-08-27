@@ -2620,7 +2620,25 @@ shares its shape.
     correct detail underneath a first line that had stopped being true, which is
     why reading further would have caught it and skimming did not.
 
-    Wanted: a check that can fail. Several items name a commit, a milestone or a
+    ### ✅ BUILT — `tests/test_open_items_are_still_open.py`
+
+    ⚠️ **It asserts each open item's defect is STILL PRESENT**, so the day
+    someone fixes one without updating this file, it goes red and names the
+    item. That inverts the usual direction deliberately: **these tests are
+    EXPECTED to fail when the code improves.** A red there is not a regression,
+    it is this list falling behind, and the fix is to update the heading and
+    delete the entry.
+
+    Pinned open: 25, 29, 31. Pinned closed (so a fix cannot quietly regress):
+    35, 51, 54, 58, 59, 63.
+
+    ⚠️ Only genuinely grep-able claims are in it. Most items cannot be pinned
+    this way and are not pretended to be — a guard that covered everything by
+    weakening what it asserts is the failure it exists to prevent. And a missing
+    file FAILS rather than skipping, which is `test_corporate_action_has_every_reader`'s
+    own recorded lesson.
+
+    ORIGINAL WANT: a check that can fail. Several items name a commit, a milestone or a
     file that would let a test assert the claim still holds - `grep`-able facts
     like "`_EXPOSURE_SCALARS` contains 0.4" or "risk_console renders
     'risk-approved'". Not every item can be pinned, and the ones that can should
