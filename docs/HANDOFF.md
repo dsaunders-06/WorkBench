@@ -2144,8 +2144,12 @@ shares its shape.
     ### ⚠️ WHAT IT COSTS TODAY, AND IT IS NOT NOTHING
 
     Eleven positions against a cap of ten is also **why no entry can happen at
-    all** until something closes, which cost 27 August its planned test of item
-    56's entry path:
+    all**, and it costs MORE than it looks: `governor.py:304` refuses at `>=`,
+    so returning to ten is back AT the limit rather than under it. **From
+    eleven, TWO exits are needed before a new name can be entered.** Confirmed
+    live on 27 August - RHC.AX exited at 10:02:41, the book went 11 -> 10, and
+    nothing became enterable. That cost 27 August its planned test of item 56's
+    entry path:
 
         max_concurrent_positions      : 10      book holds 11
         max_aggregate_risk_at_stop_pct: 0.05    last read 5.03%
@@ -2292,9 +2296,21 @@ THE STATE
     nothing will be sold to correct it. It falls as positions close or as
     equity rises, and rises as equity falls
 
-  So an EXIT must come first. It frees a slot and drops the aggregate under the
-  cap, and only then does the entry watch come alive. Item 56's entry fix stays
-  unexercised until that happens - which may not be today.
+  ⚠️⚠️ **TWO exits are needed, not one, and the first draft of this section got
+  that wrong.** `governor.py:304` refuses at `>=`:
+
+      if not already_held and snap.position_count >= max_concurrent_positions:
+
+  So a book of ELEVEN going to TEN is back AT the limit, not under it, and
+  10 >= 10 still refuses. A new name needs the count at NINE. Confirmed live on
+  27 August: RHC.AX exited at 10:02:41 taking the book 11 -> 10, and no entry
+  became possible.
+
+  ⚠️ The `already_held` escape does NOT help - the signal bridge drops a buy for
+  a symbol *"already holding the position the signal is asking for"*
+  (`signal_bridge.py:12`), so that branch is unreachable from the strategy path
+  and adds never happen. Item 56's entry fix stays unexercised until the book
+  reaches nine.
 
   ⚠️ Do NOT clear this by raising either cap. See item 58: the book crossed the
   line through a sizing race, and widening a rail to fit a race hides the race.
