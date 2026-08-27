@@ -2238,6 +2238,80 @@ shares its shape.
     startup line must say **how old** the quarantine is and that the current
     scan disagrees with it, so the staleness is impossible to miss.
 
+61. **⚠️ THE WORKBENCH'S AI NOTE BELIEVES THE ACCOUNT IS FLAT. It is the
+    SIBLING of the regime gap that was fixed three lines above it.** Found by
+    the operator on 27 August, who ran a backtest and a walk-forward on SUN.AX
+    and read the note saying *"Given no current positions and lacking portfolio
+    risk metrics..."* while the account held **3,192 SUN.AX**.
+
+    **The commentary is wrong, and the note is formed on a false premise.**
+
+    ### The asymmetry, in one table
+
+    Both screens call `build_advisory_context`. What each actually passes:
+
+    | argument | Advisor | Workbench |
+    |---|---|---|
+    | `regime_label` / `regime_probs` | ✅ | ✅ *(fixed earlier)* |
+    | `fundamentals` | ✅ | ✅ |
+    | **`positions`** | ✅ | ❌ |
+    | **`risk_metrics`** | ✅ | ❌ |
+    | **`verdict`** (M136 rule checks) | ✅ | ❌ |
+    | **`position`** (the held lot's own facts) | ✅ | ❌ |
+    | `fetched_notes` | ✅ | ❌ |
+
+    Every missing argument defaults to `None` and becomes an empty dict. Nothing
+    errors. The model is simply told the account holds nothing.
+
+    ### ⚠️ It is the sibling, and the comment that closed the first half is
+    three lines above the gap
+
+    `workbench.py:566` carries this, on the regime arguments:
+
+    > The defect this closes: it passed "unknown" and formed a recommendation
+    > against no regime at all, while the Advisor formed one against the live
+    > regime for the same company.
+
+    **Exactly the same sentence is true of positions today.** M126's whole
+    purpose was that the two screens cannot reach different views of one
+    company. The regime half was found and fixed; the account half was never
+    checked. This is the fourth instance of *check whether the fix has a
+    SIBLING* in three days.
+
+    ### Why the tests did not catch it
+
+    `build_advisory_context`'s own docstring asserts the invariant:
+
+    > Both screens call this. They differ ONLY in what they can legitimately
+    > supply ... and never in what they fetch
+
+    **That sentence is false as written**, and the test built to defend it only
+    covers the second clause. `test_both_screens_get_the_same_fetched_material`
+    compares `_FETCHED = ("symbol", "next_earnings", "news")` - the material the
+    BUILDER fetches for itself. Its sibling test's docstring states the trap
+    outright: *"`fundamentals` and `position` are SUPPLIED by the caller, not
+    fetched, so asserting the two calls agree on them proves nothing when both
+    default to empty."*
+
+    So the suite knows supplied fields default to empty, and **nothing checks
+    that the Workbench supplies them.** The guard covers the builder; the defect
+    is at the call site.
+
+    ### What it costs
+
+    Advisory only - no rail, no sizing, no order path. But the one real action
+    on that screen is **Deploy to Paper**, and the note is the commentary an
+    operator weighs before pressing it. Forming that advice believing the
+    account is flat removes exactly the considerations that should temper it:
+    existing exposure in the same name, concentration, and correlation. On
+    SUN.AX it is sharper still - the book is five financials of ten and SUN is
+    one of them.
+
+    Wanted: the Workbench passes the same account facts the Advisor does. ⚠️
+    **And a test at the CALL SITES, not the builder** - one that constructs both
+    screens' calls and asserts neither drops an argument the other supplies.
+    A guard on the builder alone is what let this through.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```
