@@ -2688,88 +2688,49 @@ THE STATE
   net on the four real rows. ⚠️ The FIFTH is a REPAIR row with EMPTY costs, so
   net P&L across LOV is NOT summable from that file.
 
-⚠️ FIRST WORK: THE FIRST LIVE EVENT IS AN EXIT, NOT AN ENTRY.
+⚠️ FIRST WORK: READ BACK M152, THEN WATCH THE OPEN.
 
-  ⚠️ CORRECTED 27 August 08:5x, from the record. The previous version of this
-  section told you to be at the screen at 10:29 for the first entry. NO ENTRY
-  CAN HAPPEN. Two independent blocks, either one sufficient:
+  M152 (`d49782e`) installed 27 August 18:09, SHA256 `8BD24D06...00D2`,
+  signature Valid on the installed copy. Rollback:
+  `C:\QuantAdvisoryTerminal.bak-M151-20260827-1809`.
+  ⚠️ NOT READ BACK - the first launch is the read-back. Expect
+  `Build: M152 (d49782e, ...)` and NO header-repair lines (M150 already healed
+  both files; silence there is the confirmation).
 
-    max_concurrent_positions      : 10      book holds ELEVEN   (item 58)
-    max_aggregate_risk_at_stop_pct: 0.05    last read 5.03%
-
-  and the governor has logged the second every 300s since 26 August:
-
-    Aggregate risk-at-stop 5.03% is over the 5.00% cap - sweep is disabled, so
-    nothing will be sold to correct it. It falls as positions close or as
-    equity rises, and rises as equity falls
-
-  ⚠️⚠️ **TWO exits are needed, not one, and the first draft of this section got
-  that wrong.** `governor.py:304` refuses at `>=`:
-
-      if not already_held and snap.position_count >= max_concurrent_positions:
-
-  So a book of ELEVEN going to TEN is back AT the limit, not under it, and
-  10 >= 10 still refuses. A new name needs the count at NINE. Confirmed live on
-  27 August: RHC.AX exited at 10:02:41 taking the book 11 -> 10, and no entry
-  became possible.
-
-  ⚠️ The `already_held` escape does NOT help - the signal bridge drops a buy for
-  a symbol *"already holding the position the signal is asking for"*
-  (`signal_bridge.py:12`), so that branch is unreachable from the strategy path
-  and adds never happen. Item 56's entry fix stays unexercised until the book
-  reaches nine.
-
-  ⚠️ Do NOT clear this by raising either cap. See item 58: the book crossed the
-  line through a sizing race, and widening a rail to fit a race hides the race.
+  ⚠️ AN ENTRY STILL CANNOT HAPPEN AT TEN POSITIONS. `governor.py:304` refuses
+  at `>=`, so ten of ten is AT the cap. The book needs to reach NINE. Yesterday
+  that cost 1,036 refusals across six symbols - DMP, RHC, ORA, AMC, KAR, SUL -
+  and zero approvals.
 
   WATCH, IN ORDER:
 
-  ON AN EXIT - the likely event, and it tests three unproven things:
-    1. ONE ledger row, FULL quantity (item 56's other half, M147's quantity
-       half). Four rows for one exit is the 26 August shape returning.
-    2. ⚠️ THE PRICE. M147's price half has NO real-wire confirmation, because
-       all 183 LOV executions filled at exactly 28.45 - a blended average and a
-       single price are the same number there, which is the same blindness that
-       hid the quantity bug. RUN THE CHECK:
+  1. ⚠️ M151's FILTER, at the bell. The recovery line should now read
+     `yfinance market data has recovered - N per-symbol 'possibly delisted'
+     error(s) were suppressed...`. **A recovery line with NO suppression count
+     means `blind` never got set and the storm passed through.** Measured
+     yesterday: 685 of 710 lines in the window were that storm.
+     ⚠️ Total absence of delisting errors ALL SESSION would mean the filter is
+     over-reaching, not that the feed is healthy.
 
-         & ".\.venv\Scripts\python.exe" scripts\verify_exit_on_the_wire.py --symbol <SYM>
+  2. M152's QUARANTINE AUTO-CLEAR - only if something gets quarantined. Three
+     consecutive clean scans then `Resting-order quarantine on X LIFTED by the
+     reconciler`. Nothing is quarantined right now, so this may not exercise.
 
-       ⚠️⚠️ RUN IT THE SAME DAY. IBKR execution retention is SAME-DAY ONLY and
-       that is measured twice now - 183 executions on 26 August with none from
-       the 25th, and this script correctly returning nothing on 27 August for
-       the 26th's exit. AFTER THE CLOSE THE EVIDENCE IS GONE.
-       ⚠️ If the order has ONE distinct price, it is NOT a confirmation. The
-       script says so itself rather than letting it be quoted as one.
-    3. The absorb query floor moves for the first time on this broker once an
-       own partial stamps `_own_partial_fill_stamps` - see item 56. Safe by
-       argument, never yet observed.
+  3. ON AN EXIT: ONE ledger row, full quantity, and RUN THE WIRE CHECK
+     THE SAME DAY - IBKR retention is same-day only:
 
-  ON AN ENTRY - only reachable after an exit, and the whole point of M148:
-    4. The transmit line carries a NUMERIC permId, not a UUID. Every such line
-       since 1 August carried a UUID. Confirmed on 27 August that the last one
-       did: `order=6ac52ed8d8284a25a3fa81966e02fafe ... WOW.AX qty=1098.0`.
-       That IS the before/after, in one field, with no absorb pass needed.
-    5. The order transmits EXACTLY ONCE (M139).
-    6. NO "BROKER-SIDE FILL absorbed" line names an order the app just sent.
-       ⚠️ If one appears, HALT - that is item 56 surviving its fix.
-    7. A SECOND, INDEPENDENT confirmation: `Corrected the recorded entry price
-       for <SYM> -> <price> to what the broker charged`. That line cannot appear
-       unless the identity bridge resolved. ⚠️ Its ABSENCE proves nothing - it
-       is suppressed inside the price tolerance - so 4 stays the signal that
-       must be there.
-    8. ⚠️ ITEM 58 IS LIVE: if TWO entries are approved in one cycle they will
-       each see a book without the other, exactly as WOW and SEK did. The book
-       is already at 11 of 10.
+         & ".\.venv\Scripts\python.exe" scriptserify_exit_on_the_wire.py --symbol <SYM>
 
-  ALSO, ALL SESSION:
-    9. M119 at the 10:00 open - the yfinance retry, deployed and never
-       exercised. Yahoo publishes ASX intraday ~20 min late; on the 26th all
-       five polls from the bell returned empty and the stream ENDED
-       permanently. This is its first real test, and it is free to watch.
-   10. ~~sector_pct in risk_decisions.csv stops reading null.~~ ALREADY TRUE -
-       the last two rows read 0.191 (WOW) and 0.057 (SEK), with
-       held_in_sector_dollars 67,318 on WOW. Item 44's rail IS being fed;
-       whether it ever BINDS is still open.
+     A second exit also takes the book to NINE, which is what unblocks entries.
+
+  4. ON AN ENTRY (only reachable after a second exit): the transmit line carries
+     a NUMERIC permId, not a UUID. Item 56's fix is STILL UNEXERCISED.
+     ⚠️ Item 58 shipped in M150, so two entries in one cycle should now see each
+     other - `position_count` must not read the same number twice in a row.
+
+  5. M149's TWO READ-BACKS, which need no market: Workbench -> backtest SUN.AX
+     (the AI note should name the 3,192 shares) and Regime Monitor -> Analyse
+     Market Conditions (the reasoning should engage with `exposure_hint`).
 
 THEN, IN ORDER
 
