@@ -2395,6 +2395,90 @@ shares its shape.
     Whether an anchored prompt produces a different number is the read-back
     check for this change, and it has not been run.
 
+63. **⚠️⚠️ THE CLOSED-TRADE LEDGER'S HEADER IS STALE, AND THREE FIELDS ARE
+    UNREADABLE ON EVERY ROW — INCLUDING THE ONE `EdgeEstimator` FILTERS ON.**
+    Found 27 August after the close, from the ledger file itself.
+
+        HEADER  30 fields   ...,best_price,market,currency,
+        ROW     32 fields   ...,44.4523,,,ASX,AUD,1216558924
+
+    ### Measured, by reading the file exactly as the app does
+
+        rows read back: 6
+          symbol       = 'RHC.AX'
+          r_multiple   = '2.4737'      ← fine
+          exit_reason  = 'target'      ← fine
+          market       = ''            ← should be 'ASX'
+          currency     = ''            ← should be 'AUD'
+          order_id     = None          ← the key does not exist
+          restkey(None) = ['AUD', '1216558924']
+
+        market values across every row: ['', '', '', '', '', '']
+
+    **The data is not lost.** `ASX`, `AUD` and the order id are all present in
+    the rows, at the right positions. They are simply past where the header
+    stops naming columns, so `csv.DictReader` hands them back under the wrong
+    names or strands them in the restkey.
+
+    ### The cause: a header written once and never migrated
+
+    `_record` (`trades.py:1128`) writes the header only when the file is NEW:
+
+        is_new = not self.path.exists() or self.path.stat().st_size == 0
+        writer = csv.DictWriter(handle, fieldnames=_FIELDS, ...)
+        if is_new:
+            writer.writeheader()
+
+    Rows are then appended under the CURRENT `_FIELDS` forever after. So every
+    field added since the file was created - `earnings_at_entry`,
+    `held_through_earnings` (both landing under the names `market` and
+    `currency`), then `market`, `currency`, `order_id` themselves - is written
+    into rows and never named in the header.
+
+    ⚠️ **And the amendment path preserves the staleness by design.**
+    `_read_closed_rows`' docstring: *"keyed by whatever header the file actually
+    has - not `_FIELDS` - so a row is read and, if untouched, written straight
+    back under the schema it already had."* That is right for not clobbering
+    data and it also guarantees the bad header survives every amendment.
+
+    ⚠️ **`order_id`'s own comment shows the half that was thought about:**
+    *"Added while the file already has rows without it - `from_row` reads it
+    with `.get()` for exactly that reason."* A ROW missing a field was handled.
+    A HEADER missing the NAME was not. The same one-direction shape as items 56,
+    58, 59 and 61.
+
+    ### What it costs
+
+    1. ⚠️⚠️ **`EdgeEstimator` can never measure an edge.** It calls
+       `closed_trades(strategy, market=self.settings.market)` and the filter is
+       a strict `trade.market == market`. Every restored row has `market=None`,
+       so **the filter matches nothing and will match nothing at 20 trades or at
+       200** - the sizer stays on its invented 0.55 / 1.5 constants forever,
+       reporting `source="default"` for a reason that has nothing to do with
+       sample size. **This is M122's rail, silently never binding.**
+    2. **M71/M147's exit-price amendment cannot target its row after a
+       restart** - it matches on `order_id`, which reads back as absent.
+    3. `earnings_at_entry` and `held_through_earnings` are unreadable too.
+
+    ✅ **No live harm has occurred YET**, and that is worth stating precisely:
+    at 6 closed trades the estimator is below its 20-trade threshold and would
+    have used defaults anyway. The cost is entirely in the future, which is
+    exactly why it would not have announced itself.
+
+    ### The fix, in two separable parts
+
+    * **Code:** on append, compare the on-disk header against `_FIELDS` and
+      REWRITE the file's header when they differ. The rows already match
+      `_FIELDS` order, so nothing else has to move.
+    * **Data:** the existing file needs its header line replaced.
+      ⚠️ **This is the only record of realised P&L this system has.** It gets a
+      dry-run script and a backup first, per the standing rule about live data
+      writes - never an inline edit.
+
+    ⚠️ **Check `equity_curve.csv` for the same shape before assuming it is
+    clean.** It has its own `_FIELDS` (`trades.py:1207`) and the identical
+    write-header-only-if-new logic at `:1276-1278`.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```
