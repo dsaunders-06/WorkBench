@@ -31,7 +31,7 @@ from qat.data.broker.account_poller import AccountSnapshot
 from qat.data.broker.adapter import AccountBalances
 from qat.domain.ai_advisory.context import AdvisoryContext
 from qat.domain.risk_engine.audit import RiskDecision
-from qat.presentation import theme
+from qat.presentation import advisory_account, theme
 from qat.presentation.ai_advisor import AiAdvisorScreen, _answer_caveats
 from qat.presentation.runtime import Runtime
 
@@ -114,7 +114,7 @@ def test_a_missing_metric_is_omitted_rather_than_zeroed(qtbot):
     screen = _screen(qtbot)
     _record_check(screen, {"var_95": 0.031})
 
-    metrics = screen._risk_metrics()
+    metrics = advisory_account.risk_metrics(screen.runtime)
 
     assert metrics == pytest.approx({"var_95": 0.031})
     assert "es_975" not in metrics
@@ -124,11 +124,13 @@ def test_metrics_that_are_present_are_carried(qtbot):
     screen = _screen(qtbot)
     _record_check(screen, {"var_95": 0.031, "es_975": 0.047})
 
-    assert screen._risk_metrics() == pytest.approx({"var_95": 0.031, "es_975": 0.047})
+    assert advisory_account.risk_metrics(screen.runtime) == pytest.approx(
+        {"var_95": 0.031, "es_975": 0.047}
+    )
 
 
 def test_no_risk_check_at_all_yields_nothing(qtbot):
-    assert _screen(qtbot)._risk_metrics() == {}
+    assert advisory_account.risk_metrics(_screen(qtbot).runtime) == {}
 
 
 def test_the_prompt_says_unknown_rather_than_showing_an_empty_container():
@@ -224,7 +226,7 @@ def test_an_unknown_day_pnl_produces_no_verdict_rather_than_a_permissive_one(qtb
         summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
     )
 
-    verdict, view = screen._build_verdict("AMD", [], snapshot)
+    verdict, view = advisory_account.build_symbol_verdict(screen.runtime, "AMD", [], snapshot)
 
     assert verdict is None
     assert view is None
@@ -258,7 +260,7 @@ def test_the_monitors_day_pnl_is_enough_to_produce_a_verdict(qtbot):
         summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
     )
 
-    verdict, _view = screen._build_verdict("AMD", [], snapshot)
+    verdict, _view = advisory_account.build_symbol_verdict(screen.runtime, "AMD", [], snapshot)
 
     assert verdict is not None, (
         "the verdict is still suppressed - the monitor's figure is not reaching "
@@ -276,6 +278,6 @@ def test_a_fully_known_account_still_produces_a_verdict(qtbot):
         summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
     )
 
-    verdict, _view = screen._build_verdict("AMD", [], snapshot)
+    verdict, _view = advisory_account.build_symbol_verdict(screen.runtime, "AMD", [], snapshot)
 
     assert verdict is not None

@@ -49,6 +49,7 @@ from qat.domain.backtester.walk_forward import run_walk_forward
 from qat.domain.display_dates import format_display_date
 from qat.domain.events import RegimeEvent
 from qat.presentation import theme
+from qat.presentation.advisory_account import gather as gather_account_facts
 from qat.presentation.advisory_inputs import build_advisory_context
 from qat.presentation.runtime import Runtime
 from qat.presentation.ui_level import UiLevel
@@ -558,6 +559,17 @@ class WorkbenchScreen(QWidget):
         signal_series: pd.Series,
         fundamentals: FundamentalSnapshot | None = None,
     ) -> None:
+        # ⚠️ ITEM 61. The same gatherer the Advisor uses, because this screen used
+        # to pass NONE of the account facts and the note then opened "Given no
+        # current positions and lacking portfolio risk metrics" while the account
+        # held 3,192 SUN.AX. Each missing argument defaulted to an empty dict and
+        # nothing errored.
+        #
+        # It is the SIBLING of the regime gap fixed three lines below: that one
+        # passed "unknown" and formed a recommendation against no regime at all,
+        # while the Advisor formed one against the live regime for the same
+        # company. The regime half was found and the account half was not.
+        facts = await gather_account_facts(self.runtime, symbol)
         context = await build_advisory_context(
             self.runtime,
             symbol,
@@ -572,6 +584,11 @@ class WorkbenchScreen(QWidget):
             regime_label=self._regime_label,
             regime_probs=self._regime_probs,
             fundamentals=fundamentals.available_figures() if fundamentals is not None else {},
+            positions=facts.positions,
+            risk_metrics=facts.risk_metrics,
+            verdict=facts.verdict,
+            position=facts.position,
+            fetched_notes=facts.notes,
         )
         recommendation = await self.runtime.ai_service.get_regime_narrative(context)
         flags = ", ".join(recommendation.risk_flags) if recommendation.risk_flags else "none"

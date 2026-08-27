@@ -14,10 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import UTC, datetime
 from html import escape
 
-import pandas as pd
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -29,15 +27,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from qat.data.broker.account_poller import AccountSnapshot
-from qat.data.broker.adapter import Position
-from qat.domain.autonomy.gate import AccountState, AutonomyGate
 from qat.domain.events import RegimeEvent
-from qat.domain.oms.position_view import PositionView, build_position_views
 from qat.presentation import theme
+from qat.presentation.advisory_account import gather as gather_account_facts
+from qat.presentation.advisory_account import resolve_day_pnl_pct
 from qat.presentation.advisory_inputs import build_advisory_context
 from qat.presentation.runtime import Runtime
-from qat.presentation.symbol_verdict import SymbolVerdict, build_verdict, render_caveats
+from qat.presentation.symbol_verdict import render_caveats
 
 logger = logging.getLogger(__name__)
 
@@ -140,31 +136,6 @@ def _answer_caveats(fundamentals: dict[str, object], risk_metrics: dict[str, flo
     if not caveats:
         return ""
     return "<br><i>Answered without: " + "; ".join(caveats) + ".</i>"
-
-
-def _position_dict(view: PositionView | None) -> dict[str, object]:
-    """The held position's own facts, read from `position_view.py` (M136) -
-    never re-derived, for the reason `AdvisoryContext.position`'s own comment
-    gives: a model asked whether to sell a symbol with only its share count
-    has no entry price, no P&L, no R multiple and no stop to reason from.
-
-    Empty when the symbol is not held or the view could not be built - the
-    same "show nothing rather than guess" rule `position_view.py` states for
-    itself, not a substitute zero.
-    """
-    if view is None:
-        return {}
-    return {
-        "quantity": view.quantity,
-        "entry_price": view.entry_price,
-        "last_price": view.last_price,
-        "pnl_pct": view.pnl_pct,
-        "pnl_r": view.pnl_r,
-        "exit_distance": view.exit_distance,
-        "stop_distance": view.stop_distance,
-        "risk_share": view.risk_share,
-        "notes": list(view.notes),
-    }
 
 
 class AiAdvisorScreen(QWidget):
@@ -272,197 +243,6 @@ class AiAdvisorScreen(QWidget):
             return {}
         return snapshot.available_figures()
 
-    def _corporate_action_notes(self) -> list[str]:
-        """Pending corporate actions, into the context the model reasons from
-        (M39, R2).
-
-        The reason this is not optional: the model is asked about positions, and
-        a pending split means a share count and a per-share price are both about
-        to change. Advice about a position whose shape is about to move, given
-        without knowing that, is confidently wrong - and `is_synthetic` is the
-        precedent for a fact reaching the model late rather than never.
-        """
-        monitor = getattr(self.runtime, "corporate_action_monitor", None)
-        pending = monitor.pending_actions() if monitor is not None else []
-        if not pending:
-            return []
-        mode = self.runtime.settings.corporate_action_mode
-        return [
-            f"CORPORATE ACTION PENDING: {a.describe()}. The resting stop is "
-            + (
-                f"adjusted to {a.adjusted_stop:.2f}."
-                if a.state == "applied" and a.adjusted_stop is not None
-                else f"NOT adjusted (mode={mode})."
-            )
-            + " New entries in this symbol are refused."
-            for a in pending
-        ]
-
-    def _bars_for(self, symbol: str) -> pd.DataFrame | None:
-        """The bars `PositionView.exit_distance` is computed from.
-
-        The identical read `dashboard.py`'s own `_bars_for` performs, for the
-        identical reason given there: read-only, so building a verdict cannot
-        mutate `SignalToOrderBridge` state, and never the aggregator the exit
-        condition is actually judged against - `exit_distance` is a strategy
-        accessor over whichever bars this bridge happens to hold.
-        """
-        bridge = self.runtime.signal_bridge
-        if bridge is None:
-            return None
-        return bridge.bars.frame_if_present(symbol)
-
-    def _build_verdict(
-        self,
-        symbol: str,
-        positions: list[Position],
-        account_snapshot: AccountSnapshot,
-    ) -> tuple[SymbolVerdict | None, PositionView | None]:
-        """What this application's own rails say about `symbol`, right now
-        (M136) - or (None, None) when it cannot be said without guessing.
-
-        Every input here is a READ: `governor.snapshot`, `position_stops`,
-        `entry_permitted`, `is_quarantined`, and `gate.evaluate` are all pure
-        or read-only, and `RiskEngine.evaluate_*` - the sizer, which WRITES
-        `risk_decisions.csv` - is never called. See `symbol_verdict.py`'s own
-        docstring for why that line may never be crossed.
-
-        Wrapped so a failure anywhere in here costs the verdict block and
-        never the answer - an advisory screen is the last place that should
-        raise, the same rule `_fundamentals_for` and `news_for` already keep.
-        """
-        try:
-            equity = account_snapshot.balances.equity
-            cash = account_snapshot.balances.cash
-            # Item 47. This read `balances.day_pnl_pct` alone, which derives
-            # from `last_equity` - a field IBKR never supplies - so the value
-            # was ALWAYS None on this broker and the verdict below has never
-            # rendered in production. The guard is right and stays; the input
-            # was wrong. `EquityMonitor.day_pnl_pct()` is a real measured
-            # figure and is what `AutonomyGate` gates on, so the verdict now
-            # agrees with the rail it reports.
-            monitor = getattr(self.runtime, "equity_monitor", None)
-            state = getattr(monitor, "state", None)
-            # ONLY when the monitor genuinely has a basis. `day_pnl_pct()`
-            # returns 0.0 rather than None when it does not - deliberately, so
-            # that a just-started app does not read as a loss and pause buys.
-            # That is right for the GATE and fatal here: a fabricated 0.0 can
-            # never trip the always-negative pause threshold, so the verdict
-            # would state "no rail here would refuse it" on nothing. The first
-            # version of this fix did exactly that and the existing
-            # suppression test caught it.
-            monitor_pct: float | None = None
-            if monitor is not None and state is not None:
-                if getattr(state, "day_start_equity", 0.0) > 0:
-                    monitor_pct = monitor.day_pnl_pct(equity)
-            day_pnl_pct = resolve_day_pnl_pct(
-                broker_pct=account_snapshot.balances.day_pnl_pct,
-                monitor_pct=monitor_pct,
-            )
-            if equity is None or cash is None or day_pnl_pct is None:
-                # The Dashboard's own `_refresh` bails identically when equity
-                # is unknown - a verdict computed from an assumed figure would
-                # guess, which `position_view.py` forbids of itself: "a value
-                # this module cannot support is `None`, never `0` or `0.0`".
-                #
-                # `day_pnl_pct` is the one that bites: `AutonomyGate.evaluate`
-                # only pauses buys when day P&L is at or below a threshold that
-                # is always negative, so a substituted 0.0 could NEVER trip
-                # that pause - an unreported -6% day would read as "no rail
-                # checked here would refuse it". That is M73's `var_95=0.0`
-                # scar again, this time in the verdict rather than the prompt.
-                # `cash` is inert today (the gate never reads it) but is the
-                # same category of fact, so it is held to the same rule.
-                return None, None
-            account = AccountState(equity=equity, cash=cash, day_pnl_pct=day_pnl_pct)
-
-            resting_stops = self.runtime.oms.position_stops()
-            entries = (
-                self.runtime.signal_bridge.position_entries()
-                if self.runtime.signal_bridge is not None
-                else {}
-            )
-            views = build_position_views(
-                positions=positions,
-                entries=entries,
-                resting_stops=resting_stops,
-                # The SAME derivation the aggregate cap is gated on - never
-                # recomputed here, the reason `dashboard.py`'s identical call
-                # gives for its own copy.
-                snapshot=self.runtime.risk_engine.governor.snapshot(
-                    positions, resting_stops, equity
-                ),
-                settings=self.runtime.settings,
-                bars_for=self._bars_for,
-                strategies=self.runtime.available_strategies,
-                clock=lambda: datetime.now(UTC),
-            )
-            view = next((v for v in views if v.symbol == symbol), None)
-
-            # The DEPLOYED set, not the available one (M136) - what the
-            # verdict reports is whether the rails would refuse a real order,
-            # and only a deployed strategy could ever place one.
-            by_name = {s.name: s for s in self.runtime.available_strategies}
-            deployed = [
-                by_name[name]
-                for name in self.runtime.settings.deployed_strategies_tuple
-                if name in by_name
-            ]
-
-            gate = getattr(self.runtime, "autonomy_gate", None)
-            if gate is None:
-                gate = AutonomyGate(self.runtime.settings, self.runtime.kill_switch)
-
-            verdict = build_verdict(
-                symbol=symbol,
-                positions=positions,
-                position_views=views,
-                strategies=deployed,
-                strategy_engine=self.runtime.strategy_engine,
-                gate=gate,
-                account=account,
-                entry_refusal=self.runtime.oms.entry_permitted,
-                is_quarantined=self.runtime.oms.anomalies.is_quarantined,
-                settings=self.runtime.settings,
-                last_price=view.last_price if view is not None else None,
-                now=datetime.now(UTC),
-            )
-            return verdict, view
-        except Exception:  # noqa: BLE001 - the verdict must never cost the answer
-            logger.debug("Could not build the symbol verdict for %s", symbol, exc_info=True)
-            return None, None
-
-    def _risk_metrics(self) -> dict[str, float]:
-        """The portfolio risk figures that actually exist (M73).
-
-        This read `portfolio_check.get("var_95", 0.0)`, so a metric the last
-        check did not record reached the model as a MEASURED ZERO - "no tail
-        risk" - and a language model has no way to ask which it was.
-
-        `to_prompt_text` applies exactly this discipline to fundamentals two
-        lines below, and says so in the prompt: "fields the vendor could not
-        answer are omitted rather than zeroed". Absent is omitted here for the
-        same reason, and the codebase already states it twice more - the
-        Screener's em dash, and `available_figures()`.
-        """
-        entries = self.runtime.risk_engine.audit_log.entries()
-        if not entries:
-            return {}
-        portfolio_check = entries[-1].inputs.get("portfolio_check")
-        if not portfolio_check:
-            return {}
-        return {
-            name: float(value)
-            for name in ("var_95", "es_975")
-            if (value := portfolio_check.get(name)) is not None
-        }
-
-    # `_news_for` and `_next_earnings_for` went when the double fetch did. Both
-    # were one-line passes through to `advisory_inputs`, and their only caller
-    # now reads the same material off the context the builder returns. Left in
-    # place they would be a second, tempting way to fetch the same thing - which
-    # is how the divergence they caused got written in the first place.
-
     async def _ask(self, question: str) -> None:
         self.ask_button.setEnabled(False)
         # The symbol is read BEFORE the question is echoed, so the transcript
@@ -476,18 +256,21 @@ class AiAdvisorScreen(QWidget):
             # One shared, throttled read (M21) - the same snapshot the
             # Dashboard's own `_refresh` reads, rather than a second broker
             # round trip for this screen's own copy of the same figures.
-            account_snapshot = await self.runtime.account_poller.snapshot()
-            raw_positions = list(account_snapshot.positions)
-            positions = {p.symbol: p.quantity for p in raw_positions}
-
-            risk_metrics = self._risk_metrics()
+            # ONE gatherer, shared with the Workbench (item 61). It used to be
+            # assembled here, which is how the Workbench came to assemble none
+            # of it and tell the model the account was flat while holding 3,192
+            # SUN.AX. A screen can no longer collect a SUBSET of the account
+            # facts because no screen collects them at all.
+            facts = await gather_account_facts(self.runtime, symbol)
+            positions = facts.positions
+            risk_metrics = facts.risk_metrics
 
             fundamentals = await self._fundamentals_for(symbol)
             # M117. The question used to travel inside `fetched_notes`, the field
             # whose whole purpose is to quarantine third-party text - so what the
             # operator typed and what a stranger published arrived with identical
             # standing. Only genuinely external material belongs in there now.
-            notes = list(self._corporate_action_notes())
+            notes = list(facts.notes)
             # The context is built FIRST, and the sources block is rendered from
             # what it actually contains. It was the other way round until the
             # 22 August review: this screen fetched news and the results date
@@ -512,8 +295,8 @@ class AiAdvisorScreen(QWidget):
             # which is what writes `risk_decisions.csv`. See
             # `symbol_verdict.py`'s module docstring for why that line is the
             # one this whole design exists to hold.
-            verdict, view = self._build_verdict(symbol, raw_positions, account_snapshot)
-            position = _position_dict(view)
+            verdict = facts.verdict
+            position = facts.position
 
             context = await build_advisory_context(
                 self.runtime,
@@ -574,23 +357,6 @@ class AiAdvisorScreen(QWidget):
             self.ask_button.setEnabled(True)
 
 
-def resolve_day_pnl_pct(*, broker_pct: float | None, monitor_pct: float | None) -> float | None:
-    """The day's P&L for the verdict, from whichever source can answer (item 47).
-
-    The verdict's guard - suppress rather than assume - is right and stays:
-    a substituted 0.0 could never trip the always-negative pause threshold, so
-    an unreported -6% day would read as "no rail here would refuse it".
-
-    What was wrong was the input. `balances.day_pnl_pct` derives from
-    `last_equity`, an Alpaca-era "previous close" that IBKR never supplies, so
-    on this broker it is ALWAYS None and the verdict had never rendered in
-    production. `EquityMonitor.day_pnl_pct()` measures against a persisted
-    `day_start_equity`, works on any broker, and is what `AutonomyGate`
-    actually gates on - so the verdict now agrees with the rail it reports.
-
-    A monitor figure of exactly 0.0 is a MEASURED zero and must survive; only
-    None means unknown. `is not None`, never truthiness.
-    """
-    if broker_pct is not None:
-        return broker_pct
-    return monitor_pct
+# `resolve_day_pnl_pct` moved to `advisory_account.py` with the verdict builder
+# it serves (item 61), and is imported above so it has exactly one definition.
+__all__ = ["AiAdvisorScreen", "resolve_day_pnl_pct"]

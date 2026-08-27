@@ -18,7 +18,7 @@ fabricated zero - and makes the verdict agree with the rail it reports.
 
 from __future__ import annotations
 
-from qat.presentation.ai_advisor import resolve_day_pnl_pct
+from qat.presentation.advisory_account import resolve_day_pnl_pct
 
 
 def test_the_brokers_figure_wins_when_it_exists():

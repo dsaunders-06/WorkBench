@@ -36,7 +36,15 @@ _MUST_READ = {
     "presentation/blotter.py": "where the adjustment itself appears as an order",
     "presentation/workbench.py": "where a proposal must not read as clean",
     "presentation/screener.py": "where a candidate must not read as clean",
-    "presentation/ai_advisor.py": "the model must not reason about a share count about to change",
+    # ⚠️ WAS `presentation/ai_advisor.py`. The read moved to `advisory_account.py`
+    # in item 61, and the entry moved WITH it rather than being deleted - a
+    # guard that quietly stops naming a file is this module's own stated
+    # failure mode. The claim is unchanged and now covers MORE: the Advisor
+    # was the only screen whose PROMPT carried these notes, and both do now.
+    # `workbench.py` keeps its own separate entry above because its read at
+    # `:328` feeds the DISPLAY, which is a different consequence.
+    "presentation/advisory_account.py": "the model must not reason about a share count "
+    "about to change - and BOTH advisory screens now reason from this one read",
     "domain/performance/reports.py": "the daily report is read when nobody watched the session",
 }
 
@@ -64,3 +72,23 @@ def test_every_entry_gives_a_reason():
     separating this list from a rubber stamp."""
     for module, reason in _MUST_READ.items():
         assert len(reason) > 25, f"{module} needs a real reason, not a label"
+
+
+# The indirection the entry above introduces, pinned. A guard that names the
+# module holding the read is worth nothing if the screens stop reaching it, and
+# "the read exists somewhere" is precisely the weaker claim this file's own
+# docstring rejects.
+_MUST_REACH_THE_ACCOUNT_FACTS = {
+    "presentation/ai_advisor.py": "the Advisor's prompt",
+    "presentation/workbench.py": "the Workbench's AI note - which had NO account "
+    "facts at all until item 61",
+}
+
+
+@pytest.mark.parametrize("module", sorted(_MUST_REACH_THE_ACCOUNT_FACTS))
+def test_both_advisory_screens_reach_the_shared_account_facts(module):
+    source = (_SRC / module).read_text(encoding="utf-8")
+    assert "advisory_account" in source, (
+        f"{module} no longer reaches advisory_account, so {_MUST_REACH_THE_ACCOUNT_FACTS[module]} "
+        f"has lost the pending corporate action along with every other account fact (item 61)."
+    )

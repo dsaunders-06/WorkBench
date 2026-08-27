@@ -21,6 +21,7 @@ from qat.config import Settings
 from qat.domain.corporate_actions.announcements import Announcement
 from qat.domain.corporate_actions.detector import PendingAction
 from qat.domain.performance.reports import build_report
+from qat.presentation import advisory_account
 from qat.presentation.blotter import BlotterScreen
 from qat.presentation.dashboard import DashboardScreen
 from qat.presentation.risk_console import RiskConsoleScreen
@@ -223,7 +224,7 @@ def test_the_model_is_told_the_stop_was_not_adjusted_in_shadow_mode(qtbot):
     screen = AiAdvisorScreen(_runtime(mode="shadow"))
     qtbot.addWidget(screen)
 
-    notes = screen._corporate_action_notes()
+    notes = advisory_account.corporate_action_notes(screen.runtime)
 
     assert len(notes) == 1
     assert "MNST 2-for-1 split" in notes[0]
@@ -236,7 +237,7 @@ def test_the_model_gets_nothing_when_nothing_is_pending(qtbot):
     screen = AiAdvisorScreen(_runtime(actions=[]))
     qtbot.addWidget(screen)
 
-    assert screen._corporate_action_notes() == []
+    assert advisory_account.corporate_action_notes(screen.runtime) == []
 
 
 @pytest.mark.parametrize("mode", ["shadow", "act"])
@@ -246,7 +247,7 @@ def test_the_notes_always_say_entries_are_refused(qtbot, mode):
     screen = AiAdvisorScreen(_runtime(mode=mode, actions=[_action(state="applied")]))
     qtbot.addWidget(screen)
 
-    assert "refused" in screen._corporate_action_notes()[0]
+    assert "refused" in advisory_account.corporate_action_notes(screen.runtime)[0]
 
 
 # --- where it sits, and how much room the neighbours take (M39, R1) -----------
