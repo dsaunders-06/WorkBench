@@ -566,9 +566,57 @@ class OMS:
             )
         )
 
-    def pending_orders(self) -> list[Order]:
-        """Orders awaiting a decision - committed exposure that has not filled."""
+    # Committed exposure the broker has not yet reported as a position. Both,
+    # because in AUTO mode `pending_signoff` lasts milliseconds (item 58).
+    _COMMITTED_STATUSES = ("pending_signoff", "transmitted")
+
+    def awaiting_signoff(self) -> list[Order]:
+        """Orders that have not yet been decided on.
+
+        ⚠️ **Narrower than `pending_orders`, and the difference is load-bearing
+        (item 58).** They answer different questions and must not be merged
+        again: this one is "has a decision been made", `pending_orders` is "what
+        exposure is committed".
+
+        The duplicate guard on protective stops needs THIS one. A protective
+        order that has been signed off is `transmitted` and RESTING at the
+        broker - it does not fill until it triggers - so treating it as pending
+        turns a duplicate guard into a one-shot LATCH, and a position whose stop
+        was later cancelled could never be re-armed. `tests/safety/
+        test_protective_stop_rearm.py` caught exactly that when the two were
+        briefly the same call: *"The guard is about DUPLICATES, not a one-shot
+        latch."*
+        """
         return [order for order in self._orders.values() if order.status == "pending_signoff"]
+
+    def pending_orders(self) -> list[Order]:
+        """Orders awaiting a decision - committed exposure that has not filled.
+
+        ⚠️ **`transmitted` counts, and its absence is item 58.** This matched
+        only `pending_signoff`. In auto mode the executor signs off in
+        milliseconds, so between sign-off and the broker reporting the position
+        an order was in NEITHER `held` NOR here - invisible to the position cap.
+
+        On 26 August two entries went out 173ms apart, both sized against a book
+        of nine, and the book reached ELEVEN against a cap of 10. Because
+        `governor.py:304` refuses at `>=`, returning to ten was still AT the cap,
+        which cost the 27 August session 1,036 refusals and every entry it might
+        have made.
+
+        The docstring above is unchanged - it already said "committed exposure
+        that has not filled", and the code simply did less than it claimed.
+
+        ⚠️ `filled` stays OUT deliberately. It is already in the broker's
+        positions, and `ExposureSnapshot` guards the COUNT with
+        `if order.symbol not in held` but adds `gross` and `risk_at_stop_dollars`
+        unconditionally - so counting a filled order here would double its
+        exposure. A `transmitted` order that has filled without the OMS seeing
+        the event is over-counted until reconciliation catches up, which refuses
+        MORE rather than less and is the safe direction to be wrong in.
+        """
+        return [
+            order for order in self._orders.values() if order.status in self._COMMITTED_STATUSES
+        ]
 
     def pending_signoff_symbols(self) -> set[str]:
         """Symbols that already have an order awaiting the operator's decision -
@@ -1236,7 +1284,10 @@ class OMS:
         already_pending = next(
             (
                 existing
-                for existing in self.pending_orders()
+                # NOT `pending_orders` - see `awaiting_signoff`. A transmitted
+                # protective stop is resting, and treating it as pending would
+                # stop this position ever re-arming.
+                for existing in self.awaiting_signoff()
                 if existing.symbol == symbol and existing.is_protective_stop
             ),
             None,
