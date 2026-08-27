@@ -977,7 +977,37 @@ from qat.domain.display_dates import format_display_date
 # storm starts at poll one and four polls of 95 is most of it already spent by
 # the time the threshold is crossed. What is dropped is COUNTED and printed
 # beside the recovery line that explains it.
-MILESTONE = "M151"
+# M152 - the rail that declares a quarantine now lifts it.
+#
+# ITEM 59. clear() had ONE caller in the codebase - an operator button - and
+# _reconcile_resting_orders declared inside `for divergence in divergences:`, so
+# a clean scan cleared nothing. Two quarantines outlived their cause by 26 hours
+# and a restart on 27 August and would have silently blocked SEK.AX and WOW.AX
+# from re-entry.
+#
+# Auto-clear after CLEAN_SCANS_BEFORE_CLEAR = 3 consecutive clean scans, with
+# the operator button kept so a release need not wait fifteen minutes.
+#
+# Defensible here specifically because it is not "the symptom went away": it is
+# the SAME rail, over the SAME input, running the SAME derivation and reporting
+# the negation - a stronger warrant than a human clicking without re-deriving
+# anything, which until now was the only way.
+#
+# Hysteresis because a divergence can flap; declare() resets the run so the
+# counter is of CONSECUTIVE scans. Scoped to symbols the scan could actually
+# SEE - counting an unscanned symbol as clean would lift on absence of evidence,
+# the shape of items 34 and 37.
+#
+# ⚠️ THE FALSIFICATION FOUND A HOLE IN THE TESTS. Six store-level tests stayed
+# GREEN when saw_clean_scan was deleted from the reconciler, because nothing
+# drove the reconciler - item 56's first regression guard again, a guard at a
+# layer no path from the defect reaches. The wiring test added afterwards DOES
+# go red when the call is removed.
+#
+# Also carries item 64's pin (tests only, no runtime change): the open items
+# now assert their own defect is still present, so a fix cannot outlive its
+# heading. Twelve did in two days.
+MILESTONE = "M152"
 
 _UNKNOWN = "unknown"
 
