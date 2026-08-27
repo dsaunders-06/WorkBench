@@ -573,7 +573,35 @@ git commit -m "Milestone C: compare two feature arms, guard first"
 ```
 Expected: rails as before, plus a features section naming the four ablatable ones and the two refused with their reason.
 
-- [ ] **Step 3: Run the arm end to end through PowerShell**
+- [ ] **Step 3: Run the arm end to end through PowerShell — `credit_spread` FIRST**
+
+⚠️ **`credit_spread` before `asx_vix_z`, deliberately (operator, 28 August).**
+
+Three of the six columns are US macro on a 94-stock ASX book — `vix_level`
+(`VIXCLS`), `yield_curve_slope` (`T10Y3M`) and `credit_spread` (`BAA10Y`) — and
+BAA10Y is the weakest thing anyone has measured here: **+0.004 against forward
+ASX volatility**, against `BAMLH0A0HYM2`'s +0.160 (25 August). That is
+indistinguishable from nothing, in a column that feeds a SIZING input.
+
+**Removing a column that measures +0.004 is a cheaper and cleaner first
+question than adding one that moves the label on 23% of bars.** If
+`credit_spread` costs nothing, that is a US column off an Australian sizing
+input for free — and it is the ablation this harness was built to answer.
+
+```bash
+& ".\.venv\Scripts\python.exe" scriptsesearchun_ablation.py --feature credit_spread
+```
+
+⚠️ **A NOT EXERCISED result is a real answer, not a failure.** If the label
+never moves without `credit_spread`, the column contributes nothing to the
+label and should be proposed for removal on that evidence — recorded with its
+numbers, the way `AUDUSD=X` and `TIO=F` were rejected.
+
+⚠️ **It does NOT license the `BAMLH0A0HYM2` swap.** That removes a feature AND
+adds one, and Milestone B's plan is explicit that it must be judged on the same
+footing rather than smuggled in beside a new column.
+
+Then the original arm:
 
 ```bash
 & ".\.venv\Scripts\python.exe" scripts\research\run_ablation.py --feature vix_level

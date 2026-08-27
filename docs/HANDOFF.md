@@ -2694,6 +2694,37 @@ shares its shape.
     by reading the note** — a note that mentions a holding proves the model
     chose to, and one that does not proves nothing without the line.
 
+66. **⚠️ HALF THE REGIME FEATURES ARE US DATA ON AN AUSTRALIAN BOOK, AND ONE OF
+    THEM MEASURES +0.004.** Raised by the operator on 28 August. Recorded here
+    because it was previously buried in Milestone B's "what this plan does NOT
+    do" section, where nothing would surface it.
+
+    | column | source | market |
+    |---|---|---|
+    | `log_return` | STW.AX | 🇦🇺 |
+    | `realized_vol` | STW.AX | 🇦🇺 |
+    | `breadth` | the 94 ASX symbols | 🇦🇺 |
+    | `vix_level` | `VIXCLS` | 🇺🇸 |
+    | `yield_curve_slope` | `T10Y3M` | 🇺🇸 |
+    | **`credit_spread`** | **`BAA10Y`** | 🇺🇸 |
+
+    **The label that sets position size on a 94-stock ASX book is half
+    classified on American data.** That is Milestone B's stated goal in one
+    line, and it is still true.
+
+    ⚠️ **`BAA10Y` is the weakest thing measured here: +0.004 against forward ASX
+    volatility** (25 August), where `BAMLH0A0HYM2` carries +0.160. +0.004 is
+    indistinguishable from nothing — in a column feeding a sizing input.
+
+    **This is NOT Milestone C.** C builds the instrument; this is the first
+    question to put to it. Scheduled: `--feature credit_spread` is now Milestone
+    C's Task 6 Step 3, ahead of `asx_vix_z`, on the operator's call —
+    removing a column that measures +0.004 is a cheaper and cleaner question
+    than adding one that moves the label on 23% of bars.
+
+    ⚠️ Answering it does NOT license the `BAMLH0A0HYM2` swap, which removes a
+    feature as well as adding one and must be judged on the same footing.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```
