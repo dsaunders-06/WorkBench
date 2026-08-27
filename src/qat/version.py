@@ -847,7 +847,67 @@ from qat.domain.display_dates import format_display_date
 # derived from the 2s timer that already runs, because a derived label cannot go
 # stale where another listener could be missed - which is exactly how the
 # outbound half of this same bug was fixed and the inbound half was not.
-MILESTONE = "M148"
+# M149 - both advisory screens see the same account, and the macro exposure
+# proposal is anchored to a scale.
+#
+# ITEM 61. The operator ran a backtest and walk-forward on SUN.AX and read an AI
+# note opening "Given no current positions and lacking portfolio risk metrics"
+# while the account held 3,192 SUN.AX. The Workbench passed NONE of positions,
+# risk_metrics, verdict or position to build_advisory_context; each defaults to
+# an empty dict, so nothing errored and the model was simply told the account
+# was flat.
+#
+# It is the SIBLING of a fix already made in that very call. The comment three
+# lines above the gap reads: "The defect this closes: it passed 'unknown' and
+# formed a recommendation against no regime at all, while the Advisor formed one
+# against the live regime for the same company." The regime half was found in
+# M126; the account half was never checked.
+#
+# Fixed by removing the opportunity rather than by adding four arguments. The
+# gathering was PRIVATE to the Advisor, which is exactly why the Workbench could
+# not use it - so _build_verdict, _risk_metrics, _position_dict,
+# _corporate_action_notes and _bars_for all move to advisory_account.py behind
+# one gather() returning AccountFacts. Neither screen assembles a subset any
+# more because neither assembles anything.
+#
+# ⚠️ THE MOVE WAS VERIFIED BY AST, NOT BY READING IT - and the first copy was
+# WRONG. _corporate_action_notes was rewritten from memory instead of copied,
+# changing the branch condition, the else text, and dropping the sentence "New
+# entries in this symbol are refused." The existing rendering test caught all
+# three, which is why every moved function was then compared as a normalised
+# syntax tree rather than by eye.
+#
+# An unplanned gain: the Workbench's own pending_action read feeds its DISPLAY,
+# so until now its PROMPT carried no corporate action at all. Both screens do.
+#
+# The new guard reads the two CALL SITES from source with ast. The existing test
+# compares what the BUILDER fetches, and its sibling's docstring already said
+# supplied fields default to empty and prove nothing - so the suite knew and
+# checked nothing. A behavioural test would pass here too: a stub runtime hands
+# both call sites the same empty account.
+#
+# ITEM 62. The Regime Monitor showed "Exposure hint 1.00" one line above
+# "Proposed exposure scalar: 0.40" on a Risk-On day. The model had never seen
+# the 1.00: exposure_hint is a property, the screen renders it, and to_dict() -
+# the only part of the signal reaching the prompt - did not carry it. The prompt
+# named no scale either, and the schema constrains the field to nothing tighter
+# than ge=0.0, le=1.0.
+#
+# 0.40 is not a value that read can produce. MACRO_REGIME_EXPOSURE_HINT runs
+# 1.0/0.85/0.6/0.3; 0.40 exists only in _EXPOSURE_SCALARS, where it means
+# high_vol - a table owned by the component that is deliberately the sole writer
+# of RiskEngine.regime_scalar. That table is deliberately NOT named in the
+# prompt: showing a second scale invites exactly this crossover.
+#
+# ⚠️ This does NOT establish the 0.40 was wrong. A model can argue for
+# defensiveness at bull=0.47. What is established is that the proposal was
+# uninformed and unconstrained. Whether an anchored prompt yields a different
+# number is the read-back check and has NOT been run.
+#
+# NOT item 61 twice: get_macro_assessment passes positions={} on purpose, for
+# LLM routing, and says so. Two empty dicts in two screens, one a defect and one
+# correct - which is why "the context looks thin" is not by itself a finding.
+MILESTONE = "M149"
 
 _UNKNOWN = "unknown"
 
