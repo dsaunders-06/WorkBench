@@ -1115,7 +1115,14 @@ for each gap and is worth reading; the list lives here.
     capability nothing implements. It was believed here by the same session
     that was auditing other docstrings for exactly this.
 
-37. **⚠️ THE DRIFT GUARD ON PARKED ORDERS MAY NEVER RUN.** An order the autonomy
+37. ~~**⚠️ THE DRIFT GUARD ON PARKED ORDERS MAY NEVER RUN.**~~ **FIXED — all
+    three wants, and EXERCISED live on 27 August.** `ib_adapter.py:287` uses
+    `reqTickersAsync`, which waits for the ticker rather than hoping, bounded by
+    `_call`'s deadline. `executor.py:235` logs the skip and distinguishes it
+    from a pass — seen today on WOW.AX: *"No usable quote for WOW.AX, so the
+    price-drift check is SKIPPED for this order - it is not passing that check,
+    it is not taking it."* Found stale on 27 August by audit.
+    ORIGINAL: An order the autonomy
     gate blocks on phase is not rejected — it parks in `pending_signoff` and is
     retried every 60 seconds (M31b, and that retry is right: without it a
     blocked exit sat for a hundred sessions and a position was never closed).
@@ -1193,7 +1200,11 @@ for each gap and is worth reading; the list lives here.
     render the order's actual status beside it. The audit log is the right data;
     the label is the bug.
 
-39. **The Equity vs Benchmark chart's x-axis renders bar indices, not dates.**
+39. ~~**The Equity vs Benchmark chart's x-axis renders bar indices, not dates.**~~
+    **FIXED in `62660ae`, with a second half in `fc296f8`.** `equity_axis_mode`
+    returns the axis and its label as a PAIR so the two cannot disagree — which
+    is exactly how they came to disagree. Found stale on 27 August by audit.
+    ORIGINAL:
     Strategy Workbench, observed 25 August: the axis is labelled *"Date
     (synthetic daily bars)"* and its ticks read `00.550, 00.600 … 01.450`. Those
     are fractional positions along a one-element series, formatted as if they
@@ -1770,7 +1781,10 @@ shares its shape.
 
 ---
 
-50. **The build stamp renders its date in UTC.** Seen on M144: `built
+50. ~~**The build stamp renders its date in UTC.**~~ **FIXED in M145
+    (`08e4dc5`).** Confirmed on today's own builds: `M151 (7f3efe3, built
+    27/08/2026 17:24 AEST)`. Found stale on 27 August by audit.
+    ORIGINAL: Seen on M144: `built
     25/08/2026 12:01 UTC` on the Settings screen, where 12:01 UTC is 22:01
     AEST. Reported by the operator on 25 August and deferred to the next
     session.
@@ -2552,7 +2566,10 @@ shares its shape.
     write-header-only-if-new logic at `:1276-1278`.
 
 64. **⚠️ ITEM HEADINGS OUTLIVE THEIR FINDINGS, AND ONE OF THEM WAS DANGEROUS.**
-    Four found in two days, all by tripping over them rather than by looking:
+    **SEVEN found in two days.** The first four by tripping over them; the last
+    three by finally LOOKING, in a ten-minute audit that closed three items for
+    the cost of five greps. That ratio is the argument for doing the audit
+    before the work, not after.
 
     | item | heading said | truth |
     |---|---|---|
@@ -2560,6 +2577,9 @@ shares its shape.
     | 32 | **the kill switch DOES NOT survive a restart** | it has since M144 |
     | 38 | the console calls a parked order "approved" | fixed in `de8b8d1` |
     | 61 | the Workbench believes the account is flat | fixed in M149 |
+    | 37 | the drift guard may never run | fixed, and exercised today |
+    | 39 | the chart's x-axis renders bar indices | fixed in `62660ae` |
+    | 50 | the build stamp renders its date in UTC | fixed in M145 |
 
     **Item 32 is the one that mattered.** A reader trusting it would believe a
     restart clears a halt - the opposite of the truth, and an invitation to the
