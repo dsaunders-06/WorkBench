@@ -2433,8 +2433,24 @@ shares its shape.
     A guard on the builder alone is what let this through.
 
 62. ~~**⚠️ THE MACRO AI PROPOSES AN EXPOSURE SCALAR ON NO STATED SCALE, AND HAS
-    NEVER SEEN THE ONE THE DETERMINISTIC READ JUSTIFIES.**~~ **FIXED 27 August,
-    NOT YET DEPLOYED.** Found by the operator, who read the Regime Monitor
+    NEVER SEEN THE ONE THE DETERMINISTIC READ JUSTIFIES.**~~ **FIXED in M149, ✅ CONFIRMED LIVE 28 August.**
+    The model now names the hint and reasons about it:
+
+    > *"The deterministic read already proposes an exposure hint of 0.85, which
+    > aligns with a neutral stance. No additional macro factors justify
+    > deviating from this figure, so we keep it unchanged."*
+
+    Proposed 0.85 — which IS `neutral` in `MACRO_REGIME_EXPOSURE_HINT` — and
+    named no HMM regime. Yesterday it returned 0.40, a value in neither position
+    of this table, with no reference to the hint beside it.
+
+    ⚠️ **0.40 → 0.85 is NOT the proof and must not be quoted as it.** The
+    deterministic read moved Risk-On (1.00) → Neutral (0.85) overnight, so the
+    two days are not like-for-like. The proof is that it NAMED and REASONED
+    about the hint — which is the criterion set in advance, precisely so a
+    changed number could not be mistaken for a fix.
+
+    ORIGINAL: Found by the operator, who read the Regime Monitor
     showing, one line above the other:
 
         Deterministic read (STW.AX): Risk-On ... Exposure hint 1.00.
