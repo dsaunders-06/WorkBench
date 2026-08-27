@@ -589,7 +589,7 @@ question than adding one that moves the label on 23% of bars.** If
 input for free — and it is the ablation this harness was built to answer.
 
 ```bash
-& ".\.venv\Scripts\python.exe" scriptsesearchun_ablation.py --feature credit_spread
+& ".\.venv\Scripts\python.exe" scripts\research\run_ablation.py --feature credit_spread
 ```
 
 ⚠️ **A NOT EXERCISED result is a real answer, not a failure.** If the label
