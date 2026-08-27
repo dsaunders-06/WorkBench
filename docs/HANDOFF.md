@@ -1872,7 +1872,26 @@ shares its shape.
     fallback that cannot raise, because a monitor that dies on one malformed
     line is worse than one showing an awkward stamp.
 
-54. **The known blind window logs 570 ERRORs a session, from a library logger
+54. ~~**The known blind window logs 570 ERRORs a session, from a library logger**~~
+    **FIXED — M151, and the volume was UNDERSTATED.** Measured on the 27 August
+    log: **685 of the 710 lines** in the blind window (10:00:05–10:20:32) were
+    the per-symbol delisting storm — 96% — and they buried the RHC.AX
+    `BROKER-SIDE FILL absorbed` under about three hundred of them. With the
+    filter the fill would sit among ~25 lines.
+
+    `BlindWindowFilter` drops ONLY the `possibly delisted; no price data found`
+    message, and ONLY while the feed says it is blind. Matched on the TEXT, not
+    the logger — suppressing yfinance wholesale would have hidden the real
+    `HTTP Error 401: Invalid Crumb` that landed at 10:26:52. Outside the window
+    the same message passes through, because COL.AX and GQG.AX logged it
+    genuinely on 26 August. What is dropped is counted, and the count is printed
+    beside the recovery line that explains it.
+
+    ⚠️ Blind is set from the FIRST empty poll rather than at the failure
+    threshold: the storm starts at poll one, and four polls of 95 is most of it
+    already spent by the time the threshold is crossed.
+
+    ORIGINAL: **The known blind window logs 570 ERRORs a session, from a library logger
     nobody tamed.** Observed live 26 August at the open. From 10:00:02,
     yfinance logged `<SYM>: possibly delisted; no price data found` once per
     symbol per poll — 95 symbols × 6 polls = **570 ERROR lines**, plus six

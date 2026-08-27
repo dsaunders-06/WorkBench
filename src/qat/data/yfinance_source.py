@@ -39,6 +39,7 @@ import pandas as pd
 
 from qat.data.market_data import RawTick
 from qat.data.symbols import to_yfinance
+from qat.logging import BLIND_WINDOW_FILTER
 
 logger = logging.getLogger(__name__)
 
@@ -235,12 +236,30 @@ class YFinanceMarketDataSource:
 
             if ticks:
                 if consecutive_failures >= self.max_consecutive_failures:
-                    logger.warning("yfinance market data has recovered")
+                    # Item 54: the count goes BESIDE the recovery, which is the
+                    # line that explains it. A suppressed total nobody sees is
+                    # the silence this filter is supposed to replace.
+                    suppressed = BLIND_WINDOW_FILTER.take_suppressed()
+                    logger.warning(
+                        "yfinance market data has recovered%s",
+                        (
+                            f" - {suppressed} per-symbol 'possibly delisted' error(s) were "
+                            f"suppressed while the feed was inside its known delay window"
+                            if suppressed
+                            else ""
+                        ),
+                    )
+                BLIND_WINDOW_FILTER.blind = False
                 consecutive_failures = 0
                 for tick in ticks:
                     yield tick
             else:
                 consecutive_failures += 1
+                # Item 54. Blind from the FIRST empty poll, not from the
+                # threshold: the storm starts at poll one, and 95 lines x 4
+                # polls is most of it already spent by the time the threshold
+                # is crossed.
+                BLIND_WINDOW_FILTER.blind = True
                 if consecutive_failures == self.max_consecutive_failures:
                     # M119. Ending the stream here used to be the design, on the
                     # reasoning that a dead feed must not look alive. It could

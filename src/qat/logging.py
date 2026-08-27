@@ -45,6 +45,61 @@ LOG_BACKUP_COUNT = 10
 # WARNING, not silence: the library's 1100/1102 disconnects and order
 # rejections are precisely what IS wanted.
 NOISY_LIBRARY_LOGGERS = ("ib_async.wrapper", "ib_async.client", "ib_async.ib")
+
+# The one message the blind window makes redundant, and nothing else (item 54).
+# Matched on the TEXT rather than on the logger, deliberately: suppressing the
+# yfinance logger wholesale would hide a 401, a rate limit or a schema change
+# inside the very window where the feed is already struggling - and on 27 August
+# a real `HTTP Error 401: Invalid Crumb` landed at 10:26:52, four minutes before
+# the feed recovered.
+_BLIND_WINDOW_NOISE = "possibly delisted; no price data found"
+
+
+class BlindWindowFilter(logging.Filter):
+    """Drops the per-symbol delisting storm WHILE the feed says it is blind.
+
+    Yahoo publishes ASX intraday about 20 minutes late, so every poll from the
+    bell lands inside a window the app already knows about and already reports
+    once. yfinance logs one ERROR per symbol per poll - 95 of them - and on
+    27 August that produced roughly 475 lines in four minutes and buried a real
+    `BROKER-SIDE FILL absorbed` for RHC.AX under about three hundred of them.
+
+    ⚠️ **Never a blanket silence.** Outside the blind window the same message is
+    a genuinely delisted symbol and passes through untouched - COL.AX and GQG.AX
+    logged exactly that on 26 August with a healthy feed. And inside the window,
+    only THIS message is dropped; every other yfinance error still reaches the
+    log.
+
+    ⚠️ `NOISY_LIBRARY_LOGGERS` cannot do this: it raises a logger to WARNING and
+    yfinance logs these at ERROR, so that mechanism would pass all of them.
+
+    What is dropped is COUNTED and the count is taken by the feed, so the
+    suppression is reported rather than silent - a filter whose effect nobody
+    can see is the failure mode this project keeps finding.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.blind = False
+        self.suppressed = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if self.blind and _BLIND_WINDOW_NOISE in record.getMessage():
+            self.suppressed += 1
+            return False
+        return True
+
+    def take_suppressed(self) -> int:
+        """The count since it was last taken, and resets. Read by the feed when
+        it reports the window, so the number appears beside the event that
+        explains it rather than as a free-floating total."""
+        count, self.suppressed = self.suppressed, 0
+        return count
+
+
+# One instance, because the feed sets `blind` on it and the logging config
+# attaches it. Two would mean the flag and the filter were different objects.
+BLIND_WINDOW_FILTER = BlindWindowFilter()
 # How long to stop attempting a rename after one fails. Without this the
 # handler retries a rename it already knows is failing on EVERY record.
 ROLLOVER_RETRY_SECONDS = 60.0
@@ -231,6 +286,9 @@ def configure_logging(level: str = "INFO", data_dir: str | Path | None = None) -
     handler = logging.StreamHandler(stream=sys.stdout)
     handler.setFormatter(JsonFormatter())
     handler.addFilter(RedactSecretsFilter())
+    # Item 54. On the handler rather than a logger, because the storm comes from
+    # yfinance's own logger and the app never constructs it.
+    handler.addFilter(BLIND_WINDOW_FILTER)
     root.addHandler(handler)
 
     if data_dir is None:
