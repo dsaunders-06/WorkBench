@@ -2212,7 +2212,36 @@ shares its shape.
     re-checked against the book at sign-off — which is where the order becomes
     real anyway, and where the price-drift check (item 37) already sits.
 
-59. **⚠️ A RESTING-ORDER QUARANTINE CAN ONLY EVER BE DECLARED, NEVER LIFTED —
+59. ~~**⚠️ A RESTING-ORDER QUARANTINE CAN ONLY EVER BE DECLARED, NEVER LIFTED**~~
+    **FIXED — the reconciler now lifts its own quarantine after
+    `CLEAN_SCANS_BEFORE_CLEAR = 3` consecutive clean scans** (15 minutes at the
+    300s poll). The operator button stays, so a release need not wait.
+
+    **Why auto-clearing is defensible here and would not be in general:** this
+    is not "the symptom went away". It is the SAME rail, over the SAME input,
+    running the SAME derivation and reporting the negation - a stronger warrant
+    than a human clicking without re-deriving anything, which until now was the
+    only way.
+
+    ⚠️ **Hysteresis because a divergence can flap.** Clearing on the first clean
+    scan would let the store track noise. `declare()` resets the run, so the
+    counter is of CONSECUTIVE clean scans and not a tally.
+
+    ⚠️ **Scoped to what the scan could SEE.** A symbol the broker did not report
+    says nothing about that symbol, and counting it clean would lift on absence
+    of evidence - items 34 and 37's shape.
+
+    ### ⚠️ THE STORE TESTS DID NOT TEST THE WIRING, AND THE FALSIFICATION FOUND IT
+
+    Six tests covered the store and all six stayed GREEN when
+    `saw_clean_scan` was deleted from `_reconcile_resting_orders` - because
+    nothing drove the reconciler. **That is item 56's first regression guard
+    exactly**: a guard built at a layer no path from the defect reaches.
+    `test_a_clean_scan_lifts_a_quarantine_the_reconciler_declared` now runs the
+    real reconciler over a broker whose book justifies everything, and it DOES
+    go red when the call is removed.
+
+    ORIGINAL: **A resting-order quarantine can only ever be declared, never lifted —
     AND TWO ARE LIVE RIGHT NOW ON A CONDITION THAT NO LONGER EXISTS.** Found
     27 August at launch, from the app's own startup line.
 

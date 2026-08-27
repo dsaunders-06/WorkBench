@@ -30,6 +30,21 @@ logger = logging.getLogger(__name__)
 
 _FILENAME = "resting_order_anomalies.json"
 
+# Consecutive CLEAN scans before the reconciler lifts its own quarantine
+# (item 59). Three, which is fifteen minutes at the 300s poll.
+#
+# Not one. A divergence can flap, and clearing on the first clean scan would let
+# the store track noise - an entry could slip through a clean window that does
+# not hold. The regime engine already uses this shape in `HysteresisGate`.
+#
+# ⚠️ Auto-clearing is defensible HERE specifically because it is not "the
+# symptom went away": it is the same rail, over the same input, running the same
+# derivation and reporting the negation. That is a stronger warrant than a human
+# clicking without re-deriving anything - and until this existed, a human
+# clicking was the ONLY way, which is how two quarantines outlived their cause
+# by 26 hours and a restart on 27 August.
+CLEAN_SCANS_BEFORE_CLEAR = 3
+
 
 @dataclass(frozen=True, slots=True)
 class RestingOrderAnomaly:
@@ -52,12 +67,21 @@ class RestingOrderAnomalyStore:
     def __init__(self, data_dir: str | Path | None = None) -> None:
         self._path = Path(data_dir) / _FILENAME if data_dir is not None else None
         self._active: dict[str, RestingOrderAnomaly] = {}
+        # Consecutive clean scans per symbol. In memory deliberately: a restart
+        # re-adopts from the broker and the count should start again from what
+        # THIS run has actually observed, not from a number it inherited.
+        self._clean_runs: dict[str, int] = {}
         self._load()
 
     def declare(
         self, *, symbol: str, reason: str, declared_by: str, excess: float
     ) -> RestingOrderAnomaly:
         """Declares (or re-declares) one symbol's quarantine.
+
+        ⚠️ Resets the clean run (item 59). Without this the counter would tally
+        clean scans rather than CONSECUTIVE ones, and a symbol that went clean,
+        dirty, clean would lift on the strength of two windows that were never
+        continuous.
 
         `declared_at` is PRESERVED across a re-declare of a symbol already
         present (I5, final review). With cancelling off - the default - the
@@ -86,8 +110,41 @@ class RestingOrderAnomalyStore:
             excess,
             reason,
         )
+        self._clean_runs.pop(symbol, None)
         self._save()
         return anomaly
+
+    def saw_clean_scan(self, symbols_scanned: set[str]) -> list[str]:
+        """Tell the store a scan found nothing unjustified. Returns what it lifted.
+
+        `symbols_scanned` is what the scan could actually SEE. ⚠️ A symbol the
+        scan did not cover says NOTHING about that symbol, and counting it as
+        clean would lift a quarantine on absence of evidence - the
+        fabricated-all-clear shape of items 34 and 37. So only scanned symbols
+        advance, and an unscanned one holds its run rather than losing it.
+        """
+        lifted: list[str] = []
+        for symbol in list(self._active):
+            if symbol not in symbols_scanned:
+                continue
+            run = self._clean_runs.get(symbol, 0) + 1
+            self._clean_runs[symbol] = run
+            if run < CLEAN_SCANS_BEFORE_CLEAR:
+                continue
+            anomaly = self._active.pop(symbol)
+            self._clean_runs.pop(symbol, None)
+            lifted.append(symbol)
+            logger.warning(
+                "Resting-order quarantine on %s LIFTED by the reconciler after %d "
+                "consecutive clean scans (was: %s) - ordinary order flow resumes for "
+                "this symbol",
+                symbol,
+                run,
+                anomaly.reason,
+            )
+        if lifted:
+            self._save()
+        return lifted
 
     def clear(self, symbol: str, operator: str) -> bool:
         """Releases a symbol. Returns False if it was not quarantined."""

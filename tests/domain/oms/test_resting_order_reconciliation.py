@@ -377,3 +377,43 @@ async def test_toctou_also_checks_this_apps_own_tracked_quantity(oms_factory, ca
 
     assert broker.cancelled == []
     assert "abandoned" in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_a_clean_scan_lifts_a_quarantine_the_reconciler_declared(oms_factory, caplog):
+    """⚠️ THE WIRING, not the store (item 59).
+
+    `test_quarantine_auto_clear.py` proves `RestingOrderAnomalyStore` counts
+    clean scans and lifts after three. It does NOT prove anything ever CALLS it -
+    deleting `saw_clean_scan` from `_reconcile_resting_orders` left that whole
+    file green, which is item 56's first regression guard all over again: a
+    guard built at a layer no path from the defect reaches.
+
+    So this drives the real reconciler over a real broker whose book justifies
+    everything, and asserts the quarantine goes.
+    """
+    from qat.domain.oms.resting_order_anomaly import CLEAN_SCANS_BEFORE_CLEAR
+
+    class _Position:
+        def __init__(self, symbol, quantity):
+            self.symbol, self.quantity = symbol, quantity
+
+    broker = _Broker([], [_Position("SEK.AX", 2978.0)])
+    oms = oms_factory(broker)
+    oms.resting_order_anomalies.declare(
+        symbol="SEK.AX",
+        reason="2978 shares of resting sell the book does not justify (holds 2978)",
+        declared_by="order-reconciler",
+        excess=2978.0,
+    )
+    assert oms.resting_order_anomalies.is_quarantined("SEK.AX")
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(CLEAN_SCANS_BEFORE_CLEAR):
+            await oms.check_resting_orders()
+
+    assert not oms.resting_order_anomalies.is_quarantined("SEK.AX"), (
+        "the reconciler ran clean scans and never told the store, so the quarantine "
+        "it declared can still only be lifted by hand (item 59)"
+    )
+    assert "LIFTED by the reconciler" in caplog.text

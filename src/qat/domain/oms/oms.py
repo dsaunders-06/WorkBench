@@ -2040,6 +2040,20 @@ class OMS:
             ),
         )
 
+        # Item 59. The rail that DECLARES a quarantine is the only thing
+        # entitled to lift it, and until this existed it never did: the loop
+        # below runs only over divergences, so a clean scan cleared nothing and
+        # `clear()` had one caller in the codebase - an operator button. Two
+        # quarantines outlived their cause by 26 hours and a restart on
+        # 27 August.
+        #
+        # ⚠️ Scoped to what this scan could actually SEE. A symbol the broker
+        # did not report is not evidence of anything, and counting it as clean
+        # would lift a quarantine on absence of evidence.
+        diverged_now = {d.symbol for d in divergences}
+        scanned = {order.symbol for order in orders} | {p.symbol for p in positions}
+        self.resting_order_anomalies.saw_clean_scan(scanned - diverged_now)
+
         for divergence in divergences:
             # Logged once per session per (symbol, side), and again only if
             # the excess actually changed (I5) - see `_resting_order_logged`.
