@@ -1157,7 +1157,17 @@ for each gap and is worth reading; the list lives here.
     Also note the ordering: the phase block precedes the drift block, so a
     parked order's staleness is never even evaluated until the window reopens.
 
-38. **⚠️ THE RISK CONSOLE CALLS A PARKED ORDER "approved".** Observed 25 August:
+38. ~~**⚠️ THE RISK CONSOLE CALLS A PARKED ORDER "approved".**~~ **ALREADY
+    FIXED in `de8b8d1`, and this heading outlived it.** `risk_console.py:384`
+    renders `risk-approved`/`risk-refused`, and `:180` adds a caption saying
+    what the verdict is NOT - *"NOT whether the order reached the broker"* -
+    rather than trusting a hyphenated label to carry it alone.
+
+    ⚠️ Found on 27 August by starting to re-implement it. **Fourth stale
+    heading in two days** (28, 32, 61, and this). The pattern is now frequent
+    enough to be its own item: see 64.
+
+    ORIGINAL: **The Risk Console calls a parked order "approved".** Observed 25 August:
     RHC.AX, IAG.AX and PNI.AX all render as `approved  approved` in the Risk
     Console's audit panel while the Blotter shows them `pending_signoff -
     session phase 'Midday Lull' is not eligible`. The headline above reads
@@ -2511,6 +2521,35 @@ shares its shape.
     ⚠️ **Check `equity_curve.csv` for the same shape before assuming it is
     clean.** It has its own `_FIELDS` (`trades.py:1207`) and the identical
     write-header-only-if-new logic at `:1276-1278`.
+
+64. **⚠️ ITEM HEADINGS OUTLIVE THEIR FINDINGS, AND ONE OF THEM WAS DANGEROUS.**
+    Four found in two days, all by tripping over them rather than by looking:
+
+    | item | heading said | truth |
+    |---|---|---|
+    | 28 | the kill switch is TRIPPED | clear since 26 Aug 22:02:22 |
+    | 32 | **the kill switch DOES NOT survive a restart** | it has since M144 |
+    | 38 | the console calls a parked order "approved" | fixed in `de8b8d1` |
+    | 61 | the Workbench believes the account is flat | fixed in M149 |
+
+    **Item 32 is the one that mattered.** A reader trusting it would believe a
+    restart clears a halt - the opposite of the truth, and an invitation to the
+    restart-to-clear that item 32 was written to prevent.
+
+    Item 38 was found by beginning to RE-IMPLEMENT a fix that already existed.
+    That is the cost in its plainest form: the list is the work queue, and a
+    stale entry spends real time.
+
+    ⚠️ **The bodies are right; the headings rot.** Every one of these had
+    correct detail underneath a first line that had stopped being true, which is
+    why reading further would have caught it and skimming did not.
+
+    Wanted: a check that can fail. Several items name a commit, a milestone or a
+    file that would let a test assert the claim still holds - `grep`-able facts
+    like "`_EXPOSURE_SCALARS` contains 0.4" or "risk_console renders
+    'risk-approved'". Not every item can be pinned, and the ones that can should
+    be, the way `test_corporate_action_has_every_reader` pins its own claim
+    rather than trusting a sentence.
 
 ## 📋 PROMPT TO PASTE — next session
 
