@@ -907,7 +907,50 @@ from qat.domain.display_dates import format_display_date
 # NOT item 61 twice: get_macro_assessment passes positions={} on purpose, for
 # LLM routing, and says so. Two empty dicts in two screens, one a defect and one
 # correct - which is why "the context looks thin" is not by itself a finding.
-MILESTONE = "M149"
+# M150 - the ledger header catches up with its schema, and a transmitted order
+# counts as committed exposure.
+#
+# ITEM 63. _record wrote a header only when the file was NEW, then appended
+# under the current _FIELDS forever, so every field added after creation was
+# WRITTEN into rows and never NAMED. Live: closed_trades.csv header 30 over rows
+# of 32 and 31; equity_curve.csv header 4 over rows of 5 and 4.
+#
+# The cost was EdgeEstimator, which filters closed_trades on a strict
+# trade.market == market. Every restored row carried market=None, so it matched
+# nothing at 6 trades and would have matched nothing at 200 - the sizer stuck on
+# invented constants permanently while reporting "default" for a reason
+# unrelated to sample size.
+#
+# repair_csv_header reads rows POSITIONALLY, never through DictReader: under a
+# stale header the surplus lands in the restkey and a DictWriter-driven rewrite
+# DROPS it, turning mislabelling into data loss. Only the header line changes.
+# Atomic via os.replace. A correct header is left untouched. Safe only because
+# _FIELDS has only ever grown by appending, so a short row is a prefix - a row
+# WIDER than the schema raises rather than remapping.
+#
+# ⚠️ equity_curve.csv was CHECKED rather than assumed clean and had the same
+# defect: M133's position_value written on every sample, readable on none.
+#
+# ⚠️ The first dry run went through the Bash tool and was worthless - a frozen
+# July snapshot of %LOCALAPPDATA%, served silently, reporting 301 rows for a
+# 2,894-row file. The PowerShell re-run is where the numbers came from, and it
+# revealed the MIXED row widths the stale read had hidden.
+#
+# ITEM 58. pending_orders matched only "pending_signoff". In auto mode sign-off
+# takes milliseconds, so between sign-off and the broker reporting the position
+# an order was in NEITHER held NOR pending. On 26 August WOW.AX signed at
+# 15:15:24.870 and SEK.AX was sized 173ms later, both against a book of NINE;
+# the book reached ELEVEN against a cap of 10. governor.py:304 refuses at >=, so
+# returning to ten was still AT the cap - which cost 27 August 1,036 refusals.
+#
+# ⚠️ THE FIRST FIX BROKE A SAFETY RAIL AND tests/safety CAUGHT IT. Widening
+# pending_orders also widened the protective-stop duplicate guard that reads it,
+# and a signed-off protective stop is transmitted and RESTING - so it became
+# permanently "already pending" and a position whose stop was cancelled could
+# never re-arm. Two accessors now, and the docstrings say they must not merge:
+# awaiting_signoff() asks whether a decision was made, pending_orders() asks what
+# exposure is committed.
+MILESTONE = "M150"
 
 _UNKNOWN = "unknown"
 
