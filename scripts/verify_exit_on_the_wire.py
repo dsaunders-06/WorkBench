@@ -13,15 +13,31 @@ erroring.
 
 M147 made `from_ib_fill` carry the order's CUMULATIVE quantity AND its
 cumulative average price, after 179 of 183 executions on the first-ever exit
-never reached the ledger. The QUANTITY half has been confirmed - the LOV repair
-recovered all 3,217 shares. **The PRICE half has never been confirmed against a
-real wire**, because every one of those 183 executions filled at exactly 28.45,
-so a blended average and a single price are the same number and the two
-readings are indistinguishable. Precisely the condition that hid the quantity
-bug for months.
+never reached the ledger. The QUANTITY half was confirmed by the LOV repair,
+which recovered all 3,217 shares. The PRICE half could not be: every one of
+those 183 executions filled at exactly 28.45, so a blended average and a single
+price were the same number and the two readings were indistinguishable -
+precisely the condition that hid the quantity bug for months.
 
-The first exit that fills at more than one price is the first real test, and
-this is the cross-check to run against it.
+## ✅ BOTH HALVES CONFIRMED — 27 August 2026, RHC.AX, and this script did it
+
+The first multi-price exit in the system's life, at 10:02:41:
+
+    order permId 1216558924  RHC  SLD
+      executions            : 3
+      distinct prices       : 2  [48.8, 49.5]
+      shares summed         : 1,194        IBKR final cumQty : 1,194
+      VWAP (derived here)   : 49.386265
+      IBKR avgPrice (last)  : 49.386265
+      ledger row            : qty 1194.0 exit_price 49.3863 reason target
+         recorded - VWAP    : +0.000035   MATCHES the wire
+
+**Two distinct prices, so this order CAN tell a blended average from a
+per-execution one** - and the ledger recorded the blend. One row, full quantity,
+correct price. That is M147 working, measured rather than argued.
+
+⚠️ **One confirmation is not a guarantee.** Three executions is a long way from
+183, and the fill was two prices rather than many. Keep running this on exits.
 
 ⚠️⚠️ **RUN IT THE SAME DAY. IBKR EXECUTION RETENTION IS SAME-DAY ONLY, and that
 is measured rather than assumed** - at 13:14 on 26 August
@@ -107,10 +123,17 @@ def _report(executions: list[Any], rows: list[dict[str, str]]) -> str:
     Gateway. Typing them as `object` and reaching through `type: ignore` on
     every attribute was worse - it suppressed the very errors that would catch
     a renamed field."""
+    # ⚠️ GROUPED BY `Fill`, NOT BY `Execution`, AND THAT IS THE WHOLE POINT.
+    # The first version kept only `fill.execution` - but `contract` lives on the
+    # FILL, so the symbol resolved to "?" and every ledger comparison silently
+    # reported "no closed_trades row for this symbol yet". Measured live on the
+    # RHC.AX exit of 27 August: the wire numbers printed correctly and the one
+    # check the script exists to perform did not run, announcing absence instead
+    # of erroring. Exactly the failure mode this script was written to catch,
+    # one level up.
     by_order: dict[str, list[Any]] = defaultdict(list)
     for fill in executions:
-        execution = fill.execution
-        by_order[str(execution.permId)].append(execution)
+        by_order[str(fill.execution.permId)].append(fill)
 
     out: list[str] = []
     if not by_order:
@@ -123,9 +146,13 @@ def _report(executions: list[Any], rows: list[dict[str, str]]) -> str:
         )
         return "\n".join(out)
 
-    for perm_id, group in sorted(by_order.items()):
-        group.sort(key=lambda e: (e.time, e.execId))
-        symbol = group[0].contract.symbol if hasattr(group[0], "contract") else "?"
+    for perm_id, fills in sorted(by_order.items()):
+        fills.sort(key=lambda f: (f.execution.time, f.execution.execId))
+        group = [f.execution for f in fills]
+        # Refused rather than defaulted to "?". A symbol this script cannot name
+        # is a symbol whose ledger row it cannot find, and printing "no
+        # closed_trades row" for that is a lie about the ledger.
+        symbol = str(getattr(fills[0].contract, "symbol", "") or "")
         shares = sum(float(e.shares) for e in group)
         notional = sum(float(e.shares) * float(e.price) for e in group)
         vwap = notional / shares if shares else 0.0
@@ -134,7 +161,7 @@ def _report(executions: list[Any], rows: list[dict[str, str]]) -> str:
         cum_qty = float(last.cumQty)
         distinct = sorted({round(float(e.price), 4) for e in group})
 
-        out.append(f"order permId {perm_id}  {symbol}  {group[0].side}")
+        out.append(f"order permId {perm_id}  {symbol or '(symbol unavailable)'}  {group[0].side}")
         out.append(f"  executions            : {len(group)}")
         out.append(f"  distinct prices       : {len(distinct)}  {distinct[:8]}")
         out.append(f"  shares summed         : {shares:,.0f}")
@@ -166,8 +193,16 @@ def _report(executions: list[Any], rows: list[dict[str, str]]) -> str:
         # the qualified "LOV.AX". Comparing them directly finds nothing and
         # reports "no closed_trades row" for a symbol that has one, which is the
         # silent-blindness failure this whole script exists to avoid.
-        matched = [r for r in rows if (r.get("symbol") or "").split(".")[0] == symbol]
-        if not matched:
+        matched = (
+            [r for r in rows if (r.get("symbol") or "").split(".")[0] == symbol] if symbol else []
+        )
+        if not symbol:
+            out.append(
+                "  ⚠️ ledger              : NOT CHECKED - this fill carried no contract "
+                "symbol, so the ledger could not be searched. This is a failure to "
+                "look, NOT a finding that no row exists."
+            )
+        elif not matched:
             out.append("  ledger                : no closed_trades row for this symbol yet")
         for row in matched:
             recorded = (row.get("exit_price") or "").strip()
