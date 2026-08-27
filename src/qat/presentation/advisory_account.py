@@ -33,6 +33,7 @@ that should raise.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -75,23 +76,80 @@ async def gather(runtime: Any, symbol: str) -> AccountFacts:
     module existed, so the degraded path is the old behaviour rather than a
     new one.
     """
+    # ⚠️ PER-FACT, not one try around everything. The first version wrapped the
+    # whole gather, so a failure in ANY optional read - `risk_metrics` reaching
+    # `runtime.risk_engine`, `corporate_action_notes` reaching `settings` -
+    # discarded the positions that had already been read SUCCESSFULLY, and the
+    # answer went out as "the account is flat". One optional fact must not cost
+    # every fact.
+    positions: dict[str, float] = {}
+    verdict: SymbolVerdict | None = None
+    view: PositionView | None = None
     try:
         # One shared, throttled read (M21) - the same snapshot the Dashboard's
         # own `_refresh` reads, rather than a second broker round trip.
         snapshot = await runtime.account_poller.snapshot()
         raw_positions = list(snapshot.positions)
+        positions = {p.symbol: p.quantity for p in raw_positions}
         verdict, view = build_symbol_verdict(runtime, symbol, raw_positions, snapshot)
-        return AccountFacts(
-            positions={p.symbol: p.quantity for p in raw_positions},
-            risk_metrics=risk_metrics(runtime),
-            verdict=verdict,
-            position=position_dict(view),
-            notes=corporate_action_notes(runtime),
-            view=view,
+    except Exception:
+        # ⚠️ WARNING, not debug. This logged at DEBUG - below the root level,
+        # and no DEBUG line has ever been emitted by this application - so a
+        # failure degraded the answer to an empty account and said so NOWHERE.
+        # That is item 61's own failure mode reproduced inside item 61's fix.
+        # The broad except stays: an advisory screen must never raise.
+        logger.warning(
+            "Could not read the account for %s - the answer will be given WITHOUT "
+            "positions or a verdict, and must NOT be read as 'the account is flat'",
+            symbol,
+            exc_info=True,
         )
-    except Exception:  # noqa: BLE001 - the account context must never cost the answer
-        logger.debug("Could not gather account facts for %s", symbol, exc_info=True)
-        return AccountFacts()
+
+    empty_metrics: dict[str, float] = {}
+    empty_notes: list[str] = []
+    metrics = _guarded(lambda: risk_metrics(runtime), empty_metrics, "risk metrics", symbol)
+    notes = _guarded(
+        lambda: corporate_action_notes(runtime), empty_notes, "corporate actions", symbol
+    )
+
+    facts = AccountFacts(
+        positions=positions,
+        risk_metrics=metrics,
+        verdict=verdict,
+        position=position_dict(view),
+        notes=notes,
+        view=view,
+    )
+    # ⚠️ The line that makes a read-back ANSWERABLE. Nothing else in
+    # `domain/ai_advisory/` logs at all, so on 28 August "the Workbench note did
+    # not mention the holding" could not be told apart from "the holding never
+    # reached the model" - and the answer decided whether item 61 had worked.
+    logger.info(
+        "Advisory context for %s: %d position(s), %s held, risk metrics %s, "
+        "verdict %s, %d corporate-action note(s)",
+        symbol,
+        len(facts.positions),
+        "IS" if symbol in facts.positions else "NOT",
+        "present" if facts.risk_metrics else "ABSENT",
+        "built" if facts.verdict is not None else "unavailable",
+        len(facts.notes),
+    )
+    return facts
+
+
+def _guarded[T](read: Callable[[], T], fallback: T, what: str, symbol: str) -> T:
+    """One optional fact, or its fallback - never the whole context."""
+    try:
+        return read()
+    except Exception:
+        logger.warning(
+            "Could not read %s for %s - that part of the advisory context is ABSENT, "
+            "which is not the same as empty",
+            what,
+            symbol,
+            exc_info=True,
+        )
+        return fallback
 
 
 def resolve_day_pnl_pct(*, broker_pct: float | None, monitor_pct: float | None) -> float | None:
@@ -298,6 +356,13 @@ def build_symbol_verdict(
             now=datetime.now(UTC),
         )
         return verdict, view
-    except Exception:  # noqa: BLE001 - the verdict must never cost the answer
-        logger.debug("Could not build the symbol verdict for %s", symbol, exc_info=True)
+    except Exception:
+        # WARNING for the same reason `gather` uses it: a verdict block that is
+        # silently absent reads as "no rail would refuse this".
+        logger.warning(
+            "Could not build the symbol verdict for %s - the verdict block will be "
+            "absent, which is NOT the same as no rail refusing",
+            symbol,
+            exc_info=True,
+        )
         return None, None

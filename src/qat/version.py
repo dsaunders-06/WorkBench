@@ -1007,7 +1007,36 @@ from qat.domain.display_dates import format_display_date
 # Also carries item 64's pin (tests only, no runtime change): the open items
 # now assert their own defect is still present, so a fix cannot outlive its
 # heading. Twelve did in two days.
-MILESTONE = "M152"
+# M153 - a degraded advisory context now says so, and one failing fact no
+# longer costs every fact.
+#
+# ITEM 61 FOLLOW-UP. On 28 August the Workbench's AI note still made no
+# reference to a 3,192-share SUN.AX holding after item 61 shipped - and it was
+# IMPOSSIBLE TO TELL whether the fix had failed or the model had simply not
+# mentioned the data, because nothing in the advisory path logs anything at all
+# and `gather` swallowed failures into an empty AccountFacts at DEBUG, below the
+# root level, where no line has ever been emitted.
+#
+# That is item 61's own failure mode reproduced inside item 61's fix.
+#
+# TWO DEFECTS, and the second was found by a test stub rather than by reading:
+#
+# 1. The failure was SILENT. Now WARNING, and it names what the answer is
+#    missing and that it must not be read as "the account is flat".
+#
+# 2. ⚠️ THE WRAPPING WAS ALL-OR-NOTHING. One `try` covered the whole gather, so
+#    a failure in any OPTIONAL read - `risk_metrics` reaching
+#    `runtime.risk_engine`, `corporate_action_notes` reaching `settings` -
+#    discarded the positions that had ALREADY been read successfully. One
+#    optional fact cost every fact, and the answer went out as a flat account.
+#    That is a plausible cause of the live symptom. Each fact is guarded
+#    separately now.
+#
+# And one INFO line records what the context actually carried - position count,
+# whether THIS symbol is held, whether risk metrics and a verdict were present.
+# Without it a read-back is a guess: "the note did not mention the holding"
+# cannot be told apart from "the holding never reached the model".
+MILESTONE = "M153"
 
 _UNKNOWN = "unknown"
 
