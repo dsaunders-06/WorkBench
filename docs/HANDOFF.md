@@ -795,7 +795,11 @@ for each gap and is worth reading; the list lives here.
     `opened_at`/`closed_at` inversion outright** — it is arithmetic, and nothing
     checks it today.
 
-28. **The kill switch is TRIPPED.** It caught the mismatch correctly. Item 27
+28. ~~**The kill switch is TRIPPED.**~~ **STALE — it is CLEAR.** Reset by the
+    operator 26 August 22:02:22 and clear all through the 27 August session
+    (`kill_switch.json` reads `tripped: false`). Kept only for the advice that
+    outlives it: reset on a launch you are WATCHING.
+    ORIGINAL: It caught the mismatch correctly. Item 27
     is now fixed, so it is safe to reset — but reset it on a launch you are
     WATCHING, because the mismatch it caught came from a replay whose first
     pass now warns rather than being silent.
@@ -823,7 +827,13 @@ for each gap and is worth reading; the list lives here.
     session. `tests/data/broker/test_working_statuses.py` asserts the
     divergence, so closing it is a deliberate act.
 
-32. **⚠️ THE KILL SWITCH DOES NOT SURVIVE A RESTART.** `KillSwitch` holds
+32. ~~**⚠️ THE KILL SWITCH DOES NOT SURVIVE A RESTART.**~~ **FIXED IN M144, AND
+    THIS HEADING HAS BEEN DANGEROUSLY WRONG SINCE.** It persists: the 27 August
+    launch logged `KILL-SWITCH RESTORED FROM THE PREVIOUS SESSION` on 26 August
+    and `kill_switch.json` is the store. A reader trusting the heading would
+    believe a restart clears a halt, which is the opposite of the truth and
+    would invite exactly the restart-to-clear that item 32 existed to prevent.
+    ORIGINAL: `KillSwitch` holds
     `_tripped` in memory and persists NOTHING (`kill_switch.py` has no path, no
     file, no load). `runtime.py:523` constructs a bare one on every launch. So a
     halt that is meant to hold until a human decides holds only until the next
@@ -2238,7 +2248,11 @@ shares its shape.
     startup line must say **how old** the quarantine is and that the current
     scan disagrees with it, so the staleness is impossible to miss.
 
-61. **⚠️ THE WORKBENCH'S AI NOTE BELIEVES THE ACCOUNT IS FLAT. It is the
+61. ~~**⚠️ THE WORKBENCH'S AI NOTE BELIEVES THE ACCOUNT IS FLAT.**~~ **FIXED IN
+    M149 (`fbcf8a3`), installed 27 August 16:22, SHA256-verified and signature
+    Valid on the installed copy. ⚠️ NOT YET READ BACK** — the Workbench note on
+    a held symbol has not been re-run, so the fix is deployed and unconfirmed.
+    ORIGINAL: **The Workbench's AI note believes the account is flat. It is the
     SIBLING of the regime gap that was fixed three lines above it.** Found by
     the operator on 27 August, who ran a backtest and a walk-forward on SUN.AX
     and read the note saying *"Given no current positions and lacking portfolio
