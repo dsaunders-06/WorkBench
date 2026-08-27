@@ -950,7 +950,34 @@ from qat.domain.display_dates import format_display_date
 # never re-arm. Two accessors now, and the docstrings say they must not merge:
 # awaiting_signoff() asks whether a decision was made, pending_orders() asks what
 # exposure is committed.
-MILESTONE = "M150"
+# M151 - the known blind window stops drowning the log.
+#
+# ITEM 54. Measured on the 27 August log rather than estimated: 685 of the 710
+# lines in the blind window (10:00:05-10:20:32) were the per-symbol "possibly
+# delisted" storm. 96%. They buried the RHC.AX BROKER-SIDE FILL under about
+# three hundred of them - the one line of the day needing action within hours,
+# because IBKR execution retention is same-day only.
+#
+# BlindWindowFilter drops that ONE message and only while the feed says it is
+# blind. Eleven lines survive the window and they are the ones that matter: the
+# aggregate "95 Failed downloads", "Retrying with backoff", MARKET DATA DOWN,
+# and the recovery.
+#
+# ⚠️ Matched on the TEXT, never the logger. Suppressing yfinance wholesale would
+# have hidden the real HTTP Error 401: Invalid Crumb at 10:26:52 - inside the
+# very window where the feed is already struggling. And outside the window the
+# same message passes through untouched, because there it is a genuinely
+# delisted symbol: COL.AX and GQG.AX logged exactly that on 26 August with a
+# healthy feed.
+#
+# NOISY_LIBRARY_LOGGERS could not do this: it raises a logger to WARNING and
+# yfinance logs these at ERROR.
+#
+# Blind is set from the FIRST empty poll, not at the failure threshold - the
+# storm starts at poll one and four polls of 95 is most of it already spent by
+# the time the threshold is crossed. What is dropped is COUNTED and printed
+# beside the recovery line that explains it.
+MILESTONE = "M151"
 
 _UNKNOWN = "unknown"
 
