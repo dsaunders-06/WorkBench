@@ -2719,7 +2719,7 @@ THE STATE
   3. ON AN EXIT: ONE ledger row, full quantity, and RUN THE WIRE CHECK
      THE SAME DAY - IBKR retention is same-day only:
 
-         & ".\.venv\Scripts\python.exe" scriptserify_exit_on_the_wire.py --symbol <SYM>
+         & ".\.venv\Scripts\python.exe" scripts\verify_exit_on_the_wire.py --symbol <SYM>
 
      A second exit also takes the book to NINE, which is what unblocks entries.
 
