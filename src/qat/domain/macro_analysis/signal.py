@@ -79,6 +79,15 @@ class MacroSignal:
         return MACRO_REGIME_EXPOSURE_HINT[self.suggested_regime]
 
     def to_dict(self) -> dict[str, float | str | bool]:
+        """⚠️ This is the ONLY part of the signal that reaches the model, so a
+        field left out here is a field the model does not have (item 62).
+
+        `exposure_hint` was missing, and the Regime Monitor renders it one line
+        above the model's own proposed scalar - so on 27 August the operator
+        read `Exposure hint 1.00` above `Proposed exposure scalar: 0.40` from a
+        model that had never been shown the 1.00. Two numbers invited into
+        comparison, one of them uninformed.
+        """
         return {
             "realized_vol_annualized_pct": round(self.realized_vol_annualized_pct, 2),
             "pct_above_trend": round(self.pct_above_trend, 2),
@@ -86,6 +95,7 @@ class MacroSignal:
             "suggested_regime": self.suggested_regime,
             "elevated_volatility": self.elevated_volatility,
             "below_trend": self.below_trend,
+            "exposure_hint": self.exposure_hint,
         }
 
     def summary_line(self) -> str:

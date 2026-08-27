@@ -48,8 +48,40 @@ def build_macro_analysis_prompt(context: AdvisoryContext) -> str:
         "wider context genuinely warrants it; if you do, say why explicitly in your reasoning.\n\n"
         "Any exposure scalar you return is a PROPOSAL for a human to accept or reject. It is "
         "not applied automatically and you are not instructing the system to change anything.\n\n"
-        "Return JSON matching the required schema.\n\n" + context.to_prompt_text()
+        + _EXPOSURE_SCALE
+        + "Return JSON matching the required schema.\n\n"
+        + context.to_prompt_text()
     )
+
+
+# ⚠️ THE MACRO SCALE ONLY, and the HMM's is deliberately absent (item 62).
+#
+# `suggested_exposure_scalar` is `Field(ge=0.0, le=1.0)` and nothing more, and
+# this prompt named no scale at all - so the model was free-picking a number
+# against nothing. On 27 August it proposed 0.40 beside a deterministic hint of
+# 1.00, and 0.40 is not a value this read can produce: it exists only in
+# `_EXPOSURE_SCALARS`, the HMM regime engine's table, where it means high_vol.
+#
+# Naming the HMM's table here would be the wrong fix twice over. That table
+# belongs to the component that OWNS `RiskEngine.regime_scalar` and is
+# deliberately its only writer - `MACRO_REGIME_EXPOSURE_HINT`'s own comment
+# says two independent things writing one scalar "would make the applied
+# exposure impossible to attribute to either". Showing the model a second scale
+# invites exactly the crossover that produced 0.40.
+#
+# Kept as literal text rather than rendered from `MACRO_REGIME_EXPOSURE_HINT`.
+# That import would point `ai_advisory` at `macro_analysis`, and this package's
+# context module states it "imports nothing from the rest of" the domain. A
+# test pins the two against each other instead, which is what catches drift
+# without buying the dependency.
+_EXPOSURE_SCALE = (
+    "The exposure scalar is on the SAME SCALE as the `exposure_hint` in the deterministic "
+    "read below, which is the exposure that read alone justifies. That scale is anchored: "
+    "risk_on 1.00, neutral 0.85, caution 0.60, risk_off 0.30. Treat your figure as a "
+    "REVISION of `exposure_hint` and say what moved it; if nothing warrants a change, "
+    "return the hint unchanged or omit the field. Do not use a value from any other "
+    "exposure table.\n\n"
+)
 
 
 def build_performance_narrative_prompt(report_markdown: str) -> str:

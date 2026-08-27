@@ -2312,6 +2312,89 @@ shares its shape.
     screens' calls and asserts neither drops an argument the other supplies.
     A guard on the builder alone is what let this through.
 
+62. ~~**⚠️ THE MACRO AI PROPOSES AN EXPOSURE SCALAR ON NO STATED SCALE, AND HAS
+    NEVER SEEN THE ONE THE DETERMINISTIC READ JUSTIFIES.**~~ **FIXED 27 August,
+    NOT YET DEPLOYED.** Found by the operator, who read the Regime Monitor
+    showing, one line above the other:
+
+        Deterministic read (STW.AX): Risk-On ... Exposure hint 1.00.
+        Proposed exposure scalar: 0.40   (proposal only - not applied)
+
+    and asked why a majority-bullish, Risk-On market would draw a 0.40.
+
+    ### ✅ First, the reassuring half: NOTHING APPLIES IT
+
+    `suggested_exposure_scalar` has exactly ONE consumer in the codebase -
+    `regime_monitor.py:221`, which prints it. The schema says so too: *"a
+    proposal only. Nothing applies it… letting a model move risk settings on
+    its own was a materially larger trust delegation than letting it comment on
+    them."* The operator's instinct that this needs human intervention is
+    correct, and the boundary held.
+
+    ### ⚠️ TWO EXPOSURE VOCABULARIES, AND 0.40 IS NOT IN THIS ONE
+
+    | table | values |
+    |---|---|
+    | `MACRO_REGIME_EXPOSURE_HINT` (this screen) | risk_on **1.0**, neutral **0.85**, caution **0.6**, risk_off **0.3** |
+    | `_EXPOSURE_SCALARS` (the HMM regime engine) | bull 1.0, recovery 0.9, low_vol 1.0, sideways 0.7, bear 0.5, **high_vol 0.4**, recession 0.3 |
+
+    **0.40 exists only in the second**, where it means `high_vol` - a table
+    belonging to the component that OWNS `RiskEngine.regime_scalar` and is
+    deliberately its only writer. The macro read cannot produce 0.40 in any
+    state.
+
+    ### The cause: the model was never given the anchor
+
+    `MacroSignal.exposure_hint` is a property. The screen renders it. But
+    `to_dict()` - **the only part of the signal that reaches the prompt** -
+    did not carry it. And `build_macro_analysis_prompt` named no scale at all,
+    while the schema constrains the field to nothing tighter than
+    `Field(ge=0.0, le=1.0)`.
+
+    So the screen invited a comparison between two numbers where **only one
+    side had the relevant input**. The model was not disagreeing with 1.00; it
+    had never seen 1.00.
+
+    ### ✅ NOT item 61, and worth saying so rather than crying wolf
+
+    `get_macro_assessment` passes `positions={}` and `risk_metrics={}` **on
+    purpose**, and the code says why: *"this is a market-wide question, and
+    keeping positions out is what lets `LLMRouter` send it to the general slot
+    rather than forcing the sensitive one."* A considered routing decision, not
+    an omission. Two empty dicts in two screens, one a defect and one correct -
+    which is exactly why "the context looks thin" is not by itself a finding.
+
+    ### The fix
+
+    1. `to_dict()` carries `exposure_hint`, with its docstring stating the rule
+       that was broken: **a field left out here is a field the model does not
+       have**.
+    2. The prompt names the macro scale, anchored, and says the figure is a
+       REVISION of `exposure_hint` on the SAME SCALE - so naming the table is
+       not just four more numbers to ignore.
+
+    ⚠️ **The HMM's table is deliberately NOT named in that prompt.** Showing
+    the model a second scale invites precisely the crossover that produced 0.40,
+    and `MACRO_REGIME_EXPOSURE_HINT`'s own comment already warns that two
+    independent things writing one scalar "would make the applied exposure
+    impossible to attribute to either". A test asserts the HMM regime names stay
+    out.
+
+    The anchor is literal text rather than rendered from the table, because
+    importing it would point `ai_advisory` at `macro_analysis` and that package
+    states it "imports nothing from the rest of" the domain. A test pins the
+    text against the real table instead - **falsified by changing 0.30 to 0.35
+    and watching it go red**, so the drift it exists to catch is a demonstrated
+    catch rather than a hope.
+
+    ### ⚠️ What this does NOT establish
+
+    It does not show the 0.40 was wrong. A model can argue for defensiveness at
+    `bull=0.47` with recovery and low_vol splitting most of the remainder. What
+    is established is that the proposal was **uninformed and unconstrained**.
+    Whether an anchored prompt produces a different number is the read-back
+    check for this change, and it has not been run.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```
