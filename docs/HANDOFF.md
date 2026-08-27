@@ -633,7 +633,11 @@ for each gap and is worth reading; the list lives here.
     only in a docstring and M105's connection test that returned a tick
     regardless.
 
-19. **Is the CI-goes-red-before-2200-AEST rule real?** Recorded as fact in this
+19. ~~**Is the CI-goes-red-before-2200-AEST rule real?**~~ **ANSWERED — NO.**
+    Tested 24 August: 43 held-back commits pushed at 13:07 and CI completed
+    green in 3m57s. Already recorded in the standing constraints; the item
+    outlived its own answer. Audit, 27 Aug.
+    ORIGINAL: Recorded as fact in this
     file and in a saved memory. On 24 August CI ran at **13:07 AEST and passed**
     — one clean counter-example. Either a time-dependent test was fixed
     somewhere in the 43 pushed commits, or the rule was never as deterministic
@@ -1072,7 +1076,10 @@ for each gap and is worth reading; the list lives here.
     case never materialised — nothing closed unrecorded and the ledger is not
     short. That was luck, not design.
 
-35. **`ib_async` logs each `orderStatus` at INFO with the entire `Trade` repr**,
+35. ~~**`ib_async` logs each `orderStatus` at INFO with the entire `Trade` repr**~~
+    **FIXED.** `NOISY_LIBRARY_LOGGERS` carries `ib_async.wrapper` and
+    `logging.py:33` describes this exact defect as its reason. Audit, 27 Aug.
+    ORIGINAL:,
     including the full `TradeLogEntry` history — kilobytes per line, growing as
     each order accumulates status changes. On 25 August this rotated the 5 MiB
     log **three times in under three minutes** (10:30:27, 10:32:20, 10:32:55)
@@ -1085,7 +1092,13 @@ for each gap and is worth reading; the list lives here.
     hides exactly the app-level lines a live incident needs. Quiet the
     `ib_async.wrapper` logger to WARNING, or raise the cap and the backup count.
 
-36. **`poll()`'s docstring promises a control that does not exist, and the
+36. ~~**`poll()`'s docstring promises a control that does not exist**~~
+    **APPEARS FIXED — judged from the docstring, not from a live run.**
+    `delever.poll()` now says what it does: *"Reports the breach whether or not
+    trimming is enabled, so 'we are over cap and doing nothing about it' is a
+    visible state rather than silence."* ⚠️ Weaker evidence than 35 or 51,
+    which name their milestone. Audit, 27 Aug.
+    ORIGINAL:
     kill-switch button is what sits where it would be.**
     `ReconciliationMonitor.poll` says it is *"Public so a test or the Risk
     Console can force a check without waiting on the interval."* **The Risk
@@ -1805,7 +1818,11 @@ shares its shape.
     stays UTC-with-offset. Machine records want one zone. Do not "finish the
     job" by converting those.
 
-51. **A refused Gateway connection kills the app with a raw PyInstaller
+51. ~~**A refused Gateway connection kills the app with a raw PyInstaller**~~
+    **FIXED in M125.** `ib_adapter.py:153` — *"Connect, retrying a refused port
+    for a bounded time (M125)"* — and `preflight` probes the port rather than
+    the process. Audit, 27 Aug.
+    ORIGINAL:
     dialog, and the log's last line says the shutdown was NORMAL.** Seen on the
     first M145 launch, 26 August 08:44:28, with IB Gateway not logged in.
 
@@ -1836,7 +1853,12 @@ shares its shape.
     — and do not log "shutdown reached normally" on a path that is ending
     because of an unhandled exception.
 
-52. **`SessionController.active` is constructed True, so a controller that
+52. ~~**`SessionController.active` is constructed True, so a controller that**~~
+    **ADDRESSED in M108.** Still constructed `True`, deliberately — the
+    orchestrator starts the feed before this engine runs — and `:98` now
+    explains it. The real defect was the SILENCE that followed, which M108
+    fixed. Audit, 27 Aug.
+    ORIGINAL:
     never runs its first check asserts the market is OPEN.** Same launch:
     the Dashboard read `Session: ACTIVE - ASX is open` at 08:45, three
     columns away from its own `ASX closed` / `opens in 01:14:28 (Wed 10:00)`.
@@ -2566,7 +2588,7 @@ shares its shape.
     write-header-only-if-new logic at `:1276-1278`.
 
 64. **⚠️ ITEM HEADINGS OUTLIVE THEIR FINDINGS, AND ONE OF THEM WAS DANGEROUS.**
-    **SEVEN found in two days.** The first four by tripping over them; the last
+    **TWELVE found in two days.** The first four by tripping over them; the last
     three by finally LOOKING, in a ten-minute audit that closed three items for
     the cost of five greps. That ratio is the argument for doing the audit
     before the work, not after.
@@ -2580,6 +2602,11 @@ shares its shape.
     | 37 | the drift guard may never run | fixed, and exercised today |
     | 39 | the chart's x-axis renders bar indices | fixed in `62660ae` |
     | 50 | the build stamp renders its date in UTC | fixed in M145 |
+    | 35 | `ib_async` orderStatus noise | in `NOISY_LIBRARY_LOGGERS` |
+    | 51 | a refused Gateway kills the app | fixed in M125 |
+    | 52 | `SessionController.active` is True | addressed in M108 |
+    | 36 | `poll()` promises a control | appears fixed |
+    | 19 | is the CI rule real? | answered NO on 24 Aug |
 
     **Item 32 is the one that mattered.** A reader trusting it would believe a
     restart clears a halt - the opposite of the truth, and an invitation to the
