@@ -116,6 +116,19 @@ class _Entry:
     # PER STRATEGY, so a lot restored without this would rebuild the trade and
     # still not count towards anything.
     strategy: str | None = None
+    # The price the order was SIZED against (M44). `ClosedTrade.entry_slippage`
+    # is `entry_price - reference_price` and returns None without it, so a lot
+    # that survives a restart loses the only measurement of what the entry
+    # actually cost against what the cost model assumed.
+    #
+    # ⚠️ THIS IS THE THIRD FIELD LOST ACROSS A RESTART, and the two above are
+    # the other two. M44 records the blocker as trade COUNT; it is not. All six
+    # closed trades on 28 August carry an empty `entry_slippage`, and they would
+    # still be empty at twenty, because this app restarts most days.
+    #
+    # `None` on an older record means UNKNOWN, never the entry price - which
+    # would report zero slippage on a trade nobody measured.
+    reference_price: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +148,10 @@ class PositionEntry:
     stop_price: float | None
     target_price: float | None
     strategy: str | None
+    # Kept in step with `_Entry` by a test that compares the two SHAPES rather
+    # than a list of names - a field added to one and not the other is exactly
+    # how M33 and M49 happened twice over.
+    reference_price: float | None = None
 
 
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
@@ -971,6 +988,9 @@ class SignalToOrderBridge:
                     stop_price=event.stop_price,
                     target_price=event.take_profit_price,
                     strategy=event.strategy,
+                    # M44. The event has carried this since M37; the bridge
+                    # simply dropped it, so it never survived to the ledger.
+                    reference_price=event.reference_price,
                 ),
             )
             self._entry_times.append(event.ts)
@@ -1044,6 +1064,15 @@ class SignalToOrderBridge:
                     # restore time from what is actually deployed rather than
                     # guessed here.
                     strategy=row.get("strategy") or None,
+                    # Same `.get` reasoning a third time (M44). A file written
+                    # before this field existed names no reference price, and
+                    # `None` there means UNKNOWN - never the entry price, which
+                    # would report zero slippage on a trade nobody measured.
+                    reference_price=(
+                        float(row["reference_price"])
+                        if row.get("reference_price") is not None
+                        else None
+                    ),
                 )
             except (KeyError, TypeError, ValueError):
                 logger.warning("Ignoring an unreadable entry record for %s", symbol)
@@ -1076,6 +1105,7 @@ class SignalToOrderBridge:
                 "stop_price": entry.stop_price,
                 "target_price": entry.target_price,
                 "strategy": entry.strategy,
+                "reference_price": entry.reference_price,
             }
             for symbol, entry in self._entries.items()
         }

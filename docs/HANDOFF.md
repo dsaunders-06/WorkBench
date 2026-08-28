@@ -538,6 +538,40 @@ for each gap and is worth reading; the list lives here.
    moved the journal rows out of the live directory; its other input was a live
    Alpaca API call that will not be made again.
 
+   ### ⚠️ THE PREMISE IS WRONG: THE BLOCKER IS NOT TRADE COUNT
+
+   Measured 28 August. All six closed trades carry an EMPTY `entry_slippage`,
+   and they would still be empty at twenty:
+
+       entry_slippage   (empty on all 6)
+       reference_price  (empty on all 6)
+       mae_r -0.0   mfe_r 0.0   worst_price = best_price = entry_price
+
+   `ClosedTrade.entry_slippage` is `entry_price - reference_price` and returns
+   `None` without it. `open_position_entries.json` stored only
+   `opened_at, price, stop_price, target_price, strategy` — **so every restart
+   discarded it, and this app restarts most days.** The instrument existed and
+   had never once been fed.
+
+   ⚠️ **THIRD TIME THIS RECORD HAS LOST A FIELD ACROSS A RESTART**, and the
+   other two are in its own comments: M33's `target_price` ("six positions came
+   back with downside protection and no way to bank a gain") and M49's
+   `strategy` ("would rebuild the trade and still not count towards anything").
+
+   ✅ **FIXED 28 August (not deployed):** `reference_price` is carried on
+   `_Entry` and `PositionEntry`, populated from the fill event — which has
+   carried it since M37, the bridge simply dropped it — persisted by
+   `_save_entries`, and read back with `.get` so pre-existing files load as
+   UNKNOWN rather than as the entry price.
+
+   ⚠️ **STILL OPEN: `worst_price` and `best_price`.** They EVOLVE over a trade's
+   life, so persisting them at open would restore a stale excursion. That needs
+   periodic persistence and is a larger piece — `mae_r` and `mfe_r` stay empty
+   until it is done.
+
+   ⚠️ **And this fixes it only for trades opened FROM NOW.** The six existing
+   rows cannot be recovered; the reference prices were never written down.
+
 ### Correctness and hygiene
 
 8. ~~**The exposure metric counts accrued interest as exposure.**~~ **DONE — M133.**
