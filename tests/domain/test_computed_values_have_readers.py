@@ -40,6 +40,7 @@ import re
 from pathlib import Path
 
 import pytest
+from support.source_corpus import source_files
 
 import qat
 
@@ -102,10 +103,13 @@ def _is_read(name: str) -> bool:
     its own test.
     """
     pattern = re.compile(rf"\.{re.escape(name)}\b")
+    # Item 20. `any()` over an empty corpus is False, so a scan root that had
+    # moved would report EVERY watched property as unread - loudly, which is
+    # the safe direction, but it would be read as a hundred real defects
+    # rather than as one wrong path. `source_files` names the actual cause.
     return any(
         pattern.search(path.read_text(encoding="utf-8"))
-        for path in _SRC.rglob("*.py")
-        if "__pycache__" not in path.parts
+        for path in source_files(_SRC, recurse=True, minimum=100)
     )
 
 

@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
+from support.source_corpus import source_files
 
 from qat.config import Settings
 from qat.data.bars import BarAggregator, floor_to_interval
@@ -340,6 +341,44 @@ def test_a_print_scheduled_for_today_is_still_found_under_aedt() -> None:
     assert _first_future_date(calendar, "ASX", OPEN_5_OCT) == date(2026, 10, 5)
 
 
+_BANNED_UTC_DATE = re.compile(r"now\(UTC\)\.date\(\)|now\(UTC\)\.strftime|utcnow\(\)\.date\(\)")
+
+
+def _banned_lines(text: str) -> list[str]:
+    """The scan, over a string, so its own eyesight can be asserted.
+
+    Comments are stripped before matching. Three source files QUOTE the banned
+    call to explain why it is banned, and a guard that cannot survive being
+    documented would be deleted the first time someone wrote about it.
+    """
+    return [line for line in text.splitlines() if _BANNED_UTC_DATE.search(line.split("#", 1)[0])]
+
+
+@pytest.mark.parametrize(
+    "planted",
+    [
+        "    today = datetime.now(UTC).date()",
+        "    stamp = datetime.now(UTC).strftime('%Y-%m-%d')",
+        "    today = datetime.utcnow().date()",
+        "    today = datetime.now(UTC).date()  # a trailing comment must not hide it",
+    ],
+)
+def test_the_scan_sees_a_utc_calendar_date(planted: str) -> None:
+    """⚠️ THE POSITIVE CONTROL (item 20). The guard below asserts an ABSENCE,
+    and a scan that has stopped matching reports the same empty list as a clean
+    codebase. This plants each banned form and requires it to be found.
+
+    The trailing-comment case is here because comment stripping is the one
+    place this scan deliberately narrows itself, and a `split` that took the
+    whole line would silence any offender written on a documented line."""
+    assert _banned_lines(planted) == [planted]
+
+
+def test_the_scan_still_allows_the_call_to_be_written_about() -> None:
+    """The other direction, which is why the stripping exists at all."""
+    assert _banned_lines("# M111. Was `datetime.now(UTC).date()`, a UTC date.") == []
+
+
 def test_no_source_file_derives_a_calendar_date_from_a_utc_instant() -> None:
     """The guard that makes this milestone stick.
 
@@ -348,17 +387,19 @@ def test_no_source_file_derives_a_calendar_date_from_a_utc_instant() -> None:
     UTC *instant* is correct and stays - this only bans turning one into a
     calendar DATE, which is what `trading_date` exists for.
     """
-    banned = re.compile(r"now\(UTC\)\.date\(\)|now\(UTC\)\.strftime|utcnow\(\)\.date\(\)")
     src = Path(__file__).resolve().parents[1] / "src" / "qat"
 
-    # Comments are stripped before matching. Both milestone notes QUOTE the
-    # banned call to explain it, and a guard that cannot survive being
-    # documented would be deleted the first time someone wrote about it.
+    # ⚠️ Item 20. This was a bare `src.rglob("*.py")`. `rglob` on a directory
+    # that does not exist yields nothing and raises nothing, so one wrong
+    # `parents[N]` - or a package move - would turn this assertion from "the
+    # codebase is clean" into "nothing was read", and the two look identical
+    # from here. `source_files` refuses an empty corpus at the point it is
+    # built.
     offenders = [
         f"{path.relative_to(src)}:{number}"
-        for path in src.rglob("*.py")
+        for path in source_files(src, recurse=True, minimum=100)
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
-        if banned.search(line.split("#", 1)[0])
+        if _BANNED_UTC_DATE.search(line.split("#", 1)[0])
     ]
 
     assert not offenders, (

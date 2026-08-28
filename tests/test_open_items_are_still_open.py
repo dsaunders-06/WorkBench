@@ -80,6 +80,21 @@ def test_item_29_deployed_is_still_maintained_by_hand() -> None:
         # regression is it becoming a literal again.
         (31, "data/broker/ib_translate.py", "_IB_WORKING_STATUSES = WORKING_STATUSES"),
         (22, "domain/oms/oms.py", "spendable_from("),
+        # Item 44, closed 28 August: the field the bridge had been dropping.
+        (44, "domain/oms/signal_bridge.py", "reference_price=event.reference_price"),
+        # Item 18, closed 28 August. Pinned on the LOG line rather than the
+        # caption: the caption is erased by the next RegimeEvent by design, so
+        # the record is the thing a regression would take away.
+        (18, "presentation/dashboard.py", "Regime note ACKNOWLEDGED by the operator"),
+        # Items 21 and 40, closed 28 August (STALE - they were already fixed).
+        # Pinned at the helper, because the defect was every call site
+        # formatting its own clock and there being no one place to put this.
+        (21, "domain/display_dates.py", "def format_session_time"),
+        # Item 20, closed 28 August. `test_source_scanning_guards_cannot_go_
+        # blind` already enforces this continuously; the pin is here so that
+        # DELETING the helper - the one change that would silently restore the
+        # old freedom - fails by item number rather than by import error.
+        (20, "tests/support/source_corpus.py", "def source_files"),
     ],
 )
 def test_a_closed_item_has_not_quietly_regressed(item: int, relative: str, needle: str) -> None:

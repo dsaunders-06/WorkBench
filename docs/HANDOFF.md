@@ -692,7 +692,28 @@ for each gap and is worth reading; the list lives here.
     the trading system. A recommendation that follows the live strategy's rules
     sits closer to that line, not further from it.
 
-18. **The Dashboard's "Review & Apply" button applies nothing.** Its handler is
+18. ~~**The Dashboard's "Review & Apply" button applies nothing.**~~
+    **DONE 28 August (not deployed).** BOTH branches of the original ask, not
+    the cheaper one: it is renamed to **"Acknowledge note"**, and the click now
+    writes an INFO line naming the regime it was acknowledged AGAINST -
+    `Regime note ACKNOWLEDGED by the operator: regime bull, at ...` - so it can
+    finally serve as evidence a human saw a regime change before a trade.
+
+    ⚠️ **The log line is the deliverable; the caption is the weaker half.** The
+    button still resets on the next `RegimeEvent`, and that is correct - a tick
+    left standing under a new regime would claim an acknowledgement nobody
+    made. What must survive is the record, and a caption is not one.
+
+    The caption confirms with a zoned, market-local time (items 21/40's rule
+    applied to a surface added after them), and a test pins that it follows the
+    MARKET rather than the machine - easy to pass by accident on a box in
+    Sydney, so it is asserted under `market="US"` too.
+
+    Spec §K is unchanged and now pinned: a source-level test asserts the
+    handler still reaches no trading path. The fix for a dishonest label was
+    never to make the label true by acting.
+
+    ORIGINAL: Its handler is
     one line — `self.review_button.setText("Reviewed ✓")`. Nothing else in
     `src` or `tests` references it. The inertness toward TRADING is deliberate
     and right (spec §K, "Review & Apply, never auto-apply"), but the label
@@ -715,14 +736,63 @@ for each gap and is worth reading; the list lives here.
     as recorded. Worth one deliberate daytime push to settle rather than
     carrying forward.
 
-20. **Sweep the other guards for the same blindness.** M135 found the colour
+20. ~~**Sweep the other guards for the same blindness.**~~ **DONE 28 August
+    (not deployed).** Four guards scan a globbed corpus of `*.py`:
+
+    | Guard | Corpus check | Positive control |
+    |---|---|---|
+    | `test_design_system_is_the_only_source_of_colour` | had one | had one |
+    | `test_computed_values_have_readers` | had one | n/a — asserts a PRESENCE |
+    | `test_theme` | **none** | **none** |
+    | `test_m111_trading_day` | **none** | **none** |
+
+    ⚠️ **NO HIDDEN LIVE VIOLATION WAS FOUND** — the honest result, and unlike
+    M135, which was hiding one. What two of the four could not do was tell you
+    their green meant anything.
+
+    **Three narrownesses closed anyway, and the positive control found the
+    worst of them on its first run.** `test_theme`'s hex scan required the
+    colour to be the WHOLE quoted literal, so `"color: #b71c1c;"` — the only
+    way a screen actually writes one — was invisible to the guard whose entire
+    job is to catch it. Its font-size scan required exactly one space after the
+    colon, so `font-size:14px` was invisible. Both were latent only because the
+    tokenising colour guard covers the same ground, and **a guard that is
+    correct only because another one overlaps it is not a guard.**
+
+    **Two halves, neither substituting for the other.** `tests/support/
+    source_corpus.py:source_files` refuses a missing root or a collapsed corpus
+    AT THE POINT THE FILE LIST IS BUILT, so a guard written next month inherits
+    it — that answers *did we look*. A planted violation answers *can we still
+    see*, and every absence-asserting scan now has one.
+
+    ⚠️ **And a meta-guard, because a helper nobody must use is a convention —
+    which is exactly what M135 had.** `test_no_guard_globs_the_source_tree_
+    without_the_corpus_check` fails on any test that globs `*.py` itself. It
+    flagged its own planted samples on the first run, which is how its two
+    exemptions were earned rather than assumed.
+
+    ORIGINAL: M135 found the colour
     guard reading every f-string as empty since the 3.12 upgrade, hiding a live
     violation while reporting none. Any pattern- or `tokenize`-based guard in
     this codebase written before that upgrade could have narrowed the same way,
     and a narrowed guard is worse than none because its green result is read as
     evidence. Not urgent; genuinely worth doing.
 
-21. **Screens render stored UTC as if it were local time.** Spotted by the
+21. ~~**Screens render stored UTC as if it were local time.**~~ **STALE —
+    ALREADY FIXED, found by audit 28 August.** `display_dates.format_session_
+    time(value, market)` exists, renders `HH:MM:SS ZONE` in the EXCHANGE's
+    timezone, treats a naive timestamp as UTC, and always names the zone. Every
+    site this item and item 40 name now routes through it: `blotter.py:333`,
+    `performance.py:435`, `regime_monitor.py:301`, `risk_console.py:415/421`,
+    `account_poller.py:72` (the Balances panel's "as of") and
+    `watch_session.py:181/275` — including the tally line that printed a bare
+    UTC clock with no zone label at all into the console an operator watches
+    during an incident. `tests/domain/test_session_time_display.py` pins it.
+
+    ⚠️ **Thirteenth stale heading this week.** Same shape as the other twelve:
+    the work shipped and the item outlived it. Nothing here was re-done.
+
+    ORIGINAL: Spotted by the
     operator on 24 August: an order created at **13:05:01 AEST** shows on the
     Blotter as **03:05:01**. `Order.created_at` is `datetime.now(UTC)`, which is
     right for storage, and `blotter.py:332` formats it with no conversion —
@@ -1382,7 +1452,13 @@ for each gap and is worth reading; the list lives here.
     axis that says "Date" and shows `01.150` teaches the reader to distrust the
     chart.
 
-40. **UTC is still rendered where AEST is meant — more instances found.**
+40. ~~**UTC is still rendered where AEST is meant — more instances found.**~~
+    **STALE — closed with item 21 on 28 August.** Every instance this entry
+    names was verified fixed: the Balances "as of", the Regime Monitor's
+    transition history, the Blotter column, and `watch_session.py`'s tally
+    line. See item 21 for the measured site list.
+
+    ORIGINAL:
     Extends item 21, which is NOT fully closed. Seen on 25 August:
     the Balances panel's *"as of 03:21:34"* (a 13:21 AEST event), the Regime
     Monitor's transition history *"25/08/2026 00:03:00 UTC -> sideways"*, and

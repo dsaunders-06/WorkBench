@@ -1,6 +1,17 @@
 """Dashboard (spec §K): KPI tiles, equity curve, positions table, and an
-AI regime-note panel with an explicit Review & Apply action - the AI
-proposes, the human disposes; nothing here auto-applies anything.
+AI regime-note panel the human acknowledges - the AI proposes, the human
+disposes; nothing here auto-applies anything.
+
+⚠️ The control used to be labelled "Review & Apply" and its handler was one
+line: `setText("Reviewed ✓")`. Being inert toward TRADING is deliberate and
+right - spec §K is "Review & Apply, never auto-apply" - but the word *Apply*
+on a button that applies nothing is the same family as M73's framing that
+lived only in a docstring and M105's connection test that returned a tick
+whatever happened (item 18). It now says what it does, and the
+acknowledgement is written to the log with the regime label it was made
+against, so it can serve as evidence a human saw a regime change before a
+trade. The button state still resets on the next `RegimeEvent`; the log line
+does not.
 """
 
 from __future__ import annotations
@@ -24,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from qat.domain.display_dates import format_session_time
 from qat.domain.events import RegimeEvent
 from qat.domain.oms.adopted import assess_adopted_positions
 from qat.domain.oms.position_view import PositionView, build_position_views
@@ -48,6 +60,10 @@ _MIN_POINTS_FOR_SHARPE = 10
 # could be misread as zero (M81, M82: a display that states something false
 # is the defect class this project has been bitten by most).
 _EM_DASH = "—"
+# Item 18. Not "Review & Apply": this applies nothing, and saying so is the
+# whole fix. `&&` is Qt's escape for a literal ampersand, which is why the old
+# label was doubled - a detail worth keeping in mind before adding one back.
+_ACKNOWLEDGE_LABEL = "Acknowledge note"
 _POSITIONS_COLUMNS = (
     "Symbol",
     "Qty",
@@ -208,6 +224,11 @@ class DashboardScreen(QWidget):
         self.corporate_action_banner.setVisible(False)
         layout.addWidget(self.corporate_action_banner)
 
+        # What the operator's acknowledgement is recorded AGAINST. `None` until
+        # the first RegimeEvent, and the log line says "unknown" rather than
+        # inventing a label - an acknowledgement of nothing in particular is
+        # still worth recording, and pretending it named a regime is not.
+        self._regime_label: str | None = None
         self.regime_header = QLabel("Regime: (waiting for data...)")
         self.regime_header.setStyleSheet(theme.text(size=theme.SUBHEAD, bold=True))
         layout.addWidget(self.regime_header)
@@ -283,7 +304,7 @@ class DashboardScreen(QWidget):
         self.ai_note_label = QLabel("(no note yet)")
         self.ai_note_label.setWordWrap(True)
         layout.addWidget(self.ai_note_label)
-        self.review_button = QPushButton("Review && Apply")
+        self.review_button = QPushButton(_ACKNOWLEDGE_LABEL)
         self.review_button.clicked.connect(self._on_review_clicked)
         layout.addWidget(self.review_button)
 
@@ -524,6 +545,7 @@ class DashboardScreen(QWidget):
                 table.setItem(row, col, item)
 
     async def _on_regime(self, event: RegimeEvent) -> None:
+        self._regime_label = event.label
         self.regime_header.setText(f"Regime: {event.label} (scalar={event.exposure_scalar:.2f})")
         top_probs = sorted(event.probs.items(), key=lambda kv: kv[1], reverse=True)[:3]
         summary = ", ".join(f"{label}={prob:.0%}" for label, prob in top_probs)
@@ -531,9 +553,27 @@ class DashboardScreen(QWidget):
             f"Current regime is '{event.label}' (top probabilities: {summary}). "
             "Review the Regime Monitor for full detail before adjusting exposure."
         )
-        self.review_button.setText("Review && Apply")
+        self.review_button.setText(_ACKNOWLEDGE_LABEL)
 
     def _on_review_clicked(self) -> None:
-        # Explicit human action; never triggers a trade - just acknowledges
-        # the note has been reviewed (spec §K: "Review & Apply, never auto-apply").
-        self.review_button.setText("Reviewed ✓")
+        """Explicit human action; never triggers a trade (spec §K).
+
+        ⚠️ The LOG line is the point of this handler, not the tick. A button
+        that changes its own caption and nothing else is not evidence of
+        anything - it resets on the next `RegimeEvent`, and nobody can ask it
+        afterwards whether the note was ever read. The label it was
+        acknowledged AGAINST is carried explicitly, because "acknowledged at
+        14:02" answers a different and much weaker question than "acknowledged
+        the bull note at 14:02".
+        """
+        acknowledged_at = datetime.now(UTC)
+        label = self._regime_label or "unknown"
+        logger.info(
+            "Regime note ACKNOWLEDGED by the operator: regime %s, at %s. "
+            "Acknowledgement only - nothing was applied to the trading system.",
+            label,
+            acknowledged_at.isoformat(),
+        )
+        self.review_button.setText(
+            f"Acknowledged ✓ {format_session_time(acknowledged_at, self.runtime.settings.market)}"
+        )

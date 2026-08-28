@@ -30,6 +30,7 @@ import tokenize
 from pathlib import Path
 
 import pytest
+from support.source_corpus import source_files
 
 import qat.presentation as presentation_package
 
@@ -102,7 +103,11 @@ def _hand_written_colours(path: Path) -> list[tuple[int, str]]:
 
 
 def _modules() -> list[Path]:
-    return sorted(p for p in _PRESENTATION.glob("*.py") if p.name not in _ALLOWED)
+    # Item 20: the non-emptiness check moves to where the corpus is BUILT, so
+    # a guard written next month inherits it. `test_there_are_modules_to_check`
+    # stays - it is the one that says out loud WHY, and this file is where the
+    # lesson was learned.
+    return source_files(_PRESENTATION, exclude=_ALLOWED, minimum=8)
 
 
 def test_there_are_modules_to_check():
