@@ -2836,10 +2836,32 @@ shares its shape.
     flips 85% of labels in a window that is 78% bear with THREE transitions -
     it is not moving the label at boundaries, it is DETERMINING it.
 
-    ⚠️ **Only `vix_level` carries a replicated result.** The other three vary
-    with the window by a factor of three to four, so no conclusion about
-    `credit_spread` — item 66's original question — is available from this
-    instrument yet, on any window.
+    ### ✅ THE MAGNITUDES DO NOT REPLICATE. THE RANK ORDER DOES.
+
+        earlier  vix_level > yield_curve_slope > breadth > credit_spread
+        later    vix_level > yield_curve_slope > breadth > credit_spread
+
+    **Identical on both disjoint windows**, while every magnitude except
+    `vix_level`'s moved by three to four times. That is the comparison the
+    window effect leaves intact: WITHIN a window all four features face the same
+    contestability, so their order is informative even when their percentages
+    are not.
+
+    ⚠️ **SO ITEM 66 DOES HAVE AN ANSWER, and it is not the one it started
+    with.** `credit_spread` (BAA10Y) is the LEAST influential of the four
+    columns, last in both windows. But least is not nothing: it still moved 56%
+    of labels in the contestable window, so **"BAA10Y is dead weight" is not
+    supported** — it is simply the weakest of four columns that all matter less
+    than `vix_level`.
+
+    ⚠️ **And the three US columns do NOT cluster.** `vix_level` is first and
+    `credit_spread` last, with the ASX-derived `breadth` between them. Whatever
+    is driving the label, it is not "US data" as a bloc - it is the VIX
+    specifically. Item 66's framing, that half the features are US and therefore
+    suspect, is the wrong cut.
+
+    ⚠️ Rank stability over TWO windows is still two. It should be checked on a
+    third before the ordering is treated as settled.
 
     Wanted next, in this order:
     1. ~~**Repeat on a second window.**~~ **DONE for `vix_level` and `breadth`.**
