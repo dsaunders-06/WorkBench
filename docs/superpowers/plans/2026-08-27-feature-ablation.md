@@ -385,6 +385,12 @@ git commit -m "Milestone C: which regime features may be ablated, and which are 
 - Modify: `scripts/research/run_ablation.py` (`_one`)
 - Modify: `src/qat/domain/backtester/manifest.py`
 
+⚠️ **NOT YET EXERCISED END TO END.** The manifest fields and the regime-path
+helpers are unit-tested and the harness writes them, but no full replay has been
+RUN - `_one` has not executed against real bars. Task 6 Step 3 is the first time
+that happens, and the first chance for the `RegimeEvent.ts` attribute or
+`get_account()` to be wrong in a way no unit test sees.
+
 **Interfaces:**
 - Consumes: `feature_settings` from Task 3.
 - Produces:
@@ -428,12 +434,12 @@ def test_the_manifest_carries_terminal_equity_and_the_ablated_feature(tmp_path):
     assert reread.regime_features == ("log_return", "realized_vol")
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_feature_ablation.py -q`
 Expected: FAIL — `build_manifest` takes no `terminal_equity`.
 
-- [ ] **Step 3: Implement the manifest fields**
+- [x] **Step 3: Implement the manifest fields**
 
 Add all three to `RunManifest` — `terminal_equity: float | None`,
 `disabled_feature: str | None`, `regime_features: tuple[str, ...] | None` —
@@ -443,7 +449,7 @@ would assert a measurement that was not taken.
 
 Then add `write_regime_path` / `read_regime_path` to `run_comparison.py`.
 
-- [ ] **Step 4: Implement the recorder in `_one`**
+- [x] **Step 4: Implement the recorder in `_one`**
 
 Before `await session.run()`:
 
@@ -460,12 +466,12 @@ Before `await session.run()`:
 
 After it, write `regime_path.csv` and read terminal equity from `(await session.broker.get_account()).net_liquidation` into `build_manifest`.
 
-- [ ] **Step 5: Run the backtester suite**
+- [x] **Step 5: Run the backtester suite**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/backtester/ -q`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/research/run_ablation.py src/qat/domain/backtester/manifest.py tests/domain/backtester/test_feature_ablation.py

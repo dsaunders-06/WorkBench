@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import csv
 import textwrap
+from collections.abc import Sequence
 from pathlib import Path
 
 from qat.domain.backtester.manifest import Observability, RailRecord, RunManifest, read_manifest
@@ -41,6 +42,43 @@ _SCOPE = (
     "Measured inside the harness. No rail has a validated live agreement rate, so this is "
     "what the rail costs THIS INSTRUMENT, not what it costs the live book."
 )
+
+
+_REGIME_PATH = "regime_path.csv"
+_REGIME_FIELDS = ("ts", "label", "exposure_scalar")
+
+
+def write_regime_path(directory: Path, rows: Sequence[tuple[str, str, float]]) -> None:
+    """One bar, one row: what the regime engine PUBLISHED during a run.
+
+    ⚠️ `risk_decisions.csv` cannot serve this. It carries `regime_label` only on
+    bars where a decision happened, so "the label never differed" would be
+    indistinguishable from "no decisions happened" - which is the blindness
+    `compare_runs` exists to refuse.
+
+    One writer and one reader, used by the harness AND its tests: a test that
+    re-implements the format is a second definition of it, and two definitions
+    drift.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    with (directory / _REGIME_PATH).open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(_REGIME_FIELDS)
+        writer.writerows(rows)
+
+
+def read_regime_path(directory: Path) -> list[tuple[str, str, float]]:
+    """The regime path, or `[]` when the run wrote none.
+
+    Empty is a legitimate outcome, not an error: an arm that never started the
+    regime engine - `--rail regime_gate`'s ablated side - publishes nothing.
+    """
+    path = directory / _REGIME_PATH
+    if not path.exists():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return [(r["ts"], r["label"], float(r["exposure_scalar"])) for r in reader]
 
 
 def _trades(directory: Path) -> list[dict[str, str]]:

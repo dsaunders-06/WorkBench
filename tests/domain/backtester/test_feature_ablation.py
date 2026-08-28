@@ -110,3 +110,70 @@ def test_the_tables_do_not_overlap_or_omit() -> None:
     and a column in both would make the refusal unreachable."""
     assert set(FEATURES) | set(UNABLATABLE_FEATURES) == set(FEATURE_NAMES)
     assert not set(FEATURES) & set(UNABLATABLE_FEATURES)
+
+
+def test_the_manifest_carries_terminal_equity_and_the_ablated_feature(tmp_path) -> None:
+    """Task 4. `terminal_equity` is the only figure that MOVES when a regime
+    feature moves - trades, win% and R are all scale-free, and a feature changes
+    position SIZE."""
+    from qat.domain.backtester.manifest import build_manifest, read_manifest
+
+    manifest = build_manifest(
+        data_dir=tmp_path,
+        disabled=[],
+        universe=["BHP.AX"],
+        starting_equity=100_000.0,
+        terminal_equity=104_250.0,
+        disabled_feature="credit_spread",
+        regime_features=("log_return", "realized_vol"),
+    )
+    manifest.write(tmp_path / "manifest.json")
+    reread = read_manifest(tmp_path / "manifest.json")
+
+    assert reread.terminal_equity == pytest.approx(104_250.0)
+    assert reread.disabled_feature == "credit_spread"
+    assert reread.regime_features == ("log_return", "realized_vol")
+
+
+def test_a_manifest_without_the_new_fields_reads_back_as_unknown(tmp_path) -> None:
+    """⚠️ `None`, never 0.0 or (). A run written before these fields existed did
+    not measure them, and a substituted zero would assert a terminal equity of
+    nothing - M73's `var_95=0.0` scar."""
+    from qat.domain.backtester.manifest import build_manifest, read_manifest
+
+    manifest = build_manifest(
+        data_dir=tmp_path, disabled=[], universe=["BHP.AX"], starting_equity=100_000.0
+    )
+    path = tmp_path / "manifest.json"
+    manifest.write(path)
+
+    import json
+
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    for field_name in ("terminal_equity", "disabled_feature", "regime_features"):
+        raw.pop(field_name, None)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+
+    reread = read_manifest(path)
+    assert reread.terminal_equity is None
+    assert reread.disabled_feature is None
+    assert reread.regime_features is None
+
+
+def test_the_regime_path_round_trips(tmp_path) -> None:
+    """One writer, one reader, used by the harness AND the tests - a test that
+    re-implements the CSV format is a second definition of it."""
+    from qat.domain.backtester.run_comparison import read_regime_path, write_regime_path
+
+    rows = [("2026-08-26T00:00:00+00:00", "bull", 1.0), ("2026-08-27T00:00:00+00:00", "bear", 0.5)]
+    write_regime_path(tmp_path, rows)
+
+    assert read_regime_path(tmp_path) == rows
+
+
+def test_a_missing_regime_path_is_empty_not_an_error(tmp_path) -> None:
+    """A run that never started the regime engine wrote none - the ablated arm
+    of `--rail regime_gate` is exactly that."""
+    from qat.domain.backtester.run_comparison import read_regime_path
+
+    assert read_regime_path(tmp_path) == []

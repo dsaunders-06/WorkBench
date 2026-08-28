@@ -47,7 +47,12 @@ sys.path.insert(0, str(_REPO / "src"))
 
 from qat.config import Settings  # noqa: E402
 from qat.data.macro_fred import MacroObservation  # noqa: E402
-from qat.domain.backtester.ablation import RAILS, REGIME_RAIL, ablated_settings  # noqa: E402
+from qat.domain.backtester.ablation import (  # noqa: E402
+    RAILS,
+    REGIME_RAIL,
+    ablated_settings,
+    feature_settings,
+)
 from qat.domain.backtester.macro_cache import DEFAULT_MACRO_CACHE, frozen_macro  # noqa: E402
 from qat.domain.backtester.manifest import build_manifest  # noqa: E402
 from qat.domain.backtester.replay_session import ReplaySession  # noqa: E402
@@ -56,7 +61,11 @@ from qat.domain.backtester.research_universe import (  # noqa: E402
     ResearchUniverse,
     load_bars,
 )
-from qat.domain.backtester.run_comparison import compare_runs  # noqa: E402
+from qat.domain.backtester.run_comparison import (  # noqa: E402
+    compare_runs,
+    write_regime_path,
+)
+from qat.domain.events import RegimeEvent  # noqa: E402
 from qat.domain.strategies.swing import SwingStrategy  # noqa: E402
 from qat.presentation.runtime import resolve_macro_source  # noqa: E402
 
@@ -67,6 +76,7 @@ async def _one(
     universe: ResearchUniverse,
     bars: dict[str, pd.DataFrame],
     macro: dict[str, list[MacroObservation]],
+    feature: str | None = None,
 ) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     base = Settings(
@@ -77,6 +87,8 @@ async def _one(
         deployed_strategies="swing",
         autonomous_strategies="swing",
     )
+    if feature is not None:
+        base = feature_settings(base, [feature])
     session = ReplaySession(
         bars=bars,
         strategies=[SwingStrategy()],
@@ -88,12 +100,28 @@ async def _one(
         # never publishes, so the exposure scalar holds its 1.0 default.
         start_regime=REGIME_RAIL not in disabled,
     )
+    # The harness LISTENS to an event the app already publishes - no change to
+    # the trading path, the same seam `start_regime` already uses. Subscribed
+    # before `run` so the first classification is not missed.
+    regime_rows: list[tuple[str, str, float]] = []
+
+    async def _record_regime(event: RegimeEvent) -> None:
+        regime_rows.append((event.ts.isoformat(), event.label, event.exposure_scalar))
+
+    session.bus.subscribe(RegimeEvent, _record_regime)
+
     await session.run()
+
+    write_regime_path(directory, regime_rows)
+    account = await session.broker.get_account()
     build_manifest(
         data_dir=directory,
         disabled=disabled,
         universe=sorted(bars),
         starting_equity=100_000.0,
+        terminal_equity=float(account.net_liquidation),
+        disabled_feature=feature,
+        regime_features=base.regime_features,
     ).write(directory / "manifest.json")
 
 

@@ -163,6 +163,23 @@ class RunManifest:
     # `build_manifest` always sets a real dict, possibly empty; only a
     # manifest written before this field existed reads back as `None`.
     unmodelled_refusals: dict[str, int] | None = field(default=None)
+    # Milestone C. `None` on all three means a run written before they existed -
+    # never 0.0 or (), which would assert a terminal equity of nothing and a
+    # matrix of no columns. The same distinction `unmodelled_refusals` draws
+    # above, and M73's `var_95=0.0` scar underneath both.
+    terminal_equity: float | None = None
+    """What the account was worth when the run ended.
+
+    ⚠️ The ONLY figure that moves when a regime feature moves. `compare_runs`
+    reports trades, win% and R-multiple, every one of them scale-free - and a
+    regime feature changes the exposure scalar, which changes position SIZE. A
+    feature that halved every position leaves all four of those identical.
+    """
+    disabled_feature: str | None = None
+    regime_features: tuple[str, ...] | None = None
+    """The columns this arm's matrix actually carried. Read by
+    `compare_feature_runs`' STILL ENABLED guard, which is cheap to trip by
+    passing the wrong directory and invisible unless something checks."""
     stated_limitations: tuple[str, ...] = _STATED_LIMITATIONS
 
     def write(self, path: Path) -> None:
@@ -188,6 +205,11 @@ def read_manifest(path: Path) -> RunManifest:
             for name, record in raw["rails"].items()
         },
         universe=tuple(raw["universe"]),
+        terminal_equity=raw.get("terminal_equity"),
+        disabled_feature=raw.get("disabled_feature"),
+        regime_features=(
+            tuple(raw["regime_features"]) if raw.get("regime_features") is not None else None
+        ),
         starting_equity=float(raw["starting_equity"]),
         fill_model=raw["fill_model"],
         # `.get(...)`, not `raw[...]`: a manifest written before this field
@@ -289,6 +311,9 @@ def build_manifest(
     universe: Sequence[str],
     starting_equity: float,
     extra_limitations: Sequence[str] = (),
+    terminal_equity: float | None = None,
+    disabled_feature: str | None = None,
+    regime_features: Sequence[str] | None = None,
 ) -> RunManifest:
     rows = load_risk_decisions(data_dir)
     refusals = _refusal_counts(rows)
@@ -347,6 +372,9 @@ def build_manifest(
         universe=tuple(universe),
         starting_equity=starting_equity,
         unmodelled_refusals=unmodelled,
+        terminal_equity=terminal_equity,
+        disabled_feature=disabled_feature,
+        regime_features=tuple(regime_features) if regime_features is not None else None,
         # APPENDED, never replacing: the six module-level limitations hold for
         # every run, and a caller adding one must not be able to drop them.
         stated_limitations=(*_STATED_LIMITATIONS, *extra_limitations),
