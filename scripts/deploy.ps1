@@ -50,7 +50,11 @@ if (-not (Test-Path $dst)) {
 # a reader can tell what a .bak actually contains.
 Push-Location $repo
 $commit    = (git rev-parse --short HEAD).Trim()
-$dirty     = (git status --porcelain).Trim()
+# ⚠️ `-join`, not `.Trim()`. A CLEAN tree makes `git status --porcelain`
+# return $null, and calling a method on it throws - so the guard against a
+# dirty tree crashed on the only state it should permit. The happy path was
+# the untested one, which is why the dry run is run before the apply.
+$dirty     = (git status --porcelain) -join "`n"
 $milestone = ((Select-String -Path "src\qat\version.py" -Pattern '^MILESTONE = "(.+)"').Matches[0].Groups[1].Value)
 $outgoing  = (Get-Content "scripts\handoff_state.py" | Select-String -Pattern '^DEPLOYED = "(.+)"').Matches[0].Groups[1].Value
 Pop-Location
