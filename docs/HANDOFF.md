@@ -846,7 +846,28 @@ for each gap and is worth reading; the list lives here.
     WATCHING, because the mismatch it caught came from a replay whose first
     pass now warns rather than being silent.
 
-29. **Make deploying update `DEPLOYED` itself.** `handoff_state.py`'s hand-
+29. ~~**Make deploying update `DEPLOYED` itself.**~~ **DONE 28 August.**
+    `scripts/deploy.ps1` installs and then calls `scripts/record_deploy.py`,
+    which rewrites the constant. Everything is DERIVED - milestone, commit,
+    hash, rollback name - so nothing is typed per deploy.
+
+    ⚠️ **THE COUNT WAS UNDERSTATED: it has been wrong TEN times, not three.**
+    Found while fixing it - `DEPLOYED` still read `0b1ecd6` (M148) with M155
+    installed, having sat stale through every deploy of 28 August. The last
+    seven failures belong to the person writing this. That is the argument for
+    a mechanism in its strongest form.
+
+    **The record is rewritten only AFTER the installed copy verifies**, so it
+    can never claim a build that is not there. A missing constant RAISES rather
+    than passing quietly: a deploy that installs the build and leaves the record
+    stale is exactly how this happened.
+
+    ⚠️ **Two guards added beyond the item**, and one fired on its first run:
+    the script REFUSES a dirty working tree - a deploy whose provenance cannot
+    be stated is not a deploy - and it refuses while the app is running, naming
+    the clean-shutdown reason.
+
+    ORIGINAL: `handoff_state.py`'s hand-
     maintained constant has now been wrong three times: for a day after M104,
     across the whole M130 deploy, and for two hours after M139 on 24 August —
     that last one in the rush to get a session running before the close. Its own
