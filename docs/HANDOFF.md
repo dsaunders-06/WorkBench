@@ -817,7 +817,8 @@ for each gap and is worth reading; the list lives here.
     zip AND rewrites the line would remove the only step a human has to
     remember.
 
-30. **Stage 4 regime re-sourcing** — do not start until the ablation question is
+30. **Stage 4 regime re-sourcing** — ⚠️ **NO LONGER BLOCKED as of 28 August:**
+    Milestone C exists and has answered its first question. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 31. **The working-status set is narrow in `ib_translate`.** `_IB_WORKING_STATUSES`
@@ -2179,7 +2180,11 @@ shares its shape.
     **No longer true — the button is trustworthy as of M148**, confirmed by the
     operator at 22:02:22 with both surfaces agreeing.
 
-58. **⚠️ TWO ENTRIES SIZED IN ONE CYCLE EACH SEE A BOOK WITHOUT THE OTHER, AND
+58. ~~**⚠️ TWO ENTRIES SIZED IN ONE CYCLE EACH SEE A BOOK WITHOUT THE OTHER**~~
+    **FIXED in M150, deployed 27 Aug.** `pending_orders` now counts `transmitted`
+    as committed exposure. ⚠️ NOT YET EXERCISED - needs two entries in one cycle,
+    and the book has been at 10 of 10 since.
+    ORIGINAL: **Two entries sized in one cycle each see a book without the other, and
     THE 10-POSITION LIMIT WENT TO 11.** Found 27 August from the audit trail,
     not from a failure — the book has been over its cap since 26 August 15:15
     and nothing has said so.
@@ -2531,7 +2536,9 @@ shares its shape.
     Whether an anchored prompt produces a different number is the read-back
     check for this change, and it has not been run.
 
-63. **⚠️⚠️ THE CLOSED-TRADE LEDGER'S HEADER IS STALE, AND THREE FIELDS ARE
+63. ~~**⚠️⚠️ THE CLOSED-TRADE LEDGER'S HEADER IS STALE**~~ **FIXED in M150 and
+    CONFIRMED live 27 Aug** - both files repaired on load, second launch silent.
+    ORIGINAL: **The closed-trade ledger's header is stale, and three fields are
     UNREADABLE ON EVERY ROW — INCLUDING THE ONE `EdgeEstimator` FILTERS ON.**
     Found 27 August after the close, from the ledger file itself.
 
@@ -2615,7 +2622,13 @@ shares its shape.
     clean.** It has its own `_FIELDS` (`trades.py:1207`) and the identical
     write-header-only-if-new logic at `:1276-1278`.
 
-64. **⚠️ ITEM HEADINGS OUTLIVE THEIR FINDINGS, AND ONE OF THEM WAS DANGEROUS.**
+64. ~~**⚠️ ITEM HEADINGS OUTLIVE THEIR FINDINGS**~~ **PIN BUILT** -
+    `tests/test_open_items_are_still_open.py`. ⚠️ **AND IT HAPPENED AGAIN THE
+    SAME DAY**: items 58, 63, 64 and 66 all had their BODIES updated and their
+    HEADINGS left stale, found on 28 August by listing unstruck items. The pin
+    catches an open item that gets FIXED; it cannot catch a heading whose body
+    already says so. Four more, hours after writing this.
+    ORIGINAL: **Item headings outlive their findings, and one of them was dangerous.**
     **TWELVE found in two days.** The first four by tripping over them; the last
     three by finally LOOKING, in a ten-minute audit that closed three items for
     the cost of five greps. That ratio is the argument for doing the audit
@@ -2694,7 +2707,10 @@ shares its shape.
     by reading the note** — a note that mentions a holding proves the model
     chose to, and one that does not proves nothing without the line.
 
-66. **⚠️ HALF THE REGIME FEATURES ARE US DATA ON AN AUSTRALIAN BOOK, AND ONE OF
+66. ~~**⚠️ HALF THE REGIME FEATURES ARE US DATA ON AN AUSTRALIAN BOOK**~~
+    **MEASURED 28 Aug: `credit_spread` moves the label on ZERO of 249 bars.**
+    Two US columns still unmeasured - `vix_level` and `yield_curve_slope`.
+    ORIGINAL: **Half the regime features are US data on an Australian book, and one of
     THEM MEASURES +0.004.** Raised by the operator on 28 August. Recorded here
     because it was previously buried in Milestone B's "what this plan does NOT
     do" section, where nothing would surface it.
