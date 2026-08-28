@@ -112,9 +112,33 @@ def build_performance_narrative_prompt(report_markdown: str) -> str:
 
 
 def build_regime_narrative_prompt(context: AdvisoryContext) -> str:
+    """The Workbench's note (item 65).
+
+    ⚠️ **Supplying the account is not the same as asking about it.** Item 61
+    fixed the DATA - an audit line proved the context carried all ten positions
+    and `SUN.AX ... IS held` on 28 August - and the note still made no reference
+    to the holding. That was the model's choice, and a reasonable one: this
+    prompt asked for the regime and what it implies for positioning, and never
+    asked it to weigh EXISTING exposure.
+
+    ⚠️ **Conditional on something being held.** A standing instruction to weigh
+    holdings, handed a flat account, invites a discussion of a position that
+    does not exist - the shape of every absent-rendered-as-present defect in
+    this codebase.
+    """
+    exposure = ""
+    if context.positions:
+        exposure = (
+            "The account ALREADY HELD the positions listed below. Weigh that: say what the "
+            "regime implies GIVEN what is already held, including concentration in one "
+            "name or one sector, rather than as though the account were flat. "
+            "⚠️ This is commentary and NOT a risk control - the rails decide what may be "
+            "ordered, this note does not decide anything, so do not write as though it "
+            "were enforcing a limit.\n\n"
+        )
     return (
         "Summarise the current market regime and what it implies for positioning, citing the "
         "supplied context only. Return your answer as JSON matching the required schema "
         "(use recommendation='hold' if this is a descriptive summary rather than a trade "
-        "call).\n\n" + context.to_prompt_text()
+        "call).\n\n" + exposure + context.to_prompt_text()
     )

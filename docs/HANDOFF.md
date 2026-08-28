@@ -2766,7 +2766,26 @@ shares its shape.
     be, the way `test_corporate_action_has_every_reader` pins its own claim
     rather than trusting a sentence.
 
-65. **The Workbench's note receives the account and is never told to use it.**
+65. ~~**The Workbench's note receives the account and is never told to use it.**~~
+    **DONE 28 August, not yet deployed.** `build_regime_narrative_prompt` now
+    asks the model to say what the regime implies GIVEN what is already held,
+    naming concentration in one name or one sector.
+
+    ⚠️ **CONDITIONAL on something being held.** A standing instruction to weigh
+    holdings, handed a flat account, invites a discussion of a position that
+    does not exist. Pinned in both directions - removing it turns five tests
+    red, making it unconditional turns the empty-book guard red.
+
+    ⚠️ **And it says the note is NOT a risk control.** Telling a model to weigh
+    exposure invites it to sound like one; the rails decide and the note
+    comments, so the prompt states that rather than leaving it to tone.
+
+    ⚠️ **VERIFY IT WITH THE AUDIT LINE, NOT THE NOTE.** A note that mentions a
+    holding proves the model chose to; one that does not proves nothing without
+    `Advisory context for ...`. That distinction is what made item 61
+    answerable, and it applies here unchanged.
+
+    ORIGINAL:
     Falls out of item 61's confirmation on 28 August: the context provably
     carried all ten positions and `SUN.AX ... IS held`, and the note still made
     no reference to the holding.
