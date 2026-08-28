@@ -760,6 +760,7 @@ class Runtime:
             breadth_symbols=watchlist,
             bar_interval_seconds=settings.bar_interval_seconds,
             bar_tz=MARKET_TIMEZONES[settings.market],
+            features=settings.regime_features,
         )
 
         # Seeds every rolling buffer from daily history before the feed starts

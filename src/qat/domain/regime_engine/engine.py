@@ -58,6 +58,11 @@ class RegimeEngine:
         refit_interval_bars: int = 20,
         min_fit_bars: int = 60,
         bar_interval_seconds: float = 86_400.0,
+        # Which columns the matrix carries (Milestone C). Handed to BOTH the
+        # builder and the model: a builder narrowed without the model would fit
+        # an N-column matrix while reading state statistics from the six-column
+        # positions, which renames every label rather than degrading one.
+        features: Sequence[str] = FEATURE_NAMES,
         # M111. This engine floors timestamps to the bar boundary in two places
         # and its default interval is DAILY, so it carries the same UTC-midnight
         # defect as the price aggregators - and its label sets the exposure
@@ -72,8 +77,8 @@ class RegimeEngine:
         self.bar_interval_seconds = bar_interval_seconds
         self.bar_tz = bar_tz
 
-        self._feature_builder = RegimeFeatureBuilder()
-        self._hmm = HMMRegimeModel(n_states=n_states)
+        self._feature_builder = RegimeFeatureBuilder(features=tuple(features))
+        self._hmm = HMMRegimeModel(n_states=n_states, features=features)
         self._fusion = RegimeFusion()
         self._hysteresis = HysteresisGate()
 

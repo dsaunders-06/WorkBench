@@ -155,6 +155,18 @@ git commit -m "Milestone C: the regime matrix carries the columns it is told to"
 - Modify: `src/qat/domain/regime_engine/hmm_core.py:20-21,192-193`
 - Test: append to `tests/domain/regime_engine/test_feature_selection.py`
 
+⚠️ **SCOPE ADDED DURING EXECUTION, recorded rather than done quietly.** The
+plan stopped at `hmm_core`. Tasks 1 and 2 are INERT unless the engine hands
+`settings.regime_features` to both the builder AND the model, and the runtime
+hands the setting to the engine — so both wirings and their guards were added
+here. Items 59 and 67 were each a working mechanism with nothing driving it.
+
+⚠️ **The runtime guard caught a real defect within minutes of being written.** A
+careless multi-line replace put `features=settings.regime_features` on
+`FeatureEngine`, which has no such parameter — the app would have raised
+`TypeError` at startup and not launched. The engine-level test stayed green;
+only the source-level runtime guard went red.
+
 **Interfaces:**
 - Consumes: `Settings.regime_features` / the builder's `features` from Task 1.
 - Produces: `HMMRegimeModel` resolving `log_return` and `realized_vol` **by name**.
@@ -182,12 +194,12 @@ def test_the_state_stats_follow_the_named_columns_not_positions():
     assert all(0.0 <= s.mean_vol < 1.0 for s in signatures.values())
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/regime_engine/test_feature_selection.py -q`
 Expected: FAIL — `HMMRegimeModel` takes no `features`; the stats read columns 0 and 1, which here are `vix_level` and `log_return`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Give `HMMRegimeModel` a `features: Sequence[str] = FEATURE_NAMES` argument and replace the constants:
 
@@ -200,16 +212,16 @@ self._return_col = features.index("log_return")
 self._vol_col = features.index("realized_vol")
 ```
 
-- [ ] **Step 4: Run the regime suite**
+- [x] **Step 4: Run the regime suite**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/regime_engine/ -q`
 Expected: PASS, existing behaviour unchanged.
 
-- [ ] **Step 5: Falsify**
+- [x] **Step 5: Falsify**
 
 Hard-code `self._return_col = 0`. Expected: the new test goes red. Restore.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/qat/domain/regime_engine/hmm_core.py tests/domain/regime_engine/test_feature_selection.py

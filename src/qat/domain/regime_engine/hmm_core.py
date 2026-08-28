@@ -10,15 +10,26 @@ variance ('high-vol bear')" - paper §11.1).
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 from hmmlearn.hmm import GaussianHMM
 
+from qat.domain.regime_engine.feature_matrix import FEATURE_NAMES
 from qat.domain.regime_engine.scaling import ColumnStandardiser
 
-_LOG_RETURN_COL = 0
-_REALIZED_VOL_COL = 1
+# ⚠️ WAS `_LOG_RETURN_COL = 0` / `_REALIZED_VOL_COL = 1`, hard-coded (Milestone
+# C, Task 2). These two columns are not ordinary features: `_characterize_states`
+# reads their means to build each fitted state's signature, and
+# `fusion.score_from_hmm` turns those into the z-scores that decide which state
+# is called bull and which bear. hmmlearn numbers states arbitrarily, so this is
+# how an index acquires a NAME.
+#
+# Reading the wrong column therefore does not degrade a label - it RENAMES every
+# label, and the run looks entirely normal. Resolved by name now that the column
+# set is configurable.
+_STRUCTURAL_COLUMNS = ("log_return", "realized_vol")
 
 _HMMLEARN_LOGGER_NAME = "hmmlearn.base"
 
@@ -59,8 +70,28 @@ class StateSignature:
 
 
 class HMMRegimeModel:
-    def __init__(self, n_states: int = 4, random_state: int = 0, n_iter: int = 100) -> None:
+    def __init__(
+        self,
+        n_states: int = 4,
+        random_state: int = 0,
+        n_iter: int = 100,
+        features: Sequence[str] = FEATURE_NAMES,
+    ) -> None:
         self.n_states = n_states
+        # Resolved ONCE, at construction, so a missing structural column fails
+        # here rather than producing signatures that quietly mean something
+        # else. `ablation.feature_settings` refuses to remove either, and this
+        # is the second line of that defence.
+        missing = [c for c in _STRUCTURAL_COLUMNS if c not in features]
+        if missing:
+            raise ValueError(
+                f"the regime matrix must carry {', '.join(_STRUCTURAL_COLUMNS)} - "
+                f"{', '.join(missing)} is missing, and without it every state signature "
+                f"and therefore every regime LABEL would mean something else"
+            )
+        self.features = tuple(features)
+        self._return_col = self.features.index("log_return")
+        self._vol_col = self.features.index("realized_vol")
         self.random_state = random_state
         self.n_iter = n_iter
         self._model: GaussianHMM | None = None
@@ -189,7 +220,7 @@ class HMMRegimeModel:
                 signatures[state] = StateSignature(mean_return=float("nan"), mean_vol=float("nan"))
                 continue
             signatures[state] = StateSignature(
-                mean_return=float(feature_matrix[mask, _LOG_RETURN_COL].mean()),
-                mean_vol=float(feature_matrix[mask, _REALIZED_VOL_COL].mean()),
+                mean_return=float(feature_matrix[mask, self._return_col].mean()),
+                mean_vol=float(feature_matrix[mask, self._vol_col].mean()),
             )
         return signatures
