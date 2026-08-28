@@ -59,6 +59,25 @@ $milestone = ((Select-String -Path "src\qat\version.py" -Pattern '^MILESTONE = "
 $outgoing  = (Get-Content "scripts\handoff_state.py" | Select-String -Pattern '^DEPLOYED = "(.+)"').Matches[0].Groups[1].Value
 Pop-Location
 
+# ⚠️ IS THE BUILD ACTUALLY FROM HEAD? Found on this script's own first dry run:
+# it planned to record HEAD while the exe had been built two commits earlier, so
+# the deploy record would have named a commit that was not what was installed -
+# item 29's exact failure with a new cause, in item 29's own fix.
+#
+# The exe's mtime against HEAD's commit time is the cheap, checkable form of
+# "was this built from what you are about to record".
+$exeTime  = (Get-Item $exe).LastWriteTime
+$headTime = [datetime]::Parse((git show -s --format=%cI HEAD))
+if ($exeTime -lt $headTime) {
+    Write-Output "  ⚠️ THE BUILD PREDATES HEAD."
+    Write-Output "     exe built : $($exeTime.ToString('yyyy-MM-dd HH:mm:ss'))"
+    Write-Output "     HEAD      : $($headTime.ToString('yyyy-MM-dd HH:mm:ss'))  $commit"
+    Write-Output "     Recording $commit would name a commit this exe was not built from."
+    Write-Output "     Run ``invoke build`` and ``invoke sign`` again, then retry."
+    exit 1
+}
+Write-Output "  build is at or after HEAD            OK"
+
 if ($dirty) {
     Write-Output "  ⚠️ WORKING TREE IS DIRTY - the installed build will not match any commit."
     Write-Output "     Refusing: a deploy whose provenance cannot be stated is not a deploy."
