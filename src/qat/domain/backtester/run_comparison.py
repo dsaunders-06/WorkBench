@@ -201,3 +201,97 @@ def compare_runs(baseline_dir: Path, ablated_dir: Path, rail: str) -> str:
         lines.append(_wrap(f"Caveat: neutralising this rail is imperfect - it {record.caveat}."))
     lines += ["", _wrap(_SCOPE)]
     return "\n".join(lines)
+
+
+def _equity_line(name: str, manifest: RunManifest) -> str:
+    if manifest.terminal_equity is None:
+        return f"{name:<10}terminal equity not recorded by this run"
+    return f"{name:<10}{manifest.terminal_equity:>14,.2f}"
+
+
+def compare_feature_runs(baseline_dir: Path, ablated_dir: Path, feature: str) -> str:
+    """Did the regime feature help? - asked of two runs of the harness.
+
+    ⚠️ **The headline is TERMINAL EQUITY, not R.** `_arm` reports trades, win%
+    and R-multiple, all scale-free. A regime feature moves the exposure scalar,
+    which moves position SIZE - so a feature that halved every position leaves
+    every figure the rail report prints identical. The trades block is kept
+    BENEATH the equity, because a changed trade SET is a different fact from a
+    changed size and both are worth seeing.
+
+    Guard-first, like `compare_runs`: if the label never differed there was
+    nothing to change.
+    """
+    baseline = read_manifest(baseline_dir / "manifest.json")
+    ablated = read_manifest(ablated_dir / "manifest.json")
+
+    if ablated.regime_features is not None and feature in ablated.regime_features:
+        return _blocked(
+            feature,
+            f"STILL ENABLED - {feature!r} is in the ablated arm's own feature list.",
+            [
+                "The two arms are not baseline-and-ablated. This is cheap to cause by "
+                "passing the wrong directory and invisible unless something checks, so "
+                "the comparison is refused rather than reported.",
+            ],
+        )
+
+    base_path = read_regime_path(baseline_dir)
+    abl_path = read_regime_path(ablated_dir)
+
+    if len(base_path) != len(abl_path):
+        return _blocked(
+            feature,
+            f"NOT COMPARABLE - the arms published {len(base_path)} and {len(abl_path)} "
+            f"regime bars.",
+            [
+                "Paths of different lengths cannot be compared bar for bar. Zipping them "
+                "would silently pair one arm's day against the other's next day - the "
+                "calendar-slip failure of 26 August with a different cause.",
+            ],
+        )
+
+    differing = [
+        (b[0], b[1], a[1]) for b, a in zip(base_path, abl_path, strict=True) if b[1] != a[1]
+    ]
+    window = (
+        f"{base_path[0][0][:10]} to {base_path[-1][0][:10]}" if base_path else "no bars published"
+    )
+
+    if not differing:
+        return _blocked(
+            feature,
+            f"NOT EXERCISED - the regime label was identical on all {len(base_path)} bars.",
+            [
+                f"Removing {feature!r} contributes nothing to the label over this window, "
+                f"so any difference between the arms is noise wearing its name and is "
+                f"suppressed rather than printed as a zero.",
+                "⚠️ That is an ANSWER, not a failed run: a column the label does not "
+                "depend on is a column to propose removing, recorded with its numbers.",
+                f"Window: {window}.",
+            ],
+        )
+
+    lines = [
+        f"=== feature: {feature} ===",
+        "",
+        "TERMINAL EQUITY - the only figure a feature can move, because it moves SIZE:",
+        _equity_line("baseline", baseline),
+        _equity_line("ablated", ablated),
+    ]
+    if baseline.terminal_equity is not None and ablated.terminal_equity is not None:
+        delta = ablated.terminal_equity - baseline.terminal_equity
+        lines.append(f"{'delta':<10}{delta:>+14,.2f}")
+    lines += [
+        "",
+        f"The label differed on {len(differing)} of {len(base_path)} bars "
+        f"({len(differing) / len(base_path):.0%}).",
+        f"Window: {window}.",
+        "",
+        "Trades - a changed SET, which is a different fact from a changed size:",
+        _arm("baseline", baseline, _trades(baseline_dir)),
+        _arm("ablated", ablated, _trades(ablated_dir)),
+        "",
+        _wrap(_SCOPE),
+    ]
+    return "\n".join(lines)

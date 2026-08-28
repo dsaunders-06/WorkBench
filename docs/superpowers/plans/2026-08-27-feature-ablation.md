@@ -486,6 +486,13 @@ git commit -m "Milestone C: record the regime path and the terminal equity"
 - Modify: `src/qat/domain/backtester/run_comparison.py`
 - Test: `tests/domain/backtester/test_compare_feature_runs.py` (create)
 
+⚠️ **TWO GUARDS ADDED BEYOND THE PLAN.** `NOT COMPARABLE` when the arms
+published different numbers of bars - zipping them would silently pair one arm's
+day against the other's next, the 26 August calendar slip with a different
+cause. And the terminal-equity headline is suppressed, delta included, when
+either arm did not record it: printing a delta against a number never measured
+is M73's `var_95=0.0` in a new place.
+
 **Interfaces:**
 - Consumes: `regime_path.csv` and `manifest.json` from Task 4.
 - Produces: `compare_feature_runs(baseline: Path, ablated: Path, feature: str) -> str`.
@@ -559,25 +566,25 @@ def test_the_report_prints_its_date_range(tmp_path):
     assert "2026-08-01" in report and "2026-08-02" in report
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_compare_feature_runs.py -q`
 Expected: FAIL — `compare_feature_runs` does not exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Guards in order: **STILL ENABLED** (the feature is in the ablated manifest's `regime_features`), then **NOT EXERCISED** (label identical on every paired bar), then the report — terminal equity per arm and the delta, then bars-differ count and percent, then the existing `_arm()` trades/win/R block, then the date range and the existing `_SCOPE` note.
 
-- [ ] **Step 4: Run**
+- [x] **Step 4: Run**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/backtester/ -q`
 Expected: PASS.
 
-- [ ] **Step 5: Falsify**
+- [x] **Step 5: Falsify**
 
 Make the NOT EXERCISED branch fall through to the report. Expected: `test_an_unmoved_label_suppresses_every_number` goes red. Restore.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/qat/domain/backtester/run_comparison.py tests/domain/backtester/test_compare_feature_runs.py
