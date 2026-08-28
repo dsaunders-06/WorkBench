@@ -41,11 +41,11 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M148 (`0b1ecd6`)**, installed 26 August 19:05, **read back off its own log at 19:06:30** — `Build: M148 (0b1ecd6, built 26/08/2026 19:02:41 AEST, packaged)`. Exe SHA256-identical to the signed artefact (`2CF98E9F…9706`), signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-M147-20260826-1905`. Carries **items 56 and 57** — the app learns its own order's permId, and the Risk Console's kill-switch label is derived rather than remembered. ⚠️ **Item 56's half is NOT yet exercised** — no entry has happened since it landed, so the first entry is its first real test. Item 57's half **was** confirmed live at 22:02:22. Previous: **M147 (`0c81b8b`)**, installed 26 August 15:10, **read back off its own log at 15:11:00**. Exe SHA256-identical to the signed artefact (`08CB73D6…143B`), signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-M146-20260826-1509`. Carries **the absorb fix** — `BrokerFill.quantity` AND `price` are both the order's CUMULATIVE figures, and one exit is ONE ledger row however many executions it took. Second mid-session deploy of the day, same justification: the kill switch was already tripped and 18 legs were resting at the broker. ⚠️ **NOT yet exercised** — no exit has happened since it landed, so the first multi-execution exit is its first real test, and the PRICE half has no real-wire confirmation at all (the LOV order filled at a constant 28.45). Previous: **M146 (`6f965fc`)**, installed 26 August 14:35, **read back off its own log at 14:37:12**. Exe SHA256-identical to the signed artefact (`D7718C39…DAAE9`), signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-M145-20260826-1435`. Carries **Milestone A** — the regime HMM now fits on a scale-neutral matrix. ⚠️ **Deployed MID-SESSION on the operator's instruction**, against the usual rule; the justification is that the kill switch was ALREADY TRIPPED, so no order flow was possible either way, and 18 legs were resting at the broker independent of the app. **Confirmed live and matching the offline prediction to the decimal**: `Raw feature spread is led by vix_level at 85.0% of the total`, and `REGIME none -> bull (exposure scalar 1.00)` — the same label and scalar the before/after predicted, so the sizing input did not move. Previous: **M145 (`08e4dc5`)**, installed 26 August 08:41. Exe SHA256-identical to the signed artefact (`576F9A72…86D65`), signature Valid on the installed copy. Stamped `M145 (08e4dc5, built 26/08/2026 08:38:09 AEST)` — the first stamp to render in AEST rather than UTC (item 50). Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M144-20260826-0841`. ⚠️ **Carries item 34's ROOT CAUSE fix, NOT yet read back and NOT yet exercised live** — the next launch is its first test, and the thing to watch is whether the reconciliation heartbeat now REPEATS every 300s instead of appearing once. Previous: **M144 (`9e168dd`)**, installed 25 August 22:04. Exe SHA256-verified, signature Valid. **READ BACK off its own log 22:21:05 on 25 August** — `Build: M144 (9e168dd, built 25/08/2026 12:01 UTC, packaged)`, operator-confirmed on screen, so this is an observation and not an intention. That run adopted 10 positions and its startup scan saw `20 working leg(s) across 10 symbol(s), nothing unjustified`. ⚠️ **It also exercised M144's IBKR call deadline for the first time, and the deadline WORKED** — `reqAllOpenOrders` timed out loudly at 22:28:22 instead of hanging forever, which is how item 34's root cause became findable. Previous: **M143 (`f81d2d4`)**, installed 25 August 21:33 (`192A9E9A…`). Rollback: `C:\QuantAdvisoryTerminal.bak-M142-20260825-2133`. Previous: **M142 (`543a978`)**, installed 25 August 17:52. Exe SHA256-identical to the signed artefact (`06B14878…B816`), signature Valid on the installed copy. **NOT yet read back off its own log.** Rollback is a rename: `C:\QuantAdvisoryTerminal.bak-M141-20260825-1752`. Previous entry: **M141 (`09ab51b`)**, installed 25 August 09:01. Exe SHA256-identical to the signed artefact, signature Valid. **Read back off its own log 09:09 25 August** — `Build: M141 (09ab51b, built 24/08/2026 22:58 UTC, packaged)`. The startup scan ran in the same launch: `RESTING ORDER SCAN: 2 working leg(s) across 1 symbol(s), nothing unjustified` — both legs of TNE's live bracket seen and correctly not flagged |
+| Deployed build | **M155 (`9bd111a`)**, installed 28 August 19:41, SHA256 `B613DAFC…E4CD`, signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-M154-20260828-1941`. ⚠️ **NOT READ BACK — it has never been launched.** Carries Milestone C, and items 22, 31, 59. Previous: M154 (item 67), M153 (item 61 follow-up), M152 (item 59), M151 (item 54), M150 (items 58, 63), M149 (items 61, 62), M148 (items 56, 57) |
 | Repository HEAD | **Level with the deployed build.** `handoff_state.py` derives the gap; do not read a number from here |
-| Deploy gap | **ZERO — M148 (`0b1ecd6`) is installed**, and `handoff_state.py` reports 0 milestones across 0 commits. ⚠️ Zero gap is not zero risk: item 56's fix is deployed and **has never run an entry**. Derive this from `handoff_state.py`, never from this row |
-| Pushed | **Up to date** through `98f8cce`. ⚠️ **CI IS BLOCKED** — the Actions allowance ran out during the 25 August session; runs now fail in ~4s at the billing wall with zero steps, likely until September. Pushes still work and cost nothing. **The local suite is the only verification now** — see the standing constraints |
-| Suite | **2,775 passed, 25 skipped** (2,800 collected). ruff, black, mypy and bandit clean |
+| Deploy gap | **ONE COMMIT.** Items 25, 29 and 65 are committed and NOT in the build — none touches sizing. ⚠️ `scripts/deploy.ps1` will refuse until a rebuild because the installed exe predates them, which is the guard working. Derive this from `handoff_state.py`, never from here |
+| Pushed | ⚠️ **59 COMMITS BEHIND `origin`.** The operator's standing hold from 27 August is still in force, and it is not mere caution: CI is at the billing wall, so every push generates a failure email — 20 of them this week — for a run that never starts. A NAS copy was taken on 28 August, so the work is backed up without pushing. **Only the operator lifts this** |
+| Suite | **2,903 passed, 25 skipped** (2,929 collected). ruff, black, mypy src, bandit clean |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **ELEVEN POSITIONS, all bracketed, 22 resting legs** — A2M ANZ ASX BOQ IAG PNI RHC SEK SUN TNE WOW. `4 unprot x0`; 11 of 11 carry a stop resting at the broker; resting-order scan `x36`, last 22:02:39, **0 divergences**. ✅ **The doubled book on WOW and SEK is GONE** — the M148 restart re-adopted from the broker and reads SEK.AX 2978 and WOW.AX 1098, not the 5956/2196 the app had tracked, and both quarantines cleared on their own. **LOV.AX exited 26 Aug at target** (+17%), fully absorbed and repaired. ⚠️ **SIX of the eleven were financials at 60% against a 30% cap** — see item 44; the book is now 5 of 11 and that rail has still never bound |
@@ -3009,6 +3009,26 @@ shares its shape.
     APP owns — because pytest injects its own, and because "at least one
     handler has it" is precisely the assertion that would have passed all along.
 
+68. **⚠️ I FIXED ITEM 29 AND THEN DID IT AGAIN, WITHIN THE HOUR.**
+    `scripts/deploy.ps1` and `scripts/record_deploy.py` exist to keep
+    `handoff_state.DEPLOYED` true. I built them, deployed M155 by the OLD
+    hand-run script, and left `DEPLOYED` reading `0b1ecd6` (M148) - stale
+    through the very deploy that shipped the fix for it being stale.
+
+    Found at handover by MEASURING the state instead of writing it from memory,
+    and corrected to `9bd111a` with the new tool.
+
+    ⚠️ **The mechanism was never the problem; not using it is.** A tool built
+    and then bypassed is worth less than the exhortation it replaced, because it
+    reads as solved. **Use `scripts/deploy.ps1` for every deploy from now on** -
+    the ad-hoc scratchpad scripts used all week are gone with their session, and
+    that is deliberate.
+
+    ⚠️ Same session, same shape: a `str.replace` in a heredoc silently no-opped
+    SIX times, each one a Windows path where `` or `` is a valid escape.
+    Every one was caught by grepping for the string just written. The habit that
+    works is the edit tool, which ERRORS on a failed match.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```
@@ -3052,49 +3072,60 @@ THE STATE
   net on the four real rows. ⚠️ The FIFTH is a REPAIR row with EMPTY costs, so
   net P&L across LOV is NOT summable from that file.
 
-⚠️ FIRST WORK: READ BACK M152, THEN WATCH THE OPEN.
+⚠️ FIRST WORK: LAUNCH AND READ M155 BACK. It has never run.
 
-  M152 (`d49782e`) installed 27 August 18:09, SHA256 `8BD24D06...00D2`,
+  M155 (`9bd111a`) installed 28 August 19:41, SHA256 `B613DAFC...E4CD`,
   signature Valid on the installed copy. Rollback:
-  `C:\QuantAdvisoryTerminal.bak-M151-20260827-1809`.
-  ⚠️ NOT READ BACK - the first launch is the read-back. Expect
-  `Build: M152 (d49782e, ...)` and NO header-repair lines (M150 already healed
-  both files; silence there is the confirmation).
+  `C:\QuantAdvisoryTerminal.bak-M154-20260828-1941`.
+  ⚠️ **NOT READ BACK - no launch has happened since.** The first launch is the
+  read-back. Expect `Build: M155 (9bd111a, ...)`, 10 positions adopted, and NO
+  header-repair or quarantine lines.
 
-  ⚠️ AN ENTRY STILL CANNOT HAPPEN AT TEN POSITIONS. `governor.py:304` refuses
-  at `>=`, so ten of ten is AT the cap. The book needs to reach NINE. Yesterday
-  that cost 1,036 refusals across six symbols - DMP, RHC, ORA, AMC, KAR, SUL -
-  and zero approvals.
+  ⚠️ THE ONE NUMBER TO READ AT THE OPEN: **aggregate risk-at-stop.** M155 carries
+  item 31, which LOOSENS a rail - a position whose stop was ignored counted its
+  FULL value against the cap and now counts only to the stop. It was measured as
+  a no-op against the book on 28 August (20 orders: 10 Submitted, 10
+  PreSubmitted, ZERO in either added state) but **a no-op then is not a no-op
+  now**. Read it before trusting any entry decision.
+
+  ⚠️ AN ENTRY STILL CANNOT HAPPEN AT TEN POSITIONS. `governor.py:304` refuses at
+  `>=`, so ten of ten is AT the cap and the book needs NINE. Items 56 and 58
+  remain unexercised for that reason, not because they are unproven.
 
   WATCH, IN ORDER:
 
-  1. ⚠️ M151's FILTER, at the bell. The recovery line should now read
-     `yfinance market data has recovered - N per-symbol 'possibly delisted'
-     error(s) were suppressed...`. **A recovery line with NO suppression count
-     means `blind` never got set and the storm passed through.** Measured
-     yesterday: 685 of 710 lines in the window were that storm.
-     ⚠️ Total absence of delisting errors ALL SESSION would mean the filter is
-     over-reaching, not that the feed is healthy.
+  1. **M154's blind-window filter, at the bell.** The recovery line should read
+     `... has recovered - N per-symbol 'possibly delisted' error(s) were
+     suppressed`. ⚠️ M151 shipped this on the STDOUT handler only and asserted a
+     suppression that never reached the log - 678 claimed against 774 still
+     present. M154 put it on the file handler. **A recovery line with no count
+     means it is still not working**; NO delisting errors all session means it
+     is over-reaching.
 
-  2. M152's QUARANTINE AUTO-CLEAR - only if something gets quarantined. Three
-     consecutive clean scans then `Resting-order quarantine on X LIFTED by the
-     reconciler`. Nothing is quarantined right now, so this may not exercise.
+  2. **M155's four sizing-adjacent changes**, none of which has run live:
+     Milestone C's `regime_features` (default byte-identical), item 22's cap on
+     spendable cash, item 31 above, item 59's quarantine auto-clear.
 
-  3. ON AN EXIT: ONE ledger row, full quantity, and RUN THE WIRE CHECK
-     THE SAME DAY - IBKR retention is same-day only:
+  3. ON AN EXIT: ONE ledger row, full quantity, and RUN THE WIRE CHECK THE SAME
+     DAY - IBKR retention is same-day only:
 
          & ".\.venv\Scripts\python.exe" scripts\verify_exit_on_the_wire.py --symbol <SYM>
 
-     A second exit also takes the book to NINE, which is what unblocks entries.
+     A second exit takes the book to NINE, which is what unblocks entries.
 
-  4. ON AN ENTRY (only reachable after a second exit): the transmit line carries
-     a NUMERIC permId, not a UUID. Item 56's fix is STILL UNEXERCISED.
-     ⚠️ Item 58 shipped in M150, so two entries in one cycle should now see each
-     other - `position_count` must not read the same number twice in a row.
+  4. ON AN ENTRY: the transmit line carries a NUMERIC permId, not a UUID
+     (item 56, still unexercised), and two entries in one cycle should now see
+     each other (item 58).
 
-  5. M149's TWO READ-BACKS, which need no market: Workbench -> backtest SUN.AX
-     (the AI note should name the 3,192 shares) and Regime Monitor -> Analyse
-     Market Conditions (the reasoning should engage with `exposure_hint`).
+  5. FREE, NO MARKET NEEDED: Workbench -> backtest a held symbol. The log line
+     `Advisory context for <SYM>: N position(s), IS held, ...` is the check -
+     item 65 now asks the model to weigh existing exposure, and ⚠️ **a note that
+     mentions the holding proves the model chose to; one that does not proves
+     nothing without that line.**
+
+⚠️ UNDEPLOYED, IN THE TREE: items 25, 29 and 65 (one commit past the build).
+None touches sizing. `scripts/deploy.ps1` will refuse until a rebuild, because
+the installed exe predates them - which is the guard working, not a fault.
 
 THEN, IN ORDER
 
