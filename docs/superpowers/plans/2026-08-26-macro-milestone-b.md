@@ -36,6 +36,52 @@ The original research listed `^AXVI`, the AU curve, `AUDUSD=X` and `TIO=F` as ca
 
 ⚠️ **`statsmodels` is NOT installed**, so the stationarity column is a drift proxy — the shift in mean between the first and second half of the window, in standard deviations — not an ADF test. It separates 0.01 from 1.35 clearly enough to decide form, and it should not be quoted as a formal test.
 
+## ⚠️⚠️ THE PREMISE MOVED — 28 August. RE-RUN THE GATE BEFORE EXECUTING.
+
+Milestone C now exists and has measured the matrix this plan proposes to add to.
+Three things below are no longer safe to execute as written.
+
+**1. The goal statement is too broad.** It says the label is "not classified
+entirely on American data". Measured, the truth is narrower and sharper: the
+label is dominated by ONE American column.
+
+    vix_level          83-86%   REPLICATES across two disjoint windows
+    yield_curve_slope  21-73%
+    breadth (ASX)      18-65%
+    credit_spread      16-56%
+
+The US columns do NOT act as a bloc — `vix_level` is first, `credit_spread`
+last, and the ASX-derived `breadth` sits between them. So this is not "half the
+features are American"; it is "the VIX decides".
+
+**2. The over-representation worry is now MEASURED, and it is worse.** This plan
+worried that `asx_vix_z` would make three of seven columns volatility measures.
+It already is one measure that moves 83-86% of labels. **Adding a second
+volatility column to a matrix the first one already dominates is a different and
+riskier question than the one this plan was written to answer.**
+
+**3. ⚠️ THE 23.0% FIGURE IS ONE WINDOW AND IS NOW SUSPECT.** Milestone C showed
+that every column except `vix_level` swings three- to fourfold with the window,
+because a bare ablation percentage measures how CONTESTABLE the window was as
+much as the feature. Task 5's 23.0% was measured once, by a hand-rolled
+comparison, before the instrument existed. It should not be quoted again until
+it has been re-taken.
+
+### What to do instead of executing Tasks 1-4
+
+Re-run the gate **with Milestone C's instrument**, on **two disjoint windows**,
+**with a control** — that combination is the only reason today's first four
+ablation results were caught as worthless.
+
+⚠️ That still requires Tasks 1-4, because `^AXVI` cannot be ablated until it
+exists. So build them behind the default-OFF switch as planned, then use
+`--feature asx_vix_z` for Task 5 rather than the hand-rolled comparison. **The
+switch is what makes the before/after one binary rather than two builds.**
+
+---
+
+## ORIGINAL GATE (26 August, hand-rolled, one window — retained for its method warning)
+
 ## ⚠️ THE GATE WAS RUN FIRST, AND IT SAYS DO NOT SHIP THIS YET
 
 Task 5 was run **before** Tasks 1-4, because it can reject the feature and
