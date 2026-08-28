@@ -24,14 +24,22 @@ def test_the_scan_knows_every_state_ib_async_calls_active():
     assert WORKING_STATUSES == frozenset(OrderStatus.ActiveStates) - _NOT_REALLY_WORKING
 
 
-def test_the_two_sets_diverge_deliberately():
-    """`_IB_WORKING_STATUSES` is NARROWER, by operator decision on 24 August.
+def test_the_two_sets_no_longer_diverge():
+    """⚠️ CLOSED 28 August (item 31), and this test was rewritten deliberately -
+    its previous version existed precisely so that closing the gap could not
+    happen by accident.
 
-    Widening it moves `_position_stops`, which is the denominator of every
-    risk-at-stop figure the governor gates entries on, so it ships separately
-    with its effect measured. This test exists so the gap reads as a decision
-    rather than as an oversight - and so that closing it is a deliberate act
-    that updates this test.
+    It used to assert `_IB_WORKING_STATUSES < WORKING_STATUSES`, missing
+    `ApiPending` and `ApiUpdate`, so a stop in either read as NO protection and
+    a protected position logged POSITION UNPROTECTED.
+
+    ⚠️ Widening LOOSENS a rail: a position whose stop was ignored counted its
+    FULL value against the aggregate cap and now counts only to the stop, so the
+    aggregate falls. It was measured against the live book first - 20 open
+    orders, 10 Submitted and 10 PreSubmitted, ZERO in either added state - so
+    the change was a no-op on that book and could not move the number.
+
+    They are now ONE definition rather than two that agree, which is what stops
+    them drifting apart again.
     """
-    assert _IB_WORKING_STATUSES < WORKING_STATUSES
-    assert WORKING_STATUSES - _IB_WORKING_STATUSES == {"ApiPending", "ApiUpdate"}
+    assert _IB_WORKING_STATUSES == WORKING_STATUSES

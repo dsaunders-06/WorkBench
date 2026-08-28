@@ -137,20 +137,28 @@ async def test_open_orders_returns_every_order(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resting_stop_orders_still_applies_the_NARROW_set(monkeypatch):
-    """The whole point of Task 2.
+async def test_resting_stop_orders_now_sees_every_working_state(monkeypatch):
+    """⚠️ REWRITTEN 28 August (item 31). This asserted the OPPOSITE - that
+    `ApiPending` stayed invisible - because widening moves `_position_stops`,
+    a sizing input, and that had to be a change of its own rather than a side
+    effect of Task 2.
 
-    `ApiPending` is a working state ib_async recognises and this app's
-    `_IB_WORKING_STATUSES` does not. Deriving `resting_stop_orders` from
-    `open_orders` must NOT widen it - that would move `_position_stops`, which
-    is a sizing input, inside a change that claims to move none.
+    It is now that change. A stop in `ApiPending` IS protection, and reading it
+    as none made `verify_position_stops` log POSITION UNPROTECTED on a protected
+    position.
+
+    ⚠️ It LOOSENS a rail - a position whose stop was ignored counted its full
+    value against the aggregate cap and now counts only to the stop. Measured
+    against the live book before shipping: 20 open orders, 10 Submitted and 10
+    PreSubmitted, ZERO in either added state, so the change could not move the
+    number on that book.
     """
     trades = [
         _trade(symbol="TNE", perm_id=1, order_type="STP", status="ApiPending", aux_price=30.69),
         _trade(symbol="DXS", perm_id=2, order_type="STP", status="PreSubmitted", aux_price=7.10),
     ]
     got = await _adapter(trades, monkeypatch).resting_stop_orders()
-    assert set(got) == {"DXS.AX"}, "ApiPending must stay invisible to the protection check"
+    assert set(got) == {"TNE.AX", "DXS.AX"}, "a stop in ApiPending is protection"
 
 
 @pytest.mark.asyncio

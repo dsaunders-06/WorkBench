@@ -24,6 +24,7 @@ from qat.data.broker.adapter import (
     RestingStopOrder,
 )
 from qat.data.symbols import from_ibkr, to_ibkr
+from qat.domain.oms.resting_orders import WORKING_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -403,7 +404,23 @@ _IB_STOP_TYPES = frozenset({"STP", "STP LMT"})
 # parent fills, and it IS the protection - a scan that demanded `Submitted`
 # would report every bracketed position as unprotected (the M33d shape, where
 # an OCO's `held` stop leg read as nothing at all).
-_IB_WORKING_STATUSES = frozenset({"PreSubmitted", "Submitted", "PendingSubmit"})
+# ⚠️ WIDENED 28 August (item 31) to match `resting_orders.WORKING_STATUSES`.
+# It held three of ib_async's five active states; `ApiPending` and `ApiUpdate`
+# were missing, so `from_ib_resting_stop` read a stop in either as NO
+# protection and `verify_position_stops` logged POSITION UNPROTECTED on a
+# protected position.
+#
+# ⚠️ THIS LOOSENS A RAIL, which is why it shipped on its own. A position whose
+# stop was ignored counted its FULL value against the aggregate cap; now it
+# counts only to the stop, so the aggregate FALLS and entries previously refused
+# may be permitted.
+#
+# MEASURED BEFORE SHIPPING, against the live book on 28 August: 20 open orders,
+# 10 Submitted and 10 PreSubmitted, and ZERO in either added state. The change
+# is a no-op against that book and the aggregate cannot move on it - which is
+# the before/after the handoff asked for, taken while it could still be taken.
+# The defect it removes is real and future, not present.
+_IB_WORKING_STATUSES = WORKING_STATUSES
 
 
 def from_ib_resting_stop(trade: Trade, market: str = "US") -> RestingStopOrder | None:

@@ -839,7 +839,28 @@ for each gap and is worth reading; the list lives here.
     Milestone C exists and has answered its first question. **Stage 4 regime re-sourcing** — do not start until the ablation question is
     settled. If the regime gate does not earn its keep, this stage disappears.
 
-31. **The working-status set is narrow in `ib_translate`.** `_IB_WORKING_STATUSES`
+31. ~~**The working-status set is narrow in `ib_translate`.**~~ **CLOSED
+    28 August, not yet deployed.** `_IB_WORKING_STATUSES` is now
+    `WORKING_STATUSES` itself - ONE definition rather than two that agree, which
+    is what stops them drifting apart again.
+
+    ⚠️ **MEASURED BEFORE SHIPPING, as this item required.** Against the live
+    book: **20 open orders, 10 `Submitted` and 10 `PreSubmitted`, ZERO in either
+    added state.** The widening is a no-op on that book and the aggregate cannot
+    move on it. The defect it removes is real and future, not present.
+
+    ⚠️ It LOOSENS a rail and that is why it shipped alone: a position whose stop
+    was ignored counted its FULL value against the aggregate cap and now counts
+    only to the stop, so the aggregate falls and entries previously refused may
+    be permitted. **Read the aggregate on the next watched session anyway** -
+    a no-op today is not a no-op forever.
+
+    ✅ **ITEM 64'S PIN FIRED, FOR THE FIRST TIME.**
+    `test_item_31_the_working_status_set_is_still_narrow` went red the moment
+    the set widened, forcing this heading to be updated rather than left stale.
+    That is exactly what it was built for, and it worked within a day.
+
+    ORIGINAL: `_IB_WORKING_STATUSES`
     holds three of ib_async's five real working states; `ApiPending` and
     `ApiUpdate` are missing, so `from_ib_resting_stop` reads a stop in either as
     no protection and `verify_position_stops` logs `POSITION UNPROTECTED` on a

@@ -44,16 +44,6 @@ def _read(relative: str) -> str:
     raise AssertionError(f"{relative} not found - item 64's own allowlist has gone stale")
 
 
-def test_item_31_the_working_status_set_is_still_narrow() -> None:
-    """Item 31: `_IB_WORKING_STATUSES` omits statuses IBKR really returns, and
-    it feeds `_position_stops` - a sizing input."""
-    source = _read("data/broker/ib_translate.py")
-
-    assert '_IB_WORKING_STATUSES = frozenset({"PreSubmitted", "Submitted", "PendingSubmit"})' in (
-        source
-    ), "item 31 appears FIXED - widen or close it in HANDOFF.md and delete this test"
-
-
 def test_item_25_preflight_still_derives_unprotected_from_held_only() -> None:
     """Item 25: a position the broker did not report cannot be seen to be
     unprotected, so the count is of what is HELD rather than of what is at
@@ -86,6 +76,10 @@ def test_item_29_deployed_is_still_maintained_by_hand() -> None:
         (58, "domain/oms/oms.py", "_COMMITTED_STATUSES"),
         (59, "domain/oms/resting_order_anomaly.py", "CLEAN_SCANS_BEFORE_CLEAR"),
         (63, "domain/performance/trades.py", "def repair_csv_header"),
+        # Item 31, closed 28 August: the set is now the SHARED one, so a
+        # regression is it becoming a literal again.
+        (31, "data/broker/ib_translate.py", "_IB_WORKING_STATUSES = WORKING_STATUSES"),
+        (22, "domain/oms/oms.py", "spendable_from("),
     ],
 )
 def test_a_closed_item_has_not_quietly_regressed(item: int, relative: str, needle: str) -> None:
