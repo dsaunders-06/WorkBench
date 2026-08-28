@@ -1036,7 +1036,32 @@ from qat.domain.display_dates import format_display_date
 # whether THIS symbol is held, whether risk metrics and a verdict were present.
 # Without it a read-back is a guess: "the note did not mention the holding"
 # cannot be told apart from "the holding never reached the model".
-MILESTONE = "M153"
+# M154 - the blind-window filter is on the handler that writes the log.
+#
+# ITEM 67. M151 attached BLIND_WINDOW_FILTER to the stdout handler and never to
+# the file handler. The packaged build is --windowed with no console, and
+# configure_logging's own docstring already said a stdout-only configuration
+# discards every line in the shipped build. Measured at the 28 August open:
+#
+#   recovery line claimed : 678 suppressed
+#   in the blind window   : 797 lines
+#   delisting errors IN THE LOG : 774
+#
+# ⚠️ Worse than not working. It suppressed on a stream nobody reads and then
+# ASSERTED the suppression on the line an operator would use to conclude the log
+# was clean. A missing fix is a gap; a fix that reports work it did not do is a
+# false assurance, and this one was quotable.
+#
+# Item 59's mistake repeated, and the lesson had been written into Milestone C's
+# constraints the day before: M151's tests proved filter() suppresses and counts,
+# and nothing proved it was ATTACHED.
+#
+# ⚠️ THE OBVIOUS FIX WOULD HAVE INTRODUCED A SECOND DEFECT. filter() runs once
+# per HANDLER, so attaching it to both without more would have counted every
+# record twice and reported double what it dropped - a wrong number in place of
+# a false assurance. Records are tagged so one record counts once, with a test
+# each way so the tag cannot become a latch.
+MILESTONE = "M154"
 
 _UNKNOWN = "unknown"
 
