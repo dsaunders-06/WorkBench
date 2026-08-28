@@ -485,6 +485,43 @@ for each gap and is worth reading; the list lives here.
 5. **M43 — trading halts.** No detection anywhere. The staleness rail covers
    entry and says nothing about the case that hurts: position held, symbol
    halted, stop cannot fill, reopens materially lower.
+
+   ### ⚠️ MEASURED 28 August BEFORE DESIGNING, and the feed is NOT ESTABLISHED
+
+   `scripts/probe_halts.py`, read-only against the live Gateway:
+
+       Ticker fields matching 'halt': ['delayedHalted', 'halted']
+
+       Error 354: Requested market data is not subscribed ...
+                  Delayed market data is available.
+
+       DELAYED feed:
+         BHP.AX  halted=nan  delayedHalted=nan  close=66.40
+         CBA.AX  halted=nan  delayedHalted=nan  close=154.96
+         SUN.AX  halted=nan  delayedHalted=nan  close=18.85
+
+   **`ib_async` models a halt; this account cannot see one.** There is no live
+   IBKR market-data subscription — the app runs on yfinance, which reports no
+   halt at all — and on the DELAYED feed, which does work (the closes above are
+   real), the halt tick was never delivered.
+
+   ⚠️ **NOT YET CONCLUSIVE, and the distinction matters.** `nan` on a symbol we
+   just got a close for looks like *the tick was never sent* rather than *not
+   halted*, which should be `0`. But the market was SHUT, so "nothing is halted"
+   and "halts are not reported" are indistinguishable from here.
+
+   **Monday finishes it in one run**: `scripts/probe_halts.py` during market
+   hours. If `halted` reads `0` on a trading symbol, the flag is live and M43 has
+   a feed. If it stays `nan`, it does not, and M43 is M39's shape — a designed
+   feature with nothing behind it.
+
+   ⚠️ **DO NOT DESIGN DETECTION UNTIL THAT RUN.** M39 was specified against a
+   feed that turned out not to exist, and the cost was the design, not the code.
+
+   If the flag proves absent, the only remaining approach is BEHAVIOURAL — a
+   symbol that stops ticking while its peers keep ticking — and that is a
+   heuristic, not a report. It would also collide with the staleness rail, which
+   already treats a silent symbol as excluded rather than halted.
 6. **M41 — earnings event risk.** M120 fixed the DATE the blackout is computed
    against; the risk itself is untouched. With a 10-day minimum hold and a 30-day
    time stop, holding through an announcement is unavoidable — roughly quarterly
