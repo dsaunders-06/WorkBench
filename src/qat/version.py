@@ -1115,7 +1115,56 @@ from qat.domain.display_dates import format_display_date
 #
 # ITEM 59 - the reconciler now lifts the quarantine it declared, after three
 # consecutive clean scans, with the operator button kept.
-MILESTONE = "M155"
+# M156 - one record that survives a restart, and the guards can now tell you
+# their green means something.
+#
+# ⚠️ NOTHING HERE TOUCHES SIZING OR A RAIL. Three commits, all of them either a
+# record, a label, or a test. That is why they ship together where M155's three
+# sizing-adjacent changes had to be measured individually first.
+#
+# ITEM 44 - THE INSTRUMENT EXISTED AND HAD NEVER ONCE BEEN FED. M44 records the
+# blocker as trade COUNT. It is not: all six closed trades carry an empty
+# entry_slippage and would still be empty at twenty, because
+# open_position_entries.json never stored reference_price and this app restarts
+# most days. The fill event has carried it since M37; the bridge dropped it.
+#
+# ⚠️ THIRD TIME THIS RECORD HAS LOST A FIELD ACROSS A RESTART, and the other two
+# are documented in its own comments - M33's target_price and M49's strategy.
+# The shape test now compares _Entry against PositionEntry rather than listing
+# names, because a field added to one and not the other is how both happened.
+#
+# ⚠️ STILL OPEN: worst_price and best_price EVOLVE over a trade's life, so
+# persisting them at open would restore a stale excursion. mae_r and mfe_r stay
+# empty until that larger piece is done. And this helps only trades opened FROM
+# NOW - the six existing rows cannot be recovered.
+#
+# ITEM 20 - swept every guard that scans this repo's own source. NO HIDDEN LIVE
+# VIOLATION WAS FOUND, which is the honest result and unlike M135, which was
+# hiding one. What two of the four could not do was tell you their green meant
+# anything. Three narrownesses closed anyway, and a positive control found the
+# worst on its first run: test_theme's hex scan required the colour to be the
+# WHOLE literal, so "color: #b71c1c;" - the only way a screen actually writes
+# one - was invisible to the guard whose entire job is catching it.
+#
+# Two halves now, neither substituting for the other. source_files refuses a
+# missing root or a collapsed corpus AT THE POINT THE LIST IS BUILT; a planted
+# violation proves the detector still detects. And a meta-guard fails any test
+# that globs *.py itself, because a helper nobody must use is a convention -
+# which is exactly what M135 had.
+#
+# ITEM 18 - the Dashboard's "Review & Apply" button applied nothing. Renamed to
+# "Acknowledge note", and the click now writes an INFO line naming the regime it
+# was acknowledged AGAINST, so it can be evidence a human saw a regime change
+# before a trade. Spec §K unchanged and now pinned: the handler still reaches no
+# trading path.
+#
+# ITEMS 21, 40 - STALE, already fixed, closed by audit. Thirteenth this week.
+#
+# ITEM 13 - the Alpaca question, answered by measuring. KEEP: preflight already
+# refuses broker=alpaca off a US market, so deletion would solve a problem a
+# rail already solves; and nine analysis probes import the SDK, which is the US
+# era's evidence trail.
+MILESTONE = "M156"
 
 _UNKNOWN = "unknown"
 
