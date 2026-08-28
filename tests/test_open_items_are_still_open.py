@@ -95,6 +95,11 @@ def test_item_29_deployed_is_still_maintained_by_hand() -> None:
         # DELETING the helper - the one change that would silently restore the
         # old freedom - fails by item number rather than by import error.
         (20, "tests/support/source_corpus.py", "def source_files"),
+        # Item 13, answered KEEP on 28 August. The answer RESTS on this
+        # refusal: the case for deleting the Alpaca paths was that a US broker
+        # could be pointed at an ASX book, and preflight already refuses that.
+        # If the refusal goes, the answer has to be reopened, not inherited.
+        (13, "preflight.py", 'settings.broker == "alpaca" and settings.market != "US"'),
     ],
 )
 def test_a_closed_item_has_not_quietly_regressed(item: int, relative: str, needle: str) -> None:

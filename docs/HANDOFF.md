@@ -637,7 +637,41 @@ for each gap and is worth reading; the list lives here.
     recognized`. Original: `@task(pre=[lint, test])` with a `pass`
     body — returns 0 with a green suite while `dist/` keeps yesterday's exe.
     Packaging is `invoke package`, then `invoke sign`.
-13. **Retire the Alpaca CODE paths?** Open question. The adapter and market-data
+13. ~~**Retire the Alpaca CODE paths?**~~ **ANSWERED 28 August — KEEP, and
+    here is what it actually costs.** Measured rather than argued:
+
+    | Question | Measured |
+    |---|---|
+    | Modules implementing it | 3 — `alpaca_source.py`, `alpaca_adapter.py`, `alpaca_client_protocol.py` |
+    | Places that reach them | 5, all LAZY — `capabilities:144`, `history:220`, `runtime:180/289`, `settings:188` |
+    | Module-level `import alpaca` in `src` | **ZERO** — all 20 are function-local |
+    | Hard dependency | **YES** — `alpaca-py>=0.43`, and the spec has `excludes=[]` |
+    | Ships in the exe | ~1.3 MB of SDK, for a path this book cannot select |
+    | Dedicated tests | 2 files, 66 references; ~10 more incidental |
+
+    **The safety half of the question is already answered by a rail, not by
+    deletion.** `preflight.py:172` refuses `broker=alpaca` with `market != US`
+    and `:195` refuses `market_data_source=alpaca` the same way. Retiring the
+    code to prevent a US broker being pointed at an ASX book would be removing
+    code to solve a problem that is already refused at startup.
+
+    **And it is not abandoned code, which is the distinction that decides
+    this.** `AlpacaAdapter` is in `KNOWN_ADAPTERS()`, and every entry there is
+    capability-audited by `test_capabilities.py` — so it cannot quietly rot
+    behind the ASX path while looking like a live fallback. Dead code that
+    still passes an audit is a different thing from dead code.
+
+    ⚠️ **What would change the answer:** IBKR proven over a full quarter, or
+    the exe size or an `alpaca-py` CVE starting to matter. Not before.
+
+    ⚠️ **What retiring would also delete, and this is the real reason to wait:**
+    nine `scripts/analysis/*` probes import the SDK at module level. They are
+    the US era's evidence trail — how the feed entitlement, the mark source and
+    the split behaviour were actually established. Deleting the SDK deletes the
+    ability to re-run any of them, and this project has twice been saved by
+    re-reading how a finding was obtained.
+
+    ORIGINAL: Open question. The adapter and market-data
     source are still in the tree and still tested, and `alpaca_source.py` is the
     reference implementation M119's retry came from. The 21 August decision was
     about DATA.
