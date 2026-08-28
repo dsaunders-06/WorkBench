@@ -2757,15 +2757,31 @@ shares its shape.
     manifest — which was written from the INTENDED feature list. It checked
     intent, not effect. It now reads the list off the engine that actually ran.
 
-    ### ✅ MEASURED PROPERLY, 28 August
+    ### ✅ MEASURED PROPERLY, 28 August — ALL FOUR, WITH A CONTROL
 
-        credit_spread   label differs on 104 of 249 bars (42%)   equity +233.81
-        breadth         label differs on  67 of 249 bars (27%)   equity -375.12
+    | column | source | label differs | equity |
+    |---|---|---|---|
+    | `vix_level` | VIXCLS 🇺🇸 | **213 of 249 (86%)** | −661.99 |
+    | `credit_spread` | BAA10Y 🇺🇸 | 104 of 249 (42%) | +233.81 |
+    | `yield_curve_slope` | T10Y3M 🇺🇸 | 75 of 249 (30%) | −698.27 |
+    | `breadth` | ASX-derived 🇦🇺 | 67 of 249 (27%) | −375.12 |
 
-    **`credit_spread` is NOT inert — it is the most influential of the two
-    tested**, moving the label on 42% of bars against the ASX-derived control's
-    27%. The opposite of what the broken harness reported, and the opposite of
-    what its +0.004 forward-vol correlation suggested in isolation.
+    ⚠️⚠️ **THE QUESTION WAS ASKED THE WRONG WAY ROUND, AND THE ANSWER IS
+    WORSE THAN THE WORRY.** The concern was that the US columns might be
+    carrying nothing on an Australian book. **All three are MORE influential
+    than the ASX-derived control**, and `vix_level` alone moves the label on
+    86% of bars. The regime label on a 94-stock ASX book is not merely informed
+    by American data - it is *dominated* by it.
+
+    ⚠️ **AND M146 DID NOT FIX THAT.** Milestone A found *"raw feature spread is
+    led by `vix_level` at 85.0% of the total"* and made the matrix
+    scale-neutral so no column could dominate by SCALE. It still dominates by
+    INFORMATION, at 86% of labels. Standardisation addressed the units and left
+    the influence untouched — those were always different questions, and only
+    the ablation could tell them apart.
+
+    ⚠️ `credit_spread` is NOT inert either, at 42% - the opposite of what its
+    +0.004 forward-vol correlation suggested in isolation.
 
     ⚠️ **DO NOT read the equity deltas as results.** Ten trades per arm on a
     baseline of -7.25R and a 10% win rate. At n=10 those figures are noise; the
@@ -2777,9 +2793,25 @@ shares its shape.
     feature can contribute through interaction while looking weak alone"* — and
     it took an ablation to see it. That is what the instrument is FOR.
 
-    Wanted next: re-run `vix_level` and `yield_curve_slope` on the FIXED
-    harness - their earlier results were taken before the wiring was repaired
-    and are retracted with the rest. ⚠️ And always run a control alongside.
+    ### What this does and does not license
+
+    ⚠️ **It does NOT say the US columns are wrong.** American volatility
+    genuinely leads Australian equities, so a dominant `vix_level` may be the
+    model working. What it says is that the influence is now MEASURED rather
+    than assumed, and that it is far larger than anyone had reason to think.
+
+    ⚠️ **One window, and ten trades per arm on a -7.25R baseline.** The equity
+    column is noise at that count and must not be quoted; the label movement is
+    the measurement.
+
+    Wanted next, in this order:
+    1. **Repeat on a second window** before any of this is acted on. One window
+       is what the 26 August calendar slip taught us not to trust.
+    2. Then Milestone B's `^AXVI` question, which is now much sharper: adding an
+       Australian volatility column to a matrix whose label is 86% driven by an
+       American one.
+    3. ⚠️ **Always with a control.** A control is the only reason today's first
+       four numbers were caught, and it cost one extra run.
 
 67. ~~**⚠️⚠️ M151's FILTER WAS ON THE WRONG HANDLER, AND REPORTED WORK IT DID
     NOT DO.**~~ **FIXED — not yet deployed.** Found live at the 28 August open.
