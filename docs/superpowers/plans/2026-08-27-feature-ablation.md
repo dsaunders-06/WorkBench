@@ -55,7 +55,7 @@ Design: `docs/superpowers/specs/2026-08-27-feature-ablation-design.md` (approved
 
 ⚠️ **The default must be a byte-identical no-op.** If any existing regime test changes behaviour, **STOP** — that means the default is not being applied. Do not adjust the test.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/domain/regime_engine/test_feature_selection.py
@@ -97,12 +97,12 @@ def test_the_vix_column_still_carries_vix_when_others_are_dropped():
     assert matrix[-1, 1] == pytest.approx(15.5)
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/regime_engine/test_feature_selection.py -q`
 Expected: FAIL — `Settings` has no attribute `regime_features`, `RegimeFeatureBuilder` takes no `features`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `feature_matrix.py`, add a `features` field to the dataclass defaulting to `FEATURE_NAMES`, build each row as a dict keyed by name, and emit `[row[name] for name in self.features]`. Keep `FEATURE_NAMES` exported unchanged — it is the default and other modules import it.
 
@@ -121,21 +121,26 @@ default is byte-identical to the six columns that shipped before it existed.
 """
 ```
 
-- [ ] **Step 4: Run the new test, then the whole regime suite**
+- [x] **Step 4: Run the new test, then the whole regime suite**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/regime_engine/ -q`
 Expected: PASS, and **no pre-existing regime test changes behaviour**. If one does, STOP.
 
-- [ ] **Step 5: Document the setting in the manual**
+- [x] **Step 5: Document the setting in the manual** — ⚠️ **DEVIATED, deliberately.**
+  Added to `_NOT_IN_THE_MANUAL` instead, with the reason. `regime_features` is a
+  RESEARCH lever, not an operator control: changing it changes what every regime
+  LABEL means, which is exactly why `bar_interval_seconds` is excused. Putting
+  it in the manual would advertise a knob whose misuse this harness exists to
+  measure. It remains a sizing input and the byte-identical default is pinned.
 
 Run: `.venv\Scripts\python.exe -m pytest -k manual_documents_every_setting -q`
 Expected: PASS.
 
-- [ ] **Step 6: Falsify**
+- [x] **Step 6: Falsify**
 
 Change the default to a five-element list. Expected: `test_the_default_is_todays_six_columns_unchanged` goes red. Restore.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/qat/config.py src/qat/domain/regime_engine/feature_matrix.py scripts/manual_body.py tests/domain/regime_engine/test_feature_selection.py
@@ -156,7 +161,7 @@ git commit -m "Milestone C: the regime matrix carries the columns it is told to"
 
 **Why this is its own task.** `_LOG_RETURN_COL = 0` and `_REALIZED_VOL_COL = 1` feed `StateSignature.mean_return` and `mean_vol`, which `fusion.py:110-123` turns into the z-scores that decide **which fitted state is called bull and which bear**. Get this wrong and every label silently means something else.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 def test_the_state_stats_follow_the_named_columns_not_positions():
@@ -222,7 +227,7 @@ git commit -m "Milestone C: the state stats resolve their columns by name"
 **Interfaces:**
 - Produces: `FEATURES: dict[str, str]` (name → why it matters); `UNABLATABLE_FEATURES: dict[str, str]` (name → refusal reason); `class UnablatableFeature(ValueError)`; `feature_settings(base: Settings, disabled: Sequence[str]) -> Settings`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/domain/backtester/test_feature_ablation.py
@@ -374,7 +379,7 @@ git commit -m "Milestone C: which regime features may be ablated, and which are 
 
 ⚠️ `risk_decisions.csv` cannot serve as the regime record: it carries `regime_label` only on bars where a decision happened, so "the label never differed" would be indistinguishable from "no decisions happened".
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # append to tests/domain/backtester/test_feature_ablation.py
@@ -458,7 +463,7 @@ git commit -m "Milestone C: record the regime path and the terminal equity"
 
 ⚠️ **The headline is terminal equity, not R.** `compare_runs._arm()` reports trades, win%, R-mean and R-total — every one scale-free. A feature that halved every position leaves all four identical, because a regime feature moves the exposure scalar, which moves *size*.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/domain/backtester/test_compare_feature_runs.py

@@ -630,6 +630,39 @@ class Settings(BaseSettings):
     # nothing, breadth of mandate decides, not an arbitrary argmax.
     regime_eligibility_mass: float = Field(default=0.5, gt=0.0, le=1.0)
 
+    # Which columns the regime feature matrix carries, in order (Milestone C).
+    #
+    # ORDERED because the matrix is positional and the HMM is fitted on column
+    # order: two runs whose lists differ only in order build different matrices
+    # and are silently incomparable.
+    #
+    # ⚠️ THIS IS A SIZING INPUT. The regime label sets the exposure scalar. The
+    # default is byte-identical to the six columns that shipped before this
+    # setting existed, so nothing moves unless the list does.
+    #
+    # It exists so the ablation harness can make a feature absent by a Settings
+    # value rather than a branch - the rule `ablation.py` states for rails, and
+    # which records `if enabled(...)` guards in the decision path as REJECTED.
+    #
+    # ⚠️ `log_return` and `realized_vol` are NOT ordinary features and the
+    # harness refuses to ablate them: `hmm_core` reads their state statistics
+    # and `fusion` turns those into the z-scores that decide which fitted state
+    # is called bull. Removing either would not drop a signal, it would rename
+    # every label.
+    # Spelled out rather than imported from `feature_matrix`: `config` is
+    # imported almost everywhere and that module pulls numpy and pandas in
+    # behind it. `test_the_default_is_todays_six_columns_unchanged` pins this
+    # against `FEATURE_NAMES`, so drift is caught without buying the coupling -
+    # the same trade the macro exposure anchor makes in `prompts.py`.
+    regime_features: tuple[str, ...] = (
+        "log_return",
+        "realized_vol",
+        "vix_level",
+        "yield_curve_slope",
+        "credit_spread",
+        "breadth",
+    )
+
     # Interval ticks are aggregated into OHLC bars over (M14), daily since
     # M27a.
     #

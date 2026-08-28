@@ -41,6 +41,12 @@ _NOT_IN_THE_MANUAL = {
     "the application behaves.",
     "bar_interval_seconds": "Aggregation interval. Changing it changes what every indicator "
     "means, so it is deliberately not offered as an operator knob.",
+    "regime_features": "Which columns the regime matrix carries. A RESEARCH lever for the "
+    "ablation harness, not an operator control: changing it changes what every regime LABEL "
+    "means, the same reason bar_interval_seconds is excused. Offering it in the manual would "
+    "advertise a knob whose misuse the harness exists to measure. ⚠️ It is still a sizing "
+    "input - the default is byte-identical to the six columns that shipped before it, and a "
+    "test pins that.",
     "blotter_max_rows": "A display cap on one table. Raising it costs render time and shows "
     "older orders; it changes nothing about what the application does.",
     "correlation_window_bars": "Inside the correlation rail, which the manual documents by "

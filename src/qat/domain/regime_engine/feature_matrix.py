@@ -34,6 +34,17 @@ _NEUTRAL_BREADTH = 0.5
 class RegimeFeatureBuilder:
     vol_window: int = 20
     breadth_window: int = 50
+    features: tuple[str, ...] = FEATURE_NAMES
+    """Which columns this matrix carries, in order (Milestone C).
+
+    ORDERED because the matrix is positional and the HMM is fitted on column
+    order: two runs whose lists differ only in order build different matrices
+    and are silently incomparable.
+
+    ⚠️ Columns are SELECTED by name, never truncated. Truncating a row would
+    leave every remaining column holding its neighbour's value - a matrix that
+    reads as working and is a different measurement entirely.
+    """
 
     _closes: list[float] = field(default_factory=list)
     _breadth_panel: dict[str, list[float]] = field(default_factory=dict)
@@ -60,14 +71,14 @@ class RegimeFeatureBuilder:
                 self._breadth_panel.setdefault(symbol, []).append(price)
 
         if len(self._closes) < 2:
-            row = [
-                0.0,
-                0.0,
-                self._vix,
-                self._yield_curve_slope,
-                self._credit_spread,
-                _NEUTRAL_BREADTH,
-            ]
+            values = {
+                "log_return": 0.0,
+                "realized_vol": 0.0,
+                "vix_level": self._vix,
+                "yield_curve_slope": self._yield_curve_slope,
+                "credit_spread": self._credit_spread,
+                "breadth": _NEUTRAL_BREADTH,
+            }
         else:
             closes = pd.Series(self._closes)
             prev_close = closes.iloc[-2]
@@ -78,16 +89,18 @@ class RegimeFeatureBuilder:
 
             breadth = self._current_breadth()
 
-            row = [
-                log_return,
-                realized_vol,
-                self._vix,
-                self._yield_curve_slope,
-                self._credit_spread,
-                breadth,
-            ]
+            values = {
+                "log_return": log_return,
+                "realized_vol": realized_vol,
+                "vix_level": self._vix,
+                "yield_curve_slope": self._yield_curve_slope,
+                "credit_spread": self._credit_spread,
+                "breadth": breadth,
+            }
 
-        self._rows.append(row)
+        # Keyed by NAME then selected, so a narrowed list picks columns rather
+        # than shortening a row.
+        self._rows.append([values[name] for name in self.features])
 
     def replace_latest_bar(
         self, close: float, breadth_prices: dict[str, float] | None = None
@@ -135,5 +148,5 @@ class RegimeFeatureBuilder:
 
     def feature_matrix(self) -> np.ndarray:
         if not self._rows:
-            return np.empty((0, len(FEATURE_NAMES)))
+            return np.empty((0, len(self.features)))
         return np.array(self._rows, dtype=float)
