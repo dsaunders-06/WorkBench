@@ -211,7 +211,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "9bd111a"
+DEPLOYED = "17f5ca9"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 
@@ -269,15 +269,34 @@ def test_totals() -> str:
     return f"{int(match.group(1)):,} collected" if match else "could not collect"
 
 
+# ⚠️ A COLLECTED count, because that is the only figure this script has.
+#
+# The pattern was `[\d,]+ tests`, and on 28 August its ONLY output was a false
+# positive: item 22's note that a change "broke 134 tests" - a historical count
+# of what FAILED, and still true. A checker whose entire output is a line you
+# have to know to ignore is a checker that gets ignored, and the real stale
+# figure goes past with it. Same argument as item 20's allowlist: a guard that
+# flags things which are fine earns an exemption list, and an exemption list is
+# not read.
+#
+# ⚠️ THE "N passed" FIGURE IS DELIBERATELY NOT CHECKED. `test_totals` only
+# COLLECTS - three seconds against three and a half minutes - so there is no
+# passed count to compare against, and checking "2,903 passed" against the
+# collected total would be wrong by exactly the skip count, every single run.
+# A number this cannot verify is left alone rather than verified against the
+# nearest number to hand.
+_COLLECTED_CLAIM = re.compile(r"([\d,]+)\s+(?:tests?\s+)?collected")
+
+
 def stale_figures_in_handoff(collected: str) -> list[str]:
-    """Any test count written in the handoff that no longer matches."""
+    """Any COLLECTED total written in the handoff that no longer matches."""
     if not HANDOFF.exists() or "collected" not in collected:
         return []
     actual = collected.split()[0]
     return [
         f"line {n}: says {m.group(0)}, suite collects {actual}"
         for n, line in enumerate(HANDOFF.read_text(encoding="utf-8").splitlines(), 1)
-        if (m := re.search(r"[\d,]+ tests", line)) and m.group(0).split()[0] != actual
+        if (m := _COLLECTED_CLAIM.search(line)) and m.group(1) != actual
     ]
 
 
