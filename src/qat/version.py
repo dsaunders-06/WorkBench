@@ -1061,7 +1061,61 @@ from qat.domain.display_dates import format_display_date
 # record twice and reported double what it dropped - a wrong number in place of
 # a false assurance. Records are tagged so one record counts once, with a test
 # each way so the tag cannot become a latch.
-MILESTONE = "M154"
+# M155 - Milestone C, and four items closed with their sizing effects measured
+# rather than assumed.
+#
+# ⚠️ THREE OF THESE TOUCH A SIZING INPUT, and each was measured as a NO-OP
+# against the CURRENT book before shipping. That is what makes one build
+# acceptable where the project's pattern is small steps:
+#
+#   Milestone C  regime_features defaults byte-identical to today's six columns,
+#                pinned by a test. Nothing moves unless the list does.
+#   item 22      per-order cap keys off spendable cash. At the $1 reserve that
+#                is one share on a hundred - immaterial, which was never the
+#                argument.
+#   item 31      _IB_WORKING_STATUSES widened to WORKING_STATUSES. Measured
+#                against the live book: 20 open orders, 10 Submitted and 10
+#                PreSubmitted, ZERO in either added state.
+#
+# ⚠️ READ THE AGGREGATE RISK-AT-STOP ON THE NEXT WATCHED SESSION ANYWAY. Item 31
+# LOOSENS a rail - a position whose stop was ignored counted its full value
+# against the cap and now counts only to the stop - and a no-op today is not a
+# no-op forever.
+#
+# MILESTONE C. The ablation harness can now adjudicate a regime FEATURE column
+# the way it adjudicates a rail. A feature is made absent by a Settings value,
+# never a branch.
+#
+# ⚠️ ITS FIRST FOUR MEASUREMENTS WERE WORTHLESS AND A CONTROL CAUGHT IT.
+# replay_session built its RegimeEngine without `features`, so both arms used
+# the default columns and were byte-identical; NOT EXERCISED was truthful about
+# the arms and meaningless about the feature. Ablating `breadth`, an
+# ASX-derived control, returned the identical result to `credit_spread` - two
+# columns of wholly different importance cannot both be inert. The STILL ENABLED
+# guard did not fire because it read the manifest, which was written from the
+# INTENDED list: it checked intent, not effect. It now reads the engine.
+#
+# Measured properly, on two disjoint windows: vix_level moves the label on
+# 83-86% of bars and REPLICATES; the other three swing three to fourfold with
+# the window. The rank order is identical on both - vix_level >
+# yield_curve_slope > breadth > credit_spread - so the magnitudes are about the
+# window and the ORDER is about the features.
+#
+# ITEM 22 - the per-order cap read raw cash, a THIRD basis for "what may a buy
+# spend". Now one definition, `adapter.spendable_from`, with three readers.
+#
+# ITEM 25 - preflight's book check states what it cannot see: stops resting on
+# symbols the book does not hold. Closed by stating the limit, not widening the
+# check. Its empty-book line used to assert "no resting stops" having never
+# looked.
+#
+# ITEM 31 - one working-status set instead of two that agree. A stop in
+# ApiPending read as NO protection and logged POSITION UNPROTECTED on a
+# protected position.
+#
+# ITEM 59 - the reconciler now lifts the quarantine it declared, after three
+# consecutive clean scans, with the operator button kept.
+MILESTONE = "M155"
 
 _UNKNOWN = "unknown"
 
