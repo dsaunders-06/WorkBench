@@ -772,7 +772,27 @@ for each gap and is worth reading; the list lives here.
     The concentration cap is upstream in the sizer and cannot see what has
     already gone out.
 
-25. **`preflight`'s book check derives `unprotected` from held positions only.**
+25. ~~**`preflight`'s book check derives `unprotected` from held positions only.**~~
+    **CLOSED 28 August, not yet deployed** - and closed by STATING the limit
+    rather than widening the check, which is what the item asked for.
+
+    Every `book` outcome now carries: *"⚠️ This does NOT look for stops resting
+    on symbols the book does not hold (the orphan shape); that is
+    check_resting_orders' question, in the session."* Confirmed against the live
+    Gateway.
+
+    ⚠️ **Deliberately NOT widened.** That question belongs to
+    `check_resting_orders`, which owns the reconciler and can act on it;
+    duplicating it here would be a second derivation of one question — the shape
+    that produced items 22 and 31 this same evening.
+
+    ⚠️ **The empty-book line was the worst of the three** and the item did not
+    name it: it read *"no positions, no resting stops"*, which asserts the
+    second half outright. With nothing held the loop runs zero times, so a stop
+    resting on ANY symbol would go unreported while the line said none existed.
+    It now says nothing was checked about what may be resting.
+
+    ORIGINAL:
     Corrected premise: it already routes through `reqAllOpenOrdersAsync`, via
     `broker.resting_stops()` (`preflight.py:445`) — the client-scoped view was
     never its defect. The defect is at `preflight.py:450`: `unprotected` is

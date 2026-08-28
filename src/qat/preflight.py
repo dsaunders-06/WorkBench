@@ -449,8 +449,29 @@ async def book_checks(broker: object) -> list[Check]:
 
     held = [p for p in positions if abs(float(p.quantity)) > 0]
     unprotected = [p.symbol for p in held if p.symbol not in stops]
+    # ⚠️ WHAT THIS CHECK CANNOT SEE (item 25). `unprotected` is built by walking
+    # HELD positions, so it answers "is every position protected" and never
+    # "what is resting that the book does not explain". A stop resting on a
+    # symbol the book does NOT hold - M141's orphan shape - is invisible here.
+    #
+    # Deliberately NOT widened: that question belongs to `check_resting_orders`,
+    # which owns the reconciler and can act on it. Duplicating it would be a
+    # second derivation of one question. What this check must stop doing is
+    # implying coverage it has not got, because a clean line here reads as
+    # "nothing unexpected is resting" and that was never asked.
+    _LIMIT = (
+        " ⚠️ This does NOT look for stops resting on symbols the book does not hold "
+        "(the orphan shape); that is check_resting_orders' question, in the session."
+    )
     if not held:
-        checks.append(Check("book", Status.OK, "no positions, no resting stops"))
+        checks.append(
+            Check(
+                "book",
+                Status.OK,
+                "no positions held, so nothing to protect - and nothing was checked about "
+                "what may be resting." + _LIMIT,
+            )
+        )
     elif unprotected:
         checks.append(
             Check(
@@ -458,12 +479,17 @@ async def book_checks(broker: object) -> list[Check]:
                 Status.FAIL,
                 f"{len(held)} position(s) held and {len(unprotected)} carry NO resting stop "
                 f"at the broker: {', '.join(unprotected)}. Starting a session over an "
-                f"unprotected position is how the protection question gets answered by a gap.",
+                f"unprotected position is how the protection question gets answered by a "
+                f"gap." + _LIMIT,
             )
         )
     else:
         checks.append(
-            Check("book", Status.OK, f"{len(held)} position(s), all carrying a resting stop")
+            Check(
+                "book",
+                Status.OK,
+                f"{len(held)} position(s), all carrying a resting stop." + _LIMIT,
+            )
         )
     return checks
 
