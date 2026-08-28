@@ -141,3 +141,19 @@ def test_a_missing_terminal_equity_suppresses_the_headline(tmp_path) -> None:
         "a delta was printed with only one arm's equity known, which asserts a "
         "difference against a number that was never measured"
     )
+
+
+def test_the_report_states_how_contestable_the_window_was(tmp_path) -> None:
+    """⚠️ Without this the percentage is uninterpretable, and that is measured
+    rather than argued: on 28 August the same three features scored 16-21% on a
+    window that was 78% bear with 3 transitions, and 56-73% on a disjoint one
+    with six labels and 8 transitions. A label that barely moves cannot be moved
+    by removing a column."""
+    base = _arm(tmp_path / "b", ["bull", "bear", "bear", "bear"], 105_000.0, _ON)
+    abl = _arm(tmp_path / "a", ["bull", "bull", "bear", "bear"], 98_000.0, _OFF)
+
+    report = compare_feature_runs(base, abl, "credit_spread")
+
+    assert "bear 75%" in report
+    assert "transition" in report
+    assert "CONTESTABLE" in report.upper()

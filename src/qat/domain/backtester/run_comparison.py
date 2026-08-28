@@ -272,6 +272,22 @@ def compare_feature_runs(baseline_dir: Path, ablated_dir: Path, feature: str) ->
             ],
         )
 
+    # ⚠️ HOW CONTESTABLE THE LABEL WAS, printed beside how often it moved -
+    # because the second cannot be read without the first (28 August). Measured
+    # on two disjoint windows: an EARLIER one that was 78% bear with 3
+    # transitions, and a LATER one with six labels and 8. The same three
+    # features scored 16-21% on the monotone window and 56-73% on the diverse
+    # one. A label that barely moves cannot be moved by removing a feature, so
+    # a bare percentage measures the WINDOW as much as the column.
+    counts: dict[str, int] = {}
+    for _ts, label, _scalar in base_path:
+        counts[label] = counts.get(label, 0) + 1
+    transitions = sum(1 for a, b in zip(base_path, base_path[1:], strict=False) if a[1] != b[1])
+    spread = ", ".join(
+        f"{name} {n / len(base_path):.0%}"
+        for name, n in sorted(counts.items(), key=lambda kv: -kv[1])
+    )
+
     lines = [
         f"=== feature: {feature} ===",
         "",
@@ -287,6 +303,14 @@ def compare_feature_runs(baseline_dir: Path, ablated_dir: Path, feature: str) ->
         f"The label differed on {len(differing)} of {len(base_path)} bars "
         f"({len(differing) / len(base_path):.0%}).",
         f"Window: {window}.",
+        "",
+        _wrap(
+            f"⚠️ The baseline label was {spread} across {transitions} transition(s). A "
+            f"window whose label barely moves cannot have it moved by removing a column, "
+            f"so the percentage above measures how CONTESTABLE this window was as much as "
+            f"how influential the feature is. Compare only against another feature on the "
+            f"SAME window, and replicate on a disjoint one before acting."
+        ),
         "",
         "Trades - a changed SET, which is a different fact from a changed size:",
         _arm("baseline", baseline, _trades(baseline_dir)),

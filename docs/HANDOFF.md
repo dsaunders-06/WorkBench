@@ -2811,23 +2811,35 @@ shares its shape.
 
     | | earlier<br>2025-08-21→2026-02-18 | later<br>2026-02-19→2026-08-14 | full |
     |---|---|---|---|
-    | `vix_level` | **85%** | **83%** | **86%** |
-    | `breadth` | 18% | **65%** | 27% |
+    | `vix_level` 🇺🇸 | **85%** | **83%** | **86%** |
+    | `credit_spread` 🇺🇸 | 16% | 56% | 42% |
+    | `yield_curve_slope` 🇺🇸 | 21% | 73% | 30% |
+    | `breadth` 🇦🇺 | 18% | 65% | 27% |
 
-    ⚠️ **`vix_level`'s dominance REPLICATES** - 85%, 83%, 86% across three
-    windows, two of them disjoint. That is a real, stable property of the
-    matrix, not an artefact of one period.
+    **Baseline regime diversity, which is what makes the rest readable:**
 
-    ⚠️⚠️ **`breadth` DOES NOT: 18% against 65% on disjoint halves.** Nearly four
-    times, on the same instrument, same universe, adjacent periods.
+    | | earlier | later |
+    |---|---|---|
+    | dominant label | **bear 78%** | bear 35% |
+    | distinct labels | 4 | 6 |
+    | transitions | **3** | **8** |
 
-    **That instability is the more important finding**, because it applies to
-    everything measured on one window. `credit_spread` at 42% and
-    `yield_curve_slope` at 30% were each measured ONCE. On breadth's evidence,
-    either could be half or double that in another period, and **neither number
-    should be acted on until it has been replicated the way `vix_level` has.**
+    ⚠️⚠️ **THREE OF THE FOUR FEATURES TRACK THE WINDOW, NOT THEMSELVES.**
+    `credit_spread`, `yield_curve_slope` and `breadth` all score 16-21% on the
+    monotone window and 56-73% on the diverse one. **A label that barely moves
+    cannot be moved by removing a column**, so a bare ablation percentage
+    measures how CONTESTABLE the window was as much as how influential the
+    feature is. The comparator now prints the baseline's label spread and
+    transition count beside the percentage, and a test pins it.
 
-    Only `vix_level` currently carries a replicated result.
+    ⚠️ **`vix_level` IS THE EXCEPTION, AND THAT MAKES ITS RESULT STRONGER.** It
+    flips 85% of labels in a window that is 78% bear with THREE transitions -
+    it is not moving the label at boundaries, it is DETERMINING it.
+
+    ⚠️ **Only `vix_level` carries a replicated result.** The other three vary
+    with the window by a factor of three to four, so no conclusion about
+    `credit_spread` — item 66's original question — is available from this
+    instrument yet, on any window.
 
     Wanted next, in this order:
     1. ~~**Repeat on a second window.**~~ **DONE for `vix_level` and `breadth`.**
