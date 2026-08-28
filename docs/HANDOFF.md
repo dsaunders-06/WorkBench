@@ -3025,7 +3025,8 @@ shares its shape.
     that is deliberate.
 
     ⚠️ Same session, same shape: a `str.replace` in a heredoc silently no-opped
-    SIX times, each one a Windows path where `` or `` is a valid escape.
+    SIX times, each one a Windows path where `` or `
+` is a valid escape.
     Every one was caught by grepping for the string just written. The habit that
     works is the edit tool, which ERRORS on a failed match.
 
@@ -3041,135 +3042,168 @@ READ THE STATE FIRST, and trust it over anything in this prompt:
     .\.venv\Scripts\python.exe scripts\handoff_state.py
 
 Then read docs\HANDOFF.md. Read the 26 AUGUST incident section before touching
-the order or absorb path, and items 56 and 57 before touching anything else.
+the order or absorb path.
 
 ⚠️ POWERSHELL for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal -
 including Python that only READS it, and anything that builds Settings(), which
 loads that directory's .env whether or not the script mentions it. The Bash
-sandbox serves a frozen snapshot and does NOT error.
+sandbox serves a frozen snapshot and does NOT error. It cost a worthless dry run
+on 28 August: it reported a 301-row, 3-column equity curve for a file that is
+2,894 rows and 5 columns.
 
-⚠️ CI IS BLOCKED at the GitHub billing wall - the Actions allowance ran out
-during 25 August. Pushes still work and cost nothing; the workflow just never
-starts, failing in ~4s with ZERO steps. THE LOCAL SUITE IS THE ONLY
-VERIFICATION. Run all four checks and treat them as final. Expect a red run and
-do not debug it. Re-test in September.
+⚠️ DO NOT PUSH. Standing operator hold since 27 August, still in force. Commit
+locally as normal. This is NOT mere caution: CI is at the GitHub billing wall,
+so every push fires a run that dies in ~4s with zero steps and emails a failure -
+20 such emails in one week. A NAS copy covers the backup risk. Only the operator
+lifts this. THE LOCAL SUITE IS THE ONLY VERIFICATION; run all four checks and
+treat them as final.
+
+⚠️ DEPLOY WITH scripts\deploy.ps1 (dry run first, then -Apply). It derives the
+milestone, commit, hash and rollback name, and rewrites handoff_state.DEPLOYED
+only AFTER the installed copy verifies. Kept by hand that record was wrong TEN
+times - see item 68, where it was left stale through the very deploy that
+shipped the fix for it being stale.
 
 THE STATE
 
-  Deployed M148 (0b1ecd6), installed 26 August 19:05, read back 19:06:30.
-  Exe SHA256-verified, signature Valid. Deploy gap ZERO, tree clean, pushed.
-  Suite 2,775 passed / 25 skipped. ruff, black, mypy, bandit clean.
-  App STOPPED - 22:04:42, "shutdown reached normally". Nothing is running.
+  Deployed M155 (9bd111a), installed 28 August 19:41. Exe SHA256 B613DAFC...E4CD,
+  signature Valid on the INSTALLED copy.
+  ⚠️ NEVER LAUNCHED - the first launch is the read-back.
+  Rollback: C:\QuantAdvisoryTerminal.bak-M154-20260828-1941
 
-  ELEVEN POSITIONS, all bracketed, 22 resting legs, 4 unprot x0:
-  A2M ANZ ASX BOQ IAG PNI RHC SEK SUN TNE WOW. LOV.AX exited 26 Aug at TARGET.
+  Tree clean at 55ae5d9. Deploy gap ONE COMMIT - items 25, 29 and 65 are
+  committed and not in the build; none touches sizing. 60 commits unpushed.
+  Suite 2,903 passed / 25 skipped. ruff, black, mypy src, bandit clean.
+  App STOPPED. Nothing is running. Gateway was up on 4002 on 28 August.
 
-  KILL SWITCH IS CLEAR. Reset by the operator at 22:02:22 after the close, on
-  a verified-clean state - 35 consecutive clean scans and no mismatch. So the
-  next session opens with order flow LIVE and autonomous execution enabled.
+  TEN POSITIONS, all bracketed, 20 resting legs, 4 unprot x0:
+  A2M ANZ ASX BOQ IAG PNI SEK SUN TNE WOW.
+  RHC.AX exited 27 Aug at TARGET, +5,736.57 net, 2.47R.
 
-  FIVE CLOSED TRADES, all LOV.AX, the first in this system's life. +1,535.78
-  net on the four real rows. ⚠️ The FIFTH is a REPAIR row with EMPTY costs, so
-  net P&L across LOV is NOT summable from that file.
+  KILL SWITCH CLEAR. No quarantines (resting_order_anomalies.json is empty).
+  Order flow LIVE and autonomous execution enabled on the next launch.
+
+  SIX CLOSED TRADES: five LOV.AX and one RHC.AX. ⚠️ One LOV row is a REPAIR row
+  with EMPTY costs, so net P&L across LOV is NOT summable from that file.
 
 ⚠️ FIRST WORK: LAUNCH AND READ M155 BACK. It has never run.
 
-  M155 (`9bd111a`) installed 28 August 19:41, SHA256 `B613DAFC...E4CD`,
-  signature Valid on the installed copy. Rollback:
-  `C:\QuantAdvisoryTerminal.bak-M154-20260828-1941`.
-  ⚠️ **NOT READ BACK - no launch has happened since.** The first launch is the
-  read-back. Expect `Build: M155 (9bd111a, ...)`, 10 positions adopted, and NO
-  header-repair or quarantine lines.
+  Expect `Build: M155 (9bd111a, ...)`, 10 positions adopted, and NO
+  header-repair or quarantine lines - their absence is M150 and the 27 August
+  clearance confirming themselves.
 
-  ⚠️ THE ONE NUMBER TO READ AT THE OPEN: **aggregate risk-at-stop.** M155 carries
+  ⚠️ THE ONE NUMBER TO READ AT THE OPEN: aggregate risk-at-stop. M155 carries
   item 31, which LOOSENS a rail - a position whose stop was ignored counted its
-  FULL value against the cap and now counts only to the stop. It was measured as
-  a no-op against the book on 28 August (20 orders: 10 Submitted, 10
-  PreSubmitted, ZERO in either added state) but **a no-op then is not a no-op
-  now**. Read it before trusting any entry decision.
+  FULL value against the aggregate cap and now counts only to the stop. It was
+  measured as a no-op against the book on 28 August (20 orders: 10 Submitted,
+  10 PreSubmitted, ZERO in either added state), but a no-op then is not a no-op
+  now. Read it before trusting any entry decision.
 
-  ⚠️ AN ENTRY STILL CANNOT HAPPEN AT TEN POSITIONS. `governor.py:304` refuses at
-  `>=`, so ten of ten is AT the cap and the book needs NINE. Items 56 and 58
-  remain unexercised for that reason, not because they are unproven.
+  ⚠️ AN ENTRY CANNOT HAPPEN AT TEN POSITIONS. governor.py:304 refuses at >=, so
+  ten of ten is AT the cap and the book needs NINE. Items 56 and 58 are
+  unexercised for that reason, not because they are unproven. On 28 August this
+  cost 1,036 refusals and zero approvals across six symbols.
 
   WATCH, IN ORDER:
 
-  1. **M154's blind-window filter, at the bell.** The recovery line should read
-     `... has recovered - N per-symbol 'possibly delisted' error(s) were
-     suppressed`. ⚠️ M151 shipped this on the STDOUT handler only and asserted a
+  1. M154's blind-window filter, at the bell. The recovery line should read
+     "... has recovered - N per-symbol 'possibly delisted' error(s) were
+     suppressed". ⚠️ M151 shipped this on the STDOUT handler only and asserted a
      suppression that never reached the log - 678 claimed against 774 still
-     present. M154 put it on the file handler. **A recovery line with no count
-     means it is still not working**; NO delisting errors all session means it
-     is over-reaching.
+     present. M154 put it on the file handler.
+     A recovery line with NO count means it is still not working.
+     NO delisting errors all session means it is over-reaching - a genuinely
+     delisted symbol must stay visible.
 
-  2. **M155's four sizing-adjacent changes**, none of which has run live:
-     Milestone C's `regime_features` (default byte-identical), item 22's cap on
-     spendable cash, item 31 above, item 59's quarantine auto-clear.
+  2. M155's four sizing-adjacent changes, none of which has run live: Milestone
+     C's regime_features (default byte-identical), item 22's cap on SPENDABLE
+     cash, item 31 above, item 59's quarantine auto-clear (needs a quarantine to
+     exercise, and there are none).
 
   3. ON AN EXIT: ONE ledger row, full quantity, and RUN THE WIRE CHECK THE SAME
-     DAY - IBKR retention is same-day only:
+     DAY - IBKR execution retention is same-day only, measured twice:
 
          & ".\.venv\Scripts\python.exe" scripts\verify_exit_on_the_wire.py --symbol <SYM>
 
      A second exit takes the book to NINE, which is what unblocks entries.
 
-  4. ON AN ENTRY: the transmit line carries a NUMERIC permId, not a UUID
-     (item 56, still unexercised), and two entries in one cycle should now see
-     each other (item 58).
+  4. ON AN ENTRY: the transmit line carries a NUMERIC permId, not a UUID (item
+     56, still unexercised - every such line back to 1 August carried a UUID).
+     Two entries in one cycle should now see each other (item 58).
 
   5. FREE, NO MARKET NEEDED: Workbench -> backtest a held symbol. The log line
-     `Advisory context for <SYM>: N position(s), IS held, ...` is the check -
-     item 65 now asks the model to weigh existing exposure, and ⚠️ **a note that
-     mentions the holding proves the model chose to; one that does not proves
-     nothing without that line.**
-
-⚠️ UNDEPLOYED, IN THE TREE: items 25, 29 and 65 (one commit past the build).
-None touches sizing. `scripts/deploy.ps1` will refuse until a rebuild, because
-the installed exe predates them - which is the guard working, not a fault.
+     "Advisory context for <SYM>: N position(s), IS held, ..." is the check.
+     ⚠️ A note that MENTIONS the holding proves the model chose to; one that does
+     not proves NOTHING without that line. That distinction is what made item 61
+     answerable and it applies to item 65 unchanged.
 
 THEN, IN ORDER
 
-  1. MILESTONE C - the "--feature" arm for scripts/research/run_ablation.py.
-     This is the gate on everything macro. Milestone B is planned, measured and
-     CORRECTLY BLOCKED behind it: adding ^AXVI moves the label on 69 of 300
-     bars (23%), ALWAYS toward more defensive, and that may be signal or may be
-     volatility over-representation (three of seven columns would be vol
-     measures under diag covariance). The ablation is what separates them.
+  1. MILESTONE B - the ^AXVI question, now unblocked and much sharper. Milestone
+     C exists and works. Adding an AUSTRALIAN volatility column to a matrix
+     whose label is 83-86% driven by an AMERICAN one is a different question
+     from the one Milestone B was planned to answer.
      Plan: docs/superpowers/plans/2026-08-26-macro-milestone-b.md
   2. Item 33 - never-ticked-this-session as its own refusal, distinct from
      stale. Adds a refusal to the entry path; wants a plan and a watched session.
-  3. Item 31 - the _IB_WORKING_STATUSES widening, still split out because it
-     moves _position_stops, a sizing input.
-  4. Macro Phase 1 - the narrative Advisory layer. No rail changes at all.
+  3. Reach 20 closed trades (item 3). At six. Below 20 the sizer uses invented
+     constants; below 30 the promotion gate cannot be read. Needs market, not
+     code.
+  4. The long-standing FEATURES, none started: M39 corporate actions, M43
+     trading halts, M41 earnings event risk, M44 execution quality, Stage 3 ASX
+     auction rules.
 
-WHAT 26 AUGUST ESTABLISHED
+WHAT 27-28 AUGUST ESTABLISHED
 
-  Three deploys, all read back. Five defects root-caused, four found by running
-  the thing rather than reading it. A live incident handled with no loss - the
-  broker quantities were correct throughout and every position stayed protected.
+  Eight builds M148-M155, every one read back except M155. Confirmed live:
+  M119's feed retry (recovered unaided twice, 20 minutes blind each time),
+  M147's absorb fix BOTH halves on a real multi-price wire, item 63's ledger
+  repair, and items 61 and 62.
 
-  THE LESSON THAT OUTLIVES THE DAY: item 34's fix did not CAUSE the
-  double-count, it REVEALED it. That defect had been firing since at least
-  25 August behind a wedged reconciliation poll - 3 scans that day against 78.
-  A rail whose failure mode is silence is worse than no rail, and that is now
-  demonstrated rather than asserted.
+  TWELVE STALE HEADINGS were closed. Three were found by starting to
+  RE-IMPLEMENT work that already existed; eight by finally auditing rather than
+  trusting the list. Item 37 sat on a work queue as tier-2 while its fix ran
+  live in a session already read twice.
 
-FIVE HABITS THAT PAID FOR THEMSELVES TODAY
+  MILESTONE C's FIRST FOUR MEASUREMENTS WERE WORTHLESS, and an ASX-derived
+  CONTROL caught it - replay_session built its RegimeEngine without `features`,
+  so both arms were identical and NOT EXERCISED was truthful about the arms and
+  meaningless about the feature. The STILL ENABLED guard stayed silent because
+  it read the manifest, written from the INTENDED list: it checked intent, not
+  effect.
 
-  Check the audit trail before writing a finding. The absorb root cause came
-  from replaying 183 REAL executions, not from reading the call site.
+  MEASURED PROPERLY, on two disjoint windows: vix_level moves the label on
+  83-86% of bars and REPLICATES. credit_spread, yield_curve_slope and breadth
+  swing three- to fourfold with the window - so a bare ablation percentage
+  measures how CONTESTABLE the window was as much as the feature. The RANK ORDER
+  is identical on both windows. The US columns do NOT cluster: vix_level first,
+  credit_spread last, ASX-derived breadth between them.
 
-  Run the gate BEFORE building what it gates. Milestone B's Task 5 was run
-  first and blocked the milestone, saving two data sources and a transform
-  policy.
+HABITS THAT PAID FOR THEMSELVES
 
-  A test never seen to FAIL is not evidence. Every fix today was falsified by
-  disabling it and watching the guard go red.
+  RUN A CONTROL. One extra ablation caught four wrong answers that were about to
+  be written down as findings.
 
-  Check whether the fix has a SIBLING. Missed three times today and caught by
-  review each time: BrokerFill.price after quantity, the watcher's event clock
-  after its tally clock, the console button's inbound half after its outbound.
+  A TEST NEVER SEEN TO FAIL IS NOT EVIDENCE - and it must fail AT THE LAYER THE
+  DEFECT LIVES. Item 59's six store tests all stayed green when the caller was
+  deleted; a source-level runtime guard caught a TypeError that would have
+  stopped the app launching.
 
-  PRINT THE DATE RANGE AND CHECK IT. A three-day calendar slip in the ^AXVI
-  measurement understated the effect NINEFOLD - 2.7% against a true 23.0%.
+  THE FULL SUITE, NOT THE TARGETED ONE. Item 22's three green tests hid a broken
+  order path; the suite found 134 failures and mypy had already named the cause.
+  A fixture that returns a friendlier type than production proves the wrong
+  thing.
+
+  CHECK WHETHER THE FIX HAS A SIBLING. Task 2 fixed positional column reads in
+  hmm_core and missed the identical shape in engine.py; the ablated arm then
+  published zero regime bars.
+
+  VERIFY THE ARTEFACT, NOT THE INTENTION. A str.replace in a heredoc silently
+  no-opped SIX times this week, always a Windows path where \v or \r is a valid
+  escape. Every one was caught by grepping for the string just written. Use the
+  edit tool, which ERRORS on a failed match.
+
+  MEASURE BEFORE SHIPPING A RAIL CHANGE. Item 31 loosens a rail; counting the
+  live order statuses first showed it was a no-op on that book, which is what
+  made it shippable without a session to read.
 ```
