@@ -177,3 +177,43 @@ def test_a_missing_regime_path_is_empty_not_an_error(tmp_path) -> None:
     from qat.domain.backtester.run_comparison import read_regime_path
 
     assert read_regime_path(tmp_path) == []
+
+
+def test_the_replay_session_honours_the_configured_columns() -> None:
+    """⚠️ THE WIRING THAT WAS MISSING, and it invalidated four measurements.
+
+    `replay_session.py` built its RegimeEngine WITHOUT `features`, so every
+    `--feature` run used the default six columns whatever `regime_features`
+    said. Both arms were byte-identical and the comparator reported NOT
+    EXERCISED - truthful about the arms, meaningless about the feature.
+
+    ⚠️ It was found by ablating `breadth`, an ASX-derived CONTROL, and getting
+    the identical result to `credit_spread`. A control earned its place in one
+    run, and the three "measurements" taken before it were worthless.
+
+    Read from source, like the runtime guard: the defect is a missing ARGUMENT,
+    which lives in the text, and constructing a full ReplaySession needs a bar
+    index, a data_dir and an absorbed-fills file that have nothing to do with it.
+    """
+    import ast
+    from pathlib import Path
+
+    import qat
+
+    source = (Path(qat.__file__).parent / "domain" / "backtester" / "replay_session.py").read_text(
+        encoding="utf-8"
+    )
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if name != "RegimeEngine":
+            continue
+        assert "features" in {kw.arg for kw in node.keywords}, (
+            "replay_session builds its RegimeEngine without `features`, so the replay "
+            "ignores regime_features and every --feature comparison runs two identical "
+            "arms and reports NOT EXERCISED"
+        )
+        return
+    raise AssertionError("no RegimeEngine(...) call found in replay_session.py")

@@ -124,7 +124,12 @@ async def _one(
         starting_equity=100_000.0,
         terminal_equity=float(account.net_liquidation),
         disabled_feature=feature,
-        regime_features=base.regime_features,
+        # ⚠️ Read back off the ENGINE, never from the Settings we passed in.
+        # The STILL ENABLED guard exists to catch an arm that did not actually
+        # ablate, and a manifest written from the INTENDED value cannot do that:
+        # on 28 August the replay ignored the setting entirely and the guard
+        # stayed silent because the manifest agreed with the intent.
+        regime_features=session.regime_engine._feature_builder.features,
     ).write(directory / "manifest.json")
 
 

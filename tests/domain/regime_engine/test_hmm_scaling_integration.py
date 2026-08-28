@@ -133,6 +133,7 @@ def test_refit_logs_which_raw_column_has_the_widest_spread(caplog):
     import logging
 
     from qat.domain.regime_engine.engine import RegimeEngine
+    from qat.domain.regime_engine.feature_matrix import FEATURE_NAMES
 
     rng = np.random.default_rng(3)
     matrix = np.column_stack(
@@ -147,12 +148,18 @@ def test_refit_logs_which_raw_column_has_the_widest_spread(caplog):
     )
 
     # __new__ deliberately: constructing a RegimeEngine drags in a bus, a
-    # feed and a benchmark, none of which _fit touches. It reads exactly two
-    # attributes, and BOTH must be set or the test fails on an AttributeError
+    # feed and a benchmark, none of which _fit touches. It reads exactly THREE
+    # attributes, and ALL must be set or the test fails on an AttributeError
     # that has nothing to do with what it is checking.
+    #
+    # ⚠️ `_features` was added by Milestone C, and this test found it: `_fit`
+    # now names the widest column from the run's OWN feature list rather than
+    # the module-level default, because a narrowed matrix zipped against six
+    # names raised and the engine published nothing.
     engine = RegimeEngine.__new__(RegimeEngine)
     engine._hmm = HMMRegimeModel(n_states=2)
     engine._non_monotonic_fits = 0  # read when the fit logs a convergence warning
+    engine._features = FEATURE_NAMES  # the six columns this matrix is built as
 
     with caplog.at_level(logging.INFO, logger="qat.domain.regime_engine.engine"):
         engine._fit(matrix)

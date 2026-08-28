@@ -37,8 +37,18 @@ from qat.domain.regime_engine.hmm_core import HMMRegimeModel
 logger = logging.getLogger(__name__)
 
 _SMA_WINDOW = 200
-_VIX_COL = 2
-_YIELD_CURVE_COL = 3
+# ⚠️ WAS `_VIX_COL = 2` / `_YIELD_CURVE_COL = 3` (Milestone C). THE SIBLING of
+# the positional reads fixed in `hmm_core` for Task 2 - and it was missed on that
+# pass, which is exactly the "does this fix have a sibling?" check this project
+# keeps rediscovering. With a narrowed matrix these index the wrong column or run
+# off the end, and the ablated arm published ZERO regime bars while the harness
+# reported a comparison.
+#
+# `None` when the column is absent, never a substituted 0.0: `compute_recession_
+# probability` reads the curve, and a fabricated zero would be a real yield-curve
+# reading of "flat" rather than "not measured".
+_VIX_FEATURE = "vix_level"
+_YIELD_CURVE_FEATURE = "yield_curve_slope"
 
 # How often to say "still warming up" while below min_fit_bars. Every bar
 # would be noise; never saying it is how a blank regime field on screen came
@@ -77,7 +87,11 @@ class RegimeEngine:
         self.bar_interval_seconds = bar_interval_seconds
         self.bar_tz = bar_tz
 
-        self._feature_builder = RegimeFeatureBuilder(features=tuple(features))
+        # Held on the engine as well as handed to the builder: `_fit` and
+        # `_column` both need the names, and reaching through the builder made
+        # `_fit` depend on an object it does not otherwise use.
+        self._features = tuple(features)
+        self._feature_builder = RegimeFeatureBuilder(features=self._features)
         self._hmm = HMMRegimeModel(n_states=n_states, features=features)
         self._fusion = RegimeFusion()
         self._hysteresis = HysteresisGate()
@@ -355,8 +369,8 @@ class RegimeEngine:
             return
 
         latest_row = matrix[-1]
-        vix_level = float(latest_row[_VIX_COL])
-        yield_curve_slope = float(latest_row[_YIELD_CURVE_COL])
+        vix_level = self._column(latest_row, _VIX_FEATURE)
+        yield_curve_slope = self._column(latest_row, _YIELD_CURVE_FEATURE)
         sma_200 = self._current_sma()
 
         probs = self._fusion.compute(
@@ -387,6 +401,24 @@ class RegimeEngine:
             )
         )
         await self._report_health(True, f"classifying - {label.value}")
+
+    def _column(self, row: object, name: str) -> float:
+        """One feature off the latest row, by NAME, or 0.0 when it is absent.
+
+        ⚠️ The 0.0 is a deliberate, narrow exception to this codebase's
+        absent-is-never-zero rule, and it is safe only because of where it goes:
+        `RegimeFusion.compute` treats both of these as RULE BONUSES over the
+        HMM's own posterior, and a zero contributes no bonus. That is the same
+        thing "this column is not in the matrix" should mean.
+
+        It is NOT safe to widen. If either value ever reaches something that
+        reads it as a measurement - a displayed VIX, a stored curve - this must
+        become `None` and that caller must handle it.
+        """
+        features = self._features
+        if name not in features:
+            return 0.0
+        return float(row[features.index(name)])  # type: ignore[index]
 
     async def _report_health(self, healthy: bool, reason: str) -> None:
         """Publishes on a change of state, and always on the first report.
@@ -431,7 +463,14 @@ class RegimeEngine:
         while the live path silently reports nothing wrong.
         """
         ranges = matrix.max(axis=0) - matrix.min(axis=0)
-        flat = [name for name, spread in zip(FEATURE_NAMES, ranges, strict=True) if spread == 0.0]
+        # ⚠️ `self._feature_builder.features`, not the module-level
+        # FEATURE_NAMES (Milestone C). `strict=True` is right and stays - it is
+        # what turns a width mismatch into an error instead of a silent
+        # misalignment - but zipping the DEFAULT six against a narrowed matrix
+        # raised on every ablated arm, so the engine published nothing and the
+        # harness compared 249 bars against 0.
+        names = self._features
+        flat = [name for name, spread in zip(names, ranges, strict=True) if spread == 0.0]
         if flat:
             logger.warning(
                 "Regime features that never moved across %d bars: %s. A constant column makes "
@@ -454,7 +493,7 @@ class RegimeEngine:
             logger.info(
                 "Raw feature spread is led by %s at %.1f%% of the total; the matrix is "
                 "standardised before fitting so this does not bias the states",
-                FEATURE_NAMES[widest],
+                names[widest],
                 shares[widest] * 100.0,
             )
 
@@ -467,8 +506,7 @@ class RegimeEngine:
                 "fit succeeds. Per-feature range: %s",
                 len(matrix),
                 ", ".join(
-                    f"{name}={spread:.6g}"
-                    for name, spread in zip(FEATURE_NAMES, ranges, strict=True)
+                    f"{name}={spread:.6g}" for name, spread in zip(names, ranges, strict=True)
                 ),
             )
             return False

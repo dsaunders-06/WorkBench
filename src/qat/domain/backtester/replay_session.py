@@ -215,6 +215,13 @@ class ReplaySession:
             benchmark_symbol=benchmark,
             breadth_symbols=tuple(bars),
             bar_interval_seconds=_DAILY_SECONDS,
+            # ⚠️ Milestone C. Without this the replay built the DEFAULT six
+            # columns whatever `regime_features` said, so every `--feature` run
+            # compared two identical arms and reported NOT EXERCISED - a
+            # truthful statement about the arms and a meaningless one about the
+            # feature. Four columns were "measured" that way on 28 August,
+            # including an ASX control that should have differed.
+            features=settings.regime_features,
         )
         self.journal = DecisionJournal(settings.data_dir)
         self.executor = AutonomousExecutor(

@@ -2738,33 +2738,48 @@ shares its shape.
     removing a column that measures +0.004 is a cheaper and cleaner question
     than adding one that moves the label on 23% of bars.
 
-    ### ✅ MEASURED 28 August — `credit_spread` MOVES THE LABEL ON ZERO BARS
+    ### ⚠️⚠️ THE FIRST FOUR MEASUREMENTS WERE WORTHLESS. RETRACTED.
 
-        === credit_spread ===
-        NOT EXERCISED - the regime label was identical on all 249 bars.
-        Removing 'credit_spread' contributes nothing to the label over this
-        window, so any difference between the arms is noise wearing its name.
-        Window: 2025-08-21 to 2026-08-14.
+    On 28 August this file briefly recorded *"`credit_spread` moves the label on
+    ZERO of 249 bars"*. **That was wrong, and so were the three runs beside it.**
+    The harness was not ablating anything: `replay_session.py` built its
+    `RegimeEngine` without `features`, so both arms used the default six columns
+    and were byte-identical. `NOT EXERCISED` was a truthful statement about the
+    arms and a meaningless one about the feature.
 
-    A full year of ASX sessions, and removing `BAA10Y` changed the regime label
-    on **not one bar**. Consistent with its +0.004 against forward ASX vol: the
-    column is carrying nothing the label depends on.
+    ⚠️ **A CONTROL IS WHAT CAUGHT IT.** `breadth` is ASX-derived and central to
+    the matrix; ablating it returned the identical result to `credit_spread`.
+    Two columns of wholly different importance cannot both be inert, and that
+    was the only reason to look. **The three runs before the control were
+    believed.**
 
-    ⚠️ **THREE THINGS THIS DOES NOT SAY**, and they matter more than the result:
+    ⚠️ **AND THE STILL ENABLED GUARD DID NOT FIRE**, because it read the
+    manifest — which was written from the INTENDED feature list. It checked
+    intent, not effect. It now reads the list off the engine that actually ran.
 
-    1. **"Nothing to the LABEL" is not "nothing at all."** The comparator
-       compares labels, because the label is what is consumed. `credit_spread`
-       could still move the posterior without crossing a label boundary.
-    2. **ONE window.** 2025-08-21 to 2026-08-14, from the frozen ASX cache -
-       and NOT the window the live app seeds (2025-06-24 to 2026-08-27 on
-       28 August). A different period could differ, and the 26 August
-       ninefold-slip lesson is exactly about trusting one window's dates.
-    3. **It does not license the `BAMLH0A0HYM2` swap**, which removes a feature
-       AND adds one and must be judged on the same footing.
+    ### ✅ MEASURED PROPERLY, 28 August
 
-    Wanted next: run the same arm on `vix_level` and `yield_curve_slope` - the
-    other two US columns - so the three are judged together rather than
-    `credit_spread` being singled out because it was measured first.
+        credit_spread   label differs on 104 of 249 bars (42%)   equity +233.81
+        breadth         label differs on  67 of 249 bars (27%)   equity -375.12
+
+    **`credit_spread` is NOT inert — it is the most influential of the two
+    tested**, moving the label on 42% of bars against the ASX-derived control's
+    27%. The opposite of what the broken harness reported, and the opposite of
+    what its +0.004 forward-vol correlation suggested in isolation.
+
+    ⚠️ **DO NOT read the equity deltas as results.** Ten trades per arm on a
+    baseline of -7.25R and a 10% win rate. At n=10 those figures are noise; the
+    LABEL movement is the measurement, and even that is one window.
+
+    ⚠️ **THE LESSON, and it is the day's most expensive:** a marginal
+    correlation of +0.004 said the column was worthless and the joint model says
+    it moves 42% of labels. Milestone B's plan warned of exactly this — *"a
+    feature can contribute through interaction while looking weak alone"* — and
+    it took an ablation to see it. That is what the instrument is FOR.
+
+    Wanted next: re-run `vix_level` and `yield_curve_slope` on the FIXED
+    harness - their earlier results were taken before the wiring was repaired
+    and are retracted with the rest. ⚠️ And always run a control alongside.
 
 67. ~~**⚠️⚠️ M151's FILTER WAS ON THE WRONG HANDLER, AND REPORTED WORK IT DID
     NOT DO.**~~ **FIXED — not yet deployed.** Found live at the 28 August open.
