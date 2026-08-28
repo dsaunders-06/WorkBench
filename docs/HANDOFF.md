@@ -2804,9 +2804,34 @@ shares its shape.
     column is noise at that count and must not be quoted; the label movement is
     the measurement.
 
+    ### ✅ REPLICATED ON TWO DISJOINT WINDOWS, 28 August
+
+    `--until 375` replays bars 250-375; `--from 125` replays 375-499. **No bar
+    is in both.**
+
+    | | earlier<br>2025-08-21→2026-02-18 | later<br>2026-02-19→2026-08-14 | full |
+    |---|---|---|---|
+    | `vix_level` | **85%** | **83%** | **86%** |
+    | `breadth` | 18% | **65%** | 27% |
+
+    ⚠️ **`vix_level`'s dominance REPLICATES** - 85%, 83%, 86% across three
+    windows, two of them disjoint. That is a real, stable property of the
+    matrix, not an artefact of one period.
+
+    ⚠️⚠️ **`breadth` DOES NOT: 18% against 65% on disjoint halves.** Nearly four
+    times, on the same instrument, same universe, adjacent periods.
+
+    **That instability is the more important finding**, because it applies to
+    everything measured on one window. `credit_spread` at 42% and
+    `yield_curve_slope` at 30% were each measured ONCE. On breadth's evidence,
+    either could be half or double that in another period, and **neither number
+    should be acted on until it has been replicated the way `vix_level` has.**
+
+    Only `vix_level` currently carries a replicated result.
+
     Wanted next, in this order:
-    1. **Repeat on a second window** before any of this is acted on. One window
-       is what the 26 August calendar slip taught us not to trust.
+    1. ~~**Repeat on a second window.**~~ **DONE for `vix_level` and `breadth`.**
+       Still needed for `credit_spread` and `yield_curve_slope`.
     2. Then Milestone B's `^AXVI` question, which is now much sharper: adding an
        Australian volatility column to a matrix whose label is 86% driven by an
        American one.

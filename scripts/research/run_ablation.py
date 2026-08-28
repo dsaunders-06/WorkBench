@@ -138,6 +138,23 @@ async def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rail", help="the rail to switch off")
     parser.add_argument("--feature", help="the regime feature column to switch off")
     parser.add_argument("--out", default=None, help="where to write both runs")
+    parser.add_argument(
+        "--from",
+        dest="skip",
+        type=int,
+        default=None,
+        help="drop the first N sessions before warming, giving a LATER window. With "
+        "--until on a separate run this is how two DISJOINT windows are obtained: "
+        "--until W replays bars warm..W, and --from (W - warm) replays W..end",
+    )
+    parser.add_argument(
+        "--until",
+        type=int,
+        default=None,
+        help="truncate every symbol's bars to the first N sessions, giving an EARLIER "
+        "and shorter replay window. A result that holds on only one window is a "
+        "result about that window (26 August's calendar slip)",
+    )
     parser.add_argument("--list", action="store_true", help="list the ablatable rails and exit")
     parser.add_argument(
         "--market",
@@ -185,6 +202,23 @@ async def main(argv: list[str] | None = None) -> int:
 
     root = Path(args.out) if args.out else Path(tempfile.mkdtemp(prefix="ablation-"))
     bars = load_bars(universe)
+    if args.skip is not None:
+        # ⚠️ Dropped BEFORE the warm start, so the warm bars come from the
+        # skipped region's tail and the replay begins where the other window
+        # ended. Slicing after warming would replay the same bars with a
+        # different fit, which is a different experiment.
+        bars = {symbol: frame.iloc[args.skip :] for symbol, frame in bars.items()}
+    if args.until is not None:
+        if args.until <= universe.warm_bars:
+            parser.error(
+                f"--until {args.until} leaves no replay bars: {universe.warm_bars} are "
+                f"consumed by the warm start alone"
+            )
+        # ⚠️ Truncated, never resampled. Every symbol keeps its own real
+        # sessions and the date-alignment `load_bars` already did is preserved -
+        # reindexing onto a shorter spine would invent bars, which is the one
+        # thing this instrument must not do.
+        bars = {symbol: frame.iloc[: args.until] for symbol, frame in bars.items()}
     # Live config, for CREDENTIALS ONLY - read, never written, and never used
     # as a data_dir. One instance, because two reads of the same config to fill
     # two arguments of one call is a difference waiting to happen.
@@ -202,6 +236,8 @@ async def main(argv: list[str] | None = None) -> int:
     print(f"universe   : {len(bars)} {universe.market} symbols ({universe.bars_cache.name})")
     print(f"macro      : {len(macro)} series, {sum(len(v) for v in macro.values())} observations")
     print(f"warm bars  : {universe.warm_bars}")
+    replay_bars = len(next(iter(bars.values()))) - universe.warm_bars
+    print(f"replay bars: {replay_bars}")
     print(f"output     : {root}")
     print()
 
