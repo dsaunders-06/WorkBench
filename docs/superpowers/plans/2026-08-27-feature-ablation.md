@@ -236,6 +236,17 @@ git commit -m "Milestone C: the state stats resolve their columns by name"
 - Modify: `src/qat/domain/backtester/ablation.py`
 - Test: `tests/domain/backtester/test_feature_ablation.py` (create)
 
+⚠️ **ADDED BEYOND THE PLAN:** a rail name passed to `--feature` is refused with
+a hint naming the right arm. `--feature cost_to_risk` is the easy typo - a real
+name, wrong arm - and without it the run would narrow nothing, execute two
+identical baselines and report no difference, which reads as "the feature costs
+nothing". Also a table-completeness test: every column is either ablatable or
+refused WITH A REASON, so none can fall through to the unhelpful "unknown".
+
+⚠️ **A TEST THAT COULD NOT FAIL WAS FOUND HERE.** The first rail-name test
+asserted only that it raised - true with or without the hint. Falsifying the
+hint left it GREEN. It now asserts the hint text.
+
 **Interfaces:**
 - Produces: `FEATURES: dict[str, str]` (name → why it matters); `UNABLATABLE_FEATURES: dict[str, str]` (name → refusal reason); `class UnablatableFeature(ValueError)`; `feature_settings(base: Settings, disabled: Sequence[str]) -> Settings`.
 
@@ -290,12 +301,12 @@ def test_the_result_is_revalidated_not_copied():
     assert isinstance(feature_settings(_base(), ["breadth"]), Settings)
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_feature_ablation.py -q`
 Expected: FAIL — `UnablatableFeature` and `feature_settings` do not exist.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 class UnablatableFeature(ValueError):
@@ -350,16 +361,16 @@ def feature_settings(base: Settings, disabled: Sequence[str]) -> Settings:
     return Settings.model_validate({**base.model_dump(), "regime_features": kept})
 ```
 
-- [ ] **Step 4: Run**
+- [x] **Step 4: Run**
 
 Run: `.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_feature_ablation.py -q`
 Expected: PASS (5 tests, 6 cases).
 
-- [ ] **Step 5: Falsify**
+- [x] **Step 5: Falsify**
 
 Delete `log_return` from `UNABLATABLE_FEATURES`. Expected: the parametrised refusal test goes red for that case. Restore.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/qat/domain/backtester/ablation.py tests/domain/backtester/test_feature_ablation.py

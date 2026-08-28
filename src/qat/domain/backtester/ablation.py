@@ -77,6 +77,79 @@ IMPERFECT: dict[str, str] = {
 }
 
 
+# ⚠️ Regime FEATURE columns, which are a different question from rails and get
+# their own table (Milestone C). A rail is a Settings knob set beyond reach; a
+# feature is a column omitted from `regime_features`.
+#
+# Each entry is a claim about consequence, not a wish list.
+FEATURES: dict[str, str] = {
+    "vix_level": "the incumbent volatility measure (VIXCLS - US)",
+    "yield_curve_slope": "the recession term (T10Y3M - US)",
+    "credit_spread": "the stress term (BAA10Y - US, and +0.004 against forward ASX vol)",
+    "breadth": "the participation term, derived from the traded universe",
+}
+
+# ⚠️ REFUSED, with the reason, the way `_TWO_CONSUMERS` refuses
+# `apply_costs_in_paper`. `hmm_core._characterize_states` reads these two
+# columns' means to build each fitted state's signature, and
+# `fusion.score_from_hmm` turns those into the z-scores that decide which state
+# is called bull and which bear. hmmlearn numbers states arbitrarily, so this is
+# the only thing that gives an index a NAME.
+#
+# Removing either would not ablate a signal. It would RENAME every label, and
+# the run would look entirely normal - which is worse than an error.
+UNABLATABLE_FEATURES: dict[str, str] = {
+    name: (
+        f"{name!r} is not an ordinary feature: `fusion` reads its state statistics to "
+        f"decide which fitted state is called bull and which bear. Ablating it would not "
+        f"remove a signal, it would RENAME every label - and the run would still look "
+        f"normal. Ablate one of: {', '.join(sorted(FEATURES))}."
+    )
+    for name in ("log_return", "realized_vol")
+}
+
+
+class UnablatableFeature(ValueError):
+    """A regime feature this module will not neutralise.
+
+    Its own class rather than a reuse of `UnablatableRail`, so a caller can tell
+    a rail problem from a feature problem without parsing a message - and so
+    `--feature cost_to_risk`, a real name in the wrong arm, cannot be caught by
+    a handler meant for something else.
+    """
+
+
+def feature_settings(base: Settings, disabled: Sequence[str]) -> Settings:
+    """`base` with every named feature column removed from `regime_features`.
+
+    Re-validated rather than copied, for the reason `ablated_settings` gives:
+    `model_copy(update=...)` writes fields without running their validators.
+    """
+    if not disabled:
+        return base
+    for feature in disabled:
+        if feature in UNABLATABLE_FEATURES:
+            raise UnablatableFeature(UNABLATABLE_FEATURES[feature])
+        if feature not in FEATURES:
+            # ⚠️ A RAIL name lands here, and that is the point. `--feature
+            # cost_to_risk` is the easy typo - a real name in the wrong arm -
+            # and without this it would narrow nothing, run two identical
+            # baselines and report no difference, which reads as "the feature
+            # costs nothing".
+            hint = (
+                " - that is a RAIL, not a regime feature; use --rail for it"
+                if feature in RAILS or feature == REGIME_RAIL
+                else ""
+            )
+            raise UnablatableFeature(
+                f"{feature!r} is not an ablatable regime feature{hint}. "
+                f"Known features: {', '.join(sorted(FEATURES))}."
+            )
+    removed = set(disabled)
+    kept = tuple(f for f in base.regime_features if f not in removed)
+    return Settings.model_validate({**base.model_dump(), "regime_features": kept})
+
+
 class UnablatableRail(ValueError):
     """A rail this module cannot neutralise.
 
