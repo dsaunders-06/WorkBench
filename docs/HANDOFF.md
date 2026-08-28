@@ -2725,6 +2725,44 @@ shares its shape.
     ⚠️ Answering it does NOT license the `BAMLH0A0HYM2` swap, which removes a
     feature as well as adding one and must be judged on the same footing.
 
+67. ~~**⚠️⚠️ M151's FILTER WAS ON THE WRONG HANDLER, AND REPORTED WORK IT DID
+    NOT DO.**~~ **FIXED — not yet deployed.** Found live at the 28 August open.
+
+        10:20:36  yfinance market data has recovered - 678 per-symbol
+                  'possibly delisted' error(s) were suppressed ...
+
+        lines in the blind window : 797
+        delisting errors IN THE LOG: 774
+
+    `configure_logging` attached `BLIND_WINDOW_FILTER` to the **stdout** handler
+    and never to the **file** handler. The packaged build is `--windowed` and
+    has no console — `configure_logging`'s own docstring says a stdout-only
+    configuration "discarded every line the moment the application was run the
+    way it is actually shipped".
+
+    ⚠️ **Worse than not working.** It suppressed on a stream nobody reads and
+    then ASSERTED the suppression on the line an operator would use to conclude
+    the log was clean. A missing fix is a gap; a fix that reports work it did not
+    do is a false assurance, and this one was quotable.
+
+    ⚠️ **ITEM 59'S MISTAKE, REPEATED — and the lesson had already been written
+    into Milestone C's constraints the day before.** M151's tests proved
+    `BlindWindowFilter.filter()` suppresses and counts. Nothing proved it was
+    ATTACHED. A guard at a layer no path from the defect reaches.
+
+    ### ⚠️ AND THE OBVIOUS FIX WOULD HAVE INTRODUCED A SECOND DEFECT
+
+    `filter()` runs once per HANDLER. Attaching it to both without more would
+    have counted every suppressed record TWICE, and the recovery line would have
+    reported double what it dropped — replacing a false assurance with a wrong
+    number. Records are now tagged so one record counts once, pinned by a test,
+    and by its opposite so the tag cannot become a latch that only counts one.
+
+    The new tests drive `configure_logging` and inspect the handlers it
+    installs. They are scoped to handlers carrying `JsonFormatter` — what the
+    APP owns — because pytest injects its own, and because "at least one
+    handler has it" is precisely the assertion that would have passed all along.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ```

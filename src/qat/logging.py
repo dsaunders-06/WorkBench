@@ -54,6 +54,10 @@ NOISY_LIBRARY_LOGGERS = ("ib_async.wrapper", "ib_async.client", "ib_async.ib")
 # the feed recovered.
 _BLIND_WINDOW_NOISE = "possibly delisted; no price data found"
 
+# Marks a record already counted, so a second handler seeing the same object
+# does not count it again (item 67).
+_COUNTED = "_qat_blind_counted"
+
 
 class BlindWindowFilter(logging.Filter):
     """Drops the per-symbol delisting storm WHILE the feed says it is blind.
@@ -84,10 +88,18 @@ class BlindWindowFilter(logging.Filter):
         self.suppressed = 0
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if self.blind and _BLIND_WINDOW_NOISE in record.getMessage():
+        if not (self.blind and _BLIND_WINDOW_NOISE in record.getMessage()):
+            return True
+        # ⚠️ Counted once per RECORD, not once per handler (item 67). `filter()`
+        # runs for EVERY handler the record reaches, so with this correctly
+        # attached to both stdout and the file, a naive counter would report
+        # double what it dropped - replacing a false assurance with a wrong
+        # number. The same record object is passed to each handler, so tagging
+        # it is what makes "once" mean once.
+        if not getattr(record, _COUNTED, False):
+            setattr(record, _COUNTED, True)
             self.suppressed += 1
-            return False
-        return True
+        return False
 
     def take_suppressed(self) -> int:
         """The count since it was last taken, and resets. Read by the feed when
@@ -305,6 +317,13 @@ def configure_logging(level: str = "INFO", data_dir: str | Path | None = None) -
         )
         file_handler.setFormatter(JsonFormatter())
         file_handler.addFilter(RedactSecretsFilter())
+        # ⚠️ ITEM 67. M151 attached this to the stdout handler ONLY, so the
+        # storm was suppressed on a stream the packaged build does not even
+        # have - this is a --windowed app with no console - and reached qat.log
+        # in full. On 28 August the recovery line claimed 678 suppressions while
+        # 774 of those errors sat in the log. A filter that reports work it did
+        # not do is worse than one that does nothing.
+        file_handler.addFilter(BLIND_WINDOW_FILTER)
         root.addHandler(file_handler)
     except OSError:
         # An unwritable log directory must not stop the application starting.
