@@ -48,8 +48,10 @@ sys.path.insert(0, str(_REPO / "src"))
 from qat.config import Settings  # noqa: E402
 from qat.data.macro_fred import MacroObservation  # noqa: E402
 from qat.domain.backtester.ablation import (  # noqa: E402
+    FEATURES,
     RAILS,
     REGIME_RAIL,
+    UNABLATABLE_FEATURES,
     ablated_settings,
     feature_settings,
 )
@@ -62,6 +64,7 @@ from qat.domain.backtester.research_universe import (  # noqa: E402
     load_bars,
 )
 from qat.domain.backtester.run_comparison import (  # noqa: E402
+    compare_feature_runs,
     compare_runs,
     write_regime_path,
 )
@@ -113,7 +116,7 @@ async def _one(
     await session.run()
 
     write_regime_path(directory, regime_rows)
-    account = await session.broker.get_account()
+    account = await session.broker.account()
     build_manifest(
         data_dir=directory,
         disabled=disabled,
@@ -128,25 +131,45 @@ async def _one(
 async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Ablate one rail and compare two runs")
     parser.add_argument("--rail", help="the rail to switch off")
+    parser.add_argument("--feature", help="the regime feature column to switch off")
     parser.add_argument("--out", default=None, help="where to write both runs")
     parser.add_argument("--list", action="store_true", help="list the ablatable rails and exit")
     parser.add_argument(
         "--market",
         choices=sorted(UNIVERSES),
-        default="US",
-        help="which universe to replay: US (G1 megacaps, the default - every "
-        "existing invocation) or ASX",
+        default=None,
+        help="which universe to replay. Defaults to US for --rail (every existing "
+        "invocation is unchanged) and ASX for --feature",
     )
     args = parser.parse_args(argv)
 
     if args.list:
+        print("RAILS (--rail):")
         for name in [*sorted(RAILS), REGIME_RAIL]:
-            print(name)
+            print(f"  {name}")
+        print()
+        print("REGIME FEATURES (--feature):")
+        for name, why in sorted(FEATURES.items()):
+            print(f"  {name:<20} {why}")
+        print()
+        print("  REFUSED, and why:")
+        for name in sorted(UNABLATABLE_FEATURES):
+            print(f"  {name:<20} fusion reads its state statistics to decide which")
+            print(f"  {'':<20} fitted state is bull - ablating it RENAMES every")
+            print(f"  {'':<20} label rather than removing a signal")
         return 0
-    if not args.rail:
-        parser.error("--rail is required (or --list)")
 
-    universe = UNIVERSES[args.market]
+    if bool(args.rail) == bool(args.feature):
+        parser.error("exactly one of --rail or --feature is required")
+
+    # ⚠️ ASX for --feature, US for --rail. The regime question is about a
+    # 94-stock ASX book, and the US G1 cache is 200 sessions against
+    # warm_bars=120 - eighty replay bars, too few for a label to move. ASX
+    # leaves ~250. A per-arm default is a mild footgun, accepted deliberately so
+    # that every existing --rail invocation is unchanged.
+    market = args.market or ("ASX" if args.feature else "US")
+
+    universe = UNIVERSES[market]
     if not universe.bars_cache.exists():
         print(f"no bar cache at {universe.bars_cache}")
         if universe.market == "US":
@@ -177,13 +200,20 @@ async def main(argv: list[str] | None = None) -> int:
     print(f"output     : {root}")
     print()
 
-    print("baseline (all rails on)...")
+    subject = args.rail or args.feature
+    print("baseline (everything on)...")
     await _one(root / "baseline", [], universe, bars, macro)
-    print(f"ablated ({args.rail} off)...")
-    await _one(root / "ablated", [args.rail], universe, bars, macro)
+    print(f"ablated ({subject} off)...")
+    if args.feature:
+        await _one(root / "ablated", [], universe, bars, macro, feature=args.feature)
+    else:
+        await _one(root / "ablated", [args.rail], universe, bars, macro)
 
     print()
-    print(compare_runs(root / "baseline", root / "ablated", args.rail))
+    if args.feature:
+        print(compare_feature_runs(root / "baseline", root / "ablated", args.feature))
+    else:
+        print(compare_runs(root / "baseline", root / "ablated", args.rail))
     return 0
 
 

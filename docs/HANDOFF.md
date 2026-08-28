@@ -2722,8 +2722,33 @@ shares its shape.
     removing a column that measures +0.004 is a cheaper and cleaner question
     than adding one that moves the label on 23% of bars.
 
-    ⚠️ Answering it does NOT license the `BAMLH0A0HYM2` swap, which removes a
-    feature as well as adding one and must be judged on the same footing.
+    ### ✅ MEASURED 28 August — `credit_spread` MOVES THE LABEL ON ZERO BARS
+
+        === credit_spread ===
+        NOT EXERCISED - the regime label was identical on all 249 bars.
+        Removing 'credit_spread' contributes nothing to the label over this
+        window, so any difference between the arms is noise wearing its name.
+        Window: 2025-08-21 to 2026-08-14.
+
+    A full year of ASX sessions, and removing `BAA10Y` changed the regime label
+    on **not one bar**. Consistent with its +0.004 against forward ASX vol: the
+    column is carrying nothing the label depends on.
+
+    ⚠️ **THREE THINGS THIS DOES NOT SAY**, and they matter more than the result:
+
+    1. **"Nothing to the LABEL" is not "nothing at all."** The comparator
+       compares labels, because the label is what is consumed. `credit_spread`
+       could still move the posterior without crossing a label boundary.
+    2. **ONE window.** 2025-08-21 to 2026-08-14, from the frozen ASX cache -
+       and NOT the window the live app seeds (2025-06-24 to 2026-08-27 on
+       28 August). A different period could differ, and the 26 August
+       ninefold-slip lesson is exactly about trusting one window's dates.
+    3. **It does not license the `BAMLH0A0HYM2` swap**, which removes a feature
+       AND adds one and must be judged on the same footing.
+
+    Wanted next: run the same arm on `vix_level` and `yield_curve_slope` - the
+    other two US columns - so the three are judged together rather than
+    `credit_spread` being singled out because it was measured first.
 
 67. ~~**⚠️⚠️ M151's FILTER WAS ON THE WRONG HANDLER, AND REPORTED WORK IT DID
     NOT DO.**~~ **FIXED — not yet deployed.** Found live at the 28 August open.

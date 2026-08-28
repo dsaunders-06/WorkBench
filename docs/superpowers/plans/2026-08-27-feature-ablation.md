@@ -1,5 +1,8 @@
 # Macro Milestone C — `--feature` Ablation Arm Implementation Plan
 
+> ✅ **COMPLETE, 28 August.** All six tasks. First run: `--feature credit_spread`
+> returned NOT EXERCISED over 249 bars — see item 66.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let the ablation harness adjudicate a regime *feature column* the way it already adjudicates a *rail*, so Milestone B's `^AXVI` question is answered by the instrument rather than a hand-rolled script.
@@ -464,7 +467,7 @@ Before `await session.run()`:
     session.bus.subscribe(RegimeEvent, _record_regime)
 ```
 
-After it, write `regime_path.csv` and read terminal equity from `(await session.broker.get_account()).net_liquidation` into `build_manifest`.
+After it, write `regime_path.csv` and read terminal equity from `(await session.broker.account()).net_liquidation` into `build_manifest`.
 
 - [x] **Step 5: Run the backtester suite**
 
@@ -601,20 +604,20 @@ git commit -m "Milestone C: compare two feature arms, guard first"
 **Interfaces:**
 - Consumes: everything above.
 
-- [ ] **Step 1: Add the arguments**
+- [x] **Step 1: Add the arguments**
 
 `--feature` (mutually exclusive with `--rail`, one required), `--list` grows a features section, and `--feature` defaults `--market` to `ASX`.
 
 ⚠️ The ASX default is **per-arm** and deliberate: the US G1 cache is 200 sessions against `warm_bars=120`, leaving 80 replay bars — too few for a regime label to move. ASX leaves ~250. `--rail` keeps its US default so every existing invocation is unchanged.
 
-- [ ] **Step 2: Run `--list` both ways**
+- [x] **Step 2: Run `--list` both ways**
 
 ```bash
 & ".\.venv\Scripts\python.exe" scripts\research\run_ablation.py --list
 ```
 Expected: rails as before, plus a features section naming the four ablatable ones and the two refused with their reason.
 
-- [ ] **Step 3: Run the arm end to end through PowerShell — `credit_spread` FIRST**
+- [x] **Step 3: Run the arm end to end through PowerShell — `credit_spread` FIRST**
 
 ⚠️ **`credit_spread` before `asx_vix_z`, deliberately (operator, 28 August).**
 
@@ -649,12 +652,12 @@ Then the original arm:
 ```
 Expected: two arms, then a report. ⚠️ **Print the date range and check it against the startup log's `Regime engine seeded with 300 daily bars (2025-06-23 to 2026-08-26)` before believing any number.**
 
-- [ ] **Step 4: Full suite and four checks**
+- [x] **Step 4: Full suite and four checks**
 
 Run: `.venv\Scripts\python.exe -m pytest -q` then ruff, black, mypy, bandit.
 Expected: all clean; total ≈ 2,831 + ~18 new.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add scripts/research/run_ablation.py
