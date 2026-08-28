@@ -230,6 +230,24 @@ class Position:
     current_price: float | None = None
 
 
+def spendable_from(cash: float | None, min_cash_reserve: float) -> float | None:
+    """What a buy may spend: cash the application has not reserved.
+
+    ⚠️ ONE definition with three readers (item 22). The no-leverage rail
+    computes this, the Balances panel shows it, and the per-order cap keyed off
+    RAW cash instead - a third basis for one question, the shape that hurt
+    `trading_date` (one caller of four) and `minimum_hold_status` before each was
+    extracted.
+
+    `None` when cash is unknown, never 0.0: "the broker did not report cash" and
+    "there is no cash" are different, and only the first should refuse an order
+    for a reason naming the broker.
+    """
+    if cash is None:
+        return None
+    return max(0.0, cash - min_cash_reserve)
+
+
 @dataclass(slots=True)
 class AccountSummary:
     net_liquidation: float
@@ -315,16 +333,14 @@ class AccountBalances:
         return change / self.last_equity
 
     def spendable_cash(self, min_cash_reserve: float) -> float | None:
-        """What THIS application will let a buy spend.
+        """What THIS application will let a buy spend. See `spendable_from`.
 
         Shown beside buying power because the two differ by a factor of four on
         a margin account, and that gap is the most confusing thing about
         running this app next to the broker's own screen. Buying power is what
         the broker would allow; this is what the no-leverage rule permits.
         """
-        if self.cash is None:
-            return None
-        return max(0.0, self.cash - min_cash_reserve)
+        return spendable_from(self.cash, min_cash_reserve)
 
 
 def balances_from_summary(summary: AccountSummary) -> AccountBalances:

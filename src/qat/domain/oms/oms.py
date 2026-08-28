@@ -24,7 +24,7 @@ from typing import Literal
 import pandas as pd
 
 from qat.config import Settings
-from qat.data.broker.adapter import BrokerAdapter, BrokerFill, Order
+from qat.data.broker.adapter import BrokerAdapter, BrokerFill, Order, spendable_from
 from qat.data.broker.mock_broker import new_order_id
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal, JournalEntry
@@ -439,7 +439,36 @@ class OMS:
                 "(a share of available cash) cannot be computed",
             )
 
-        cap = self.max_order_pct_of_cash * account.cash
+        # ⚠️ SPENDABLE, not raw cash (item 22). `min_cash_reserve` is money this
+        # application has already declared unspendable, and the no-leverage rail
+        # already subtracts it (`engine.py:242`) while the Balances panel already
+        # shows `spendable_cash(...)`. A cap on raw cash was a THIRD basis for
+        # one question - the shape that hurt `trading_date` and
+        # `minimum_hold_status` before each was extracted.
+        #
+        # The arithmetic is immaterial at today's $1 reserve: one share on a
+        # 100-share order. That is not the argument. As cash approaches the
+        # reserve the two diverge without limit, and a cap on RAW cash can
+        # authorise an order the no-leverage rail then refuses - one rail
+        # permitting what another forbids. The reserve exists to be raised.
+        # ⚠️ `spendable_from`, not `AccountBalances.spendable_cash`: the broker
+        # returns an `AccountSummary`, which does not carry that method. My own
+        # test fixture returned the wrong type and hid this - mypy caught it.
+        #
+        # A missing `settings` means no configured reserve, so the cap falls back
+        # to raw cash. That is the OLD behaviour, not a new hazard: the only
+        # callers without settings are tests, and `min_cash_reserve` is `gt=0` in
+        # production so a real run always has one.
+        reserve = self.settings.min_cash_reserve if self.settings is not None else 0.0
+        spendable = spendable_from(account.cash, reserve)
+        if spendable is None:
+            return self._new_rejected_order(
+                candidate,
+                0.0,
+                "the broker did not report cash, so the per-order cap "
+                "(a share of spendable cash) cannot be computed",
+            )
+        cap = self.max_order_pct_of_cash * spendable
         notional = shares * candidate.price
         if notional > cap:
             trimmed = float(int(cap / candidate.price)) if candidate.price > 0 else 0.0
@@ -447,12 +476,13 @@ class OMS:
                 return self._new_rejected_order(
                     candidate,
                     0.0,
-                    f"the per-order cap of {self.max_order_pct_of_cash:.1%} of cash "
-                    f"({cap:,.0f}) does not cover one share at {candidate.price:,.2f}",
+                    f"the per-order cap of {self.max_order_pct_of_cash:.1%} of SPENDABLE "
+                    f"cash ({cap:,.0f}) does not cover one share at "
+                    f"{candidate.price:,.2f}",
                 )
             logger.info(
                 "%s trimmed from %g to %g shares by the per-order cap of %.1f%% of "
-                "cash (%.0f of %.0f): notional %.0f -> %.0f. The risk decision in the "
+                "SPENDABLE cash (%.0f of %.0f): notional %.0f -> %.0f. The risk decision in the "
                 "audit trail keeps the sizer's own figure, so the two will differ for "
                 "this order.",
                 candidate.symbol,
@@ -460,7 +490,7 @@ class OMS:
                 trimmed,
                 self.max_order_pct_of_cash * 100,
                 cap,
-                account.cash,
+                spendable,
                 notional,
                 trimmed * candidate.price,
             )

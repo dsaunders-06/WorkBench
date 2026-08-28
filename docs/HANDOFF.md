@@ -688,7 +688,25 @@ for each gap and is worth reading; the list lives here.
     explicit offsets (`2026-08-24T03:05:01+00:00`), which is correct and
     unambiguous. This is display only.
 
-22. **The per-order cap keys off CASH; it should key off SPENDABLE cash.**
+22. ~~**The per-order cap keys off CASH; it should key off SPENDABLE cash.**~~
+    **FIXED 28 August, not yet deployed.** The rule is extracted to
+    `adapter.spendable_from(cash, min_cash_reserve)` with THREE readers -
+    `AccountBalances.spendable_cash` delegates to it, and the OMS cap calls it
+    directly. The broker returns an `AccountSummary`, which does not carry the
+    method, so extracting the free function was the only way both could read one
+    definition.
+
+    ⚠️ **The suite caught a change that broke 134 tests**, and mypy caught the
+    cause first: `account.spendable_cash(...)` does not exist on
+    `AccountSummary`. My own test fixture returned `AccountBalances` and hid it.
+    A fixture that returns a friendlier type than production is a test that
+    proves the wrong thing.
+
+    ⚠️ Also handled: `OMS.settings` can be `None` (tests only - `min_cash_reserve`
+    is `gt=0` in production), which falls back to raw cash. That is the OLD
+    behaviour rather than a new hazard, and it is stated at the call site.
+
+    ORIGINAL:
     Operator finding, 24 August, agreed and deferred to after the session.
     M138's cap uses `account.cash`, which ignores `min_cash_reserve` — money the
     system has already declared unspendable. Fix to
