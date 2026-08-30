@@ -100,6 +100,7 @@ class _LotStore(Protocol):
         stop_price: float | None,
         strategy: str | None,
         opened_at: datetime,
+        reference_price: float | None = None,
     ) -> bool: ...
 
 
@@ -699,6 +700,7 @@ class SignalToOrderBridge:
                 stop_price=entry.stop_price,
                 strategy=entry.strategy or self._sole_deployed_strategy(),
                 opened_at=entry.opened_at,
+                reference_price=entry.reference_price,
             ):
                 restored.append(position.symbol)
 

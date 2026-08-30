@@ -622,6 +622,7 @@ class TradeLedger:
         stop_price: float | None,
         strategy: str | None,
         opened_at: datetime,
+        reference_price: float | None = None,
     ) -> bool:
         """Re-create the entry lot for a position opened before this run (M49).
 
@@ -641,6 +642,14 @@ class TradeLedger:
         invented, so MAE and MFE on a restored lot measure from the restart
         forward. That understates both, and understating a diagnostic is
         acceptable where fabricating one is not.
+
+        `reference_price` is the price the order was SIZED against, and `None`
+        means UNKNOWN - never the entry price, which would report zero slippage
+        on a trade nobody measured. ⚠️ M156 carried it onto the record, into
+        `open_position_entries.json` and back out again, and stopped HERE: the
+        parameter did not exist, so the bridge could not pass it and every
+        restored lot got `None`. With a ten-day minimum hold and a session most
+        nights, that is every trade this system closes. M157.
         """
         if quantity <= 0 or price <= 0:
             return False
@@ -655,6 +664,7 @@ class TradeLedger:
                 strategy=strategy,
                 opened_at=opened_at,
                 entry_cost=self._fill_cost(quantity, price),
+                reference_price=reference_price,
                 worst_price=price,
                 best_price=price,
             )
