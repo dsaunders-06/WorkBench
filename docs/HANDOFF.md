@@ -1349,6 +1349,24 @@ because reading a list is not auditing it. Item 2 needed four.
     count. Wired by an assignment in `runtime.py`, pinned by a test that was
     SEEN to fail.
 
+    ⚠️⚠️ **WHAT A 10-OF-10 BOOK DOES TO THE READ-BACK, and it caught an
+    over-claim of mine before the deploy.** `executor.py:161` evaluates the gate
+    only on an order that is already `pending_signoff` — one the risk engine
+    approved. `governor.py:304` refuses at the position limit UPSTREAM of that,
+    so **while the book is 10 of 10 no order is created and the GATE IS NEVER
+    REACHED.**
+
+    So the two halves read back separately:
+
+    * **The rail half is readable any session** — the absence count comes from
+      the staleness pass and needs no order at all. It requires a moment where
+      some symbols have printed and others have not, which is the partial
+      delivery pattern the 28 August "possibly delisted" errors show.
+    * **The gate half needs the book at NINE.** Until then, "no absence refusal
+      appeared" means *nothing reached the gate*, **NOT** that the refusal is
+      inert. Reading it as inert would be the absence-proves-nothing trap this
+      project keeps recording.
+
     ⚠️ **TWO CORRECTIONS TO THIS ITEM, both from reading the code rather than
     the item.**
 
