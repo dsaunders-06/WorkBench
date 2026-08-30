@@ -174,3 +174,29 @@ def test_an_unwired_gate_behaves_exactly_as_before() -> None:
 
     assert "no price at all this session" not in decision.reason
     assert "previous session" not in decision.reason
+
+
+def test_runtime_wires_the_gate_to_the_feed() -> None:
+    """⚠️ A GUARD THAT IS NEVER WIRED IS INERT.
+
+    That is items 59 and 67, and it is M156 exactly: reference_price was carried
+    onto the record, persisted, read back - and never reached the lot, because
+    one signature was not changed. Every test above passes with the gate
+    unwired, because `last_print_source=None` disables the check by design.
+
+    Read from source rather than by building a runtime: constructing one needs a
+    broker, a feed and a Gateway. What is pinned is that the ASSIGNMENT exists.
+    """
+    from pathlib import Path
+
+    import qat
+
+    source = (Path(qat.__file__).parent / "presentation" / "runtime.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "autonomy_gate.last_print_source = market_data_feed.last_print_at" in source, (
+        "the gate is constructed BEFORE the feed exists, so the source must be ASSIGNED "
+        "after the feed is built - without that line the refusal never fires and every "
+        "other test in this file still passes"
+    )

@@ -695,6 +695,16 @@ class Runtime:
             staleness_seconds=settings.data_staleness_seconds,
             source_delay_seconds=source_delay,
         )
+        # Item 33. ASSIGNED rather than passed to the constructor because the
+        # gate is built well above this line, before the feed exists, and
+        # reordering the two would move `autonomous_executor`'s dependency for
+        # no benefit.
+        #
+        # ⚠️ Without this line the refusal is INERT and every unit test still
+        # passes, because `last_print_source=None` disables the check by design.
+        # That is M156's defect exactly - carried, persisted, read back, and one
+        # signature short of the consumer - so a wiring test pins this statement.
+        autonomy_gate.last_print_source = market_data_feed.last_print_at
         feature_engine = FeatureEngine(
             bus,
             bar_interval_seconds=settings.bar_interval_seconds,
