@@ -483,6 +483,47 @@ money"). Two lists is how M39, M41, M43 and M44 went unmentioned in a review of
 outstanding work on 21 August. The readiness document still holds the REASONING
 for each gap and is worth reading; the list lives here.
 
+### ⚠️ AUDITED 30 AUGUST — what was checked, and against what
+
+Every open item below was checked against **the code, the logs or the live
+Gateway**, never against its own prose. That distinction is the entire point:
+15 stale headings were closed on 27-28 August, three of them found only by
+starting to RE-IMPLEMENT work that already existed.
+
+**Closed by this audit:**
+
+* **Item 2 (M119)** said "deployed but unexercised". The logs say
+  `yfinance market data has recovered` on **25, 26, 27 AND 28 August**, every one
+  at ~10:20. It survived four consecutive confirmations, two of them in sessions
+  that were read back at the time.
+* **Item 7 (M44)** — both halves done in M157, deployed and read back tonight.
+* **Five "not yet deployed" markers** — HEAD is the deployed build, so all are
+  deployed. Weakened to "as of 30 August" rather than naming a build, because
+  which of M155/M156/M157 first carried each was not checked and should not be
+  asserted.
+* **Item 17's regime half** — its text still claimed the Workbench "does not know
+  the prevailing regime". `workbench.py:226` subscribes to `RegimeEvent`; M136
+  fixed it. Caught because a live note read "regime unknown" and looked like the
+  defect — it was not, the market was shut.
+
+**Sharpened rather than closed:**
+
+* **Item 26** — the TIF half is fixed (M96, explicit `tif="GTC"`). The LOCATE
+  half fired **63 times, all 25 August, all LOV**, and none since only because no
+  app-transmitted sell has happened since. Not rare — **untested**. It is the one
+  open item that can break an EXIT.
+
+**Confirmed genuinely open, by looking:** item 9 (nothing in `src/` implements
+auction rules — only `costs.py` mentions the word), item 24 (no transmission-time
+exposure bound exists).
+
+**Items 41 and 42 are CORRECTIONS, not work.** Both record that an earlier claim
+was wrong. They read as open items and are not.
+
+⚠️ **The pattern this audit found is the same one as last week:** a heading is
+written once and then survives every piece of evidence that contradicts it,
+because reading a list is not auditing it. Item 2 needed four.
+
 ### Blocking the experiment
 
 1. **The first fill, and everything behind it:** `recent_fills` on IBKR, M71
@@ -504,9 +545,14 @@ for each gap and is worth reading; the list lives here.
    absorbed**, because the executions are gone. Any repair that depends on
    re-reading them has until the end of the trading day, and the automatic
    re-absorb path in the absorb-fix plan inherits that deadline.
-2. **M119 is deployed but unexercised.** Friday's session started at 12:10, after
-   the delay window that killed the 10:00 one. Monday's open is its first real
-   test and the highest-value thing to watch.
+2. ~~**M119 is deployed but unexercised.**~~ **CLOSED 30 August — it has been
+   exercised FOUR times.** Audited against the logs rather than the list:
+   `yfinance market data has recovered` appears on **25, 26, 27 and 28 August,
+   every one at ~10:20**, each after the feed went down at the open and came
+   back unaided. The 28 August line also carries M151's suppression count.
+   ⚠️ **This heading survived four consecutive confirmations**, including two
+   sessions that were read back at the time. Reading the list is not auditing
+   it — which is the whole of what this audit found.
 3. **Reach 20 closed trades**, then 30. Below 20 the sizer uses invented
    constants; below 30 the promotion gate cannot be read at all. Every question
    below this line is partly speculative until then.
@@ -789,8 +835,13 @@ for each gap and is worth reading; the list lives here.
     reasoning.** The AI Advisor
     forms buy/sell/hold from regime, positions, risk, fundamentals, results date
     and news. The Workbench forms one from backtest stats and the strategy's
-    candidate signal — and passes `regime_label="unknown"`, so **it does not know
-    the prevailing regime**. Neither sees everything. The ask is one answer over
+    candidate signal — and passed `regime_label="unknown"`, so it did not know
+    the prevailing regime. ⚠️ **THAT HALF WAS FIXED IN M136** and this text
+    outlived it: `workbench.py:226` subscribes to `RegimeEvent` and updates, and
+    the `"unknown"` at :219 is only the value before the first event arrives.
+    Checked 30 August, after a live Workbench note read "regime unknown" and
+    looked like this defect — it was not, the market was simply shut and nothing
+    had classified. Neither sees everything. The ask is one answer over
     both, against the prevailing regime and following the current strategy's
     rules. Needs a design pass first, and **M73's framing has to survive it**:
     this screen is "an analyst, never a trader" and its output reaches no part of
@@ -935,7 +986,7 @@ for each gap and is worth reading; the list lives here.
     unambiguous. This is display only.
 
 22. ~~**The per-order cap keys off CASH; it should key off SPENDABLE cash.**~~
-    **FIXED 28 August, not yet deployed.** The rule is extracted to
+    **FIXED 28 August, DEPLOYED as of 30 August.** The rule is extracted to
     `adapter.spendable_from(cash, min_cash_reserve)` with THREE readers -
     `AccountBalances.spendable_cash` delegates to it, and the OMS cap calls it
     directly. The broker returns an `AccountSummary`, which does not carry the
@@ -1019,7 +1070,7 @@ for each gap and is worth reading; the list lives here.
     already gone out.
 
 25. ~~**`preflight`'s book check derives `unprotected` from held positions only.**~~
-    **CLOSED 28 August, not yet deployed** - and closed by STATING the limit
+    **CLOSED 28 August, DEPLOYED as of 30 August** - and closed by STATING the limit
     rather than widening the check, which is what the item asked for.
 
     Every `book` outcome now carries: *"⚠️ This does NOT look for stops resting
@@ -1050,13 +1101,27 @@ for each gap and is worth reading; the list lives here.
     preflight's, and preflight should say so rather than imply coverage it
     does not have.
 
-26. **The IBKR order preset.** Every API sell on DXS.AX threw
-    `Error 10349: Order TIF was set to DAY based on order preset` and
-    `Warning 404: Order held while securities are located` — a short-sale locate
-    on the sale of a LONG position, which never resolves in paper, parking the
-    order at `PreSubmitted`. 68,268 and 12,000 both failed identically, so it is
-    not size. A manual sell through TWS filled. Find the preset; every order
-    this application places goes through the API.
+26. **The IBKR order preset — HALF FIXED, and the open half can break an EXIT.**
+    Every API sell on DXS.AX threw `Error 10349: Order TIF was set to DAY based
+    on order preset` and `Warning 404: Order held while securities are located` —
+    a short-sale locate on the sale of a LONG position, which never resolves in
+    paper, parking the order at `PreSubmitted`. 68,268 and 12,000 both failed
+    identically, so it is not size. A manual sell through TWS filled.
+
+    ✅ **The TIF half is FIXED (M96).** `ib_translate.py:152/188/189` now pass
+    `tif="GTC"` explicitly on every order rather than letting the Gateway preset
+    choose, and the comment at :184 records the measurement it came from.
+
+    ⚠️ **The LOCATE half is OPEN, and measured 30 August:** `Order held while
+    securities are located` appears **63 times in the logs, all on 25 August,
+    all on LOV** — the unwind attempt. **None since, because no app-transmitted
+    sell has happened since**, which is item 1's remaining gap. So this is not
+    "rare"; it is UNTESTED, and the next app-transmitted sell is the test.
+
+    ⚠️ **This is the only open item that can break an EXIT**, and exits are what
+    take the book to nine and unblock everything else. RHC exited cleanly on
+    27 August through a broker-side bracket leg — not through an API sell — so
+    that success says nothing about this path.
 
 27. ~~**⚠️ THE ABSORB WATERMARK DOES NOT SURVIVE A CRASH.**~~ **FIXED — M140.**
     The guard sits at the MATCH, not the watermark: `_close_against_lots` refuses
@@ -1127,7 +1192,7 @@ for each gap and is worth reading; the list lives here.
     settled. If the regime gate does not earn its keep, this stage disappears.
 
 31. ~~**The working-status set is narrow in `ib_translate`.**~~ **CLOSED
-    28 August, not yet deployed.** `_IB_WORKING_STATUSES` is now
+    28 August, DEPLOYED as of 30 August.** `_IB_WORKING_STATUSES` is now
     `WORKING_STATUSES` itself - ONE definition rather than two that agree, which
     is what stops them drifting apart again.
 
@@ -3019,7 +3084,7 @@ shares its shape.
     rather than trusting a sentence.
 
 65. ~~**The Workbench's note receives the account and is never told to use it.**~~
-    **DONE 28 August, not yet deployed.** `build_regime_narrative_prompt` now
+    **DONE 28 August, DEPLOYED as of 30 August.** `build_regime_narrative_prompt` now
     asks the model to say what the regime implies GIVEN what is already held,
     naming concentration in one name or one sector.
 
@@ -3224,7 +3289,7 @@ shares its shape.
        four numbers were caught, and it cost one extra run.
 
 67. ~~**⚠️⚠️ M151's FILTER WAS ON THE WRONG HANDLER, AND REPORTED WORK IT DID
-    NOT DO.**~~ **FIXED — not yet deployed.** Found live at the 28 August open.
+    NOT DO.**~~ **FIXED — DEPLOYED as of 30 August.** Found live at the 28 August open.
 
         10:20:36  yfinance market data has recovered - 678 per-symbol
                   'possibly delisted' error(s) were suppressed ...
