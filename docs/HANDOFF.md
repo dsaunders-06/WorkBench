@@ -506,12 +506,19 @@ starting to RE-IMPLEMENT work that already existed.
   fixed it. Caught because a live note read "regime unknown" and looked like the
   defect — it was not, the market was shut.
 
-**Sharpened rather than closed:**
+**Item 26 — CLOSED on investigation, and the sharpening I did first was WRONG.**
+The audit's first pass reported "the locate half fired 63 times" and promoted the
+item to the top of the queue on that basis. There is **ONE** such event, echoed
+63 times by `ib_async`'s Trade-repr logging. Investigated properly the same
+night: `Error 10349` appears zero times ever, `whyHeld` never says `locate`, the
+one warning was on LOV not DXS and did not stop that order filling, and the
+"parked" DXS sells were bracket legs resting normally. See item 26.
 
-* **Item 26** — the TIF half is fixed (M96, explicit `tif="GTC"`). The LOCATE
-  half fired **63 times, all 25 August, all LOV**, and none since only because no
-  app-transmitted sell has happened since. Not rare — **untested**. It is the one
-  open item that can break an EXIT.
+⚠️ **A grep over these logs counts repr ECHOES, not events**, because ib_async
+writes each Trade's entire `log=[...]` history into every `orderStatus` line.
+That is the second measurement artefact this week to survive into a conclusion —
+the first was Milestone C's identical arms. **Extract distinct `TradeLogEntry`
+tuples, then count.**
 
 **Confirmed genuinely open, by looking:** item 9 (nothing in `src/` implements
 auction rules — only `costs.py` mentions the word), item 24 (no transmission-time
@@ -1101,27 +1108,46 @@ because reading a list is not auditing it. Item 2 needed four.
     preflight's, and preflight should say so rather than imply coverage it
     does not have.
 
-26. **The IBKR order preset — HALF FIXED, and the open half can break an EXIT.**
-    Every API sell on DXS.AX threw `Error 10349: Order TIF was set to DAY based
-    on order preset` and `Warning 404: Order held while securities are located` —
-    a short-sale locate on the sale of a LONG position, which never resolves in
-    paper, parking the order at `PreSubmitted`. 68,268 and 12,000 both failed
-    identically, so it is not size. A manual sell through TWS filled.
+26. ~~**The IBKR order preset.**~~ **PREMISE NOT SUPPORTED — investigated
+    30 August, and the item was wrong on every specific it named.** Measured
+    against logs retained back to **27 July**:
 
-    ✅ **The TIF half is FIXED (M96).** `ib_translate.py:152/188/189` now pass
-    `tif="GTC"` explicitly on every order rather than letting the Gateway preset
-    choose, and the comment at :184 records the measurement it came from.
+    | The item said | The record says |
+    |---|---|
+    | `Error 10349` on every API sell | **ZERO occurrences**, any symbol, ever |
+    | `Warning 404` locate on DXS.AX | **ONE** occurrence, and on **LOV**, not DXS |
+    | a locate parked the orders | `whyHeld` **never** contains `locate`, anywhere |
+    | DXS sells parked at PreSubmitted | TRUE — with `whyHeld='child'`, `'trigger'`, `'child,trigger'` |
+    | "68,268 and 12,000 both failed" | 68,268 is the DXS **POSITION SIZE**: `Position(…symbol='DXS'…, position=68268.0, avgCost=5.86)` |
 
-    ⚠️ **The LOCATE half is OPEN, and measured 30 August:** `Order held while
-    securities are located` appears **63 times in the logs, all on 25 August,
-    all on LOV** — the unwind attempt. **None since, because no app-transmitted
-    sell has happened since**, which is item 1's remaining gap. So this is not
-    "rare"; it is UNTESTED, and the next app-transmitted sell is the test.
+    The DXS sells were LimitOrder/StopOrder pairs at ids 98/99, 108/109,
+    118/119, 128/129 — **bracket legs resting in their designed state**, which is
+    exactly what the ten positions held today look like: 10 Submitted, 10
+    PreSubmitted. The single locate warning was on LOV order 147, a bracket
+    CHILD, and that is the same `permId 1216552509` that executed 3,217 shares on
+    26 August. It blocked nothing.
 
-    ⚠️ **This is the only open item that can break an EXIT**, and exits are what
-    take the book to nine and unblock everything else. RHC exited cleanly on
-    27 August through a broker-side bracket leg — not through an API sell — so
-    that success says nothing about this path.
+    ⚠️ **The TIF half was real and is fixed (M96)** — `ib_translate.py:152/188/189`
+    pass `tif="GTC"` explicitly, and the comment at :184 records the measurement.
+    That is presumably why 10349 never appears in this window.
+
+    ⚠️ **THE COUNT THAT MADE THIS LOOK URGENT WAS AN ARTEFACT.** A grep found "63
+    occurrences" of the locate warning; there is **one**, echoed 63 times because
+    `ib_async` logs the entire `Trade` repr — including its whole `log=[...]`
+    history — into every subsequent `orderStatus` line. Any grep over these logs
+    counts repr echoes, not events. Extract distinct `TradeLogEntry` tuples.
+
+    **What remains genuinely open is item 1, not this:** no app-transmitted sell
+    has ever completed, so the path is UNTESTED rather than broken. The item's
+    one unexplained observation — "a manual sell through TWS filled" — is not
+    contradicted here, but nothing in the log supports the mechanism it was
+    attributed to. **An open market and one app-transmitted sell settles it.**
+
+    Loose end, recorded rather than chased: positions report
+    `exchange='ASX', conId=49281421` while orders go out on `exchange='SMART'`.
+    Nothing observed suggests this causes anything — the sells reached
+    PreSubmitted/Submitted rather than being rejected — and it is noted only so
+    the next person does not re-derive it.
 
 27. ~~**⚠️ THE ABSORB WATERMARK DOES NOT SURVIVE A CRASH.**~~ **FIXED — M140.**
     The guard sits at the MATCH, not the watermark: `_close_against_lots` refuses
