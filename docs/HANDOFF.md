@@ -1335,10 +1335,49 @@ because reading a list is not auditing it. Item 2 needed four.
     asserts it.
 
     So the work is *"treat never-ticked-this-session as its own refusal,
-    distinct from stale"*, not *"add a staleness rail"*. It adds a refusal to
-    the entry path, so it wants a plan and a watched session rather than being
-    appended to a long day of other changes. **Deliberately NOT done on 25
-    August for that reason** — it is the natural next piece of work.
+    distinct from stale"*, not *"add a staleness rail"*.
+
+    ✅ **BUILT — M158, 31 August. NOT YET DEPLOYED**, deliberately: M157 is
+    running today's open, and this deploys after the close so its read-back
+    lands at a real bell.
+
+    **The gate enforces, the rail reports**, and they are deliberately not the
+    same mechanism. `AutonomyGate` takes a `last_print_source` and refuses a BUY
+    whose latest print is absent or from a previous session, compared on
+    `mc.trading_date` — both sides of the Sydney midnight boundary are pinned.
+    `MarketDataFeed` exposes `last_print_at` and reports absent symbols with a
+    count. Wired by an assignment in `runtime.py`, pinned by a test that was
+    SEEN to fail.
+
+    ⚠️ **TWO CORRECTIONS TO THIS ITEM, both from reading the code rather than
+    the item.**
+
+    **It OVERSTATED one part.** Signals are generated inside
+    `StrategyEngine._on_market_data`, which is TICK-DRIVEN — a symbol with no
+    tick never reaches the handler and cannot signal. "No data at the bell" is
+    therefore not by itself an entry hazard, and the 10:29 gate was not the only
+    thing standing in the way.
+
+    **It UNDERSTATED the real one, and this is the finding.** A pre-session
+    print IS caught by the staleness arithmetic. But exclusion is computed by a
+    PERIODIC PASS while the signal is computed ON TICK ARRIVAL — so between a
+    pre-session-stamped tick landing and the next pass, an entry can be sized
+    against data that is not today's. **That is a RACE, not a coincidence**, and
+    no margin closes a race. An assertion at the point of decision does.
+
+    ⚠️ **AND A REAL DEFECT FOUND WHILE BUILDING IT.**
+    `refusals._match` is FIRST-MATCH-WINS over substrings. The new refusal's own
+    text reads *"ABSENT, not stale"*, and `("stale", …)` was listed first — so
+    it was being filed under **"Stale market data"**, the exact conflation this
+    item exists to prevent. The specific patterns now precede the general one,
+    and nothing but list order enforces that.
+
+    **Recorded, deliberately out of scope:** `MarketDataFeedEvent` — which
+    exists precisely because *"a feed that never delivered anything raised
+    nothing at all"* — has ONE subscriber, `main_window.py:83`, a display.
+    **No entry decision gates on feed health.** That is a different rail from
+    per-symbol absence and mixing them would repeat M28a's mistake of halting an
+    account for one symbol's silence.
 
 34. ~~**⚠️ THE RECONCILIATION POLL WEDGED SILENTLY AND NEVER RECOVERED.**~~
     **ROOT CAUSE FOUND, FIXED, AND CONFIRMED LIVE 26 Aug.**

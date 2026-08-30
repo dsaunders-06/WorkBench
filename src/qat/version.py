@@ -1204,7 +1204,43 @@ from qat.domain.display_dates import format_display_date
 # UNPROVEN UNTIL A TRADE CLOSES. All of the above is from the suite. The check
 # is the first trade opened and closed under M157, and it must survive a RESTART
 # before it counts.
-MILESTONE = "M157"
+# ---------------------------------------------------------------------------
+# M158 - absence is not staleness, and the coincidence was really a race.
+#
+# Item 33. market_data.py skipped a symbol it had never seen - `if last is None:
+# continue` - so a symbol that never printed was never marked stale, never
+# published DataStaleEvent, and never reached StrategyEngine._stale_symbols.
+# Nothing refused an entry on it.
+#
+# THE ITEM WAS WRONG IN BOTH DIRECTIONS. It OVERSTATED the bell hazard: signals
+# are generated inside _on_market_data, which is tick-driven, so a symbol with no
+# tick cannot signal at all. And it UNDERSTATED the real one: a pre-session print
+# IS caught by the staleness arithmetic, but exclusion is computed by a PERIODIC
+# PASS while the signal is computed ON TICK ARRIVAL. That is a race, and no
+# margin closes a race - only an assertion at the point of decision.
+#
+# THE GATE ENFORCES, THE RAIL REPORTS, deliberately not the same mechanism.
+# AutonomyGate takes last_print_source and refuses a BUY whose latest print is
+# absent or from a previous trading session, on mc.trading_date and never a UTC
+# date. BUYS ONLY: refusing an exit because the feed is quiet would strand a
+# position in exactly the conditions where getting out matters, and the sell and
+# protective-stop exemptions are planted tests rather than inspection.
+#
+# A REAL DEFECT THE TESTS CAUGHT: refusals._match is first-match-wins over
+# substrings, and this refusal's own text says "ABSENT, not stale" - so with
+# ("stale", ...) listed first it was filed under "Stale market data", the exact
+# conflation the item exists to prevent. Specific patterns now precede general
+# ones, enforced by nothing but list order.
+#
+# The wiring is one assignment in runtime.py, because the gate is constructed
+# before the feed exists. Without it the refusal is inert and every other test
+# still passes - M156's shape - so a wiring test pins it, and was seen to fail.
+#
+# UNPROVEN UNTIL A REAL BELL. At launch _last_seen is empty, so every buy should
+# be refused until the feed delivers. NO absence refusal at all means inert;
+# refusals continuing past ~10:30 on symbols that ARE printing means the
+# trading-date comparison is wrong and every entry is refused for the session.
+MILESTONE = "M158"
 
 _UNKNOWN = "unknown"
 
