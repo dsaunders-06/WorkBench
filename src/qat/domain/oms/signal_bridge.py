@@ -101,6 +101,8 @@ class _LotStore(Protocol):
         strategy: str | None,
         opened_at: datetime,
         reference_price: float | None = None,
+        worst_price: float | None = None,
+        best_price: float | None = None,
     ) -> bool: ...
 
 
@@ -724,6 +726,8 @@ class SignalToOrderBridge:
         restored: list[str] = []
         unknown: list[str] = []
         quarantined: list[str] = []
+        backfilled: list[str] = []
+        no_bars: list[str] = []
         for position in positions:
             quantity = abs(position.quantity)
             if quantity <= 0:
@@ -735,6 +739,7 @@ class SignalToOrderBridge:
             if entry is None:
                 unknown.append(position.symbol)
                 continue
+            worst, best, bar_count = self._excursion_since(position.symbol, entry.opened_at)
             if ledger.restore_open_lot(
                 symbol=position.symbol,
                 quantity=quantity,
@@ -743,8 +748,11 @@ class SignalToOrderBridge:
                 strategy=entry.strategy or self._sole_deployed_strategy(),
                 opened_at=entry.opened_at,
                 reference_price=entry.reference_price,
+                worst_price=worst,
+                best_price=best,
             ):
                 restored.append(position.symbol)
+                (backfilled if bar_count else no_bars).append(position.symbol)
 
         if restored:
             logger.info(
@@ -752,6 +760,23 @@ class SignalToOrderBridge:
                 "on a position opened in an earlier session records no closed trade at all.",
                 len(restored),
                 ", ".join(sorted(restored)),
+            )
+            # A COUNT, not an adjective (M154). M151 asserted a suppression that
+            # never reached the log - 678 claimed against 774 still present - and
+            # a line with no number cannot be checked against anything.
+            #
+            # ⚠️ Warm start catches its own exceptions and continues ("a cold
+            # start beats no application"), so an empty buffer is a live
+            # possibility. When that happens every lot lands in `no_bars` and
+            # this line says so, rather than the excursion quietly reverting to
+            # the entry price the way it did until M157.
+            logger.info(
+                "Excursion backfilled from daily bars on %d of %d restored lot(s); %d had no "
+                "bars after their entry day and start at the entry price, which understates "
+                "both MAE and MFE.",
+                len(backfilled),
+                len(restored),
+                len(no_bars),
             )
         if unknown:
             logger.warning(

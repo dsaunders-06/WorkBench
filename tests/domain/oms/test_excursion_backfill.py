@@ -16,6 +16,8 @@ acceptable; inventing one is not.
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -24,10 +26,12 @@ import pytest
 
 from qat.config import Settings
 from qat.data.bars import BAR_COLUMNS
+from qat.data.broker.adapter import Position
 from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
+from qat.domain.performance.trades import TradeLedger
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -152,3 +156,97 @@ def test_a_symbol_the_aggregator_has_never_seen_reports_nothing(tmp_path) -> Non
     assert (
         bridge.bars.frame_if_present("NEVERSEEN") is None
     ), "asking about a symbol must not start tracking it"
+
+
+# --- the wiring, end to end -------------------------------------------------
+#
+# ⚠️ AT THE CONSUMER, not at the store. Item 59's six store tests all stayed
+# green when the caller was deleted; a source-level guard caught the TypeError
+# that would have stopped the app launching. A helper that computes the right
+# answer and is never called computes nothing.
+
+
+def _entries(tmp_path, *symbols: str, reference_price: float | None = None) -> None:
+    row: dict[str, object] = {
+        # ⚠️ +10:00, matching the real record. As UTC this is already
+        # 25 August in Sydney and the entry day shifts.
+        "opened_at": "2026-08-24T15:19:36+10:00",
+        "price": 50.0,
+        "stop_price": 45.0,
+        "target_price": 60.0,
+        "strategy": "swing",
+    }
+    if reference_price is not None:
+        row["reference_price"] = reference_price
+    (tmp_path / "open_position_entries.json").write_text(
+        json.dumps({symbol: row for symbol in symbols}), encoding="utf-8"
+    )
+
+
+async def _ledger_for(tmp_path) -> TradeLedger:
+    ledger = TradeLedger(EventBus(), tmp_path)
+    await ledger.start()
+    return ledger
+
+
+def _holding(*symbols: str) -> MockBroker:
+    broker = MockBroker(seed=1)
+    for symbol in symbols:
+        broker._positions[symbol] = Position(symbol=symbol, quantity=20.0, avg_price=50.0)
+    return broker
+
+
+@pytest.mark.asyncio
+async def test_a_restored_lot_carries_the_excursion_from_its_bars(tmp_path) -> None:
+    _entries(tmp_path, "OLD", reference_price=49.90)
+    ledger = await _ledger_for(tmp_path)
+    bridge = _bridge(tmp_path, ledger=ledger, broker=_holding("OLD"))
+    _seed_daily(
+        bridge,
+        "OLD",
+        [("2026-08-24", 20.0, 99.0), ("2026-08-25", 45.5, 52.0), ("2026-08-26", 47.0, 59.0)],
+    )
+
+    await bridge.restore_open_lots()
+
+    lot = ledger.open_lots("OLD")[0]
+    assert lot.reference_price == pytest.approx(49.90), "Task 1's field must still arrive"
+    assert lot.worst_price == pytest.approx(45.5)
+    assert lot.best_price == pytest.approx(59.0)
+    assert lot.worst_price != pytest.approx(20.0), "the entry day's bar reached a real lot"
+
+
+@pytest.mark.asyncio
+async def test_a_restored_lot_without_bars_starts_at_the_entry_price(tmp_path) -> None:
+    """The guard. Warm start can fail and the app continues by design, so this
+    is the shape an empty buffer takes - and it must be today's behaviour
+    exactly, not a crash and not a fabricated excursion."""
+    _entries(tmp_path, "OLD")
+    ledger = await _ledger_for(tmp_path)
+    bridge = _bridge(tmp_path, ledger=ledger, broker=_holding("OLD"))
+
+    await bridge.restore_open_lots()
+
+    lot = ledger.open_lots("OLD")[0]
+    assert lot.worst_price == pytest.approx(50.0)
+    assert lot.best_price == pytest.approx(50.0)
+    assert lot.reference_price is None
+
+
+@pytest.mark.asyncio
+async def test_the_backfill_reports_a_count(tmp_path, caplog) -> None:
+    """⚠️ A COUNT, NOT AN ADJECTIVE - M154's shape. M151 asserted a suppression
+    that never reached the log, 678 claimed against 774 still present. A line
+    with no number cannot be checked against anything."""
+    _entries(tmp_path, "WITH", "WITHOUT")
+    ledger = await _ledger_for(tmp_path)
+    bridge = _bridge(tmp_path, ledger=ledger, broker=_holding("WITH", "WITHOUT"))
+    _seed_daily(bridge, "WITH", [("2026-08-24", 49.0, 51.0), ("2026-08-25", 46.0, 58.0)])
+
+    with caplog.at_level(logging.INFO):
+        await bridge.restore_open_lots()
+
+    line = next((m for m in caplog.messages if "Excursion backfilled" in m), None)
+    assert line is not None, "the backfill logged no count at all"
+    assert "on 1 of 2" in line
+    assert "1 had no bars" in line

@@ -623,6 +623,8 @@ class TradeLedger:
         strategy: str | None,
         opened_at: datetime,
         reference_price: float | None = None,
+        worst_price: float | None = None,
+        best_price: float | None = None,
     ) -> bool:
         """Re-create the entry lot for a position opened before this run (M49).
 
@@ -638,10 +640,16 @@ class TradeLedger:
         startup step and must never compete with a live fill for the same
         position: the running record is always the better one.
 
-        The excursion fields start at the entry price rather than being
-        invented, so MAE and MFE on a restored lot measure from the restart
-        forward. That understates both, and understating a diagnostic is
-        acceptable where fabricating one is not.
+        The excursion fields fall back to the entry price when the caller has
+        nothing better, so MAE and MFE then measure from the restart forward.
+        That understates both, and understating a diagnostic is acceptable
+        where fabricating one is not.
+
+        The bridge supplies them from daily bars wherever it can (M157, see
+        `_excursion_since`) - which is measurement from the same instrument the
+        stop distance already rests on, not fabrication. The entry day's own bar
+        is excluded there, because it holds prices from before the position
+        existed.
 
         `reference_price` is the price the order was SIZED against, and `None`
         means UNKNOWN - never the entry price, which would report zero slippage
@@ -665,8 +673,8 @@ class TradeLedger:
                 opened_at=opened_at,
                 entry_cost=self._fill_cost(quantity, price),
                 reference_price=reference_price,
-                worst_price=price,
-                best_price=price,
+                worst_price=worst_price if worst_price is not None else price,
+                best_price=best_price if best_price is not None else price,
             )
         )
         return True
