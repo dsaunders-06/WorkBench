@@ -104,6 +104,8 @@ class MarketDataFeed:
         self.feed_down_seconds = feed_down_seconds
         self._queue: asyncio.Queue[RawTick] = asyncio.Queue(maxsize=queue_maxsize)
         self._last_seen: dict[str, datetime] = {}
+        # Item 33. Reported once on transition rather than on every pass.
+        self._absence_reported = False
         # Which symbols are currently excluded, so only the edges are published.
         self._stale_symbols: dict[str, bool] = {}
         self._tasks: list[asyncio.Task[None]] = []
@@ -133,6 +135,7 @@ class MarketDataFeed:
         # down) does not immediately report every symbol as stale against a
         # last-seen timestamp from before it slept.
         self._last_seen.clear()
+        self._absence_reported = False
         self._stale_symbols.clear()
         self._started_at = datetime.now(UTC)
         self._last_tick_at = None
@@ -277,6 +280,20 @@ class MarketDataFeed:
             "blind by the difference" if drift > 0 else "tighter than intended",
         )
 
+    def last_print_at(self, symbol: str) -> datetime | None:
+        """When this symbol's most recent print was STAMPED, or None if it has
+        not printed since `start()` (item 33).
+
+        The trade's own timestamp, not its arrival time, for the reason M128
+        gives - which is what makes it usable as "does this price belong to
+        today's session".
+
+        ⚠️ `start()` clears `_last_seen`, so after the overnight stand-down every
+        symbol reads None until it prints again. That is correct: nothing from
+        before the restart is a current price.
+        """
+        return self._last_seen.get(symbol)
+
     async def _check_staleness_once(self) -> None:
         """One pass of the rail, extracted so it can be tested without driving
         a loop (M128). The arithmetic below is a risk decision; it deserves a
@@ -287,6 +304,30 @@ class MarketDataFeed:
         # first.
         self._check_delay_claim()
         now = datetime.now(UTC)
+
+        # Item 33. A symbol with no recorded print is skipped by the loop below
+        # - `if last is None: continue` - so it is never marked stale and never
+        # excluded. It is ABSENT, not stale, and until now nothing said so.
+        #
+        # ⚠️ Reported only once SOMETHING has printed. This component holds no
+        # market and no session, so it cannot say "the session has opened" - and
+        # does not need to. "The feed is working and these symbols are not in
+        # it" is the condition that matters, and before the first tick there is
+        # no line at all rather than a false "94 of 94 absent" at every bell.
+        # A wholly dead feed stays MarketDataFeedEvent's question, which keeps
+        # M28a's separation between one silent symbol and a down feed.
+        absent = [symbol for symbol in self.symbols if self._last_seen.get(symbol) is None]
+        if absent and len(absent) < len(self.symbols) and not self._absence_reported:
+            self._absence_reported = True
+            logger.warning(
+                "%d of %d watched symbol(s) have not printed at all this session, so they are "
+                "ABSENT rather than stale and the staleness rail cannot see them - it skips a "
+                "symbol it has never seen. They cannot be entered: %s",
+                len(absent),
+                len(self.symbols),
+                ", ".join(sorted(absent)[:10]) + (" ..." if len(absent) > 10 else ""),
+            )
+
         for symbol in self.symbols:
             last = self._last_seen.get(symbol)
             if last is None:
