@@ -191,9 +191,7 @@ def test_runtime_wires_the_gate_to_the_feed() -> None:
 
     import qat
 
-    source = (Path(qat.__file__).parent / "presentation" / "runtime.py").read_text(
-        encoding="utf-8"
-    )
+    source = (Path(qat.__file__).parent / "presentation" / "runtime.py").read_text(encoding="utf-8")
 
     assert "autonomy_gate.last_print_source = market_data_feed.last_print_at" in source, (
         "the gate is constructed BEFORE the feed exists, so the source must be ASSIGNED "
