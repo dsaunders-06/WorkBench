@@ -71,6 +71,7 @@ class AutonomyGate:
         kill_switch: KillSwitch,
         clock: Callable[[], datetime] | None = None,
         scorecard_source: Callable[[str], StrategyScorecard | None] | None = None,
+        last_print_source: Callable[[str], datetime | None] | None = None,
     ) -> None:
         self.settings = settings
         self.kill_switch = kill_switch
@@ -82,6 +83,15 @@ class AutonomyGate:
         # the suite happens to run - a market-hours gate tested against the
         # wall clock passes or fails by time of day.
         self.clock = clock
+        # When this symbol last PRINTED, or None if it never has (item 33). A
+        # callable for the same reason `scorecard_source` is one: the gate stays
+        # a pure decision function and can be exercised without a feed.
+        #
+        # ⚠️ None DISABLES the check, which keeps every existing call site and
+        # the backtester unchanged - and means an unwired gate is silently inert.
+        # That is items 59 and 67 and M156's shape, so the wiring is pinned by
+        # its own test rather than trusted.
+        self.last_print_source = last_print_source
 
     def evaluate(
         self,
@@ -158,6 +168,35 @@ class AutonomyGate:
             )
 
         # --- Buys: every gate ------------------------------------------------
+
+        # ⚠️ ABSENCE IS NOT STALENESS (item 33). `_check_staleness_once` skips a
+        # symbol it has never seen - `if last is None: continue` - so nothing
+        # else refuses an entry on a symbol that has not printed at all.
+        #
+        # And a PRE-SESSION print is a RACE rather than a coincidence: the
+        # staleness rail would catch it on its next PERIODIC pass, while the
+        # signal behind this order was computed ON TICK ARRIVAL. A wider margin
+        # cannot close that; asserting here, at the point of decision, does.
+        #
+        # Below the sell and protective-stop exemptions on purpose: refusing an
+        # EXIT because the feed is quiet would strand a position in exactly the
+        # conditions where getting out matters.
+        if self.last_print_source is not None:
+            last_print = self.last_print_source(order.symbol)
+            if last_print is None:
+                return block(
+                    f"{order.symbol} has no price at all this session, so there is nothing "
+                    "current to size against - ABSENT, not stale"
+                )
+            # trading_date, never a calendar or UTC date: the exchange's session
+            # is the only correct notion of "this session", and a UTC date is
+            # the bug M120 fixed in the unattended fixture.
+            if mc.trading_date(market, last_print) < mc.trading_date(market, now):
+                return block(
+                    f"{order.symbol}'s last price is from a previous session "
+                    f"({last_print:%Y-%m-%d %H:%M}), so it is not current"
+                )
+
         if not session.is_autonomous_eligible:
             return block(f"session phase '{phase}' is not eligible for unattended execution")
 

@@ -125,6 +125,18 @@ _PATTERNS: tuple[tuple[str, RefusalFamily, str], ...] = (
     ("allow list", RefusalFamily.STATE, "Symbol not on the allow list"),
     ("account unavailable", RefusalFamily.STATE, "Account unreadable"),
     ("risk evaluation failed", RefusalFamily.STATE, "Risk evaluation failed"),
+    # Item 33. DISTINCT from "stale" on purpose: a symbol that has never printed
+    # is ABSENT, and the staleness rail cannot see it at all - it skips a symbol
+    # with no recorded print. Two reasons, one label, because the Blotter groups
+    # by cause and both causes are "no current price to size against".
+    #
+    # ⚠️ THESE MUST STAY ABOVE ("stale", ...). `_match` is FIRST-MATCH-WINS over
+    # substrings, and this refusal's own text says "ABSENT, not stale" - so with
+    # the general pattern first it was filed under "Stale market data", which is
+    # precisely the conflation item 33 exists to prevent. A more specific reason
+    # has to precede a more general one here, and nothing but order enforces it.
+    ("no price at all this session", RefusalFamily.STATE, "No price this session"),
+    ("last price is from a previous session", RefusalFamily.STATE, "No price this session"),
     ("stale", RefusalFamily.STATE, "Stale market data"),
     # Both are conditions of the POSITION rather than of the candidate, so STATE.
     #
