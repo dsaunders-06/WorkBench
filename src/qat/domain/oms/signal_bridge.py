@@ -45,7 +45,7 @@ from typing import Any, Literal, NamedTuple, Protocol, cast
 import pandas as pd
 
 from qat.config import Settings
-from qat.data.bars import MultiSymbolAggregator
+from qat.data.bars import MultiSymbolAggregator, floor_to_interval
 from qat.data.broker.adapter import Position
 from qat.data.earnings import EarningsCalendar, NullEarningsCalendar
 from qat.data.features import compute_atr
@@ -650,6 +650,48 @@ class SignalToOrderBridge:
             ", ".join(unattributed),
         )
         return unattributed
+
+    def _excursion_since(
+        self, symbol: str, opened_at: datetime
+    ) -> tuple[float | None, float | None, int]:
+        """How far a held position travelled, from the bars rather than a file.
+
+        M44's other half. `worst_price` and `best_price` EVOLVE, so persisting
+        them at open would restore a stale excursion - which is why this half
+        stayed open. Nothing is persisted: the daily OHLC bars warm start
+        already seeded into this aggregator contain the answer, and they cannot
+        go stale.
+
+        It is also the better instrument. The feed is polled every 60 seconds,
+        so a six-hour session is sampled around 360 times and cannot see an
+        extreme that fell between two samples. A bar's high and low are the
+        extremes of every trade.
+
+        ⚠️ THE ENTRY DAY'S OWN BAR IS EXCLUDED. It holds prices from before the
+        position existed, and attributing those to the trade is the fabrication
+        `restore_open_lot`'s docstring forbids. The cost is genuine same-day
+        excursion, which on a ten-to-thirty-day hold at daily granularity is
+        small and always in the safe direction. Bars from the restore day
+        onward need no such care - every price in them was while held.
+
+        `frame_if_present`, not `frame`: a read-only caller must not be able to
+        start tracking a symbol merely by asking about it.
+
+        ✅ Why the boundary comparison is exact: `BarAggregator.seed` stamps
+        every bar as `floor_to_interval(as_utc(vendor_ts), interval, tz)` - the
+        same function, interval and timezone used here. Both sides are already
+        on one grid, so it does not matter whether the vendor timestamps a daily
+        row at local or at UTC midnight. That is why the interval and tz are
+        read off `self.bars` rather than assumed.
+        """
+        frame = self.bars.frame_if_present(symbol)
+        if frame is None or frame.empty:
+            return None, None, 0
+        entry_day = floor_to_interval(opened_at, self.bars.interval_seconds, self.bars.tz)
+        after = frame[pd.to_datetime(frame["ts"], utc=True) > entry_day.astimezone(UTC)]
+        if after.empty:
+            return None, None, 0
+        return float(after["low"].min()), float(after["high"].max()), len(after)
 
     async def restore_open_lots(self) -> list[str]:
         """Gives the trade ledger back the entry lots it forgot (M49).
