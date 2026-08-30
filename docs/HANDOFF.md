@@ -96,6 +96,47 @@ RECOVERY, logged at ERROR** — judge by content, never by count.
 
 ---
 
+## ⚠️ MEASURED 30 AUGUST 22:35, SO MONDAY IS A COMPARISON NOT A GUESS
+
+Read only, against the live Gateway, computed with the app's **own**
+`PortfolioGovernor.snapshot` and with LIVE prices (the M66 tier) — not a
+reimplementation. Measuring a rail with a different instrument than the rail
+uses is how 8 August read 5.02% against a true 5.87%.
+
+    equity            1,013,822.81
+    gross exposure      600,514.62
+    risk at stop         42,226.45     4.165%   cap 5.000%
+    headroom              8,464.69     -> WITHIN CAP
+    positions                    10    stops found 10
+
+    TNE 0.617%  SEK 0.590%  A2M 0.589%  ASX 0.537%  BOQ 0.482%
+    SUN 0.390%  IAG 0.377%  PNI 0.296%  WOW 0.193%  ANZ 0.093%
+
+⚠️ **THE AGGREGATE CAP IS NOT BREACHED, and the standing note said it was.**
+That claim was true on 20 August at 5.01% and has been repeated since. Tonight it
+is 4.165%. **The only gate actually shut is the POSITION COUNT** —
+`governor.py:304` refuses at `>=`, so ten of ten is AT the cap and the book needs
+NINE. `session_check.ps1`'s "expected, not a fault" note has been corrected: it
+never measured the cap it was asserting.
+
+**What that changes for Monday:** if an exit takes the book to nine, an entry is
+possible *and* there is budget for it — 8,464 of headroom, roughly one position's
+worth at the ~0.5% each these run at. Previously the note implied both gates were
+shut.
+
+⚠️ **AND THE COUNTERINTUITIVE PART, which is worth holding in mind at the bell.**
+Risk-at-stop is `(price − stop) × qty`, so **a RALLY raises it** — a position that
+has gained has further to fall. Headroom is 8,464 against 600,514 of gross, so a
+move of roughly **+1.4% across the book breaches the 5% cap**, at which point the
+aggregate rail starts refusing regardless of the position count. A fall does the
+opposite. So "we have headroom" is a statement about today's prices only.
+
+**Item 31's baseline, unchanged from 28 August:** 20 resting legs, **10
+PreSubmitted and 10 Submitted, ZERO in either state item 31 added**. So it is
+still a no-op against this book. If Monday shows orders in the added states,
+item 31 has become live and its loosened rail is being exercised for the first
+time — that is the moment to read it.
+
 ## ⚠️ WHAT MONDAY'S OPEN ACTUALLY TESTS
 
 **M119 has never been exercised.** It is deployed — it has been since 12:10 and

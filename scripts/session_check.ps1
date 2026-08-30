@@ -503,6 +503,9 @@ if ($report) {
 }
 
 Write-Output ''
-Write-Output 'EXPECTED, NOT A FAULT: zero new entries while the aggregate cap is breached and the book is 10 of 10;'
+Write-Output 'EXPECTED, NOT A FAULT: zero new entries while the book is 10 of 10 - governor.py refuses at >=,'
+Write-Output 'so ten of ten is AT the cap and the book needs NINE. (This used to add "while the aggregate cap is'
+Write-Output 'breached", which this script never measures and which was TRUE on 20 August at 5.01% and FALSE on'
+Write-Output '30 August at 4.165% - an explanation that outlived its fact, and the position count is the real gate);'
 Write-Output 'a staleness burst at the bell that clears; repeated position-limit refusals on one symbol; CRWD'
 Write-Output 'corporate action in M39 shadow mode with no SHADOW: or ADJUSTED: line following it.'
