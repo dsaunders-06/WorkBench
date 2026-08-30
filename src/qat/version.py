@@ -1164,7 +1164,47 @@ from qat.domain.display_dates import format_display_date
 # refuses broker=alpaca off a US market, so deletion would solve a problem a
 # rail already solves; and nine analysis probes import the SDK, which is the US
 # era's evidence trail.
-MILESTONE = "M156"
+# ---------------------------------------------------------------------------
+# M157 - the two fields a restart destroys, and one of them was believed fixed.
+#
+# M44's "other half" was recorded as one open piece: worst_price and best_price
+# EVOLVE over a trade's life, so persisting them at open would restore a stale
+# excursion. Measuring before designing found a SECOND defect on the same line,
+# and it is the worse of the two because it had shipped as done.
+#
+# DEFECT A - M156's reference_price never reached the lot. It was carried onto
+# _Entry, persisted and read back, all of which worked, and then died one call
+# further on: restore_open_lot had no such parameter, so the bridge could not
+# pass one and every rebuilt lot got None. With a ten-day minimum hold and a
+# session most nights, the restart path is the one EVERY trade this system
+# closes takes. Proven with a control before anything changed - the live path
+# recorded slippage, the restored path did not.
+#
+# M156 shipped five tests. They pin the dataclass shape, the write and the read
+# - the record and the file. None follows the value into the rebuilt lot, which
+# is what a ClosedTrade is made from. Items 59, 67 and Milestone C Task 1 again.
+#
+# DEFECT B - the excursion is no longer persisted at all. It is recomputed at
+# restore from the daily OHLC bars warm start already seeds, so it cannot go
+# stale, needs no keying or pruning, and recovers the ten held positions back to
+# their entry days. It is also the better instrument: a 60-second poll samples a
+# six-hour session ~360 times and cannot see an extreme between two samples,
+# where a bar's high and low are the extremes of every trade.
+#
+# THE ENTRY DAY'S OWN BAR IS EXCLUDED - it holds prices from before the position
+# existed, and attributing those to the trade is the fabrication
+# restore_open_lot's docstring already forbids. Pinned by a PLANTED VIOLATION.
+#
+# THE GUARD, anchored on SHAPE rather than a list of names, because a list of
+# names is what failed three times: every field common to _Entry and OpenLot
+# must be a parameter of restore_open_lot. Five fields have now been lost across
+# a restart - target_price (M33), strategy (M49), reference_price (M44, twice),
+# worst_price and best_price. Confirmed to fail when the defect is reintroduced.
+#
+# UNPROVEN UNTIL A TRADE CLOSES. All of the above is from the suite. The check
+# is the first trade opened and closed under M157, and it must survive a RESTART
+# before it counts.
+MILESTONE = "M157"
 
 _UNKNOWN = "unknown"
 

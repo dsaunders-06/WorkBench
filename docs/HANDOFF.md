@@ -564,13 +564,43 @@ for each gap and is worth reading; the list lives here.
    `_save_entries`, and read back with `.get` so pre-existing files load as
    UNKNOWN rather than as the entry price.
 
-   ⚠️ **STILL OPEN: `worst_price` and `best_price`.** They EVOLVE over a trade's
-   life, so persisting them at open would restore a stale excursion. That needs
-   periodic persistence and is a larger piece — `mae_r` and `mfe_r` stay empty
-   until it is done.
+   ✅ **BOTH HALVES DONE — M157, 30 August.** And measuring before designing
+   found a second defect inside the first, which is the worse of the two because
+   it had shipped as done.
 
-   ⚠️ **And this fixes it only for trades opened FROM NOW.** The six existing
-   rows cannot be recovered; the reference prices were never written down.
+   ⚠️ **M156's `reference_price` NEVER REACHED THE LOT.** It was carried onto
+   `_Entry`, persisted, and read back — all of which worked — and then died one
+   call further on: `TradeLedger.restore_open_lot` had no such parameter, so the
+   bridge could not pass one and every rebuilt lot got `None`. With a ten-day
+   minimum hold and a session most nights, the restart path is the one EVERY
+   trade this system closes takes, so `entry_slippage` was still empty. Proven
+   with a control, before anything was changed:
+
+       LIVE     reference_price=49.9  entry_slippage=0.099…
+       RESTORED reference_price=None  entry_slippage=None
+
+   M156 shipped five tests. They pin the dataclass shape, the write and the read
+   — the record and the file. **None follows the value into the rebuilt lot,
+   which is what a `ClosedTrade` is made from.** Items 59, 67 and Milestone C
+   Task 1 are the same shape, and that commit's own message names them.
+
+   **`worst_price` and `best_price` are NOT persisted.** They are recomputed at
+   restore from the daily bars warm start already seeds, so they cannot go stale
+   and there is nothing to key, prune or write atomically. The entry day's own
+   bar is excluded — it holds prices from before the position existed.
+
+   **Fields this record has now lost across a restart: five.** `target_price`
+   (M33), `strategy` (M49), `reference_price` (M44, fixed at the record on 28
+   August and lost again one call down), `worst_price` and `best_price`. The
+   guard added is anchored on SHAPE — every field common to `_Entry` and
+   `OpenLot` must be a parameter of `restore_open_lot` — because a list of names
+   is what failed three times. Confirmed to fail when the defect is reintroduced.
+
+   ⚠️ **UNPROVEN UNTIL A TRADE CLOSES.** Everything above is from the suite. The
+   check is the first trade opened and closed under M157, and **it must survive a
+   RESTART before it counts** — losing it at restart is the entire defect. The
+   six existing rows stay empty and always will; their reference prices were
+   never written down.
 
 ### Correctness and hygiene
 
