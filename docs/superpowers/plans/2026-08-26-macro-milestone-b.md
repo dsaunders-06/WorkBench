@@ -1,5 +1,24 @@
 # Macro Milestone B — Australian Regime Features Implementation Plan
 
+> # ❌ REJECTED 31 August 2026 — DO NOT EXECUTE THIS PLAN
+>
+> `scripts/research/axvi_control.py`, 30 trials per control, on the window the
+> saved matrix actually covers:
+>
+>     real ^AXVI z-score          23.0%
+>     shuffled (same values)      17.3%   [0.0 - 85.3]
+>     gaussian noise              17.3%   [0.0 - 43.7]
+>     controls reaching the real arm : 18 of 60 (30%)
+>
+> **^AXVI's effect is not distinguishable from adding an arbitrary seventh
+> column.** The reading rule was fixed before the numbers existed and p = 0.30
+> fails it. This plan's OWN worry - three of seven columns becoming volatility
+> measures under `covariance_type='diag'` - is what the control confirmed.
+>
+> Tasks 1-5 below are kept for their method, not for execution. The 23.0% figure
+> is vindicated on alignment; it was never the problem. **The missing control
+> was.**
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Give the regime engine an Australian volatility feature, so the label that sets position size on a 94-stock ASX book is not classified entirely on American data.

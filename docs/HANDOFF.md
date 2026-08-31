@@ -815,6 +815,64 @@ delay, its coverage across all 94 symbols, its rate limits, and what it does at
 the auction. Those want their own measurement before any migration - M39 and M43
 are both cases of a design built on a feed nobody measured first.
 
+## ❌ 31 AUGUST: MILESTONE B REJECTED BY ITS OWN CONTROL
+
+**^AXVI's effect is not distinguishable from adding an arbitrary seventh column.**
+Measured with `scripts/research/axvi_control.py`, 30 trials per control, on the
+window the saved matrix actually covers:
+
+    real ^AXVI z-score          23.0%
+    shuffled (same values)      17.3%   [0.0 - 85.3]
+    gaussian noise              17.3%   [0.0 - 43.7]
+
+    controls reaching the real arm : 18 of 60 (30%)
+
+The reading rule was written into the script **before the numbers existed**: *"if
+`real` is NOT clearly above BOTH controls, the 23% was the model reacting to a
+seventh column rather than to Australian volatility, and Milestone B should be
+REJECTED rather than built."* An empirical p-value of **0.30** is not clearly
+above anything.
+
+**This is the plan's own worry, confirmed.** It wrote: *"adding `asx_vix_z` makes
+three of seven columns volatility measures, and under `covariance_type='diag'`
+the model treats columns as independent - so correlated columns double-count. A
+systematic shift toward defensive labels is exactly what that would look like."*
+
+✅ **THE 23.0% ITSELF IS VINDICATED, on the alignment question.** It reproduced to
+the decimal once the window matched, so the figure was never the problem - the
+missing control was.
+
+### ✅ What this saves
+
+Tasks 1-4 - a `MarketSeriesSource`, a generalised as-of join, a transformation
+policy and the admission of `^AXVI` - would all have been built for a feature
+that cannot be shown to do anything. **One extra arm rejected it in an evening.**
+
+### ⚠️ AND THE SECOND FINDING, which is larger than Milestone B
+
+**The controls span 0% to 85.3%.** The HMM fit is deterministic
+(`random_state=0` reaches `GaussianHMM`), so that spread is the seventh column's
+CONTENT, not fit noise. **A four-state Gaussian HMM under diagonal covariance has
+no stable answer to "add one column"** - a meaningless one can move the label on
+anything from no bars to five in six.
+
+That is a question about the regime engine itself, not about ^AXVI, and it bears
+on Milestone C's ablation percentages too: if adding *any* column moves the label
+this much, an ablation percentage measures the model's fragility as much as the
+feature's contribution. **Not chased tonight, and recorded rather than acted on.**
+
+### ⚠️ A THIRD CALENDAR SLIP, caught by the guard rather than by luck
+
+The first run reported `real` at 40.3% and aligned `2025-06-26 -> 2026-08-31`
+against a matrix ending `2026-08-26`. `z.iloc[-300:]` takes the last 300 bars of
+a series that grows every day, so run after the matrix was saved it silently ends
+TODAY - a three-trading-day offset, the same failure as the original `dropna()`
+slip in a new form.
+
+⚠️ **`compare_axvi_feature.py` has identical slicing and would be wrong run
+today.** The control script now slices by DATE and REFUSES when the reconstructed
+range does not match the log.
+
 ## OUTSTANDING, IN ORDER
 
 **One list.** It used to be two: this file's, and section 4 of
