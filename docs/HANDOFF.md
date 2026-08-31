@@ -625,6 +625,33 @@ is not a durable one, and **any market order that outlives the poll gap will do
 this every time.** Reconciliation needs to know an order is still working before
 calling the difference a mismatch.
 
+### ✅ ITEM 59 CONFIRMED LIVE — the quarantine auto-clear, first exercise
+
+Shipped in M155 and unexercised since, for want of a quarantine to clear. The
+false JHX orphan supplied one, and the restart made the condition go away while
+the quarantine persisted from disk — exactly the state item 59 exists for.
+
+    13:38:57  scan clean (1)
+    13:43:57  scan clean (2)
+    13:48:57  scan clean (3)
+    13:48:57  Resting-order quarantine on JHX.AX LIFTED by the reconciler after
+              3 consecutive clean scans (was: 1097 shares of resting sell the
+              book does not justify (holds 1097)) - ordinary order flow resumes
+
+`resting_order_anomalies.json` → `{"anomalies": []}`, written 13:48:57.
+
+**Predicted before it happened and it landed on the second.** `_clean_runs` is
+in-memory, so the restart reset the counter and the third scan was due at
+13:48:57 on a 300s poll.
+
+It behaved as DESIGNED rather than merely working: **three scans, not one** -
+*"a divergence can flap, and clearing on the first clean scan would let the store
+track noise"* - and the lift line quotes the original reason, so the record says
+what was lifted and why.
+
+⚠️ **The KILL SWITCH is unaffected and still tripped.** The reconciler lifted its
+own quarantine; it does not and must not touch the halt.
+
 ### ✅ DEFECT C — NARROWED BY A POWER CUT, 31 August 13:37
 
 A power outage forced an unplanned restart, which produced a before/after nobody
