@@ -916,7 +916,30 @@ because reading a list is not auditing it. Item 2 needed four.
    wrong by the split factor. Ten positions held for a quarter makes it a
    question of when. **The MNST row retired on 21 August is what this looks like
    when it happens.**
-5. **M43 — trading halts.** No detection anywhere. The staleness rail covers
+5. ~~**M43 — trading halts.**~~ **ANSWERED 31 August — THERE IS NO FEED. Do not
+   design detection against the flag.**
+
+   Measured at 10:59 with the ASX in CONTINUOUS TRADING, holding a STREAMING
+   delayed subscription (`marketDataType=3`) for twenty seconds - not a snapshot:
+
+       BHP.AX  last=66.515 bid=66.51 ask=66.52 high=66.74 low=66.18 open=66.68
+               volume=495,809      halted=nan      delayedHalted=nan
+
+   **A full live quote arrives and the halt fields are the ONLY ones that never
+   populate.** That removes the confound 28 August could not: "nothing is
+   arriving" is excluded, because everything except `halted` is. By this item's
+   own rule - *"if it stays nan, it does not, and M43 is M39's shape"* - the
+   question is closed.
+
+   **What remains is BEHAVIOURAL detection** - a symbol that stops ticking while
+   its peers keep ticking. That is a heuristic, not a report, and it collides
+   with the staleness rail, which already treats a silent symbol as excluded
+   rather than halted. **It is a separate decision and has not been taken.**
+
+   ⚠️ The probe's own caveat was HARDCODED and nearly hid this - see the
+   31 August section. The original wording is kept below.
+
+   ORIGINAL: No detection anywhere. The staleness rail covers
    entry and says nothing about the case that hurts: position held, symbol
    halted, stop cannot fill, reopens materially lower.
 
@@ -1412,9 +1435,26 @@ because reading a list is not auditing it. Item 2 needed four.
     because a flat TNE carrying 12,304 shares of resting sells is short risk
     nothing was watching. Highest-value item on this list.
 
-24. **Bound total exposure per name at TRANSMISSION time.** See lesson 1 above.
-    The concentration cap is upstream in the sizer and cannot see what has
-    already gone out.
+24. ~~**Bound total exposure per name at TRANSMISSION time.**~~ **STALE — already
+    covered, closed 31 August by reading the code.** `governor.py:341` computes
+    `held_in_name` as held positions PLUS pending BUY orders in that symbol:
+
+        held_in_name = sum(... for pos in positions if pos.symbol == symbol) + sum(
+            order.quantity * (order.reference_price or price)
+            for order in (pending_orders or [])
+            if order.symbol == symbol and order.side == "buy"
+        )
+
+    And the chain holds end to end: `_COMMITTED_STATUSES = ("pending_signoff",
+    "transmitted")` → `pending_orders()` → `oms.py:382` passes it into the
+    governor. **Item 58 is what closed this**, by putting `transmitted` into that
+    tuple — a transmitted-but-unfilled buy now counts against the single-name cap.
+
+    ⚠️ Nobody noticed item 58 had closed item 24, which is this list's recurring
+    shape: a heading written once and never re-read against the code.
+
+    ORIGINAL: See lesson 1 above. The concentration cap is upstream in the sizer
+    and cannot see what has already gone out.
 
 25. ~~**`preflight`'s book check derives `unprotected` from held positions only.**~~
     **CLOSED 28 August, DEPLOYED as of 30 August** - and closed by STATING the limit
