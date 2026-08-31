@@ -1240,7 +1240,46 @@ from qat.domain.display_dates import format_display_date
 # be refused until the feed delivers. NO absence refusal at all means inert;
 # refusals continuing past ~10:30 on symbols that ARE printing means the
 # trading-date comparison is wrong and every entry is refused for the session.
-MILESTONE = "M158"
+# ---------------------------------------------------------------------------
+# M159 - three defects the first app-transmitted entry exposed, and two it did
+# not let me fix.
+#
+# DEFECT A, measured live every 60 seconds: executor.py retry_pending ->
+# _consider -> oms.get_order -> KeyError '1031062661'. IBAdapter.place_order
+# returns an Order RE-IDENTIFIED with the broker's permId; sign_off stored it
+# under the ORIGINAL key and put the permId only into _broker_order_ids, a set.
+# pending_orders() hands out the VALUE and _consider looks it up by KEY. Fixed by
+# ALIASING under both ids, never moving - the journal, blotter and decision
+# record all hold the id the order was created with. And the try, which wrapped
+# the WHOLE for loop so one bad order ended the sweep, is now inside it.
+#
+# ⚠️ WHY NO TEST CAUGHT IT: MockBroker.place_order never varies order_id. The
+# fixture was friendlier than production - item 22's lesson. And the first
+# version of the new invariant test PASSED VACUOUSLY, because MockBroker fills
+# instantly and pending_orders() excludes `filled`, so it iterated an empty list.
+#
+# THE EXCURSION NOW INCLUDES THE EXIT. Measured on the PNI.AX stop-out, the first
+# trade this system ever produced with mae_r populated and the field was wrong:
+# worst_price 16.9979 against a 15.56 exit, mae_r -0.633 against gross -1.614.
+# _close_against_lots never touched worst/best, so a broker-side stop filling at
+# a price no tick carried was invisible - and the error ran in the dangerous
+# direction, making a gapped stop look milder than it was, on exactly the case
+# M44 exists to measure. min/max, never assignment, with a control.
+#
+# ITEM 56's TRANSMIT LINE now carries both ids. It logged only the app's UUID, so
+# the permId every execution later arrives under appeared nowhere and a session
+# could not be joined to its executions.
+#
+# NOT FIXED, and recorded as such. Defect B: reconciliation counts an order's
+# SIZE as tracked the instant the broker accepts (oms.py:861), so a 45-second
+# market order trips the kill switch on a 9-second-old partial. Order carries no
+# executed quantity, so the fix is a broker-contract change across three adapters
+# feeding the halt rail - M147's rule, both halves or neither. Defect C: the
+# orphan scan double-counted a fresh position's OCA legs; a power cut narrowed it
+# to the app's IN-SESSION view of an order it placed, since a fresh read is
+# clean. describe() now prints the group key so the next occurrence measures it
+# instead of needing my hypothesis.
+MILESTONE = "M159"
 
 _UNKNOWN = "unknown"
 
