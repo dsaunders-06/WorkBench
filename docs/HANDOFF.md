@@ -625,6 +625,30 @@ is not a durable one, and **any market order that outlives the poll gap will do
 this every time.** Reconciliation needs to know an order is still working before
 calling the difference a mismatch.
 
+### ✅ DEFECT C — NARROWED BY A POWER CUT, 31 August 13:37
+
+A power outage forced an unplanned restart, which produced a before/after nobody
+could have staged:
+
+    10:30-13:25 (running)  RESTING ORDER SCAN: 20 legs / 10 symbols,
+                           1 symbol/side divergence(s) unjustified
+    13:38 (fresh start)    RESTING ORDER SCAN: 20 legs / 10 symbols,
+                           nothing unjustified
+
+**Same twenty legs. Same OCA groups. Same positions.** Clean on a fresh read.
+
+**So the scan logic is SOUND.** `_netted` takes the MAX within an OCA group and
+the SUM across groups, and it did exactly that once the app read the orders
+afresh. What differs is the app's **in-session view** of an order it placed
+during that session: the JHX legs lacked the OCA group the fresh read has.
+
+⚠️ **NARROWED, NOT PROVEN.** Which call, which field, and at what point the
+group appears are all still unknown. M159's group-key in `describe()` settles it
+on the next occurrence. Do not "fix" this from the narrowing alone.
+
+**Operationally, though, this is now usable:** the false orphan affects only
+orders placed during a RUNNING session, and it **self-heals on restart**.
+
 ### ⚠️ DEFECT C — the orphan scan double-counts OCA legs on a NEW position
 
     10:35:15  RESTING ORDER ORPHAN: JHX.AX SELL resting=2194 justified=1097 excess=1097
