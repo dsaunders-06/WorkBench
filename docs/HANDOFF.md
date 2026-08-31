@@ -42,10 +42,10 @@ source.
 | | |
 |---|---|
 | Deployed build | **M159 (`e4987f9`)**, installed 31 August 16:31, SHA256 `A077BE40…55C3`, signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-16ce8e6-20260831-1631` (contains M158). ⚠️ **NOT READ BACK — never launched.** Tomorrow's launch at the bell is the read-back. Carries M159's three fixes: `_orders` aliasing, the excursion including the exit, both ids on the transmit line, and the orphan-scan group key. Previous: M158 (read back 3×), M157, M156, M155, M154, M153, M152 |
-| Repository HEAD | **Level with the deployed build.** `handoff_state.py` derives the gap; do not read a number from here |
-| Deploy gap | **ZERO.** `DEPLOYED` reads `e4987f9` and so does HEAD, recorded by the script only after the installed copy verified |
+| Repository HEAD | ⚠️ **AHEAD by M160**, built and NOT deployed. `handoff_state.py` derives the gap |
+| Deploy gap | ⚠️ **M160 NOT DEPLOYED.** `DEPLOYED` reads `e4987f9` (M159), which is installed and itself NOT YET READ BACK - it has never launched. Tomorrow's launch reads back M159; M160 needs its own build and deploy |
 | Pushed | ✅ **LEVEL with `origin` at `0167399`.** The 27 August hold was lifted on 30 August and 74 commits went up in ONE push. ⚠️ **CI is STILL at the billing wall** — that push's run died in 2s with zero steps, *"the job was not started because recent account payments have failed or your spending limit needs to be increased"*. **The allowance resets ~1 September.** Until then a push backs work up, costs no Actions minutes (a job that never starts bills nothing) and emails a failure while verifying nothing. After the reset, batch pushes: one push is one run, ~8.6 minutes of 2,000 at `windows-latest`'s 2× multiplier |
-| Suite | **2,984 passed, 26 skipped** (3,010 collected). ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY - `black --check` exits 0 while printing "1 file would be reformatted", so `&&` hides a failure |
+| Suite | **2,993 passed, 26 skipped** (3,019 collected). ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY - `black --check` exits 0 while printing "1 file would be reformatted", so `&&` hides a failure |
 | Watchlist | **94 ASX megacaps + STW.AX** |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **TEN POSITIONS, 20 resting legs, all protected** - A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW. **JHX.AX 1,097 @ 41.9554 entered 31 Aug 10:30** (17 executions, bracketed LMT 46.01 / STP 39.39, OCA-linked). **PNI.AX stopped out 31 Aug 10:00 at 15.56, -7,170.79 net, -1.6455R** - gapped 0.90 through a 16.46 stop. Aggregate risk-at-stop was 3.992% at 9 positions; re-measure, the book is 10 again |
@@ -587,7 +587,7 @@ stalled, repeating every 60s. It does not touch resting protection.
 (nothing holding the old id then breaks), AND move the `try` INSIDE the loop so
 one bad order cannot starve the rest.
 
-### ⚠️ DEFECT B — DIAGNOSED, DELIBERATELY NOT FIXED
+### ✅ DEFECT B — FIXED, M160 (31 August). Was: diagnosed, deliberately not fixed
 
 **Root cause found, `oms.py:861`:**
 
@@ -634,7 +634,32 @@ only the first would be worse than the bug."* A contract change across three
 adapters, into the rail that halts trading, taken mid-session under time
 pressure, is the combination this project keeps paying for.
 
-**The shape it wants:** a divergence should be expected up to the unfilled
+✅ **FIXED IN M160.** `check_reconciliation` subtracts the unfilled remainder
+of working BUY orders, read from the broker's own `open_orders()`:
+`1097 - 378 - 719 == 0`.
+
+**No contract change was needed, and the earlier claim that one was is
+corrected.** `RestingOrder.quantity` **is** `orderStatus.remaining`, and
+`check_resting_orders` already fetches it in the same monitor cycle. The number
+was in hand in the same SECOND the switch tripped.
+
+⚠️ **BUYS ONLY. The symmetric version would have broken the book.** The twenty
+resting protective legs are working SELL orders whose remaining is the full
+position - BOQ's is 13,586 - but a protective stop returns early at sign-off and
+never touches `_filled_quantities`. Subtracting sell remainders would invent a
+13,586-share tolerance on a symbol that agrees perfectly. Planted at both layers.
+
+⚠️ **THE TEETH WERE SEEN TO BITE.** Sabotaging the tolerance into a blanket skip
+left EIGHT of nine tests green; only the larger-gap test caught it.
+
+**No evidence means no tolerance** - no `open_orders()`, or a call that raises,
+and the rail behaves exactly as before.
+
+**Still true, and still not done:** an executed quantity on `Order` would fix
+the root, but alone it under-counts at sign-off and would trip the rail the
+other way. Not needed for this defect.
+
+**The shape it wanted, kept for the record:** a divergence should be expected up to the unfilled
 remainder of a working order for that symbol, and still trip beyond it. At
 10:30:15 the gap was 719 and the working remainder was 719 — expected. With no
 working order, a 719 gap must still halt. That keeps the rail's teeth.

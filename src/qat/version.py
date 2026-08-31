@@ -1282,7 +1282,34 @@ from qat.domain.display_dates import format_display_date
 # to the app's IN-SESSION view of an order it placed, since a fresh read is
 # clean. describe() now prints the group key so the next occurrence measures it
 # instead of needing my hypothesis.
-MILESTONE = "M159"
+# ---------------------------------------------------------------------------
+# M160 - an order still filling is not a divergence.
+#
+# Defect B. The reconciliation poll landed NINE SECONDS into a forty-five-second
+# fill and halted trading on "JHX.AX tracked=1097 broker=378". sign_off books
+# filled.quantity - the ORDER'S SIZE, not what executed - so the app counts the
+# whole order the instant the broker accepts it while the broker reports only
+# what has executed.
+#
+# check_reconciliation now subtracts the unfilled remainder of working BUY
+# orders, read from the broker's own open_orders(). 1097 - 378 - 719 == 0. NO
+# CONTRACT CHANGE was needed: RestingOrder.quantity IS orderStatus.remaining and
+# the resting scan already fetches it in the same cycle - the number sat beside
+# the mismatch in the same second, in the same scan.
+#
+# ⚠️ BUYS ONLY. The symmetric version would have been a serious bug: the resting
+# protective legs are working SELL orders carrying the full position, but a
+# protective stop returns early at sign-off and never touches
+# _filled_quantities, so subtracting them invents a 13,586-share tolerance on a
+# symbol that agrees perfectly. Planted at both layers.
+#
+# ⚠️ THE TEETH WERE SEEN TO BITE: sabotaged into a blanket skip, eight of nine
+# tests stayed green and only the larger-gap test caught it.
+#
+# No evidence means NO tolerance - no open_orders(), or a call that raises, and
+# the rail behaves exactly as before. A rail that loses its evidence gets
+# stricter, not laxer.
+MILESTONE = "M160"
 
 _UNKNOWN = "unknown"
 
