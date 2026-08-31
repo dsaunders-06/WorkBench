@@ -599,7 +599,35 @@ the broker accepts, whatever has actually filled.
 
 ⚠️ **`Order` has NO executed-quantity field** — only `quantity` and
 `filled_price`. Fixing this properly means adding one to the broker contract and
-populating it in all three adapters, feeding the kill-switch rail.
+populating it wherever `place_order` is implemented, feeding the kill-switch rail.
+
+⚠️ **AND THAT COST WAS OVERSTATED, corrected 31 August.** The figure "three
+adapters" was asserted without counting: there are FOUR implementations of
+`place_order` - `ib_adapter`, `mock_broker`, `simulated_broker` and
+`alpaca_adapter`. **Alpaca is dead for this system** - the app runs ASX through
+IBKR and preflight refuses `broker=alpaca` off a US market - so counting it as
+live adapter work inflated the cost of an option that was already being argued
+against. Do not cite Alpaca as a cost or a constraint; item 13 keeps that code
+only as the US era's evidence trail.
+
+⚠️ **A SMALLER ROUTE EXISTS AND NEEDS NO CONTRACT CHANGE.** `open_orders()` is
+already on the adapter protocol and implemented in `IBAdapter`, and
+`RestingOrder.quantity` is `orderStatus.remaining` - the broker's own unfilled
+remainder. `check_resting_orders` already fetches it in the same monitor cycle
+as `check_reconciliation`.
+
+**Today's log proves the number was already in hand at the moment it tripped:**
+
+    10:30:15  RESTING ORDER ORPHAN: JHX.AX BUY resting=719 justified=0 excess=719
+    10:30:15  Broker reconciliation mismatch: JHX.AX tracked=1097 broker=378
+
+The gap was 719 and the working buy's remainder was 719, in the same second.
+
+⚠️ **And the contract change ALONE would make this WORSE, not better.** At
+sign-off the executed quantity is zero or partial, so tracked would UNDER-count
+and reconciliation would trip the other way once the order completed
+(`tracked=378 broker=1097`). It only works alongside a stream that updates
+tracked as each execution arrives - a far larger machine, into the halt rail.
 
 **NOT DONE, and the reason is M147's:** *"the fix wants BOTH halves, and shipping
 only the first would be worse than the bug."* A contract change across three

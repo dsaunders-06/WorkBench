@@ -1273,8 +1273,11 @@ from qat.domain.display_dates import format_display_date
 # NOT FIXED, and recorded as such. Defect B: reconciliation counts an order's
 # SIZE as tracked the instant the broker accepts (oms.py:861), so a 45-second
 # market order trips the kill switch on a 9-second-old partial. Order carries no
-# executed quantity, so the fix is a broker-contract change across three adapters
-# feeding the halt rail - M147's rule, both halves or neither. Defect C: the
+# executed quantity. ⚠️ That cost was OVERSTATED and the figure was never counted:
+# there are FOUR place_order implementations, and one of them is Alpaca, which is
+# dead for this system. A smaller route needs no contract change at all -
+# open_orders() already exposes the broker's unfilled remainder, and the resting
+# scan was holding the exact number (719) in the same second the switch tripped. Defect C: the
 # orphan scan double-counted a fresh position's OCA legs; a power cut narrowed it
 # to the app's IN-SESSION view of an order it placed, since a fresh read is
 # clean. describe() now prints the group key so the next occurrence measures it
