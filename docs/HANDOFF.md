@@ -629,6 +629,64 @@ the same late resolution is what causes Defect A.
 **Item 58 remains unexercised**: only one entry fired, so no two entries have
 seen each other in one cycle.
 
+## ✅ 31 AUGUST: M43 ANSWERED, AND A BIGGER FINDING BEHIND IT
+
+**Measured at 10:59 AEST with the ASX in CONTINUOUS TRADING**, holding a
+STREAMING delayed subscription (`marketDataType=3`) for twenty seconds, not a
+snapshot:
+
+    BHP.AX  last=66.515  bid=66.51  ask=66.52  high=66.74  low=66.18  open=66.68
+            volume=495,809      halted=nan      delayedHalted=nan
+    CBA.AX  last=159.31  bid=159.29   |   SUN.AX  last=18.705  bid=18.7
+
+### ❌ M43 HAS NO FEED. Do not design detection against the flag.
+
+**A full live quote arrives, and the halt fields are the ONLY ones that never
+populate.** That removes the confound the 28 August measurement could not:
+"nothing is arriving" is now excluded, because everything except `halted` is.
+
+By item 5's own rule - *"if it stays `nan`, it does not, and M43 is M39's shape"*
+- this is the answer. What remains is BEHAVIOURAL detection: a symbol that stops
+ticking while its peers keep ticking. That is a heuristic, not a report, and it
+collides with the staleness rail, which already treats a silent symbol as
+excluded rather than halted.
+
+### ⚠️ THE INSTRUMENT WAS LYING, and it nearly hid the result
+
+`probe_halts.py` ended with an unconditional `print` reading *"The market is
+SHUT"*. **It was never a session check.** Written on 28 August when the market
+genuinely was shut, it printed unchanged at 10:57 on 31 August with the ASX
+trading - and it is what made the first re-run look inconclusive.
+
+Same shape as `session_check.ps1`'s "the aggregate cap is breached", corrected
+the night before: **a statement true when written, surviving into a context where
+it is false.** Both were caught by checking the claim against the world rather
+than reading it. The line is now replaced by the measurement, and
+`scripts/probe_halts_streaming.py` holds the streaming test so a snapshot is
+never mistaken for the feed again.
+
+### ✅ THE BIGGER FINDING: IBKR's DELAYED FEED STREAMS A FULL ASX QUOTE
+
+`last`, `bid`, `ask`, `high`, `low`, `open`, `volume` - live, streaming, on the
+paper account, with **no market-data subscription**.
+
+⚠️ **This changes what item 33's "deeper fix" is worth.** That item says: *"The
+deeper fix is a feed that is not 20 minutes late at all. IBKR is already
+connected, already authenticated, and already serving positions and orders - it
+is the obvious candidate, and the reason yfinance is still the price source is
+history rather than a decision."*
+
+**That is now MEASURED rather than assumed.** The app runs on yfinance: ~20
+minutes late, polled every 60s, structurally blind from the bell to ~10:21 - a
+blind window observed again this morning, with M119 backing off at 10:04:28 and
+recovering at 10:20:37. IBKR was streaming a live quote the whole time.
+
+⚠️ **NOT a decision, and deliberately not made here.** What is established is
+that the candidate feed exists and delivers. What is NOT established: its true
+delay, its coverage across all 94 symbols, its rate limits, and what it does at
+the auction. Those want their own measurement before any migration - M39 and M43
+are both cases of a design built on a feed nobody measured first.
+
 ## OUTSTANDING, IN ORDER
 
 **One list.** It used to be two: this file's, and section 4 of

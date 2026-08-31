@@ -78,10 +78,28 @@ async def main() -> int:
         ib.disconnect()
 
     print(
-        "\n⚠️ The market is SHUT. A halted symbol and a closed market may look the same "
-        "here, so this establishes only whether the FIELD exists and is populated - not "
-        "whether it distinguishes a halt. That needs an open market, and ideally a real "
-        "halted symbol."
+        "\n⚠️ A SNAPSHOT ALONE CANNOT CONCLUDE. `reqTickers` is a snapshot, and 'the "
+        "snapshot did not carry it' is not 'the feed does not provide it'. Hold a "
+        "STREAMING subscription before deciding."
+    )
+    print(
+        "\n✅ ANSWERED 31 August 2026, 10:59 AEST, ASX in CONTINUOUS TRADING, with a\n"
+        "   streaming delayed subscription (marketDataType=3) held for 20 seconds:\n\n"
+        "     BHP.AX  last=66.515 bid=66.51 ask=66.52 high=66.74 low=66.18 open=66.68\n"
+        "             volume=495,809      halted=nan      delayedHalted=nan\n\n"
+        "   A FULL LIVE QUOTE ARRIVES, and the halt fields are the ONLY ones that never\n"
+        "   populate. The flag is not served to this account, so M43 CANNOT be built on\n"
+        "   it - M39's shape. What remains is BEHAVIOURAL detection, a heuristic rather\n"
+        "   than a report, and it collides with the staleness rail.\n\n"
+        "   ⚠️ THE BIGGER FINDING: IBKR's DELAYED feed STREAMS last/bid/ask/high/low/\n"
+        "   open/volume for ASX. That is the 'deeper fix' item 33 names for the 20-minute\n"
+        "   yfinance blind window - now measured rather than assumed."
+    )
+    print(
+        "\n⚠️ The line that used to print here said 'The market is SHUT' - HARDCODED, not\n"
+        "   a session check. It was true on 28 August and printed unchanged at 10:57 on\n"
+        "   31 August with the ASX in continuous trading, masking the result above. A\n"
+        "   statement written once, surviving into a context where it is false."
     )
     return 0
 
