@@ -1136,6 +1136,25 @@ class TradeLedger:
                 )
                 return
             matched = min(remaining, lot.quantity)
+            # ⚠️ THE EXIT IS PART OF THE EXCURSION (31 August). worst/best were
+            # only ever updated by `_on_price` from a market tick, so a
+            # broker-side stop filling at a price the app never saw as a tick
+            # was invisible to MAE. Measured on the PNI.AX stop-out - the first
+            # trade this system ever produced with `mae_r` populated:
+            #
+            #   entry 17.9258  exit 15.56  r_multiple -1.6455
+            #   worst_price 16.9979  ->  mae_r -0.633
+            #
+            # `worst_price` HIGHER than the exit. The trade reached its own exit
+            # price by definition, so a loser's MAE can never be less severe
+            # than its realised R - and the error ran in the dangerous
+            # direction, making a gapped stop look milder than it was, on
+            # exactly the case M44 exists to measure.
+            #
+            # min/max, never assignment: a genuinely worse tick the app DID see
+            # must still win.
+            exit_worst = min(lot.worst_price, event.price) if lot.worst_price else event.price
+            exit_best = max(lot.best_price, event.price) if lot.best_price else event.price
             trade = ClosedTrade(
                 symbol=event.symbol,
                 # The ENTRY's strategy, not the exit's. A stop-loss sweep or a
@@ -1156,8 +1175,8 @@ class TradeLedger:
                 exposure_scalar=lot.exposure_scalar,
                 exit_reason=event.exit_reason,
                 reference_price=lot.reference_price,
-                worst_price=lot.worst_price,
-                best_price=lot.best_price,
+                worst_price=exit_worst,
+                best_price=exit_best,
                 earnings_at_entry=lot.earnings_at_entry,
                 # The SELL's id, not the lot's - this is what a later exit-price
                 # correction targets (M71). `OpenLot.order_id` answers a
@@ -1190,8 +1209,11 @@ class TradeLedger:
                     regime_probability=lot.regime_probability,
                     exposure_scalar=lot.exposure_scalar,
                     reference_price=lot.reference_price,
-                    worst_price=lot.worst_price,
-                    best_price=lot.best_price,
+                    # The residual lot keeps the folded excursion too: this exit
+                    # happened while it was held, so it belongs to whatever
+                    # closes the remainder later.
+                    worst_price=exit_worst,
+                    best_price=exit_best,
                 )
 
         if remaining > 1e-9:
