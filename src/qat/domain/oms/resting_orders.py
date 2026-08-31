@@ -83,9 +83,22 @@ class SymbolOrderDivergence:
     def describe(self) -> str:
         """Every leg, individually. "Sixteen orphaned legs" was established by
         hand on 24 August and should have been one log line."""
+        # ⚠️ THE GROUP KEY IS PRINTED (31 August). `_netted` takes the MAX within
+        # an OCA group and the SUM across groups, so two bracket legs sharing a
+        # group net to one position's worth. On 31 August a freshly entered
+        # JHX.AX bracket reported resting=2194 against justified=1097 - exactly
+        # 2x, so its two legs were NOT grouped - while the nine adopted
+        # positions with identical shapes read clean, and a read-only probe
+        # moments later showed BOTH legs carrying oca=1031062661.
+        #
+        # The cause is NOT established, and this line is why the next occurrence
+        # will not need a hypothesis: it says whether the legs grouped and under
+        # what key. Guessing here is how M39 was designed against a feed that
+        # did not exist.
         legs = "; ".join(
             f"{leg.order_id} {leg.side} {leg.order_type} {leg.quantity:g}"
-            f"@{leg.stop_price or leg.limit_price or 0:g} (client {leg.owner_client_id})"
+            f"@{leg.stop_price or leg.limit_price or 0:g} (client {leg.owner_client_id}"
+            f", group {_group_key(leg)})"
             for leg in self.legs
         )
         return (

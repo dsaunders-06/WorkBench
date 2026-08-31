@@ -871,8 +871,16 @@ class OMS:
             self._position_stops.pop(filled.symbol, None)
         self._record(filled, "signed_off", "transmitted to the broker", operator)
         logger.info(
-            "Order signed off and transmitted: order=%s operator=%s symbol=%s qty=%s",
+            # ⚠️ BOTH IDS (item 56, 31 August). This line carried only the app's
+            # own id, so every transmit back to 1 August logged a UUID and the
+            # broker-native permId - the id every execution, modify and cancel
+            # later arrives under - appeared nowhere. Reading a session could
+            # not join a transmit to its executions. `broker=` is the app's id
+            # again when the permId has not arrived yet, which is itself worth
+            # seeing rather than hiding.
+            "Order signed off and transmitted: order=%s broker=%s operator=%s symbol=%s qty=%s",
             order_id,
+            filled.order_id,
             operator,
             filled.symbol,
             filled.quantity,

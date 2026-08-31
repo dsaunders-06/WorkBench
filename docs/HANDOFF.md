@@ -587,7 +587,31 @@ stalled, repeating every 60s. It does not touch resting protection.
 (nothing holding the old id then breaks), AND move the `try` INSIDE the loop so
 one bad order cannot starve the rest.
 
-### ⚠️ DEFECT B — reconciliation races a partial fill and trips the kill switch
+### ⚠️ DEFECT B — DIAGNOSED, DELIBERATELY NOT FIXED
+
+**Root cause found, `oms.py:861`:**
+
+    signed_qty = filled.quantity if filled.side == "buy" else -filled.quantity
+
+`filled` is the ORDER the broker returned, and `.quantity` is the **order's
+size**, not the amount executed. So the app records the full 1,097 the instant
+the broker accepts, whatever has actually filled.
+
+⚠️ **`Order` has NO executed-quantity field** — only `quantity` and
+`filled_price`. Fixing this properly means adding one to the broker contract and
+populating it in all three adapters, feeding the kill-switch rail.
+
+**NOT DONE, and the reason is M147's:** *"the fix wants BOTH halves, and shipping
+only the first would be worse than the bug."* A contract change across three
+adapters, into the rail that halts trading, taken mid-session under time
+pressure, is the combination this project keeps paying for.
+
+**The shape it wants:** a divergence should be expected up to the unfilled
+remainder of a working order for that symbol, and still trip beyond it. At
+10:30:15 the gap was 719 and the working remainder was 719 — expected. With no
+working order, a 719 gap must still halt. That keeps the rail's teeth.
+
+
 
     10:30:15  Broker reconciliation mismatch: JHX.AX tracked=1097 broker=378
     10:30:15  KILL-SWITCH TRIPPED
