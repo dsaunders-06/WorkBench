@@ -1962,6 +1962,49 @@ class OMS:
             return "stop"
         return "target"
 
+    async def _in_flight_buy_remainders(self) -> dict[str, float]:
+        """How much of each working BUY order the broker has NOT yet filled.
+
+        `sign_off` books `filled.quantity` - the ORDER'S SIZE, not what executed
+        - so between acceptance and completion this app's holdings view runs
+        ahead of the broker's by exactly this amount. Measured live on
+        31 August: the poll landed nine seconds into a forty-five-second fill
+        and halted trading on `tracked=1097 broker=378`, while the resting scan
+        in the very same second already held `JHX.AX BUY resting=719`.
+
+        ⚠️ **BUYS ONLY, and this is load-bearing.** The resting protective legs
+        are working SELL orders whose remaining is the full position - BOQ's is
+        13,586 - but a protective stop returns early at sign-off and never
+        touches `_filled_quantities`; the `return filled` sits two lines above
+        `signed_qty`. Subtracting their remainders would invent a tolerance of
+        the whole position on a symbol with no divergence at all, and turn a
+        clean book into a halt. Buys always inflate tracked; protective sells
+        never do.
+
+        ⚠️ **No evidence means NO tolerance.** An adapter without
+        `open_orders()`, or one whose call fails, yields an empty map and the
+        rail behaves exactly as it did before. A rail that loses its evidence
+        must get stricter, not laxer.
+        """
+        source = getattr(self.broker, "open_orders", None)
+        if source is None:
+            return {}
+        try:
+            orders = await source()
+        except Exception:
+            logger.exception(
+                "Could not read open orders for the reconciliation tolerance - "
+                "judging on the raw difference, which is the strict direction"
+            )
+            return {}
+
+        remainders: dict[str, float] = {}
+        for order in orders:
+            if order.side != "buy" or order.status not in WORKING_STATUSES:
+                continue
+            remainders[order.symbol] = remainders.get(order.symbol, 0.0) + float(order.quantity)
+        return remainders
+
     async def check_reconciliation(self) -> bool:
         """Compares OMS-tracked filled quantities against broker-reported
         positions; a mismatch trips the kill-switch (spec §I). Returns True
@@ -1990,11 +2033,26 @@ class OMS:
         # different ways and only one of them was ever being watched.
         await self.verify_position_stops()
         broker_positions = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
+        # Defect B, 31 August. An order still filling is not a divergence: this
+        # app books the whole order at sign-off while the broker reports only
+        # what has executed, so the two legitimately differ by the unfilled
+        # remainder until the order completes. Subtracting it EXPLAINS that gap
+        # without blinding the rail - anything beyond the remainder still halts,
+        # and with no working buy the tolerance is zero.
+        in_flight = await self._in_flight_buy_remainders()
         symbols = set(self._filled_quantities) | set(broker_positions)
         divergent = {
+            # ⚠️ The pair stays RAW - what each side actually holds. The
+            # tolerance explains the difference; it must not rewrite the numbers
+            # the log line reports, or the record would describe a book nobody
+            # has.
             symbol: (self._filled_quantities.get(symbol, 0.0), broker_positions.get(symbol, 0.0))
             for symbol in symbols
-            if abs(self._filled_quantities.get(symbol, 0.0) - broker_positions.get(symbol, 0.0))
+            if abs(
+                self._filled_quantities.get(symbol, 0.0)
+                - broker_positions.get(symbol, 0.0)
+                - in_flight.get(symbol, 0.0)
+            )
             > 1e-6
         }
         explained = {
