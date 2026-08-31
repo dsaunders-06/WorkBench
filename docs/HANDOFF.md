@@ -535,6 +535,100 @@ Entries become possible for the first time since 24 August. That unblocks
 M158's gate (which a 10-of-10 book never reaches), item 56's numeric permId and
 item 58's two-entries-in-one-cycle.
 
+## ⚠️ 31 AUGUST: THE FIRST APP-TRANSMITTED ENTRY, AND THE FOUR THINGS IT BROKE
+
+**The first entry this system has placed since 24 August**, and the first ever to
+exercise item 56's identity bridge. The entry itself SUCCEEDED. Four defects
+surfaced behind it, three of them new.
+
+### ✅ What worked, measured from the broker
+
+    10:30:07  Autonomy signed off order 9a8d... : buy 1097 JHX.AX
+    10:30:06 - 10:30:51   17 executions, cumQty 1,097, ~41.91-41.93
+    JHX 1,097 @ avgCost 41.9554
+    JHX SELL LMT 1,097 @46.01  Submitted     oca=1031062661
+    JHX SELL STP 1,097 @39.39  PreSubmitted  oca=1031062661
+
+Signal → gate → sign-off → transmit → 17 executions → full fill → **bracket
+placed and OCA-linked**. Ten positions, twenty legs, all protected.
+
+**M65's entry-price correction fired:** `ENTRY PRICE CORRECTED: JHX.AX filled at
+41.9185, announced at 41.9100 (+2.0 bps)`.
+
+**M158's gate was EXERCISED and ALLOWED it.** Zero `no price at all this session`
+refusals today — JHX had printed, so the gate let a legitimate entry through. ⚠️
+**It has been seen to ALLOW, never yet to REFUSE.** Half a confirmation: it does
+not false-positive; whether it actually blocks is still unproven live.
+
+### ⚠️ DEFECT A — `_orders` key and the order's own id diverge (item 56)
+
+    executor.py:127 retry_pending -> :147 _consider -> oms.py:964 get_order
+    KeyError: '1031062661'
+
+`oms.py:816-820`:
+
+    self._orders[order_id] = filled            # the app's ORIGINAL id
+    if filled.order_id:
+        self._broker_order_ids.add(str(filled.order_id))   # the permId, into a SET
+
+`place_order` returns an Order **re-identified with the broker's permId**
+(`ib_adapter.py:342-344`). The OMS stores that object under its ORIGINAL key and
+puts the permId only into `_broker_order_ids`. **`_orders` is never re-keyed**, so
+`_orders["<uuid>"] = Order(order_id="1031062661")`.
+
+`pending_orders()` iterates `.values()` and hands back that object; `_consider`
+then calls `get_order(order.order_id)`, a KEY lookup, which raises.
+
+⚠️ **The `try` wraps the WHOLE `for` loop**, so the sweep dies on the first such
+order and **every remaining pending order is skipped**. Autonomous execution is
+stalled, repeating every 60s. It does not touch resting protection.
+
+**Fix wants both halves:** alias `_orders` under the new id as well as the old
+(nothing holding the old id then breaks), AND move the `try` INSIDE the loop so
+one bad order cannot starve the rest.
+
+### ⚠️ DEFECT B — reconciliation races a partial fill and trips the kill switch
+
+    10:30:15  Broker reconciliation mismatch: JHX.AX tracked=1097 broker=378
+    10:30:15  KILL-SWITCH TRIPPED
+
+The fill ran **10:30:06 → 10:30:51**. The poll landed **9 seconds into a
+45-second market order**: the app counted the whole order as committed while the
+broker had filled 378 of 1,097.
+
+**The switch was not wrong** — that is a real instantaneous disagreement — but it
+is not a durable one, and **any market order that outlives the poll gap will do
+this every time.** Reconciliation needs to know an order is still working before
+calling the difference a mismatch.
+
+### ⚠️ DEFECT C — the orphan scan double-counts OCA legs on a NEW position
+
+    10:35:15  RESTING ORDER ORPHAN: JHX.AX SELL resting=2194 justified=1097 excess=1097
+    10:35:15  RESTING ORDER QUARANTINE on JHX.AX: 1097 shares of resting sell the
+              book does not justify (holds 1097)
+
+**The message contradicts itself**: the book does not justify 1,097 of resting
+sell, while holding 1,097. It is summing both OCA legs (1,097 + 1,097 = 2,194)
+against one position.
+
+⚠️ **ROOT CAUSE NOT ESTABLISHED, and it is recorded as unknown rather than
+guessed.** The other nine positions have identical LMT+STP OCA-linked shapes and
+reported `nothing unjustified` all morning, so the scan normally dedupes OCA
+siblings. What is different about a position entered THIS session has not been
+determined. Do not fix this from a call site — instrument it.
+
+### ⚠️ DEFECT D — item 56's stated check FAILED: the transmit line still carries a UUID
+
+    Order signed off and transmitted: order=9a8d057d6c9e44f399120bdecbf94bf2
+
+Item 56's check is *"the transmit line carries a NUMERIC permId, not a UUID"*.
+**It does not.** The permId is resolved LATER and reaches `_broker_order_ids` and
+the Order object, never the transmit line. So item 56 is **not** confirmed — and
+the same late resolution is what causes Defect A.
+
+**Item 58 remains unexercised**: only one entry fired, so no two entries have
+seen each other in one cycle.
+
 ## OUTSTANDING, IN ORDER
 
 **One list.** It used to be two: this file's, and section 4 of
