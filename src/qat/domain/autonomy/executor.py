@@ -122,11 +122,21 @@ class AutonomousExecutor:
         """
         if not self.settings.autonomy_enabled:
             return
-        try:
-            for order in self.oms.pending_orders():
+        # ⚠️ THE `try` IS INSIDE THE LOOP (31 August). It wrapped the whole
+        # `for`, so ONE order that raised ended the sweep and every order after
+        # it was silently skipped - measured live, where a single KeyError
+        # stalled autonomous execution entirely while logging only "will try
+        # again". One bad order must cost only that order.
+        for order in self.oms.pending_orders():
+            try:
                 await self._consider(order.order_id)
-        except Exception:  # noqa: BLE001 - a bad sweep must not end the loop
-            logger.exception("Retry of pending orders failed - will try again")
+            except Exception:  # noqa: BLE001 - a bad order must not end the sweep
+                logger.exception(
+                    "Retry failed for order %s (%s %s) - skipped, the sweep continues",
+                    order.order_id,
+                    order.side,
+                    order.symbol,
+                )
 
     async def _on_pending(self, event: OrderPendingSignoffEvent) -> None:
         # Cheapest possible early exit. In recommend mode - the default - this

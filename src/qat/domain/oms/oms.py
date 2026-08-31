@@ -815,6 +815,19 @@ class OMS:
         # is not a guard.
         self._transmitted.add(order_id)
         self._orders[order_id] = filled
+        # ⚠️ ALIASED under the broker's id as well (item 56, measured live on
+        # 31 August). `IBAdapter.place_order` returns an order RE-IDENTIFIED
+        # with the permId, and storing it under the original key alone left the
+        # dict key and the object's own `order_id` disagreeing. `pending_orders`
+        # hands out the VALUE, so every caller that then looked it up by
+        # `order.order_id` - `_consider` does exactly that - raised KeyError
+        # once a minute and stalled autonomous execution.
+        #
+        # ALIAS, never move: the journal, the blotter and the decision record
+        # all hold the id the order was created with, and re-keying would trade
+        # one KeyError for another.
+        if filled.order_id and str(filled.order_id) != order_id:
+            self._orders[str(filled.order_id)] = filled
         # Recorded BEFORE anything else, so an absorb running concurrently can
         # never see this fill as foreign.
         if filled.order_id:
