@@ -41,9 +41,9 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M159 (`e4987f9`)**, installed 31 August 16:31, SHA256 `A077BE40…55C3`, signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-16ce8e6-20260831-1631` (contains M158). ⚠️ **NOT READ BACK — never launched.** Tomorrow's launch at the bell is the read-back. Carries M159's three fixes: `_orders` aliasing, the excursion including the exit, both ids on the transmit line, and the orphan-scan group key. Previous: M158 (read back 3×), M157, M156, M155, M154, M153, M152 |
+| Deployed build | **M159 (`e4987f9`)**, installed 31 August 16:31, SHA256 `A077BE40…55C3`, signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-16ce8e6-20260831-1631` (contains M158). ✅ **READ BACK 1 September 08:34** off its own log: `Build: M159 (e4987f9, built 31/08/2026 16:10:30 AEST, packaged)`, ten positions adopted with 20 legs, zero ERROR/CRITICAL through startup, and **no kill-switch restore line — the 16:36 reset persisted across the restart.** ⚠️ **Only ONE of its four checks is settled** — see the 1 September section; the other three need market events that had not happened at launch. Previous: M158 (read back 3×), M157, M156, M155, M154, M153, M152 |
 | Repository HEAD | ⚠️ **AHEAD by M160**, built and NOT deployed. `handoff_state.py` derives the gap |
-| Deploy gap | ⚠️ **M160 NOT DEPLOYED.** `DEPLOYED` reads `e4987f9` (M159), which is installed and itself NOT YET READ BACK - it has never launched. Tomorrow's launch reads back M159; M160 needs its own build and deploy |
+| Deploy gap | ⚠️ **M160 NOT DEPLOYED.** `DEPLOYED` reads `e4987f9` (M159), now launched and partly read back. ⚠️ **Deploying M160 requires stopping the app** (the running process holds the exe), so it cannot happen mid-session without ending M159's read-back before three of its four checks have been exercised. **Deploy M160 after the close, not during.** M160's own read-back then needs an entry that fills across multiple executions - which needs the book below ten, which needs an exit |
 | Pushed | ✅ **LEVEL with `origin` at `0167399`.** The 27 August hold was lifted on 30 August and 74 commits went up in ONE push. ⚠️ **CI is STILL at the billing wall** — that push's run died in 2s with zero steps, *"the job was not started because recent account payments have failed or your spending limit needs to be increased"*. **The allowance resets ~1 September.** Until then a push backs work up, costs no Actions minutes (a job that never starts bills nothing) and emails a failure while verifying nothing. After the reset, batch pushes: one push is one run, ~8.6 minutes of 2,000 at `windows-latest`'s 2× multiplier |
 | Suite | **2,993 passed, 26 skipped** (3,019 collected). ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY - `black --check` exits 0 while printing "1 file would be reformatted", so `&&` hides a failure |
 | Watchlist | **94 ASX megacaps + STW.AX** |
@@ -872,6 +872,64 @@ slip in a new form.
 ⚠️ **`compare_axvi_feature.py` has identical slicing and would be wrong run
 today.** The control script now slices by DATE and REFUSES when the reconstructed
 range does not match the log.
+
+## ✅ 1 SEPTEMBER: M159 READ BACK, AND A PREDICTION IN THIS FILE WAS WRONG
+
+Launched 08:34:27, pre-open. **`Build: M159 (e4987f9, built 31/08/2026 16:10:30
+AEST, packaged)`** — read back off its own log, the installed exe hashing
+`A077BE40…55C3` with signature Valid.
+
+Startup carried **zero ERROR/CRITICAL**, ten positions adopted (20 legs, 10 of
+10 stopped), and — the thing worth naming — **no `KILL-SWITCH RESTORED` line.**
+The 31 August 16:36 reset survived the restart, so order flow is live and the
+position cap is the only gate.
+
+### ⚠️ 9 OF 10, NOT 10 OF 10 — and the handover's reason was a calendar assumption
+
+    Excursion backfilled from daily bars on 9 of 10 restored lot(s); 1 had no
+    bars after their entry day and start at the entry price
+
+The 31 August note predicted **10** here, reasoning that JHX read 9 only because
+it was entered that day. **That is right about yesterday and wrong about the
+mechanism.** `_excursion_since` needs a *bar* strictly after the entry day:
+
+    after = frame[pd.to_datetime(frame["ts"], utc=True) > entry_day...]
+
+Warm start seeded **300 daily bars ending 2026-08-31** — because at 08:35 the
+ASX had not opened and **1 September's bar does not exist yet.** JHX was entered
+31 August, so there is still no bar after its entry day.
+
+**Verified, not assumed:** `open_position_entries.json` puts the other nine at
+24–26 August and JHX alone on 31 August, so the "1" is JHX and the count is
+correct.
+
+⚠️ **The general form, which is the fourth calendar slip in this file:** a new
+calendar day is not a new bar. A bar exists once the market has traded, not once
+the date has changed. This one cost nothing because the line prints a COUNT and
+the count could be checked; had it printed "backfilled" with no number, the
+prediction would simply have been recorded as met.
+
+**It resolves itself:** a restart once JHX has a completed 1 September bar reads
+10 of 10. The understatement is confined to 31 August's post-entry range.
+
+### ⚠️ THREE OF THE FOUR CHECKS ARE GATED ON MARKET EVENTS, and were not exercised at launch
+
+| Check | Needs | State |
+|---|---|---|
+| Excursion 10-of-10 branch | a bar after entry day | ✅ settled — reads 9, correctly |
+| `order=<uuid> broker=<permId>` (Defect D, item 56) | an entry | ⏳ book is 10 of 10, at the cap |
+| `mae_r <= gross_r_multiple` (M157/M44) | a stop-out | ⏳ no exit yet |
+| Orphan scan's GROUP KEY (Defect C) | a **divergence**, not a clean scan | ⏳ 08:35 scan read *nothing unjustified* |
+
+⚠️ **The group key prints from `SymbolOrderDivergence.describe()` only** —
+`resting_orders.py:83`. A clean scan never prints it, and the 08:35 scan was
+clean, exactly as the 31 August power-cut restart was. **Defect C cannot be
+settled by a quiet session**; it needs a position entered while the app is
+running, which needs the book below ten, which needs an exit.
+
+**So all three remaining checks stand behind the same door: an exit, then an
+entry.** That is also M160's read-back condition. Do not deploy M160 over a
+session that is still the only instrument for M159.
 
 ## OUTSTANDING, IN ORDER
 
