@@ -475,6 +475,66 @@ replacing the 19 August measurement with today's. Restored with
 output path of a tool that gets re-run; the probe should write to a new dated
 file, or to the scratchpad.
 
+## ⚠️ 31 AUGUST: THE PNI STOP-OUT — three findings from one row
+
+**The first closed trade under M157**, and the first in this system's life to
+carry `mae_r` and `mfe_r`. It immediately proved one thing and broke another.
+
+    symbol PNI.AX  qty 2,973   entry 17.9258  stop 16.46  exit 15.56
+    exit_reason stop   net_pnl -7,170.79   r_multiple -1.6455
+    mae_r -0.633   mfe_r -0.087   worst_price 16.9979   best_price 17.7985
+
+### ✅ M147's absorb fix CONFIRMED on a real multi-execution order
+
+`verify_exit_on_the_wire.py`, same day:
+
+    executions 9   shares summed 2,973   IBKR final cumQty 2,973
+    ledger row qty 2973.0 exit_price 15.56   recorded - VWAP  -0.000000
+
+**Nine executions, ONE ledger row, full quantity.** That is exactly the shape
+that lost 179 of 183 executions on LOV. ⚠️ The tool says honestly that with ONE
+price across all nine, a blended average and a single price are the same number,
+so this cannot distinguish M147's cumulative-price half — that stays unproven.
+
+### ⚠️ NEW DEFECT: `mae_r` UNDERSTATES, and it does so on the case M44 exists for
+
+`worst_price` is **16.9979 — HIGHER than the exit price of 15.56.** MAE reports
+the trade went 0.63R against; it realised **−1.6455R**.
+
+**On a stop-out MAE cannot be less severe than the realised R.** That invariant
+is violated, and nothing checks it.
+
+**Root cause, read not guessed:** `_close_against_lots` never touches
+`worst_price`/`best_price`. The excursion is updated only by `_on_price` from a
+MarketDataEvent — so a broker-side stop filling at a price the app never sees as
+a tick is invisible to it. Here the exit landed at 10:00:13, inside the blind
+window, with the feed delivering nothing.
+
+**The fix is small — fold the exit price into worst/best when closing a lot —
+and the invariant is worth asserting in the same change:** for a losing trade,
+`mae_r <= r_multiple`. Not done mid-session; this is the trade ledger.
+
+⚠️ **This makes every `mae_r` M157 produces suspect in the same direction**, and
+the direction is the dangerous one: it makes trades look like they went less
+against than they did.
+
+### ⚠️ A SECOND DATA POINT FOR M44's CENTRAL WORRY, and it agrees with the first
+
+The stop was 16.46 and it filled at **15.56 — 0.90 through, −1.6455R on an
+intended −1R.** M44's only previous observation was CVS at 1.68R. **Two
+stop-outs, both about 1.6R.** If that is typical, every position is sized against
+an understated downside, which is precisely what item 7 warns about. Two is not a
+distribution, but two agreeing is worth more than one.
+
+`entry_slippage` is empty and always will be on this row: PNI opened 25 August,
+before M156 persisted `reference_price`.
+
+### The book is now NINE
+
+Entries become possible for the first time since 24 August. That unblocks
+M158's gate (which a 10-of-10 book never reaches), item 56's numeric permId and
+item 58's two-entries-in-one-cycle.
+
 ## OUTSTANDING, IN ORDER
 
 **One list.** It used to be two: this file's, and section 4 of
