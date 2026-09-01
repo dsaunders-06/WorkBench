@@ -89,7 +89,10 @@ def _unscaled_fit(matrix: np.ndarray) -> tuple[np.ndarray, dict[int, StateSignat
 
 
 def _label_and_scalar(
-    posterior: np.ndarray, signatures: dict[int, StateSignature], matrix: np.ndarray
+    posterior: np.ndarray,
+    signatures: dict[int, StateSignature],
+    matrix: np.ndarray,
+    gate: HysteresisGate | None = None,
 ) -> tuple[Regime, float]:
     """Mirrors the posterior -> probs -> label -> scalar path in
     engine.py's `_on_market_data` (RegimeFusion.compute, then
@@ -121,7 +124,18 @@ def _label_and_scalar(
         sma_200=0.0,
         sma_200_prev=0.0,
     )
-    label = HysteresisGate().update(probs)
+    # ⚠️ `gate` IS THE DIFFERENCE BETWEEN THIS AND PRODUCTION, and the default
+    # is the wrong one ON PURPOSE. A fresh gate per call takes the
+    # `_current_label is None` branch and returns the argmax immediately, so
+    # `margin=0.15` and `min_persistence=3` NEVER ENGAGE. The live engine builds
+    # ONE gate in `RegimeEngine.__init__` (engine.py:97) and keeps it for the
+    # session (engine.py:386).
+    #
+    # The default is preserved rather than corrected so that every figure taken
+    # through this function before 1 September 2026 stays reproducible - the old
+    # numbers are the control on this change. A caller wanting production's path
+    # passes ONE gate and reuses it across bars, in order.
+    label = (gate if gate is not None else HysteresisGate()).update(probs)
     scalar = exposure_scalar_for(label)
     return label, scalar
 
@@ -188,4 +202,11 @@ def main() -> None:
     )
 
 
-main()
+# ⚠️ GUARDED 1 September 2026. This was a bare `main()`, so `axvi_control.py` -
+# which imports `_label_and_scalar` from here - re-ran this entire report, two
+# HMM fits included, every time it started. Harmless to either script's numbers
+# and actively confusing to read: the standardisation report interleaved with
+# the control's own output, and on a failure the traceback landed in the middle
+# of it. Running this file directly is unchanged.
+if __name__ == "__main__":
+    main()

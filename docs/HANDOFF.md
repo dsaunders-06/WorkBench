@@ -861,7 +861,39 @@ on Milestone C's ablation percentages too: if adding *any* column moves the labe
 this much, an ablation percentage measures the model's fragility as much as the
 feature's contribution. **Not chased tonight, and recorded rather than acted on.**
 
-#### ⚠️ SCOPED 1 SEPTEMBER, AND THE MAGNITUDE IS IN DOUBT — see `docs/superpowers/specs/2026-09-01-regime-label-stability-scope.md`
+#### ✅ SCOPED AND TESTED 1 SEPTEMBER — THE FINDING SURVIVES. See `docs/superpowers/specs/2026-09-01-regime-label-stability-scope.md`
+
+**The doubt below was real, was tested, and did not hold.** `axvi_control.py` now
+runs both gate disciplines in one pass, so the 31 August figures are the control
+on the change:
+
+    FRESH gate per bar     29 baseline transitions   real 23.0%   shuffled 17.3% [0.0-85.3]   18/60 (30%)
+    ONE GATE across bars    8 baseline transitions   real 24.3%   shuffled 11.8% [0.0-85.3]   23/60 (38%)
+
+✅ Instrument intact — the fresh-gate block reproduces 31 August to the decimal.
+✅ The gate engages — baseline transitions fall **29 → 8** on the same 300 bars.
+❌ **The spread does NOT collapse: `shuffled` still spans [0.0 – 85.3].** By the
+rule written before the run, **the finding stands.**
+
+⚠️ **Hysteresis bought the MEDIAN, not the tail** (17.3% → 11.8%). A typical
+meaningless column now moves far fewer bars; the worst case is unchanged.
+Smoothing damps flip-flopping around a boundary and cannot damp a systematically
+different posterior path — an added column changes the FIT, not just the noise
+around it. That mechanism is inferred from the shape, not measured.
+
+⚠️ **And it makes Milestone B's rejection STRONGER: 30% → 38%.** On production's
+own label path ^AXVI is *less* distinguishable from noise. Do not misread the
+fall in control medians as separation — `real` barely moved (23.0 → 24.3) and the
+control distribution simply became more skewed.
+
+⚠️ **Still not production:** the engine refits every 20 bars; this harness fits
+once over the window. Identical in both blocks, so it cannot explain the
+difference between them, but neither block is the live path.
+
+**Task 2 (the eligibility path) is now the higher priority** — the label has
+hysteresis and is still moved this much; probability mass has none.
+
+##### The reading that prompted it, kept because it was right to check
 
 **The control measures a label path production never takes.**
 `compare_standardisation._label_and_scalar` builds a **fresh `HysteresisGate` on

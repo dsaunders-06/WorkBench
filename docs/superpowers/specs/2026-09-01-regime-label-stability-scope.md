@@ -84,7 +84,7 @@ SIDEWAYS 0.7, BEAR 0.5, HIGH_VOL 0.4, RECESSION 0.3.
 ⚠️ **Reading rules fixed HERE, before any number exists.** That is what rejected
 Milestone B and item 33, and it only works written down in advance.
 
-### Task 1 — carry ONE gate across bars, as production does
+### ✅ Task 1 — DONE, 1 September. THE FINDING SURVIVES.
 
 Build the gate once in `_labels_for` instead of per bar. Change nothing else.
 Re-run `axvi_control.py` unchanged otherwise.
@@ -95,7 +95,65 @@ Re-run `axvi_control.py` unchanged otherwise.
 > survives hysteresis, the finding stands as written and bears directly on
 > position sizing.
 
+`axvi_control.py` now runs BOTH disciplines in one pass, so **the old numbers
+are the control on the change**:
+
+    ==== FRESH gate per bar (every figure before 1 Sep 2026) ====
+    baseline label transitions : 29 over 300 bars
+    real ^AXVI z-score                 23.0%
+    shuffled (same values, no time)    17.3%   [0.0 - 85.3]
+    gaussian noise (same moments)      17.3%   [0.0 - 43.7]
+    controls reaching the real arm : 18 of 60 (30%)
+
+    ==== ONE GATE across bars (what RegimeEngine does) ====
+    baseline label transitions : 8 over 300 bars
+    real ^AXVI z-score                 24.3%
+    shuffled (same values, no time)    11.8%   [0.0 - 85.3]
+    gaussian noise (same moments)      11.0%   [0.0 - 42.3]
+    controls reaching the real arm : 23 of 60 (38%)
+
+✅ **THE INSTRUMENT IS INTACT.** The fresh-gate block reproduces 31 August to
+the decimal — 23.0%, 17.3%, 17.3%, 18 of 60. Nothing in the one-gate block is
+resting on a broken edit.
+
+✅ **THE GATE IS ENGAGING.** Baseline transitions fall **29 → 8** over the same
+300 bars. Hysteresis is doing real work, so this is not the same measurement
+under two names — the check that would have caught it was printed, not assumed.
+
+❌ **AND THE SPREAD DOES NOT COLLAPSE.** `shuffled` still spans
+**[0.0 – 85.3]**, an identical maximum; `noise` [0.0 – 42.3] against
+[0.0 – 43.7]. **By the rule written before the run, the finding STANDS.** A
+meaningless seventh column can still move the published label on five bars in
+six.
+
+⚠️ **WHAT HYSTERESIS ACTUALLY BOUGHT: the median, not the tail.** Control
+medians fall 17.3% → 11.8% / 11.0%, so a *typical* meaningless column now moves
+far fewer bars. The worst case is untouched. **Smoothing damps flip-flopping
+around a boundary; it cannot damp a systematically different posterior path** —
+and an added column changes the HMM fit itself, not just the noise around a
+stable fit. That mechanism is an inference from the shape of the result, not
+something this run measured.
+
+⚠️ **AND IT MAKES MILESTONE B's REJECTION STRONGER, NOT WEAKER.** Controls
+reaching the real arm go **18 of 60 (30%) → 23 of 60 (38%)**. On production's own
+label path ^AXVI is *less* distinguishable from noise, not more. Do not read the
+fall in control medians as "real now separates cleanly": `real` barely moved
+(23.0 → 24.3) while the control distribution became more skewed, and the p-value
+is the comparison that matters.
+
+⚠️ **A REMAINING UN-FAITHFULNESS, stated rather than papered over.** Production
+**refits every 20 bars** (`refit_interval_bars=20`); this harness fits ONCE over
+the whole window and predicts across it. So the posterior path still is not
+production's. That property is pre-existing and identical in both blocks, so it
+cannot be the source of the difference between them — but it does mean neither
+block is production, and Task 3 should carry the refit cadence if it is going to
+claim anything about live stability.
+
 ### Task 2 — measure the ELIGIBILITY path, which nothing smooths
+
+⚠️ **Task 1 RAISED this one's priority.** The label has hysteresis and is still
+moved on up to 85.3% of bars by a meaningless column. Eligibility has no
+smoothing at all.
 
 Record the percentage of bars on which `mass >= 0.5` flips for the deployed
 strategy (`swing`), across the same arms.

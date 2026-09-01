@@ -68,6 +68,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "research"))
 
 from compare_standardisation import _label_and_scalar  # noqa: E402
 
+from qat.domain.regime_engine.fusion import HysteresisGate  # noqa: E402
 from qat.domain.regime_engine.hmm_core import HMMRegimeModel  # noqa: E402
 
 _N_STATES = 4
@@ -80,23 +81,121 @@ _MATRIX_FIRST_DAY = "2025-06-23"
 _MATRIX_LAST_DAY = "2026-08-26"
 
 
-def _labels_for(matrix: np.ndarray, six: np.ndarray) -> list[str]:
-    """Fit an arm and carry it through the real fusion path, bar by bar."""
+def _labels_for(matrix: np.ndarray, six: np.ndarray, one_gate: bool = False) -> list[str]:
+    """Fit an arm and carry it through the real fusion path, bar by bar.
+
+    ⚠️ `one_gate` DECIDES WHICH LABEL IS BEING MEASURED, and the default is the
+    one production does NOT use.
+
+    * `one_gate=False` - a fresh `HysteresisGate` per bar, so `update()` takes
+      the `_current_label is None` branch and returns the argmax. `margin=0.15`
+      and `min_persistence=3` never engage. **This is what every figure before
+      1 September 2026 was taken on**, and it is kept as the default so those
+      figures stay reproducible.
+    * `one_gate=True` - ONE gate carried across the bars in order, which is what
+      `RegimeEngine` does (`engine.py:97` builds it, `engine.py:386` updates it).
+      A challenger must beat the incumbent by 0.15 for three consecutive bars.
+
+    Each call builds its OWN gate. Sharing one between the baseline and an arm
+    would let the baseline's history decide the arm's labels, which is not a
+    control, it is a leak.
+    """
     model = HMMRegimeModel(n_states=_N_STATES)
     model.fit(matrix)
     posteriors = model.predict_proba(matrix)
     sigs = model.state_signatures
+    gate = HysteresisGate() if one_gate else None
     out = []
     for i in range(len(matrix)):
         # The six-column matrix for the fusion path in EVERY arm: those columns
         # are identical across arms, so the only difference is the HMM itself.
-        label, _ = _label_and_scalar(posteriors[i], sigs, six[: i + 1])
+        label, _ = _label_and_scalar(posteriors[i], sigs, six[: i + 1], gate)
         out.append(label.value)
     return out
 
 
 def _pct_moved(baseline: list[str], arm: list[str]) -> float:
     return 100.0 * sum(1 for a, b in zip(baseline, arm, strict=True) if a != b) / len(baseline)
+
+
+def _transitions(labels: list[str]) -> int:
+    """How many times the label CHANGES down the series.
+
+    ⚠️ This is the rail-bite check, not decoration. If carrying one gate across
+    the bars produced the same transition count as a fresh gate per bar, the
+    gate would not be engaging and every number below it would be measuring the
+    same thing twice under two names. Print it, do not assume it.
+    """
+    # `labels[:-1]` rather than `labels`: zipping a list against its own tail
+    # under strict=True is a guaranteed ValueError, because the two can never be
+    # the same length. Caught on the first run.
+    return sum(1 for a, b in zip(labels[:-1], labels[1:], strict=True) if a != b)
+
+
+def _run_arms(six: np.ndarray, column: np.ndarray, one_gate: bool) -> None:
+    """One full control, under one gate discipline.
+
+    ⚠️ THE RNG IS RE-SEEDED PER MODE, deliberately. Both modes must see the
+    SAME thirty permutations and the same thirty noise draws, or the difference
+    between them confounds the gate with a different set of random columns -
+    which is the one thing this comparison exists to isolate.
+    """
+    heading = (
+        "ONE GATE across bars (what RegimeEngine does)"
+        if one_gate
+        else ("FRESH gate per bar (every figure before 1 Sep 2026)")
+    )
+    print(f"\n{'=' * 62}\n{heading}\n{'=' * 62}")
+
+    baseline = _labels_for(six, six, one_gate)
+    real = _pct_moved(baseline, _labels_for(np.column_stack([six, column]), six, one_gate))
+
+    rng = np.random.default_rng(_SEED)
+    shuffled = [
+        _pct_moved(
+            baseline, _labels_for(np.column_stack([six, rng.permutation(column)]), six, one_gate)
+        )
+        for _ in range(_TRIALS)
+    ]
+    noise = [
+        _pct_moved(
+            baseline,
+            _labels_for(
+                np.column_stack([six, rng.normal(column.mean(), column.std(), size=len(column))]),
+                six,
+                one_gate,
+            ),
+        )
+        for _ in range(_TRIALS)
+    ]
+
+    print(f"baseline label transitions : {_transitions(baseline)} over {len(baseline)} bars")
+    print()
+    print(f"{'arm':<34}{'label moved':>14}")
+    print("-" * 48)
+    print(f"{'real ^AXVI z-score':<34}{real:>13.1f}%")
+    print(
+        f"{'shuffled (same values, no time)':<34}"
+        f"{np.median(shuffled):>13.1f}%   [{min(shuffled):.1f} - {max(shuffled):.1f}]"
+    )
+    print(
+        f"{'gaussian noise (same moments)':<34}"
+        f"{np.median(noise):>13.1f}%   [{min(noise):.1f} - {max(noise):.1f}]"
+    )
+
+    # ⚠️ The comparison that matters is NOT median against median. The controls
+    # span a wide range, so the question is how often a MEANINGLESS column moves
+    # the label at least as much as the real one - an empirical p-value.
+    #
+    # The HMM fit is deterministic (`random_state=0` passed to GaussianHMM), so
+    # this spread is the seventh column's CONTENT and not fit noise. That is what
+    # makes the controls interpretable at all.
+    controls = shuffled + noise
+    at_least = sum(1 for value in controls if value >= real - 1e-9)
+    print(
+        f"\ncontrols reaching the real arm : {at_least} of {len(controls)} "
+        f"({100.0 * at_least / len(controls):.0f}%)"
+    )
 
 
 def main() -> None:
@@ -136,51 +235,9 @@ def main() -> None:
     print()
 
     column = z_tail.to_numpy(dtype=float)
-    baseline = _labels_for(six, six)
 
-    real = _pct_moved(baseline, _labels_for(np.column_stack([six, column]), six))
-
-    rng = np.random.default_rng(_SEED)
-    shuffled = [
-        _pct_moved(baseline, _labels_for(np.column_stack([six, rng.permutation(column)]), six))
-        for _ in range(_TRIALS)
-    ]
-    noise = [
-        _pct_moved(
-            baseline,
-            _labels_for(
-                np.column_stack([six, rng.normal(column.mean(), column.std(), size=len(column))]),
-                six,
-            ),
-        )
-        for _ in range(_TRIALS)
-    ]
-
-    print(f"{'arm':<34}{'label moved':>14}")
-    print("-" * 48)
-    print(f"{'real ^AXVI z-score':<34}{real:>13.1f}%")
-    print(
-        f"{'shuffled (same values, no time)':<34}"
-        f"{np.median(shuffled):>13.1f}%   [{min(shuffled):.1f} - {max(shuffled):.1f}]"
-    )
-    print(
-        f"{'gaussian noise (same moments)':<34}"
-        f"{np.median(noise):>13.1f}%   [{min(noise):.1f} - {max(noise):.1f}]"
-    )
-
-    # ⚠️ The comparison that matters is NOT median against median. The controls
-    # span a wide range, so the question is how often a MEANINGLESS column moves
-    # the label at least as much as the real one - an empirical p-value.
-    #
-    # The HMM fit is deterministic (`random_state=0` passed to GaussianHMM), so
-    # this spread is the seventh column's CONTENT and not fit noise. That is what
-    # makes the controls interpretable at all.
-    controls = shuffled + noise
-    at_least = sum(1 for value in controls if value >= real - 1e-9)
-    print(
-        f"\ncontrols reaching the real arm : {at_least} of {len(controls)} "
-        f"({100.0 * at_least / len(controls):.0f}%)"
-    )
+    for one_gate in (False, True):
+        _run_arms(six, column, one_gate)
 
     print(
         "\n⚠️ HOW TO READ THIS, decided before the numbers were seen:\n"
@@ -192,6 +249,23 @@ def main() -> None:
         "\n   ⚠️ ONE WINDOW ONLY. Milestone C showed every column except vix_level\n"
         "   swings three- to fourfold with the window, so a single window settles\n"
         "   the SIGNAL-vs-ARTEFACT question and nothing about stability."
+    )
+    print(
+        "\n⚠️ AND HOW TO READ THE TWO BLOCKS, decided 1 September BEFORE running:\n"
+        "   The FRESH-gate block is the control on this change, not a result. It\n"
+        "   must reproduce the 31 August figures - real 23.0%, both controls\n"
+        "   17.3% median, 18 of 60 reaching the real arm. If it does not, the\n"
+        "   edit broke the instrument and NOTHING in the ONE-GATE block means\n"
+        "   anything.\n"
+        "\n   Then, on the ONE-GATE block only:\n"
+        "   * If the control SPREAD collapses to a narrow band, '0% to 85.3%'\n"
+        "     was a property of a per-bar gate, not of the HMM, and the finding\n"
+        "     must be RE-RECORDED at its true size - not quietly dropped.\n"
+        "   * If the spread survives, the finding stands as written and bears\n"
+        "     directly on position sizing.\n"
+        "\n   ⚠️ Neither outcome reopens Milestone B. Every arm is treated\n"
+        "   identically within a block, so the between-arm comparison that gave\n"
+        "   p = 0.30 is untouched either way."
     )
 
 
