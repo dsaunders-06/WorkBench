@@ -119,16 +119,44 @@ is large enough that adding it would make both harder to hold in context.
 | Kill switch clear **or** `acknowledge_halt=True` | Operator decision, below |
 | `quantity is None` | v1 is full-close only; a value returns REFUSED rather than silently closing everything |
 
-### The kill-switch decision
+### ❌ The kill-switch decision — REVERSED 1 September, and the original was dangerous
 
-**A manual close is permitted while the switch is TRIPPED, but only with an
-explicit second confirmation.** A close only ever reduces exposure, and being
-unable to flatten during a halt is the situation where one most wants to — but
-the halt must not become something clicked through from habit.
+**A manual close REFUSES while the switch is tripped. There is no acknowledged
+override.** `acknowledge_halt` is removed from `close_position` and from the UI.
 
-⚠️ **The dialog must quote the halt reason verbatim** — e.g. *"IBKR connection
-lost and reconnect attempts exhausted"* — not merely say the switch is tripped.
-Reading the actual reason is what makes it a decision rather than a click.
+⚠️ **WHY THE ORIGINAL WAS WORSE THAN NO FEATURE.** The first version permitted a
+close during a halt behind a second confirmation. The whole-branch review found
+that this could not work, and the mechanism was confirmed against source:
+
+* **Cancelling bypasses the kill switch.** `_cancel_legs` calls
+  `broker.cancel_order()` DIRECTLY. It never passes sign-off.
+* **Selling does not.** It goes `submit_exit_order` → `sign_off`, and
+  `OMS._sign_off_locked` (`oms.py:723`) sets `status = "rejected"`
+  unconditionally while the switch is tripped.
+* **So does re-protecting.** The recovery path's `submit_protective_stop` needs
+  sign-off too, and is rejected for the same reason.
+
+**The sequence during a halt was therefore: legs cancelled, nothing sold,
+bracket cannot be restored.** The operator ends up holding the full position
+with **the stop-loss deleted** — strictly worse than before pressing the button,
+at the exact moment the system has already decided something is wrong. Every
+other failure path in this design leaves the operator no worse off; this one
+actively stripped protection.
+
+⚠️ **The tests passed anyway**, which is the part worth remembering:
+`_FakeOms.sign_off` ignored the kill switch and always returned `filled`, so
+`test_proceeds_past_the_halt_when_acknowledged` was satisfied by an
+`UNPROTECTED` outcome. **A green test described a disaster.**
+
+**The chosen answer is the honest one:** the button refuses while halted and
+says so. Resetting the kill switch first is a deliberate act that takes seconds
+and is already routine — it was done twice on 1 September. The escape hatch was
+worth less than it appeared.
+
+**The rejected alternative, recorded so it is not re-proposed blindly:** carve a
+narrow exemption into sign-off so an operator-approved EXIT may pass while
+tripped, while entries may not. Coherent, and it means deliberately putting a
+hole in the one rail that halts everything. Not taken.
 
 ---
 
