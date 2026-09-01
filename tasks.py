@@ -89,17 +89,65 @@ def package(c):
     """
     stamp = _write_build_stamp(c)
     try:
-        c.run(
-            f'"{sys.executable}" -m PyInstaller '
-            "--noconfirm --name QuantAdvisoryTerminal --onedir --windowed "
-            "--collect-all hmmlearn --collect-all sklearn --collect-all yfinance "
-            "src/qat/app.py"
-        )
+        _run_pyinstaller(c)
     finally:
         # The stamp's life is this build. Left behind, the next run from source
         # would report itself as a packaged build of whatever commit was last
         # frozen - precisely the confusion the stamp exists to prevent.
         stamp.unlink(missing_ok=True)
+    _write_dist_manifest(c)
+
+
+def _write_dist_manifest(c) -> None:
+    """Record what was frozen, NEXT TO the exe, where `deploy.ps1` can read it.
+
+    ⚠️ WRITTEN BECAUSE A DEPLOY WOULD HAVE MISLABELLED A STALE BUILD.
+    `_build_stamp.py` is bundled INSIDE the exe and deleted from the tree, so
+    nothing outside the running application can tell which source a `dist\\`
+    folder came from. `deploy.ps1` installs whatever sits in `dist\\` but
+    derives its label from `git rev-parse HEAD` and `version.py` - it verified
+    that the installed copy matched `dist\\`, never that `dist\\` matched the
+    source it was naming.
+
+    Found 1 September 2026: `dist\\` held an exe built 31/08 16:10:30, hash
+    A077BE40...55C3, byte-identical to the installed M159, while M160's source
+    had landed at 17:18 and the handover recorded M160 as "BUILT". A deploy
+    would have installed M159 and written DEPLOYED = M161, reporting success.
+
+    Written AFTER PyInstaller succeeds, so a failed build leaves no manifest and
+    the deploy refuses rather than reading a stale one.
+    """
+    import json
+
+    sys.path.insert(0, str(pathlib.Path(__file__).parent / "src"))
+    from qat.version import MILESTONE
+
+    described = c.run("git describe --tags --always --dirty", hide=True, warn=True)
+    short = c.run("git rev-parse --short HEAD", hide=True, warn=True)
+    manifest = pathlib.Path("dist/QuantAdvisoryTerminal/BUILD_MANIFEST.json")
+    manifest.write_text(
+        json.dumps(
+            {
+                "milestone": MILESTONE,
+                "commit": (described.stdout or "").strip() or "unknown",
+                "short_sha": (short.stdout or "").strip() or "unknown",
+                "built_at": datetime.now(UTC).isoformat(),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    print(f"Build manifest: {manifest} -> {MILESTONE}")
+
+
+def _run_pyinstaller(c) -> None:
+    c.run(
+        f'"{sys.executable}" -m PyInstaller '
+        "--noconfirm --name QuantAdvisoryTerminal --onedir --windowed "
+        "--collect-all hmmlearn --collect-all sklearn --collect-all yfinance "
+        "src/qat/app.py"
+    )
 
 
 def _write_build_stamp(c) -> pathlib.Path:

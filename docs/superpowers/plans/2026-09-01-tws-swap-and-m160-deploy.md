@@ -57,13 +57,33 @@ NOT DEPLOYED"*. It is not built:
     installed exe      A077BE40…55C3        <- BYTE-IDENTICAL. dist IS M159.
     M160 source landed 31/08 17:18 and 17:23  <- over an hour LATER
 
-⚠️ **AND `deploy.ps1` WOULD NOT HAVE CAUGHT IT.** It installs whatever sits in
-`dist\`, but derives the label from `git rev-parse HEAD` and `version.py`'s
-`MILESTONE`. It verifies that the INSTALLED COPY matches `dist\` — never that
-`dist\` matches the source it is about to name. Run `-Apply` against a stale
-`dist\` and it installs M159, writes `DEPLOYED = M161`, and reports success.
-**That is the "DEPLOYED has been wrong ten times" failure arriving through the
-one gap the script does not cover.**
+### ✅ CORRECTION — `deploy.ps1` WOULD have caught it. I said it would not.
+
+I wrote here, and in `d30b919`'s commit message, that `deploy.ps1` would have
+installed M159 under the name M161 and reported success. **That was wrong, and
+it was wrong because I judged the script from the section I had read rather than
+the whole file.** It already carries an mtime guard, added after this script's
+own first dry run:
+
+    $exeTime = (Get-Item $exe).LastWriteTime
+    $headTime = [datetime]::Parse((git show -s --format=%cI HEAD))
+    if ($exeTime -lt $headTime) { ... exit 1 }
+
+**Run against the stale `dist\` it refuses**, and this was checked by running it
+rather than reasoned about:
+
+    ⚠️ THE BUILD PREDATES HEAD.
+       exe built : 2026-08-31 16:13:04
+       HEAD      : 2026-09-01 14:05:13  d30b919
+
+⚠️ **What IS true is narrower: mtime is a proxy, and signing defeats it.**
+`invoke sign` REWRITES the exe. Build from commit A, commit B, then sign — the
+exe's mtime is now newer than HEAD while the binary is still A, and the guard
+passes. Copying an old exe into `dist\` does the same. **M161 adds a
+`BUILD_MANIFEST.json`** written by `invoke package` after PyInstaller succeeds,
+from the same MILESTONE and commit the build stamp is frozen with, and
+`deploy.ps1` refuses if it is absent or disagrees. That closes the case the
+mtime guard cannot see — it does not replace it.
 
 So:
 
