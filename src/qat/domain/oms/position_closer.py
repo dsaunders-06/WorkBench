@@ -852,6 +852,70 @@ class PositionCloser:
             )
 
         quantity = await self._held_quantity(symbol)
+
+        # ⚠️ A POSITION THAT IS NOT HELD CANNOT BE UNPROTECTED, AND TELLING THE
+        # OPERATOR OTHERWISE ASKS FOR A NAKED SHORT.
+        #
+        # This fell straight into the block below with `quantity=0`.
+        # `OMS.submit_protective_stop` rejects a non-positive quantity outright
+        # (`oms.py:1319`), so `protective.status == "rejected"` raised into the
+        # broad `except` and the loudest branch in the file announced
+        # "{symbol} is held with NO STOP. Re-place it by hand now" over a
+        # position holding NOTHING. An operator obeying that hand-places a
+        # full-size protective SELL against no position - a NAKED SHORT, which
+        # is the exact trap this whole feature exists to prevent, reached
+        # through the recovery path and with the operator's own hand.
+        #
+        # Guarded BEFORE the try, and the two non-positive cases are reported
+        # differently because they are not the same event.
+        if quantity < 0:
+            # A protective stop is a SELL. Over a short it DEEPENS the short.
+            # Loud, because the account is on the wrong side with no bracket.
+            logger.critical(
+                "MANUAL CLOSE of %s: %s, and the broker now reports a SHORT %g. NO "
+                "protective stop was re-placed - a protective stop is a SELL and "
+                "would deepen the short. Intervene by hand now.",
+                symbol,
+                why,
+                abs(quantity),
+            )
+            return CloseResult(
+                CloseOutcome.UNPROTECTED,
+                symbol,
+                0.0,
+                cancelled,
+                f"{why}, and the broker now reports {symbol} SHORT {abs(quantity):g}. "
+                f"No protective stop was re-placed, and none should be: a protective "
+                f"stop is a SELL, so placing one over a short DEEPENS it rather than "
+                f"protecting anything. Do NOT place one by hand. Cover the short at "
+                f"the broker, or use {_SCRIPT_HINT}.",
+                issued_legs=report.issued,
+            )
+        if quantity == 0:
+            # Nothing held, so nothing bare. Not a success of this close - it
+            # sold nothing - but there is no protection missing and no action
+            # for the operator to take, and inventing one is the harm.
+            logger.warning(
+                "MANUAL CLOSE of %s: %s, and the broker reports the position FLAT. "
+                "Nothing was sold and NO bracket was re-placed - there is nothing "
+                "held to protect.",
+                symbol,
+                why,
+            )
+            return CloseResult(
+                CloseOutcome.CLOSED,
+                symbol,
+                0.0,
+                cancelled,
+                f"{why}, but {symbol} is now FLAT at the broker - either a protective "
+                f"leg FILLED during the cancel or the position was already gone. "
+                f"Nothing was sold and NO bracket was re-placed, because there is "
+                f"nothing held to protect. ⚠️ Do NOT place a stop by hand: against no "
+                f"position that is a naked short. Check which way the position closed "
+                f"- a leg filling and a market exit close at different prices.",
+                issued_legs=report.issued,
+            )
+
         try:
             if stop is None:
                 # `submit_protective_stop` requires a float stop. Without one

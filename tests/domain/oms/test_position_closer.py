@@ -200,6 +200,18 @@ class _FakeOms:
     async def submit_protective_stop(self, symbol, quantity, stop_price, take_profit_price=None):
         if self._reprotect_raises is not None:
             raise self._reprotect_raises
+        # ⚠️ The real `OMS.submit_protective_stop` REJECTS a non-positive
+        # quantity outright (`oms.py:1319`), and this fake used to accept one
+        # and hand back a pending order. That difference hid a branch: a
+        # `_recover` reached with the position already FLAT called this with
+        # quantity=0, the real OMS rejected it, and the closer reported
+        # UNPROTECTED - "held with NO STOP. Re-place it by hand now" - over a
+        # position holding nothing. An operator obeying that hand-places a
+        # NAKED SHORT.
+        if quantity <= 0 or stop_price <= 0:
+            return Order(
+                symbol=symbol, side="sell", quantity=0.0, order_id="protect-x", status="rejected"
+            )
         self.protective_orders.append((symbol, quantity, stop_price, take_profit_price))
         return Order(
             symbol=symbol,
@@ -1199,3 +1211,65 @@ async def test_the_zero_leg_refusal_names_the_script(closer_factory):
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
     assert "flatten_positions.py" in result.detail
+
+
+# --- ⚠️ A FLAT POSITION HAS NOTHING TO PROTECT --------------------------
+#
+# `_recover` re-read the broker's quantity and went straight into
+# `submit_protective_stop`. Reached with the position already FLAT it called
+# that with quantity=0, which the real OMS rejects outright (`oms.py:1319`),
+# raised into the broad `except Exception`, and reported UNPROTECTED - "held
+# with NO STOP. Re-place it by hand now" - over a position holding NOTHING.
+#
+# An operator obeying that instruction hand-places a full-size protective SELL
+# against no position: a NAKED SHORT. It is the short trap this whole feature
+# exists to prevent, reached through the recovery path and with the operator's
+# own hand.
+
+
+@pytest.mark.asyncio
+async def test_recovery_over_a_flat_position_never_tells_the_operator_to_place_a_stop(
+    closer_factory, caplog
+):
+    """Leg 1's cancel went through, leg 2's raised, nothing rests - and the
+    position is FLAT, because a leg filled during the race. There is nothing
+    to protect and nothing to re-place."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_after_cancel=[],
+        cancel_raises_for=("2",),
+        positions_after_cancel={"CBA.AX": 0.0},
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+
+    assert result.outcome is not CloseOutcome.UNPROTECTED, result.detail
+    assert closer.oms.protective_orders == [], "no stop may be proposed for zero shares"
+    lowered = result.detail.lower()
+    assert "no stop" not in lowered, "there is nothing held that could lack one"
+    assert "re-place it by hand" not in lowered, "obeying that is a naked short"
+    assert "flat" in lowered, "and it must say WHY there is nothing to do"
+
+
+@pytest.mark.asyncio
+async def test_recovery_over_a_position_gone_SHORT_refuses_to_place_a_sell_stop(
+    closer_factory, caplog
+):
+    """The other non-positive quantity, and it is the loud one. A protective
+    stop is a SELL: placed over a short it DEEPENS the short rather than
+    protecting anything. `submit_protective_stop` would reject it anyway, and
+    the operator would then be told to place it by hand."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_after_cancel=[],
+        cancel_raises_for=("2",),
+        positions_after_cancel={"CBA.AX": -40.0},
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+
+    assert result.outcome is CloseOutcome.UNPROTECTED, result.detail
+    assert closer.oms.protective_orders == []
+    assert "short" in result.detail.lower()
+    assert "re-place it by hand now" not in result.detail.lower(), "that would deepen the short"
+    assert any(r.levelname == "CRITICAL" for r in caplog.records)
