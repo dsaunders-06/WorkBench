@@ -48,16 +48,23 @@ the 24 August reason. The trap is live, not historical.
 
 ### A prerequisite fix, in the same change
 
-`OMS.cancel_order()` resolves through `self._orders` / `_ib_orders`, which are
+⚠️ **CORRECTED, Task 1:** the silent-cancel branch below lives in
+`IBAdapter.cancel_order`, one layer under `OMS.cancel_order()` — not in
+`OMS.cancel_order()` itself, which does `self._orders[order_id]` and raises
+`KeyError` on an unknown order, already fail-closed. `IBAdapter.cancel_order`
+resolves through `self._ib_orders` / `self._ib_groups`, which are
 **session-scoped** — and order identity does not survive a restart. For any leg
-placed in an earlier session it reaches `if not group:`, sets
-`status = "cancelled"` **locally**, and returns success **without cancelling
+placed in an earlier session it reached `if not group:`, set
+`status = "cancelled"` **locally**, and returned success **without cancelling
 anything at the broker**.
 
 `PositionCloser` does not call it — it cancels via broker identity. But a method
 that reports a cancel it did not perform, sitting beside a feature whose entire
-safety rests on cancels being real, must not be left as it is. It should raise
-or return a distinguishable outcome rather than claim success.
+safety rests on cancels being real, must not be left as it is. **Fixed in Task
+1** (`src/qat/data/broker/ib_adapter.py`, commit `99a3650`): before giving up,
+it now falls back to the live client's `openTrades()`, matched on permId (the
+id that survives a restart); if that still resolves nothing, it raises
+`CancelNotResolvedError` rather than claiming success.
 
 ---
 
