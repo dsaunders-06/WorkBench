@@ -861,6 +861,37 @@ on Milestone C's ablation percentages too: if adding *any* column moves the labe
 this much, an ablation percentage measures the model's fragility as much as the
 feature's contribution. **Not chased tonight, and recorded rather than acted on.**
 
+#### ⚠️ SCOPED 1 SEPTEMBER, AND THE MAGNITUDE IS IN DOUBT — see `docs/superpowers/specs/2026-09-01-regime-label-stability-scope.md`
+
+**The control measures a label path production never takes.**
+`compare_standardisation._label_and_scalar` builds a **fresh `HysteresisGate` on
+every call**, and `axvi_control._labels_for` calls it once per bar. A new gate
+takes the `_current_label is None` branch and returns the argmax immediately, so
+`margin=0.15` and `min_persistence=3` **never engage**. The live engine builds
+ONE gate (`engine.py:97`) and keeps it for the session (`engine.py:386`).
+
+So **0% – 85.3% is the spread of the UNSMOOTHED argmax**, not of the published
+label.
+
+✅ **MILESTONE B IS NOT REOPENED.** Every arm got identical treatment, so the
+between-arm comparison that produced p = 0.30 is untouched. What is in doubt is
+only the magnitude of THIS finding.
+
+⚠️ **And the label is not the only consumer.** Position SIZE reads the sticky
+label and IS smoothed; strategy ELIGIBILITY reads probability MASS at a 0.5
+threshold and is **not smoothed by anything** — `HysteresisGate` reports probs
+honestly every time and only the label is sticky. So the unsmoothed instability
+the control measured maps onto **admission**, which is binary, rather than onto
+sizing, which is graded (LOW_VOL 1.0 → HIGH_VOL 0.4 is a 60% cut).
+
+⚠️ **Milestone C's ablation percentages ran through the same per-bar gate** and
+inherit whatever this finds. Flagged, not chased.
+
+**Precedent:** this model has had one column-sensitivity crisis already, and it
+was the instrument's — KMeans init on the raw matrix let `vix_level`'s scale pick
+the states, **87.8% on 26 August**, fixed by standardising first. 85.3% and 87.8%
+are the same order of magnitude.
+
 ### ⚠️ A THIRD CALENDAR SLIP, caught by the guard rather than by luck
 
 The first run reported `real` at 40.3% and aligned `2025-06-26 -> 2026-08-31`
