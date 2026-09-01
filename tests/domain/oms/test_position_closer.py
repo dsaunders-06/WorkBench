@@ -231,3 +231,70 @@ async def test_a_cancel_that_cannot_be_resolved_refuses(closer_factory):
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
     assert closer.oms.exit_orders == []
+
+
+@pytest.mark.asyncio
+async def test_sells_the_reread_broker_quantity_not_the_stale_one(closer_factory):
+    """A leg may fill during the cancel. The broker is the authority."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT")],
+        positions_after_cancel={"CBA.AX": 60.0},
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.CLOSED
+    assert result.quantity == 60.0
+
+
+@pytest.mark.asyncio
+async def test_the_sell_goes_through_the_oms_and_is_signed_off_as_the_operator(
+    closer_factory,
+):
+    """Placing on the adapter directly would fill at the broker while the
+    ledger never saw it - the position would vanish with no closed trade."""
+    closer = closer_factory(positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "LMT")])
+    await closer.close_position("CBA.AX", operator="darren")
+    assert closer.oms.exit_orders == [("CBA.AX", 100.0, "manual_close")]
+    assert closer.oms.signed_off == [("order-1", "darren")]
+
+
+@pytest.mark.asyncio
+async def test_sends_exactly_one_order_and_never_retries(closer_factory):
+    """M139 re-transmitted a working order every 60s into 4x the position."""
+    closer = closer_factory(positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "LMT")])
+    await closer.close_position("CBA.AX", operator="tester")
+    assert len(closer.oms.exit_orders) == 1
+
+
+@pytest.mark.asyncio
+async def test_abort_blocks_the_sell_when_a_leg_survives_the_cancel(closer_factory):
+    """Now that a sell path exists at all, the abort's real job - stopping
+    THAT sell from reaching the OMS - must be proven, not just implied by
+    the cancel-legs return value. If this regresses, the account goes short."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT"), _leg("CBA.AX", "2", "STP")],
+        legs_after_cancel=[_leg("CBA.AX", "2", "STP")],  # one survives
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert closer.oms.exit_orders == [], "a surviving leg must never let the sell through"
+
+
+@pytest.mark.asyncio
+async def test_abort_blocks_the_sell_when_the_verification_read_is_unverifiable(closer_factory):
+    """Same defect, other trigger: an unverifiable post-cancel read must also
+    stop the sell from reaching the OMS, not merely REFUSE with the right
+    wording while quietly selling anyway."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[
+            _leg("CBA.AX", "1", "LMT"),
+            _leg("CBA.AX", "2", "STP"),
+            _leg("BHP.AX", "9", "STP"),
+        ],
+        legs_after_cancel=[],
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert closer.oms.exit_orders == [], "an unverifiable read must never let the sell through"

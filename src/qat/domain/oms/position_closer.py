@@ -167,4 +167,57 @@ class PositionCloser:
         if failure is not None:
             return self._refuse(symbol, failure)
         cancelled = tuple(leg.order_id for leg in captured)
-        return CloseResult(CloseOutcome.REFUSED, symbol, 0.0, cancelled, "sell not implemented yet")
+
+        quantity = await self._held_quantity(symbol)
+        if quantity <= 0:
+            # A leg filled the whole position during the cancel. Nothing to sell,
+            # and that is a success rather than an error.
+            return CloseResult(
+                CloseOutcome.CLOSED,
+                symbol,
+                0.0,
+                cancelled,
+                "the position was already flat after the legs were cancelled",
+            )
+
+        # entries.get(symbol) was already checked non-None above; indexing
+        # (rather than .get again) keeps that guarantee visible to mypy.
+        entry = self.entries[symbol]
+        order = await self.oms.submit_exit_order(
+            symbol, quantity, entry.price, reason="manual_close"
+        )
+        if order.status == "rejected":
+            return await self._recover(symbol, captured, cancelled, "the exit order was rejected")
+
+        # ⚠️ Signed off as the OPERATOR, bypassing the AutonomyGate. The gate
+        # decides whether the SYSTEM may act unattended; a human has already
+        # approved this specific order in the dialog. It must never queue in the
+        # blotter for a second sign-off.
+        signed = await self.oms.sign_off(order.order_id, operator)
+        if signed.status != "filled":
+            return await self._recover(
+                symbol, captured, cancelled, f"the exit order ended {signed.status}"
+            )
+
+        logger.warning(
+            "MANUAL CLOSE: %s %g sold by %s, %d protective leg(s) cancelled first",
+            symbol,
+            quantity,
+            operator,
+            len(cancelled),
+        )
+        return CloseResult(
+            CloseOutcome.CLOSED,
+            symbol,
+            quantity,
+            cancelled,
+            f"closed {quantity:g} {symbol} at market; {len(cancelled)} leg(s) cancelled",
+        )
+
+    async def _recover(
+        self, symbol: str, captured: list[RestingOrder], cancelled: tuple[str, ...], why: str
+    ) -> CloseResult:
+        # TEMPORARY: Task 5 replaces this body with real re-protection. Until
+        # then a failed exit order leaves the position genuinely unprotected -
+        # reported as such, never silently swallowed as a plain REFUSED.
+        return CloseResult(CloseOutcome.UNPROTECTED, symbol, 0.0, cancelled, why)
