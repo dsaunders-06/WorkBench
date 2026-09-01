@@ -919,6 +919,53 @@ while the 30 July label frequencies behind `suitable_regimes()` imply ~48.6%.
 Different windows AND different criteria, so they are not comparable — but the
 direction would justify one apples-to-apples run some day. Not run, not claimed.
 
+##### ✅ TASK 3 DONE — the finding is GENERAL, and the harness must be RE-TAKEN
+
+**3a, window sensitivity** (one gate, as `RegimeEngine`):
+
+    bars   0-300 (n=300)     real 24.3%   shuffled 11.8% [0.0-85.3]   noise 11.0% [0.0-42.3]   23/60
+    bars   0-150 (n=150)     real 14.0%   shuffled 11.3% [0.0-65.3]   noise  0.7% [0.0-23.3]   21/60
+    bars  75-225 (n=150)     real 76.0%   shuffled 28.0% [0.0-86.7]   noise 14.7% [0.0-89.3]    6/60
+    bars 150-300 (n=150)     real 40.7%   shuffled 60.0% [0.0-77.3]   noise 50.3% [0.0-86.7]   38/60
+
+✅ **The finding HOLDS.** Control maxima are 65–89% on *every* window, so a
+meaningless column moving the label on most bars is not one alignment's quirk.
+
+⚠️⚠️ **AND A SINGLE-WINDOW p IS NOT TRUSTWORTHY ON THIS MODEL.** `real` swings
+**14.0 → 24.3 → 40.7 → 76.0%**, and p with it: **6 of 60 (10%)** on bars 75–225
+against **38 of 60 (63%)** on 150–300. **On bars 75–225 ^AXVI would have
+PASSED.** ⚠️ This does **not** overturn Milestone B and must not be quoted as if
+it did — the full window has the most data, three of four windows show nothing,
+and 150–300 runs the other way. It puts numbers behind `axvi_control`'s own
+"ONE WINDOW ONLY" caveat.
+
+**3b, production's refit cadence** (expanding, every 20 bars, 240 bars
+classified, denominators matched):
+
+    single fit (control)     real 30.4%   shuffled 14.8% [ 0.0-87.1]   noise 13.8% [ 0.0-52.9]   23/60
+    refit every 20           real 33.3%   shuffled 30.2% [14.2-55.0]   noise 33.5% [12.9-50.8]   28/60
+
+❌ **They differ materially. By the rule written before the run, every figure
+taken on the single-fit harness must be RE-TAKEN — Milestone C's ablation
+percentages included.**
+
+⚠️ **THE FLOOR COMES OFF THE FLOOR, and that matters more than the size.**
+Control minima go **0.0 → 14.2** and **0.0 → 12.9**. Under a single fit some
+meaningless columns changed *nothing*; under production's cadence **every
+meaningless column moves the label on at least ~13% of bars.** The "harmless
+column" case does not exist in production. The ceiling falls at the same time
+(87.1 → 55.0) and the medians roughly double — refitting compresses the range
+and lifts the whole distribution. Plausibly each refit re-rolls the
+perturbation; inferred from the shape, not measured.
+
+✅ Milestone B untouched a third time: p moves only 23/60 → 28/60.
+
+⚠️ **23 hmmlearn non-convergence warnings** in this run, concentrated in the
+refit arm fitting expanding windows as short as 60 bars.
+`_decreasing_loglik_warnings` counts exactly this. Recorded, not investigated —
+it is a property of the path production takes and the single-fit harness never
+exercises.
+
 ##### The reading that prompted it, kept because it was right to check
 
 **The control measures a label path production never takes.**
@@ -3993,6 +4040,27 @@ shares its shape.
     ⚠️ **`vix_level` IS THE EXCEPTION, AND THAT MAKES ITS RESULT STRONGER.** It
     flips 85% of labels in a window that is 78% bear with THREE transitions -
     it is not moving the label at boundaries, it is DETERMINING it.
+
+    ### ⚠️ 1 SEPTEMBER: THESE PERCENTAGES NEED RE-TAKING, and the reason is the harness
+
+    Two instrument defects found while scoping the seventh-column finding, both
+    in the path these numbers came through. See
+    `docs/superpowers/specs/2026-09-01-regime-label-stability-scope.md`.
+
+    1. **A fresh `HysteresisGate` per bar**, so `margin=0.15` and
+       `min_persistence=3` never engaged and the "label" was an unsmoothed
+       argmax. Production keeps ONE gate for the session.
+    2. **A single fit over the whole window**, where production refits on an
+       EXPANDING matrix every 20 bars. Measured, that is not a detail: control
+       minima rise from **0.0% to ~13%** - under production's cadence there is
+       no such thing as a column that changes nothing - while maxima fall from
+       87.1% to 55.0% and medians roughly double.
+
+    ⚠️ **The rank order may well survive; the magnitudes should not be quoted
+    until re-taken.** Nothing here says the ablation's CONCLUSIONS were wrong -
+    `vix_level`'s dominance in particular is a large effect that a harness
+    artefact is unlikely to manufacture. What is established is that the
+    denominator these percentages sit on is not production's.
 
     ### ✅ THE MAGNITUDES DO NOT REPLICATE. THE RANK ORDER DOES.
 

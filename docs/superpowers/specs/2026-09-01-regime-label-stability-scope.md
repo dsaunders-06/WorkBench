@@ -213,7 +213,67 @@ direction is large enough to be worth one apples-to-apples run some day —
 label-based against mass-based eligibility on the SAME window. Not run, not
 claimed.
 
-### Task 3 — more than one window
+### ✅ Task 3a — DONE. THE FINDING IS GENERAL, and single-window p-values are not.
+
+    window                    real  shuffled                noise                     p
+    bars   0-300 (n=300)     24.3%     11.8% [ 0.0- 85.3]    11.0% [ 0.0- 42.3]  23 of 60
+    bars   0-150 (n=150)     14.0%     11.3% [ 0.0- 65.3]     0.7% [ 0.0- 23.3]  21 of 60
+    bars  75-225 (n=150)     76.0%     28.0% [ 0.0- 86.7]    14.7% [ 0.0- 89.3]   6 of 60
+    bars 150-300 (n=150)     40.7%     60.0% [ 0.0- 77.3]    50.3% [ 0.0- 86.7]  38 of 60
+
+✅ **By the rule written before the run, the finding HOLDS.** Control maxima are
+**65.3, 86.7, 89.3, 85.3, 77.3, 86.7** — high on *every* window. A meaningless
+seventh column moving the label on most bars is not an artefact of one alignment.
+
+⚠️⚠️ **AND A SECOND RESULT THAT IS ARGUABLY BIGGER: A SINGLE-WINDOW p IS NOT
+TRUSTWORTHY.** `real` swings **14.0% → 24.3% → 40.7% → 76.0%** across windows,
+and the empirical p with it: **6 of 60 (10%)** on bars 75–225 against **38 of 60
+(63%)** on bars 150–300.
+
+**On bars 75–225, ^AXVI would have PASSED.** Had Milestone B been measured on
+that window, the control would have endorsed it.
+
+⚠️ **This does NOT overturn Milestone B's rejection**, and must not be quoted as
+if it did: the full window carries the most data, three of four windows show
+nothing, and 150–300 runs strongly the other way. What it establishes is that
+**one window's p-value is close to worthless on this model** — which is exactly
+what `axvi_control`'s own "ONE WINDOW ONLY" caveat said, now with numbers behind
+it.
+
+### ✅ Task 3b — DONE. **PRODUCTION'S REFIT CADENCE CHANGES THE ANSWER MATERIALLY.**
+
+240 bars classified, `min_fit_bars=60` withheld, denominators matched:
+
+    arm                       real  shuffled                noise                     p
+    single fit (control)     30.4%     14.8% [ 0.0- 87.1]    13.8% [ 0.0- 52.9]  23 of 60
+    refit every 20           33.3%     30.2% [14.2- 55.0]    33.5% [12.9- 50.8]  28 of 60
+
+❌ **They differ materially, so by the rule written before the run, figures taken
+on the single-fit harness must be RE-TAKEN — Milestone C's ablation percentages
+included.**
+
+⚠️ **THE SHAPE OF THE DIFFERENCE MATTERS MORE THAN ITS SIZE. The floor comes off
+the floor.** Control minima go **0.0 → 14.2 and 0.0 → 12.9**. Under a single fit,
+some meaningless columns changed *nothing at all*; under production's cadence,
+**every meaningless column moves the label on at least ~13% of bars.** The
+"harmless column" case does not exist in production.
+
+The ceiling falls at the same time (87.1 → 55.0, 52.9 → 50.8), and the medians
+roughly double (14.8 → 30.2, 13.8 → 33.5). **Refitting compresses the range and
+raises the whole distribution** — a plausible mechanism is that each refit is a
+fresh chance to reorganise the states, so the perturbation is re-rolled fifteen
+times instead of once. That is an inference from the shape, not measured here.
+
+✅ **Milestone B is untouched again**: p moves only 23/60 → 28/60, still nowhere
+near significance.
+
+⚠️ **hmmlearn logged 23 non-convergence warnings during this run**, concentrated
+in the refit arm, which fits on expanding windows as short as 60 bars.
+`HMMRegimeModel._decreasing_loglik_warnings` exists to count exactly this. Not
+investigated; recorded because it is a property of the path production actually
+takes and the single-fit harness never exercises.
+
+### Task 3 — more than one window (original scoping note)
 
 Milestone C established that every column except `vix_level` swings three- to
 fourfold with the window, and `axvi_control` says so itself: *"ONE WINDOW ONLY …

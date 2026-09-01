@@ -53,10 +53,12 @@ does in production, and the date range is PRINTED so it can be checked against
 the startup log before any number here is believed.
 """
 
+import argparse
 import inspect
 import pathlib
 import sys
 import warnings
+from collections.abc import Callable
 
 warnings.filterwarnings("ignore")
 
@@ -69,10 +71,18 @@ sys.path.insert(0, str(ROOT / "scripts" / "research"))
 
 from compare_standardisation import _fused_probs, _label_and_scalar  # noqa: E402
 
+from qat.domain.regime_engine.engine import RegimeEngine  # noqa: E402
 from qat.domain.regime_engine.fusion import HysteresisGate  # noqa: E402
 from qat.domain.regime_engine.hmm_core import HMMRegimeModel  # noqa: E402
 from qat.domain.strategies.engine import StrategyEngine  # noqa: E402
 from qat.domain.strategies.swing import SwingStrategy  # noqa: E402
+
+_ENGINE_DEFAULTS = inspect.signature(RegimeEngine.__init__).parameters
+# ⚠️ Read off RegimeEngine, never restated. Task 3b exists BECAUSE a harness had
+# silently stopped matching production; hardcoding 20 and 60 here would rebuild
+# the same trap one level down.
+_REFIT_INTERVAL: int = _ENGINE_DEFAULTS["refit_interval_bars"].default
+_MIN_FIT_BARS: int = _ENGINE_DEFAULTS["min_fit_bars"].default
 
 # ⚠️ READ off StrategyEngine rather than restated as 0.5. A threshold copied
 # into a research script is a threshold that silently stops matching production
@@ -188,6 +198,169 @@ def _transitions(labels: list[str]) -> int:
     # under strict=True is a guaranteed ValueError, because the two can never be
     # the same length. Caught on the first run.
     return sum(1 for a, b in zip(labels[:-1], labels[1:], strict=True) if a != b)
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--windows", action="store_true", help="Task 3a: sub-window sensitivity")
+    parser.add_argument("--refit", action="store_true", help="Task 3b: production's refit cadence")
+    return parser.parse_args()
+
+
+def _arms(
+    six: np.ndarray, column: np.ndarray, labeller: Callable[[np.ndarray, np.ndarray], list[str]]
+) -> tuple[float, list[float], list[float]]:
+    """real, shuffled, noise for any bar-by-bar labeller.
+
+    ⚠️ The RNG is re-seeded HERE, so every caller sees the SAME thirty
+    permutations and the same thirty noise draws. Two arms that differed in
+    their random columns as well as in the thing under test would measure both
+    at once, which is the confound this whole exercise keeps finding.
+    """
+    baseline = labeller(six, six)
+    real = _pct_moved(baseline, labeller(np.column_stack([six, column]), six))
+    rng = np.random.default_rng(_SEED)
+    shuffled = [
+        _pct_moved(baseline, labeller(np.column_stack([six, rng.permutation(column)]), six))
+        for _ in range(_TRIALS)
+    ]
+    noise = [
+        _pct_moved(
+            baseline,
+            labeller(
+                np.column_stack([six, rng.normal(column.mean(), column.std(), size=len(column))]),
+                six,
+            ),
+        )
+        for _ in range(_TRIALS)
+    ]
+    return real, shuffled, noise
+
+
+def _report(label: str, real: float, shuffled: list[float], noise: list[float]) -> None:
+    controls = shuffled + noise
+    at_least = sum(1 for value in controls if value >= real - 1e-9)
+    print(
+        f"{label:<22}{real:>7.1f}%{np.median(shuffled):>9.1f}% "
+        f"[{min(shuffled):>4.1f}-{max(shuffled):>5.1f}]{np.median(noise):>8.1f}% "
+        f"[{min(noise):>4.1f}-{max(noise):>5.1f}]{at_least:>6} of {len(controls)}"
+    )
+
+
+def _run_windows(six: np.ndarray, column: np.ndarray) -> None:
+    """Task 3a - is the control spread a property of ONE window?
+
+    Sub-windows of the saved matrix, sliced identically in `six` and `column`.
+    They overlap, and shorter windows are not the same measurement as a long
+    one - both stated rather than glossed. What they can settle is narrower and
+    still worth having: whether a meaningless column's ability to move the label
+    a great deal is general, or was one alignment's quirk.
+    """
+    print(f"\n{'=' * 78}\nTASK 3a - WINDOW SENSITIVITY (one gate, as RegimeEngine)\n{'=' * 78}")
+    print(f"{'window':<22}{'real':>8}{'shuffled':>10}{'':>13}{'noise':>8}{'':>13}{'p':>14}")
+    print("-" * 78)
+    for start, stop in ((0, 300), (0, 150), (75, 225), (150, 300)):
+        sub_six, sub_col = six[start:stop], column[start:stop]
+        real, shuffled, noise = _arms(
+            sub_six, sub_col, lambda m, s: _labels_for(m, s, one_gate=True)
+        )
+        _report(f"bars {start:>3}-{stop:<3} (n={stop - start})", real, shuffled, noise)
+    print(
+        "\n⚠️ HOW TO READ THIS, decided BEFORE running:\n"
+        "   The finding under test is that a MEANINGLESS column can move the\n"
+        "   label on a large fraction of bars (85.3% on the full window).\n"
+        "   * If the control MAXIMUM stays high across most windows, that is\n"
+        "     general - not an artefact of one alignment - and the finding holds.\n"
+        "   * If 85.3% is unique to the full window and the others cap far\n"
+        "     lower, the finding must be RE-RECORDED as window-specific.\n"
+        "   ⚠️ These windows OVERLAP and the short ones are shorter measurements.\n"
+        "   They cannot establish a trend with window length; only whether the\n"
+        "   effect appears away from one particular 300-bar alignment."
+    )
+
+
+def _labels_refit(matrix: np.ndarray, six: np.ndarray) -> list[str]:
+    """Production's own path: EXPANDING matrix, refit every 20 bars, last row only.
+
+    Mirrors `RegimeEngine._on_market_data` (engine.py:344-386) rather than the
+    single fit the rest of this script uses:
+
+    * the matrix GROWS - `feature_builder.feature_matrix()` is everything so far,
+      not a trailing window;
+    * a refit happens when `_bars_since_fit >= refit_interval_bars`;
+    * the posterior is `predict_proba(matrix)[-1]` - the latest bar under the
+      model current AT that bar, never a model fitted on the future;
+    * nothing is published below `min_fit_bars`, so the series starts there.
+
+    Both constants are read off `RegimeEngine.__init__` rather than restated.
+    """
+    gate = HysteresisGate()
+    model: HMMRegimeModel | None = None
+    bars_since_fit = 0
+    out: list[str] = []
+    for i in range(_MIN_FIT_BARS, len(matrix)):
+        window = matrix[: i + 1]
+        if model is None or bars_since_fit >= _REFIT_INTERVAL:
+            model = HMMRegimeModel(n_states=_N_STATES)
+            model.fit(window)
+            bars_since_fit = 0
+        posterior = model.predict_proba(window)[-1]
+        label, _ = _label_and_scalar(posterior, model.state_signatures, six[: i + 1], gate)
+        out.append(label.value)
+        bars_since_fit += 1
+    return out
+
+
+def _labels_single_fit_tail(matrix: np.ndarray, six: np.ndarray) -> list[str]:
+    """The single-fit path, restricted to the SAME bars `_labels_refit` returns.
+
+    Without this the refit arm's percentage would be compared against a figure
+    taken over 300 bars while itself covering 240 - a different denominator
+    dressed up as a different result.
+
+    ⚠️ THE GATE STARTS AT `_MIN_FIT_BARS` HERE TOO, and that is why this is
+    written out rather than sliced off `_labels_for(...)[60:]`. Slicing would
+    hand this arm a gate carrying sixty bars of history while the refit arm's
+    gate is fresh at bar 60 - a SECOND difference between the arms on top of the
+    one being measured. Only the FIT discipline may differ.
+    """
+    model = HMMRegimeModel(n_states=_N_STATES)
+    model.fit(matrix)
+    posteriors = model.predict_proba(matrix)
+    sigs = model.state_signatures
+    gate = HysteresisGate()
+    return [
+        _label_and_scalar(posteriors[i], sigs, six[: i + 1], gate)[0].value
+        for i in range(_MIN_FIT_BARS, len(matrix))
+    ]
+
+
+def _run_refit(six: np.ndarray, column: np.ndarray) -> None:
+    """Task 3b - does production's refit cadence change the answer?"""
+    heading = f"TASK 3b - REFIT CADENCE (expanding, every {_REFIT_INTERVAL} bars)"
+    print(f"\n{'=' * 78}\n{heading}\n{'=' * 78}")
+    print(f"bars classified: {len(six) - _MIN_FIT_BARS} (min_fit_bars={_MIN_FIT_BARS} withheld)")
+    print(f"{'arm':<22}{'real':>8}{'shuffled':>10}{'':>13}{'noise':>8}{'':>13}{'p':>14}")
+    print("-" * 78)
+
+    real, shuffled, noise = _arms(six, column, _labels_single_fit_tail)
+    _report("single fit (control)", real, shuffled, noise)
+
+    real, shuffled, noise = _arms(six, column, _labels_refit)
+    _report("refit every 20", real, shuffled, noise)
+
+    print(
+        "\n⚠️ HOW TO READ THIS, decided BEFORE running:\n"
+        "   The single-fit row is the CONTROL on the comparison, taken over the\n"
+        "   same bars as the refit row so the denominators match.\n"
+        "   * If the two are comparable, the single-fit harness is an adequate\n"
+        "     proxy and every figure taken on it stands - Milestone C's\n"
+        "     ablations included.\n"
+        "   * If they differ materially, those figures were taken on a proxy\n"
+        "     that does not match production and must be RE-TAKEN.\n"
+        "   ⚠️ Still not production in one respect: this replays a saved matrix,\n"
+        "   so it cannot see intraday bar replacement (`replace_latest_bar`)."
+    )
 
 
 def _run_eligibility(six: np.ndarray, column: np.ndarray) -> None:
@@ -360,6 +533,17 @@ def main() -> None:
     print()
 
     column = z_tail.to_numpy(dtype=float)
+
+    args = _parse_args()
+    if args.windows or args.refit:
+        # ⚠️ The default blocks are SKIPPED when a Task 3 arm is asked for, so a
+        # long run is not paying for three blocks already recorded. Ask for them
+        # explicitly with no flags.
+        if args.windows:
+            _run_windows(six, column)
+        if args.refit:
+            _run_refit(six, column)
+        return
 
     for one_gate in (False, True):
         _run_arms(six, column, one_gate)
