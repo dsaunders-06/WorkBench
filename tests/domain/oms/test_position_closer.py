@@ -189,6 +189,37 @@ async def test_reads_legs_with_open_orders_not_open_trades(closer_factory):
 
 
 @pytest.mark.asyncio
+async def test_refuses_when_the_verification_read_cannot_be_trusted(closer_factory):
+    """`IBAdapter.open_orders()` returns `[]` for two different situations: a
+    genuinely clean broker, and a client that could not answer (not yet
+    connected, too old to carry `reqAllOpenOrdersAsync`) - its own docstring
+    says so. A connection blip between the cancel and the verification re-read
+    hits the second case, and `[]` looks identical to success.
+
+    If the account-wide book held orders belonging to OTHER symbols before the
+    cancel, and the post-cancel read comes back with the WHOLE book empty,
+    those other orders cannot have vanished too - the read is not credible.
+    This must be reported as UNVERIFIED, never as a clean cancel.
+    """
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[
+            _leg("CBA.AX", "1", "LMT"),
+            _leg("CBA.AX", "2", "STP"),
+            _leg("BHP.AX", "9", "STP"),  # another position's leg, untouched
+        ],
+        legs_after_cancel=[],  # the WHOLE book reads empty - the failure mode
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert "VERIFIED" in result.detail
+    assert (
+        "leg(s) still resting after the cancel" not in result.detail
+    ), "this is a read failure, not a survivor"
+    assert closer.oms.exit_orders == [], "NOTHING may be sold when the cancel cannot be verified"
+
+
+@pytest.mark.asyncio
 async def test_a_cancel_that_cannot_be_resolved_refuses(closer_factory):
     from qat.data.broker.ib_adapter import CancelNotResolvedError
 

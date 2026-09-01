@@ -68,29 +68,59 @@ class PositionCloser:
                 return abs(position.quantity)
         return 0.0
 
-    async def _legs_for(self, symbol: str) -> list[RestingOrder]:
-        """Working orders for `symbol`, read with `open_orders()`.
+    async def _working_orders(self) -> list[RestingOrder]:
+        """Every working order, account-wide, read with `open_orders()`.
 
         NOT `openTrades()`: that read is clientId-scoped and on 24 August
         reported zero protective stops while sixteen were resting.
         """
         orders = await self.broker.open_orders()
-        return [o for o in orders if o.symbol == symbol and o.status in WORKING_STATUSES]
+        return [o for o in orders if o.status in WORKING_STATUSES]
 
     async def _cancel_legs(self, symbol: str) -> tuple[list[RestingOrder], str | None]:
         """Cancel every working leg, then RE-READ to prove they are gone.
 
         ⚠️ The cancel's own response is not evidence. On 19 August one reported
         PendingCancel while being rejected outright (error 10147).
+
+        ⚠️ Nor is an empty re-read, on its own. `IBAdapter.open_orders()`
+        returns `[]` for two different situations - a genuinely clean broker,
+        and a client that could not answer (not yet connected, or too old to
+        carry `reqAllOpenOrdersAsync`) - and its own docstring says so. A
+        connection blip landing between the cancel and this re-read produces
+        the SAME `[]` a clean book would, and `open_orders()` gives this layer
+        no way to tell the two apart.
+
+        The discriminator: read the WHOLE book, not just `symbol`, before and
+        after cancelling. If OTHER symbols' orders were working beforehand and
+        the account-wide total has collapsed to zero afterward, that emptiness
+        is not credible - those orders cannot all have vanished along with the
+        ones just cancelled. Treat that as UNVERIFIED and refuse, distinctly
+        from "a leg is still resting": one means the read could not be
+        trusted, the other means the broker was asked and answered.
         """
-        captured = await self._legs_for(symbol)
+        before = await self._working_orders()
+        captured = [o for o in before if o.symbol == symbol]
         for leg in captured:
             try:
                 await self.broker.cancel_order(leg.order_id)
             except Exception as exc:  # noqa: BLE001 - report it, never proceed
                 return captured, f"cancel of leg {leg.order_id} failed: {exc}"
 
-        survivors = await self._legs_for(symbol)
+        after = await self._working_orders()
+
+        if not after and len(before) > len(captured):
+            return captured, (
+                f"cancel of {symbol} could NOT BE VERIFIED: {len(before)} order(s) were "
+                f"working account-wide before the cancel but only {len(captured)} belonged "
+                f"to {symbol}, yet the post-cancel read reports the ENTIRE book empty. "
+                f"Other positions' orders cannot have vanished too, so this read is not "
+                f"credible - most likely a connection blip, not a clean broker. NOTHING "
+                f"was sold. This is a READ FAILURE, distinct from a leg still resting: it "
+                f"means the cancel's outcome is unknown, not that it succeeded."
+            )
+
+        survivors = [o for o in after if o.symbol == symbol]
         if survivors:
             ids = ", ".join(o.order_id for o in survivors)
             return captured, (
