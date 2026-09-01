@@ -84,6 +84,24 @@ class CloseResult:
     # than confirmed gone; the wording carries that and this tuple cannot.
     cancelled_legs: tuple[str, ...]
     detail: str
+    # Legs a cancel was SENT for, whatever came back - a superset of
+    # `cancelled_legs`.
+    #
+    # ⚠️ THIS, NOT `cancelled_legs`, IS "SOMETHING ALREADY HAPPENED".
+    # `close_position` used to key that decision on `cancelled_legs`, i.e. on
+    # legs CONFIRMED GONE, so a close whose cancels went out and came back
+    # confirming nothing - both legs still settling in `PendingCancel`, or the
+    # second cancel raising after the first was accepted - reported an EMPTY
+    # tuple, fell through to a plain refusal, and reached the operator as a
+    # NON-BLOCKING information dialog saying nothing had been cancelled. The
+    # accepted cancel then lands and the position is part or wholly bare with
+    # nothing on screen.
+    #
+    # The two are kept apart rather than merged because they mean different
+    # things and the operator acts differently on each: `cancelled_legs` is
+    # protection that is definitely OFF, this is protection whose state is
+    # UNKNOWN. Both are serious; only the first is certain.
+    issued_legs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +119,12 @@ class _CancelReport:
     captured: list[RestingOrder]
     # Cancels that returned without raising, minus anything still resting.
     cancelled: tuple[str, ...]
+    # Cancels that returned without raising, FULL STOP - the ones that went
+    # out. `cancelled` is this minus the survivors, and can be empty while this
+    # is not: that is a cancel whose outcome is unknown, not a cancel that did
+    # not happen. Routing on `cancelled` instead of this is why such a close
+    # reported "nothing happened".
+    issued: tuple[str, ...]
     # Working orders for this symbol AFTER the cancels.
     survivors: tuple[str, ...]
     # Working orders belonging to OTHER symbols before the cancels. The
@@ -255,7 +279,7 @@ class PositionCloser:
 
         def refused_untouched(detail: str) -> _CancelReport:
             """A refusal that precedes every cancel: nothing was touched."""
-            return _CancelReport([], (), (), others_before, True, detail)
+            return _CancelReport([], (), (), (), others_before, True, detail)
 
         # ⚠️ M139's precondition, and it comes BEFORE any cancel. "No working
         # order for the symbol beyond its protective legs." This loop used to
@@ -333,7 +357,15 @@ class PositionCloser:
         gone = tuple(order_id for order_id in issued if order_id not in survivors)
 
         def report(detail: str | None) -> _CancelReport:
-            return _CancelReport(captured, gone, survivors, others_before, book_is_credible, detail)
+            return _CancelReport(
+                captured,
+                gone,
+                tuple(issued),
+                survivors,
+                others_before,
+                book_is_credible,
+                detail,
+            )
 
         if cancel_failure is not None:
             return report(cancel_failure)
@@ -386,9 +418,28 @@ class PositionCloser:
         exactly"). What changes is that `cancelled_legs` is now populated, and
         the dashboard renders a REFUSED result carrying cancelled legs as a
         BLOCKING error rather than an information dialog.
+
+        ⚠️ AND "CONFIRMED GONE" AND "SENT, OUTCOME UNKNOWN" ARE DIFFERENT
+        THINGS TO SAY. `report.cancelled` can be EMPTY here while cancels
+        genuinely went out - every leg still settling in `PendingCancel` is
+        exactly that, and it is the ordinary shape of an honoured cancel read a
+        moment too early. Text that says "leg(s)  WERE cancelled and are gone"
+        over an empty list is worse than useless, so each branch below states
+        what is confirmed and what is merely issued, separately.
         """
         detail = report.failure or "the close was refused after the cancels went out"
         cancelled_text = ", ".join(report.cancelled)
+        issued_text = ", ".join(report.issued)
+        # What is CONFIRMED gone, in words - or an honest statement that
+        # nothing is, which is a different claim from "nothing was cancelled".
+        if report.cancelled:
+            confirmed_text = f"leg(s) {cancelled_text} WERE cancelled and are CONFIRMED GONE"
+        else:
+            confirmed_text = (
+                f"NO LEG IS CONFIRMED GONE, but a cancel WAS SENT for leg(s) "
+                f"{issued_text} and its outcome is UNKNOWN - a cancel still "
+                f"settling lands moments later"
+            )
 
         if not report.book_is_credible:
             logger.critical(
@@ -397,29 +448,29 @@ class PositionCloser:
                 "still be resting. Check the broker by hand.",
                 symbol,
                 detail,
-                cancelled_text,
+                issued_text,
             )
             return CloseResult(
                 CloseOutcome.REFUSED,
                 symbol,
                 0.0,
                 report.cancelled,
-                f"{detail} A cancel had ALREADY been sent for leg(s) {cancelled_text}, "
+                f"{detail} A cancel had ALREADY been sent for leg(s) {issued_text}, "
                 f"so this is not 'nothing happened': their true state is UNKNOWN, and "
                 f"{symbol} may be holding with part or all of its bracket gone. No "
                 f"bracket was re-placed, because placing one on a read that answered "
                 f"nothing could stack it on legs still resting. Check the broker by "
                 f"hand before doing anything else.",
+                issued_legs=report.issued,
             )
 
         if report.survivors:
             logger.critical(
-                "MANUAL CLOSE of %s: %s Leg(s) %s WERE cancelled and are gone; %s "
-                "still rest. Nothing was sold and no bracket was re-placed. The "
-                "position is only partly protected.",
+                "MANUAL CLOSE of %s: %s %s; %s still rest. Nothing was sold and no "
+                "bracket was re-placed. The position is only partly protected.",
                 symbol,
                 detail,
-                cancelled_text,
+                confirmed_text,
                 ", ".join(report.survivors),
             )
             return CloseResult(
@@ -427,26 +478,25 @@ class PositionCloser:
                 symbol,
                 0.0,
                 report.cancelled,
-                f"{detail} ⚠️ This is NOT 'nothing happened': leg(s) {cancelled_text} "
-                f"WERE cancelled and are gone, so {symbol} is now protected only by "
-                f"the {len(report.survivors)} leg(s) that survived "
-                f"({', '.join(report.survivors)}). No bracket was re-placed, because a "
-                f"fresh full-size bracket stacked on a leg still resting is the same "
-                f"short trap from the other side. Deal with this position by hand, or "
-                f"use {_SCRIPT_HINT}.",
+                f"{detail} ⚠️ This is NOT 'nothing happened': {confirmed_text}. "
+                f"{symbol} still shows {len(report.survivors)} leg(s) at the broker "
+                f"({', '.join(report.survivors)}) - a leg reporting PendingCancel is "
+                f"VISIBLE AND CAN STILL FILL, so it is counted as resting, not as "
+                f"gone. No bracket was re-placed, because a fresh full-size bracket "
+                f"stacked on a leg still resting is the same short trap from the other "
+                f"side. Deal with this position by hand, or use {_SCRIPT_HINT}.",
+                issued_legs=report.issued,
             )
 
         # Nothing rests for this symbol and the read is credible: BARE.
         logger.critical(
-            "MANUAL CLOSE of %s: %s Leg(s) %s were cancelled and NOTHING rests for "
-            "this symbol - the position is BARE. Re-placing the bracket.",
+            "MANUAL CLOSE of %s: %s %s, and NOTHING rests for this symbol - the "
+            "position is BARE. Re-placing the bracket.",
             symbol,
             detail,
-            cancelled_text,
+            confirmed_text,
         )
-        return await self._recover(
-            symbol, report, f"{detail} Leg(s) {cancelled_text} had already been cancelled"
-        )
+        return await self._recover(symbol, report, f"{detail} {confirmed_text}")
 
     async def _sign_off_or_reread(self, order: Order, operator: str) -> Order | None:
         """Sign `order` off - and treat an order ALREADY signed off as what it
@@ -593,7 +643,16 @@ class PositionCloser:
             # `_refuse` was defect N3: `cancelled_legs=()` and no recovery
             # attempt, over a position whose bracket had been half or wholly
             # stripped.
-            if report.cancelled:
+            #
+            # ⚠️ KEYED ON `issued`, NOT `cancelled`. It was `cancelled` - legs
+            # CONFIRMED GONE - so a close whose cancels went out and confirmed
+            # NOTHING fell through here into a plain refusal reporting
+            # `cancelled_legs=()`, which the dashboard renders as a
+            # non-blocking information dialog. The accepted cancel then lands
+            # and the position is part or wholly bare with nothing on screen.
+            # "A cancel was sent" is the question; "was it confirmed" is
+            # exactly what is unknown, and cannot be the gate on saying so.
+            if report.issued:
                 return await self._refuse_after_cancels(symbol, report)
             return self._refuse(symbol, report.failure)
         cancelled = report.cancelled
@@ -618,6 +677,7 @@ class PositionCloser:
                 f"{len(cancelled)} leg(s) were cancelled and the broker then reported "
                 f"{symbol} SHORT {abs(quantity):g}. NOTHING was sold - a sell would "
                 f"deepen the short. Intervene by hand now.",
+                issued_legs=report.issued,
             )
         if quantity == 0:
             # Nothing to sell, and that is a success rather than an error -
@@ -636,6 +696,7 @@ class PositionCloser:
                 f"protective leg FILLED during the cancel, or the position was "
                 f"already gone before it. Nothing was sold. Check which - the two "
                 f"close at different prices.",
+                issued_legs=report.issued,
             )
 
         order = await self.oms.submit_exit_order(
@@ -685,7 +746,9 @@ class PositionCloser:
                 f"reported a fill yet; a market order does not rest for long, and "
                 f"the ledger records the exit when the fill lands."
             )
-        return CloseResult(CloseOutcome.CLOSED, symbol, quantity, cancelled, detail)
+        return CloseResult(
+            CloseOutcome.CLOSED, symbol, quantity, cancelled, detail, issued_legs=report.issued
+        )
 
     async def _recover(self, symbol: str, report: _CancelReport, why: str) -> CloseResult:
         """Put the protection back. The position is BARE until this succeeds.
@@ -759,6 +822,7 @@ class PositionCloser:
                 f"read that answered nothing, it could stack on a sell still in "
                 f"flight and put the account SHORT. {symbol} may be held with NO STOP. "
                 f"Check the broker by hand before doing anything else.",
+                issued_legs=report.issued,
             )
 
         working_sells = [
@@ -784,6 +848,7 @@ class PositionCloser:
                 f"stacked on an in-flight one puts the account SHORT when the first "
                 f"fills. {symbol} currently has no protective bracket. Watch it and "
                 f"act by hand.",
+                issued_legs=report.issued,
             )
 
         quantity = await self._held_quantity(symbol)
@@ -830,6 +895,7 @@ class PositionCloser:
                 cancelled,
                 f"{why}, AND the bracket could not be re-placed. {symbol} is held "
                 f"with NO STOP. Re-place it by hand now.",
+                issued_legs=report.issued,
             )
         logger.error(
             "Manual close of %s failed (%s) - original bracket re-placed at stop=%s target=%s",
@@ -845,4 +911,5 @@ class PositionCloser:
             cancelled,
             f"{why}. The original bracket was re-placed (stop {stop}, target "
             f"{target}); the position is protected and still held.",
+            issued_legs=report.issued,
         )

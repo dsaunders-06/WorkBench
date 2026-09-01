@@ -254,6 +254,43 @@ async def test_a_refusal_that_already_cancelled_legs_is_shown_as_a_blocking_erro
     assert shown == {"error": "leg-1 WERE cancelled and are gone"}
 
 
+async def test_a_refusal_that_ISSUED_cancels_is_blocking_even_with_none_confirmed_gone(
+    dashboard, monkeypatch
+):
+    """⚠️ THE ROUND-3 FINDING, AT THE SURFACE THE OPERATOR ACTUALLY SEES.
+
+    The blocking dialog was keyed on `cancelled_legs` - legs CONFIRMED GONE.
+    When the cancels went out and nothing came back confirmed gone (both legs
+    still settling in `PendingCancel`, or leg 2's cancel raising after leg 1's
+    was accepted), that tuple is EMPTY, and a bare position was announced with
+    a non-blocking information dialog reading "nothing was cancelled".
+
+    Cancels that were SENT are the discriminator, not cancels that were
+    confirmed - their outcome is precisely what is unknown.
+    """
+    monkeypatch.setattr(dashboard, "_confirm_close", lambda *a, **k: True)
+    shown: dict[str, str] = {}
+    monkeypatch.setattr(dashboard, "_show_error", lambda msg: shown.setdefault("error", msg))
+    monkeypatch.setattr(dashboard, "_show_result", lambda msg: shown.setdefault("result", msg))
+
+    async def _issued_but_unconfirmed(symbol, *, operator, quantity=None):
+        return CloseResult(
+            CloseOutcome.REFUSED,
+            symbol,
+            0.0,
+            (),  # nothing CONFIRMED gone
+            "no leg is confirmed gone, but cancels were sent for leg-1, leg-2",
+            issued_legs=("leg-1", "leg-2"),
+        )
+
+    dashboard.runtime.closer.close_position = _issued_but_unconfirmed
+    dashboard.positions_table.selectRow(0)
+    dashboard._on_close_clicked()
+    await asyncio.sleep(0.05)
+
+    assert shown == {"error": "no leg is confirmed gone, but cancels were sent for leg-1, leg-2"}
+
+
 async def test_a_refusal_that_cancelled_nothing_stays_an_information_dialog(dashboard, monkeypatch):
     """The other side of the same rail, so the fix is not "make every refusal
     a critical modal". A precondition refusal changed nothing at the broker

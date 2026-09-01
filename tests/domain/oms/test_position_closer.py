@@ -995,6 +995,7 @@ async def test_a_survivor_refusal_names_the_leg_it_already_cancelled(closer_fact
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
     assert result.cancelled_legs == ("1",), "the leg that IS gone must be reported"
+    assert sorted(result.issued_legs) == ["1", "2"], "and both cancels went out"
     assert "1" in result.detail and "2" in result.detail
     assert "still resting" in result.detail
     assert "cancelled" in result.detail.lower()
@@ -1046,6 +1047,82 @@ async def test_a_second_leg_cancel_that_raises_re_protects_the_bare_position(clo
     assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
     assert "1" in result.detail
     assert closer.oms.exit_orders == [], "a refusal is still a refusal - nothing is sold"
+
+
+# --- ⚠️ "SOMETHING ALREADY HAPPENED" IS KEYED ON `issued`, NOT `cancelled` --
+#
+# `close_position` routed to `_refuse_after_cancels` on `report.cancelled` -
+# legs CONFIRMED GONE - rather than on the cancels that were SENT. So when the
+# cancels went out and nothing came back confirmed gone, `cancelled` was empty,
+# it fell through to plain `_refuse` with `cancelled_legs=()`, and the
+# dashboard rendered a NON-BLOCKING information dialog reading "NOTHING was
+# cancelled and NOTHING was sold". The accepted cancel then lands and the
+# position is left part- or wholly bare with nothing on screen.
+#
+# ⚠️ AND THE C1 FIX MAKES THIS THE COMMON CASE, not a corner. Once a leg in
+# `PendingCancel` counts as a survivor, the ordinary "both cancels honoured,
+# neither settled yet" read has `issued=(1, 2)` and `cancelled=()`.
+
+
+@pytest.mark.asyncio
+async def test_cancels_that_went_out_are_reported_even_when_none_is_confirmed_gone(
+    closer_factory,
+):
+    """Both cancels were SENT and both legs sit in `PendingCancel`. Nothing is
+    confirmed gone, so `cancelled` is empty - but this is emphatically not
+    "nothing happened", and it must not be rendered as one."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        cancel_effect="pending",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert result.cancelled_legs == (), "nothing is CONFIRMED gone, and it must not claim so"
+    assert sorted(result.issued_legs) == ["1", "2"], "but the cancels DID go out"
+    assert closer.oms.exit_orders == []
+    assert closer.oms.protective_orders == []
+
+
+@pytest.mark.asyncio
+async def test_the_text_separates_confirmed_gone_from_outcome_unknown(closer_factory):
+    """Two different situations, and the operator acts differently on each.
+    "cancelled and gone" means protection is definitely off; "issued, still
+    visible" means it may be off in a moment and may not."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        cancel_effect="pending",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    lowered = result.detail.lower()
+    assert "no leg is confirmed gone" in lowered, "it must say nothing is CONFIRMED gone"
+    assert "1" in result.detail and "2" in result.detail, "and still name the cancels sent"
+    assert "nothing was cancelled" not in lowered, "which is exactly what it used to say"
+
+
+@pytest.mark.asyncio
+async def test_a_raised_second_cancel_with_the_first_unsettled_is_not_nothing_happened(
+    closer_factory,
+):
+    """Leg 1's cancel was ACCEPTED and is still settling; leg 2's RAISED. So
+    `issued=("1",)` and `cancelled=()`. Leg 1's cancel lands moments later and
+    the position is half bare - and the operator was shown an information
+    dialog saying nothing had been cancelled."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_after_cancel=[
+            _leg("CBA.AX", "1", "LMT", limit=110.0, status="PendingCancel"),
+            _leg("CBA.AX", "2", "STP", stop=90.0),
+        ],
+        cancel_raises_for=("2",),
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert result.issued_legs == ("1",)
+    assert result.cancelled_legs == ()
+    assert closer.oms.exit_orders == []
 
 
 @pytest.mark.asyncio

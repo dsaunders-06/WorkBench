@@ -712,11 +712,22 @@ class DashboardScreen(QWidget):
             # was sold". `cancelled_legs` on a REFUSED result is exactly that
             # case, and it is as serious as UNPROTECTED.
             #
+            # ⚠️ AND `issued_legs` IS THE OTHER HALF, which keying on
+            # `cancelled_legs` alone missed. That tuple holds legs CONFIRMED
+            # GONE, so a close whose cancels went out and confirmed NOTHING -
+            # every leg still settling in `PendingCancel`, or the second
+            # cancel raising after the first was accepted - carried an EMPTY
+            # `cancelled_legs` and was rendered as an information dialog. The
+            # accepted cancel then lands and the position is part or wholly
+            # bare, announced by a box the operator has already dismissed.
+            # "A cancel went out" is the discriminator; whether it was
+            # confirmed is exactly what is unknown.
+            #
             # A refusal that cancelled nothing stays an information dialog -
             # making every refusal a critical modal only teaches the operator
             # to dismiss red boxes.
             already_stripped = result.outcome is CloseOutcome.REFUSED and bool(
-                result.cancelled_legs
+                result.cancelled_legs or result.issued_legs
             )
             if result.outcome is CloseOutcome.UNPROTECTED or already_stripped:
                 # Blocking, not a status line: the position is held with part
