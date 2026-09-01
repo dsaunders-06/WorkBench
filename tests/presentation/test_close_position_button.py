@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTableWidgetItem
 
 from qat.config import Settings
@@ -85,6 +86,34 @@ def dashboard(qtbot, tmp_path):
 def test_button_is_disabled_until_one_row_is_selected(dashboard):
     assert not dashboard.close_position_button.isEnabled()
     dashboard.positions_table.selectRow(0)
+    assert dashboard.close_position_button.isEnabled()
+
+
+def test_a_real_mouse_click_on_a_cell_enables_the_button(dashboard, qtbot):
+    """⚠️ THE BUTTON WAS DEAD TO A MOUSE.
+
+    `_sync_close_button` counts `selectionModel().selectedRows()`, which is
+    empty unless the table's selection BEHAVIOUR is `SelectRows`. Qt's default
+    is `SelectItems`: clicking a cell selects that cell, `selectedRows()`
+    returns nothing, and the button never enabled - for anyone using the
+    application, ever. `blotter.py:139` sets the behaviour; this table did not.
+
+    Every other test in this file selects with `selectRow(0)`, which selects
+    whole rows PROGRAMMATICALLY whatever the behaviour is set to, and so hid
+    the defect completely. This one drives an ACTUAL CELL CLICK, on a column
+    that is not the first, which is the only thing that would have caught it.
+    """
+    table = dashboard.positions_table
+    dashboard.show()
+    qtbot.waitExposed(dashboard)
+
+    item = table.item(0, 1)
+    table.scrollToItem(item)
+    qtbot.mouseClick(
+        table.viewport(), Qt.MouseButton.LeftButton, pos=table.visualItemRect(item).center()
+    )
+
+    assert table.selectionModel().selectedRows(), "a click on a cell must select the ROW"
     assert dashboard.close_position_button.isEnabled()
 
 

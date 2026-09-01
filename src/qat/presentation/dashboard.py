@@ -25,6 +25,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -290,6 +291,22 @@ class DashboardScreen(QWidget):
         layout.addWidget(QLabel("Positions"))
         self.positions_table = QTableWidget(0, len(_POSITIONS_COLUMNS))
         self.positions_table.setHorizontalHeaderLabels(list(_POSITIONS_COLUMNS))
+        # ⚠️ WITHOUT THIS THE CLOSE POSITION BUTTON IS DEAD TO A MOUSE.
+        #
+        # `_sync_close_button` counts `selectionModel().selectedRows()`, and Qt
+        # defaults to `SelectItems`: a click selects one CELL, `selectedRows()`
+        # returns an empty list, and the button never enables - for every real
+        # operator, on every click. `blotter.py` sets this on its own table for
+        # the same reason. Eleven UI tests passed over it because they all
+        # select with `selectRow(0)`, which selects a whole row
+        # programmatically whatever the behaviour is; only a real cell click
+        # exercises this line.
+        self.positions_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # v1 is full-close-only, so the button acts on exactly one symbol.
+        # Enforced in the selection model as well as in `_sync_close_button` -
+        # a table that cannot produce a two-row selection cannot present the
+        # operator with a disabled button and no visible reason why.
+        self.positions_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         # Cells get a tooltip below; the headers need one too (M87 originally
         # fixed only the cells) - "To exit" and "To stop" are the two most in
         # need of disambiguating, and the first to elide.
