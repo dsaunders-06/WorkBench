@@ -17,8 +17,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
-from qat.data.broker.adapter import BrokerAdapter
+from qat.data.broker.adapter import BrokerAdapter, RestingOrder
 from qat.domain.oms.oms import OMS
+from qat.domain.oms.resting_orders import WORKING_STATUSES
 from qat.domain.oms.signal_bridge import PositionEntry
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -67,6 +68,38 @@ class PositionCloser:
                 return abs(position.quantity)
         return 0.0
 
+    async def _legs_for(self, symbol: str) -> list[RestingOrder]:
+        """Working orders for `symbol`, read with `open_orders()`.
+
+        NOT `openTrades()`: that read is clientId-scoped and on 24 August
+        reported zero protective stops while sixteen were resting.
+        """
+        orders = await self.broker.open_orders()
+        return [o for o in orders if o.symbol == symbol and o.status in WORKING_STATUSES]
+
+    async def _cancel_legs(self, symbol: str) -> tuple[list[RestingOrder], str | None]:
+        """Cancel every working leg, then RE-READ to prove they are gone.
+
+        ⚠️ The cancel's own response is not evidence. On 19 August one reported
+        PendingCancel while being rejected outright (error 10147).
+        """
+        captured = await self._legs_for(symbol)
+        for leg in captured:
+            try:
+                await self.broker.cancel_order(leg.order_id)
+            except Exception as exc:  # noqa: BLE001 - report it, never proceed
+                return captured, f"cancel of leg {leg.order_id} failed: {exc}"
+
+        survivors = await self._legs_for(symbol)
+        if survivors:
+            ids = ", ".join(o.order_id for o in survivors)
+            return captured, (
+                f"{len(survivors)} leg(s) still resting after the cancel ({ids}). "
+                f"NOTHING was sold - selling now would leave them resting against a "
+                f"position no longer held and put the account short."
+            )
+        return captured, None
+
     async def close_position(
         self,
         symbol: str,
@@ -100,4 +133,8 @@ class PositionCloser:
                 f"halt was not acknowledged",
             )
 
-        return self._refuse(symbol, "not implemented past preconditions")
+        captured, failure = await self._cancel_legs(symbol)
+        if failure is not None:
+            return self._refuse(symbol, failure)
+        cancelled = tuple(leg.order_id for leg in captured)
+        return CloseResult(CloseOutcome.REFUSED, symbol, 0.0, cancelled, "sell not implemented yet")

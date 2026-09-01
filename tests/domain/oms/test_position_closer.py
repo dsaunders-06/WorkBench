@@ -159,3 +159,44 @@ async def test_proceeds_past_the_halt_when_acknowledged(closer_factory):
     closer = closer_factory(positions={"CBA.AX": 100.0}, halt="broker gone")
     result = await closer.close_position("CBA.AX", operator="tester", acknowledge_halt=True)
     assert result.outcome is not CloseOutcome.REFUSED or "tripped" not in result.detail
+
+
+@pytest.mark.asyncio
+async def test_stops_dead_when_a_leg_survives_the_cancel(closer_factory):
+    """⚠️ THE MOST IMPORTANT TEST IN THIS FILE.
+
+    On 19 August a cancel reported PendingCancel while being rejected outright
+    (error 10147). If a leg is still resting, selling puts the account short.
+    """
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT"), _leg("CBA.AX", "2", "STP")],
+        legs_after_cancel=[_leg("CBA.AX", "2", "STP")],  # one survives
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert "still resting" in result.detail
+    assert closer.oms.exit_orders == [], "NOTHING may be sold while a leg rests"
+
+
+@pytest.mark.asyncio
+async def test_reads_legs_with_open_orders_not_open_trades(closer_factory):
+    """open_orders() uses reqAllOpenOrders. openTrades() is clientId-scoped and
+    reported zero legs against sixteen resting on 24 August."""
+    closer = closer_factory(positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "LMT")])
+    await closer.close_position("CBA.AX", operator="tester")
+    assert closer.broker.open_orders_calls >= 2, "read once to capture, again to verify"
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_that_cannot_be_resolved_refuses(closer_factory):
+    from qat.data.broker.ib_adapter import CancelNotResolvedError
+
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT")],
+        cancel_raises=CancelNotResolvedError("no live order"),
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert closer.oms.exit_orders == []
