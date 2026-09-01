@@ -41,7 +41,7 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M159 (`e4987f9`)**, installed 31 August 16:31, SHA256 `A077BE40…55C3`, signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-16ce8e6-20260831-1631` (contains M158). ✅ **READ BACK 1 September 08:34** off its own log: `Build: M159 (e4987f9, built 31/08/2026 16:10:30 AEST, packaged)`, ten positions adopted with 20 legs, zero ERROR/CRITICAL through startup, and **no kill-switch restore line — the 16:36 reset persisted across the restart.** ⚠️ **Only ONE of its four checks is settled** — see the 1 September section; the other three need market events that had not happened at launch. Previous: M158 (read back 3×), M157, M156, M155, M154, M153, M152 |
+| Deployed build | **M161 (`04053ba`)**, installed 1 September 16:18, SHA256 `1F769859…03A0`, signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-e4987f9-20260901-1618` (contains M159). ✅ **READ BACK 1 September 17:20** off its own log: `Build: M161 (04053ba, built 01/09/2026 16:07:36 AEST, packaged)`, **warm start seeded 100 symbols** (the 94→99 widening, live), ten positions adopted with 20 legs, scan clean, `Excursion backfilled … 10 of 10`. **M161 contains M160 and M159**, so one deploy carried all three. ⚠️ **The kill switch is TRIPPED** — see below. Previous: M159 (read back 1 Sept), M158 (read back 3×), M157, M156, M155, M154, M153 |
 | Repository HEAD | ⚠️ **AHEAD by M160**, built and NOT deployed. `handoff_state.py` derives the gap |
 | Deploy gap | ⚠️ **M160 NOT DEPLOYED.** `DEPLOYED` reads `e4987f9` (M159), now launched and partly read back. ⚠️ **Deploying M160 requires stopping the app** (the running process holds the exe), so it cannot happen mid-session without ending M159's read-back before three of its four checks have been exercised. **Deploy M160 after the close, not during.** M160's own read-back then needs an entry that fills across multiple executions - which needs the book below ten, which needs an exit |
 | Pushed | ✅ **LEVEL with `origin` at `0167399`.** The 27 August hold was lifted on 30 August and 74 commits went up in ONE push. ⚠️ **CI is STILL at the billing wall** — that push's run died in 2s with zero steps, *"the job was not started because recent account payments have failed or your spending limit needs to be increased"*. **The allowance resets ~1 September.** Until then a push backs work up, costs no Actions minutes (a job that never starts bills nothing) and emails a failure while verifying nothing. After the reset, batch pushes: one push is one run, ~8.6 minutes of 2,000 at `windows-latest`'s 2× multiplier |
@@ -1077,6 +1077,46 @@ running, which needs the book below ten, which needs an exit.
 **So all three remaining checks stand behind the same door: an exit, then an
 entry.** That is also M160's read-back condition. Do not deploy M160 over a
 session that is still the only instrument for M159.
+
+### ✅ M161 DEPLOYED AND READ BACK, 1 September 17:20 — and 10 OF 10 SETTLES THE MORNING'S CORRECTION
+
+    Build: M161 (04053ba, built 01/09/2026 16:07:36 AEST, packaged)
+    Warm start: fetching 300 daily bars for 100 symbols
+    Warm start seeded 100 symbols across 3 buffers with 300-300 daily bars each
+    Adopted 10 pre-existing broker position(s) ... 10 of 10 carry a stop
+    RESTING ORDER SCAN: 20 working leg(s) across 10 symbol(s), nothing unjustified
+    Excursion backfilled from daily bars on 10 of 10 restored lot(s); 0 had no bars
+
+✅ **`10 of 10`, and this is the morning's corrected reasoning confirming itself.**
+At 08:35 it read 9 because JHX was entered 31 August and no bar existed AFTER
+its entry day — the ASX had not opened. The handover had predicted 10 on the
+grounds that a new calendar day supplies a new bar; it does not. **Now that
+1 September has a completed bar, it reads 10.** The mechanism was the bar, not
+the date.
+
+✅ **100 symbols seeded** — M161's widening, live. First run above 95.
+
+### ⚠️ THE KILL SWITCH IS TRIPPED, and it tripped on the SHUTDOWN
+
+    17:20:06 CRITICAL KILL-SWITCH RESTORED FROM THE PREVIOUS SESSION: IBKR
+             connection lost and reconnect attempts exhausted (triggered by
+             ib-adapter). The halt was NOT cleared by this restart.
+
+**Cause is known and benign:** IB Gateway was closed by the operator at ~16:09
+to make way for TWS, *after* the session had stood down at 16:00:04. The adapter
+lost its connection, exhausted reconnects, and tripped — correctly. The 16:11
+shutdown log carries the same `ConnectionRefusedError` immediately before
+`shutdown reached normally`.
+
+⚠️ **It is a TRUE POSITIVE on a condition that has since cleared.** The Gateway
+is back up on 4002, this launch connected, adopted ten positions FROM THE BROKER
+with 20 legs, and the resting scan reads clean. **But it stays tripped until a
+human resets it**, and the reset must be justified rather than routine — the
+31 August precedent is `scripts/reset_kill_switch.py --apply`, which goes through
+the app's own `KillSwitch.reset()` so the action and its reason are attributed.
+
+⚠️ **NOT RESET — awaiting the operator.** Order flow is halted meanwhile, which
+costs nothing with the market shut.
 
 ### ❌ ITEM 33's "DEEPER FIX" MEASURED AND REJECTED — see item 33 for the numbers
 
