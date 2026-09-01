@@ -49,7 +49,7 @@ source.
 | Watchlist | **94 ASX megacaps + STW.AX = 95 polled** on the DEPLOYED build. ⚠️ **M161 takes it to 99 + STW.AX = 100 polled, built and NOT deployed.** ⚠️ **NEITHER 94 NOR 101 WAS EVER A LIMIT** — 94 is the length of the hardcoded megacap tuple (shipped at 100, six pruned by M110), and the 20 August yfinance block at "101" was OUR count (unpruned 100 + STW.AX), not Yahoo's threshold. Where the vendor's limit actually sits is **unmeasured**. `watchlist_max_symbols` is 100 and was never binding at 94 |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **TEN POSITIONS, 20 resting legs, all protected** - A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW. **JHX.AX 1,097 @ 41.9554 entered 31 Aug 10:30** (17 executions, bracketed LMT 46.01 / STP 39.39, OCA-linked). **PNI.AX stopped out 31 Aug 10:00 at 15.56, -7,170.79 net, -1.6455R** - gapped 0.90 through a 16.46 stop. Aggregate risk-at-stop was 3.992% at 9 positions; re-measure, the book is 10 again |
-| Kill switch | ✅ **CLEAR** — reset 31 August 16:36 via `scripts/reset_kill_switch.py --apply`, which calls the app's own `KillSwitch.reset()` so the action is attributed: *"Kill-switch reset by operator - order flow resumes (was: Broker reconciliation mismatch)"*. **Justified, not routine:** the mismatch resolved at 10:30:51 and never recurred, item 59 lifted the JHX quarantine at 13:48:57 after 3 clean scans, twenty legs read clean on every scan to 15:58, and ten positions with twenty protective legs were verified FROM THE BROKER. ⚠️ **The next launch resumes order flow.** The position cap is now the only thing between a signal and an entry, so **the first exit unblocks a real entry with no halt behind it**. Quarantines: EMPTY |
+| Kill switch | ✅ **CLEAR** — tripped 1 September ~16:11 (*"IBKR connection lost and reconnect attempts exhausted"*, a TRUE POSITIVE: the operator closed IB Gateway after the 16:00:04 stand-down), restored on the 17:20 launch, and **reset 17:22:53 via the risk console**, which calls the app's own `KillSwitch.reset()` so the action is attributed and quotes the original reason. **Verified on disk, not taken on trust:** `kill_switch.json` reads `{"tripped": false, "reason": null}`. **Justified, not routine:** the Gateway is back on 4002, this launch connected, ten positions with twenty legs were adopted FROM THE BROKER, and the resting scan read clean. ⚠️ **ORDER FLOW IS LIVE.** The position cap is the only thing between a signal and an entry, so **the first exit unblocks a real entry with no halt behind it**. Quarantines: EMPTY. Previous reset: 31 August 16:36 via `scripts/reset_kill_switch.py --apply` |
 | Ledgers | **6 closed trades** — five LOV.AX and one RHC.AX. ⚠️ **One LOV row is a REPAIR row with EMPTY costs**, so net P&L across LOV is **NOT summable from that file**; IBKR's commission on the unabsorbed portion was not knowable after the fact and its `exit_reason` says so. ⚠️ **All six carry an EMPTY `entry_slippage`** — see item 44: the field was never persisted, and M156 fixes that only for trades opened FROM NOW |
 
 > ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
@@ -1115,8 +1115,22 @@ human resets it**, and the reset must be justified rather than routine — the
 31 August precedent is `scripts/reset_kill_switch.py --apply`, which goes through
 the app's own `KillSwitch.reset()` so the action and its reason are attributed.
 
-⚠️ **NOT RESET — awaiting the operator.** Order flow is halted meanwhile, which
-costs nothing with the market shut.
+✅ **RESET 17:22:53, and verified on disk rather than taken on trust:**
+
+    Kill-switch reset by operator (risk console) - order flow resumes
+    (was: IBKR connection lost and reconnect attempts exhausted (triggered by ib-adapter))
+
+    kill_switch.json            {"tripped": false, "reason": null}
+    resting_order_anomalies     {"anomalies": []}
+
+Done through the **risk console**, so it went through the app's own
+`KillSwitch.reset()` and the line carries both the operator attribution and the
+original reason — the same shape as the 31 August reset, by a different route.
+
+⚠️ **ORDER FLOW IS LIVE AGAIN.** The position cap is once more the only thing
+between a signal and an entry, so **the first exit unblocks a real entry with no
+halt behind it** — and that entry is what M159's three unread checks and M160's
+own read-back are all waiting on.
 
 ### ❌ ITEM 33's "DEEPER FIX" MEASURED AND REJECTED — see item 33 for the numbers
 
