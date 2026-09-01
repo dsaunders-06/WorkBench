@@ -371,7 +371,39 @@ if ($orphanLines.Count -gt 0) {
 
 # --- failures --------------------------------------------------------------
 Write-Section 'ERRORS AND HALTS'
-$errs = @($rows | Where-Object { $_.level -eq 'ERROR' -or $_.level -eq 'CRITICAL' })
+# ⚠️ SPLIT AT THE BELL, WITHIN THIS RUN. Both buckets were wrong until
+# 1 September 2026, and the pre-bell one reported a DIFFERENT RUN entirely.
+#
+# It searched BACKWARDS from $startIndex for a `"Build: ` banner. But
+# $startIndex is this run's FIRST line ("Logging to ..."), and this run's banner
+# is printed AFTER it - so the backward search could only ever land on the
+# PREVIOUS run's banner, and the window spanned that whole previous run. On
+# 1 September it printed `08-31 13:37:48 CRITICAL KILL-SWITCH RESTORED` under
+# today's heading: a stale halt in today's column, which is precisely the line
+# an operator must not misread. With a bad previous day it would have printed
+# hundreds.
+#
+# "since the bell" was wrong too, in the other direction: it counted EVERY error
+# in $rows, which begins at launch. Today's "108 since the bell" included an
+# 08:39 GQG failure 81 minutes BEFORE the 10:00:19 bell.
+#
+# Both are now sliced from $rows - already this run alone - at the bell's own
+# timestamp. No index arithmetic, so log rotation cannot move the boundary.
+$bellRow = $rows | Where-Object { $_.message -cmatch 'Trading session started' } | Select-Object -First 1
+$bellTs = if ($bellRow) { [datetime]$bellRow.ts } else { $null }
+
+$allErrs = @($rows | Where-Object { $_.level -eq 'ERROR' -or $_.level -eq 'CRITICAL' })
+if ($bellTs) {
+    $errs = @($allErrs | Where-Object { ([datetime]$_.ts) -ge $bellTs })
+    $pre = @($allErrs | Where-Object { ([datetime]$_.ts) -lt $bellTs })
+} else {
+    # No bell in this run - launched outside market hours and never opened. Every
+    # error is pre-bell, and saying "0 since the bell" beside a bell that never
+    # rang would read as a clean session rather than an un-held one.
+    $errs = @()
+    $pre = $allErrs
+}
+
 Write-Output ("ERROR/CRITICAL since the bell: {0}" -f $errs.Count)
 foreach ($e in $errs) {
     Write-Output ("  {0} {1} {2}" -f ([datetime]$e.ts).ToLocalTime().ToString('HH:mm:ss'), $e.level, $e.message)
@@ -379,23 +411,11 @@ foreach ($e in $errs) {
 # The startup window - THIS LAUNCH to the bell - reported separately rather than
 # dropped. Scoping errors to the session alone hid a macro fetch failure at
 # 23:05 against a 23:30 open, and launch is exactly where startup problems show.
-#
-# Bounded at the launch banner, not at the top of the tail. Unbounded, this
-# walked back to 27 July and printed 1,965 errors from sessions long finished -
-# a check nobody would read, which is the same as no check.
-$launchIndex = 0
-for ($i = $startIndex; $i -ge 0; $i--) {
-    if ($raw[$i] -cmatch '"Build: ') { $launchIndex = $i; break }
+if ($bellTs) {
+    Write-Output ("ERROR/CRITICAL between launch and the bell: {0}" -f $pre.Count)
+} else {
+    Write-Output ("ERROR/CRITICAL this run (the market never opened during it): {0}" -f $pre.Count)
 }
-$pre = @()
-if ($startIndex -gt $launchIndex) {
-    foreach ($line in $raw[$launchIndex..($startIndex - 1)]) {
-        if ($line -cmatch '"level":\s*"(ERROR|CRITICAL)"') {
-            try { $pre += ($line | ConvertFrom-Json) } catch { continue }
-        }
-    }
-}
-Write-Output ("ERROR/CRITICAL between launch and the bell: {0}" -f $pre.Count)
 foreach ($e in $pre) {
     Write-Output ("  {0} {1} {2}" -f ([datetime]$e.ts).ToLocalTime().ToString('MM-dd HH:mm:ss'), $e.level, $e.message)
 }
