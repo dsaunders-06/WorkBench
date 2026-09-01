@@ -257,6 +257,78 @@ class PositionCloser:
             )
         return captured, None
 
+    async def _sign_off_or_reread(self, order: Order, operator: str) -> Order | None:
+        """Sign `order` off - and treat an order ALREADY signed off as what it
+        is, which is a SUCCESS.
+
+        ⚠️ THIS CLOSER DOES NOT OWN SIGN-OFF, AND ASSUMING IT DID WAS A
+        CRITICAL DEFECT.
+
+        `OMS._announce_pending` publishes `OrderPendingSignoffEvent`, and
+        `EventBus.publish` AWAITS its handlers (`asyncio.gather` over the
+        handler coroutines) - so a subscriber runs to completion INSIDE
+        `submit_exit_order` and `submit_protective_stop`, before either
+        returns. `AutonomousExecutor._on_pending` is subscribed from
+        `start()`, and `AutonomyGate.evaluate` allows EVERY sell
+        unconditionally ("risk-reducing orders are not gated on appetite
+        limits") and every protective stop unconditionally as well
+        (`is_protective_stop`, which outranks even the closed-session check).
+
+        In `execution_mode="auto"` the executor has therefore already signed
+        the order off and handed it to the broker by the time this method is
+        called. `OMS._sign_off_locked` then raises `ValueError` - from the
+        "not pending sign-off" check, or from the `_transmitted` duplicate
+        guard behind it - and the ORIGINAL code let that escape:
+
+        * out of `close_position`, into the dashboard's `except`, which told
+          the operator "The close FAILED ... held with NO STOP" over a sell
+          that was in flight with the legs correctly gone;
+        * out of `_recover`'s `submit_protective_stop` block, into the broad
+          `except Exception`, which reported UNPROTECTED and "re-place it by
+          hand now" over a bracket that IS live. An operator obeying that
+          hand-places a SECOND full-size protective sell - the SHORT trap this
+          whole feature exists to prevent, walked into from the other side.
+
+        So: re-read the order and judge it by its ACTUAL status. Returns None
+        only when the order cannot be re-read at all, which the callers treat
+        as the failure it is.
+
+        ⚠️ The `except` is NOT defensive padding around an impossible case.
+        `tests/safety/test_manual_close_end_to_end.py::
+        test_autonomy_signs_the_exit_off_inside_submit_exit_order` pins the
+        mechanism; if that ever stops holding, this branch becomes dead code
+        and should be revisited rather than left.
+        """
+        try:
+            return await self.oms.sign_off(order.order_id, operator)
+        except ValueError as exc:
+            try:
+                actual = self.oms.get_order(order.order_id)
+            except KeyError:
+                logger.critical(
+                    "MANUAL CLOSE of %s: sign-off of %s was refused (%s) AND the order "
+                    "could not be re-read, so its true state is unknown. Requested by %s.",
+                    order.symbol,
+                    order.order_id,
+                    exc,
+                    operator,
+                )
+                return None
+            logger.warning(
+                "MANUAL CLOSE of %s: sign-off of %s by %s was refused (%s) because the "
+                "order had ALREADY been signed off - in auto mode the autonomous "
+                "executor signs every sell off inside the submit call, on the event "
+                "bus, before it returns. Judging it by its ACTUAL status instead: %s. "
+                "The close was still requested by %s and is recorded as manual.",
+                order.symbol,
+                order.order_id,
+                operator,
+                exc,
+                actual.status,
+                operator,
+            )
+            return actual
+
     async def close_position(
         self,
         symbol: str,
@@ -378,7 +450,18 @@ class PositionCloser:
         # decides whether the SYSTEM may act unattended; a human has already
         # approved this specific order in the dialog. It must never queue in the
         # blotter for a second sign-off.
-        signed = await self.oms.sign_off(order.order_id, operator)
+        #
+        # ⚠️ ...and it does NOT own sign-off. In auto mode the autonomous
+        # executor has already signed this exit off, synchronously, inside
+        # `submit_exit_order` above. See `_sign_off_or_reread`.
+        signed = await self._sign_off_or_reread(order, operator)
+        if signed is None:
+            return await self._recover(
+                symbol,
+                captured,
+                cancelled,
+                "the exit order could not be signed off and could not be re-read",
+            )
         if signed.status not in _SELL_IS_WORKING_OR_DONE:
             # Genuinely failed: rejected, or cancelled. Nothing is working, so
             # the position is BARE and the bracket must go back.
@@ -478,7 +561,17 @@ class PositionCloser:
             )
             if protective.status == "rejected":
                 raise RuntimeError(f"protective stop rejected for {symbol}")
-            placed = await self.oms.sign_off(protective.order_id, operator="auto-reprotect")
+            #
+            # ⚠️ ...and the executor may have signed it off first, on the bus,
+            # inside `submit_protective_stop`. A ValueError here used to fall
+            # into the `except` below and report UNPROTECTED over a LIVE
+            # bracket - see `_sign_off_or_reread`.
+            placed = await self._sign_off_or_reread(protective, "auto-reprotect")
+            if placed is None:
+                raise RuntimeError(
+                    f"the protective stop for {symbol} could not be signed off "
+                    f"and could not be re-read"
+                )
             if placed.status not in ("transmitted", "filled"):
                 raise RuntimeError(f"protective stop ended {placed.status}")
         except Exception:  # noqa: BLE001 - the loudest branch in the file
