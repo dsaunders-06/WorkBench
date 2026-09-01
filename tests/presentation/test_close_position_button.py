@@ -222,6 +222,58 @@ async def test_unprotected_outcome_is_shown_as_a_blocking_error(dashboard, monke
     assert shown == {"error": "CBA.AX is held with NO STOP"}
 
 
+async def test_a_refusal_that_already_cancelled_legs_is_shown_as_a_blocking_error(
+    dashboard, monkeypatch
+):
+    """⚠️ A REFUSAL IS NOT ALWAYS HARMLESS.
+
+    Three of `_cancel_legs`' failure branches fire AFTER `cancel_order` has
+    already gone out, so the position can be left with part or all of its
+    bracket deleted. Rendered through `_show_result` - a non-blocking
+    information dialog - a bare downside read as reassuring: "NOTHING was
+    sold", dismissed, position walked away from.
+
+    A REFUSED result carrying cancelled legs is the discriminator, and it must
+    be as loud as UNPROTECTED.
+    """
+    monkeypatch.setattr(dashboard, "_confirm_close", lambda *a, **k: True)
+    shown: dict[str, str] = {}
+    monkeypatch.setattr(dashboard, "_show_error", lambda msg: shown.setdefault("error", msg))
+    monkeypatch.setattr(dashboard, "_show_result", lambda msg: shown.setdefault("result", msg))
+
+    async def _refused_after_cancels(symbol, *, operator, quantity=None):
+        return CloseResult(
+            CloseOutcome.REFUSED, symbol, 0.0, ("leg-1",), "leg-1 WERE cancelled and are gone"
+        )
+
+    dashboard.runtime.closer.close_position = _refused_after_cancels
+    dashboard.positions_table.selectRow(0)
+    dashboard._on_close_clicked()
+    await asyncio.sleep(0.05)
+
+    assert shown == {"error": "leg-1 WERE cancelled and are gone"}
+
+
+async def test_a_refusal_that_cancelled_nothing_stays_an_information_dialog(dashboard, monkeypatch):
+    """The other side of the same rail, so the fix is not "make every refusal
+    a critical modal". A precondition refusal changed nothing at the broker
+    and must not train the operator to dismiss red boxes."""
+    monkeypatch.setattr(dashboard, "_confirm_close", lambda *a, **k: True)
+    shown: dict[str, str] = {}
+    monkeypatch.setattr(dashboard, "_show_error", lambda msg: shown.setdefault("error", msg))
+    monkeypatch.setattr(dashboard, "_show_result", lambda msg: shown.setdefault("result", msg))
+
+    async def _refused_untouched(symbol, *, operator, quantity=None):
+        return CloseResult(CloseOutcome.REFUSED, symbol, 0.0, (), "NOTHING was cancelled")
+
+    dashboard.runtime.closer.close_position = _refused_untouched
+    dashboard.positions_table.selectRow(0)
+    dashboard._on_close_clicked()
+    await asyncio.sleep(0.05)
+
+    assert shown == {"result": "NOTHING was cancelled"}
+
+
 async def test_a_closed_outcome_is_rendered_as_a_result_not_an_error(dashboard, monkeypatch):
     monkeypatch.setattr(dashboard, "_confirm_close", lambda *a, **k: True)
     shown: dict[str, str] = {}

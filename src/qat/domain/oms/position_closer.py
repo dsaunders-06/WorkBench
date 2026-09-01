@@ -74,8 +74,42 @@ class CloseResult:
     outcome: CloseOutcome
     symbol: str
     quantity: float
+    # Legs a cancel was ISSUED for and which are not still resting afterwards.
+    #
+    # ⚠️ Non-empty on a REFUSED result means the refusal came AFTER protection
+    # was already removed, which is a materially different event from a
+    # refusal that changed nothing - the dashboard routes it to a blocking
+    # dialog for exactly that reason. When `detail` says the post-cancel read
+    # could not be trusted, these are the legs whose outcome is UNKNOWN rather
+    # than confirmed gone; the wording carries that and this tuple cannot.
     cancelled_legs: tuple[str, ...]
     detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class _CancelReport:
+    """What `_cancel_legs` actually did, rather than a bare pass/fail.
+
+    `_cancel_legs` used to return `(captured, failure_message)`, and
+    `close_position` funnelled every failure through `_refuse` - which reports
+    `cancelled_legs=()` and attempts no recovery. Three of those branches run
+    AFTER `cancel_order` has already gone out, so the operator was told
+    "NOTHING was cancelled and NOTHING was sold" over a position whose bracket
+    was half or wholly stripped.
+    """
+
+    captured: list[RestingOrder]
+    # Cancels that returned without raising, minus anything still resting.
+    cancelled: tuple[str, ...]
+    # Working orders for this symbol AFTER the cancels.
+    survivors: tuple[str, ...]
+    # Working orders belonging to OTHER symbols before the cancels. The
+    # discriminator for an empty read: those cannot have vanished too.
+    others_working_before: int
+    # False when the post-cancel read collapsed the whole book to empty while
+    # other symbols' orders were working. Nothing may be re-placed on it.
+    book_is_credible: bool
+    failure: str | None
 
 
 class PositionCloser:
@@ -156,7 +190,7 @@ class PositionCloser:
         orders = await self.broker.open_orders()
         return [o for o in orders if o.status in WORKING_STATUSES]
 
-    async def _cancel_legs(self, symbol: str) -> tuple[list[RestingOrder], str | None]:
+    async def _cancel_legs(self, symbol: str) -> _CancelReport:
         """Cancel every working leg, then RE-READ to prove they are gone.
 
         ⚠️ The cancel's own response is not evidence. On 19 August one reported
@@ -180,6 +214,11 @@ class PositionCloser:
         """
         before = await self._working_orders()
         mine = [o for o in before if o.symbol == symbol]
+        others_before = len(before) - len(mine)
+
+        def refused_untouched(detail: str) -> _CancelReport:
+            """A refusal that precedes every cancel: nothing was touched."""
+            return _CancelReport([], (), (), others_before, True, detail)
 
         # ⚠️ M139's precondition, and it comes BEFORE any cancel. "No working
         # order for the symbol beyond its protective legs." This loop used to
@@ -191,7 +230,7 @@ class PositionCloser:
         intruders = [o for o in mine if not _is_protective_leg(o)]
         if intruders:
             described = ", ".join(f"{o.order_id} ({o.side} {o.order_type})" for o in intruders)
-            return [], (
+            return refused_untouched(
                 f"{len(intruders)} working order(s) for {symbol} are not protective "
                 f"legs: {described}. NOTHING was cancelled and NOTHING was sold - "
                 f"this close cancels a bracket, and it will not act while another "
@@ -218,26 +257,47 @@ class PositionCloser:
         # against the app's own belief and refuse.
         if not captured:
             believed = len(self.believed_legs_for(symbol))
-            return [], (
+            return refused_untouched(
                 f"the broker holds {symbol} but reports NO working orders for it, and "
                 f"this app believes {believed} protective leg(s) are resting. A held "
                 f"position in this system always carries protection, so an empty read "
                 f"means the read FAILED, not that the position is bare - open_orders() "
                 f"returns the same empty list when the client cannot answer as when the "
                 f"book is clean. NOTHING was cancelled and NOTHING was sold; selling on "
-                f"this read could leave both legs resting and put the account short."
+                f"this read could leave both legs resting and put the account short. "
+                f"If {symbol} really is held with no protection at all, this button "
+                f"cannot close it - it has no bracket to cancel and will refuse every "
+                f"time. Use {_SCRIPT_HINT} for that."
             )
 
+        # Cancels that went out without the call itself raising. NOT proof they
+        # took effect - 19 August, error 10147 - which is what the re-read below
+        # is for. Recorded per leg so a raise on the SECOND one still reports the
+        # first as issued, rather than reporting the whole attempt as untouched.
+        issued: list[str] = []
+        cancel_failure: str | None = None
         for leg in captured:
             try:
                 await self.broker.cancel_order(leg.order_id)
             except Exception as exc:  # noqa: BLE001 - report it, never proceed
-                return captured, f"cancel of leg {leg.order_id} failed: {exc}"
+                cancel_failure = f"cancel of leg {leg.order_id} failed: {exc}"
+                break
+            issued.append(leg.order_id)
 
         after = await self._working_orders()
+        survivors = tuple(o.order_id for o in after if o.symbol == symbol)
+        book_is_credible = bool(after) or others_before == 0
+        # What is CONFIRMED gone. A leg whose cancel was issued and which is
+        # still resting is not cancelled, whatever the cancel's own response said.
+        gone = tuple(order_id for order_id in issued if order_id not in survivors)
 
-        if not after and len(before) > len(captured):
-            return captured, (
+        def report(detail: str | None) -> _CancelReport:
+            return _CancelReport(captured, gone, survivors, others_before, book_is_credible, detail)
+
+        if cancel_failure is not None:
+            return report(cancel_failure)
+        if not book_is_credible:
+            return report(
                 f"cancel of {symbol} could NOT BE VERIFIED: {len(before)} order(s) were "
                 f"working account-wide before the cancel but only {len(captured)} belonged "
                 f"to {symbol}, yet the post-cancel read reports the ENTIRE book empty. "
@@ -246,16 +306,106 @@ class PositionCloser:
                 f"was sold. This is a READ FAILURE, distinct from a leg still resting: it "
                 f"means the cancel's outcome is unknown, not that it succeeded."
             )
-
-        survivors = [o for o in after if o.symbol == symbol]
         if survivors:
-            ids = ", ".join(o.order_id for o in survivors)
-            return captured, (
-                f"{len(survivors)} leg(s) still resting after the cancel ({ids}). "
-                f"NOTHING was sold - selling now would leave them resting against a "
-                f"position no longer held and put the account short."
+            return report(
+                f"{len(survivors)} leg(s) still resting after the cancel "
+                f"({', '.join(survivors)}). NOTHING was sold - selling now would leave "
+                f"them resting against a position no longer held and put the account short."
             )
-        return captured, None
+        return report(None)
+
+    async def _refuse_after_cancels(self, symbol: str, report: _CancelReport) -> CloseResult:
+        """A refusal raised AFTER `cancel_order` has already gone out.
+
+        ⚠️ NOT THE SAME EVENT AS AN ORDINARY REFUSAL, and treating it as one
+        was defect N3. `_refuse` reports `cancelled_legs=()` and attempts no
+        recovery, so all three post-cancel branches told the operator "NOTHING
+        was cancelled and NOTHING was sold" over a position whose bracket had
+        been half or wholly stripped. The survivors branch was the worst of
+        them: it listed the legs still resting and never mentioned that the
+        OTHER one was already gone - a bare downside reading as reassuring, in
+        a non-blocking information dialog.
+
+        Three cases, and they are NOT interchangeable:
+
+        1. **The post-cancel read is not credible.** Nothing may be re-placed
+           on it. The legs may still be resting, and a fresh full-size bracket
+           over them is the short trap approached from the other side. Say so,
+           name the legs the cancel went out for, and say their outcome is
+           UNKNOWN.
+        2. **A leg is still resting.** The position keeps part of its
+           protection, so re-arming would again stack a full-size sell on a
+           resting one. Name what is gone as well as what remains.
+        3. **Nothing rests for this symbol.** The position is BARE and the
+           bracket must go back - `_recover` does exactly that, and its own
+           guards still apply.
+
+        The outcome stays REFUSED in cases 1 and 2, as the spec's failure
+        table requires ("Legs untouched or partially cancelled - reported
+        exactly"). What changes is that `cancelled_legs` is now populated, and
+        the dashboard renders a REFUSED result carrying cancelled legs as a
+        BLOCKING error rather than an information dialog.
+        """
+        detail = report.failure or "the close was refused after the cancels went out"
+        cancelled_text = ", ".join(report.cancelled)
+
+        if not report.book_is_credible:
+            logger.critical(
+                "MANUAL CLOSE of %s: %s Cancels had ALREADY been issued for %s, and "
+                "their outcome is unknown. NO bracket was re-placed - the legs may "
+                "still be resting. Check the broker by hand.",
+                symbol,
+                detail,
+                cancelled_text,
+            )
+            return CloseResult(
+                CloseOutcome.REFUSED,
+                symbol,
+                0.0,
+                report.cancelled,
+                f"{detail} A cancel had ALREADY been sent for leg(s) {cancelled_text}, "
+                f"so this is not 'nothing happened': their true state is UNKNOWN, and "
+                f"{symbol} may be holding with part or all of its bracket gone. No "
+                f"bracket was re-placed, because placing one on a read that answered "
+                f"nothing could stack it on legs still resting. Check the broker by "
+                f"hand before doing anything else.",
+            )
+
+        if report.survivors:
+            logger.critical(
+                "MANUAL CLOSE of %s: %s Leg(s) %s WERE cancelled and are gone; %s "
+                "still rest. Nothing was sold and no bracket was re-placed. The "
+                "position is only partly protected.",
+                symbol,
+                detail,
+                cancelled_text,
+                ", ".join(report.survivors),
+            )
+            return CloseResult(
+                CloseOutcome.REFUSED,
+                symbol,
+                0.0,
+                report.cancelled,
+                f"{detail} ⚠️ This is NOT 'nothing happened': leg(s) {cancelled_text} "
+                f"WERE cancelled and are gone, so {symbol} is now protected only by "
+                f"the {len(report.survivors)} leg(s) that survived "
+                f"({', '.join(report.survivors)}). No bracket was re-placed, because a "
+                f"fresh full-size bracket stacked on a leg still resting is the same "
+                f"short trap from the other side. Deal with this position by hand, or "
+                f"use {_SCRIPT_HINT}.",
+            )
+
+        # Nothing rests for this symbol and the read is credible: BARE.
+        logger.critical(
+            "MANUAL CLOSE of %s: %s Leg(s) %s were cancelled and NOTHING rests for "
+            "this symbol - the position is BARE. Re-placing the bracket.",
+            symbol,
+            detail,
+            cancelled_text,
+        )
+        return await self._recover(
+            symbol, report, f"{detail} Leg(s) {cancelled_text} had already been cancelled"
+        )
 
     async def _sign_off_or_reread(self, order: Order, operator: str) -> Order | None:
         """Sign `order` off - and treat an order ALREADY signed off as what it
@@ -395,10 +545,17 @@ class PositionCloser:
                 f"trade and no R-multiple. Use {_SCRIPT_HINT} instead.",
             )
 
-        captured, failure = await self._cancel_legs(symbol)
-        if failure is not None:
-            return self._refuse(symbol, failure)
-        cancelled = tuple(leg.order_id for leg in captured)
+        report = await self._cancel_legs(symbol)
+        if report.failure is not None:
+            # ⚠️ A refusal raised AFTER cancel_order has already run is NOT the
+            # same event as one raised before it, and reporting both as a plain
+            # `_refuse` was defect N3: `cancelled_legs=()` and no recovery
+            # attempt, over a position whose bracket had been half or wholly
+            # stripped.
+            if report.cancelled:
+                return await self._refuse_after_cancels(symbol, report)
+            return self._refuse(symbol, report.failure)
+        cancelled = report.cancelled
 
         quantity = await self._held_quantity(symbol)
         if quantity < 0:
@@ -444,7 +601,7 @@ class PositionCloser:
             symbol, quantity, entry.price, reason="manual_close"
         )
         if order.status == "rejected":
-            return await self._recover(symbol, captured, cancelled, "the exit order was rejected")
+            return await self._recover(symbol, report, "the exit order was rejected")
 
         # ⚠️ Signed off as the OPERATOR, bypassing the AutonomyGate. The gate
         # decides whether the SYSTEM may act unattended; a human has already
@@ -457,17 +614,12 @@ class PositionCloser:
         signed = await self._sign_off_or_reread(order, operator)
         if signed is None:
             return await self._recover(
-                symbol,
-                captured,
-                cancelled,
-                "the exit order could not be signed off and could not be re-read",
+                symbol, report, "the exit order could not be signed off and could not be re-read"
             )
         if signed.status not in _SELL_IS_WORKING_OR_DONE:
             # Genuinely failed: rejected, or cancelled. Nothing is working, so
             # the position is BARE and the bracket must go back.
-            return await self._recover(
-                symbol, captured, cancelled, f"the exit order ended {signed.status}"
-            )
+            return await self._recover(symbol, report, f"the exit order ended {signed.status}")
 
         logger.warning(
             "MANUAL CLOSE: %s %g sold by %s (%s), %d protective leg(s) cancelled first",
@@ -494,14 +646,14 @@ class PositionCloser:
             )
         return CloseResult(CloseOutcome.CLOSED, symbol, quantity, cancelled, detail)
 
-    async def _recover(
-        self, symbol: str, captured: list[RestingOrder], cancelled: tuple[str, ...], why: str
-    ) -> CloseResult:
+    async def _recover(self, symbol: str, report: _CancelReport, why: str) -> CloseResult:
         """Put the protection back. The position is BARE until this succeeds.
 
         ⚠️ EXCEPT when a sell is still working, in which case putting a
         bracket back is the dangerous move, not the safe one - see below.
         """
+        captured = report.captured
+        cancelled = report.cancelled
         stop = next((leg.stop_price for leg in captured if leg.stop_price), None)
         target = next((leg.limit_price for leg in captured if leg.limit_price), None)
 
@@ -520,6 +672,47 @@ class PositionCloser:
         # the belt to that pair of braces, asked of the BROKER rather than of
         # a status field, because a status field is exactly what was wrong.
         still_working = await self._working_orders()
+
+        # ⚠️ AND THE GUARD ABOVE MUST FAIL CLOSED, NOT OPEN.
+        #
+        # `IBAdapter.open_orders()` returns `[]` for an unanswerable client
+        # exactly as it does for a clean book. An empty read therefore proved
+        # NOTHING about whether a sell is in flight, yet it sent this straight
+        # down the re-arm path - failing OPEN on precisely the read
+        # `_cancel_legs` refuses on. Two layers, one broker method, opposite
+        # verdicts.
+        #
+        # Same discriminator as `_cancel_legs`, so the two agree: an empty
+        # account-wide book is credible only if nothing else was working before
+        # the cancels. If other symbols' orders WERE working, they cannot all
+        # have vanished, and a full-size bracket placed on that read could land
+        # on top of an in-flight sell.
+        if not still_working and report.others_working_before > 0:
+            logger.critical(
+                "MANUAL CLOSE of %s: %s, and the broker then reported an EMPTY book "
+                "account-wide although %d order(s) for other symbols were working "
+                "before the cancel. That read cannot be trusted, so NO bracket was "
+                "re-placed - it could stack on a sell this app cannot see. %s may be "
+                "held with no stop. Check the broker by hand.",
+                symbol,
+                why,
+                report.others_working_before,
+                symbol,
+            )
+            return CloseResult(
+                CloseOutcome.UNPROTECTED,
+                symbol,
+                0.0,
+                cancelled,
+                f"{why}, and the broker then reported NO working orders at all - "
+                f"although {report.others_working_before} order(s) for other symbols "
+                f"were working moments before. Those cannot all have vanished, so the "
+                f"read is not credible and the bracket was NOT re-placed: placed on a "
+                f"read that answered nothing, it could stack on a sell still in "
+                f"flight and put the account SHORT. {symbol} may be held with NO STOP. "
+                f"Check the broker by hand before doing anything else.",
+            )
+
         working_sells = [
             o for o in still_working if o.symbol == symbol and o.side.lower() == "sell"
         ]

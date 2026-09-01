@@ -704,9 +704,24 @@ class DashboardScreen(QWidget):
         """
         try:
             result = await closer.close_position(symbol, operator=_OPERATOR)
-            if result.outcome is CloseOutcome.UNPROTECTED:
-                # Blocking, not a status line: UNPROTECTED means the position
-                # is held with NO stop, and that must be impossible to miss.
+            # ⚠️ A REFUSAL IS NOT ALWAYS HARMLESS, and assuming it was put a
+            # bare downside behind a reassuring information dialog. Three of
+            # `_cancel_legs`' failure branches fire AFTER `cancel_order` has
+            # already gone out, so the position can be left with part or all
+            # of its bracket deleted while the text truthfully says "NOTHING
+            # was sold". `cancelled_legs` on a REFUSED result is exactly that
+            # case, and it is as serious as UNPROTECTED.
+            #
+            # A refusal that cancelled nothing stays an information dialog -
+            # making every refusal a critical modal only teaches the operator
+            # to dismiss red boxes.
+            already_stripped = result.outcome is CloseOutcome.REFUSED and bool(
+                result.cancelled_legs
+            )
+            if result.outcome is CloseOutcome.UNPROTECTED or already_stripped:
+                # Blocking, not a status line: the position is held with part
+                # or all of its protection gone, and that must be impossible
+                # to miss.
                 self._show_error(result.detail)
             else:
                 self._show_result(result.detail)

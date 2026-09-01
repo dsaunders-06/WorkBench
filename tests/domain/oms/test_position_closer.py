@@ -65,6 +65,7 @@ class _FakeBroker:
         positions_after_cancel,
         cancel_raises,
         legs_at_recovery=None,
+        cancel_raises_for=(),
     ):
         self._positions = positions
         self._positions_after = positions_after_cancel
@@ -72,6 +73,10 @@ class _FakeBroker:
         self._legs_after = legs_after_cancel
         self._legs_at_recovery = legs_at_recovery
         self._cancel_raises = cancel_raises
+        # Per-leg, so the SECOND leg's cancel can raise after the first has
+        # already gone through - the branch that leaves the position half
+        # stripped and is the whole point of the "refusal after cancels" tests.
+        self._cancel_raises_for = set(cancel_raises_for)
         self.open_orders_calls = 0
         self.cancelled_ids = []
         self._cancelled = False
@@ -93,6 +98,9 @@ class _FakeBroker:
     async def cancel_order(self, order_id):
         if self._cancel_raises is not None:
             raise self._cancel_raises
+        if order_id in self._cancel_raises_for:
+            self._cancelled = True  # the earlier legs DID go through
+            raise RuntimeError(f"broker refused the cancel of {order_id}")
         self.cancelled_ids.append(order_id)
         self._cancelled = True
         return Order(symbol="X", side="sell", quantity=0.0, order_id=order_id, status="cancelled")
@@ -202,6 +210,7 @@ def closer_factory():
         positions_after_cancel=None,
         halt=None,
         cancel_raises=None,
+        cancel_raises_for=(),
         exit_rejected=False,
         sign_off_status="transmitted",
         reprotect_raises=None,
@@ -216,6 +225,7 @@ def closer_factory():
             positions_after_cancel,
             cancel_raises,
             legs_at_recovery,
+            cancel_raises_for,
         )
         kill_switch = _FakeKillSwitch(halt)
         oms = _FakeOms(
@@ -772,3 +782,157 @@ async def test_the_entry_is_bound_before_the_legs_are_cancelled(closer_factory):
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.CLOSED
     assert entries.lookups == 1, "one lookup, taken before anything is cancelled"
+
+
+# --- a refusal AFTER the cancels have been issued -----------------------
+#
+# ⚠️ THE FINDING: three branches in `_cancel_legs` return a failure once
+# `cancel_order` has ALREADY run, and `close_position` funnelled all three
+# through `_refuse`, which reports `cancelled_legs=()` and attempts no
+# recovery. So the operator was told "NOTHING was sold" - true - while the
+# protection had been half or wholly stripped, and never told WHICH legs were
+# gone. In the survivors case in particular the text listed the legs still
+# resting and never mentioned that the OTHER one was already cancelled: a bare
+# downside reading as reassuring, in a non-blocking information dialog.
+
+
+@pytest.mark.asyncio
+async def test_a_survivor_refusal_names_the_leg_it_already_cancelled(closer_factory):
+    """One leg gone, one still resting. Saying only "1 leg still resting" reads
+    as "the position is still protected, nothing happened" - and the operator
+    walks away from a position carrying HALF its bracket."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_after_cancel=[_leg("CBA.AX", "2", "STP", stop=90.0)],  # the STP survives
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert result.cancelled_legs == ("1",), "the leg that IS gone must be reported"
+    assert "1" in result.detail and "2" in result.detail
+    assert "still resting" in result.detail
+    assert "cancelled" in result.detail.lower()
+    assert closer.oms.exit_orders == [], "still no sell"
+
+
+@pytest.mark.asyncio
+async def test_an_unverifiable_refusal_reports_the_cancels_it_issued(closer_factory):
+    """The collapse guard fires AFTER both cancels went out. Their outcome is
+    unknown, which is not the same as "nothing happened" - and it is the
+    reading the operator was left with."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[
+            _leg("CBA.AX", "1", "LMT", limit=110.0),
+            _leg("CBA.AX", "2", "STP", stop=90.0),
+            _leg("BHP.AX", "9", "STP"),
+        ],
+        legs_after_cancel=[],
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert sorted(result.cancelled_legs) == ["1", "2"]
+    assert "VERIFIED" in result.detail
+    assert "leg(s) still resting after the cancel" not in result.detail
+    assert "1" in result.detail and "2" in result.detail
+    # No bracket may be re-placed on a read that cannot be trusted: the legs
+    # may still be resting, and a fresh full-size bracket over them is the
+    # short trap from the other side.
+    assert closer.oms.protective_orders == []
+    assert closer.oms.exit_orders == []
+
+
+@pytest.mark.asyncio
+async def test_a_second_leg_cancel_that_raises_re_protects_the_bare_position(closer_factory):
+    """Leg 1 cancelled, leg 2's cancel RAISED, and the re-read shows nothing
+    working for the symbol - the position is BARE. `_refuse` returned
+    `cancelled_legs=()` and attempted no recovery at all, so the operator was
+    told nothing had been cancelled over a position with no stop."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_after_cancel=[],
+        cancel_raises_for=("2",),
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.RECOVERED, result.detail
+    assert result.cancelled_legs == ("1",)
+    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
+    assert "1" in result.detail
+    assert closer.oms.exit_orders == [], "a refusal is still a refusal - nothing is sold"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_before_any_cancel_still_reports_nothing_cancelled(closer_factory):
+    """The other half of the same rail: a refusal that precedes every cancel
+    must NOT start claiming legs were touched, and must not run recovery."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "STP", stop=90.0), _working_order("CBA.AX", "9")],
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert result.cancelled_legs == ()
+    assert closer.oms.protective_orders == []
+    assert closer.broker.cancelled_ids == []
+
+
+# --- N4: _recover's in-flight-sell guard must fail CLOSED ---------------
+
+
+@pytest.mark.asyncio
+async def test_recovery_refuses_to_re_arm_on_a_blind_book_read(closer_factory, caplog):
+    """⚠️ `_recover`'s "never re-arm over an in-flight sell" guard reads
+    `_working_orders()`, and `IBAdapter.open_orders()` returns `[]` for an
+    unanswerable client exactly as it does for a clean book. So the guard
+    failed OPEN on the blind read - it placed the bracket - while
+    `_cancel_legs` REFUSES on the identical read. Two layers, one broker
+    method, opposite verdicts.
+
+    Same discriminator as `_cancel_legs`: other symbols' orders were working
+    before the cancel, so an entirely empty account-wide book afterwards is
+    not credible.
+    """
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "STP", stop=90.0), _working_order("BHP.AX", "9")],
+        legs_after_cancel=[_working_order("BHP.AX", "9")],  # credible: BHP still there
+        legs_at_recovery=[],  # the recovery read goes blind
+        sign_off_status="rejected",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.UNPROTECTED
+    assert closer.oms.protective_orders == [], "no bracket on a read that answered nothing"
+    assert any(r.levelname == "CRITICAL" for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_recovery_still_re_arms_when_the_empty_read_is_credible(closer_factory):
+    """The other side of N4, so the fix cannot be "never re-arm". Nothing else
+    was working account-wide before the cancel, so an empty book afterwards is
+    exactly what a clean broker looks like and recovery must proceed."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_after_cancel=[],
+        legs_at_recovery=[],
+        sign_off_status="rejected",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.RECOVERED, result.detail
+    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
+
+
+# --- N5: the zero-leg refusal names the escape hatch --------------------
+
+
+@pytest.mark.asyncio
+async def test_the_zero_leg_refusal_names_the_script(closer_factory):
+    """Every other refusal that ends the road names `flatten_positions.py`.
+    This one did not, and it is the one with NO way forward: a genuinely bare
+    held position can never be closed by this button, so the operator is left
+    with a refusal and no next step."""
+    closer = closer_factory(positions={"CBA.AX": 100.0}, legs=[])
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert "flatten_positions.py" in result.detail
