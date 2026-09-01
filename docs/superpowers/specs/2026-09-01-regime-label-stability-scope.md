@@ -149,11 +149,7 @@ cannot be the source of the difference between them — but it does mean neither
 block is production, and Task 3 should carry the refit cadence if it is going to
 claim anything about live stability.
 
-### Task 2 — measure the ELIGIBILITY path, which nothing smooths
-
-⚠️ **Task 1 RAISED this one's priority.** The label has hysteresis and is still
-moved on up to 85.3% of bars by a meaningless column. Eligibility has no
-smoothing at all.
+### ✅ Task 2 — DONE, 1 September. **THE PREDICTION IN THIS DOCUMENT WAS WRONG.**
 
 Record the percentage of bars on which `mass >= 0.5` flips for the deployed
 strategy (`swing`), across the same arms.
@@ -161,6 +157,61 @@ strategy (`swing`), across the same arms.
 > **READING RULE.** If eligibility flips materially more than the smoothed label
 > does, the exposure is in strategy admission rather than in sizing, and any
 > future work belongs there. If it flips comparably, one number covers both.
+
+    ==== ELIGIBILITY of `swing` (mass >= 0.5, NO smoothing) ====
+    baseline eligible on         : 89.7% of bars
+    baseline admission flips     : 4 over 300 bars
+
+    real ^AXVI z-score                  1.0%
+    shuffled (same values, no time)     0.3%   [0.0 - 11.3]
+    gaussian noise (same moments)       0.3%   [0.0 -  4.0]
+    controls reaching the real arm : 19 of 60 (32%)
+
+Against the ONE-GATE label block on the identical window, seed and arms:
+
+| | control median | control max | baseline churn |
+|---|---|---|---|
+| LABEL (hysteresis) | 11.8% | **85.3%** | 8 transitions / 300 |
+| ADMISSION (no smoothing) | **0.3%** | **11.3%** | **4 flips / 300** |
+
+❌ **ADMISSION IS ~40× MORE STABLE THAN THE LABEL, not less.** The scope argued
+the opposite above — that because nothing smooths the mass path, that is where
+the exposure would be. **That reasoning was wrong**, and it was wrong for an
+interesting reason.
+
+### ⚠️ THE REAL STABILISER IS AGGREGATION, NOT HYSTERESIS
+
+`swing.suitable_regimes()` is `{SIDEWAYS, BULL, LOW_VOL, RECOVERY}` — **four of
+the seven regimes.** `_eligible_mass` SUMS the distribution over that set, so the
+label can move freely *among* those four without the sum going anywhere near
+0.5. The label distinguishes bull from low_vol from sideways; admission does not
+care which, only that it is one of the risk-on four.
+
+**Summing over a set is a far stronger stabiliser than a 0.15 margin and a
+three-bar streak.** Hysteresis smooths a sequence; set-membership collapses a
+whole dimension of the disagreement before the threshold ever sees it.
+
+### ⚠️ SO THE EXPOSURE IS IN SIZING, AND ONLY IN SIZING
+
+The added-column fragility from Task 1 lands on the **exposure scalar**, not on
+whether the strategy trades. That is operationally better news — admission is
+robust — and it means **Task 1's numbers are the whole story**, with the cost
+denominated in position size (LOW_VOL 1.0 → HIGH_VOL 0.4) rather than in
+missed trading.
+
+### ⚠️ RECORDED, NOT CHASED: admission is far more permissive than the label
+
+`swing` is admitted on **89.7% of bars** on this window. The 30 July measurement
+behind `suitable_regimes()`'s widening recorded label frequencies of bull 32.0%,
+bear 26.6%, high-vol 24.9%, low-vol 10.4%, sideways 6.2% — which would put
+label-based eligibility near 48.6%.
+
+⚠️ **Those two are NOT comparable and must not be quoted as a gap**: different
+windows (300 sessions to 29 July against 300 bars to 26 August) and different
+criteria (set membership of the argmax against a summed mass at 0.5). But the
+direction is large enough to be worth one apples-to-apples run some day —
+label-based against mass-based eligibility on the SAME window. Not run, not
+claimed.
 
 ### Task 3 — more than one window
 

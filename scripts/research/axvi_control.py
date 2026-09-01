@@ -53,6 +53,7 @@ does in production, and the date range is PRINTED so it can be checked against
 the startup log before any number here is believed.
 """
 
+import inspect
 import pathlib
 import sys
 import warnings
@@ -66,10 +67,20 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts" / "research"))
 
-from compare_standardisation import _label_and_scalar  # noqa: E402
+from compare_standardisation import _fused_probs, _label_and_scalar  # noqa: E402
 
 from qat.domain.regime_engine.fusion import HysteresisGate  # noqa: E402
 from qat.domain.regime_engine.hmm_core import HMMRegimeModel  # noqa: E402
+from qat.domain.strategies.engine import StrategyEngine  # noqa: E402
+from qat.domain.strategies.swing import SwingStrategy  # noqa: E402
+
+# ⚠️ READ off StrategyEngine rather than restated as 0.5. A threshold copied
+# into a research script is a threshold that silently stops matching production
+# the first time somebody tunes it, and this whole exercise exists because a
+# harness had quietly stopped matching production.
+_ELIGIBILITY_MASS: float = (
+    inspect.signature(StrategyEngine.__init__).parameters["regime_eligibility_mass"].default
+)
 
 _N_STATES = 4
 _Z_WINDOW = 60
@@ -114,7 +125,54 @@ def _labels_for(matrix: np.ndarray, six: np.ndarray, one_gate: bool = False) -> 
     return out
 
 
+def _eligibility_for(matrix: np.ndarray, six: np.ndarray) -> list[bool]:
+    """Whether `swing` would be ADMITTED to trade, bar by bar.
+
+    ⚠️ THE OTHER CONSUMER, and nothing smooths it. `StrategyEngine.is_eligible`
+    sums the fused distribution over the strategy's suitable regimes and admits
+    at `>= regime_eligibility_mass` (0.5) - `strategies/engine.py:232-256`. The
+    hysteresis gate is not in that path at all, so there is no `one_gate`
+    parameter here and there must not be one: a gate mode would be measuring
+    something this decision never reads.
+
+    ⚠️ And the cost of being wrong here is BINARY, where the label's is graded.
+    A wrong label sizes a position at 0.7 instead of 1.0; a wrong admission
+    means the only promoted strategy in the system does not trade at all.
+
+    `swing.suitable_regimes()` is read from the strategy rather than restated,
+    so a change there cannot leave this measuring the old set.
+    """
+    model = HMMRegimeModel(n_states=_N_STATES)
+    model.fit(matrix)
+    posteriors = model.predict_proba(matrix)
+    sigs = model.state_signatures
+    suitable = SwingStrategy().suitable_regimes()
+    out = []
+    for i in range(len(matrix)):
+        probs = _fused_probs(posteriors[i], sigs, six[: i + 1])
+        # ⚠️ REFUSE rather than report zero. `RegimeFusion.compute` keys on the
+        # Regime enum; `StrategyEngine._eligible_mass` keys on `regime.value`
+        # because it reads an event's already-stringified dict. Get that wrong
+        # here and every `.get` misses, mass is 0.0 on every bar, and uniform
+        # INELIGIBILITY reads as a finding instead of as a broken lookup.
+        if i == 0:
+            missing = [r for r in suitable if r not in probs]
+            if missing:
+                raise KeyError(
+                    f"fused probs are not keyed by Regime - {missing} absent from "
+                    f"{sorted(str(k) for k in probs)}. Every mass would be 0.0 and "
+                    "this arm would report total ineligibility as a result."
+                )
+        mass = sum(probs.get(regime, 0.0) for regime in suitable)
+        out.append(mass >= _ELIGIBILITY_MASS)
+    return out
+
+
 def _pct_moved(baseline: list[str], arm: list[str]) -> float:
+    return 100.0 * sum(1 for a, b in zip(baseline, arm, strict=True) if a != b) / len(baseline)
+
+
+def _pct_flipped(baseline: list[bool], arm: list[bool]) -> float:
     return 100.0 * sum(1 for a, b in zip(baseline, arm, strict=True) if a != b) / len(baseline)
 
 
@@ -130,6 +188,73 @@ def _transitions(labels: list[str]) -> int:
     # under strict=True is a guaranteed ValueError, because the two can never be
     # the same length. Caught on the first run.
     return sum(1 for a, b in zip(labels[:-1], labels[1:], strict=True) if a != b)
+
+
+def _run_eligibility(six: np.ndarray, column: np.ndarray) -> None:
+    """Task 2 - the ADMISSION path, which no gate smooths.
+
+    Same three arms, same seed, same window. The only change is what is read off
+    each bar: `swing` admitted or not, instead of the sticky label.
+    """
+    rule = f"mass >= {_ELIGIBILITY_MASS}, NO smoothing"
+    print(f"\n{'=' * 62}\nELIGIBILITY of `swing` ({rule})\n{'=' * 62}")
+
+    baseline = _eligibility_for(six, six)
+    eligible_share = 100.0 * sum(baseline) / len(baseline)
+    flips = _transitions([str(b) for b in baseline])
+    print(f"baseline eligible on         : {eligible_share:.1f}% of bars")
+    print(f"baseline admission flips     : {flips} over {len(baseline)} bars")
+    print()
+
+    real = _pct_flipped(baseline, _eligibility_for(np.column_stack([six, column]), six))
+
+    rng = np.random.default_rng(_SEED)
+    shuffled = [
+        _pct_flipped(
+            baseline, _eligibility_for(np.column_stack([six, rng.permutation(column)]), six)
+        )
+        for _ in range(_TRIALS)
+    ]
+    noise = [
+        _pct_flipped(
+            baseline,
+            _eligibility_for(
+                np.column_stack([six, rng.normal(column.mean(), column.std(), size=len(column))]),
+                six,
+            ),
+        )
+        for _ in range(_TRIALS)
+    ]
+
+    print(f"{'arm':<34}{'admission flipped':>20}")
+    print("-" * 54)
+    print(f"{'real ^AXVI z-score':<34}{real:>19.1f}%")
+    print(
+        f"{'shuffled (same values, no time)':<34}"
+        f"{np.median(shuffled):>19.1f}%   [{min(shuffled):.1f} - {max(shuffled):.1f}]"
+    )
+    print(
+        f"{'gaussian noise (same moments)':<34}"
+        f"{np.median(noise):>19.1f}%   [{min(noise):.1f} - {max(noise):.1f}]"
+    )
+    controls = shuffled + noise
+    at_least = sum(1 for value in controls if value >= real - 1e-9)
+    print(
+        f"\ncontrols reaching the real arm : {at_least} of {len(controls)} "
+        f"({100.0 * at_least / len(controls):.0f}%)"
+    )
+    print(
+        "\n⚠️ HOW TO READ THIS BLOCK, decided BEFORE running it:\n"
+        "   Compare the control MEDIAN and MAXIMUM here against the ONE-GATE\n"
+        "   label block above (median 11.8%, max 85.3%).\n"
+        "   * If admission flips MATERIALLY MORE than the smoothed label, the\n"
+        "     exposure is in strategy ADMISSION rather than in sizing, and any\n"
+        "     future work belongs there rather than on the label.\n"
+        "   * If it flips comparably or less, one number covers both and the\n"
+        "     label figures already describe the risk.\n"
+        "   ⚠️ Admission is BINARY - a flip means the only promoted strategy in\n"
+        "   the system does not trade, where a label flip only resizes."
+    )
 
 
 def _run_arms(six: np.ndarray, column: np.ndarray, one_gate: bool) -> None:
@@ -238,6 +363,8 @@ def main() -> None:
 
     for one_gate in (False, True):
         _run_arms(six, column, one_gate)
+
+    _run_eligibility(six, column)
 
     print(
         "\n⚠️ HOW TO READ THIS, decided before the numbers were seen:\n"

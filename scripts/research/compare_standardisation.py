@@ -88,6 +88,37 @@ def _unscaled_fit(matrix: np.ndarray) -> tuple[np.ndarray, dict[int, StateSignat
     return posterior, signatures
 
 
+def _fused_probs(
+    posterior: np.ndarray, signatures: dict[int, StateSignature], matrix: np.ndarray
+) -> dict[Regime, float]:
+    """The fused distribution, BEFORE hysteresis touches anything.
+
+    Split out of `_label_and_scalar` on 1 September because the LABEL is not the
+    only consumer. `StrategyEngine._eligible_mass` sums this distribution over a
+    strategy's suitable regimes and admits it at `>= 0.5`
+    (`strategies/engine.py:232`), and `HysteresisGate` never sees that path -
+    its own docstring says probs are reported honestly every time and only the
+    sticky label is smoothed.
+
+    So a caller measuring ADMISSION must read this, not the label.
+    """
+    latest_row = matrix[-1]
+    vix_level = float(latest_row[_VIX_COL])
+    yield_curve_slope = float(latest_row[_YIELD_CURVE_COL])
+
+    probs: dict[Regime, float] = RegimeFusion().compute(
+        posterior=posterior.tolist(),
+        signatures=signatures,
+        yield_curve_slope=yield_curve_slope,
+        yield_curve_slope_prev=yield_curve_slope,
+        vix_level=vix_level,
+        price=0.0,
+        sma_200=0.0,
+        sma_200_prev=0.0,
+    )
+    return probs
+
+
 def _label_and_scalar(
     posterior: np.ndarray,
     signatures: dict[int, StateSignature],
@@ -110,20 +141,7 @@ def _label_and_scalar(
     here, so none of this can be the source of any difference between them -
     only the HMM posterior and state_signatures can be.
     """
-    latest_row = matrix[-1]
-    vix_level = float(latest_row[_VIX_COL])
-    yield_curve_slope = float(latest_row[_YIELD_CURVE_COL])
-
-    probs = RegimeFusion().compute(
-        posterior=posterior.tolist(),
-        signatures=signatures,
-        yield_curve_slope=yield_curve_slope,
-        yield_curve_slope_prev=yield_curve_slope,
-        vix_level=vix_level,
-        price=0.0,
-        sma_200=0.0,
-        sma_200_prev=0.0,
-    )
+    probs = _fused_probs(posterior, signatures, matrix)
     # ⚠️ `gate` IS THE DIFFERENCE BETWEEN THIS AND PRODUCTION, and the default
     # is the wrong one ON PURPOSE. A fresh gate per call takes the
     # `_current_label is None` branch and returns the argmax immediately, so

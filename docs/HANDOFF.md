@@ -890,8 +890,34 @@ control distribution simply became more skewed.
 once over the window. Identical in both blocks, so it cannot explain the
 difference between them, but neither block is the live path.
 
-**Task 2 (the eligibility path) is now the higher priority** — the label has
-hysteresis and is still moved this much; probability mass has none.
+##### ✅ TASK 2 DONE — AND IT REVERSED THE PREDICTION
+
+I argued above that eligibility would be the worse path *because nothing smooths
+it*. **Measured, it is ~40× MORE stable than the label.** Same window, seed and
+arms:
+
+| | control median | control max | baseline churn |
+|---|---|---|---|
+| LABEL (hysteresis) | 11.8% | **85.3%** | 8 transitions / 300 |
+| ADMISSION (no smoothing) | **0.3%** | **11.3%** | **4 flips / 300** |
+
+`swing` eligible on 89.7% of bars; real ^AXVI flips admission on 1.0%.
+
+⚠️ **THE REAL STABILISER IS AGGREGATION, NOT HYSTERESIS.**
+`swing.suitable_regimes()` is `{SIDEWAYS, BULL, LOW_VOL, RECOVERY}` — **four of
+seven** — and `_eligible_mass` SUMS over that set. The label can move freely
+among those four without the sum approaching 0.5. **Summing over a set collapses
+a whole dimension of disagreement before the threshold sees it**, which beats a
+0.15 margin and a three-bar streak comfortably.
+
+✅ **So the exposure is in SIZING and only in sizing.** The added-column
+fragility lands on the exposure scalar, not on whether the strategy trades.
+Task 1's numbers are the whole story; admission is robust.
+
+⚠️ **Recorded, NOT chased, and NOT a gap to quote:** admission runs 89.7% here
+while the 30 July label frequencies behind `suitable_regimes()` imply ~48.6%.
+Different windows AND different criteria, so they are not comparable — but the
+direction would justify one apples-to-apples run some day. Not run, not claimed.
 
 ##### The reading that prompted it, kept because it was right to check
 
