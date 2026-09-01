@@ -249,8 +249,22 @@ it.
     refit every 20           33.3%     30.2% [14.2- 55.0]    33.5% [12.9- 50.8]  28 of 60
 
 ❌ **They differ materially, so by the rule written before the run, figures taken
-on the single-fit harness must be RE-TAKEN — Milestone C's ablation percentages
-included.**
+on the single-fit harness must be RE-TAKEN.**
+
+⚠️ **CORRECTED, same day — this does NOT include Milestone C's ablation.**
+`run_ablation.py` builds a `ReplaySession` which constructs the **real
+`RegimeEngine`** (`replay_session.py:213`) and captures labels by subscribing to
+the real `RegimeEvent`. It always had one gate and the 20-bar refit. Nothing
+under `src/qat/domain/backtester/` imports `compare_standardisation`.
+
+**The defect is confined to three research scripts:**
+`compare_standardisation.py` (source, now parameterised), `axvi_control.py`
+(fixed), and **`compare_axvi_feature.py:86`, still uncorrected** — which is
+where the original 23.0% came from.
+
+⚠️ **I inferred a shared defect from a shared subject** — both concerned "the
+regime label" — and wrote it into two documents and a commit message before
+checking the import graph. **A shared subject is not a shared code path.**
 
 ⚠️ **THE SHAPE OF THE DIFFERENCE MATTERS MORE THAN ITS SIZE. The floor comes off
 the floor.** Control minima go **0.0 → 14.2 and 0.0 → 12.9**. Under a single fit,
@@ -287,10 +301,13 @@ here, so a single window cannot answer it.
 
 * **No change to the regime engine.** Not a fix, not a design for one.
 * **Not a re-run of Milestone B.** Rejected on 31 August; this does not reopen it.
-* **Not Milestone C's ablation re-measurement** — but ⚠️ **flag it**: every
+* ~~**Not Milestone C's ablation re-measurement** — but ⚠️ **flag it**: every
   ablation percentage was produced through the same per-bar gate and inherits
-  whatever Task 1 finds. Recorded, not chased, exactly as the 31 August note
-  recorded this one.
+  whatever Task 1 finds.~~ ❌ **THIS FLAG WAS WRONG and is struck rather than
+  deleted.** Milestone C's ablation runs the real `RegimeEngine` through
+  `ReplaySession` and never touched this helper. Checked by import graph after
+  the flag had already been written into two documents and a commit. **Nothing
+  to re-take there.**
 
 ## COST
 

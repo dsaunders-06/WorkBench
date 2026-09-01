@@ -946,8 +946,16 @@ classified, denominators matched):
     refit every 20           real 33.3%   shuffled 30.2% [14.2-55.0]   noise 33.5% [12.9-50.8]   28/60
 
 ❌ **They differ materially. By the rule written before the run, every figure
-taken on the single-fit harness must be RE-TAKEN — Milestone C's ablation
-percentages included.**
+taken on the single-fit harness must be RE-TAKEN.**
+
+⚠️ **CORRECTED, same day: that does NOT include Milestone C's ablation.** I
+wrote that it did, twice, before checking the import graph. `run_ablation.py`
+runs the **real `RegimeEngine`** inside `ReplaySession` and subscribes to the
+real `RegimeEvent`, so it always had one gate and the 20-bar refit. **The
+defect is confined to the research scripts** — see the correction at the
+ablation section. What must be re-taken is anything measured through
+`compare_standardisation._label_and_scalar`, and the only such figure still in
+circulation is `compare_axvi_feature.py`'s.
 
 ⚠️ **THE FLOOR COMES OFF THE FLOOR, and that matters more than the size.**
 Control minima go **0.0 → 14.2** and **0.0 → 12.9**. Under a single fit some
@@ -989,8 +997,11 @@ honestly every time and only the label is sticky. So the unsmoothed instability
 the control measured maps onto **admission**, which is binary, rather than onto
 sizing, which is graded (LOW_VOL 1.0 → HIGH_VOL 0.4 is a 60% cut).
 
-⚠️ **Milestone C's ablation percentages ran through the same per-bar gate** and
-inherit whatever this finds. Flagged, not chased.
+⚠️ ~~**Milestone C's ablation percentages ran through the same per-bar gate** and
+inherit whatever this finds. Flagged, not chased.~~ **WRONG, corrected the same
+day.** `run_ablation.py` runs the real `RegimeEngine` and reads the real
+`RegimeEvent`; it never touched this helper. Struck rather than deleted because
+it was committed and acted on. See the correction at the ablation section.
 
 **Precedent:** this model has had one column-sensitivity crisis already, and it
 was the instrument's — KMeans init on the raw matrix let `vix_level`'s scale pick
@@ -4041,26 +4052,40 @@ shares its shape.
     flips 85% of labels in a window that is 78% bear with THREE transitions -
     it is not moving the label at boundaries, it is DETERMINING it.
 
-    ### ⚠️ 1 SEPTEMBER: THESE PERCENTAGES NEED RE-TAKING, and the reason is the harness
+    ### ✅ 1 SEPTEMBER: THESE PERCENTAGES DO **NOT** NEED RE-TAKING — I claimed they did, and I was wrong
 
-    Two instrument defects found while scoping the seventh-column finding, both
-    in the path these numbers came through. See
-    `docs/superpowers/specs/2026-09-01-regime-label-stability-scope.md`.
+    ⚠️ **A CORRECTION, kept rather than deleted because the wrong version was
+    committed and acted on.** On 1 September the seventh-column scope found two
+    instrument defects — a fresh `HysteresisGate` per bar, and a single fit where
+    production refits every 20 bars — and I recorded here that this ablation
+    inherited both. **It does not. It never did.**
 
-    1. **A fresh `HysteresisGate` per bar**, so `margin=0.15` and
-       `min_persistence=3` never engaged and the "label" was an unsmoothed
-       argmax. Production keeps ONE gate for the session.
-    2. **A single fit over the whole window**, where production refits on an
-       EXPANDING matrix every 20 bars. Measured, that is not a detail: control
-       minima rise from **0.0% to ~13%** - under production's cadence there is
-       no such thing as a column that changes nothing - while maxima fall from
-       87.1% to 55.0% and medians roughly double.
+    **Checked rather than assumed, and the check is one grep:**
 
-    ⚠️ **The rank order may well survive; the magnitudes should not be quoted
-    until re-taken.** Nothing here says the ablation's CONCLUSIONS were wrong -
-    `vix_level`'s dominance in particular is a large effect that a harness
-    artefact is unlikely to manufacture. What is established is that the
-    denominator these percentages sit on is not production's.
+    * `run_ablation.py` builds a `ReplaySession`, which constructs the **real
+      `RegimeEngine`** (`replay_session.py:213`) — one `HysteresisGate` for the
+      run, the 20-bar refit on an expanding matrix, `min_fit_bars` withheld.
+    * The label path is captured by SUBSCRIBING to the real `RegimeEvent` the
+      engine publishes (`run_ablation.py:111-118`), not recomputed.
+    * Nothing under `src/qat/domain/backtester/` imports
+      `compare_standardisation` or touches `HysteresisGate` directly.
+
+    **So Milestone C's percentages were taken on production's own engine all
+    along, and stand as recorded.**
+
+    ⚠️ **THE DEFECT IS CONFINED TO THREE RESEARCH SCRIPTS**, and one is still
+    uncorrected: `compare_standardisation.py` (the source, now parameterised),
+    `axvi_control.py` (**fixed** 1 September), and **`compare_axvi_feature.py`
+    (`:86`) — which still calls `_label_and_scalar` with no gate and therefore
+    still measures an unsmoothed argmax.** That is where the original 23.0%
+    came from. It is not worth a re-run on its own — `axvi_control` puts the
+    one-gate figure at 24.3% — but the script should not be quoted as if it
+    measured production's label.
+
+    ⚠️ **The lesson is this file's own recurring one, and it caught me:** I
+    inferred that a heavier harness shared a lighter one's defect because both
+    concerned "the regime label", and wrote it down twice before checking the
+    import graph. **A shared subject is not a shared code path.**
 
     ### ✅ THE MAGNITUDES DO NOT REPLICATE. THE RANK ORDER DOES.
 
