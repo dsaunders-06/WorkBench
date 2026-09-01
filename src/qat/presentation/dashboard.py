@@ -634,7 +634,7 @@ class DashboardScreen(QWidget):
         if closer is None:
             self._show_error("Closing is unavailable: no PositionCloser is wired for this runtime.")
             return
-        legs = closer.legs_for(symbol)
+        legs = closer.believed_legs_for(symbol)
         halt_reason = self.runtime.kill_switch.reason if self.runtime.kill_switch.tripped else None
         if not self._confirm_close(symbol, quantity, legs, halt_reason):
             return
@@ -685,9 +685,10 @@ class DashboardScreen(QWidget):
         lines = [
             f"Close the entire {symbol} position ({quantity} share(s))?",
             "",
-            f"{len(legs)} protective leg(s) will be cancelled first, then the "
-            "position is sold at market. If the sell fails, the original "
-            "bracket is re-placed.",
+            f"This app BELIEVES {len(legs)} protective leg(s) are resting. The "
+            "cancel re-reads the broker and acts on whatever is actually "
+            "there, not this count, then the position is sold at market. If "
+            "the sell fails, the original bracket is re-placed.",
         ]
         if halt_reason is not None:
             lines.append("")

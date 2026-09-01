@@ -52,12 +52,16 @@ class _FakeBroker:
 
 
 class _FakeOms:
-    def __init__(self, exit_rejected, reprotect_raises):
+    def __init__(self, exit_rejected, reprotect_raises, believed_orders=None):
         self.exit_orders = []
         self.signed_off = []
         self.protective_orders = []
         self._exit_rejected = exit_rejected
         self._reprotect_raises = reprotect_raises
+        self._believed_orders = believed_orders or []
+
+    def orders(self):
+        return list(self._believed_orders)
 
     async def submit_exit_order(self, symbol, quantity, price, reason="signal"):
         self.exit_orders.append((symbol, quantity, reason))
@@ -106,13 +110,14 @@ def closer_factory():
         cancel_raises=None,
         exit_rejected=False,
         reprotect_raises=None,
+        believed_orders=None,
     ):
         positions = positions or {}
         entries = {s: _Entry() for s in positions} if entries is None else entries
         broker = _FakeBroker(
             positions, legs or [], legs_after_cancel or [], positions_after_cancel, cancel_raises
         )
-        oms = _FakeOms(exit_rejected, reprotect_raises)
+        oms = _FakeOms(exit_rejected, reprotect_raises, believed_orders)
         closer = PositionCloser(oms, broker, _FakeKillSwitch(halt), entries)
         closer.oms, closer.broker = oms, broker
         return closer
@@ -217,6 +222,80 @@ async def test_refuses_when_the_verification_read_cannot_be_trusted(closer_facto
         "leg(s) still resting after the cancel" not in result.detail
     ), "this is a read failure, not a survivor"
     assert closer.oms.exit_orders == [], "NOTHING may be sold when the cancel cannot be verified"
+
+
+# --- believed_legs_for --------------------------------------------------
+#
+# Not broker truth. `_cancel_legs` never consults this method - it reads
+# `_working_orders()` from the broker, unfiltered on side/type/status. These
+# tests pin the filter this preview applies to the app's OWN record, and that
+# the rename covers every call site (a plain `legs_for` here would mean the
+# rename regressed silently).
+
+
+def test_believed_legs_for_filters_to_transmitted_sell_stops(closer_factory):
+    """Only side=sell, order_type=stop, status=transmitted counts as a
+    believed-resting protective leg - anything else on the app's own record
+    is not what this preview is for."""
+    matching = Order(
+        symbol="CBA.AX",
+        side="sell",
+        order_type="stop",
+        status="transmitted",
+        quantity=100.0,
+        order_id="1",
+    )
+    wrong_symbol = Order(
+        symbol="BHP.AX",
+        side="sell",
+        order_type="stop",
+        status="transmitted",
+        quantity=100.0,
+        order_id="2",
+    )
+    wrong_side = Order(
+        symbol="CBA.AX",
+        side="buy",
+        order_type="stop",
+        status="transmitted",
+        quantity=100.0,
+        order_id="3",
+    )
+    wrong_type = Order(
+        symbol="CBA.AX",
+        side="sell",
+        order_type="market",
+        status="transmitted",
+        quantity=100.0,
+        order_id="4",
+    )
+    wrong_status = Order(
+        symbol="CBA.AX",
+        side="sell",
+        order_type="stop",
+        status="pending_signoff",
+        quantity=100.0,
+        order_id="5",
+    )
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        believed_orders=[matching, wrong_symbol, wrong_side, wrong_type, wrong_status],
+    )
+    assert closer.believed_legs_for("CBA.AX") == (matching,)
+
+
+def test_believed_legs_for_reads_the_app_not_the_broker(closer_factory):
+    """The whole point of the rename: this is the OMS's local record, and it
+    does not change when the broker's book does. `legs` (the broker's resting
+    orders) and `believed_orders` (the app's local `Order` record) are wired
+    to two different fakes here on purpose, to prove `believed_legs_for`
+    reads only the second."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "broker-1", "STP")],  # the broker's book: one leg
+        believed_orders=[],  # the app's own record: none
+    )
+    assert closer.believed_legs_for("CBA.AX") == ()
 
 
 @pytest.mark.asyncio

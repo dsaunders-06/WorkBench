@@ -61,18 +61,31 @@ class PositionCloser:
         logger.warning("Manual close of %s REFUSED: %s", symbol, detail)
         return CloseResult(CloseOutcome.REFUSED, symbol, 0.0, (), detail)
 
-    def legs_for(self, symbol: str) -> tuple[Order, ...]:
+    def believed_legs_for(self, symbol: str) -> tuple[Order, ...]:
         """The protective leg(s) this app currently BELIEVES are resting for
         symbol - synchronous, from the OMS's own local record, for a
         confirmation dialog to itemise before the operator commits.
 
+        ⚠️ NOT broker truth, and the name says so on its own - unlike
+        `_held_quantity` (also a preview of the broker's own fact), this reads
+        `self.oms.orders()`, the app's LOCAL record, filtered on side/type/
+        status. `_cancel_legs` cancels whatever `_working_orders()` returns
+        from the BROKER instead, with no such filter, so this preview can
+        differ from what actually gets cancelled two ways: it can be STALE,
+        and a working order of a different side or type is cancelled there
+        without ever appearing here. Public rather than a leading underscore
+        despite that gap, because the dashboard (a different module) is a
+        legitimate caller of exactly this preview, for exactly this dialog -
+        an underscore would misrepresent a supported cross-module API as
+        internal-only. The name carries the warning a leading underscore
+        would otherwise have to stand in for.
+
         Deliberately NOT `_working_orders()`: that reads the broker and is
         async, and a Qt slot cannot await before opening its confirm dialog.
-        This is a belief, not the fact this module's docstring insists on -
         `close_position` itself re-reads and re-verifies the broker before
-        cancelling or selling anything, exactly as `_cancel_legs` requires.
-        This method only has to be honest enough to preview what that later,
-        authoritative read will find.
+        cancelling or selling anything, exactly as `_cancel_legs` requires -
+        this method is never consulted on that path, only by the dialog that
+        precedes it.
 
         A bracket is ONE `Order` record per entry (`submit_protective_stop`
         carries both `stop_price` and `take_profit_price` on it), not two -

@@ -42,7 +42,7 @@ class _FakeCloser:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
 
-    def legs_for(self, symbol: str) -> tuple[object, ...]:
+    def believed_legs_for(self, symbol: str) -> tuple[object, ...]:
         return ()
 
     async def close_position(
@@ -120,6 +120,36 @@ async def test_confirming_calls_the_closer_with_the_operator(dashboard, monkeypa
     # config.py: nothing named `operator`). Dashboard follows that same
     # established convention rather than the brief's hardcoded string.
     assert dashboard.runtime.closer.calls == [("CBA.AX", "operator (dashboard)")]
+
+
+def test_confirm_dialog_does_not_overclaim_the_legs_shown(dashboard, monkeypatch):
+    """The leg count comes from `believed_legs_for` - the app's own local
+    record, not a re-read of the broker (see `PositionCloser.believed_legs_for`'s
+    docstring). `_cancel_legs` re-reads and acts on the broker independently,
+    so the dialog must say that plainly rather than presenting the count as
+    definitely what gets cancelled - the finding this test pins.
+
+    Calls the real `_confirm_close` with `QMessageBox.question` patched, so
+    the ACTUAL string this dialog builds is what gets pinned - not a
+    hand-reconstruction of it that could drift from the source unnoticed.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    seen = {}
+
+    def _fake_question(parent, title, text, buttons, default):
+        seen["text"] = text
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", _fake_question)
+    dashboard._confirm_close("CBA.AX", "100", (), None)
+
+    shown_text = seen["text"]
+    assert "BELIEVES" in shown_text
+    assert "re-reads the broker" in shown_text
+    assert "acts on whatever is actually there" in shown_text
+    # Must not present the count as unconditionally what will be cancelled.
+    assert "will be cancelled first" not in shown_text
 
 
 async def test_the_dialog_is_told_the_halt_reason_verbatim(dashboard, monkeypatch):
