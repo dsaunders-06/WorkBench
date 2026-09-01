@@ -38,6 +38,44 @@ fabricates bars on a 404. IBKR would need an `IBHistorySource` written with
 pacing. A third vendor is the only option that would let the survivorship caveat
 come off the research manifests.
 
+## ❌ IBKR's DELAYED FEED IS NOT FRESHER THAN yfinance — measured 1 September 2026
+
+Both sources polled in the SAME window by `scripts/measure_ibkr_feed.py`, sample
+of six ASX megacaps, during continuous trading 10:17:53–10:48:15 AEST:
+
+| | symbols | median print age | per-symbol spread | distinct prints |
+|---|---|---|---|---|
+| IBKR (delayed, streaming) | 6 of 6 | **1206.9s** (20.1 min) | 1205.3–1208.3s | 173 |
+| yfinance (the control) | 6 of 6 | **1237.3s** (20.6 min) | 1213.0–1260.8s | 168 |
+
+**Thirty seconds apart on a twenty-minute window.** Migrating the price source to
+IBKR's delayed feed would recover 2.5% of the blind window. It is not the "deeper
+fix" item 33 proposed it as.
+
+**Both are blind at the bell**, which is the window the fix was for. A separate
+run across 10:07–10:17, deliberately not averaged in, returned `0 of 6` on BOTH
+sides — not one last-trade stamp in ten minutes. The application's own feed
+agrees: 95/95 failed downloads from 10:00:00, recovery at **10:20:40**, a 20m40s
+blind window against 31 August's ~20m37s.
+
+⚠️ **The one thing IBKR is measurably better at is CONSISTENCY, not freshness** —
+3.0s of spread across symbols against yfinance's 47.8s. That decides nothing
+here.
+
+⚠️ **Read the harness's own validation before trusting a re-run.** Its first
+draft read `Ticker.time` — the object's refresh stamp — and reported IBKR as 60
+seconds fresh on a market shut for ninety minutes. The field is
+`delayedLastTimestamp`. A SHUT market is the free control: with nothing trading,
+both sources must report the same last trade, and when they disagreed eightyfold
+the instrument was broken, not the feed.
+
+⚠️ **Known limit:** a "print" is scored only when a last-trade timestamp is a
+datetime, so `0 of 6` means no *stamp*, not proven no *price*. It does not affect
+the steady-state medians, which are measured from real stamps on both sides.
+
+**What would actually close the window is a paid real-time ASX subscription** — a
+cost decision, not an engineering one.
+
 ---
 
 

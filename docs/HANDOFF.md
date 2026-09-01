@@ -931,6 +931,29 @@ running, which needs the book below ten, which needs an exit.
 entry.** That is also M160's read-back condition. Do not deploy M160 over a
 session that is still the only instrument for M159.
 
+### ❌ ITEM 33's "DEEPER FIX" MEASURED AND REJECTED — see item 33 for the numbers
+
+IBKR delayed **1206.9s** against yfinance **1237.3s**, both polled in the same
+window. A thirty-second gap on a twenty-minute window. Blind at the bell on both
+sides, 0 of 6 each. **Rejected against a reading rule written into the script
+before the numbers existed.** Two designs killed by their own controls in two
+days, neither of them built first.
+
+### The session, so far
+
+Feed recovered **10:20:40** (blind window 20m40s, against 31 August's ~20m37s).
+Regime classified `low_vol` at 10:21:45 on **301 bars × 6 features**, and gating
+moved off the sideways default one minute later — the single pre-classification
+warning is the documented shape, not a fault.
+
+⚠️ **AN EXIT SIGNAL FIRED AND WAS HELD.** `Signal exit on IAG.AX held back: 5 of
+10 trading days, and not far enough down to escape the minimum hold` (10:20:40).
+The minimum-hold rail did its job. Worth naming because the exit is the door
+every remaining check stands behind: IAG is five sessions from being eligible on
+time alone.
+
+Resting-order scans clean on every poll to 10:45. Book still ten.
+
 ## OUTSTANDING, IN ORDER
 
 **One list.** It used to be two: this file's, and section 4 of
@@ -1815,6 +1838,57 @@ because reading a list is not auditing it. Item 2 needed four.
     already connected, already authenticated, and already serving positions and
     orders to this application — it is the obvious candidate, and the reason
     yfinance is still the price source is history rather than a decision.
+
+    ### ❌ MEASURED 1 SEPTEMBER, AND THE DEEPER FIX IS NOT ONE
+
+    ⚠️ **IBKR's delayed feed is 20.1 minutes late. yfinance is 20.6. The gap is
+    THIRTY SECONDS.** Both polled in the same window by
+    `scripts/measure_ibkr_feed.py`, sample of six, during continuous trading
+    10:17:53–10:48:15:
+
+        IBKR (delayed, streaming)   6 of 6   median 1206.9s   spread 1205.3-1208.3   173 prints
+        yfinance (the control)      6 of 6   median 1237.3s   spread 1213.0-1260.8   168 prints
+
+    **Migrating to IBKR's delayed feed would close 30 seconds of a 20-minute
+    blind window — 2.5% of it.** Item 33's "deeper fix" does not fix the thing
+    it was proposed for. Do not migrate for freshness.
+
+    ⚠️ **AND IT IS BLIND AT THE BELL TOO, which is the window that matters.** A
+    separate run across 10:07–10:17, deliberately not averaged with the above:
+
+        IBKR       symbols with any print : 0 of 6
+        yfinance   symbols with any print : 0 of 6
+
+    Neither source produced a single last-trade stamp for ten minutes. The app's
+    own feed agrees independently: 95/95 failed downloads from 10:00:00, and
+    `yfinance market data has recovered` at **10:20:40** — a 20m40s blind
+    window, against 31 August's ~20m37s. **A 20-minute-delayed feed cannot see
+    the first 20 minutes of a session, whoever serves it.**
+
+    ✅ **THE READING RULE WAS IN THE SCRIPT BEFORE THE NUMBERS EXISTED** — *"if
+    the two medians are comparable, migrating does NOT close the blind window"* —
+    so a 30-second difference could not be argued into a pass afterwards. Same
+    habit that rejected Milestone B, same result: a design killed by its own
+    control before anything was built for it.
+
+    **What IBKR IS better at, and it decides nothing here:** its per-symbol
+    spread is 3.0s against yfinance's 47.8s, so the delay is far more uniform.
+    Freshness is the question, and on freshness they tie.
+
+    ⚠️ **THE INSTRUMENT'S REMAINING LIMIT, stated rather than papered over.**
+    `_last_trade_time` scores a print only when `lastTimestamp` or
+    `delayedLastTimestamp` is a datetime, so `0 of 6` means *no trade stamp*,
+    not proven *no price*. That does not touch the steady-state result — the
+    medians are measured from real stamps on both sides — but the blind-window
+    run does not separate "the delayed window has not reached the open yet" from
+    "a price was present with no stamp". If that distinction ever matters,
+    record price-presence alongside the stamp; it did not matter for this
+    decision, because a price stamped 20 minutes ago is 20 minutes old either
+    way.
+
+    **What would actually close the window is a paid real-time ASX
+    subscription.** That is a cost decision, not an engineering one, and it is
+    not on this list.
 
     **NARROWED 25 Aug, after checking what already exists** — the lesson of
     three wrong findings earlier the same day. A staleness rail IS in place:
