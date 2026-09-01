@@ -45,9 +45,11 @@ class _FakeCloser:
     def believed_legs_for(self, symbol: str) -> tuple[object, ...]:
         return ()
 
-    async def close_position(
-        self, symbol: str, *, operator: str, acknowledge_halt: bool = False, quantity=None
-    ) -> CloseResult:
+    # ⚠️ NO `acknowledge_halt`. The real `close_position` no longer takes one
+    # (spec, 1 September reversal), so a fake that still accepted it would let
+    # a dashboard still passing it stay green - which is precisely the class
+    # of failure this branch's review was about.
+    async def close_position(self, symbol: str, *, operator: str, quantity=None) -> CloseResult:
         self.calls.append((symbol, operator))
         # A real CloseResult, not None - the brief's fake returns nothing,
         # which is fine for the "was it called" assertions but leaves
@@ -178,7 +180,7 @@ async def test_unprotected_outcome_is_shown_as_a_blocking_error(dashboard, monke
     monkeypatch.setattr(dashboard, "_show_error", lambda msg: shown.setdefault("error", msg))
     monkeypatch.setattr(dashboard, "_show_result", lambda msg: shown.setdefault("result", msg))
 
-    async def _unprotected(symbol, *, operator, acknowledge_halt=False, quantity=None):
+    async def _unprotected(symbol, *, operator, quantity=None):
         return CloseResult(
             CloseOutcome.UNPROTECTED, symbol, 0.0, (), f"{symbol} is held with NO STOP"
         )
@@ -201,3 +203,130 @@ async def test_a_closed_outcome_is_rendered_as_a_result_not_an_error(dashboard, 
     await asyncio.sleep(0.05)
 
     assert shown == {"result": "closed 100 CBA.AX"}
+
+
+# --- re-entrancy: one click, one market sell ----------------------------
+
+
+class _BlockingCloser(_FakeCloser):
+    """A close that does not finish until the test lets it, so the window
+    between the click and the result can be inspected."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.released = asyncio.Event()
+
+    async def close_position(self, symbol: str, *, operator: str, quantity=None) -> CloseResult:
+        self.calls.append((symbol, operator))
+        await self.released.wait()
+        return CloseResult(CloseOutcome.CLOSED, symbol, 100.0, (), f"closed 100 {symbol}")
+
+
+async def test_a_second_click_cannot_send_a_second_market_sell(dashboard, monkeypatch):
+    """⚠️ The button stayed ENABLED for the whole async close, so a second
+    click sent a SECOND full-size market sell - the position sold twice, the
+    account short by the second one. `close_position` is irreversible and
+    takes a broker round-trip; the operator has no way to know it is running.
+    """
+    closer = _BlockingCloser()
+    dashboard.runtime.closer = closer
+    monkeypatch.setattr(dashboard, "_confirm_close", lambda *a, **k: True)
+    monkeypatch.setattr(dashboard, "_show_result", lambda msg: None)
+    dashboard.positions_table.selectRow(0)
+
+    dashboard._on_close_clicked()
+    await asyncio.sleep(0.05)
+    assert not dashboard.close_position_button.isEnabled(), "disabled for the duration"
+
+    dashboard._on_close_clicked()
+    await asyncio.sleep(0.05)
+    assert len(closer.calls) == 1, "a second click must not send a second sell"
+
+    closer.released.set()
+    await asyncio.sleep(0.05)
+    assert dashboard.close_position_button.isEnabled(), "re-enabled once it finishes"
+
+
+async def test_a_selection_change_does_not_re_enable_the_button_mid_close(dashboard, monkeypatch):
+    """The selection handler sets `enabled` from the row count alone, so any
+    selection change during an in-flight close would hand the button back."""
+    closer = _BlockingCloser()
+    dashboard.runtime.closer = closer
+    monkeypatch.setattr(dashboard, "_confirm_close", lambda *a, **k: True)
+    monkeypatch.setattr(dashboard, "_show_result", lambda msg: None)
+    dashboard.positions_table.selectRow(0)
+    dashboard._on_close_clicked()
+    await asyncio.sleep(0.05)
+
+    dashboard.positions_table.clearSelection()
+    dashboard.positions_table.selectRow(0)
+    assert not dashboard.close_position_button.isEnabled()
+
+    closer.released.set()
+    await asyncio.sleep(0.05)
+
+
+async def test_an_exception_during_the_close_is_surfaced_loudly(dashboard, monkeypatch):
+    """⚠️ `asyncio.ensure_future` with no exception handler: anything raising
+    AFTER the legs are cancelled left the position BARE with nothing on
+    screen, and the traceback swallowed into a "Task exception was never
+    retrieved" nobody reads. The operator must be told, and the button must
+    come back."""
+    monkeypatch.setattr(dashboard, "_confirm_close", lambda *a, **k: True)
+    shown: dict[str, str] = {}
+    monkeypatch.setattr(dashboard, "_show_error", lambda msg: shown.setdefault("error", msg))
+    monkeypatch.setattr(dashboard, "_show_result", lambda msg: shown.setdefault("result", msg))
+
+    async def _explode(symbol, *, operator, quantity=None):
+        raise RuntimeError("the broker went away mid-close")
+
+    dashboard.runtime.closer.close_position = _explode
+    dashboard.positions_table.selectRow(0)
+    dashboard._on_close_clicked()
+    await asyncio.sleep(0.05)
+
+    assert "error" in shown, "a raised close must not vanish"
+    assert "the broker went away mid-close" in shown["error"]
+    assert "CBA.AX" in shown["error"]
+    assert "result" not in shown
+    assert dashboard.close_position_button.isEnabled(), "re-enabled in a finally"
+
+
+# --- no halt override anywhere in the UI --------------------------------
+
+
+async def test_the_closer_is_never_asked_to_override_a_halt(dashboard, monkeypatch):
+    """`acknowledge_halt` is gone from `close_position` (spec, 1 September
+    reversal). `_FakeCloser.close_position` above no longer accepts one, so a
+    dashboard still passing it raises TypeError here rather than passing."""
+    monkeypatch.setattr(dashboard, "_confirm_close", lambda *a, **k: True)
+    monkeypatch.setattr(dashboard, "_show_result", lambda msg: None)
+    monkeypatch.setattr(dashboard, "_show_error", lambda msg: pytest.fail(f"raised: {msg}"))
+    dashboard.runtime.kill_switch.trip("IBKR connection lost")
+    dashboard.positions_table.selectRow(0)
+    dashboard._on_close_clicked()
+    await asyncio.sleep(0.05)
+    assert dashboard.runtime.closer.calls == [("CBA.AX", "operator (dashboard)")]
+
+
+def test_the_dialog_does_not_offer_a_halt_override(dashboard, monkeypatch):
+    """The old dialog said "Closing now overrides the halt for this position
+    only", which was false AND dangerous: the cancel bypasses sign-off while
+    the sell and the re-protect are rejected by it, so the "override" deleted
+    the stop and sold nothing."""
+    from PySide6.QtWidgets import QMessageBox
+
+    seen = {}
+
+    def _fake_question(parent, title, text, buttons, default):
+        seen["text"] = text
+        return QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QMessageBox, "question", _fake_question)
+    dashboard._confirm_close("CBA.AX", "100", (), "IBKR connection lost")
+
+    shown_text = seen["text"]
+    assert "IBKR connection lost" in shown_text, "the reason, verbatim"
+    assert "override" not in shown_text.lower()
+    assert "REFUSED" in shown_text
+    assert "reset" in shown_text.lower()
