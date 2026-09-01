@@ -91,16 +91,15 @@ async def close_position(
     symbol: str,
     *,
     operator: str,
-    acknowledge_halt: bool = False,
     quantity: float | None = None,   # None = all. Reserved; v1 accepts only None
 ) -> CloseResult
 ```
 
 **Depends on:** the `BrokerAdapter` protocol (`open_orders`, `cancel_order`,
 `place_order`, `positions`), the OMS for recording the exit, and `KillSwitch` to
-read state. It imports no Qt and decides no policy — `acknowledge_halt` is
-passed in, so the dialog owns the human question and the service owns the
-mechanism.
+read state. It imports no Qt. ⚠️ It reads the kill switch and REFUSES on it
+itself — there is no override parameter, because the halt cannot be honoured
+half-way: cancelling bypasses sign-off and selling does not.
 
 **Why not a method on `OMS`:** `oms.py` already carries the reconciliation rail,
 the resting-order scan and fill absorption. This choreographs one irreversible
@@ -116,7 +115,7 @@ is large enough that adding it would make both harder to hold in context.
 | Symbol held **per the broker** | The broker is the authority on what is held; app records are a claim |
 | An entry record exists in `_entries` | Without it there is no entry basis, so no closed trade and no R-multiple. v1 names `flatten_positions.py` instead of half-recording |
 | No working order for the symbol beyond its protective legs | M139. Never send while another is working |
-| Kill switch clear **or** `acknowledge_halt=True` | Operator decision, below |
+| Kill switch CLEAR | No override. During a halt the cancel would succeed and the sell would not — see below |
 | `quantity is None` | v1 is full-close only; a value returns REFUSED rather than silently closing everything |
 
 ### ❌ The kill-switch decision — REVERSED 1 September, and the original was dangerous
@@ -232,8 +231,9 @@ almost never run:
 - cancel verification fails → **no sell is sent**
 - sell rejected → bracket re-placed at original levels → `RECOVERED`
 - re-place also fails → `UNPROTECTED`, CRITICAL
-- switch tripped without `acknowledge_halt` → `REFUSED`, nothing sent
-- switch tripped **with** it → proceeds
+- switch tripped → `REFUSED`, **nothing cancelled and nothing sent**
+- ⚠️ the fake OMS must REJECT sign-off while tripped, as the real one does — the
+  original fake ignored it, and that is why a green test described a disaster
 - a leg fills mid-cancel → the sell uses the **re-read** quantity
 - no entry record → `REFUSED`, names the script
 - `quantity` not None → `REFUSED`
