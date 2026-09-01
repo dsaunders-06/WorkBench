@@ -310,6 +310,7 @@ async def test_a_rejected_sell_re_places_the_bracket(closer_factory):
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.RECOVERED
     assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
+    assert closer.oms.signed_off == [("protect-1", "auto-reprotect")]
 
 
 @pytest.mark.asyncio
