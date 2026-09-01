@@ -240,6 +240,38 @@ _WATCHLISTS_ASX: dict[WatchlistCategory, tuple[str, ...]] = {
         "CGF.AX",
         "AZJ.AX",
         "ALQ.AX",
+        # --- added 1 September 2026, taking the list 94 -> 99 -------------
+        #
+        # ⚠️ 94 WAS THE LIST'S LENGTH, NOT A LIMIT. The list shipped at 100;
+        # M110 pruned six that returned no real bars (AWC, BKW, DHG, IPL, NSR,
+        # SVW) and the remainder read as a cap it never was.
+        # `watchlist_max_symbols` is 100 and was not binding at 94.
+        #
+        # ⚠️ AND "101" WAS OUR OWN COUNT, NOT A VENDOR THRESHOLD. The
+        # 20 August yfinance block happened while polling 101 - the unpruned
+        # 100 plus the STW.AX benchmark - so it says how many we asked for and
+        # nothing about where the vendor's limit is. 99 + STW.AX = 100 polled,
+        # which stays below the one count ever observed to fail while using the
+        # headroom the cap already allowed.
+        #
+        # ⚠️ VERIFIED BEFORE ADDING, because M110 is what happens otherwise.
+        # Each returned a full 129 daily bars over six months with real volume,
+        # and each passes `synthetic_average_daily_volume`. Chosen as the top
+        # five of fourteen candidates by REAL turnover (price x 60-day average
+        # volume), which is the liquidity screen this app does not otherwise
+        # have - the configured filter runs on a synthetic volume derived from
+        # the ticker string.
+        #
+        #   ALX.AX  $43.5M/day   toll roads
+        #   CWY.AX  $37.4M/day   waste management - sector not otherwise held
+        #   SDF.AX  $33.3M/day   insurance broking
+        #   SOL.AX  $21.5M/day   diversified investment house
+        #   ANN.AX  $20.2M/day   healthcare products
+        "ALX.AX",
+        "CWY.AX",
+        "SDF.AX",
+        "SOL.AX",
+        "ANN.AX",
     ),
 }
 
@@ -257,10 +289,12 @@ def synthetic_average_daily_volume(symbol: str) -> int:
     been volume: it is `random.Random(symbol).randint(10_000, 20_000_000)`, so
     the filter admits or rejects a symbol on the hash of its ticker.
 
-    Harmless across the 94 ASX megacaps, which are liquid by construction —
-    none is excluded at the default threshold. Actively misleading the moment
-    the universe widens beyond them, because it looks like a liquidity rail and
-    is not one.
+    Harmless across the 99 ASX megacaps, which are liquid by construction —
+    none is excluded at the default threshold, and the five added on
+    1 September were checked against it explicitly rather than assumed.
+    Actively misleading the moment the universe widens beyond them, because it
+    looks like a liquidity rail and is not one. ⚠️ That is why those five were
+    picked on REAL turnover: this filter would have admitted anything.
 
     Left in place rather than deleted: removing it would silently widen the
     universe, and the setting is documented. Renamed so no call site can read

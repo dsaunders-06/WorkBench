@@ -48,13 +48,47 @@ launch** — the app says so itself at startup. Do not kill the process.
 
 `deploy.ps1` refuses while it runs, and says why in those words.
 
-### 3. Deploy M160 — dry run, then ask, then apply
+### 3. ⚠️ BUILD FIRST — M160 WAS NEVER BUILT, AND M161 CERTAINLY HAS NOT BEEN
+
+**Found 1 September while preparing this.** The handover says *"M160 IS BUILT AND
+NOT DEPLOYED"*. It is not built:
+
+    dist exe built     31/08 16:10:30, hash A077BE40…55C3
+    installed exe      A077BE40…55C3        <- BYTE-IDENTICAL. dist IS M159.
+    M160 source landed 31/08 17:18 and 17:23  <- over an hour LATER
+
+⚠️ **AND `deploy.ps1` WOULD NOT HAVE CAUGHT IT.** It installs whatever sits in
+`dist\`, but derives the label from `git rev-parse HEAD` and `version.py`'s
+`MILESTONE`. It verifies that the INSTALLED COPY matches `dist\` — never that
+`dist\` matches the source it is about to name. Run `-Apply` against a stale
+`dist\` and it installs M159, writes `DEPLOYED = M161`, and reports success.
+**That is the "DEPLOYED has been wrong ten times" failure arriving through the
+one gap the script does not cover.**
+
+So:
+
+    invoke build        # lint + test + package
+    invoke sign         # then verify the signature is Valid
+
+⚠️ **THEN CHECK THE BUILD ACTUALLY HAPPENED, before `deploy.ps1` is run at all:**
+
+    (Get-FileHash dist\QuantAdvisoryTerminal\QuantAdvisoryTerminal.exe -Algorithm SHA256).Hash
+
+**It MUST differ from `A077BE40…55C3`.** If it matches, the build did not
+happen and nothing below is safe to run. A hash that has not moved is the whole
+check.
+
+### 4. Deploy — dry run, then ask, then apply
 
     .\scripts\deploy.ps1                # dry run: derives everything, writes nothing
     .\scripts\deploy.ps1 -Apply         # ONLY after the dry run is read and approved
 
 ⚠️ **Ask before `-Apply`.** It rewrites `DEPLOYED` only after verifying the
 installed copy, and creates rollback directory number 22.
+
+⚠️ **The dry run's milestone line must read M161** — and M161 CONTAINS M160 and
+M159, so this single deploy carries all three. The build stamp in the app's own
+log at step 6 is the authority, not `DEPLOYED`.
 
 ### 4. Swap the broker
 

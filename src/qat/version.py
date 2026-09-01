@@ -1309,7 +1309,37 @@ from qat.domain.display_dates import format_display_date
 # No evidence means NO tolerance - no open_orders(), or a call that raises, and
 # the rail behaves exactly as before. A rail that loses its evidence gets
 # stricter, not laxer.
-MILESTONE = "M160"
+#
+# M161 - the ASX megacap list goes 94 -> 99, and two numbers stop being limits.
+#
+# ⚠️ 94 WAS NEVER A CAP. It is the length of the hardcoded megacap tuple. The
+# list shipped at 100; M110 pruned six that returned no real bars (AWC, BKW,
+# DHG, IPL, NSR, SVW) and 94 has since been quoted as though something enforced
+# it. `watchlist_max_symbols` is 100 and was not binding.
+#
+# ⚠️ AND 101 WAS OUR OWN COUNT, NOT A VENDOR THRESHOLD. The 20 August yfinance
+# block happened while polling 101 - the unpruned 100 plus the STW.AX benchmark
+# - so it records how many we asked for, not where Yahoo's limit is. It could
+# be 96 or 250; nobody has measured it. 99 + STW.AX = 100 polled, which uses
+# the headroom the cap already allowed while staying under the only count ever
+# observed to fail.
+#
+# EVIDENCE THAT 95 SUSTAINS: on 1 September the live session polled 95 symbols
+# on a 60-second cadence from 10:20:40 with ZERO feed failures for three and a
+# half hours - roughly 210 polls. That is why this is a widening rather than a
+# measurement: the failure the caution was built on is not reproducing.
+#
+# ⚠️ VERIFIED BEFORE ADDING, because M110 is what happens otherwise. Fourteen
+# candidates were fetched; all five added returned a full 129 daily bars over
+# six months with real volume. Chosen as the top five by REAL turnover (price x
+# 60-day average volume) - ALX, CWY, SDF, SOL, ANN, $20-44M/day - because the
+# configured QAT_WATCHLIST_MIN_AVG_VOLUME filter screens on a SYNTHETIC volume
+# derived from the ticker string and would have admitted anything.
+#
+# ⚠️ THIS DOES NOT WIDEN EXPOSURE. The position cap is 10 and the book is at 10,
+# so a wider watchlist means more candidates for the same slots, not more
+# positions. It changes what may be chosen, not how much is held.
+MILESTONE = "M161"
 
 _UNKNOWN = "unknown"
 

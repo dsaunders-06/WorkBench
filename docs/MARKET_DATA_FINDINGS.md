@@ -14,6 +14,29 @@ once - megacaps included, minutes after pricing them - and the feed produced no
 ticks. The 499-session replay never exposed this because replay reads history in
 BULK, ONCE; live polling is a different access pattern against the same vendor.
 
+> ### ⚠️ RE-READ 1 SEPTEMBER 2026: "101" IS OUR COUNT, NOT YAHOO'S THRESHOLD
+>
+> The heading above has been read as though 101 were a vendor limit. It is not.
+> On 20 August the watchlist was the **unpruned megacap 100 plus the STW.AX
+> benchmark** = 101 polled, so the number records **how many we asked for** and
+> says nothing about where the limit sits. It could be 96 or 250. **Nobody has
+> measured it**, and there is no documented yfinance free-tier symbol threshold
+> anywhere in this repo - the only other `101`s in the codebase are Alpaca-era
+> equity figures.
+>
+> ⚠️ **AND THE FAILURE IS NOT REPRODUCING.** On 1 September the live session
+> polled **95 symbols on a 60-second cadence for three and a half hours**
+> (10:20:40 onward, ~210 polls) with **zero feed failures**. Whatever caused the
+> 20 August block - request rate, vendor behaviour, or the un-cached re-fetching
+> this file warns about two paragraphs down - it is not biting at 95 today.
+>
+> **M161 widens the list to 99 + STW.AX = 100 polled**, using headroom
+> `watchlist_max_symbols` already allowed while staying under the one count ever
+> observed to fail. That is a deliberate step below an unmeasured boundary, not
+> a measurement of it. ⚠️ **Going materially beyond 100 needs the boundary
+> measured first, out of hours** - a harness that finds where the block actually
+> starts, rather than another count inherited as a rule.
+
 **It is not a per-symbol fact and must not be read as one.** M106 rewrote the
 pre-flight's feed check for exactly this: a source that prices NONE of the
 symbols asked for has failed as a SOURCE, and listing a hundred tickers sends an
