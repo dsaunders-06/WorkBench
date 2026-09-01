@@ -257,10 +257,15 @@ on the single-fit harness must be RE-TAKEN.**
 the real `RegimeEvent`. It always had one gate and the 20-bar refit. Nothing
 under `src/qat/domain/backtester/` imports `compare_standardisation`.
 
-**The defect is confined to three research scripts:**
-`compare_standardisation.py` (source, now parameterised), `axvi_control.py`
-(fixed), and **`compare_axvi_feature.py:86`, still uncorrected** — which is
-where the original 23.0% came from.
+**The defect was confined to three research scripts, all now fixed:**
+`compare_standardisation.py` (source, parameterised), `axvi_control.py`, and
+`compare_axvi_feature.py` — where the original 23.0% came from.
+
+✅ **Fixing the third produced a cross-instrument agreement:** it now reports
+**24.3%**, identical to `axvi_control`'s one-gate `real` arm, from a separately
+written script. Both reported 23.0% before the fix. It also carried two further
+defects found while fixing it — position-based slicing that printed the expected
+range beside the reconstructed one and compared nothing, and a bare `main()`.
 
 ⚠️ **I inferred a shared defect from a shared subject** — both concerned "the
 regime label" — and wrote it into two documents and a commit message before

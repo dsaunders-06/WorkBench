@@ -953,9 +953,9 @@ wrote that it did, twice, before checking the import graph. `run_ablation.py`
 runs the **real `RegimeEngine`** inside `ReplaySession` and subscribes to the
 real `RegimeEvent`, so it always had one gate and the 20-bar refit. **The
 defect is confined to the research scripts** — see the correction at the
-ablation section. What must be re-taken is anything measured through
-`compare_standardisation._label_and_scalar`, and the only such figure still in
-circulation is `compare_axvi_feature.py`'s.
+ablation section. ✅ **All three are now fixed**, and re-running
+`compare_axvi_feature.py` on the corrected path gives **24.3%**, identical to
+`axvi_control`'s one-gate arm.
 
 ⚠️ **THE FLOOR COMES OFF THE FLOOR, and that matters more than the size.**
 Control minima go **0.0 → 14.2** and **0.0 → 12.9**. Under a single fit some
@@ -4073,14 +4073,27 @@ shares its shape.
     **So Milestone C's percentages were taken on production's own engine all
     along, and stand as recorded.**
 
-    ⚠️ **THE DEFECT IS CONFINED TO THREE RESEARCH SCRIPTS**, and one is still
-    uncorrected: `compare_standardisation.py` (the source, now parameterised),
-    `axvi_control.py` (**fixed** 1 September), and **`compare_axvi_feature.py`
-    (`:86`) — which still calls `_label_and_scalar` with no gate and therefore
-    still measures an unsmoothed argmax.** That is where the original 23.0%
-    came from. It is not worth a re-run on its own — `axvi_control` puts the
-    one-gate figure at 24.3% — but the script should not be quoted as if it
-    measured production's label.
+    ⚠️ **THE DEFECT WAS CONFINED TO THREE RESEARCH SCRIPTS, ALL NOW FIXED:**
+    `compare_standardisation.py` (the source, parameterised),
+    `axvi_control.py`, and `compare_axvi_feature.py`.
+
+    ✅ **AND FIXING THE THIRD PRODUCED A CROSS-INSTRUMENT AGREEMENT.**
+    `compare_axvi_feature.py` now reports the label differing on **24.3%** of
+    bars — **identical to `axvi_control.py`'s one-gate `real` arm**, from a
+    separately written script. Before the fix both reported **23.0%**. Two
+    independent instruments agreeing to the decimal both before and after is
+    much better evidence than either number alone.
+
+    ⚠️ **AND IT SHOWS WHAT THE DISAGREEMENT COSTS.** The scalar differs on the
+    same 73 bars, and the differences run in CONTIGUOUS BLOCKS:
+
+        105: low_vol (1.00)  ->  bear (0.50)
+        106: low_vol (1.00)  ->  bear (0.50)
+        ... eight consecutive bars and more
+
+    **A 50% cut in position size, sustained.** That is also the mechanical
+    reason hysteresis cannot help: it damps flip-flopping around a boundary,
+    and this is a persistent alternative path, not a flap.
 
     ⚠️ **The lesson is this file's own recurring one, and it caught me:** I
     inferred that a heavier harness shared a lighter one's defect because both

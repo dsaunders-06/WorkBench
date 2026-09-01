@@ -13,6 +13,33 @@ compare_standardisation.py's own helper rather than reimplementing it.
 the label on one day in three hundred is not worth a sizing risk.
 
 READ ONLY. Writes nothing.
+
+## ⚠️ THREE DEFECTS FIXED 1 SEPTEMBER 2026, and the first invalidated the headline
+
+1. **The HysteresisGate never engaged.** `_label_and_scalar` built a FRESH gate
+   on every call, which takes the `_current_label is None` branch and returns
+   the argmax, so `margin=0.15` and `min_persistence=3` did nothing. The
+   docstring above claimed the real fusion path and got two thirds of it. The
+   live engine builds ONE gate (`engine.py:97`) and keeps it (`engine.py:386`).
+   **The 23.0% this script produced was an unsmoothed argmax.**
+
+2. **It sliced by POSITION and refused nothing.** `z.iloc[-len(six):]` takes the
+   last 300 bars of a series that grows every day, so run after the matrix was
+   saved it silently ends TODAY. It printed the expected range beside the
+   reconstructed one and then never compared them - an instrument that shows you
+   the evidence of its own failure and reports anyway. `axvi_control.py` was
+   given a date slice and a REFUSAL on 31 August; this one was not, and the note
+   recording that said in as many words that this script "would be wrong run
+   today".
+
+3. **A bare `main()` at module level**, so importing anything from here ran the
+   whole comparison.
+
+⚠️ **Milestone B is REJECTED and none of this reopens it.** `axvi_control.py`
+settled that with controls the same day: p = 0.30 on the full window, and on
+production's gate p = 0.38. This script measures one arm against one baseline
+with no control at all, and a single number from it never could have decided
+anything.
 """
 
 import pathlib
@@ -30,10 +57,15 @@ sys.path.insert(0, str(ROOT / "scripts" / "research"))
 
 from compare_standardisation import _label_and_scalar  # noqa: E402
 
+from qat.domain.regime_engine.fusion import HysteresisGate  # noqa: E402
 from qat.domain.regime_engine.hmm_core import HMMRegimeModel  # noqa: E402
 
 _N_STATES = 4
 _Z_WINDOW = 60
+# The matrix carries no dates. This is what the startup log recorded for it, and
+# the alignment REFUSES rather than reports if it cannot reproduce it.
+_MATRIX_FIRST_DAY = "2025-06-23"
+_MATRIX_LAST_DAY = "2026-08-26"
 
 
 def main() -> None:
@@ -62,12 +94,24 @@ def main() -> None:
     if len(z) < len(six):
         print(f"REFUSED: only {len(z)} aligned ^AXVI bars for {len(six)} matrix rows")
         return
+
+    # ⚠️ SLICE BY DATE, NEVER BY POSITION. `z.iloc[-300:]` takes the last 300
+    # bars of a series that grows every day, so run after the matrix was saved
+    # it silently ends TODAY. This script printed the expected range beside the
+    # reconstructed one and then compared nothing - it would have shown you the
+    # evidence of its own failure and reported the number anyway.
+    z = z[z.index <= _MATRIX_LAST_DAY]
     z_tail = z.iloc[-len(six) :]
-    print(
-        f"^AXVI aligned : {len(z_tail)} bars, {z_tail.index[0].date()} -> "
-        f"{z_tail.index[-1].date()}"
-    )
-    print("   (startup log recorded the matrix as 2025-06-23 -> 2026-08-26)\n")
+    first, last = str(z_tail.index[0].date()), str(z_tail.index[-1].date())
+    print(f"^AXVI aligned : {len(z_tail)} bars, {first} -> {last}")
+    print(f"   startup log recorded the matrix as {_MATRIX_FIRST_DAY} -> {_MATRIX_LAST_DAY}")
+    if first != _MATRIX_FIRST_DAY or last != _MATRIX_LAST_DAY:
+        print("\n   ⚠️ REFUSED: the reconstructed range does not match the log, so the")
+        print("      arms are NOT on the same days and every number below would be")
+        print("      measured on misaligned rows - the ninefold-understatement")
+        print("      failure. Fix the alignment; do not read past this line.")
+        return
+    print()
 
     seven = np.column_stack([six, z_tail.to_numpy(dtype=float)])
 
@@ -81,9 +125,16 @@ def main() -> None:
         # _label_and_scalar reads them from the matrix it is given, so pass the
         # SIX-column matrix for both arms - those two columns are identical in
         # both and this keeps the only difference the HMM itself.
+        # ⚠️ ONE GATE for the arm, carried across the bars in order, because that
+        # is what RegimeEngine does. A fresh gate per bar - what this script did
+        # until 1 September - returns the argmax and never engages margin=0.15
+        # or min_persistence=3. Each ARM gets its own gate: sharing one between
+        # the six- and seven-column arms would let one arm's history decide the
+        # other's labels.
+        gate = HysteresisGate()
         out = []
         for i in range(len(matrix)):
-            lbl, sc = _label_and_scalar(posteriors[i], sigs, six[: i + 1])
+            lbl, sc = _label_and_scalar(posteriors[i], sigs, six[: i + 1], gate)
             out.append((lbl, sc))
         labels[name] = out
         print(f"{name:<20} final: label={out[-1][0].value:<10} scalar={out[-1][1]:.2f}")
@@ -115,4 +166,7 @@ def main() -> None:
         print("   REJECT the feature and record these numbers.")
 
 
-main()
+# ⚠️ GUARDED 1 September 2026. This was a bare `main()`, so importing anything
+# from here ran the whole comparison as a side effect.
+if __name__ == "__main__":
+    main()
