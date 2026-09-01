@@ -49,7 +49,8 @@ source.
 | Watchlist | **94 ASX megacaps + STW.AX = 95 polled** on the DEPLOYED build. ⚠️ **M161 takes it to 99 + STW.AX = 100 polled, built and NOT deployed.** ⚠️ **NEITHER 94 NOR 101 WAS EVER A LIMIT** — 94 is the length of the hardcoded megacap tuple (shipped at 100, six pruned by M110), and the 20 August yfinance block at "101" was OUR count (unpruned 100 + STW.AX), not Yahoo's threshold. Where the vendor's limit actually sits is **unmeasured**. `watchlist_max_symbols` is 100 and was never binding at 94 |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **TEN POSITIONS, 20 resting legs, all protected** - A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW. **JHX.AX 1,097 @ 41.9554 entered 31 Aug 10:30** (17 executions, bracketed LMT 46.01 / STP 39.39, OCA-linked). **PNI.AX stopped out 31 Aug 10:00 at 15.56, -7,170.79 net, -1.6455R** - gapped 0.90 through a 16.46 stop. Aggregate risk-at-stop was 3.992% at 9 positions; re-measure, the book is 10 again |
-| Kill switch | ✅ **CLEAR** — tripped 1 September ~16:11 (*"IBKR connection lost and reconnect attempts exhausted"*, a TRUE POSITIVE: the operator closed IB Gateway after the 16:00:04 stand-down), restored on the 17:20 launch, and **reset 17:22:53 via the risk console**, which calls the app's own `KillSwitch.reset()` so the action is attributed and quotes the original reason. **Verified on disk, not taken on trust:** `kill_switch.json` reads `{"tripped": false, "reason": null}`. **Justified, not routine:** the Gateway is back on 4002, this launch connected, ten positions with twenty legs were adopted FROM THE BROKER, and the resting scan read clean. ⚠️ **ORDER FLOW IS LIVE.** The position cap is the only thing between a signal and an entry, so **the first exit unblocks a real entry with no halt behind it**. Quarantines: EMPTY. Previous reset: 31 August 16:36 via `scripts/reset_kill_switch.py --apply` |
+| Broker | ⚠️ **TWS on 7497, changed 1 September 17:40** — `QAT_IBKR_PORT=4002 -> 7497` via `scripts/set_ibkr_port.py --apply` (backup `.env.bak-20260901-174044`, value read back). IB Gateway is CLOSED. Verified read-only before switching: account **DUQ200898** (`DU` = paper), NetLiquidation **1,007,674.57 AUD**, ten positions and **twenty legs each OCA-paired**. Then verified again from the app: M161 adopted the same ten positions, 20 legs, scan clean. ⚠️ **TWS gives MANUAL buy/sell, which the app knows nothing about** — a manual SELL of an app-managed position is safe, a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
+| Kill switch | ⚠️ **TRIPPED, awaiting reset** — see the 1 September section. Previously: tripped ~16:11 (*"IBKR connection lost and reconnect attempts exhausted"*, a TRUE POSITIVE: the operator closed IB Gateway after the 16:00:04 stand-down), restored on the 17:20 launch, and **reset 17:22:53 via the risk console**, which calls the app's own `KillSwitch.reset()` so the action is attributed and quotes the original reason. **Verified on disk, not taken on trust:** `kill_switch.json` reads `{"tripped": false, "reason": null}`. **Justified, not routine:** the Gateway is back on 4002, this launch connected, ten positions with twenty legs were adopted FROM THE BROKER, and the resting scan read clean. ⚠️ **ORDER FLOW IS LIVE.** The position cap is the only thing between a signal and an entry, so **the first exit unblocks a real entry with no halt behind it**. Quarantines: EMPTY. Previous reset: 31 August 16:36 via `scripts/reset_kill_switch.py --apply` |
 | Ledgers | **6 closed trades** — five LOV.AX and one RHC.AX. ⚠️ **One LOV row is a REPAIR row with EMPTY costs**, so net P&L across LOV is **NOT summable from that file**; IBKR's commission on the unabsorbed portion was not knowable after the fact and its `exit_reason` says so. ⚠️ **All six carry an EMPTY `entry_slippage`** — see item 44: the field was never persisted, and M156 fixes that only for trades opened FROM NOW |
 
 > ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
@@ -1127,10 +1128,46 @@ Done through the **risk console**, so it went through the app's own
 `KillSwitch.reset()` and the line carries both the operator attribution and the
 original reason — the same shape as the 31 August reset, by a different route.
 
-⚠️ **ORDER FLOW IS LIVE AGAIN.** The position cap is once more the only thing
-between a signal and an entry, so **the first exit unblocks a real entry with no
-halt behind it** — and that entry is what M159's three unread checks and M160's
-own read-back are all waiting on.
+⚠️ **AND IT TRIPPED AGAIN AT 17:39:13, SAME CAUSE.** Closing IB Gateway to make
+way for TWS, with the app still running, exhausted the adapter's reconnects a
+second time. **Tripped twice in one evening, a true positive both times, and
+both were self-inflicted by the shutdown ORDER.**
+
+✅ **THE OPERATIONAL RULE THAT FALLS OUT OF IT: CLOSE THE APP FIRST, THEN THE
+BROKER.** The reverse costs a kill-switch reset every time, and a reset is meant
+to be a justified act rather than a routine one — doing it twice an evening for
+avoidable reasons is how it stops being read carefully.
+
+### ✅ THE BROKER IS NOW TWS ON 7497 — swapped 1 September 17:40
+
+`scripts/set_ibkr_port.py 7497 --apply`: backed up to `.env.bak-20260901-174044`
+and **read the value back rather than trusting the write**. Gateway closed.
+
+**Verified read-only BEFORE switching**, on TWS's own socket: account
+`DUQ200898` (`DU` prefix, paper), NetLiquidation **1,007,674.57 AUD**, ten
+positions matching the book symbol-for-symbol, and **twenty legs, every LMT/STP
+pair sharing one OCA group.**
+
+⚠️ **AND THE PROBE LIED FIRST, in the way this project keeps finding.**
+`openTrades()` is scoped to the CALLING clientId, so a fresh probe reported
+**"0 open orders"** against a book carrying twenty. Reported as-is that would
+have read as the protective legs having vanished. `reqAllOpenOrders()` is the
+call that sees them. **A count from an instrument that cannot see everything is
+not a count.**
+
+**Then verified again from the app**: M161 relaunched on 7497, adopted the same
+ten positions, 20 legs, `nothing unjustified`, excursion 10 of 10.
+
+⚠️ **TWS BRINGS MANUAL TRADING, AND THE APP KNOWS NOTHING ABOUT IT.** A manual
+SELL of an app-managed position is safe — the app records the exit against a
+known entry. **A manual BUY creates a position with no entry basis**, so the
+minimum hold and time stop cannot be computed and no stop can be re-armed: the
+24 August state `flatten_positions.py` exists to clean up.
+
+⚠️ **ORDER FLOW IS HALTED** until the switch is reset. Once it is, the position
+cap is the only thing between a signal and an entry, so **the first exit
+unblocks a real entry with no halt behind it** — and that entry is what M159's
+three unread checks and M160's own read-back are all waiting on.
 
 ### ❌ ITEM 33's "DEEPER FIX" MEASURED AND REJECTED — see item 33 for the numbers
 
