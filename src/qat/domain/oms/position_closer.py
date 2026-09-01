@@ -19,7 +19,7 @@ from enum import Enum
 
 from qat.data.broker.adapter import BrokerAdapter, Order, RestingOrder
 from qat.domain.oms.oms import OMS
-from qat.domain.oms.resting_orders import WORKING_STATUSES
+from qat.domain.oms.resting_orders import TERMINAL_STATUSES, WORKING_STATUSES
 from qat.domain.oms.signal_bridge import PositionEntry
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -182,13 +182,50 @@ class PositionCloser:
         return 0.0
 
     async def _working_orders(self) -> list[RestingOrder]:
-        """Every working order, account-wide, read with `open_orders()`.
+        """Every WORKING order, account-wide, read with `open_orders()`.
+
+        ⚠️ THE CAPTURE PREDICATE, AND ONLY THE CAPTURE PREDICATE. It answers
+        "what is working, so what must I cancel and what levels would I
+        re-place" - not "is it gone". Verifying a cancel with this read sent a
+        SELL over two still-resting legs; see `_live_orders`.
 
         NOT `openTrades()`: that read is clientId-scoped and on 24 August
         reported zero protective stops while sixteen were resting.
         """
         orders = await self.broker.open_orders()
         return [o for o in orders if o.status in WORKING_STATUSES]
+
+    async def _live_orders(self) -> list[RestingOrder]:
+        """Everything the broker is STILL SHOWING that has not finished.
+
+        ⚠️ THE VERIFICATION PREDICATE, AND IT IS NOT `_working_orders()`.
+        Using that one to answer "is the leg gone?" was the round-3 Critical.
+
+        `WORKING_STATUSES` is {Submitted, PreSubmitted, PendingSubmit,
+        ApiPending, ApiUpdate} - raw IBKR statuses, since `from_ib_open_order`
+        passes `str(trade.orderStatus.status)` straight through - and
+        **`PendingCancel` is not among them**. So the post-cancel read DROPPED
+        any leg sitting in `PendingCancel`, `survivors` came back empty, the
+        "stop dead if a leg survives" step passed, and the market SELL went out
+        with both OCA legs STILL RESTING at the broker. A short position,
+        reported to the operator as a clean close.
+
+        ⚠️ AND IT FIRED ON THE HAPPY PATH. `PendingCancel` is BOTH the
+        19 August rejected-cancel state (error 10147, the order belongs to
+        another clientId) AND the ordinary transient of a cancel that IS being
+        honoured. It needed nothing worse than normal IBKR cancel latency.
+
+        ⚠️ THIS REPO HAD ALREADY DOCUMENTED THE TRAP, TWICE - `adapter.py:151`
+        and `ib_adapter.py:638` both say that after a cancel IBKR STILL SHOWS
+        the order reporting `PendingCancel`, and that VISIBLE IS NOT GONE.
+
+        So this fails CLOSED and the sets are asymmetric on purpose: an order
+        is gone only if it is ABSENT from `open_orders()` entirely or reports a
+        TERMINAL status. Anything else still visible is a SURVIVOR - it can
+        still fill, which is the only property that matters here.
+        """
+        orders = await self.broker.open_orders()
+        return [o for o in orders if o.status not in TERMINAL_STATUSES]
 
     async def _cancel_legs(self, symbol: str) -> _CancelReport:
         """Cancel every working leg, then RE-READ to prove they are gone.
@@ -284,7 +321,11 @@ class PositionCloser:
                 break
             issued.append(leg.order_id)
 
-        after = await self._working_orders()
+        # ⚠️ `_live_orders`, NOT `_working_orders`. This read asks "is it
+        # GONE", and a leg in `PendingCancel` is neither working nor finished -
+        # it is VISIBLE AT THE BROKER AND CAN STILL FILL. Reading it with the
+        # capture predicate dropped it, found no survivors, and sold over it.
+        after = await self._live_orders()
         survivors = tuple(o.order_id for o in after if o.symbol == symbol)
         book_is_credible = bool(after) or others_before == 0
         # What is CONFIRMED gone. A leg whose cancel was issued and which is
@@ -671,7 +712,14 @@ class PositionCloser:
         # (a working sell reports "transmitted", which is a SUCCESS). This is
         # the belt to that pair of braces, asked of the BROKER rather than of
         # a status field, because a status field is exactly what was wrong.
-        still_working = await self._working_orders()
+        #
+        # ⚠️ AND IT IS `_live_orders`, THE SAME PREDICATE `_cancel_legs`
+        # VERIFIES WITH. This read used `_working_orders()`, so a protective
+        # leg still visible in `PendingCancel` - or this app's own sell, sitting
+        # in the same status - was invisible to the guard and a fresh full-size
+        # bracket went on top of something that can still fill: the short trap
+        # from the other side. One notion of "still live" in this file, not two.
+        still_working = await self._live_orders()
 
         # ⚠️ AND THE GUARD ABOVE MUST FAIL CLOSED, NOT OPEN.
         #

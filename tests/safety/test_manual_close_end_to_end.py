@@ -29,6 +29,7 @@ answers with IBKR's semantics: `place_order` returns a WORKING order
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -67,6 +68,23 @@ class _IbkrLikeBroker:
     synchronously and that is the only reason a `!= "filled"` test ever looked
     correct. `ib_translate._IB_STATUS_MAP` maps Submitted/PreSubmitted/
     PendingSubmit/ApiPending/PendingCancel ALL to "transmitted".
+
+    ⚠️ AND `cancel_order` NO LONGER POPS THE LEG. It used to, and so did every
+    other fake on this branch - an instantaneous, always-honoured, fully-
+    visible cancel that real IBKR does not offer. `adapter.py:151` and
+    `ib_adapter.py:638` both already record that after a cancel
+    `reqAllOpenOrders()` STILL SHOWS the order reporting `PendingCancel`, and
+    that VISIBLE IS NOT GONE. `cancel_effect` picks which of the four real
+    behaviours this broker exhibits - see `_CANCEL_EFFECTS` in
+    `tests/domain/oms/test_position_closer.py`, which documents them:
+
+      "terminal" (default) honoured and settled - the leg stays visible
+                 reporting `Cancelled`, which cannot fill and IS gone
+      "pending"  honoured, not yet settled - the leg stays visible reporting
+                 `PendingCancel`, and CAN still fill. Ordinary latency
+      "rejected" refused outright (19 August, error 10147) - `cancelOrder`
+                 does not raise and the leg is untouched, still `Submitted`
+      "gone"     the leg disappears from the book entirely
     """
 
     def __init__(
@@ -75,11 +93,14 @@ class _IbkrLikeBroker:
         quantity: float = 100.0,
         reject_market_sell: bool = False,
         reject_protective: bool = False,
+        cancel_effect: str = "terminal",
         extra_resting: tuple[RestingOrder, ...] = (),
     ) -> None:
         self.quantity = quantity
         self.reject_market_sell = reject_market_sell
         self.reject_protective = reject_protective
+        assert cancel_effect in ("terminal", "pending", "rejected", "gone")
+        self.cancel_effect = cancel_effect
         self.resting: dict[str, RestingOrder] = {
             "leg-stp": RestingOrder(
                 symbol=SYMBOL,
@@ -108,11 +129,25 @@ class _IbkrLikeBroker:
         self.cancelled: list[str] = []
 
     async def open_orders(self) -> list[RestingOrder]:
+        # Unfiltered, as `reqAllOpenOrders` is: whatever the broker is still
+        # showing, in whatever status. Judging that is the caller's job.
         return list(self.resting.values())
 
     async def cancel_order(self, order_id: str) -> Order:
         self.cancelled.append(order_id)
-        self.resting.pop(order_id, None)
+        leg = self.resting.get(order_id)
+        if leg is None:
+            pass
+        elif self.cancel_effect == "gone":
+            self.resting.pop(order_id, None)
+        elif self.cancel_effect == "pending":
+            self.resting[order_id] = replace(leg, status="PendingCancel")
+        elif self.cancel_effect == "terminal":
+            self.resting[order_id] = replace(leg, status="Cancelled")
+        # "rejected": the leg is untouched and still Submitted (error 10147).
+        #
+        # ⚠️ And this returns success regardless. The cancel's own response is
+        # not evidence - that is the whole reason the caller re-reads.
         return Order(symbol=SYMBOL, side="sell", quantity=0.0, order_id=order_id)
 
     async def place_order(self, order: Order) -> Order:
@@ -296,6 +331,67 @@ async def test_recommend_mode_still_closes_the_position(auto_mode):
 
     assert result.outcome is CloseOutcome.CLOSED, result.detail
     assert result.quantity == 100.0
+
+
+# --- ⚠️ PendingCancel, through the REAL wiring --------------------------
+#
+# The round-3 Critical, driven end to end rather than against `_FakeOms`.
+# `_working_orders()` filtered the POST-CANCEL verification read on
+# `WORKING_STATUSES`, which does not contain `PendingCancel`, so a leg still
+# visible in it read as GONE, `survivors` came back empty, the "stop dead if a
+# leg survives" step passed, and the market SELL went out with both OCA legs
+# still resting at the broker. That is a short position, reported as a clean
+# close.
+
+
+@pytest.mark.asyncio
+async def test_a_pending_cancel_leg_stops_the_sell_end_to_end(auto_mode):
+    """⚠️ THE ONE THAT WOULD HAVE CAUGHT ROUND 3.
+
+    Both cancels are HONOURED. Both legs sit in `PendingCancel` when the
+    verification read happens - ordinary IBKR latency, nothing rejected,
+    nothing gone wrong. They are still resting and can still fill, so NO sell
+    may reach the broker.
+    """
+    broker = _IbkrLikeBroker(cancel_effect="pending")
+    wiring = await auto_mode(broker)
+
+    result = await wiring.closer.close_position(SYMBOL, operator="operator (dashboard)")
+
+    assert result.outcome is not CloseOutcome.CLOSED, result.detail
+    assert broker.placed == [], (
+        "the legs are VISIBLE at the broker in PendingCancel and can still "
+        "fill - a market sell over them puts the account SHORT"
+    )
+    assert sorted(broker.cancelled) == ["leg-lmt", "leg-stp"], "the cancels DID go out"
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_rejected_outright_stops_the_sell_end_to_end(auto_mode):
+    """19 August, error 10147. `cancelOrder` does not raise, the refusal
+    arrives on the error channel, and both legs are untouched."""
+    broker = _IbkrLikeBroker(cancel_effect="rejected")
+    wiring = await auto_mode(broker)
+
+    result = await wiring.closer.close_position(SYMBOL, operator="operator (dashboard)")
+
+    assert result.outcome is CloseOutcome.REFUSED, result.detail
+    assert broker.placed == []
+    assert "still resting" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_a_settled_cancel_still_lets_the_close_through_end_to_end(auto_mode):
+    """The other side, so the fix is not "never sell". A cancel that settles
+    leaves the leg visible reporting `Cancelled`, which is terminal: it cannot
+    fill, so it is gone."""
+    broker = _IbkrLikeBroker(cancel_effect="terminal")
+    wiring = await auto_mode(broker)
+
+    result = await wiring.closer.close_position(SYMBOL, operator="operator (dashboard)")
+
+    assert result.outcome is CloseOutcome.CLOSED, result.detail
+    assert len([o for o in broker.placed if o.order_type != "stop"]) == 1
 
 
 # --- the recovery path, under the same wiring ---------------------------

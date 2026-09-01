@@ -66,6 +66,40 @@ WORKING_STATUSES = frozenset(
     {"Submitted", "PreSubmitted", "PendingSubmit", "ApiPending", "ApiUpdate"}
 )
 
+# ⚠️ THE COMPLEMENT OF `WORKING_STATUSES` IS NOT ITS NEGATION, AND ASKING
+# "is it gone?" WITH `not in WORKING_STATUSES` SENT A SELL OVER TWO RESTING
+# LEGS.
+#
+# `PendingCancel` is in NEITHER set. `PositionCloser` verified its cancels by
+# re-reading `open_orders()` and keeping only `WORKING_STATUSES`, so a leg
+# sitting in `PendingCancel` was dropped from the read, `survivors` came back
+# empty, the "stop dead if a leg survives" step passed, and the market SELL
+# went out with both OCA legs STILL RESTING at the broker - a short position,
+# reported to the operator as a clean close. And `PendingCancel` is the
+# ORDINARY transient of a cancel that IS being honoured, as well as the
+# 19 August state of one REJECTED outright (error 10147), so that fired on the
+# happy path, on nothing worse than normal cancel latency.
+#
+# `adapter.py:151` and `ib_adapter.py:638` both already recorded the trap:
+# after a cancel IBKR STILL SHOWS the order reporting `PendingCancel`, and
+# VISIBLE IS NOT GONE.
+#
+# So "still working" and "definitely finished" are two questions with two
+# answers and a gap between them, and the gap is where the risk lives.
+# **Capture** asks the first (what must I cancel, what would I re-place):
+# `WORKING_STATUSES`. **Verification** asks the second, and must fail CLOSED -
+# an order counts as gone ONLY if it is absent from `open_orders()` entirely or
+# reports one of these. Anything else still visible can still fill.
+#
+# PINNED TO ib_async's own `OrderStatus.DoneStates`, exactly as
+# `WORKING_STATUSES` is pinned to `ActiveStates`, and asserted against it in
+# both directions by `tests/data/broker/test_working_statuses.py`. Literals
+# HERE for the same reason: this module is domain and must not import the
+# broker library. The two sets are also asserted DISJOINT there, and their
+# union asserted NOT to cover `PendingCancel` - the gap is deliberate and the
+# test says so, rather than leaving the next reader to rediscover it.
+TERMINAL_STATUSES = frozenset({"Cancelled", "ApiCancelled", "Filled", "Inactive"})
+
 
 @dataclass(frozen=True, slots=True)
 class SymbolOrderDivergence:

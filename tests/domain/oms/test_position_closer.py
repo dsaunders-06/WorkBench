@@ -17,12 +17,35 @@ distinction is the reason twenty-seven green tests sat over an unsafe branch:
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
 from qat.data.broker.adapter import Order, Position, RestingOrder
 from qat.domain.oms.position_closer import CloseOutcome, PositionCloser
+
+# ⚠️ WHAT A CANCEL ACTUALLY DOES AT IBKR - AND A FAKE MUST BE ABLE TO DO EACH.
+#
+# THREE rounds of Critical defects on this branch came from fakes that popped
+# the leg out of the book the instant `cancel_order` was called: an
+# instantaneous, always-honoured, fully-visible cancel. Real IBKR offers no
+# such guarantee, and this repo already said so TWICE - `adapter.py:151` and
+# `ib_adapter.py:638` both record that after a cancel `reqAllOpenOrders()`
+# STILL SHOWS the order reporting `PendingCancel`, and that VISIBLE IS NOT
+# GONE.
+#
+#   "terminal"  Honoured and settled: the leg stays visible reporting
+#               `Cancelled`. This one IS gone.
+#   "pending"   Honoured but not yet settled: the leg stays visible reporting
+#               `PendingCancel`. ⚠️ THE HAPPY-PATH TRANSIENT - it needs
+#               nothing more than ordinary cancel latency.
+#   "rejected"  Refused outright (19 August, error 10147: an order belongs to
+#               the clientId that placed it). `cancelOrder` does NOT raise -
+#               the refusal arrives on the error channel - and the leg is
+#               untouched, still `Submitted`, still able to fill.
+#   "gone"      The leg disappears from the book entirely. Possible, and the
+#               only behaviour every fake in this branch used to model.
+_CANCEL_EFFECTS = ("terminal", "pending", "rejected", "gone")
 
 
 def _leg(symbol, order_id, order_type, *, stop=None, limit=None, status="Submitted"):
@@ -66,13 +89,22 @@ class _FakeBroker:
         cancel_raises,
         legs_at_recovery=None,
         cancel_raises_for=(),
+        cancel_effect="terminal",
     ):
         self._positions = positions
         self._positions_after = positions_after_cancel
         self._legs = legs
+        # ⚠️ `None` means "let the cancel decide", which is the realistic
+        # default: the book after the cancel is whatever `_apply_cancel` made
+        # of it. An explicit list is still accepted, for the tests that need a
+        # specific after-state (a blind read, another symbol's leg surviving).
         self._legs_after = legs_after_cancel
         self._legs_at_recovery = legs_at_recovery
         self._cancel_raises = cancel_raises
+        assert cancel_effect in _CANCEL_EFFECTS
+        self._cancel_effect = cancel_effect
+        # The book this broker actually keeps, mutated BY the cancel.
+        self._book = list(legs)
         # Per-leg, so the SECOND leg's cancel can raise after the first has
         # already gone through - the branch that leaves the position half
         # stripped and is the whole point of the "refusal after cancels" tests.
@@ -90,10 +122,33 @@ class _FakeBroker:
         # Reads 1 and 2 are the capture and the verification re-read. Anything
         # after those is the recovery path asking again, which is a different
         # moment in time - by then this app's own sell may be working.
+        #
+        # ⚠️ NOTHING IS FILTERED HERE. `open_orders()` is `reqAllOpenOrders`,
+        # and IBKR answers it with every order it is still showing, whatever
+        # status it carries - `PendingCancel` and `Cancelled` included. A fake
+        # that filtered would hide exactly the leg this branch kept selling
+        # over. Deciding what counts as gone is the caller's job.
         self.open_orders_calls += 1
         if self.open_orders_calls > 2 and self._legs_at_recovery is not None:
             return list(self._legs_at_recovery)
-        return list(self._legs_after) if self._cancelled else list(self._legs)
+        if not self._cancelled:
+            return list(self._legs)
+        if self._legs_after is not None:
+            return list(self._legs_after)
+        return list(self._book)
+
+    def _apply_cancel(self, order_id):
+        """What the BROKER does to its book when a cancel arrives. See
+        `_CANCEL_EFFECTS` - three of the four leave the leg visible."""
+        if self._cancel_effect == "gone":
+            self._book = [o for o in self._book if o.order_id != order_id]
+            return
+        if self._cancel_effect == "rejected":
+            return  # untouched, still Submitted, still able to fill
+        status = "PendingCancel" if self._cancel_effect == "pending" else "Cancelled"
+        self._book = [
+            replace(o, status=status) if o.order_id == order_id else o for o in self._book
+        ]
 
     async def cancel_order(self, order_id):
         if self._cancel_raises is not None:
@@ -103,6 +158,10 @@ class _FakeBroker:
             raise RuntimeError(f"broker refused the cancel of {order_id}")
         self.cancelled_ids.append(order_id)
         self._cancelled = True
+        self._apply_cancel(order_id)
+        # ⚠️ The cancel's OWN response is not evidence, so this says "cancelled"
+        # whatever `_apply_cancel` just did to the book - including nothing.
+        # That is the 19 August shape exactly.
         return Order(symbol="X", side="sell", quantity=0.0, order_id=order_id, status="cancelled")
 
 
@@ -211,6 +270,7 @@ def closer_factory():
         halt=None,
         cancel_raises=None,
         cancel_raises_for=(),
+        cancel_effect="terminal",
         exit_rejected=False,
         sign_off_status="transmitted",
         reprotect_raises=None,
@@ -221,11 +281,12 @@ def closer_factory():
         broker = _FakeBroker(
             positions,
             legs or [],
-            legs_after_cancel or [],
+            legs_after_cancel,
             positions_after_cancel,
             cancel_raises,
             legs_at_recovery,
             cancel_raises_for,
+            cancel_effect,
         )
         kill_switch = _FakeKillSwitch(halt)
         oms = _FakeOms(
@@ -318,16 +379,141 @@ async def test_stops_dead_when_a_leg_survives_the_cancel(closer_factory):
 
     On 19 August a cancel reported PendingCancel while being rejected outright
     (error 10147). If a leg is still resting, selling puts the account short.
+
+    ⚠️ The survivor is modelled `PendingCancel`, and it used to be modelled
+    `Submitted`. That is not a cosmetic difference. This test cited 19 August
+    and PendingCancel BY NAME while constructing the one status the branch it
+    guards did NOT catch: `_working_orders()` filtered the post-cancel read on
+    `WORKING_STATUSES`, which does not contain `PendingCancel`, so a leg in it
+    was read as GONE and the sell went out over both legs still resting. A
+    `Submitted` survivor passed through that filter and made the test green
+    over the defect it was named for.
     """
     closer = closer_factory(
         positions={"CBA.AX": 100.0},
         legs=[_leg("CBA.AX", "1", "LMT"), _leg("CBA.AX", "2", "STP")],
-        legs_after_cancel=[_leg("CBA.AX", "2", "STP")],  # one survives
+        # One survives - VISIBLE, in PendingCancel, exactly as IBKR shows it.
+        legs_after_cancel=[_leg("CBA.AX", "2", "STP", status="PendingCancel")],
     )
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
     assert "still resting" in result.detail
     assert closer.oms.exit_orders == [], "NOTHING may be sold while a leg rests"
+
+
+# --- ⚠️ PENDINGCANCEL: VISIBLE IS NOT GONE ------------------------------
+#
+# `_working_orders()` filtered BOTH the capture read and the post-cancel
+# verification read on `resting_orders.WORKING_STATUSES` -
+# {Submitted, PreSubmitted, PendingSubmit, ApiPending, ApiUpdate}. These are
+# RAW IBKR statuses (`from_ib_open_order` passes `str(trade.orderStatus.
+# status)` straight through), and `PendingCancel` is NOT among them.
+#
+# So the verification read DROPPED any leg sitting in PendingCancel,
+# `survivors` came back empty, the "stop dead if a leg survives" step passed,
+# and the market SELL went out with both OCA legs STILL RESTING at the broker.
+# A short position, reported to the operator as a clean close.
+#
+# ⚠️ AND PendingCancel FIRES ON THE HAPPY PATH. It is both the 19 August
+# rejected-cancel state (error 10147) and the ordinary transient of a cancel
+# that IS being honoured. It needs nothing more than normal IBKR latency.
+#
+# The predicates therefore differ by design: CAPTURE asks "what is working,
+# so what must I cancel and what would I re-place" (WORKING_STATUSES); VERIFY
+# asks "is it GONE", and a leg is gone only if it is absent from open_orders()
+# entirely or reports a TERMINAL status. Anything else still visible for the
+# symbol is a SURVIVOR.
+
+
+@pytest.mark.asyncio
+async def test_a_leg_left_in_pending_cancel_blocks_the_sell(closer_factory):
+    """⚠️ THE ROUND-3 CRITICAL, ON THE HAPPY PATH.
+
+    Both cancels are honoured; both legs sit in `PendingCancel` for the
+    moment the verification read happens. They are STILL RESTING and can
+    still fill. Nothing may be sold.
+    """
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT"), _leg("CBA.AX", "2", "STP")],
+        cancel_effect="pending",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is not CloseOutcome.CLOSED, result.detail
+    assert closer.oms.exit_orders == [], (
+        "a leg in PendingCancel is VISIBLE AT THE BROKER and can still fill - "
+        "selling over it puts the account SHORT"
+    )
+    assert "1" in result.detail and "2" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_rejected_outright_blocks_the_sell(closer_factory):
+    """19 August, error 10147: `cancelOrder` does not raise, the refusal
+    arrives on the error channel, and the leg is untouched and still
+    `Submitted`. The cancel's own response said success."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT"), _leg("CBA.AX", "2", "STP")],
+        cancel_effect="rejected",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED, result.detail
+    assert closer.oms.exit_orders == []
+    assert "still resting" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_a_leg_that_reaches_a_terminal_status_IS_gone_and_the_sell_proceeds(
+    closer_factory,
+):
+    """The other side, so the fix cannot be "never sell". A cancel that
+    settles leaves the leg visible reporting `Cancelled` - a TERMINAL status.
+    It cannot fill, so it is gone and the close must go through."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT"), _leg("CBA.AX", "2", "STP")],
+        cancel_effect="terminal",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.CLOSED, result.detail
+    assert closer.oms.exit_orders == [("CBA.AX", 100.0, "manual_close")]
+
+
+@pytest.mark.asyncio
+async def test_a_leg_that_vanishes_from_the_book_IS_gone(closer_factory):
+    """The behaviour every fake in this branch used to model, kept as ONE of
+    four rather than as the only one."""
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT"), _leg("CBA.AX", "2", "STP")],
+        cancel_effect="gone",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.CLOSED, result.detail
+
+
+@pytest.mark.asyncio
+async def test_recovery_will_not_re_arm_over_a_leg_in_pending_cancel(closer_factory, caplog):
+    """The same widening in `_recover`, so the file does not hold two
+    different notions of "still live".
+
+    `_recover`'s in-flight-sell guard read `_working_orders()` too, so a
+    protective leg still visible in `PendingCancel` was invisible to it and a
+    fresh full-size bracket went on top of one that can still fill - the short
+    trap from the other side.
+    """
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_after_cancel=[],  # the verification read is clean, so the sell is attempted
+        legs_at_recovery=[_leg("CBA.AX", "2", "STP", stop=90.0, status="PendingCancel")],
+        sign_off_status="rejected",
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.UNPROTECTED, result.detail
+    assert closer.oms.protective_orders == [], "no bracket over a leg that can still fill"
+    assert any(r.levelname == "CRITICAL" for r in caplog.records)
 
 
 @pytest.mark.asyncio
