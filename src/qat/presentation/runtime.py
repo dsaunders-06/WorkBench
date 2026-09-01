@@ -20,6 +20,7 @@ constructor swap, since M10 made the provider a user-facing Settings choice.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Literal, cast
 
@@ -57,8 +58,9 @@ from qat.domain.bus import EventBus
 from qat.domain.corporate_actions.monitor import CorporateActionMonitor
 from qat.domain.market_calendar import MARKET_TIMEZONES
 from qat.domain.oms.oms import OMS
+from qat.domain.oms.position_closer import PositionCloser
 from qat.domain.oms.reconciliation import ReconciliationMonitor
-from qat.domain.oms.signal_bridge import SignalToOrderBridge
+from qat.domain.oms.signal_bridge import PositionEntry, SignalToOrderBridge
 from qat.domain.orchestrator import Orchestrator
 from qat.domain.performance import (
     EquityCurve,
@@ -456,6 +458,36 @@ def resolve_llm_engines(settings: Settings) -> tuple[LLMEngine, LLMEngine]:
     )
 
 
+class _LiveEntries(Mapping[str, PositionEntry]):
+    """A read-through view onto the bridge's own entry record, for
+    `PositionCloser` (2026-09-01 manual position close spec).
+
+    `PositionCloser` is built once, at startup, while `SignalToOrderBridge`
+    keeps trading and opening/closing positions for the rest of the session.
+    A snapshot dict taken here at construction time would answer every later
+    `close_position()` call with whatever was true at THAT moment - for a
+    freshly-built Runtime, always empty - so entries taken at open would never
+    be found and every manual close would be refused for "no entry record".
+    This calls `position_entries()` itself on every access instead, so it can
+    never go stale - the same "always re-derive, never cache what can move"
+    rule the rest of this module's screens already follow (e.g. the Risk
+    Console's `refresh_binding_pairs`, which is asked of the governor fresh
+    on every refresh rather than computed once and kept).
+    """
+
+    def __init__(self, bridge: SignalToOrderBridge) -> None:
+        self._bridge = bridge
+
+    def __getitem__(self, symbol: str) -> PositionEntry:
+        return self._bridge.position_entries()[symbol]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._bridge.position_entries())
+
+    def __len__(self) -> int:
+        return len(self._bridge.position_entries())
+
+
 @dataclass
 class Runtime:
     """Everything a screen needs: the bus, the engines, and the settings.
@@ -490,6 +522,11 @@ class Runtime:
     # unaffected. Only the adoption banner reads it.
     signal_bridge: SignalToOrderBridge | None = None
     corporate_action_monitor: CorporateActionMonitor | None = None
+    # Manual position close (2026-09-01 spec). Optional for the same reason
+    # signal_bridge is: every existing construction of Runtime, including the
+    # tests that build one directly rather than through build_demo, stays
+    # unaffected.
+    closer: PositionCloser | None = None
 
     def opened_position_symbols(self) -> set[str]:
         """Symbols this app opened itself, from its own entry record (M33e).
@@ -591,6 +628,14 @@ class Runtime:
         # the share count and per-share price are both about to change, so a
         # size computed now has a known expiry (R2).
         oms.corporate_actions = corporate_action_monitor
+
+        # Manual position close (2026-09-01 spec, Task 7): the dashboard's
+        # Close Position button reaches the broker only through this. Built
+        # here, after oms/broker/kill_switch/signal_bridge all exist, and
+        # wrapped in `_LiveEntries` rather than handed `signal_bridge.
+        # position_entries()` directly - see that class's docstring for why a
+        # snapshot dict here would go stale for the rest of the session.
+        closer = PositionCloser(oms, broker, kill_switch, _LiveEntries(signal_bridge))
 
         # Autonomy (spec M13). All four pieces are constructed regardless of
         # execution_mode so the UI can always show the journal and the rails,
@@ -879,6 +924,7 @@ class Runtime:
             available_strategies=available_strategies,
             signal_bridge=signal_bridge,
             corporate_action_monitor=corporate_action_monitor,
+            closer=closer,
             regime_engine=regime_engine,
             ai_service=ai_service,
             watchlist=watchlist,

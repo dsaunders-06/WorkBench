@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
-from qat.data.broker.adapter import BrokerAdapter, RestingOrder
+from qat.data.broker.adapter import BrokerAdapter, Order, RestingOrder
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.resting_orders import WORKING_STATUSES
 from qat.domain.oms.signal_bridge import PositionEntry
@@ -60,6 +60,32 @@ class PositionCloser:
     def _refuse(self, symbol: str, detail: str) -> CloseResult:
         logger.warning("Manual close of %s REFUSED: %s", symbol, detail)
         return CloseResult(CloseOutcome.REFUSED, symbol, 0.0, (), detail)
+
+    def legs_for(self, symbol: str) -> tuple[Order, ...]:
+        """The protective leg(s) this app currently BELIEVES are resting for
+        symbol - synchronous, from the OMS's own local record, for a
+        confirmation dialog to itemise before the operator commits.
+
+        Deliberately NOT `_working_orders()`: that reads the broker and is
+        async, and a Qt slot cannot await before opening its confirm dialog.
+        This is a belief, not the fact this module's docstring insists on -
+        `close_position` itself re-reads and re-verifies the broker before
+        cancelling or selling anything, exactly as `_cancel_legs` requires.
+        This method only has to be honest enough to preview what that later,
+        authoritative read will find.
+
+        A bracket is ONE `Order` record per entry (`submit_protective_stop`
+        carries both `stop_price` and `take_profit_price` on it), not two -
+        so this normally returns zero or one order, not two.
+        """
+        return tuple(
+            order
+            for order in self.oms.orders()
+            if order.symbol == symbol
+            and order.side == "sell"
+            and order.order_type == "stop"
+            and order.status == "transmitted"
+        )
 
     async def _held_quantity(self, symbol: str) -> float:
         """The BROKER's quantity. App records are a claim; this is the fact."""
