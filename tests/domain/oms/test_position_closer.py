@@ -298,3 +298,28 @@ async def test_abort_blocks_the_sell_when_the_verification_read_is_unverifiable(
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
     assert closer.oms.exit_orders == [], "an unverifiable read must never let the sell through"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_sell_re_places_the_bracket(closer_factory):
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        exit_rejected=True,
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.RECOVERED
+    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_re_place_reports_unprotected(closer_factory, caplog):
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0},
+        legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
+        exit_rejected=True,
+        reprotect_raises=RuntimeError("broker said no"),
+    )
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.UNPROTECTED
+    assert any(r.levelname == "CRITICAL" for r in caplog.records)

@@ -217,7 +217,56 @@ class PositionCloser:
     async def _recover(
         self, symbol: str, captured: list[RestingOrder], cancelled: tuple[str, ...], why: str
     ) -> CloseResult:
-        # TEMPORARY: Task 5 replaces this body with real re-protection. Until
-        # then a failed exit order leaves the position genuinely unprotected -
-        # reported as such, never silently swallowed as a plain REFUSED.
-        return CloseResult(CloseOutcome.UNPROTECTED, symbol, 0.0, cancelled, why)
+        """Put the protection back. The position is BARE until this succeeds."""
+        stop = next((leg.stop_price for leg in captured if leg.stop_price), None)
+        target = next((leg.limit_price for leg in captured if leg.limit_price), None)
+        quantity = await self._held_quantity(symbol)
+        try:
+            if stop is None:
+                # `submit_protective_stop` requires a float stop. Without one
+                # captured there is nothing to restore, and pretending otherwise
+                # would report RECOVERED over a bare position.
+                raise ValueError("no stop price was captured from the original legs")
+            # ⚠️ SIGN IT OFF. `submit_protective_stop` only ever creates a
+            # pending_signoff order - "nothing reaches the broker without
+            # sign-off". Without this the bracket is proposed and never placed,
+            # and the position stays bare while the result claims RECOVERED.
+            protective = await self.oms.submit_protective_stop(
+                symbol, quantity, stop, take_profit_price=target
+            )
+            if protective.status == "rejected":
+                raise RuntimeError(f"protective stop rejected for {symbol}")
+            placed = await self.oms.sign_off(protective.order_id, operator="auto-reprotect")
+            if placed.status not in ("transmitted", "filled"):
+                raise RuntimeError(f"protective stop ended {placed.status}")
+        except Exception:  # noqa: BLE001 - the loudest branch in the file
+            logger.critical(
+                "MANUAL CLOSE LEFT %s UNPROTECTED: %s, and re-placing the bracket "
+                "FAILED. %g shares are held with no resting stop. Re-place by hand.",
+                symbol,
+                why,
+                quantity,
+            )
+            return CloseResult(
+                CloseOutcome.UNPROTECTED,
+                symbol,
+                0.0,
+                cancelled,
+                f"{why}, AND the bracket could not be re-placed. {symbol} is held "
+                f"with NO STOP. Re-place it by hand now.",
+            )
+        logger.error(
+            "Manual close of %s failed (%s) - original bracket re-placed at stop=%s target=%s",
+            symbol,
+            why,
+            stop,
+            target,
+        )
+        return CloseResult(
+            CloseOutcome.RECOVERED,
+            symbol,
+            0.0,
+            cancelled,
+            f"{why}. The original bracket was re-placed (stop {stop}, target "
+            f"{target}); the position is protected and still held.",
+        )
