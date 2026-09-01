@@ -1,0 +1,161 @@
+from dataclasses import dataclass
+
+import pytest
+
+from qat.data.broker.adapter import Order, Position, RestingOrder
+from qat.domain.oms.position_closer import CloseOutcome, PositionCloser
+
+
+def _leg(symbol, order_id, order_type, *, stop=None, limit=None, status="Submitted"):
+    return RestingOrder(
+        symbol=symbol,
+        order_id=order_id,
+        side="sell",
+        order_type=order_type,
+        quantity=100.0,
+        status=status,
+        oca_group="oca-1",
+        stop_price=stop,
+        limit_price=limit,
+    )
+
+
+@dataclass
+class _Entry:
+    price: float = 100.0
+
+
+class _FakeBroker:
+    def __init__(self, positions, legs, legs_after_cancel, positions_after_cancel, cancel_raises):
+        self._positions = positions
+        self._positions_after = positions_after_cancel
+        self._legs = legs
+        self._legs_after = legs_after_cancel
+        self._cancel_raises = cancel_raises
+        self.open_orders_calls = 0
+        self._cancelled = False
+
+    async def positions(self):
+        use_after = self._cancelled and self._positions_after
+        source = self._positions_after if use_after else self._positions
+        return [Position(symbol=s, quantity=q, avg_price=100.0) for s, q in source.items()]
+
+    async def open_orders(self):
+        self.open_orders_calls += 1
+        return list(self._legs_after) if self._cancelled else list(self._legs)
+
+    async def cancel_order(self, order_id):
+        if self._cancel_raises is not None:
+            raise self._cancel_raises
+        self._cancelled = True
+        return Order(symbol="X", side="sell", quantity=0.0, order_id=order_id, status="cancelled")
+
+
+class _FakeOms:
+    def __init__(self, exit_rejected, reprotect_raises):
+        self.exit_orders = []
+        self.signed_off = []
+        self.protective_orders = []
+        self._exit_rejected = exit_rejected
+        self._reprotect_raises = reprotect_raises
+
+    async def submit_exit_order(self, symbol, quantity, price, reason="signal"):
+        self.exit_orders.append((symbol, quantity, reason))
+        status = "rejected" if self._exit_rejected else "pending_signoff"
+        return Order(
+            symbol=symbol,
+            side="sell",
+            quantity=quantity,
+            order_id=f"order-{len(self.exit_orders)}",
+            status=status,
+        )
+
+    async def submit_protective_stop(self, symbol, quantity, stop_price, take_profit_price=None):
+        if self._reprotect_raises is not None:
+            raise self._reprotect_raises
+        self.protective_orders.append((symbol, quantity, stop_price, take_profit_price))
+        return Order(
+            symbol=symbol,
+            side="sell",
+            quantity=quantity,
+            order_id="protect-1",
+            status="pending_signoff",
+        )
+
+    async def sign_off(self, order_id, operator):
+        self.signed_off.append((order_id, operator))
+        status = "transmitted" if order_id.startswith("protect") else "filled"
+        return Order(symbol="X", side="sell", quantity=0.0, order_id=order_id, status=status)
+
+
+class _FakeKillSwitch:
+    def __init__(self, reason):
+        self.reason = reason
+        self.tripped = reason is not None
+
+
+@pytest.fixture
+def closer_factory():
+    def make(
+        positions=None,
+        entries=None,
+        legs=None,
+        legs_after_cancel=None,
+        positions_after_cancel=None,
+        halt=None,
+        cancel_raises=None,
+        exit_rejected=False,
+        reprotect_raises=None,
+    ):
+        positions = positions or {}
+        entries = {s: _Entry() for s in positions} if entries is None else entries
+        broker = _FakeBroker(
+            positions, legs or [], legs_after_cancel or [], positions_after_cancel, cancel_raises
+        )
+        oms = _FakeOms(exit_rejected, reprotect_raises)
+        closer = PositionCloser(oms, broker, _FakeKillSwitch(halt), entries)
+        closer.oms, closer.broker = oms, broker
+        return closer
+
+    return make
+
+
+@pytest.mark.asyncio
+async def test_refuses_a_symbol_the_broker_does_not_hold(closer_factory):
+    closer = closer_factory(positions={})
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert "not held" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_refuses_when_there_is_no_entry_record(closer_factory):
+    """Without an entry basis the exit records no closed trade and no
+    R-multiple. v1 names the script rather than half-recording."""
+    closer = closer_factory(positions={"CBA.AX": 100.0}, entries={})
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert "flatten_positions.py" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_refuses_a_partial_quantity_in_v1(closer_factory):
+    closer = closer_factory(positions={"CBA.AX": 100.0})
+    result = await closer.close_position("CBA.AX", operator="tester", quantity=50.0)
+    assert result.outcome is CloseOutcome.REFUSED
+    assert "full close" in result.detail
+
+
+@pytest.mark.asyncio
+async def test_refuses_while_the_kill_switch_is_tripped(closer_factory):
+    closer = closer_factory(positions={"CBA.AX": 100.0}, halt="broker gone")
+    result = await closer.close_position("CBA.AX", operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert "broker gone" in result.detail, "the halt REASON must reach the operator"
+
+
+@pytest.mark.asyncio
+async def test_proceeds_past_the_halt_when_acknowledged(closer_factory):
+    closer = closer_factory(positions={"CBA.AX": 100.0}, halt="broker gone")
+    result = await closer.close_position("CBA.AX", operator="tester", acknowledge_halt=True)
+    assert result.outcome is not CloseOutcome.REFUSED or "tripped" not in result.detail
