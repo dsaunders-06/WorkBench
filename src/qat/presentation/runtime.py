@@ -39,6 +39,7 @@ from qat.data.history import HistoricalBarSource, resolve_history_source
 from qat.data.macro_fred import FredMacroSource, MacroDataSource, MacroFeed, MockMacroSource
 from qat.data.market_data import MarketDataFeed, MarketDataSource, SyntheticMarketDataSource
 from qat.data.news import NewsSource
+from qat.data.sectors import SECTOR_BY_SYMBOL
 from qat.domain.ai_advisory.llm_engine import (
     AnthropicEngine,
     DemoLLMEngine,
@@ -70,6 +71,7 @@ from qat.domain.performance import (
 )
 from qat.domain.performance.scorecard import StrategyScorecard, build_scorecard
 from qat.domain.regime_engine.engine import RegimeEngine
+from qat.domain.risk_engine.book_risk import BookRiskMonitor
 from qat.domain.risk_engine.delever import DeleverSweep
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch, KillSwitchEngine
@@ -527,6 +529,10 @@ class Runtime:
     # tests that build one directly rather than through build_demo, stays
     # unaffected.
     closer: PositionCloser | None = None
+    # Live portfolio risk over the held book (2026-09-02 spec). Optional for the
+    # same reason `closer` is: every existing construction of Runtime, including
+    # tests that build one directly, stays unaffected.
+    book_risk_monitor: BookRiskMonitor | None = None
 
     def opened_position_symbols(self) -> set[str]:
         """Symbols this app opened itself, from its own entry record (M33e).
@@ -636,6 +642,18 @@ class Runtime:
         # position_entries()` directly - see that class's docstring for why a
         # snapshot dict here would go stale for the rest of the session.
         closer = PositionCloser(oms, broker, kill_switch, _LiveEntries(signal_bridge))
+
+        # Reads the SHARED throttled poller, never the broker: a second poller
+        # would double broker traffic to record the same number. `bars` is the
+        # signal bridge's aggregator, warm started with 300 daily bars per
+        # symbol - the same source the decision path uses for existing_returns,
+        # so the live and decision figures stay comparable.
+        book_risk_monitor = BookRiskMonitor(
+            account_poller=account_poller,
+            bars=signal_bridge.bars,
+            settings=settings,
+            sector_by_symbol=SECTOR_BY_SYMBOL,
+        )
 
         # Autonomy (spec M13). All four pieces are constructed regardless of
         # execution_mode so the UI can always show the journal and the rails,
@@ -895,6 +913,7 @@ class Runtime:
             corporate_action_monitor,
             signal_bridge,
             regime_engine,
+            book_risk_monitor,
             # Last: the orchestrator has started the feed by now, so this
             # engine's first check stands the session down if the market is
             # shut rather than racing a feed that has not started yet.
@@ -925,6 +944,7 @@ class Runtime:
             signal_bridge=signal_bridge,
             corporate_action_monitor=corporate_action_monitor,
             closer=closer,
+            book_risk_monitor=book_risk_monitor,
             regime_engine=regime_engine,
             ai_service=ai_service,
             watchlist=watchlist,
