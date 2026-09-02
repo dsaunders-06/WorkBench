@@ -132,7 +132,16 @@ def _answer_caveats(fundamentals: dict[str, object], risk_metrics: dict[str, Any
         caveats.append(
             "the company fundamentals in its context were SYNTHETIC placeholders, not real figures"
         )
-    if not risk_metrics:
+    # Dict TRUTHINESS, not figures. `compute_book_risk` returns a notes-only
+    # BookRisk - all five metrics None - whenever the book is flat, equity is
+    # unreadable, or every weight is non-finite, and risk_metrics() then
+    # returns {"book_now_notes": [...]} for that: no VaR, no ES, just an
+    # explanation why. That dict is truthy, so `if not risk_metrics:` read it
+    # as fully informed and dropped this caveat in exactly the case it
+    # describes. Testing for the two groups that actually carry figures is
+    # the same discipline AdvisoryContext.to_prompt_text's risk-metrics
+    # branch is held to.
+    if not risk_metrics.get("book_now") and not risk_metrics.get("at_last_decision"):
         caveats.append("no portfolio risk check had been recorded yet, so it had no VaR or ES")
     if not caveats:
         return ""

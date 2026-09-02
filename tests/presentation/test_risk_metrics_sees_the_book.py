@@ -9,10 +9,14 @@ by a hardcoded two-name tuple.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import cast
 
-from qat.domain.risk_engine.book_risk import BookRisk
+from qat.config import Settings
+from qat.data.bars import MultiSymbolAggregator
+from qat.data.broker.account_poller import AccountPoller
+from qat.domain.risk_engine.book_risk import BookRisk, BookRiskMonitor
 from qat.presentation.advisory_account import risk_metrics
 
 
@@ -153,3 +157,70 @@ def test_neither_group_is_still_an_empty_dict():
     runtime.book_risk_monitor = None
 
     assert risk_metrics(runtime) == {}
+
+
+# --- a REAL BookRiskMonitor, not a stub ----------------------------------
+#
+# `_Monitor` above answers `fresh()` with whatever value it was built with,
+# regardless of what it is asked or when - so it cannot tell a reader that
+# calls `.latest` directly (bypassing the staleness bound entirely) apart
+# from one that calls `.fresh()` correctly; both just return the value. It
+# also ignores whatever `now` it is called with, so a reader that hands
+# `fresh()` a NAIVE `datetime.now()` instead of no argument goes undetected
+# too, even though the real `BookRiskMonitor.fresh()` raises on exactly that
+# (an aware `computed_at` minus a naive `now`). The tests below drive the
+# real class so the age bound and the tz-aware clock both actually gate
+# something, not merely a fake that happens to agree.
+
+_NOW = datetime(2026, 9, 2, 17, 0, tzinfo=UTC)
+
+
+def _monitor_holding(age: timedelta) -> BookRiskMonitor:
+    monitor = BookRiskMonitor(
+        # fresh() touches neither account_poller nor bars (see its own
+        # docstring), so a real poller/aggregator is not needed to exercise
+        # it. `cast`, not a loosened signature - BookRiskMonitor's
+        # constructor keeps its concrete types deliberately.
+        account_poller=cast(AccountPoller, None),
+        bars=cast(MultiSymbolAggregator, None),
+        settings=Settings(_env_file=None),
+        clock=lambda: _NOW,
+    )
+    monitor.latest = _book_risk(computed_at=_NOW - age)
+    return monitor
+
+
+def test_a_four_hour_old_book_is_absent_not_stale():
+    """A realistic stand-in for the fake `_Monitor` above: 4 hours is well
+    past the 180s default bound (Settings.book_risk_max_age_seconds), so
+    fresh() must return None and this measurement must not reach the model -
+    not stale, not zeroed, simply absent."""
+    runtime = _runtime_with_audit_entries([])
+    runtime.book_risk_monitor = _monitor_holding(timedelta(hours=4))
+
+    assert risk_metrics(runtime) == {}
+
+
+def test_a_measurement_inside_the_bound_still_reaches_the_model():
+    """The other half of the same bound: proves the test above is gating on
+    age rather than simply failing to observe a real monitor at all."""
+    runtime = _runtime_with_audit_entries([])
+    runtime.book_risk_monitor = _monitor_holding(timedelta(seconds=30))
+
+    metrics = risk_metrics(runtime)
+
+    assert metrics["book_now"]["var_95"] == 0.011
+
+
+def test_book_now_carries_its_own_age_in_seconds():
+    """The only figure telling the model how old `book_now` is - the field
+    closest to the four-hour-old-book incident above. Deleting the
+    `book_now_age_seconds` assignment in risk_metrics() leaves every other
+    test in this file green."""
+    runtime = _runtime_with_audit_entries([])
+    runtime.book_risk_monitor = _Monitor(_book_risk())
+
+    metrics = risk_metrics(runtime)
+
+    assert "book_now_age_seconds" in metrics
+    assert metrics["book_now_age_seconds"] >= 0

@@ -83,16 +83,26 @@ class AdvisoryContext:
         symbol_line = f"Symbol: {self.symbol}"
         if self.entity_name and self.entity_name != self.symbol:
             symbol_line = f"Symbol: {self.symbol} ({self.entity_name})"
-        lines = [
-            symbol_line,
-            f"Regime: {self.regime_label} (probabilities: {self.regime_probs})",
-            f"Current positions: {self.positions}",
-            # Absent is stated, not rendered as an empty container (M73). The
-            # caller used to substitute 0.0 for a metric the last risk check
-            # did not record, so "no VaR was computed" reached the model as "VaR
-            # is zero" - the same mistake the fundamentals block below exists to
-            # avoid, in the same prompt.
-            (
+        # Absent is stated, not rendered as an empty container (M73). The
+        # caller used to substitute 0.0 for a metric the last risk check did
+        # not record, so "no VaR was computed" reached the model as "VaR is
+        # zero" - the same mistake the fundamentals block below exists to
+        # avoid, in the same prompt.
+        #
+        # has_risk_figures, not dict truthiness. `compute_book_risk` returns a
+        # notes-only BookRisk - every metric None - whenever the book is flat,
+        # equity is unreadable, or every weight is non-finite, and
+        # risk_metrics() then returns {"book_now_notes": [...]} for that: no
+        # VaR, no ES, no concentration, just an explanation why. That dict is
+        # truthy, so `if self.risk_metrics:` took the figures branch and
+        # swapped the UNKNOWN warning for a bag of notes and no numbers -
+        # backwards, since a notes-only book is exactly the case the warning
+        # exists for.
+        has_risk_figures = bool(self.risk_metrics.get("book_now")) or bool(
+            self.risk_metrics.get("at_last_decision")
+        )
+        if has_risk_figures:
+            risk_metrics_line = (
                 "Risk metrics: "
                 + str(self.risk_metrics)
                 + " - 'book_now' measures the portfolio you currently hold; "
@@ -102,10 +112,24 @@ class AdvisoryContext:
                 "name and sector in the book; in 'at_last_decision' they are "
                 "the candidate's own. A field that is absent is UNKNOWN, not "
                 "zero."
-                if self.risk_metrics
-                else "Risk metrics: none available - no portfolio risk check has been recorded "
+            )
+        else:
+            risk_metrics_line = (
+                "Risk metrics: none available - no portfolio risk check has been recorded "
                 "yet this session. Treat this as UNKNOWN, not as zero risk."
-            ),
+            )
+            if self.risk_metrics:
+                # Notes travel ALONGSIDE the warning, not instead of it - e.g.
+                # book_now_notes explaining why the book had nothing to
+                # measure. Dropping them here would repeat the M73 mistake in
+                # the other direction: a real fact discarded rather than
+                # zeroed.
+                risk_metrics_line += f" ({self.risk_metrics})"
+        lines = [
+            symbol_line,
+            f"Regime: {self.regime_label} (probabilities: {self.regime_probs})",
+            f"Current positions: {self.positions}",
+            risk_metrics_line,
             f"Candidate signal: {self.candidate_signal}",
         ]
         if self.macro_signal:

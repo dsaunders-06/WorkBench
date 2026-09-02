@@ -157,11 +157,62 @@ def test_real_metrics_still_render_as_figures():
         regime_label="bull",
         regime_probs={},
         positions={},
-        risk_metrics={"var_95": 0.031},
+        risk_metrics={"book_now": {"var_95": 0.031}},
         candidate_signal={},
     )
 
     assert "0.031" in context.to_prompt_text()
+
+
+def test_the_prompt_explains_the_two_groups_and_their_different_concentration_meaning():
+    """The sibling of the empty-branch test above, for the branch that
+    actually renders. Deleting this explanation and reverting to
+    f"Risk metrics: {self.risk_metrics}" leaves the whole suite green - this
+    text is what stops the model reading a coincidence as agreement between
+    book_now's largest-in-book concentration and at_last_decision's
+    candidate-specific one."""
+    context = AdvisoryContext(
+        symbol="AMD",
+        regime_label="bull",
+        regime_probs={},
+        positions={},
+        risk_metrics={
+            "book_now": {"var_95": 0.011, "single_name_pct": 0.12},
+            "at_last_decision": {"var_95": 0.02, "single_name_pct": 0.3},
+        },
+        candidate_signal={},
+    )
+
+    text = context.to_prompt_text()
+
+    assert "book_now" in text
+    assert "at_last_decision" in text
+    assert "LARGEST" in text
+    assert "candidate's own" in text
+
+
+def test_a_notes_only_book_still_reads_as_unknown_not_zero():
+    """`risk_metrics()` returns `{"book_now_notes": [...]}` - no VaR, no ES,
+    no concentration - whenever the book is flat, equity is unreadable, or
+    every weight is non-finite (book_risk.py's compute_book_risk). That dict
+    is TRUTHY, so a plain `if self.risk_metrics:` took the figures branch and
+    swapped the UNKNOWN warning for a bag of notes and no numbers - backwards,
+    since a notes-only book is exactly the case the warning exists for. The
+    notes must still reach the model, alongside the warning rather than
+    instead of it."""
+    context = AdvisoryContext(
+        symbol="AMD",
+        regime_label="bull",
+        regime_probs={},
+        positions={},
+        risk_metrics={"book_now_notes": ["no positions held"]},
+        candidate_signal={},
+    )
+
+    text = context.to_prompt_text()
+
+    assert "UNKNOWN, not as zero risk" in text
+    assert "no positions held" in text
 
 
 # --- what the answer was reasoning from ---------------------------------------
@@ -185,7 +236,9 @@ def test_an_answer_with_no_risk_figures_says_so():
 def test_a_fully_informed_answer_carries_no_caveat():
     """The M69 rule. A caveat printed under every reply is scrolled past, so it
     self-suppresses when there is nothing to say."""
-    assert _answer_caveats({"is_synthetic": False, "roe": 0.2}, {"var_95": 0.03}) == ""
+    assert (
+        _answer_caveats({"is_synthetic": False, "roe": 0.2}, {"book_now": {"var_95": 0.03}}) == ""
+    )
 
 
 def test_both_caveats_appear_together_when_both_apply():
@@ -193,6 +246,25 @@ def test_both_caveats_appear_together_when_both_apply():
 
     assert "SYNTHETIC" in caveats
     assert "no portfolio risk check" in caveats
+
+
+def test_a_notes_only_book_still_gets_the_no_risk_check_caveat():
+    """`risk_metrics()` returns `{"book_now_notes": [...]}` when the book is
+    flat, equity is unreadable, or every weight is non-finite - no VaR, no
+    ES, no concentration, just an explanation why. That dict is truthy, so
+    `if not risk_metrics:` used to read it as fully informed and drop this
+    caveat in exactly the case it describes."""
+    caveats = _answer_caveats({"is_synthetic": False}, {"book_now_notes": ["no positions held"]})
+
+    assert "no portfolio risk check" in caveats
+
+
+def test_book_now_alone_is_enough_to_drop_the_caveat():
+    """Either group carrying real figures is enough - the caveat is about
+    having no VaR/ES from EITHER measurement, not about both being present."""
+    caveats = _answer_caveats({"is_synthetic": False}, {"book_now": {"var_95": 0.011}})
+
+    assert "no portfolio risk check" not in caveats
 
 
 # --- an unknown day P&L must never be fabricated as zero -----------------------
