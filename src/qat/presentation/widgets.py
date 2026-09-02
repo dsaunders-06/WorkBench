@@ -21,10 +21,21 @@ class KpiTile(QFrame):
         self._value.setStyleSheet(theme.text(size=theme.TITLE, bold=True))
         layout.addWidget(self._label)
         layout.addWidget(self._value)
+        # A second line that appears ONLY when it has something to say. A
+        # caption that is always present - even as a dash - is the furniture
+        # problem: an operator stops reading a region that never changes.
+        self._caption = QLabel("")
+        self._caption.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
+        self._caption.setVisible(False)
+        layout.addWidget(self._caption)
 
     def set_value(self, value: str, color: str | None = None) -> None:
         self._value.setText(value)
         self._value.setStyleSheet(theme.text(color, size=theme.TITLE, bold=True))
+
+    def set_caption(self, text: str | None) -> None:
+        self._caption.setText(text or "")
+        self._caption.setVisible(bool(text))
 
 
 class ProbabilityBar(QFrame):
