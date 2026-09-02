@@ -46,7 +46,7 @@ source.
 | Deploy gap | ⚠️ **M160 NOT DEPLOYED.** `DEPLOYED` reads `e4987f9` (M159), now launched and partly read back. ⚠️ **Deploying M160 requires stopping the app** (the running process holds the exe), so it cannot happen mid-session without ending M159's read-back before three of its four checks have been exercised. **Deploy M160 after the close, not during.** M160's own read-back then needs an entry that fills across multiple executions - which needs the book below ten, which needs an exit |
 | Pushed | ✅ **LEVEL with `origin` at `0167399`.** The 27 August hold was lifted on 30 August and 74 commits went up in ONE push. ⚠️ **CI is STILL at the billing wall** — that push's run died in 2s with zero steps, *"the job was not started because recent account payments have failed or your spending limit needs to be increased"*. **The allowance resets ~1 September.** Until then a push backs work up, costs no Actions minutes (a job that never starts bills nothing) and emails a failure while verifying nothing. After the reset, batch pushes: one push is one run, ~8.6 minutes of 2,000 at `windows-latest`'s 2× multiplier |
 | Suite | **2,993 passed, 26 skipped** (3,019 collected). ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY - `black --check` exits 0 while printing "1 file would be reformatted", so `&&` hides a failure |
-| Watchlist | **94 ASX megacaps + STW.AX = 95 polled** on the DEPLOYED build. ⚠️ **M161 takes it to 99 + STW.AX = 100 polled, built and NOT deployed.** ⚠️ **NEITHER 94 NOR 101 WAS EVER A LIMIT** — 94 is the length of the hardcoded megacap tuple (shipped at 100, six pruned by M110), and the 20 August yfinance block at "101" was OUR count (unpruned 100 + STW.AX), not Yahoo's threshold. Where the vendor's limit actually sits is **unmeasured**. `watchlist_max_symbols` is 100 and was never binding at 94 |
+| Watchlist | **99 ASX megacaps + STW.AX = 100 polled — M161, DEPLOYED and live since 1 September.** First open on 100 symbols was 2 September: blind window **20m22s** against 95 symbols' 20m40s the day before, so the widening cost nothing measurable; 713 per-symbol errors suppressed against 674. ⚠️⚠️ **BUT THE FIVE ADDED SYMBOLS HAVE NO SECTOR MAPPING — see the 2 September item below. The 30% sector concentration cap does not apply to them.** ⚠️ **NEITHER 94 NOR 101 WAS EVER A LIMIT** — 94 is the length of the hardcoded megacap tuple (shipped at 100, six pruned by M110), and the 20 August yfinance block at "101" was OUR count (unpruned 100 + STW.AX), not Yahoo's threshold. Where the vendor's limit actually sits is **unmeasured**. `watchlist_max_symbols` is 100 and was never binding at 94 |
 | Entry allow list | **CLEARED** — all 94 enterable |
 | Account | **TEN POSITIONS, 20 resting legs, all protected** - A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW. **JHX.AX 1,097 @ 41.9554 entered 31 Aug 10:30** (17 executions, bracketed LMT 46.01 / STP 39.39, OCA-linked). **PNI.AX stopped out 31 Aug 10:00 at 15.56, -7,170.79 net, -1.6455R** - gapped 0.90 through a 16.46 stop. Aggregate risk-at-stop was 3.992% at 9 positions; re-measure, the book is 10 again |
 | Broker | ⚠️ **TWS on 7497, changed 1 September 17:40** — `QAT_IBKR_PORT=4002 -> 7497` via `scripts/set_ibkr_port.py --apply` (backup `.env.bak-20260901-174044`, value read back). IB Gateway is CLOSED. Verified read-only before switching: account **DUQ200898** (`DU` = paper), NetLiquidation **1,007,674.57 AUD**, ten positions and **twenty legs each OCA-paired**. Then verified again from the app: M161 adopted the same ten positions, 20 legs, scan clean. ⚠️ **TWS gives MANUAL buy/sell, which the app knows nothing about** — a manual SELL of an app-managed position is safe, a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
@@ -1191,6 +1191,46 @@ every remaining check stands behind: IAG is five sessions from being eligible on
 time alone.
 
 Resting-order scans clean on every poll to 10:45. Book still ten.
+
+## ⚠️ 2 SEPTEMBER: M161's FIVE NEW SYMBOLS BYPASS THE SECTOR CAP
+
+**Found from the SCREENER, by the operator**, before any log line could report it:
+rows 95–99 showed a ticker with no Sector. Those rows are exactly the five
+symbols M161 appended.
+
+**None of `ALX.AX`, `CWY.AX`, `SDF.AX`, `SOL.AX`, `ANN.AX` is in
+`qat.data.sectors.SECTOR_BY_SYMBOL`** (102 ASX entries; none of the five).
+`sector_for()` returns `UNKNOWN_SECTOR`, which is what the screener rendered.
+
+⚠️ **AND IT IS NOT COSMETIC: the 30% sector concentration cap does not apply to
+those five.** `signal_bridge.py:1422` uses `.get`, deliberately, and says why:
+
+> `.get`, deliberately, NOT `sectors.sector_for`: that returns "Unknown" for an
+> unmapped symbol, which would put every unmapped name in one bucket and have
+> them constrain each other as though they were a sector. **None means the cap
+> does not apply**, which is honest; a shared "Unknown" would be an invented
+> relationship.
+
+That design is right. The defect is mine: **M161 widened the tradable universe
+by five names without mapping them**, and M161 is deployed and live.
+
+⚠️ **THE APP HAS A WARNING FOR EXACTLY THIS AND IT HAS NEVER FIRED** — *"X has
+no sector mapping, so the 30% sector concentration cap cannot apply to it (item
+44). Add it to qat.data.sectors.SECTOR_BY_SYMBOL."* It only triggers when a
+SIGNAL for that symbol reaches the bridge, and 2 September produced no entry
+signals at all. **The screener showed the symptom before the log could.** A rail
+that only reports when exercised is invisible until the day it matters.
+
+**Exposure:** low today — the book is 10 of 10 so no entry can happen. But the
+first exit unblocks one, and if that entry were one of the five it would be
+sized with no sector cap.
+
+**Fix:** add the five to `SECTOR_BY_SYMBOL` — ALX Industrials (toll roads), CWY
+Industrials (waste), SDF Financials (insurance broking), SOL Financials
+(diversified investment house), ANN Health Care. ⚠️ `sectors.py` is in `src/`,
+so it is compiled into the exe: this needs a rebuild and redeploy, after a
+close. **HELD by operator decision on 2 September**, to be batched into a new
+milestone with other changes.
 
 ## OUTSTANDING, IN ORDER
 
