@@ -3022,6 +3022,32 @@ def _config_reference(doc: Any) -> None:
                 "0.06",
                 "Expected-shortfall limit for the whole book.",
             ),
+            (
+                "QAT_BOOK_RISK_POLL_SECONDS",
+                "60",
+                "How often portfolio risk is re-measured over the holdings actually held. "
+                "Matches the equity poll interval; the monitor reads the shared, throttled "
+                "account poller rather than the broker, so changing this does not increase "
+                "broker traffic.",
+            ),
+            (
+                "QAT_BOOK_RISK_MIN_OBSERVATIONS",
+                "30",
+                "Overlapping daily return observations required before VaR and Expected "
+                "Shortfall are reported as actual figures. Below this they read as UNKNOWN "
+                "with a note. A floor of 2 is always enforced: the underlying computation "
+                "returns 0.0 below two observations, and a zero reaching the AI advisory "
+                "reads as 'no tail risk' about a book that could not be measured. Not a "
+                "tuning knob.",
+            ),
+            (
+                "QAT_BOOK_RISK_MAX_AGE_SECONDS",
+                "180",
+                "A risk measurement older than this is treated exactly as a missing one. "
+                "The age is measured against the measurement's own timestamp, not the "
+                "moment of computation, so a stale broker snapshot cannot be re-dated as "
+                "current. Three polls at the default interval.",
+            ),
             # --- the promotion gate, which the trial exists to satisfy -------
             (
                 "QAT_PROMOTION_MIN_TRADES",
