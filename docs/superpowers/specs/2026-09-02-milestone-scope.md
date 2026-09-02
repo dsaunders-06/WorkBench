@@ -30,11 +30,32 @@ that symbol reaches the bridge.
 **Fix:** ALX Industrials, CWY Industrials, SDF Financials, SOL Financials, ANN
 Health Care.
 
-⚠️ **AND SWEEP THE WHOLE WATCHLIST, not just these five.** 102 mapped entries
-against a 99-symbol watchlist does not prove the 99 are covered — the sets may
-simply overlap imperfectly. A one-off check of every watchlist symbol against
-`SECTOR_BY_SYMBOL` belongs in this milestone, and arguably a startup assertion
-belongs with it, so the next widening cannot repeat this silently.
+### ✅ SWEEP RUN 2 September — the gap is EXACTLY the five, and nothing else
+
+Operator agreed to a full sweep. Run read-only against the live settings:
+
+    watchlist resolved : 99      polled (incl benchmark): 100
+    sector map entries : 204     UNMAPPED: 5
+        ALX.AX  ANN.AX  CWY.AX  SDF.AX  SOL.AX
+    mapped but NOT watched: 7 -> AWC, BKW, DHG, IOZ, IPL, NSR, SVW
+
+**Coverage of the other 95 is complete.** The earlier caution — that 102 mapped
+entries against 99 watched did not prove coverage — was worth raising and turned
+out negative. Scope of the fix is settled and small: five entries.
+
+⚠️ **AND THE MIRROR IMAGE, found by the same sweep.** Six of the seven mapped-but-
+unwatched symbols are **AWC, BKW, DHG, IPL, NSR, SVW** — precisely the tickers
+**M110 pruned as dead**. Their sector entries were never removed. Harmless in
+itself (a lookup nobody queries), but it shows the watchlist and the sector map
+are edited independently **in both directions**, which is the actual defect
+behind item 1.
+
+**So the milestone should carry a guard, not just five rows.** A startup
+assertion — or a test — that every resolved watchlist symbol has a sector
+mapping would have caught M161 on the day it was built, and costs one
+comparison. `IOZ.AX` is a legitimate exception: it is in the `etf` watchlist
+category, not `megacap`, so any guard must scope to the RESOLVED watchlist
+rather than to every symbol the app knows.
 
 ---
 
