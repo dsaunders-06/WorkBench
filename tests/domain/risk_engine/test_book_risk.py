@@ -25,6 +25,17 @@ the same treatment: `total_equity > 0` alone is True for +inf, so the guard
 must check finiteness as well as sign. Two mutation-testing gaps are closed
 too: a zero-weight position actually being excluded from `symbols`, and the
 "no held symbol is in the sector map" note actually firing.
+
+A later round closes the third sibling hole, on the RETURNS input:
+`_combined_portfolio_returns`'s dropna() drops NaN rows but not +/-inf ones,
+so a lone infinite observation - a legitimate `pct_change()` artifact over a
+vendor zero close - would otherwise reach `np.percentile` and `tail.mean()`
+directly. These tests cover one bad tick alongside 59 good ones, enough bad
+ticks to fall back through the existing floor gate, an entirely infinite
+series, and the reachable case with a real SHORT position rather than a
+constructed one. This file also pins the one shape that filter had never
+been exercised against: a length-0 RETURNS input entirely, the state at the
+very first live poll before any symbol's bar history has warmed.
 """
 
 from __future__ import annotations
@@ -390,6 +401,36 @@ def test_all_non_finite_returns_is_absent_not_zero():
     assert any("60 non-finite return observation" in note for note in result.notes)
 
 
+def test_a_held_book_with_no_return_history_anywhere_is_absent_not_zero():
+    """The likeliest live-startup shape: the account snapshot already carries
+    real positions but the bar aggregator has not warmed a single symbol yet,
+    so the whole RETURNS dict is empty rather than any one symbol's series
+    merely being short. `_combined_portfolio_returns` then hands back a
+    genuine length-0 Series - a shape no other test in this file produces,
+    since every other 'thin book' case still has SOME overlapping return
+    data. The non-finite filter (`portfolio_returns.map(math.isfinite)`) and
+    the length comparison that follows it must both handle zero rows without
+    raising or fabricating an exclusion note about a drop that never
+    happened."""
+    result = compute_book_risk(
+        weights={"A2M.AX": 120_000.0},
+        returns={},
+        total_equity=1_000_000.0,
+        sector_by_symbol={"A2M.AX": "Consumer Staples"},
+        now=NOW,
+        min_observations=30,
+    )
+
+    assert result.var_95 is None
+    assert result.var_99 is None
+    assert result.es_975 is None
+    assert result.observations == 0
+    assert result.single_name_pct == 0.12
+    assert result.symbols == 1
+    assert not any("non-finite return observation" in note for note in result.notes)
+    assert any("below the floor of 30" in note for note in result.notes)
+
+
 def test_short_weight_over_pct_change_with_zero_closes_is_never_a_measured_zero():
     """The reachable, not-constructed case: `closes.pct_change().dropna()`
     (the exact expression signal_bridge.py:182 uses) produces +inf across a
@@ -423,8 +464,9 @@ def test_short_weight_over_pct_change_with_zero_closes_is_never_a_measured_zero(
         min_observations=30,
     )
 
-    for metric in (result.var_95, result.var_99, result.es_975):
-        assert not (metric == 0.0 and not result.notes)
+    assert result.var_95 is not None and math.isfinite(result.var_95)
+    assert result.var_99 is not None and math.isfinite(result.var_99)
+    assert result.es_975 is not None and math.isfinite(result.es_975)
     assert any("non-finite return observation" in note for note in result.notes)
 
 

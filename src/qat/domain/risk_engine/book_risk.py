@@ -22,13 +22,42 @@ The computation reuses `PortfolioRiskChecker`'s own internals rather than
 reimplementing them, because the live figure is displayed BESIDE the decision
 figure and two numbers measured with different instruments cannot be compared.
 That is the 8 August lesson: 5.02% against a true 5.87%.
+
+⚠️ EVERY NUMERIC INPUT CARRIES THE SAME GUARD, NOT ONLY EQUITY. A NaN or
++/-inf dollar WEIGHT is truthy, so a bare `if value:` filter lets it through,
+and pandas' skipna=True then turns the resulting NaN weight fraction into a
+MEASURED 0.0 concentration - so weights are checked for finiteness too, and
+the excluded symbol is named in `notes` rather than silently vanishing from
+the book. RETURN observations get the same treatment one step later:
+`_combined_portfolio_returns`'s dropna() removes NaN rows but not +/-inf
+ones, which `pct_change()` over a vendor zero close legitimately produces
+(see signal_bridge.py's `_returns_by_ts`) and which two infinities landing
+either side of a percentile target collapse to a measured 0.0 or inf. Those
+are filtered out before VaR/ES are called, `observations` reflects the
+reduced count, and the same floor gate applies to whatever remains - an
+all-infinite book falls through to None on its own, the same way an all-NaN
+one already did. A zero-dollar position is excluded from `symbols` outright,
+and a sector map that names none of the held symbols leaves `sector_pct` at
+None WITH a note, rather than reading as an uncontested (and wrong) zero.
+
+⚠️ `BookRiskMonitor`, below, is the live sampler this module was built for -
+independent of any risk decision, on its own timer, over the book actually
+held. It reads the account through the SHARED throttled `AccountPoller`
+rather than polling the broker itself, and a reader may only ever consult a
+measurement through `fresh()`, which treats a stale one exactly as a missing
+one.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+import logging
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 import pandas as pd
 
@@ -40,6 +69,8 @@ from qat.domain.risk_engine.portfolio_risk import (
     compute_expected_shortfall,
     compute_historical_var,
 )
+
+logger = logging.getLogger(__name__)
 
 # The mathematical floor, not a policy choice: compute_historical_var and
 # compute_expected_shortfall both return 0.0 (not None) below this many
@@ -218,3 +249,131 @@ def compute_book_risk(
         sector_pct=sector_pct,
         notes=tuple(notes),
     )
+
+
+def _returns_from_bars(bars: pd.DataFrame | None) -> pd.Series:
+    """Close-to-close returns indexed by TIMESTAMP.
+
+    Deliberately the same shape as `signal_bridge._returns_by_ts`: correlating
+    two symbols on a positional index compares one symbol's fifth bar to
+    another's fifth bar, which are the same day only if both have identical
+    history. Duplicated timestamps are collapsed last-wins, because a duplicated
+    index fails the whole portfolio computation - which refused every order for
+    a full session on 3 August.
+    """
+    if bars is None or len(bars) < 2 or "ts" not in bars or "close" not in bars:
+        return pd.Series(dtype=float)
+    frame = bars[["ts", "close"]]
+    frame = frame[~frame["ts"].duplicated(keep="last")]
+    if len(frame) < 2:
+        return pd.Series(dtype=float)
+    closes = frame["close"].astype(float)
+    closes.index = pd.DatetimeIndex(frame["ts"])
+    return closes.pct_change().dropna()
+
+
+class BookRiskMonitor:
+    """Engine (per domain.orchestrator.Engine protocol).
+
+    ⚠️ IT DOES NOT POLL THE BROKER. `EquityMonitor` already states the principle
+    for its own sampler - "a separate poller would double the broker traffic to
+    record the same number" - and the dashboard calls `AccountPoller` "one
+    shared, throttled read rather than two broker calls per tick". This engine
+    reads that same shared poller.
+    """
+
+    name = "book-risk-monitor"
+
+    def __init__(
+        self,
+        account_poller: Any,
+        bars: Any,
+        settings: Any | None = None,
+        sector_by_symbol: dict[str, str] | None = None,
+        clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        from qat.config import Settings
+
+        self.account_poller = account_poller
+        self.bars = bars
+        self.settings = settings or Settings()
+        self.sector_by_symbol = sector_by_symbol or {}
+        self._clock = clock or (lambda: datetime.now(UTC))
+        self.latest: BookRisk | None = None
+        self._task: asyncio.Task[None] | None = None
+
+    async def start(self) -> None:
+        self._task = asyncio.create_task(self._run())
+
+    async def stop(self) -> None:
+        if self._task is None:
+            return
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+        self._task = None
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                await self.poll()
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a bad poll must not kill the rails
+                logger.exception("Book-risk poll failed; continuing")
+            await asyncio.sleep(self.settings.book_risk_poll_seconds)
+
+    async def poll(self) -> BookRisk | None:
+        """One measurement.
+
+        ⚠️ A failure LEAVES THE PREVIOUS VALUE STANDING rather than clearing it.
+        That is safe only because every value carries `computed_at` and readers
+        go through `fresh()`.
+        """
+        try:
+            snapshot = await self.account_poller.snapshot()
+        except Exception:  # noqa: BLE001 - the previous measurement survives
+            logger.warning("Could not read the account for book risk; keeping the last measurement")
+            return self.latest
+
+        equity = getattr(snapshot.balances, "equity", None)
+        if equity is None:
+            logger.debug(
+                "No equity in the account snapshot; keeping the last book-risk measurement"
+            )
+            return self.latest
+
+        weights = {
+            position.symbol: position.quantity * position.avg_price
+            for position in snapshot.positions
+            if position.quantity
+        }
+        returns = {
+            symbol: series
+            for symbol in weights
+            if not (series := _returns_from_bars(self.bars.frame_if_present(symbol))).empty
+        }
+
+        self.latest = compute_book_risk(
+            weights=weights,
+            returns=returns,
+            total_equity=float(equity),
+            sector_by_symbol=self.sector_by_symbol,
+            now=self._clock(),
+            min_observations=self.settings.book_risk_min_observations,
+        )
+        return self.latest
+
+    def fresh(self, now: datetime | None = None) -> BookRisk | None:
+        """The latest measurement, or None if it is too old to be believed.
+
+        ⚠️ A stale snapshot is treated IDENTICALLY to a missing one. There is no
+        third state and no "probably still fine" path - that is what item 6
+        refused when it rejected searching back through the audit CSV.
+        """
+        if self.latest is None:
+            return None
+        age = self.latest.age_seconds(now or self._clock())
+        if age > self.settings.book_risk_max_age_seconds:
+            return None
+        return self.latest
