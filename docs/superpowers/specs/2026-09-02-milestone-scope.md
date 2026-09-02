@@ -5,7 +5,8 @@ open while this was gathered, and `sectors.py` and the UI files are all in
 `src/`, compiled into the exe, so every item here needs a build and deploy after
 a close.
 
-Five items: one found by me, four raised by the operator.
+Six items: one found by me, four raised by the operator, and a sixth (item 6,
+the absent risk metrics) measured on 2 September after the M163 deploy.
 
 ---
 
@@ -199,6 +200,122 @@ files on disk or a rendered list in the app. Smallest item here; no findings yet
 
 ---
 
+## 6. ✅ MEASURED 2 September — why the AI advisory has no portfolio risk
+
+Raised as *"portfolio_check appears in only 63 of 3,596 audit rows (1.8%), and
+`risk_metrics()` reads ONLY the last entry"*, with two questions. Both are now
+answered from the audit file itself rather than from the code.
+
+### Q1 — why so rarely? BECAUSE THE BOOK IS FULL. It is not a logging defect.
+
+All **3,533** rows without a `portfolio_check` carry **one** reason, and it is
+the same one:
+
+    3533  "already at the 10-position limit (10 held or pending)"
+    3533  side = buy
+    3533  furthest input key reached: `governor`
+
+`inputs["portfolio_check"]` is assigned at `engine.py:311`. The governor's
+position-count rejection returns at `engine.py:283` — one rail earlier. **A
+candidate that was already refused never reaches the portfolio checker**, so
+there is no number to record. The 1.8% is a measurement of how long the book has
+been at 10 of 10, not of anything broken.
+
+⚠️ **It self-corrects on the first exit.** The moment the book drops to nine,
+candidates get past the governor and every one of them records a
+`portfolio_check` again. This is the same event items elsewhere are waiting on.
+
+### Q2 — should the read search back? NO, and staleness is the smaller reason.
+
+⚠️ **`AuditLog._entries` is IN-MEMORY and is never rehydrated from the CSV.**
+`audit.py:70` initialises it empty; `entries()` at `:116` returns
+`list(self._entries)`. It holds **this run only**.
+
+That breaks the proposal at the root:
+
+* At **startup** `entries()` is empty, so `risk_metrics()` returns `{}` — the
+  model gets nothing, every single run, before any decision happens.
+* **Within** a 10-of-10 run the list contains nothing but governor rejections, so
+  a search back over it finds nothing either.
+* Searching back **across days** would mean reading `risk_decisions.csv`, which
+  nothing does today. That is a materially bigger change than "search back".
+
+And then the staleness trap M73's own comment names. The most recent stored
+`portfolio_check` is:
+
+    1,161 rows back   2026-08-31T00:30:06+00:00   JHX.AX (approved)
+    var_95 0.01078  var_99 0.01482  es_975 0.01663
+    single_name_pct 0.125  sector_pct 0.125
+
+Two days old, and computed on an **8-position** book that no longer exists. Feed
+that to the model as today's portfolio risk and it is exactly the failure the
+docstring was written to prevent. **Any honest staleness bound rejects it** — so
+a bounded search-back would be code that changes nothing while looking like a
+fix. That is worse than leaving it alone.
+
+### Q3 — the dropped fields. Two-thirds true, and cheap.
+
+`risk_metrics()` filters to the hardcoded tuple `("var_95", "es_975")`. Across
+all 63 rows that DO carry a check:
+
+    var_95           present 63   non-null 63
+    var_99           present 63   non-null 63     <- dropped, always available
+    es_975           present 63   non-null 63
+    single_name_pct  present 63   non-null 63     <- dropped, always available
+    sector_pct       present 63   non-null  3     <- correctly omitted 60/63
+
+`var_99` and `single_name_pct` are discarded despite being populated in every
+case. Adding all three names to the tuple is safe: the existing `is not None`
+comprehension already omits `sector_pct` on the 60 occasions it is null, which is
+the "absent is omitted rather than zeroed" discipline the docstring states.
+
+### Q4 — the operator's own tiles read the same source
+
+Not raised, found while checking. `risk_console.py:574` and `dashboard.py:479`
+both read `entries[-1].inputs["portfolio_check"]` and both `return` silently when
+it is absent.
+
+✅ `KpiTile` defaults to `"-"` (`widgets.py:13`), so a fresh run shows **dashes,
+not a measured zero**. That is honest and needs no fix.
+
+⚠️ **Latent, within-run:** once a tile HAS been set, a later absence leaves the
+old number on screen with nothing marking it stale. Bounded to one run and to the
+same book, so low severity — but it is the same shape as the Status-column defect
+in item 2: a display that cannot distinguish "no value" from "last value".
+
+### What would actually put a number in front of the model
+
+The advisory wants **current portfolio risk** and is reading a **decision
+artefact**. `PortfolioRiskChecker.check()` needs a candidate — it prices the book
+*plus a proposed trade* — so nothing today computes risk over the held book
+alone.
+
+✅ The pieces exist and are already candidate-free:
+`_combined_portfolio_returns` is a `@staticmethod` taking only
+`(weights, returns, total_equity)` (`portfolio_risk.py:133`), and
+`compute_historical_var` / `compute_expected_shortfall` are module-level
+functions.
+
+**Three options, operator's call:**
+
+* **(a) Leave it.** The number returns by itself on the first exit. Costs
+  nothing; the model still sees no portfolio risk on any 10-of-10 day or in any
+  run before its first non-rejected decision.
+* **(b) Widen the tuple** to `var_99` and `single_name_pct` (and `sector_pct`,
+  which self-omits). Real, one line, tested — but it only helps on the occasions
+  a check fires at all, so on today's data it changes nothing.
+* **(c) Compute portfolio risk over the CURRENT book**, on the equity-sample
+  cadence, independent of any decision — and feed THAT to the advisory and the
+  tiles. The only option that gives the model a number today, and the only one
+  that makes the tiles mean "the book right now". It is a new path, so it needs
+  its own rails: what it does with fewer than N return observations, and what it
+  shows when the book is empty.
+
+(b) and (c) are independent and (b) is strictly smaller; doing (c) does not make
+(b) unnecessary, because the audit rows should carry the full set either way.
+
+---
+
 ## Sequencing
 
 ⚠️ **Everything above needs a build and deploy, so it lands after a close.**
@@ -210,3 +327,8 @@ can happen — but the first exit unblocks one.
 Item 2b is a genuine unexplained defect and should be instrumented before it is
 "fixed"; 2a, 3, 4 and 5 are UX decisions where the operator's preference
 decides.
+
+Item 6 is ANSWERED, not open: the 1.8% is the position cap working, and the
+proposed search-back is refused on evidence. What remains of it is a choice
+between (a) nothing, (b) a one-line widening, and (c) a live book-risk path -
+also the operator's.

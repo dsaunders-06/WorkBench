@@ -43,7 +43,7 @@ source.
 |---|---|
 | Deployed build | **M163 (`06d3156`)**, installed 2 September 17:28, SHA256 `655C29AB…59D7`, signature Valid on the installed copy. ✅ **READ BACK 17:28:59** off its own log — `Build: M163 (06d3156, built 02/09/2026 17:23:26 AEST, packaged)`, 100 symbols seeded, ten positions adopted with **10 of 10 carrying a stop**, 20 legs, excursion 10 of 10, resting scan clean, zero ERROR/CRITICAL. The dist hash MOVED (`ED2A768E…C181` → `299027EF…C76A` unsigned → `655C29AB…59D7` signed), which is the check M160 failed. Rollback: `C:\QuantAdvisoryTerminal.bak-0961752-20260902-1728` (M162). Previous: M162, M161, M159 (read back 3×) |
 | Deploy gap | ✅ **NONE — HEAD IS THE INSTALLED BUILD.** The manual position close (button + `PositionCloser` + `IBAdapter.cancel_order`) and the escaped-hold Status note both shipped in M163. The close button is **INERT until pressed** — no autonomous path reaches it — so this changed nothing unattended. ⚠️ **EXPECT THE FIRST PRESS TO REFUSE:** `cancelOrder` is fire-and-forget and `PendingCancel` is the ordinary transient of an HONOURED cancel, now correctly counted as a survivor. That branch deliberately does not recover, so the position is briefly **BARE** until `rearm_protective_stops` re-proposes a stop. The fix then is a bounded re-read (~3 polls over 2s) before declaring survivors — **NOT** a looser predicate |
-| Pushed | ✅ **UP TO DATE** with `origin/master` (M163 batch pushed 2 September). ✅ **CI IS HEALTHY** — the billing wall cleared ~1 September and a 46-commit push ran green in **7m9s**. One push is one run, ~8.6 min of 2,000 at `windows-latest`'s 2× multiplier, so batch rather than push per commit |
+| Pushed | **1 commit unpushed** — the item 6 scope findings, docs only. The M163 batch of four went up 2 September and CI ran on it. ✅ **CI IS HEALTHY** — the billing wall cleared ~1 September and a 46-commit push ran green in **7m9s**. One push is one run, ~8.6 min of 2,000 at `windows-latest`'s 2× multiplier, so batch rather than push per commit |
 | Suite | **3,076 passed, 26 skipped.** ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted", so `&&` hides a failure |
 | Watchlist | **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
@@ -4372,7 +4372,7 @@ rearm_protective_stops re-proposes a stop. The fix then is a bounded re-read (~3
 polls over 2s) before declaring survivors - NOT a looser predicate.
 
 Suite 3,076 passed / 26 skipped. ruff, black, mypy src, bandit clean.
-Pushed, up to date with origin/master. Tree clean, on master.
+1 commit unpushed (docs only). Tree clean, on master.
 
 Broker is TWS on 7497 (Gateway closed). Account DUQ200898, paper, AUD.
 TEN POSITIONS, 20 resting legs, all protected. Equity 1,007,638.94.
