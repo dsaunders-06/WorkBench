@@ -103,7 +103,7 @@ async def build_advisory_context(
     regime_probs: dict[str, float] | None = None,
     verdict: _VerdictSource | None = None,
     positions: dict[str, float] | None = None,
-    risk_metrics: dict[str, float] | None = None,
+    risk_metrics: dict[str, Any] | None = None,
     fundamentals: dict[str, Any] | None = None,
     fetched_notes: list[str] | None = None,
     position: dict[str, Any] | None = None,

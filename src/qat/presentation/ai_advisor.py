@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from html import escape
+from typing import Any
 
 from PySide6.QtWidgets import (
     QComboBox,
@@ -115,7 +116,7 @@ def _sources_html(text: str) -> str:
     return f'<div style="{theme.text(theme.MUTED, size=theme.CAPTION)}">{body}</div>'
 
 
-def _answer_caveats(fundamentals: dict[str, object], risk_metrics: dict[str, float]) -> str:
+def _answer_caveats(fundamentals: dict[str, object], risk_metrics: dict[str, Any]) -> str:
     """What this particular answer was reasoning from, when it was not much.
 
     `to_prompt_text` already tells the MODEL both of these - it leads the

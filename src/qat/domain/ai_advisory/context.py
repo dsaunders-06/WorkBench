@@ -21,7 +21,7 @@ class AdvisoryContext:
     regime_label: str
     regime_probs: dict[str, float]
     positions: dict[str, float]
-    risk_metrics: dict[str, float]
+    risk_metrics: dict[str, Any]
     candidate_signal: dict[str, Any]
     backtest_stats: dict[str, float] = field(default_factory=dict)
     fetched_notes: list[str] = field(default_factory=list)
@@ -93,7 +93,15 @@ class AdvisoryContext:
             # is zero" - the same mistake the fundamentals block below exists to
             # avoid, in the same prompt.
             (
-                f"Risk metrics: {self.risk_metrics}"
+                "Risk metrics: "
+                + str(self.risk_metrics)
+                + " - 'book_now' measures the portfolio you currently hold; "
+                "'at_last_decision' is what the risk check saw when it last "
+                "evaluated a candidate trade, which may be days old. In "
+                "'book_now' the concentration figures are the LARGEST single "
+                "name and sector in the book; in 'at_last_decision' they are "
+                "the candidate's own. A field that is absent is UNKNOWN, not "
+                "zero."
                 if self.risk_metrics
                 else "Risk metrics: none available - no portfolio risk check has been recorded "
                 "yet this session. Treat this as UNKNOWN, not as zero risk."

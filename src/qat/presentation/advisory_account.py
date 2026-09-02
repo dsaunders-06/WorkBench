@@ -58,7 +58,7 @@ class AccountFacts:
     """
 
     positions: dict[str, float] = field(default_factory=dict)
-    risk_metrics: dict[str, float] = field(default_factory=dict)
+    risk_metrics: dict[str, Any] = field(default_factory=dict)
     verdict: SymbolVerdict | None = None
     position: dict[str, Any] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
@@ -105,7 +105,7 @@ async def gather(runtime: Any, symbol: str) -> AccountFacts:
             exc_info=True,
         )
 
-    empty_metrics: dict[str, float] = {}
+    empty_metrics: dict[str, Any] = {}
     empty_notes: list[str] = []
     metrics = _guarded(lambda: risk_metrics(runtime), empty_metrics, "risk metrics", symbol)
     notes = _guarded(
@@ -199,34 +199,62 @@ def position_dict(view: PositionView | None) -> dict[str, Any]:
     }
 
 
-def risk_metrics(runtime: Any) -> dict[str, float]:
-    """The portfolio risk figures that actually exist (M73).
+_DECISION_FIELDS = ("var_95", "var_99", "es_975", "single_name_pct", "sector_pct")
+
+
+def risk_metrics(runtime: Any) -> dict[str, Any]:
+    """Portfolio risk for the model: the book NOW, and what the last decision saw.
 
     This read `portfolio_check.get("var_95", 0.0)`, so a metric the last check
     did not record reached the model as a MEASURED ZERO - "no tail risk" - and
-    a language model has no way to ask which it was.
+    a language model has no way to ask which it was. `to_prompt_text` applies
+    exactly this discipline to fundamentals, and says so in the prompt: "fields
+    the vendor could not answer are omitted rather than zeroed". Absent is
+    omitted here for the same reason.
 
-    `to_prompt_text` applies exactly this discipline to fundamentals, and says
-    so in the prompt: "fields the vendor could not answer are omitted rather
-    than zeroed". Absent is omitted here for the same reason.
+    ⚠️ TWO GROUPS, BECAUSE THEY ARE NOT THE SAME MEASUREMENT. `at_last_decision`
+    is written one rail AFTER the governor's position-count refusal, so with the
+    book at 10 of 10 it is absent from 3,533 of 3,596 audit rows - and the audit
+    log is in-memory, so it is absent at every startup regardless. `book_now`
+    is the book actually held, sampled on a timer.
 
-    ⚠️ The tuple was ("var_95", "es_975"). Measured across all 63 audit rows
-    that carry a portfolio_check: var_99 and single_name_pct are non-null in
-    63 of 63 and were being discarded, while sector_pct is non-null in only 3
-    and is omitted by the `is not None` filter on the other 60 - which is the
-    same "absent is omitted rather than zeroed" discipline, working correctly.
+    ⚠️ `single_name_pct` and `sector_pct` mean DIFFERENT THINGS in the two
+    groups: largest-in-book for `book_now`, the CANDIDATE's for
+    `at_last_decision`. The prompt text must say so, or the model reads a
+    coincidence as agreement.
+
+    Every key is omitted entirely when it has nothing to say. A run with neither
+    group returns {}, which `AdvisoryContext` already renders as "none available
+    ... treat this as UNKNOWN, not as zero risk".
     """
+    metrics: dict[str, Any] = {}
+
+    monitor = getattr(runtime, "book_risk_monitor", None)
+    live = monitor.fresh() if monitor is not None else None
+    if live is not None:
+        book_now = {
+            name: float(value)
+            for name in _DECISION_FIELDS
+            if (value := getattr(live, name)) is not None
+        }
+        if book_now:
+            metrics["book_now"] = book_now
+            metrics["book_now_age_seconds"] = round(live.age_seconds(datetime.now(UTC)), 1)
+        if live.notes:
+            metrics["book_now_notes"] = list(live.notes)
+
     entries = runtime.risk_engine.audit_log.entries()
-    if not entries:
-        return {}
-    portfolio_check = entries[-1].inputs.get("portfolio_check")
-    if not portfolio_check:
-        return {}
-    return {
-        name: float(value)
-        for name in ("var_95", "var_99", "es_975", "single_name_pct", "sector_pct")
-        if (value := portfolio_check.get(name)) is not None
-    }
+    portfolio_check = entries[-1].inputs.get("portfolio_check") if entries else None
+    if portfolio_check:
+        at_last_decision = {
+            name: float(value)
+            for name in _DECISION_FIELDS
+            if (value := portfolio_check.get(name)) is not None
+        }
+        if at_last_decision:
+            metrics["at_last_decision"] = at_last_decision
+
+    return metrics
 
 
 def corporate_action_notes(runtime: Any) -> list[str]:

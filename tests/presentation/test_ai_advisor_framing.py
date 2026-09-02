@@ -116,15 +116,15 @@ def test_a_missing_metric_is_omitted_rather_than_zeroed(qtbot):
 
     metrics = advisory_account.risk_metrics(screen.runtime)
 
-    assert metrics == pytest.approx({"var_95": 0.031})
-    assert "es_975" not in metrics
+    assert metrics["at_last_decision"] == pytest.approx({"var_95": 0.031})
+    assert "es_975" not in metrics["at_last_decision"]
 
 
 def test_metrics_that_are_present_are_carried(qtbot):
     screen = _screen(qtbot)
     _record_check(screen, {"var_95": 0.031, "es_975": 0.047})
 
-    assert advisory_account.risk_metrics(screen.runtime) == pytest.approx(
+    assert advisory_account.risk_metrics(screen.runtime)["at_last_decision"] == pytest.approx(
         {"var_95": 0.031, "es_975": 0.047}
     )
 
