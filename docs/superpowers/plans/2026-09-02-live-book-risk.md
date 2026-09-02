@@ -21,6 +21,9 @@
 - Use `.venv\Scripts\python.exe -m <tool>`, never a bare tool name — the venv's Scripts directory is not on PATH.
 - Every commit message ends with `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 - Nothing here is visible until a build, deploy and read-back, which happens after a market close and is **not** part of this plan.
+- ⚠️ **`qat.domain.*` and `qat.data.*` are under STRICT mypy** (`pyproject.toml:76-82`). `book_risk.py` and `config.py` are both in that scope: every function needs full annotations, and `mypy src` must be clean before any commit.
+- Ruff's rule selection is `["E", "F", "I", "UP", "B"]` — private-member access is **not** linted, so reusing `PortfolioRiskChecker._combined_portfolio_returns` from another module passes. That reuse is required by the spec, not a workaround.
+- **Work happens on `master`** — consent given 2 September. Master is the deployed line, so every task must leave the suite green.
 
 ## File Structure
 
@@ -924,6 +927,15 @@ async def test_it_never_touches_the_broker():
 
     poller = _Poller(_snapshot([_position("A2M.AX", 1000, 120.0)], 1_000_000.0))
     monitor = _monitor(poller, _Aggregator({"A2M.AX": _bars()}))
+
+    # The STRUCTURAL guarantee, which no future edit can leave passing by
+    # accident: this engine was never given a broker to call.
+    assert not hasattr(monitor, "broker"), (
+        "BookRiskMonitor acquired a broker attribute - the whole point is that it "
+        "reads the shared throttled poller instead"
+    )
+
+    # And the regression guard, for the day someone adds one anyway.
     monitor.broker = _ExplodingBroker()
 
     await monitor.poll()
