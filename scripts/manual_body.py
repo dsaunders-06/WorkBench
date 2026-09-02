@@ -913,7 +913,12 @@ def _risk_console(doc: Any, figures: FigureSet) -> None:
             (
                 "Portfolio VaR (95%) and (99%) tiles",
                 "Historical Value-at-Risk at each confidence level, from the live return "
-                "history of the current portfolio.",
+                "history of the current portfolio. Each of the four risk tiles reads the "
+                "book you hold right now, sampled on a timer, and shows a dash - never a "
+                'zero - when it cannot be measured, so "no reading" is never mistaken '
+                'for "no risk". A second, smaller line appears beneath a tile only when '
+                "the last sizing decision recorded the same figure; when there is no such "
+                "decision the line is absent rather than blank.",
             ),
             (
                 "Expected Shortfall (97.5%) tile",
@@ -921,9 +926,13 @@ def _risk_console(doc: Any, figures: FigureSet) -> None:
                 "day costs when it is bad, rather than how often.",
             ),
             (
-                "Single-name concentration tile",
-                "The largest single position's share of total equity, against the "
-                "configured cap.",
+                "Largest single name tile",
+                "The largest single position's share of total equity, in the book you "
+                'hold right now. Renamed from "Single-name concentration": the figure '
+                "underneath it, when one is shown, is the CANDIDATE's share from the "
+                "last sizing decision, which is a different measurement - so the two "
+                "carry different labels rather than inviting you to read a coincidence "
+                "as agreement.",
             ),
             (
                 "Correlation table",

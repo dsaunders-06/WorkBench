@@ -587,19 +587,19 @@ class RiskConsoleScreen(QWidget):
         def _pct(value: float | None) -> str:
             return "-" if value is None else f"{value:.2%}"
 
-        def _caption(name: str) -> str | None:
+        def _caption(name: str, *, prefix: str = "") -> str | None:
             if not decision:
                 return None
             value = decision.get(name)
-            return None if value is None else f"at last decision: {value:.2%}"
+            return None if value is None else f"{prefix}at last decision: {value:.2%}"
 
-        self.var95_tile.set_value(_pct(getattr(live, "var_95", None)))
+        self.var95_tile.set_value(_pct(live.var_95 if live is not None else None))
         self.var95_tile.set_caption(_caption("var_95"))
 
-        self.var99_tile.set_value(_pct(getattr(live, "var_99", None)))
+        self.var99_tile.set_value(_pct(live.var_99 if live is not None else None))
         self.var99_tile.set_caption(_caption("var_99"))
 
-        es_value = getattr(live, "es_975", None)
+        es_value = live.es_975 if live is not None else None
         self.es_tile.set_value(
             "-" if es_value is None else f"{es_value:.2%} / {es_limit:.0%}",
             color=(
@@ -610,13 +610,16 @@ class RiskConsoleScreen(QWidget):
         )
         self.es_tile.set_caption(_caption("es_975"))
 
-        self.concentration_tile.set_value(_pct(getattr(live, "single_name_pct", None)))
-        caption = _caption("single_name_pct")
-        self.concentration_tile.set_caption(
-            None
-            if caption is None
-            else caption.replace("at last decision", "candidate at last decision")
-        )
+        # `single_name_pct` here is the CANDIDATE's, from the last decision -
+        # the live figure above is the largest already in the book. The two
+        # are different measurements (book_risk.py's own docstring warns
+        # against letting a coincidence between them read as agreement), so
+        # the qualifier is built explicitly rather than by editing the base
+        # string after the fact: a later change to the base wording would
+        # carry through here too, instead of a `.replace()` silently failing
+        # to match and dropping the qualifier back to the unqualified text.
+        self.concentration_tile.set_value(_pct(live.single_name_pct if live is not None else None))
+        self.concentration_tile.set_caption(_caption("single_name_pct", prefix="candidate "))
 
     def _refresh_kill_switch_button(self) -> None:
         if self.runtime.kill_switch.tripped:
