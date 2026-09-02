@@ -209,6 +209,12 @@ def risk_metrics(runtime: Any) -> dict[str, float]:
     `to_prompt_text` applies exactly this discipline to fundamentals, and says
     so in the prompt: "fields the vendor could not answer are omitted rather
     than zeroed". Absent is omitted here for the same reason.
+
+    ⚠️ The tuple was ("var_95", "es_975"). Measured across all 63 audit rows
+    that carry a portfolio_check: var_99 and single_name_pct are non-null in
+    63 of 63 and were being discarded, while sector_pct is non-null in only 3
+    and is omitted by the `is not None` filter on the other 60 - which is the
+    same "absent is omitted rather than zeroed" discipline, working correctly.
     """
     entries = runtime.risk_engine.audit_log.entries()
     if not entries:
@@ -218,7 +224,7 @@ def risk_metrics(runtime: Any) -> dict[str, float]:
         return {}
     return {
         name: float(value)
-        for name in ("var_95", "es_975")
+        for name in ("var_95", "var_99", "es_975", "single_name_pct", "sector_pct")
         if (value := portfolio_check.get(name)) is not None
     }
 
