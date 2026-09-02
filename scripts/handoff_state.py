@@ -234,27 +234,46 @@ def deployed_milestone() -> str:
 
 
 def milestones_since_deploy() -> tuple[list[str], int]:
-    """Milestones in `src/` since the deployed build, and the commit count.
+    """Milestone labels between the deployed build and HEAD, and the commit count.
 
-    **Counted from the DIFF, not from commit subjects.** Three of these commits
-    do not carry their milestone number in the subject line - M64, M67 and M68
-    are titled by what they do - so `git log | grep M[0-9]` under-reports by
-    three, which is how the figure came to be wrong four separate times.
+    ⚠️ **READ FROM `version.py` AT EACH COMMIT, NEVER SCRAPED FROM SUBJECTS.**
+    `MILESTONE` is the same constant `invoke package` freezes into the build
+    stamp, so this reports what a build WOULD call itself rather than what a
+    commit message happened to mention.
+
+    The previous version ran `re.findall(r"\\bM(\\d+)\\b", subject)` over commit
+    subjects - while its own docstring claimed it counted from the diff. On
+    2 September that reported the deploy gap as **"M3"**, because a commit
+    titled `Round 3 M3: recovery over a FLAT position...` used M3 as a FINDING
+    label. A milestone that does not exist, printed in the one line the next
+    session reads to learn what is undeployed.
+
+    Any convention that puts `M<digits>` in a subject for another purpose -
+    findings, tasks, review rounds - collides with subject scraping. Reading the
+    constant cannot collide with anything, and it also retires the three
+    hand-listed exceptions (M64, M67, M68) that existed only because those
+    commits titled themselves by behaviour rather than by number.
+
+    Order is chronological rather than numeric: it answers "what would ship, in
+    what order", and a numeric sort would silently reorder a hotfix.
     """
     log = _git("log", "--format=%s", f"{DEPLOYED}..HEAD", "--", "src/")
     commits = [line for line in log.splitlines() if line]
-    found: set[str] = set()
-    for subject in commits:
-        found.update(re.findall(r"\bM(\d+)\b", subject))
-    # The three that name themselves by behaviour rather than by number.
-    for subject, milestone in (
-        ("Regime Monitor", "64"),
-        ("Risk Console answer the question", "67"),
-        ("correlation the rail enforces", "68"),
-    ):
-        if any(subject in c for c in commits):
-            found.add(milestone)
-    return sorted(found, key=int), len(commits)
+
+    revisions = _git(
+        "log", "--format=%H", f"{DEPLOYED}..HEAD", "--", "src/qat/version.py"
+    ).splitlines()
+    deployed = deployed_milestone()
+    found: list[str] = []
+    for revision in reversed(revisions):  # oldest first, so order is shipping order
+        source = _git("show", f"{revision}:src/qat/version.py")
+        match = re.search(r'^MILESTONE = "([^"]+)"', source, re.MULTILINE)
+        if match is None:
+            continue
+        label = match.group(1)
+        if label != deployed and label not in found:
+            found.append(label)
+    return found, len(commits)
 
 
 def test_totals() -> str:
@@ -312,7 +331,25 @@ def main() -> None:
     print("Deploy gap")
     print(f"  deployed build  {DEPLOYED} ({deployed_milestone()})")
     print(f"  milestones      {len(milestones)} across {commits} commits")
-    print(f"  which           {', '.join('M' + m for m in milestones)}")
+    # The labels already carry their "M" - read verbatim from `version.py`, not
+    # reassembled from a scraped number.
+    #
+    # ⚠️ ZERO MILESTONES IS NOT "NOTHING TO DEPLOY", and saying only "none"
+    # would invite exactly that reading. src/ can move for many commits without
+    # MILESTONE being bumped - it is on 2 September, with 18 such commits
+    # carrying the manual-close feature and the escaped-hold note. The COMMIT
+    # COUNT is the signal there; the milestone label is only how a build would
+    # name itself.
+    if milestones:
+        print(f"  which           {', '.join(milestones)}")
+    elif commits:
+        print(f"  which           none - {commits} src/ commit(s) with NO milestone bump.")
+        print(
+            "                  ⚠️ Undeployed work that a build would still call "
+            + deployed_milestone()
+        )
+    else:
+        print("  which           none - src/ is level with the deployed build")
     print()
     print("Tests")
     print(f"  suite           {collected}")
