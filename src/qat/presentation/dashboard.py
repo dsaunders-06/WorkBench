@@ -25,9 +25,11 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMessageBox,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -35,9 +37,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from qat.data.broker.adapter import Order
 from qat.domain.display_dates import format_session_time
 from qat.domain.events import RegimeEvent
 from qat.domain.oms.adopted import assess_adopted_positions
+from qat.domain.oms.position_closer import CloseOutcome, PositionCloser
 from qat.domain.oms.position_view import PositionView, build_position_views
 from qat.presentation import theme
 from qat.presentation.adopted_panel import AdoptedPositionsPanel
@@ -64,6 +68,11 @@ _EM_DASH = "—"
 # whole fix. `&&` is Qt's escape for a literal ampersand, which is why the old
 # label was doubled - a detail worth keeping in mind before adding one back.
 _ACKNOWLEDGE_LABEL = "Acknowledge note"
+# Same convention as blotter.py's and risk_console.py's own `_OPERATOR`: a
+# per-screen identity string, since there is no single app-wide operator
+# identity to import instead (config.py defines none). Manual position close
+# (2026-09-01 spec, Task 7).
+_OPERATOR = "operator (dashboard)"
 _POSITIONS_COLUMNS = (
     "Symbol",
     "Qty",
@@ -282,6 +291,22 @@ class DashboardScreen(QWidget):
         layout.addWidget(QLabel("Positions"))
         self.positions_table = QTableWidget(0, len(_POSITIONS_COLUMNS))
         self.positions_table.setHorizontalHeaderLabels(list(_POSITIONS_COLUMNS))
+        # ⚠️ WITHOUT THIS THE CLOSE POSITION BUTTON IS DEAD TO A MOUSE.
+        #
+        # `_sync_close_button` counts `selectionModel().selectedRows()`, and Qt
+        # defaults to `SelectItems`: a click selects one CELL, `selectedRows()`
+        # returns an empty list, and the button never enables - for every real
+        # operator, on every click. `blotter.py` sets this on its own table for
+        # the same reason. Eleven UI tests passed over it because they all
+        # select with `selectRow(0)`, which selects a whole row
+        # programmatically whatever the behaviour is; only a real cell click
+        # exercises this line.
+        self.positions_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        # v1 is full-close-only, so the button acts on exactly one symbol.
+        # Enforced in the selection model as well as in `_sync_close_button` -
+        # a table that cannot produce a two-row selection cannot present the
+        # operator with a disabled button and no visible reason why.
+        self.positions_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         # Cells get a tooltip below; the headers need one too (M87 originally
         # fixed only the cells) - "To exit" and "To stop" are the two most in
         # need of disambiguating, and the first to elide.
@@ -299,6 +324,29 @@ class DashboardScreen(QWidget):
             _POSITIONS_STATUS_COLUMN, QHeaderView.ResizeMode.Stretch
         )
         layout.addWidget(self.positions_table)
+
+        # Manual position close (2026-09-01 spec, Task 7). Disabled until
+        # exactly one row is selected - PositionCloser is a full-close-only
+        # operation (v1), so a multi-row or zero-row selection has no single
+        # symbol to act on.
+        #
+        # ⚠️ AND disabled for the whole DURATION of a close. `close_position`
+        # is async and irreversible; while it awaited the broker the button
+        # sat enabled, so a second click sent a SECOND full-size market sell.
+        # `_close_in_flight` is the guard, and it is consulted by the
+        # selection handler too - otherwise any selection change during the
+        # close would hand the button straight back.
+        self._close_in_flight = False
+        self.close_position_button = QPushButton("Close Position")
+        self.close_position_button.setEnabled(False)
+        self.close_position_button.setToolTip(
+            "Cancel this position's protective legs and sell the whole holding at "
+            "market. The legs are cancelled FIRST and verified gone; if the sell "
+            "fails the bracket is put back."
+        )
+        self.close_position_button.clicked.connect(self._on_close_clicked)
+        self.positions_table.itemSelectionChanged.connect(self._sync_close_button)
+        layout.addWidget(self.close_position_button)
 
         layout.addWidget(QLabel("AI Regime Note"))
         self.ai_note_label = QLabel("(no note yet)")
@@ -577,3 +625,185 @@ class DashboardScreen(QWidget):
         self.review_button.setText(
             f"Acknowledged ✓ {format_session_time(acknowledged_at, self.runtime.settings.market)}"
         )
+
+    # --- manual position close (2026-09-01 spec, Task 7) -------------------
+    #
+    # THE UI STAYS THIN. This block's whole job is: gate the button on
+    # selection, ask the operator, call close_position, render
+    # CloseResult.detail - every sequencing decision (cancel-then-verify,
+    # recovery on a failed sell) lives in PositionCloser, not here.
+    #
+    # _confirm_close is its own method for the same reason blotter.py's
+    # _confirm()/_show_error() are (see that module's docstring): so a test
+    # can answer the dialog, or capture what was shown, without driving a
+    # real modal - tests/presentation/conftest.py's autouse
+    # no_blocking_dialogs fixture makes any unpatched QMessageBox call fail
+    # loudly rather than hang the suite.
+
+    def _sync_close_button(self) -> None:
+        """Enabled only for exactly one selected row, and never while a close
+        is in flight. Both conditions in ONE place, because the selection
+        signal fires on its own and would otherwise re-enable the button in
+        the middle of an irreversible operation."""
+        selected = len(self.positions_table.selectionModel().selectedRows())
+        self.close_position_button.setEnabled(selected == 1 and not self._close_in_flight)
+
+    def _on_close_clicked(self) -> None:
+        if self._close_in_flight:
+            # ⚠️ The re-entrancy rail. `clicked` is not the only way in (a
+            # test, or a future keyboard shortcut, calls this directly), so
+            # the guard lives here as well as on the button's enabled state.
+            # A second pass sends a SECOND full-size market sell.
+            return
+        rows = self.positions_table.selectionModel().selectedRows()
+        if len(rows) != 1:
+            return
+        row = rows[0].row()
+        symbol_item = self.positions_table.item(row, 0)
+        quantity_item = self.positions_table.item(row, 1)
+        if symbol_item is None or quantity_item is None:
+            return
+        symbol = symbol_item.text()
+        quantity = quantity_item.text()
+        closer = self.runtime.closer
+        if closer is None:
+            self._show_error("Closing is unavailable: no PositionCloser is wired for this runtime.")
+            return
+        legs = closer.believed_legs_for(symbol)
+        halt_reason = self.runtime.kill_switch.reason if self.runtime.kill_switch.tripped else None
+        if not self._confirm_close(symbol, quantity, legs, halt_reason):
+            return
+        self._close_in_flight = True
+        self._sync_close_button()
+        asyncio.ensure_future(self._run_close(closer, symbol))
+
+    async def _run_close(self, closer: PositionCloser, symbol: str) -> None:
+        """Await the closer and put its own words on screen.
+
+        Takes `closer` as a parameter (narrowed to non-None by the caller)
+        rather than re-reading `self.runtime.closer` and asserting - the
+        assert this replaced tripped bandit's B101 for no benefit `_on_close_
+        clicked` had not already provided.
+
+        `CloseResult.detail` is always populated and is written for the
+        operator, so it is rendered verbatim rather than re-summarised here -
+        two descriptions of one outcome drift, and the operator would be
+        reading an explanation of a decision taken on different words.
+
+        ⚠️ No `acknowledge_halt`: `close_position` no longer takes one and
+        REFUSES while the switch is tripped, before touching the broker. The
+        UI's job during a halt is to say so, not to offer a way past it.
+
+        ⚠️ EVERYTHING IS IN A try/finally, AND THE EXCEPT ARM IS LOAD-BEARING.
+        This runs under `asyncio.ensure_future` with nothing awaiting it, so
+        an exception raised in here - after the protective legs have already
+        been cancelled - had nowhere to go but a "Task exception was never
+        retrieved" on stderr that nobody reads, with the position left BARE
+        and NOTHING on screen. The operator must be told, and the button must
+        come back either way.
+        """
+        try:
+            result = await closer.close_position(symbol, operator=_OPERATOR)
+            # ⚠️ A REFUSAL IS NOT ALWAYS HARMLESS, and assuming it was put a
+            # bare downside behind a reassuring information dialog. Three of
+            # `_cancel_legs`' failure branches fire AFTER `cancel_order` has
+            # already gone out, so the position can be left with part or all
+            # of its bracket deleted while the text truthfully says "NOTHING
+            # was sold". `cancelled_legs` on a REFUSED result is exactly that
+            # case, and it is as serious as UNPROTECTED.
+            #
+            # ⚠️ AND `issued_legs` IS THE OTHER HALF, which keying on
+            # `cancelled_legs` alone missed. That tuple holds legs CONFIRMED
+            # GONE, so a close whose cancels went out and confirmed NOTHING -
+            # every leg still settling in `PendingCancel`, or the second
+            # cancel raising after the first was accepted - carried an EMPTY
+            # `cancelled_legs` and was rendered as an information dialog. The
+            # accepted cancel then lands and the position is part or wholly
+            # bare, announced by a box the operator has already dismissed.
+            # "A cancel went out" is the discriminator; whether it was
+            # confirmed is exactly what is unknown.
+            #
+            # A refusal that cancelled nothing stays an information dialog -
+            # making every refusal a critical modal only teaches the operator
+            # to dismiss red boxes.
+            already_stripped = result.outcome is CloseOutcome.REFUSED and bool(
+                result.cancelled_legs or result.issued_legs
+            )
+            if result.outcome is CloseOutcome.UNPROTECTED or already_stripped:
+                # Blocking, not a status line: the position is held with part
+                # or all of its protection gone, and that must be impossible
+                # to miss.
+                self._show_error(result.detail)
+            else:
+                self._show_result(result.detail)
+        except Exception as exc:  # noqa: BLE001 - a swallowed one leaves a bare position
+            logger.critical(
+                "MANUAL CLOSE of %s RAISED: %s. The protective legs may ALREADY have "
+                "been cancelled, so the position may be held with no stop. Check the "
+                "broker by hand.",
+                symbol,
+                exc,
+                exc_info=True,
+            )
+            self._show_error(
+                f"The close of {symbol} FAILED with an error: {exc}\n\n"
+                f"⚠️ The protective legs may ALREADY have been cancelled, in which "
+                f"case {symbol} is held with NO STOP. Check the broker by hand "
+                f"before doing anything else."
+            )
+        finally:
+            self._close_in_flight = False
+            self._sync_close_button()
+
+    def _confirm_close(
+        self,
+        symbol: str,
+        quantity: str,
+        legs: tuple[Order, ...],
+        halt_reason: str | None,
+    ) -> bool:
+        """Ask before selling the whole position. Separated so a test can
+        answer it (see blotter.py's _confirm docstring for why).
+
+        The halt reason, when present, is quoted VERBATIM in the message
+        rather than the dialog merely saying the switch is tripped - the same
+        "state the reason, not just the fact" rule PositionCloser itself
+        applies to its own refusal text.
+
+        ⚠️ It no longer offers an override. It said "closing now overrides the
+        halt for this position only", which was false and dangerous: the
+        cancel bypasses sign-off and would have gone through, while the sell
+        and the re-protect are both rejected by the tripped switch - the
+        stop deleted, nothing sold, the bracket unrestorable. The dialog now
+        says what will actually happen, which is a refusal.
+        """
+        lines = [
+            f"Close the entire {symbol} position ({quantity} share(s))?",
+            "",
+            f"This app BELIEVES {len(legs)} protective leg(s) are resting. The "
+            "cancel re-reads the broker and acts on whatever is actually "
+            "there, not this count, then the position is sold at market. If "
+            "the sell fails, the original bracket is re-placed.",
+        ]
+        if halt_reason is not None:
+            lines.append("")
+            lines.append(f"⚠️ THE KILL SWITCH IS TRIPPED: {halt_reason}")
+            lines.append(
+                "A manual close is REFUSED while it is tripped - nothing will be "
+                "cancelled and nothing will be sold. Reset the kill switch first, "
+                "then close."
+            )
+        answer = QMessageBox.question(
+            self,
+            "Close position?",
+            "\n".join(lines),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
+    def _show_error(self, message: str) -> None:
+        QMessageBox.critical(self, "Position close failed", message)
+
+    def _show_result(self, message: str) -> None:
+        QMessageBox.information(self, "Position close", message)

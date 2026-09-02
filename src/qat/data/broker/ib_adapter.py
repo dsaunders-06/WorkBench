@@ -93,6 +93,18 @@ class LivePortInPaperModeError(Exception):
     """
 
 
+class CancelNotResolvedError(Exception):
+    """A cancel could not be resolved to a live broker order.
+
+    ⚠️ RAISED RATHER THAN REPORTED AS SUCCESS. This method used to set
+    `order.status = "cancelled"` and return when `_ib_groups` had no entry -
+    which is EVERY order placed in a previous session, because order identity
+    does not survive a restart. A caller that then sold would leave both OCA
+    protective legs resting against a position no longer held, and be put
+    short. A cancel that reached no broker is a failure, not a cancel.
+    """
+
+
 class IBAdapter:
     name = "ib-adapter"
 
@@ -759,8 +771,18 @@ class IBAdapter:
         ib_order = self._ib_orders.get(order_id)
         group = self._ib_groups.get(order_id) or ([ib_order] if ib_order is not None else [])
         if not group:
-            order.status = "cancelled"
-            return order
+            # ⚠️ FALL BACK TO THE LIVE CLIENT before giving up. `open_orders()`
+            # calls reqAllOpenOrdersAsync, which populates the client's open
+            # trades with orders this session never placed - exactly the
+            # previous-session legs this path exists for.
+            group = self._resolve_from_open_trades(order_id)
+        if not group:
+            raise CancelNotResolvedError(
+                f"cancel_order({order_id!r}) resolved no live broker order. This "
+                f"session did not place it and the client does not report it, so "
+                f"nothing was cancelled - reporting success here is what would put "
+                f"the account short."
+            )
 
         for leg in group:
             self.ib_client.cancelOrder(leg)  # type: ignore[arg-type]
@@ -786,6 +808,24 @@ class IBAdapter:
 
         order.status = "cancelled"
         return order
+
+    def _resolve_from_open_trades(self, order_id: str) -> list[object]:
+        """Live orders matching `order_id`, matched on permId.
+
+        `RestingOrder.order_id` carries the broker's permId, which is what
+        survives a restart - `orderId` is per-session and does not.
+        """
+        open_trades = getattr(self.ib_client, "openTrades", None)
+        if not callable(open_trades):
+            return []
+        found: list[object] = []
+        for trade in open_trades():
+            order = getattr(trade, "order", None)
+            if order is None:
+                continue
+            if str(getattr(order, "permId", "")) == str(order_id):
+                found.append(order)
+        return found
 
     async def balances(self) -> AccountBalances:
         """Derived from the account summary: the IB translation layer does not

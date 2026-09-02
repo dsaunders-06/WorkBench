@@ -48,16 +48,23 @@ the 24 August reason. The trap is live, not historical.
 
 ### A prerequisite fix, in the same change
 
-`OMS.cancel_order()` resolves through `self._orders` / `_ib_orders`, which are
+⚠️ **CORRECTED, Task 1:** the silent-cancel branch below lives in
+`IBAdapter.cancel_order`, one layer under `OMS.cancel_order()` — not in
+`OMS.cancel_order()` itself, which does `self._orders[order_id]` and raises
+`KeyError` on an unknown order, already fail-closed. `IBAdapter.cancel_order`
+resolves through `self._ib_orders` / `self._ib_groups`, which are
 **session-scoped** — and order identity does not survive a restart. For any leg
-placed in an earlier session it reaches `if not group:`, sets
-`status = "cancelled"` **locally**, and returns success **without cancelling
+placed in an earlier session it reached `if not group:`, set
+`status = "cancelled"` **locally**, and returned success **without cancelling
 anything at the broker**.
 
 `PositionCloser` does not call it — it cancels via broker identity. But a method
 that reports a cancel it did not perform, sitting beside a feature whose entire
-safety rests on cancels being real, must not be left as it is. It should raise
-or return a distinguishable outcome rather than claim success.
+safety rests on cancels being real, must not be left as it is. **Fixed in Task
+1** (`src/qat/data/broker/ib_adapter.py`, commit `99a3650`): before giving up,
+it now falls back to the live client's `openTrades()`, matched on permId (the
+id that survives a restart); if that still resolves nothing, it raises
+`CancelNotResolvedError` rather than claiming success.
 
 ---
 
@@ -84,16 +91,15 @@ async def close_position(
     symbol: str,
     *,
     operator: str,
-    acknowledge_halt: bool = False,
     quantity: float | None = None,   # None = all. Reserved; v1 accepts only None
 ) -> CloseResult
 ```
 
 **Depends on:** the `BrokerAdapter` protocol (`open_orders`, `cancel_order`,
 `place_order`, `positions`), the OMS for recording the exit, and `KillSwitch` to
-read state. It imports no Qt and decides no policy — `acknowledge_halt` is
-passed in, so the dialog owns the human question and the service owns the
-mechanism.
+read state. It imports no Qt. ⚠️ It reads the kill switch and REFUSES on it
+itself — there is no override parameter, because the halt cannot be honoured
+half-way: cancelling bypasses sign-off and selling does not.
 
 **Why not a method on `OMS`:** `oms.py` already carries the reconciliation rail,
 the resting-order scan and fill absorption. This choreographs one irreversible
@@ -109,19 +115,47 @@ is large enough that adding it would make both harder to hold in context.
 | Symbol held **per the broker** | The broker is the authority on what is held; app records are a claim |
 | An entry record exists in `_entries` | Without it there is no entry basis, so no closed trade and no R-multiple. v1 names `flatten_positions.py` instead of half-recording |
 | No working order for the symbol beyond its protective legs | M139. Never send while another is working |
-| Kill switch clear **or** `acknowledge_halt=True` | Operator decision, below |
+| Kill switch CLEAR | No override. During a halt the cancel would succeed and the sell would not — see below |
 | `quantity is None` | v1 is full-close only; a value returns REFUSED rather than silently closing everything |
 
-### The kill-switch decision
+### ❌ The kill-switch decision — REVERSED 1 September, and the original was dangerous
 
-**A manual close is permitted while the switch is TRIPPED, but only with an
-explicit second confirmation.** A close only ever reduces exposure, and being
-unable to flatten during a halt is the situation where one most wants to — but
-the halt must not become something clicked through from habit.
+**A manual close REFUSES while the switch is tripped. There is no acknowledged
+override.** `acknowledge_halt` is removed from `close_position` and from the UI.
 
-⚠️ **The dialog must quote the halt reason verbatim** — e.g. *"IBKR connection
-lost and reconnect attempts exhausted"* — not merely say the switch is tripped.
-Reading the actual reason is what makes it a decision rather than a click.
+⚠️ **WHY THE ORIGINAL WAS WORSE THAN NO FEATURE.** The first version permitted a
+close during a halt behind a second confirmation. The whole-branch review found
+that this could not work, and the mechanism was confirmed against source:
+
+* **Cancelling bypasses the kill switch.** `_cancel_legs` calls
+  `broker.cancel_order()` DIRECTLY. It never passes sign-off.
+* **Selling does not.** It goes `submit_exit_order` → `sign_off`, and
+  `OMS._sign_off_locked` (`oms.py:723`) sets `status = "rejected"`
+  unconditionally while the switch is tripped.
+* **So does re-protecting.** The recovery path's `submit_protective_stop` needs
+  sign-off too, and is rejected for the same reason.
+
+**The sequence during a halt was therefore: legs cancelled, nothing sold,
+bracket cannot be restored.** The operator ends up holding the full position
+with **the stop-loss deleted** — strictly worse than before pressing the button,
+at the exact moment the system has already decided something is wrong. Every
+other failure path in this design leaves the operator no worse off; this one
+actively stripped protection.
+
+⚠️ **The tests passed anyway**, which is the part worth remembering:
+`_FakeOms.sign_off` ignored the kill switch and always returned `filled`, so
+`test_proceeds_past_the_halt_when_acknowledged` was satisfied by an
+`UNPROTECTED` outcome. **A green test described a disaster.**
+
+**The chosen answer is the honest one:** the button refuses while halted and
+says so. Resetting the kill switch first is a deliberate act that takes seconds
+and is already routine — it was done twice on 1 September. The escape hatch was
+worth less than it appeared.
+
+**The rejected alternative, recorded so it is not re-proposed blindly:** carve a
+narrow exemption into sign-off so an operator-approved EXIT may pass while
+tripped, while entries may not. Coherent, and it means deliberately putting a
+hole in the one rail that halts everything. Not taken.
 
 ---
 
@@ -197,8 +231,9 @@ almost never run:
 - cancel verification fails → **no sell is sent**
 - sell rejected → bracket re-placed at original levels → `RECOVERED`
 - re-place also fails → `UNPROTECTED`, CRITICAL
-- switch tripped without `acknowledge_halt` → `REFUSED`, nothing sent
-- switch tripped **with** it → proceeds
+- switch tripped → `REFUSED`, **nothing cancelled and nothing sent**
+- ⚠️ the fake OMS must REJECT sign-off while tripped, as the real one does — the
+  original fake ignored it, and that is why a green test described a disaster
 - a leg fills mid-cancel → the sell uses the **re-read** quantity
 - no entry record → `REFUSED`, names the script
 - `quantity` not None → `REFUSED`
