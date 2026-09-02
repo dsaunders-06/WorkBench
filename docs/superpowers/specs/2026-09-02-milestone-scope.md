@@ -102,6 +102,20 @@ distrust the column. It should say something stable, e.g. *"hold escaped (loss
 0.51R)"* rather than falling silent, so the difference between "still held" and
 "escapable now" is visible instead of inferred from an empty cell.
 
+### ✅ 2a DONE — an escaped hold now says so
+
+`position_view.py` gains an `elif status.loss_r is not None:` branch:
+`hold escaped (0.60R down)`. Blocked still reads `held until <date>`; an
+ELAPSED hold stays quiet, because it is no longer a constraint and would be
+noise on every row for the rest of the position's life. `loss_r` is the exact
+discriminator - `minimum_hold_status` populates it only when the escape was
+reached and computed. Seen to bite: disabling the branch turns
+`test_an_escaped_hold_SAYS_SO_rather_than_falling_silent` red.
+
+### ❌ 2b WITHDRAWN — it does not reproduce
+
+**Original claim, kept because it was acted on:**
+
 **2b — ANZ and IAG are blank without escaping, and the rule does not explain
 it.** Both opened 25 August 14:04:53, the same day as BOQ, A2M, SUN and ASX,
 which DO show the note — so `held_days` is not the difference. ⚠️ **This is
@@ -112,6 +126,26 @@ view's `entry.stop_price` differs from the record I computed against.
 
 ⚠️ ANZ and IAG share an identical `opened_at` to the second. Probably
 coincidence — two orders in one cycle — but worth a glance while instrumenting.
+
+⚠️ **INSTRUMENTED 2 September, and the finding is WITHDRAWN.** A read-only probe
+ran the REAL `minimum_hold_status` against live broker marks for all ten
+positions:
+
+    ANZ   mark 37.51   loss_r -0.163   blocked True   -> held until <date>
+    IAG   mark  8.30   loss_r -0.577   blocked True   -> held until <date>
+    JHX/SEK/TNE  loss_r 0.793/0.571/0.663  blocked False -> BLANK (escaped)
+
+**All ten are correct.** ANZ and IAG render the note. The original claim came
+from computing `loss_r` against the prices in a screenshot and reading those two
+Status cells as empty; the rule does not reproduce it.
+
+Two possibilities remain and cannot be distinguished from outside the app:
+their Status text did not survive into the transcription of the image, or they
+were genuinely blank at that moment for a reason this probe cannot see.
+**Operator to watch for it next session.** 2a's fix makes that observation
+decisive: with the escaped state now labelled, a blank cell inside a hold window
+is unambiguous evidence of a bug rather than something to reason about from
+prices.
 
 ---
 
