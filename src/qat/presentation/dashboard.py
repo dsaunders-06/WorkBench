@@ -474,11 +474,27 @@ class DashboardScreen(QWidget):
                 sharpe = (returns.mean() / returns.std()) * (252**0.5)
                 self.sharpe_tile.set_value(f"{sharpe:.2f}")
 
-        latest_decisions = self.runtime.risk_engine.audit_log.entries()
-        if latest_decisions:
-            portfolio_check = latest_decisions[-1].inputs.get("portfolio_check")
-            if portfolio_check and "var_95" in portfolio_check:
-                self.var_tile.set_value(f"{portfolio_check['var_95']:.2%}")
+        # The book NOW, not the last decision (Task 10; same root cause as the
+        # Risk Console tiles - see risk_console.py's `_refresh_risk_tiles`).
+        # `portfolio_check` is written one rail after the governor's
+        # position-count refusal, so it is absent on every 10-of-10 book, and
+        # the audit log is in-memory, so it is empty at every startup too.
+        # One summary tile on a crowded screen, so no caption and no
+        # side-by-side here - the Risk Console carries that comparison.
+        #
+        # ⚠️ NOT `getattr(self.runtime, "book_risk_monitor", None)`. That
+        # returns `Any`, which poisons every attribute read below it - see the
+        # ⚠️ comment at risk_console.py:579 for how that let a misspelled
+        # field name type-check clean across 173 files. `Runtime` has
+        # declared this field since it was wired, so it is read directly and
+        # mypy checks the name against `BookRisk`.
+        #
+        # ⚠️ `.fresh()`, never `.latest` or `.poll()` - both bypass the
+        # staleness bound `fresh()` enforces.
+        monitor = self.runtime.book_risk_monitor
+        live = monitor.fresh() if monitor is not None else None
+        var_95 = live.var_95 if live is not None else None
+        self.var_tile.set_value("-" if var_95 is None else f"{var_95:.2%}")
 
         self.adopted_panel.update_from(
             assess_adopted_positions(
