@@ -177,6 +177,41 @@ search-back through the audit CSV because the most recent stored value was two
 days old and computed on an eight-position book that no longer existed. A live
 value with no age bound would be the same failure with a fresher-looking face.
 
+### ⚠️ AND THE BOUND MEASURED THE WRONG THING. Found in review, 3 September.
+
+The design above says "a snapshot older than this" without saying older *than
+what*, and the implementation it produced stamped `computed_at` from the clock —
+dating the **computation**, not the **data**.
+
+`AccountPoller._fetch` catches `Exception` and returns `_degrade(...)`, which
+deliberately keeps serving the last good reading with `taken_at` carried forward
+and `error` set. Its own docstring says *"What must not happen is a stale number
+presented as current"*. `poll()` checked neither field, so a broker outage
+produced this, reproduced against the real poller:
+
+    poller taken_at   13:59:23   error='broker down'   (NOT re-dated)
+    BookRisk.computed_at        17:59:23               (RE-DATED to now)
+    notes = ()
+    fresh() returned a value.  believed age 60s.  real age 14,460s.  bound 180s.
+
+**A four-hour-old book reaching the advisory labelled sixty seconds old — 80× the
+bound the rail claims to enforce, with empty notes and nothing logged.** This is
+the same failure as item 6 itself, rebuilt inside item 6's own fix, and it was
+invisible because the poller does not raise.
+
+Two changes, closing different holes:
+1. **A snapshot carrying `error` is refused** — logged, previous value kept,
+   never computed from. The house idiom already existed one file away:
+   `balances_panel.py:390` reads `stale = snapshot.error or snapshot.is_stale`.
+2. **`computed_at` is stamped from `snapshot.taken_at`**, so `age_seconds`
+   measures how old the *reading* is. The injected clock still supplies
+   `fresh()`'s "now".
+
+⚠️ **The lesson, because it generalises:** "is this value fresh" is a question
+about the DATA's timestamp, and any component that re-stamps a value it did not
+itself measure destroys the only evidence of age. A degraded upstream that fails
+soft rather than raising will defeat every `try/except` written around it.
+
 ---
 
 ## C. The readers — both values, side by side
