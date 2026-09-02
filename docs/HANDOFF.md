@@ -41,9 +41,9 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M162 (`0961752`)**, installed 2 September 16:24, SHA256 `ED2A768E…C181`, signature Valid on the installed copy. ✅ **READ BACK 16:25** off its own log, 100 symbols seeded, ten positions adopted, 20 legs, excursion 10 of 10, zero ERROR/CRITICAL. Rollback: `C:\QuantAdvisoryTerminal.bak-04053ba-20260902-1624` (M161). Previous: M161, M159, M158 (read back 3×) |
-| Deploy gap | ⚠️ **HEAD IS AHEAD OF THE INSTALLED BUILD.** Two things are merged to `master` and NOT deployed: the **manual position close** feature (button + `PositionCloser`) and the **escaped-hold Status note**. Neither is in M162. Both need a build, deploy and read-back. `handoff_state.py` derives the gap |
-| Pushed | ⚠️ **17 commits UNPUSHED.** ✅ **CI IS HEALTHY** — the billing wall cleared ~1 September and a 46-commit push ran green in **7m9s**. One push is one run, ~8.6 min of 2,000 at `windows-latest`'s 2× multiplier, so batch rather than push per commit |
+| Deployed build | **M163 (`06d3156`)**, installed 2 September 17:28, SHA256 `655C29AB…59D7`, signature Valid on the installed copy. ✅ **READ BACK 17:28:59** off its own log — `Build: M163 (06d3156, built 02/09/2026 17:23:26 AEST, packaged)`, 100 symbols seeded, ten positions adopted with **10 of 10 carrying a stop**, 20 legs, excursion 10 of 10, resting scan clean, zero ERROR/CRITICAL. The dist hash MOVED (`ED2A768E…C181` → `299027EF…C76A` unsigned → `655C29AB…59D7` signed), which is the check M160 failed. Rollback: `C:\QuantAdvisoryTerminal.bak-0961752-20260902-1728` (M162). Previous: M162, M161, M159 (read back 3×) |
+| Deploy gap | ✅ **NONE — HEAD IS THE INSTALLED BUILD.** The manual position close (button + `PositionCloser` + `IBAdapter.cancel_order`) and the escaped-hold Status note both shipped in M163. The close button is **INERT until pressed** — no autonomous path reaches it — so this changed nothing unattended. ⚠️ **EXPECT THE FIRST PRESS TO REFUSE:** `cancelOrder` is fire-and-forget and `PendingCancel` is the ordinary transient of an HONOURED cancel, now correctly counted as a survivor. That branch deliberately does not recover, so the position is briefly **BARE** until `rearm_protective_stops` re-proposes a stop. The fix then is a bounded re-read (~3 polls over 2s) before declaring survivors — **NOT** a looser predicate |
+| Pushed | ✅ **UP TO DATE** with `origin/master` (M163 batch pushed 2 September). ✅ **CI IS HEALTHY** — the billing wall cleared ~1 September and a 46-commit push ran green in **7m9s**. One push is one run, ~8.6 min of 2,000 at `windows-latest`'s 2× multiplier, so batch rather than push per commit |
 | Suite | **3,076 passed, 26 skipped.** ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted", so `&&` hides a failure |
 | Watchlist | **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
@@ -4357,15 +4357,22 @@ grep-back caught it.
 
 THE STATE
 
-Deployed M162 (0961752), installed and READ BACK 2 September 16:25.
-Rollback: C:\QuantAdvisoryTerminal.bak-04053ba-20260902-1624 (contains M161).
+Deployed M163 (06d3156), installed and READ BACK 2 September 17:28:59.
+Rollback: C:\QuantAdvisoryTerminal.bak-0961752-20260902-1728 (contains M162).
 
-⚠️ TWO THINGS ARE MERGED TO master AND NOT DEPLOYED: the manual position-close
-feature, and the escaped-hold Status note. Neither is in M162. Both need a
-build, deploy and read-back.
+✅ NO DEPLOY GAP. The manual position-close feature and the escaped-hold Status
+note both shipped in M163. The close button is INERT until pressed, so nothing
+unattended changed.
+
+⚠️ THE CLOSE BUTTON HAS NEVER BEEN PRESSED against the real broker. Expect the
+FIRST press to REFUSE: cancelOrder is fire-and-forget and PendingCancel is the
+ordinary transient of an honoured cancel, now correctly counted as a survivor.
+That branch deliberately does not recover, so the position is briefly BARE until
+rearm_protective_stops re-proposes a stop. The fix then is a bounded re-read (~3
+polls over 2s) before declaring survivors - NOT a looser predicate.
 
 Suite 3,076 passed / 26 skipped. ruff, black, mypy src, bandit clean.
-1 commit unpushed. Tree clean, on master.
+Pushed, up to date with origin/master. Tree clean, on master.
 
 Broker is TWS on 7497 (Gateway closed). Account DUQ200898, paper, AUD.
 TEN POSITIONS, 20 resting legs, all protected. Equity 1,007,638.94.
@@ -4378,18 +4385,7 @@ on. Nothing has been within 3.4% of a leg since 1 September.
 
 OUTSTANDING, IN ORDER
 
-1. DEPLOY THE MERGED WORK - manual close + escaped-hold note. Build, sign, check
-   the hash moved, deploy, read back. The close feature is INERT until its button
-   is pressed, so deploying it changes no autonomous behaviour.
-   ⚠️ WHEN YOU DO PRESS IT: the fourth review found the FIRST click will probably
-   REFUSE, because cancelOrder is fire-and-forget and PendingCancel is the
-   ordinary transient of an honoured cancel - now correctly treated as a
-   survivor. That branch deliberately does not recover, so the position is
-   briefly BARE until rearm_protective_stops re-proposes a stop. If it happens,
-   the fix is a bounded re-read (~3 polls over 2s) before declaring survivors,
-   leaving the fail-closed predicate untouched.
-
-2. MILESTONE ITEMS still open - docs/superpowers/specs/2026-09-02-milestone-scope.md:
+1. MILESTONE ITEMS still open - docs/superpowers/specs/2026-09-02-milestone-scope.md:
    * EQUITY CURVE Y AXIS renders as 1.004e+06. Needs an operator decision between
      thousands-separated dollars, $k/$M, or change-from-day-start.
    * CORPORATE-ACTION BANNER is permanent furniture. The message is correct and
@@ -4405,21 +4401,23 @@ OUTSTANDING, IN ORDER
      comment warns that a stale number reaching the model is the failure it was
      written to prevent.
 
-3. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window. An
+2. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window. An
    escaped hold now says "hold escaped (0.60R down)", so a blank is unambiguous
    evidence of a bug rather than something to infer from prices.
 
-4. Reach 20 closed trades (item 3). At SEVEN. Below 20 the sizer uses invented
+3. Reach 20 closed trades (item 3). At SEVEN. Below 20 the sizer uses invented
    constants; below 30 the promotion gate cannot be read. Needs market.
 
-5. The long-standing FEATURES: M39 corporate actions, M41 earnings event risk,
+4. The long-standing FEATURES: M39 corporate actions, M41 earnings event risk,
    Stage 3 ASX auction rules (item 9), Stage 4 regime re-sourcing (item 30).
 
-6. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - scoped and measured 1 September,
+5. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - scoped and measured 1 September,
    docs/superpowers/specs/2026-09-01-regime-label-stability-scope.md. The finding
    SURVIVED all three tasks. Not acted on, deliberately.
 
-⚠️ HOUSEKEEPING: C:\ holds TWENTY-THREE rollback directories. Ask before
+HOUSEKEEPING: C:\ holds NINE rollback directories, 3.53 GB, against 348 GB
+free — counted 2 September, correcting a standing claim of twenty-three and 7 GB
+that nothing on disk supported. Not urgent at this size. Ask before
 deleting - each is the only rollback path for its build.
 
 WHAT THE LAST TWO DAYS ESTABLISHED
