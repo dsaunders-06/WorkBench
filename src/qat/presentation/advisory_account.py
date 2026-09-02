@@ -44,6 +44,7 @@ from qat.data.broker.account_poller import AccountSnapshot
 from qat.data.broker.adapter import Position
 from qat.domain.autonomy.gate import AccountState, AutonomyGate
 from qat.domain.oms.position_view import PositionView, build_position_views
+from qat.domain.risk_engine.book_risk import BookRisk, BookRiskMonitor
 from qat.presentation.symbol_verdict import SymbolVerdict, build_verdict
 
 logger = logging.getLogger(__name__)
@@ -229,8 +230,12 @@ def risk_metrics(runtime: Any) -> dict[str, Any]:
     """
     metrics: dict[str, Any] = {}
 
-    monitor = getattr(runtime, "book_risk_monitor", None)
-    live = monitor.fresh() if monitor is not None else None
+    # Annotated, because `runtime` is `Any` throughout this module and an
+    # unannotated getattr would make `live` `Any` too - and mypy checks nothing
+    # on an `Any`. The Risk Console had the same shape: a misspelled BookRisk
+    # field type-checked clean there until it was read off a typed object.
+    monitor: BookRiskMonitor | None = getattr(runtime, "book_risk_monitor", None)
+    live: BookRisk | None = monitor.fresh() if monitor is not None else None
     if live is not None:
         book_now = {
             name: float(value)

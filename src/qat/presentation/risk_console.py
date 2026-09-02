@@ -576,7 +576,14 @@ class RiskConsoleScreen(QWidget):
         is in-memory, and every 10-of-10 day, because the governor refuses one
         rail before that dict is written. The tiles sat at "-" from 31 August.
         """
-        monitor = getattr(self.runtime, "book_risk_monitor", None)
+        # ⚠️ NOT `getattr(self.runtime, "book_risk_monitor", None)`. That returns
+        # `Any`, which poisons every attribute read below it: with the getattr
+        # form, `live.var_99` type-checked clean even when the field name was
+        # misspelled, so three of these four tiles could have rendered "-"
+        # forever with mypy reporting success across 173 files. `Runtime` has
+        # declared this field since it was wired, so read it directly and let
+        # mypy check the names against `BookRisk`.
+        monitor = self.runtime.book_risk_monitor
         live = monitor.fresh() if monitor is not None else None
 
         entries = self.runtime.risk_engine.audit_log.entries()
