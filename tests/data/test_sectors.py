@@ -61,3 +61,44 @@ def test_screener_filter_options_cover_every_value_sector_for_can_return():
     would be unfilterable."""
     assert set(sectors.SECTOR_BY_SYMBOL.values()) <= set(SECTORS)
     assert sectors.UNKNOWN_SECTOR in SECTORS
+
+
+def test_watchlist_symbols_all_have_sectors() -> None:
+    """Every symbol the app will actually TRADE must have a sector mapping.
+
+    ⚠️ THIS EXISTS BECAUSE M161 WIDENED THE WATCHLIST WITHOUT IT. Five names
+    (ALX, CWY, SDF, SOL, ANN) were added to the megacap list and not to
+    `SECTOR_BY_SYMBOL`, so for a day they were tradable with the 30% sector
+    concentration cap SKIPPED entirely - `signal_bridge` reads
+    `SECTOR_BY_SYMBOL.get`, deliberately, so unmapped means "no cap applies"
+    rather than a shared "Unknown" bucket.
+
+    Nothing caught it. The app's own warning only fires when a SIGNAL for the
+    symbol reaches the bridge, and none did that day; the operator found it in
+    the Screener, which rendered a ticker with an empty Sector column.
+
+    ⚠️ Scoped to the RESOLVED watchlist, not to every symbol the app knows.
+    `IOZ.AX` is mapped and legitimately unwatched - it belongs to the `etf`
+    category - and asserting over everything would fail on it for no reason.
+
+    The reverse leak is deliberately NOT asserted: AWC, BKW, DHG, IPL, NSR and
+    SVW are still mapped after M110 pruned them from the watchlist as dead.
+    Harmless - a lookup nobody queries - and failing on it would only tempt
+    someone to delete history that costs nothing to keep.
+    """
+    from qat.config import Settings
+    from qat.data.universe import resolve_watchlist
+
+    settings = Settings(
+        _env_file=None,
+        market="ASX",
+        watchlist_category="megacap",
+        watchlist_max_symbols=200,
+    )
+    watched = resolve_watchlist(settings)
+    unmapped = sorted(s for s in watched if s not in sectors.SECTOR_BY_SYMBOL)
+    assert not unmapped, (
+        f"{len(unmapped)} watchlist symbol(s) have no sector mapping, so the sector "
+        f"concentration cap will not apply to them: {unmapped}. "
+        f"Add them to qat.data.sectors.SECTOR_BY_SYMBOL."
+    )

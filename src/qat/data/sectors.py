@@ -218,6 +218,23 @@ SECTOR_BY_SYMBOL: dict[str, str] = {
     "SVW.AX": "Industrials",
     "IPL.AX": "Materials",
     "ALQ.AX": "Industrials",
+    # --- M161's five, mapped in M162 -----------------------------------
+    #
+    # ⚠️ M161 widened the megacap watchlist 94 -> 99 and did NOT add these,
+    # so for a day they were tradable with NO SECTOR CAP. `signal_bridge`
+    # reads `SECTOR_BY_SYMBOL.get`, deliberately, so an unmapped symbol has
+    # the 30% concentration cap SKIPPED rather than being lumped into a
+    # shared "Unknown" bucket - the honest choice, and the reason the gap was
+    # silent. The operator found it in the Screener, which rendered a ticker
+    # with an empty Sector column; the app's own warning never fired, because
+    # it only triggers when a SIGNAL for the symbol reaches the bridge.
+    # `test_watchlist_symbols_all_have_sectors` now makes this impossible to
+    # repeat.
+    "ALX.AX": "Industrials",
+    "CWY.AX": "Industrials",
+    "SDF.AX": "Financials",
+    "SOL.AX": "Financials",
+    "ANN.AX": "Health Care",
 }
 
 # Every sector appearing above, sorted - drives the Screener's sector filter.
