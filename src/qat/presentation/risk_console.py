@@ -136,7 +136,7 @@ class RiskConsoleScreen(QWidget):
         self.var95_tile = KpiTile("Portfolio VaR (95%)")
         self.var99_tile = KpiTile("Portfolio VaR (99%)")
         self.es_tile = KpiTile("Expected Shortfall (97.5%)")
-        self.concentration_tile = KpiTile("Single-name concentration")
+        self.concentration_tile = KpiTile("Largest single name")
         for tile in (self.var95_tile, self.var99_tile, self.es_tile, self.concentration_tile):
             kpi_row.addWidget(tile)
         layout.addLayout(kpi_row)
@@ -291,7 +291,7 @@ class RiskConsoleScreen(QWidget):
         # docstring); the timer already runs every 2s regardless, so deriving
         # from it here cannot go stale the same way.
         self._refresh_kill_switch_button()
-        self._refresh_from_audit_log()
+        self._refresh_risk_tiles()
         self._refresh_correlation_table()
         self._refresh_anomalies()
         self.refresh_refusals()
@@ -567,22 +567,56 @@ class RiskConsoleScreen(QWidget):
                     else QColor(255 - intensity, 255 - intensity, 255)
                 )
 
-    def _refresh_from_audit_log(self) -> None:
+    def _refresh_risk_tiles(self) -> None:
+        """Live book risk as the headline; the last decision's figure as a
+        caption, and ONLY when there is one.
+
+        ⚠️ This used to read `entries[-1].inputs["portfolio_check"]` and return
+        early when it was absent - which is every startup, because the audit log
+        is in-memory, and every 10-of-10 day, because the governor refuses one
+        rail before that dict is written. The tiles sat at "-" from 31 August.
+        """
+        monitor = getattr(self.runtime, "book_risk_monitor", None)
+        live = monitor.fresh() if monitor is not None else None
+
         entries = self.runtime.risk_engine.audit_log.entries()
-        if not entries:
-            return
-        portfolio_check = entries[-1].inputs.get("portfolio_check")
-        if not portfolio_check:
-            return
-        self.var95_tile.set_value(f"{portfolio_check['var_95']:.2%}")
-        self.var99_tile.set_value(f"{portfolio_check['var_99']:.2%}")
+        decision = entries[-1].inputs.get("portfolio_check") if entries else None
+
         es_limit = self.runtime.settings.portfolio_es_limit_pct
-        es_value = portfolio_check["es_975"]
+
+        def _pct(value: float | None) -> str:
+            return "-" if value is None else f"{value:.2%}"
+
+        def _caption(name: str) -> str | None:
+            if not decision:
+                return None
+            value = decision.get(name)
+            return None if value is None else f"at last decision: {value:.2%}"
+
+        self.var95_tile.set_value(_pct(getattr(live, "var_95", None)))
+        self.var95_tile.set_caption(_caption("var_95"))
+
+        self.var99_tile.set_value(_pct(getattr(live, "var_99", None)))
+        self.var99_tile.set_caption(_caption("var_99"))
+
+        es_value = getattr(live, "es_975", None)
         self.es_tile.set_value(
-            f"{es_value:.2%} / {es_limit:.0%}",
-            color=theme.DANGER if es_value >= es_limit else theme.SUCCESS,
+            "-" if es_value is None else f"{es_value:.2%} / {es_limit:.0%}",
+            color=(
+                None
+                if es_value is None
+                else (theme.DANGER if es_value >= es_limit else theme.SUCCESS)
+            ),
         )
-        self.concentration_tile.set_value(f"{portfolio_check['single_name_pct']:.2%}")
+        self.es_tile.set_caption(_caption("es_975"))
+
+        self.concentration_tile.set_value(_pct(getattr(live, "single_name_pct", None)))
+        caption = _caption("single_name_pct")
+        self.concentration_tile.set_caption(
+            None
+            if caption is None
+            else caption.replace("at last decision", "candidate at last decision")
+        )
 
     def _refresh_kill_switch_button(self) -> None:
         if self.runtime.kill_switch.tripped:
