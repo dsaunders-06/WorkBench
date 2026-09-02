@@ -24,3 +24,20 @@ def test_a_tile_with_no_caption_hides_the_line_entirely(qtbot):
 
     tile.set_caption(None)
     assert tile._caption.isVisibleTo(tile) is False
+
+
+def test_empty_string_caption_also_hides_the_line(qtbot):
+    """The empty string must hide the caption, not show a blank line.
+
+    This is critical because both `None` and `""` are falsy — a mutation from
+    `setVisible(bool(text))` to `setVisible(text is not None)` would break the
+    `""` case while leaving the `None` case passing. This test pins that gap.
+    """
+    tile = KpiTile("Portfolio VaR (95%)")
+    qtbot.addWidget(tile)
+
+    tile.set_caption("something to see")
+    assert tile._caption.isVisibleTo(tile) is True
+
+    tile.set_caption("")
+    assert tile._caption.isVisibleTo(tile) is False
