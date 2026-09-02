@@ -32,9 +32,11 @@ from __future__ import annotations
 import math
 from datetime import UTC, datetime
 
+import numpy as np
 import pandas as pd
 
 from qat.domain.risk_engine.book_risk import BookRisk, compute_book_risk
+from qat.domain.risk_engine.portfolio_risk import PortfolioRiskChecker
 
 NOW = datetime(2026, 9, 2, 17, 0, tzinfo=UTC)
 
@@ -424,3 +426,91 @@ def test_short_weight_over_pct_change_with_zero_closes_is_never_a_measured_zero(
     for metric in (result.var_95, result.var_99, result.es_975):
         assert not (metric == 0.0 and not result.notes)
     assert any("non-finite return observation" in note for note in result.notes)
+
+
+def _noisy(seed: int, n: int = 120) -> pd.Series:
+    rng = np.random.default_rng(seed)
+    index = pd.date_range("2026-01-01", periods=n, freq="D")
+    return pd.Series(rng.normal(0.0, 0.01, n), index=index)
+
+
+def test_a_real_book_reports_every_metric():
+    weights = {"A2M.AX": 120_000.0, "ANZ.AX": 90_000.0, "BOQ.AX": 60_000.0}
+    returns = {"A2M.AX": _noisy(1), "ANZ.AX": _noisy(2), "BOQ.AX": _noisy(3)}
+
+    result = compute_book_risk(
+        weights=weights,
+        returns=returns,
+        total_equity=1_000_000.0,
+        sector_by_symbol={
+            "A2M.AX": "Consumer Staples",
+            "ANZ.AX": "Financials",
+            "BOQ.AX": "Financials",
+        },
+        now=NOW,
+        min_observations=30,
+    )
+
+    assert result.symbols == 3
+    assert result.observations >= 30
+    assert result.var_95 is not None and result.var_95 > 0
+    assert result.var_99 is not None and result.var_99 >= result.var_95
+    assert result.es_975 is not None and result.es_975 > 0
+    # Largest single name is A2M at 120k of 1M.
+    assert result.single_name_pct == 0.12
+    # Largest SECTOR is Financials: ANZ 90k + BOQ 60k = 150k of 1M.
+    assert result.sector_pct == 0.15
+    assert result.notes == ()
+
+
+def test_var_matches_the_checker_measured_on_the_same_inputs():
+    """⚠️ THE COMPARABILITY CLAIM, ASSERTED. These two numbers are displayed
+    side by side, so they must be produced by the same instrument. Measuring a
+    rail with a different instrument than the rail uses is how 8 August read
+    5.02% against a true 5.87%."""
+    weights = {"A2M.AX": 120_000.0, "ANZ.AX": 90_000.0}
+    returns = {"A2M.AX": _noisy(1), "ANZ.AX": _noisy(2)}
+    equity = 1_000_000.0
+
+    live = compute_book_risk(
+        weights=weights,
+        returns=returns,
+        total_equity=equity,
+        sector_by_symbol={},
+        now=NOW,
+        min_observations=30,
+    )
+
+    # The checker with a candidate of ZERO exposure sees the same book.
+    checker = PortfolioRiskChecker()
+    decision = checker.check(
+        existing_weights=weights,
+        existing_returns=returns,
+        candidate_symbol="A2M.AX",
+        candidate_dollar_exposure=0.0,
+        candidate_returns=returns["A2M.AX"],
+        total_equity=equity,
+    )
+
+    assert live.var_95 == decision.historical_var_95
+    assert live.var_99 == decision.historical_var_99
+    assert live.es_975 == decision.expected_shortfall_975
+
+
+def test_a_symbol_with_no_returns_is_excluded_from_var_but_not_concentration():
+    """The state after a restart before the warm start finishes: a held symbol
+    whose aggregator frame is still empty."""
+    result = compute_book_risk(
+        weights={"A2M.AX": 120_000.0, "ANZ.AX": 300_000.0},
+        returns={"A2M.AX": _noisy(1)},
+        total_equity=1_000_000.0,
+        sector_by_symbol={},
+        now=NOW,
+        min_observations=30,
+    )
+
+    # ANZ has no series, so it cannot enter the combined return math...
+    assert result.var_95 is not None
+    # ...but it is still held, so it still dominates concentration.
+    assert result.single_name_pct == 0.3
+    assert result.symbols == 2
