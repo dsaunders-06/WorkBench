@@ -97,6 +97,25 @@ class Settings(BaseSettings):
     # drawdown rails. These rails were dead code before M13; nothing called them.
     equity_poll_seconds: float = Field(default=60.0, gt=0)
 
+    # --- Live book risk (2026-09-02 spec) ------------------------------------
+    # Portfolio risk measured over the book ACTUALLY HELD, because the figure
+    # the advisory used to read comes from the last risk DECISION - and with the
+    # book at 10 of 10, no decision reaches the portfolio checker at all.
+    book_risk_poll_seconds: float = Field(default=60.0, gt=0)
+
+    # Below this many overlapping return observations, VaR and ES are reported
+    # as UNKNOWN rather than computed. ⚠️ Not a tuning knob: the underlying
+    # compute_historical_var returns 0.0 below two observations, and a zero
+    # reaching the model reads as "no tail risk".
+    book_risk_min_observations: int = Field(default=30, ge=2)
+
+    # A snapshot older than this is treated exactly as a missing one. Three
+    # polls. Item 6 refused a search back through the audit CSV because the most
+    # recent stored value was two days old and measured on a book that no longer
+    # existed; a live value with no age bound is the same failure with a fresher
+    # face.
+    book_risk_max_age_seconds: float = Field(default=180.0, gt=0)
+
     # --- Interface (M45) -----------------------------------------------------
     # How much the interface explains, and how much it shows.
     #
