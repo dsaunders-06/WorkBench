@@ -1367,7 +1367,58 @@ from qat.domain.display_dates import format_display_date
 # symbol has a mapping, and was seen to fail, naming the symbol, with one entry
 # removed. Scoped to the resolved watchlist because IOZ.AX is mapped and
 # legitimately unwatched - it is in the `etf` category, not `megacap`.
-MILESTONE = "M162"
+# M163 - the operator can close a position by hand, and an escaped hold says so.
+#
+# Two things merged to master after M162 and neither was in a build. This bumps
+# for both.
+#
+# 1. MANUAL POSITION CLOSE - a Close Position button, `PositionCloser`, and
+#    `IBAdapter.cancel_order`. INERT until the button is pressed: no autonomous
+#    path reaches it, so deploying it changes no unattended behaviour.
+#
+#    ⚠️ THE ORDER OF OPERATIONS IS THE WHOLE SAFETY. Every position carries two
+#    OCA-linked resting SELL legs for its full quantity. Selling without
+#    cancelling them first leaves them resting against a position no longer
+#    held - they execute and the account goes SHORT. So: cancel, VERIFY the
+#    cancels, then sell; and if verification cannot be trusted, refuse.
+#
+#    ⚠️ A GREEN SUITE PROVED ONLY THAT THE FAKES AGREED WITH THE CODE. This
+#    branch was rejected by whole-branch review THREE times, every time with
+#    3,000+ tests passing and four clean checks, and every time because a fake
+#    did not model the real broker: synchronous fills, a kill-switch-blind
+#    sign-off, no event bus, and a cancel that removed the leg instantly. The
+#    test labelled "THE MOST IMPORTANT TEST IN THIS FILE", citing 19 August and
+#    PendingCancel BY NAME, modelled its survivor as "Submitted" - the one
+#    status the broken code already caught. It was green over the exact defect
+#    it was named for.
+#
+#    WHAT FINALLY WORKED WAS FAILING CLOSED BY CONSTRUCTION, NOT BY
+#    ENUMERATION. Verification is a NEGATIVE test - `status not in
+#    TERMINAL_STATUSES` - so a status nobody thought of falls to the survivor
+#    branch and blocks the sell, rather than falling through a list of known-bad
+#    values that the next IBKR state is missing from.
+#
+#    ⚠️ EXPECT THE FIRST CLICK TO REFUSE. `cancelOrder` is fire-and-forget and
+#    PendingCancel is the ordinary transient of an HONOURED cancel, now
+#    correctly counted as a survivor. That branch deliberately does not recover,
+#    so the position is briefly BARE until `rearm_protective_stops` re-proposes
+#    a stop. If it happens the fix is a bounded re-read - roughly three polls
+#    over two seconds - before declaring survivors, leaving the fail-closed
+#    predicate untouched. It is NOT to loosen the predicate.
+#
+# 2. THE ESCAPED-HOLD STATUS NOTE. The Positions Status column rendered "still
+#    held" and "escapable right now" identically, as nothing, and the two SWAP
+#    as the price moves - so the column emptied and refilled tick by tick.
+#    Measured 2 September: three positions at 0.571, 0.663 and 0.793R against
+#    the 0.5R escape, two of them at 0.510 and 0.506 earlier the same day.
+#    Nothing was broken, and that was the problem: a column that empties itself
+#    teaches an operator to distrust it, and it cost a full investigation to
+#    establish the blanks were correct.
+#
+#    ⚠️ IT ALSO MAKES A BLANK CELL MEAN SOMETHING. With the escaped state
+#    labelled, an empty Status cell inside a hold window is now unambiguous
+#    evidence of a bug instead of something to reason about from prices.
+MILESTONE = "M163"
 
 _UNKNOWN = "unknown"
 
