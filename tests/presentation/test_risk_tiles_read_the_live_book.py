@@ -54,6 +54,15 @@ def _build(qtbot, tmp_path, book_risk, audit_entries):
     runtime.risk_engine.audit_log._entries = list(audit_entries)
     screen = RiskConsoleScreen(runtime)
     qtbot.addWidget(screen)
+    # Every test here drives the refresh by calling it directly, never by
+    # waiting on this screen's own 2s QTimer - so stop it. Left running, it
+    # can survive past this test: __init__ subscribes a bound method on
+    # runtime.bus, which is a strong reference back to this screen, forming a
+    # cycle with screen.runtime that only the cyclic GC (not refcounting)
+    # breaks - and the shared QApplication event loop is process-wide, so an
+    # un-stopped timer can fire during a LATER, unrelated test and crash
+    # refresh_refusals() on these entries' bare SimpleNamespace (no .symbol).
+    screen._timer.stop()
     return screen
 
 
