@@ -1339,7 +1339,35 @@ from qat.domain.display_dates import format_display_date
 # ⚠️ THIS DOES NOT WIDEN EXPOSURE. The position cap is 10 and the book is at 10,
 # so a wider watchlist means more candidates for the same slots, not more
 # positions. It changes what may be chosen, not how much is held.
-MILESTONE = "M161"
+# M162 - the five symbols M161 added get their sectors, and a guard.
+#
+# ⚠️ FOR ONE DAY, FIVE TRADABLE SYMBOLS SAT OUTSIDE A RISK RAIL. M161 widened
+# the megacap watchlist 94 -> 99 without adding ALX, CWY, SDF, SOL and ANN to
+# SECTOR_BY_SYMBOL. `signal_bridge` reads that map with `.get`, deliberately, so
+# an unmapped symbol has the 30% sector concentration cap SKIPPED rather than
+# being lumped into a shared "Unknown" bucket where unrelated names would
+# constrain each other as though they were a sector. That choice is right, and
+# it is exactly why the gap made no noise.
+#
+# ⚠️ NOTHING IN THE APP CAUGHT IT. The warning written for this case fires only
+# when a SIGNAL for the symbol reaches the bridge, and on 2 September the first
+# signal of the day did not arrive until 15:12. The OPERATOR found it, in the
+# Screener, which rendered a ticker with an empty Sector column. A rail that
+# only reports when exercised is invisible until the day it matters.
+#
+# Mapped: ALX Industrials (toll roads), CWY Industrials (waste), SDF Financials
+# (insurance broking), SOL Financials (diversified investment house), ANN Health
+# Care. Sweep afterwards: 99 watched, 0 unmapped.
+#
+# THE GUARD IS THE POINT, not the five rows. A full sweep found the map leaks in
+# BOTH directions - AWC, BKW, DHG, IPL, NSR and SVW are still mapped after M110
+# pruned them from the watchlist as dead. The watchlist and the sector map are
+# edited independently, and only one of those edits is ever remembered.
+# `test_watchlist_symbols_all_have_sectors` asserts every RESOLVED watchlist
+# symbol has a mapping, and was seen to fail, naming the symbol, with one entry
+# removed. Scoped to the resolved watchlist because IOZ.AX is mapped and
+# legitimately unwatched - it is in the `etf` category, not `megacap`.
+MILESTONE = "M162"
 
 _UNKNOWN = "unknown"
 
