@@ -12,6 +12,15 @@ at all - there is no third state and no "probably still fine" path. A failed
 poll leaves the previous value standing, which is safe only because every
 value carries `computed_at` and readers go through `fresh()` rather than
 `latest` directly.
+
+⚠️ A DEGRADED SNAPSHOT (`error` set) IS REFUSED THE SAME WAY A RAISED
+EXCEPTION IS. `AccountPoller._fetch` swallows the broker's own exceptions
+and returns `_degrade(...)`, which keeps serving the LAST GOOD reading with
+`taken_at` carried forward unchanged - `snapshot()` itself never raises on a
+broker outage, so a poller that only reacts to a raised exception never
+notices one. `poll()` also stamps `computed_at` from the snapshot's own
+`taken_at`, not the clock, so `age_seconds` measures how old the READING is,
+not how long ago `poll()` happened to run.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -53,10 +62,12 @@ class _Poller:
         return self._snapshot
 
 
-def _snapshot(positions, equity):
+def _snapshot(positions, equity, *, taken_at=NOW, error=None):
     return SimpleNamespace(
         positions=tuple(positions),
         balances=SimpleNamespace(equity=equity),
+        taken_at=taken_at,
+        error=error,
     )
 
 
@@ -130,6 +141,60 @@ async def test_a_raising_poller_is_logged_and_the_previous_value_survives():
 
 
 @pytest.mark.asyncio
+async def test_a_degraded_snapshot_is_refused_not_read_as_fresh():
+    """The shape the REAL AccountPoller actually produces on a broker outage
+    (account_poller.py `_fetch` -> `_degrade`), which does NOT raise: it
+    keeps serving the last good reading with `error` set and `taken_at`
+    carried FORWARD UNCHANGED. The test above proves the survival path with a
+    stub that raises - a shape `_fetch` itself already catches and never lets
+    reach here - so it is near-dead in production while this one, the
+    untested one, is what actually runs on a real outage.
+
+    Uses a MUTABLE clock, not the fixed one `_monitor()` injects, because the
+    bug this pins is about the CLOCK advancing while the DATA does not: a
+    fixed clock would stamp the same `computed_at` either way and the
+    pre-fix/post-fix difference would only show up as object identity, not as
+    a reader being told stale data is current - the failure mode this task
+    exists to close.
+    """
+    clock_box = {"t": NOW}
+    good = _Poller(_snapshot([_position("A2M.AX", 1000, 120.0)], 1_000_000.0, taken_at=NOW))
+    monitor = BookRiskMonitor(
+        account_poller=good,
+        bars=_Aggregator({"A2M.AX": _bars()}),
+        settings=Settings(),
+        sector_by_symbol={"A2M.AX": "Consumer Staples"},
+        clock=lambda: clock_box["t"],
+    )
+    await monitor.poll()
+    before = monitor.latest
+    assert before is not None
+    assert before.computed_at == NOW
+
+    # Four hours pass with the broker down the whole time. _degrade() carries
+    # taken_at forward UNCHANGED - the data is still dated NOW, not re-dated -
+    # while the wall clock a reader would use has moved on.
+    clock_box["t"] = NOW + timedelta(hours=4)
+    degraded = _snapshot(
+        [_position("A2M.AX", 1000, 120.0)],
+        1_000_000.0,
+        taken_at=NOW,
+        error="broker down",
+    )
+    monitor.account_poller = _Poller(degraded)
+    await monitor.poll()
+
+    # Refused exactly like the raising case: the previous measurement
+    # survives untouched, not recomputed from degraded data with a re-dated
+    # computed_at.
+    assert monitor.latest is before
+
+    # The decisive check: a reader asking right now must be told this
+    # four-hour-old book is ABSENT, not handed it as current.
+    assert monitor.fresh(now=clock_box["t"]) is None
+
+
+@pytest.mark.asyncio
 async def test_a_held_symbol_with_no_frame_still_counts_for_concentration():
     poller = _Poller(
         _snapshot(
@@ -185,3 +250,32 @@ async def test_fresh_refuses_a_stale_snapshot():
 
     assert monitor.fresh(now=inside) is not None
     assert monitor.fresh(now=outside) is None
+
+
+@pytest.mark.asyncio
+async def test_fresh_boundary_is_inclusive_at_exactly_the_max_age():
+    """Pins the `>` in fresh() against a mutation to `>=`. 179/181 above land
+    well inside/outside on EITHER operator - this is the one point, exactly
+    at book_risk_max_age_seconds, where the two disagree."""
+    poller = _Poller(_snapshot([_position("A2M.AX", 1000, 120.0)], 1_000_000.0))
+    monitor = _monitor(poller, _Aggregator({"A2M.AX": _bars()}))
+    await monitor.poll()
+
+    at_bound = NOW + timedelta(seconds=180)
+    just_past = NOW + timedelta(seconds=180, microseconds=1)
+
+    assert monitor.fresh(now=at_bound) is not None
+    assert monitor.fresh(now=just_past) is None
+
+
+@pytest.mark.asyncio
+async def test_fresh_refuses_a_measurement_dated_in_the_future():
+    """Clock skew, or any other way computed_at ends up ahead of `now`: a
+    NEGATIVE age must not read as fresher than fresh. Absent, not eager."""
+    poller = _Poller(_snapshot([_position("A2M.AX", 1000, 120.0)], 1_000_000.0))
+    monitor = _monitor(poller, _Aggregator({"A2M.AX": _bars()}))
+    await monitor.poll()
+
+    before_the_measurement_was_computed = NOW - timedelta(seconds=1)
+
+    assert monitor.fresh(now=before_the_measurement_was_computed) is None

@@ -57,10 +57,12 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
 
 import pandas as pd
 
+from qat.config import Settings
+from qat.data.bars import MultiSymbolAggregator
+from qat.data.broker.account_poller import AccountPoller
 from qat.domain.risk_engine.portfolio_risk import (
     _ES_CONFIDENCE,
     _VAR_CONFIDENCE_95,
@@ -286,14 +288,12 @@ class BookRiskMonitor:
 
     def __init__(
         self,
-        account_poller: Any,
-        bars: Any,
-        settings: Any | None = None,
+        account_poller: AccountPoller,
+        bars: MultiSymbolAggregator,
+        settings: Settings | None = None,
         sector_by_symbol: dict[str, str] | None = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
-        from qat.config import Settings
-
         self.account_poller = account_poller
         self.bars = bars
         self.settings = settings or Settings()
@@ -329,11 +329,29 @@ class BookRiskMonitor:
         ⚠️ A failure LEAVES THE PREVIOUS VALUE STANDING rather than clearing it.
         That is safe only because every value carries `computed_at` and readers
         go through `fresh()`.
+
+        ⚠️ A SNAPSHOT CARRYING `error` IS REFUSED, THE SAME AS A RAISED
+        EXCEPTION - not computed from. `AccountPoller._fetch` catches the
+        broker's own exceptions and returns `_degrade(...)`, which keeps
+        serving the LAST GOOD reading with `taken_at` carried forward
+        UNCHANGED and `error` set, precisely so a transient failure does not
+        blank the panel. `snapshot()` therefore does NOT raise on a broker
+        outage, so the except clause above never fires for one - this check
+        is the only thing standing between a stale broker read and a book
+        computed from it. Same idiom as balances_panel.py:390
+        (`stale = snapshot.error or snapshot.is_stale`).
         """
         try:
             snapshot = await self.account_poller.snapshot()
         except Exception:  # noqa: BLE001 - the previous measurement survives
             logger.warning("Could not read the account for book risk; keeping the last measurement")
+            return self.latest
+
+        if snapshot.error is not None:
+            logger.warning(
+                "Account snapshot is degraded (%s); keeping the last book-risk measurement",
+                snapshot.error,
+            )
             return self.latest
 
         equity = getattr(snapshot.balances, "equity", None)
@@ -359,7 +377,13 @@ class BookRiskMonitor:
             returns=returns,
             total_equity=float(equity),
             sector_by_symbol=self.sector_by_symbol,
-            now=self._clock(),
+            # The DATA's own timestamp, NOT the clock: age_seconds must measure
+            # how old the READING is, not how long ago this method happened to
+            # run. A degraded snapshot is already refused above, but even a
+            # healthy one can be an already-cached read up to interval_seconds
+            # old (AccountPoller.snapshot()) - taken_at is the honest figure
+            # either way. `_clock` stays reserved for fresh()'s notion of "now".
+            now=snapshot.taken_at,
             min_observations=self.settings.book_risk_min_observations,
         )
         return self.latest
@@ -370,10 +394,22 @@ class BookRiskMonitor:
         ⚠️ A stale snapshot is treated IDENTICALLY to a missing one. There is no
         third state and no "probably still fine" path - that is what item 6
         refused when it rejected searching back through the audit CSV.
+
+        ⚠️ A NEGATIVE age - `computed_at` dated in the future, from clock skew
+        or an injected clock running backwards - is refused too, not treated
+        as fresher than fresh. A value dated in the future about the present
+        is not trustworthy, so it is treated as absent, the same as one dated
+        too far in the past.
         """
         if self.latest is None:
             return None
         age = self.latest.age_seconds(now or self._clock())
+        if age < 0:
+            logger.warning(
+                "Book-risk measurement is dated %.1fs in the future; refusing it as unreliable",
+                -age,
+            )
+            return None
         if age > self.settings.book_risk_max_age_seconds:
             return None
         return self.latest
