@@ -4365,7 +4365,7 @@ feature, and the escaped-hold Status note. Neither is in M162. Both need a
 build, deploy and read-back.
 
 Suite 3,076 passed / 26 skipped. ruff, black, mypy src, bandit clean.
-17 commits unpushed. Tree clean, on master.
+1 commit unpushed. Tree clean, on master.
 
 Broker is TWS on 7497 (Gateway closed). Account DUQ200898, paper, AUD.
 TEN POSITIONS, 20 resting legs, all protected. Equity 1,007,638.94.
