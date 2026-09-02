@@ -311,6 +311,59 @@ def test_the_loss_escape_suppresses_the_minimum_hold_blocker():
     assert not any(b.startswith("held until") for b in views[0].notes)
 
 
+def test_an_escaped_hold_SAYS_SO_rather_than_falling_silent():
+    """⚠️ AN EMPTY STATUS CELL MEANT TWO DIFFERENT THINGS, and an operator
+    could not tell which.
+
+    "still held" and "escapable right now" both rendered as nothing. Worse,
+    they SWAP as the price moves: on 2 September three positions sat at 0.571,
+    0.663 and 0.793R against a 0.5R escape, and earlier the same day two of
+    them were at 0.510 and 0.506 - a hair over the line. Each tick across the
+    threshold made the note appear and disappear, which is what the operator
+    reported as "information missing, shifting across symbols through the day".
+
+    Nothing was broken. But a column that empties itself teaches an operator to
+    distrust it, and it cost a real investigation to establish that three of
+    the five blanks were correct behaviour.
+
+    `loss_r` is the precise discriminator - `minimum_hold_status` populates it
+    ONLY when the loss escape was actually reached and computed, and leaves it
+    None on every other path, including a hold that simply elapsed.
+    """
+    settings = _settings(
+        min_holding_trading_days=5, min_holding_loss_escape_r=0.5, enforce_time_stop=False
+    )
+    views = _build(
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0, current_price=94.0)],
+        entries={
+            "AAA": _entry(opened_at=datetime(2026, 8, 3, tzinfo=UTC), price=100.0, stop_price=90.0)
+        },
+        settings=settings,
+        clock=lambda: datetime(2026, 8, 6, tzinfo=UTC),
+    )
+    assert "hold escaped (0.60R down)" in views[0].notes
+
+
+def test_an_ELAPSED_hold_stays_quiet():
+    """The escape note is for a position still INSIDE its window. Once the
+    minimum hold is simply over, there is no constraint to report, and saying
+    so on every row for the rest of the position's life would be noise -
+    `loss_r` is None here, which is what separates the two."""
+    settings = _settings(
+        min_holding_trading_days=2, min_holding_loss_escape_r=0.5, enforce_time_stop=False
+    )
+    views = _build(
+        positions=[Position(symbol="AAA", quantity=100.0, avg_price=100.0, current_price=99.0)],
+        entries={
+            "AAA": _entry(opened_at=datetime(2026, 8, 3, tzinfo=UTC), price=100.0, stop_price=90.0)
+        },
+        settings=settings,
+        clock=lambda: datetime(2026, 8, 20, tzinfo=UTC),
+    )
+    assert not any("hold escaped" in b for b in views[0].notes)
+    assert not any(b.startswith("held until") for b in views[0].notes)
+
+
 def test_a_near_miss_escape_does_not_suppress_the_blocker():
     """0.35R down against a 0.50R escape - the exact scenario the brief warns
     a naive projection would get wrong."""

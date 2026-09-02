@@ -142,6 +142,26 @@ def _notes(
         clears_on = _first_session_that_clears(entry.opened_at, settings.min_holding_trading_days)
         suffix = "" if status.escape_evaluated else " (escape unknown)"
         notes.append(f"held until {format_display_date(clears_on)}{suffix}")
+    elif status.loss_r is not None:
+        # ⚠️ AN EMPTY CELL MEANT TWO DIFFERENT THINGS, and they SWAP as the
+        # price moves. "still held" and "escapable right now" both rendered as
+        # nothing, so the column emptied and refilled tick by tick as a
+        # position crossed the escape threshold - reported by the operator on
+        # 2 September as information going missing and shifting across symbols
+        # through the day. Three positions sat at 0.571, 0.663 and 0.793R
+        # against a 0.5R escape that afternoon, two of them at 0.510 and 0.506
+        # earlier the same day: a hair over the line, in both directions.
+        #
+        # Nothing was broken, and that was the problem - it cost a real
+        # investigation to establish that the blanks were correct. A column
+        # that empties itself teaches an operator to distrust it.
+        #
+        # `loss_r` is the exact discriminator rather than a re-derivation:
+        # `minimum_hold_status` populates it ONLY when the loss escape was
+        # reached and computed, and leaves it None on every other path -
+        # including a hold that has simply elapsed, which needs no note at all
+        # and would be noise on every row for the rest of the position's life.
+        notes.append(f"hold escaped ({status.loss_r:.2f}R down)")
 
     if settings.enforce_time_stop:
         held_days = _trading_days_between(entry.opened_at, now)
