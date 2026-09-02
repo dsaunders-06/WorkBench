@@ -29,6 +29,7 @@ too: a zero-weight position actually being excluded from `symbols`, and the
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 
 import pandas as pd
@@ -309,3 +310,117 @@ def test_infinite_equity_is_absent_not_zero():
     assert result.sector_pct is None
     assert result.symbols == 1
     assert any("equity" in note for note in result.notes)
+
+
+def test_a_single_non_finite_return_is_excluded_and_metrics_still_compute():
+    """The third sibling hole, on the RETURNS input: dropna() inside
+    `_combined_portfolio_returns` removes NaN rows but NOT +/-inf ones, so a
+    lone -inf return would otherwise reach np.percentile and tail.mean()
+    directly - and can come back as an equally non-finite (or, via the
+    nan->0.0 collapse below, a MEASURED 0.0) result. It must be excluded
+    before VaR/ES are called, with `observations` and a note reflecting the
+    drop - and the 59 finite rows that remain must still be measured, not
+    thrown away wholesale."""
+    values = [0.01, -0.02, 0.015, -0.01, 0.005, -0.004, 0.02, -0.008, 0.003, -0.012] * 6
+    values[7] = float("-inf")
+    result = compute_book_risk(
+        weights={"A2M.AX": 100_000.0},
+        returns={"A2M.AX": _series(values)},
+        total_equity=1_000_000.0,
+        sector_by_symbol={"A2M.AX": "Consumer Staples"},
+        now=NOW,
+        min_observations=30,
+    )
+
+    assert result.observations == 59
+    assert result.var_95 is not None and math.isfinite(result.var_95)
+    assert result.var_99 is not None and math.isfinite(result.var_99)
+    assert result.es_975 is not None and math.isfinite(result.es_975)
+    assert any("1 non-finite return observation" in note for note in result.notes)
+
+
+def test_enough_non_finite_returns_drops_the_remainder_below_the_floor():
+    """If excluding the non-finite observations leaves too few to measure,
+    the existing floor gate must catch the REDUCED count - the same way an
+    all-NaN book already does - rather than computing VaR/ES on whatever
+    finite rows happen to remain, or on the unfiltered (and non-finite-
+    contaminated) series."""
+    values = [0.01, -0.015] * 20  # 40 observations
+    for i in range(12):
+        values[i] = float("inf") if i % 2 == 0 else float("-inf")
+    result = compute_book_risk(
+        weights={"A2M.AX": 100_000.0},
+        returns={"A2M.AX": _series(values)},
+        total_equity=1_000_000.0,
+        sector_by_symbol={"A2M.AX": "Consumer Staples"},
+        now=NOW,
+        min_observations=30,
+    )
+
+    assert result.var_95 is None
+    assert result.var_99 is None
+    assert result.es_975 is None
+    assert result.observations == 28
+    assert any("12 non-finite return observation" in note for note in result.notes)
+    assert any("below the floor of 30" in note for note in result.notes)
+
+
+def test_all_non_finite_returns_is_absent_not_zero():
+    """Every observation unmeasurable must end as None via the existing
+    floor gate (0 finite rows), never as the 0.0/inf mess that two
+    infinities landing either side of a percentile target produce -
+    max(0.0, -float(nan)) is 0.0 because nan > 0.0 is False, the exact
+    sentinel this module exists to refuse."""
+    values = [float("inf") if i % 2 == 0 else float("-inf") for i in range(60)]
+    result = compute_book_risk(
+        weights={"A2M.AX": 100_000.0},
+        returns={"A2M.AX": _series(values)},
+        total_equity=1_000_000.0,
+        sector_by_symbol={"A2M.AX": "Consumer Staples"},
+        now=NOW,
+        min_observations=30,
+    )
+
+    assert result.var_95 is None
+    assert result.var_99 is None
+    assert result.es_975 is None
+    assert result.observations == 0
+    assert any("60 non-finite return observation" in note for note in result.notes)
+
+
+def test_short_weight_over_pct_change_with_zero_closes_is_never_a_measured_zero():
+    """The reachable, not-constructed case: `closes.pct_change().dropna()`
+    (the exact expression signal_bridge.py:182 uses) produces +inf across a
+    vendor zero close, and a SHORT position's negative weight fraction
+    flips that to -inf in the combined portfolio series - short positions
+    are a documented recurring event in this codebase. Four such incidents
+    reproduce the defect signature verbatim on the pre-fix module: var_95
+    and var_99 both MEASURED as 0.0, es_975 as inf, with empty notes. None
+    of the three may be 0.0 while notes stays empty."""
+    closes = [100.0]
+    cycle = [1.01, 0.985, 1.015, 0.99, 1.005, 0.996, 1.02, 0.992, 1.003, 0.988]
+    for i in range(56):
+        closes.append(closes[-1] * cycle[i % len(cycle)])
+    # Four separate bad-zero-tick incidents (a vendor zero, then a bounce
+    # back to a real price), spread through the series.
+    for pos in (10, 22, 34, 46):
+        closes.insert(pos, 0.0)
+        closes.insert(pos + 1, closes[pos - 1])
+    closes_series = pd.Series(
+        closes, index=pd.date_range("2026-01-01", periods=len(closes), freq="D")
+    )
+    returns = closes_series.pct_change().dropna()
+    assert any(not math.isfinite(v) for v in returns)  # sanity: the artifact is really there
+
+    result = compute_book_risk(
+        weights={"A2M.AX": -100_000.0},
+        returns={"A2M.AX": returns},
+        total_equity=1_000_000.0,
+        sector_by_symbol={"A2M.AX": "Consumer Staples"},
+        now=NOW,
+        min_observations=30,
+    )
+
+    for metric in (result.var_95, result.var_99, result.es_975):
+        assert not (metric == 0.0 and not result.notes)
+    assert any("non-finite return observation" in note for note in result.notes)

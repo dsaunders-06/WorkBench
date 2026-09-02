@@ -166,6 +166,24 @@ def compute_book_risk(
     portfolio_returns = PortfolioRiskChecker._combined_portfolio_returns(
         held, returns, total_equity
     )
+    # dropna() inside _combined_portfolio_returns removes NaN rows but NOT
+    # +/-inf ones. pct_change() over a vendor zero close (signal_bridge.py's
+    # `closes.pct_change().dropna()`) legitimately produces +inf, and a SHORT
+    # position's negative weight fraction flips that to -inf in this combined
+    # series. Left in, it reaches np.percentile / tail.mean() below: when the
+    # target percentile lands between two infinities the subtraction is
+    # -inf - -inf = nan, and max(0.0, -float(nan)) is 0.0 because nan > 0.0 is
+    # False - a MEASURED ZERO about tail risk that was never actually
+    # measured. Excluding it here, before `observations` is taken, means an
+    # all-infinite book lowers the count and falls through the existing floor
+    # gate to None on its own, the same way an all-NaN book already does.
+    finite = portfolio_returns[portfolio_returns.map(math.isfinite)]
+    if len(finite) != len(portfolio_returns):
+        notes.append(
+            f"{len(portfolio_returns) - len(finite)} non-finite return observation(s) "
+            "excluded - they cannot be measured"
+        )
+    portfolio_returns = finite
     observations = len(portfolio_returns)
 
     # ⚠️ THE GATE, BEFORE THE CALL - and the floor it gates on is not simply
