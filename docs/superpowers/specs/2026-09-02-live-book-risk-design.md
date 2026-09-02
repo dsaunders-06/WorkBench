@@ -108,6 +108,39 @@ and explained by the note.
 An empty book yields every field `None` with the note *"no positions held"* — not
 zeros. A book with no equity yields the same, noting the equity read failed.
 
+### ⚠️ The two concentration fields do NOT mean the same thing on both sides
+
+Found while reading `PortfolioRiskChecker.check` to write the plan, and it would
+have made the side-by-side display quietly misleading:
+
+* the **decision** `single_name_pct` is the **candidate's** weight over equity
+  (`portfolio_risk.py:99`) — a statement about the trade being considered
+* the **decision** `sector_pct` is the **candidate's sector** gross over equity
+* there is no candidate in a live book, so the live equivalents are the **maximum
+  over the book**: the most concentrated single name, and the most concentrated
+  sector
+
+VaR and ES have no such asymmetry — both are properties of a combined return
+series, and the live series simply omits the candidate.
+
+**Therefore the two concentration figures are labelled differently wherever they
+appear together.** The live pair reads *"largest single name"* / *"largest
+sector"*; the decision pair reads *"candidate single name"* / *"candidate
+sector"*. Putting `12.5%` beside `12.5%` under one shared label would invite the
+reader to treat a coincidence as agreement.
+
+### Weights are cost basis, matching the decision path exactly
+
+`existing_weights` is built as `quantity * avg_price` (`signal_bridge.py:1467`),
+so the live path uses the same and **not** the broker's mark.
+
+⚠️ Residual, recorded rather than hidden: that is cost basis, not current value,
+so a book that has moved a long way from entry is weighted by what it cost rather
+than what it is worth. `Position.mark` exists (M66) but is `None` on adapters that
+do not report one, which would introduce both a missing-data path and a silent
+divergence from the number displayed next to it. Comparability wins here; if the
+mark is ever wanted, **both** sides move together or neither does.
+
 ---
 
 ## B. `BookRiskMonitor` — the sampler
@@ -155,6 +188,12 @@ together, so the divergence is visible rather than inferred.
 
 Each of the four tiles: the **live** value as the headline, and beneath it, in
 muted caption type, `at last decision: x`.
+
+⚠️ The two concentration tiles are **relabelled**, per the asymmetry recorded in
+section A: `Largest single name` and `Largest sector` for the live headline, with
+the caption reading `candidate at last decision: x`. The VaR and ES tiles keep
+their existing labels, because those two figures do mean the same thing on both
+sides.
 
 ⚠️ **When there is no decision-derived value, the second line is omitted
 entirely** — not rendered as a dash. That is the common case today, because the
