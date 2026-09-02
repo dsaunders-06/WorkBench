@@ -1,4 +1,4 @@
-# Handoff — 21 August 2026, after the first widened ASX session
+# Handoff — 2 September 2026, after the manual-close merge and M162
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -41,30 +41,17 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M161 (`04053ba`)**, installed 1 September 16:18, SHA256 `1F769859…03A0`, signature Valid on the installed copy. Rollback: `C:\QuantAdvisoryTerminal.bak-e4987f9-20260901-1618` (contains M159). ✅ **READ BACK 1 September 17:20** off its own log: `Build: M161 (04053ba, built 01/09/2026 16:07:36 AEST, packaged)`, **warm start seeded 100 symbols** (the 94→99 widening, live), ten positions adopted with 20 legs, scan clean, `Excursion backfilled … 10 of 10`. **M161 contains M160 and M159**, so one deploy carried all three. ⚠️ **The kill switch is TRIPPED** — see below. Previous: M159 (read back 1 Sept), M158 (read back 3×), M157, M156, M155, M154, M153 |
-| Repository HEAD | ⚠️ **AHEAD by M160**, built and NOT deployed. `handoff_state.py` derives the gap |
-| Deploy gap | ⚠️ **M160 NOT DEPLOYED.** `DEPLOYED` reads `e4987f9` (M159), now launched and partly read back. ⚠️ **Deploying M160 requires stopping the app** (the running process holds the exe), so it cannot happen mid-session without ending M159's read-back before three of its four checks have been exercised. **Deploy M160 after the close, not during.** M160's own read-back then needs an entry that fills across multiple executions - which needs the book below ten, which needs an exit |
-| Pushed | ✅ **LEVEL with `origin` at `0167399`.** The 27 August hold was lifted on 30 August and 74 commits went up in ONE push. ⚠️ **CI is STILL at the billing wall** — that push's run died in 2s with zero steps, *"the job was not started because recent account payments have failed or your spending limit needs to be increased"*. **The allowance resets ~1 September.** Until then a push backs work up, costs no Actions minutes (a job that never starts bills nothing) and emails a failure while verifying nothing. After the reset, batch pushes: one push is one run, ~8.6 minutes of 2,000 at `windows-latest`'s 2× multiplier |
-| Suite | **2,993 passed, 26 skipped** (3,019 collected). ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY - `black --check` exits 0 while printing "1 file would be reformatted", so `&&` hides a failure |
-| Watchlist | **99 ASX megacaps + STW.AX = 100 polled — M161, DEPLOYED and live since 1 September.** First open on 100 symbols was 2 September: blind window **20m22s** against 95 symbols' 20m40s the day before, so the widening cost nothing measurable; 713 per-symbol errors suppressed against 674. ⚠️⚠️ **BUT THE FIVE ADDED SYMBOLS HAVE NO SECTOR MAPPING — see the 2 September item below. The 30% sector concentration cap does not apply to them.** ⚠️ **NEITHER 94 NOR 101 WAS EVER A LIMIT** — 94 is the length of the hardcoded megacap tuple (shipped at 100, six pruned by M110), and the 20 August yfinance block at "101" was OUR count (unpruned 100 + STW.AX), not Yahoo's threshold. Where the vendor's limit actually sits is **unmeasured**. `watchlist_max_symbols` is 100 and was never binding at 94 |
-| Entry allow list | **CLEARED** — all 94 enterable |
-| Account | **TEN POSITIONS, 20 resting legs, all protected** - A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW. **JHX.AX 1,097 @ 41.9554 entered 31 Aug 10:30** (17 executions, bracketed LMT 46.01 / STP 39.39, OCA-linked). **PNI.AX stopped out 31 Aug 10:00 at 15.56, -7,170.79 net, -1.6455R** - gapped 0.90 through a 16.46 stop. Aggregate risk-at-stop was 3.992% at 9 positions; re-measure, the book is 10 again |
-| Broker | ⚠️ **TWS on 7497, changed 1 September 17:40** — `QAT_IBKR_PORT=4002 -> 7497` via `scripts/set_ibkr_port.py --apply` (backup `.env.bak-20260901-174044`, value read back). IB Gateway is CLOSED. Verified read-only before switching: account **DUQ200898** (`DU` = paper), NetLiquidation **1,007,674.57 AUD**, ten positions and **twenty legs each OCA-paired**. Then verified again from the app: M161 adopted the same ten positions, 20 legs, scan clean. ⚠️ **TWS gives MANUAL buy/sell, which the app knows nothing about** — a manual SELL of an app-managed position is safe, a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
-| Kill switch | ⚠️ **TRIPPED, awaiting reset** — see the 1 September section. Previously: tripped ~16:11 (*"IBKR connection lost and reconnect attempts exhausted"*, a TRUE POSITIVE: the operator closed IB Gateway after the 16:00:04 stand-down), restored on the 17:20 launch, and **reset 17:22:53 via the risk console**, which calls the app's own `KillSwitch.reset()` so the action is attributed and quotes the original reason. **Verified on disk, not taken on trust:** `kill_switch.json` reads `{"tripped": false, "reason": null}`. **Justified, not routine:** the Gateway is back on 4002, this launch connected, ten positions with twenty legs were adopted FROM THE BROKER, and the resting scan read clean. ⚠️ **ORDER FLOW IS LIVE.** The position cap is the only thing between a signal and an entry, so **the first exit unblocks a real entry with no halt behind it**. Quarantines: EMPTY. Previous reset: 31 August 16:36 via `scripts/reset_kill_switch.py --apply` |
-| Ledgers | **6 closed trades** — five LOV.AX and one RHC.AX. ⚠️ **One LOV row is a REPAIR row with EMPTY costs**, so net P&L across LOV is **NOT summable from that file**; IBKR's commission on the unabsorbed portion was not knowable after the fact and its `exit_reason` says so. ⚠️ **All six carry an EMPTY `entry_slippage`** — see item 44: the field was never persisted, and M156 fixes that only for trades opened FROM NOW |
+| Deployed build | **M162 (`0961752`)**, installed 2 September 16:24, SHA256 `ED2A768E…C181`, signature Valid on the installed copy. ✅ **READ BACK 16:25** off its own log, 100 symbols seeded, ten positions adopted, 20 legs, excursion 10 of 10, zero ERROR/CRITICAL. Rollback: `C:\QuantAdvisoryTerminal.bak-04053ba-20260902-1624` (M161). Previous: M161, M159, M158 (read back 3×) |
+| Deploy gap | ⚠️ **HEAD IS AHEAD OF THE INSTALLED BUILD.** Two things are merged to `master` and NOT deployed: the **manual position close** feature (button + `PositionCloser`) and the **escaped-hold Status note**. Neither is in M162. Both need a build, deploy and read-back. `handoff_state.py` derives the gap |
+| Pushed | ⚠️ **17 commits UNPUSHED.** ✅ **CI IS HEALTHY** — the billing wall cleared ~1 September and a 46-commit push ran green in **7m9s**. One push is one run, ~8.6 min of 2,000 at `windows-latest`'s 2× multiplier, so batch rather than push per commit |
+| Suite | **3,076 passed, 26 skipped.** ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted", so `&&` hides a failure |
+| Watchlist | **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
+| Entry allow list | **CLEARED** — all 99 enterable |
+| Account | **TEN POSITIONS, 20 resting legs, all protected** — A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW, verified from the broker on every scan. Equity **1,007,638.94** at the 2 September close (+137.91 on the day, cash unchanged at 413,034.56). **No trade since 31 August** |
+| Broker | **TWS on 7497** since 1 September 17:40 (`QAT_IBKR_PORT` 4002 → 7497, backup `.env.bak-20260901-174044`). IB Gateway is closed. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
+| Kill switch | ✅ **CLEAR.** Tripped twice on 1 September, both TRUE POSITIVES and both self-inflicted by shutdown ORDER — closing the broker while the app still ran exhausted the adapter's reconnects. Reset 17:45:53 via the risk console; verified on disk (`{"tripped": false}`) and stayed clear through the whole 2 September session. ⚠️ **THE RULE: close the app FIRST, then the broker.** The reverse costs a reset every time. Quarantines: EMPTY |
+| Ledgers | **7 closed trades.** ⚠️ **One LOV row is a REPAIR row with EMPTY costs**, so net P&L across LOV is **NOT summable from that file**. ⚠️ **All carry an EMPTY `entry_slippage`** — item 44: the field was never persisted, and M156 fixes that only for trades opened FROM NOW |
 
-> ✅ **The `-dirty` exe is gone.** It was replaced at 20:02 by a build from the
-> clean tree, stamped `M134 (2d7777c, built 21/08/2026 10:00 UTC)` with no
-> `-dirty` marker, signed and timestamp-verified, and installed at 20:05. The
-> installed exe is **SHA256-identical** to the signed one in `dist\`
-> (`9C63B69D…306C`). Rollback artefact `QuantAdvisoryTerminal-M130-f5b9bd2.zip`
-> is still in `dist/`.
->
-> ✅ **Read back off its own log at 20:10**, on a run that connected to the
-> broker: `Build: M134 (2d7777c, built 21/08/2026 10:00 UTC, packaged)`. Launched
-> 20:09:43, stood down 20:10:51 with the account FLAT and nothing to adopt, zero
-> ERROR/CRITICAL, three equity samples written. The deployed build is an
-> observation, not an intention.
 
 ### The account is AUD-base. Verified, not assumed.
 
@@ -2082,7 +2069,9 @@ because reading a list is not auditing it. Item 2 needed four.
     Until then: **a tripped kill switch is not a durable halt.** If the account
     must not trade, do not rely on the switch alone across a restart.
 
-33. **The feed's blind window and the entry gate line up by COINCIDENCE, and
+33. ✅ **DEEPER FIX REJECTED 1 Sept — measured, not assumed. The gate half is BUILT (M158).** Original heading below.
+
+    **The feed's blind window and the entry gate line up by COINCIDENCE, and
     nothing checks that they do.** yfinance publishes ASX intraday roughly 20
     minutes late, so the application is structurally blind from the bell until
     about 10:21. The autonomy gate happens to block entries until 10:29. The
@@ -4333,179 +4322,136 @@ Paper account throughout - no real money.
 
 READ THE STATE FIRST, and trust it over anything in this prompt:
 
-    & "C:\Claude Programming\scripts\session_check.ps1"   (NO ARGUMENTS, EVER)
+    & "C:\Claude Programming\scripts\session_check.ps1"     # NO ARGUMENTS, EVER
     .\.venv\Scripts\python.exe scripts\handoff_state.py
 
-Then read docs\HANDOFF.md, starting with the 31 AUGUST sections - the first
-app-transmitted entry is in there and it broke four things.
+Then read docs\HANDOFF.md from "Where this stands".
 
 ⚠️ POWERSHELL for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal -
 including Python that only READS it, and anything that builds Settings(), which
 loads that directory's .env whether or not the script mentions it. The Bash
 sandbox serves a frozen snapshot and does NOT error.
 
-⚠️ RUN THE FOUR CHECKS SEPARATELY, never chained with &&. black --check EXITS 0
-while printing "1 file would be reformatted", so a chain reports success on a
-failure. That happened on 31 August and a bad commit went in.
+⚠️ RUN THE FOUR CHECKS SEPARATELY, never chained. black --check can EXIT 0 while
+printing "1 file would be reformatted", so a chain reports success on a failure.
 
-⚠️ DO NOT REFERENCE ALPACA. It has no purpose or function in this app - the
-broker is IBKR, the market ASX, the price source yfinance. Item 13 keeps the code
-only as the US era's evidence trail. Citing it inflates the cost of any change.
+⚠️ DO NOT REFERENCE ALPACA. The broker is IBKR, the market ASX, the price source
+yfinance. Item 13 keeps the code only as the US era's evidence trail.
 
-⚠️ PUSHING IS ALLOWED but batch it. The 27 August hold was lifted on 30 August
-with a condition: 2,000 Actions minutes a month, ~8.6 per run at windows-latest's
-2x multiplier, and ONE push fires ONE run however many commits it carries.
-⚠️ CI was still at the billing wall on 30 August; the allowance resets ~1 Sept.
-Until it does, a push backs work up, costs no minutes, and emails a failure while
-verifying nothing.
+⚠️ PUSHING IS ALLOWED - batch it. CI is HEALTHY (green 7m9s on 1 Sept, the
+billing wall cleared). ONE push is ONE run, ~8.6 of 2,000 minutes a month.
 
-⚠️ DEPLOY WITH scripts\deploy.ps1 (dry run first, then -Apply). Ask before
--Apply. It derives everything and rewrites DEPLOYED only after verifying the
-installed copy.
+⚠️ DEPLOY WITH scripts\deploy.ps1 (dry run first, then -Apply). ASK before
+-Apply. It refuses a stale dist via BUILD_MANIFEST.json and rewrites DEPLOYED
+only after verifying the installed copy.
+⚠️ BUILD FIRST, AND CHECK THE DIST HASH MOVED. On 1 September dist held an exe
+byte-identical to the installed build while the handover claimed a milestone was
+"BUILT". A hash that has not changed is the whole check.
+
+⚠️ CLOSE THE APP FIRST, THEN THE BROKER. The reverse trips the kill switch every
+time - twice on 1 September, both true positives, both avoidable.
+
+⚠️ COMMIT BEFORE SABOTAGING A RAIL. git checkout on an UNCOMMITTED file discards
+the real edit along with the sabotage. That happened on 2 September; the
+grep-back caught it.
 
 THE STATE
 
-  Deployed M159 (e4987f9), installed 31 August 16:31. Exe SHA256 A077BE40...55C3,
-  signature Valid on the installed copy.
-  ⚠️ NEVER LAUNCHED - the first launch is the read-back.
-  Rollback: C:\QuantAdvisoryTerminal.bak-16ce8e6-20260831-1631 (contains M158).
+Deployed M162 (0961752), installed and READ BACK 2 September 16:25.
+Rollback: C:\QuantAdvisoryTerminal.bak-04053ba-20260902-1624 (contains M161).
 
-  ⚠️ M160 IS BUILT AND NOT DEPLOYED, deliberately. HEAD is 4695761. DO NOT stack
-  a third undeployed milestone - read M159 back first, then deploy M160. Today's
-  whole value came from reading one build at a time.
+⚠️ TWO THINGS ARE MERGED TO master AND NOT DEPLOYED: the manual position-close
+feature, and the escaped-hold Status note. Neither is in M162. Both need a
+build, deploy and read-back.
 
-  Tree clean. 34 commits unpushed. Suite 2,993 passed / 26 skipped
-  (3,019 collected). ruff, black, mypy src, bandit clean.
-  App STOPPED (clean shutdown 16:01:31). Gateway UP on 4002.
+Suite 3,076 passed / 26 skipped. ruff, black, mypy src, bandit clean.
+17 commits unpushed. Tree clean, on master.
 
-  TEN POSITIONS, all bracketed, 20 resting legs, verified FROM THE BROKER:
-  A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW.
-  JHX.AX 1,097 @ 41.9554 entered 31 Aug 10:30 - the FIRST app-transmitted entry.
-  PNI.AX stopped out 31 Aug at 15.56, -7,170.79 net, -1.6455R.
+Broker is TWS on 7497 (Gateway closed). Account DUQ200898, paper, AUD.
+TEN POSITIONS, 20 resting legs, all protected. Equity 1,007,638.94.
+KILL SWITCH CLEAR. Quarantines EMPTY. No trade since 31 August.
 
-  KILL SWITCH CLEAR - reset 16:36 via scripts/reset_kill_switch.py after the
-  10:30 mismatch resolved in 45 seconds and never recurred. Quarantines EMPTY.
-  ⚠️ The next launch RESUMES ORDER FLOW. The position cap is the only thing
-  between a signal and an entry, so the FIRST EXIT unblocks a real entry with no
-  halt behind it.
+⚠️ Order flow is LIVE and the book is 10 of 10, so the position cap is the only
+gate. THE FIRST EXIT UNBLOCKS A REAL ENTRY with no halt behind it - and that
+entry is what M160's read-back and M159's three unread checks are still waiting
+on. Nothing has been within 3.4% of a leg since 1 September.
 
-  SEVEN CLOSED TRADES. ⚠️ One LOV row is a REPAIR row with EMPTY costs, so net
-  P&L across LOV is NOT summable from that file.
+OUTSTANDING, IN ORDER
 
-⚠️ FIRST WORK: LAUNCH AND READ M159 BACK. It has never run.
+1. DEPLOY THE MERGED WORK - manual close + escaped-hold note. Build, sign, check
+   the hash moved, deploy, read back. The close feature is INERT until its button
+   is pressed, so deploying it changes no autonomous behaviour.
+   ⚠️ WHEN YOU DO PRESS IT: the fourth review found the FIRST click will probably
+   REFUSE, because cancelOrder is fire-and-forget and PendingCancel is the
+   ordinary transient of an honoured cancel - now correctly treated as a
+   survivor. That branch deliberately does not recover, so the position is
+   briefly BARE until rearm_protective_stops re-proposes a stop. If it happens,
+   the fix is a bounded re-read (~3 polls over 2s) before declaring survivors,
+   leaving the fail-closed predicate untouched.
 
-  Expect Build: M159 (e4987f9, ...), ten positions adopted, and:
+2. MILESTONE ITEMS still open - docs/superpowers/specs/2026-09-02-milestone-scope.md:
+   * EQUITY CURVE Y AXIS renders as 1.004e+06. Needs an operator decision between
+     thousands-separated dollars, $k/$M, or change-from-day-start.
+   * CORPORATE-ACTION BANNER is permanent furniture. The message is correct and
+     must NOT be deleted; the problem is a STANDING condition rendered as an
+     ALERT, which teaches an operator to stop seeing that space.
+   * DAILY/WEEKLY REPORT HISTORY, newest first. Not yet investigated.
+   * RISK METRICS ABSENT in the AI advisory. portfolio_check appears in only 63
+     of 3,596 audit rows (1.8%), and risk_metrics() reads ONLY the last entry -
+     so the model has almost certainly never seen portfolio risk. It also drops
+     var_99, single_name_pct and sector_pct when it does fire. Two questions: why
+     is portfolio_check recorded so rarely, and should the read search back for
+     the most recent entry that HAS it - bounded by staleness, since M73's own
+     comment warns that a stale number reaching the model is the failure it was
+     written to prevent.
 
-  1. "Excursion backfilled from daily bars on 10 of 10 restored lot(s)". It read
-     9 of 10 on 31 August because JHX was entered that day and had no bars after
-     its entry day - that is the K>0 branch working, and it should be 10 now.
-  2. The transmit line carrying BOTH ids on any entry: order=<uuid>
-     broker=<permId>. Item 56's check was that the line carries a numeric
-     permId; it carried only a UUID until M159.
-  3. mae_r <= gross_r_multiple on any stop-out. PNI violated it (-0.633 against
-     -1.614) because the exit price was never folded into the excursion.
-  4. The orphan scan's GROUP KEY per leg. That is what settles Defect C.
+3. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window. An
+   escaped hold now says "hold escaped (0.60R down)", so a blank is unambiguous
+   evidence of a bug rather than something to infer from prices.
 
-THEN, IN ORDER
+4. Reach 20 closed trades (item 3). At SEVEN. Below 20 the sizer uses invented
+   constants; below 30 the promotion gate cannot be read. Needs market.
 
-  1. RUN scripts\measure_ibkr_feed.py DURING CONTINUOUS TRADING. Item 33 calls an
-     IBKR feed "the deeper fix" for the 20-minute yfinance blind window, and on
-     31 August a streaming delayed subscription was measured delivering a full
-     ASX quote - last/bid/ask/high/low/open/volume - with no market-data
-     subscription. ⚠️ THAT IS NOT A REASON TO MIGRATE. IBKR's DELAYED feed is
-     delayed by definition, nominally 15-20 minutes. If the two are comparable
-     the deeper fix fixes nothing. The harness polls yfinance in the same window
-     as the CONTROL and prints both medians. Read them before designing anything.
-  2. DEPLOY M160 once M159 is read back. It stops the kill switch tripping on a
-     partial fill - measured live, the poll landed 9 seconds into a 45-second
-     fill. Its own read-back needs an entry that fills across multiple
-     executions, which needs the book below ten, which needs an exit.
-  3. DEFECT C - the orphan scan double-counted a fresh position's OCA legs.
-     NARROWED, NOT PROVEN: a power cut showed a fresh read is clean while the
-     in-session view was not. M159's group key settles it. Do not fix from the
-     narrowing.
-  4. THE HMM'S SENSITIVITY TO ANY SEVENTH COLUMN - see below. Bigger than it
-     looks and not yet scoped.
-  5. Reach 20 closed trades (item 3). At SEVEN. Below 20 the sizer uses invented
-     constants; below 30 the promotion gate cannot be read. Needs market.
-  6. The long-standing FEATURES: M39 corporate actions, M41 earnings event risk,
-     Stage 3 ASX auction rules (item 9), Stage 4 regime re-sourcing (item 30).
+5. The long-standing FEATURES: M39 corporate actions, M41 earnings event risk,
+   Stage 3 ASX auction rules (item 9), Stage 4 regime re-sourcing (item 30).
 
-  ⚠️ HOUSEKEEPING: C:\ now holds TWENTY-ONE rollback directories. ~360 GB free,
-  so there is no pressure. Ask before deleting - each is the only rollback path
-  for its build.
+6. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - scoped and measured 1 September,
+   docs/superpowers/specs/2026-09-01-regime-label-stability-scope.md. The finding
+   SURVIVED all three tasks. Not acted on, deliberately.
 
-WHAT 31 AUGUST ESTABLISHED
+⚠️ HOUSEKEEPING: C:\ holds TWENTY-THREE rollback directories. Ask before
+deleting - each is the only rollback path for its build.
 
-  EIGHT THINGS CONFIRMED LIVE, most never proven before: M147's absorb fix
-  (9 executions -> ONE ledger row, full quantity, exit matching VWAP to
-  -0.000000 - the shape that lost 179 of 183 on LOV); M154's blind-window filter
-  (675 suppressed, 97 still visible - a count AND not over-reaching, where M151
-  claimed 678 against 774 still present); M158's absence line (94 of 95); M157's
-  excursion (the first mae_r/mfe_r this system has ever produced); M119's feed
-  retry (a fifth time, backoff at 10:04:28 against 10:04:26 on two earlier days);
-  M65's entry-price correction; ITEM 59's quarantine auto-clear, lifting JHX
-  after exactly 3 clean scans at a time predicted in advance; and M43 ANSWERED.
+WHAT THE LAST TWO DAYS ESTABLISHED
 
-  M43 HAS NO FEED. A streaming delayed subscription during continuous trading
-  delivers a full quote and NEVER populates halted or delayedHalted. What remains
-  is behavioural detection - a heuristic that collides with the staleness rail -
-  and that decision has NOT been taken.
+⚠️ A GREEN SUITE PROVES ONLY THAT THE FAKES AGREE WITH THE CODE. The manual-close
+branch was rejected by whole-branch review THREE times, every time with 3,000+
+tests passing and four clean checks, and every time because a fake did not model
+the real broker: synchronous fills, a kill-switch-blind sign-off, no event bus,
+and a cancel that removed the leg instantly. The test labelled "THE MOST
+IMPORTANT TEST IN THIS FILE", citing 19 August and PendingCancel BY NAME,
+modelled its survivor as "Submitted" - the one status the broken code already
+caught. It was green over the exact defect it was named for.
 
-  MILESTONE B REJECTED BY ITS OWN CONTROL, before anything was built for it.
-  ^AXVI moves the label on 23.0% of bars; a SHUFFLED column of the same values
-  moves it 17.3%, and 18 of 60 controls reached the real arm - p = 0.30. Four
-  build tasks avoided in an evening. ⚠️ The 23.0% itself was VINDICATED on
-  alignment; the figure was never the problem, the missing control was.
+✅ FAIL CLOSED BY CONSTRUCTION, NOT BY ENUMERATION. What finally worked was
+making verification a NEGATIVE test - "status not in TERMINAL_STATUSES" - so any
+status nobody thought of falls to the survivor branch and blocks the sell.
 
-  ⚠️ AND THE FINDING THAT OUTLIVES IT: the controls span 0% to 85.3% with a
-  DETERMINISTIC fit, so a four-state Gaussian HMM under diagonal covariance has
-  no stable answer to "add one column". That bears on Milestone C's ablation
-  percentages too - if adding ANY column moves the label this much, an ablation
-  percentage measures the model's fragility as much as the feature's
-  contribution. Recorded, not chased, not scoped.
+⚠️ A RAIL THAT ONLY REPORTS WHEN EXERCISED IS INVISIBLE UNTIL IT MATTERS. M161
+put five symbols outside the sector cap; the app's own warning for that fires
+only when a signal reaches the bridge, and none did that day. The OPERATOR found
+it in the Screener. M162 added the guard that would have caught it at build time.
 
-  FOUR STALE HEADINGS CLOSED by reading code rather than prose: item 2 (M119,
-  which had survived FOUR confirmations), item 24 (closed by item 58 without
-  anyone noticing), item 26 (its premise false on every specific it named) and
-  M43. That is the recurring shape: a heading written once survives every piece
-  of evidence against it.
+⚠️ AND THE MIRROR IMAGE: the watchlist and the sector map are edited
+independently in BOTH directions - M110 pruned six symbols and left their
+mappings behind. The defect was never the five missing rows.
 
-HABITS THAT PAID FOR THEMSELVES TODAY
+✅ MEASURE BEFORE MIGRATING. Item 33's "deeper fix" - an IBKR price feed - was
+REJECTED on 1 September by its own pre-written reading rule: IBKR delayed 1206.9s
+against yfinance 1237.3s, thirty seconds apart on a twenty-minute window, and
+BOTH blind at the bell. The rule was in the script before the numbers existed.
 
-  WRITE THE READING RULE BEFORE THE NUMBERS EXIST. The ^AXVI control's
-  reject-condition was in the script before it ran, so a p of 0.30 could not be
-  argued into a pass afterwards.
-
-  RUN A CONTROL, AND MAKE IT MEANINGLESS ON PURPOSE. A shuffled column - same
-  values, no time structure - is what rejected Milestone B. The real arm alone
-  looked convincing at 23%.
-
-  SEE THE RAIL BITE. M160's tolerance was sabotaged into a blanket skip and
-  EIGHT of nine tests stayed green; only the larger-gap test caught it.
-
-  A COUNT IS A CLAIM TO CHECK. "63 occurrences" of a locate warning was ONE event
-  echoed 63 times by ib_async's Trade repr - and it had already been used to
-  re-prioritise the work queue before anyone checked it.
-
-  AN INSTRUMENT CAN LIE. probe_halts.py ended with a HARDCODED "The market is
-  SHUT" that printed unchanged during continuous trading and nearly hid M43's
-  answer. session_check.ps1 asserted an aggregate cap breach it never measured.
-  Both were true when written.
-
-  RUN THE HARNESS BEFORE THE DAY IT MATTERS. measure_ibkr_feed.py read
-  Ticker.time on its first draft and reported IBKR as 60 SECONDS FRESH on a
-  market shut for ninety minutes. The trade time is delayedLastTimestamp.
-
-  A SHUT MARKET IS A FREE CONTROL. With nothing trading, two feeds must report
-  the same last trade; when they disagreed eightyfold, the instrument was broken.
-
-  SLICE BY DATE, NEVER BY POSITION. z.iloc[-300:] silently ends TODAY on a series
-  that grows daily. That is the THIRD calendar slip on this measurement.
-
-  VERIFY THE RESTORE. git checkout -- on an UNCOMMITTED file discards the real
-  edit along with the sabotage. Grep for the line afterwards.
-
-  CHECK BEFORE CLAIMING. Two suspected findings dissolved on inspection - a
-  "fabricated" risk_share that was a supplied field, and a regime-blindness that
-  M136 had already fixed. Both would have been reported as defects.
+⚠️ AN INSTRUMENT CAN LIE, AND MINE DID TWICE. A TWS probe reported "0 open
+orders" against a book of twenty because openTrades() is clientId-scoped; and a
+Status-column finding was WITHDRAWN after instrumenting showed all ten positions
+correct. Check the instrument before believing the reading.
