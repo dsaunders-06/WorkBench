@@ -328,7 +328,8 @@ class BookRiskMonitor:
 
         ⚠️ A failure LEAVES THE PREVIOUS VALUE STANDING rather than clearing it.
         That is safe only because every value carries `computed_at` and readers
-        go through `fresh()`.
+        go through `fresh()`. The return value bypasses the staleness bound —
+        `fresh()` is the only safe accessor.
 
         ⚠️ A SNAPSHOT CARRYING `error` IS REFUSED, THE SAME AS A RAISED
         EXCEPTION - not computed from. `AccountPoller._fetch` catches the

@@ -279,3 +279,23 @@ async def test_fresh_refuses_a_measurement_dated_in_the_future():
     before_the_measurement_was_computed = NOW - timedelta(seconds=1)
 
     assert monitor.fresh(now=before_the_measurement_was_computed) is None
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_but_old_snapshot_is_dated_from_the_data_not_the_clock():
+    """Account snapshots are cached by AccountPoller for up to
+    `account_poll_seconds` (Settings.account_poll_seconds), which has no upper
+    bound. Even a healthy snapshot (error=None) can legitimately be older than
+    the staleness bound. The age_seconds bound in fresh() must measure the
+    reading's actual age, not how long ago poll() happened to run, so
+    computed_at MUST be stamped from snapshot.taken_at, not from the clock."""
+    stale_reading = _snapshot(
+        [_position("A2M.AX", 1000, 120.0)],
+        1_000_000.0,
+        taken_at=NOW - timedelta(seconds=200),  # error stays None
+    )
+    monitor = _monitor(_Poller(stale_reading), _Aggregator({"A2M.AX": _bars()}))
+    result = await monitor.poll()
+    assert result is not None
+    assert result.computed_at == NOW - timedelta(seconds=200)
+    assert monitor.fresh(now=NOW) is None
