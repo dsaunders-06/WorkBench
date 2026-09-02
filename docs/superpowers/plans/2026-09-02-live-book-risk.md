@@ -104,7 +104,7 @@ Smallest and independent. Lands alone so it is worth having even if everything a
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `risk_metrics(runtime) -> dict[str, float]` — unchanged signature, now returning up to five keys instead of two. Task 6 rewrites this function's return shape and must fold this widened tuple into its `at_last_decision` group.
+- Produces: `risk_metrics(runtime) -> dict[str, float]` — unchanged signature, now returning up to five keys instead of two. Task 7 rewrites this function's return shape and must fold this widened tuple into its `at_last_decision` group.
 
 - [ ] **Step 1: Write the failing test**
 
