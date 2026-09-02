@@ -1972,7 +1972,7 @@ git status --porcelain
 Expected: empty. If not, commit before continuing.
 
 Then temporarily change `book_risk.py` so the observation gate is skipped —
-replace `if observations < min_observations:` with `if False:` — and run:
+replace `if observations < floor:` with `if False:` (the identifier is `floor`, not `min_observations` - the Task 2 review round introduced a hard floor of 2 so the rail cannot be switched off by its caller) — and run:
 
 ```bash
 .venv/Scripts/python.exe -m pytest tests/domain/risk_engine/test_book_risk.py -k one_observation -v
