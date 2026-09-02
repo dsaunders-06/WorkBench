@@ -26,6 +26,7 @@ That is the 8 August lesson: 5.02% against a true 5.87%.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -113,15 +114,36 @@ def compute_book_risk(
     clamped up to `_MIN_OBSERVATIONS_FLOOR` before it gates anything, so a
     caller passing 0 or 1 cannot switch VaR/ES off.
     """
-    held = {symbol: value for symbol, value in weights.items() if value}
+    notes: list[str] = []
+    held: dict[str, float] = {}
+    for symbol, value in weights.items():
+        if not value:
+            continue
+        if not math.isfinite(value):
+            # A NaN or infinite dollar weight is truthy, so the zero-filter just
+            # above lets it through. Left in `held` it turns the weight fraction
+            # below into NaN, and pandas' skipna=True then collapses the all-NaN
+            # row to a MEASURED 0.0 - the same failure mode already closed for
+            # equity, on the sibling input. Exclude it AND say so, rather than
+            # let it vanish as if it were simply zero exposure.
+            notes.append(
+                f"{symbol} weight is not finite (nan/inf), so it cannot be "
+                "measured and was excluded from the book"
+            )
+            continue
+        held[symbol] = value
+
     if not held:
-        return _absent(now, ("no positions held",))
-    if not (total_equity > 0):
-        # Not `total_equity <= 0`: nan <= 0 is False, so that guard lets NaN
-        # equity through. Downstream the weights become NaN and pandas'
-        # skipna=True then collapses the all-NaN series to a MEASURED 0.0 -
+        return _absent(now, tuple(notes) or ("no positions held",))
+    if not (math.isfinite(total_equity) and total_equity > 0):
+        # Finiteness and sign must both be checked: `total_equity <= 0` alone
+        # lets NaN through (nan <= 0 is False), and `total_equity > 0` alone
+        # lets +inf through (inf > 0 is True). Either one reaching here turns
+        # every weight fraction downstream into NaN or 0.0, and pandas'
+        # skipna=True then collapses the all-NaN row to a MEASURED 0.0 -
         # exactly the sentinel this module exists to refuse.
-        return _absent(now, ("equity is not available, so nothing can be measured",), len(held))
+        notes.append("equity is not available, so nothing can be measured")
+        return _absent(now, tuple(notes), len(held))
 
     # Concentration needs no return history, so it is computed first and
     # survives a book too thin for VaR.
@@ -138,7 +160,6 @@ def compute_book_risk(
         if by_sector:
             sector_pct = max(by_sector.values()) / total_equity
 
-    notes: list[str] = []
     if sector_pct is None:
         notes.append("no held symbol is in the sector map, so sector concentration is unknown")
 
