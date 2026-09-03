@@ -4537,35 +4537,76 @@ two independent counts. Both are written up below.
 
 OUTSTANDING, IN ORDER
 
-1. MILESTONE ITEMS still open - docs/superpowers/specs/2026-09-02-milestone-scope.md:
-   * EQUITY CURVE Y AXIS renders as 1.004e+06. Needs an operator decision between
-     thousands-separated dollars, $k/$M, or change-from-day-start.
+⚠️ 0. RESET THE KILL SWITCH BEFORE THE NEXT SESSION. It is tripped and survives
+   restarts by design - "stays halted until a human resets it". The discrepancy
+   IS absorbed: broker and app agree at nine, no mismatch since 17:05. Use the
+   Risk Console in the running app (updates memory and disk together), not
+   scripts\reset_kill_switch.py underneath a live process.
+
+1. THE 3 SEPTEMBER ORDER-PATH DEFECTS. These cost a real entry today and will
+   recur on the next one. Read the 3 September sections above first.
+   * ⚠️ DEFECT B IS NOT FIXED, whatever its heading says. `oms.py:861` records
+     the ORDER's size, not the amount executed, so an order merely ACCEPTED
+     books a full position. `Order` still has no executed-quantity field. This
+     is what created the phantom 790 BHP.
+   * ⚠️ THE APP CANNOT TELL A STAGED ORDER FROM A WORKING ONE. `place_order`
+     returns, the status maps to `transmitted`, and only the reconciliation
+     mismatch five minutes later disagrees. IBKR DOES say so - Error 383 arrived
+     at 15:02:04 naming the Size Limit - and nothing consumed it.
+   * ⚠️ TWS PRECAUTIONARY SIZE LIMIT IS 500 AND THE SIZER DOES NOT KNOW. Today's
+     order was 790 (trimmed from 1,767 by the cash cap). This is a STANDING
+     conflict between the TWS presets and the app's sizing, not a one-off: raise
+     the limit, or teach the sizer the broker's ceiling.
+
+2. THE FEED CANNOT REPORT ITS OWN FAILURE. On 3 September the app had no usable
+   quote for 25 minutes while a fresh process pulled all 100 symbols in 3.7s.
+   Two independent holes, both verified:
+   * `yfinance.download()` NEVER RAISES on these failures, so our own
+     `yfinance quote poll failed` warning has fired zero times.
+   * The health counter is ALL-OR-NOTHING: `stream_ticks` resets
+     `consecutive_failures` on ANY tick, so one symbol answering masks a
+     99-symbol outage and `MARKET DATA DOWN` cannot fire.
+   Fix wants both: per-symbol health, and clearing the `YfData` singleton's
+   cached cookie/crumb after N failures so it recovers without a restart.
+   ⚠️ ALSO: `pyproject.toml` pins `yfinance>=0.2.40` with NO CEILING and 1.5.2
+   is installed - a major-version drift on an unofficial API nobody chose.
+
+3. MILESTONE ITEMS still open - docs/superpowers/specs/2026-09-02-milestone-scope.md:
    * CORPORATE-ACTION BANNER is permanent furniture. The message is correct and
      must NOT be deleted; the problem is a STANDING condition rendered as an
      ALERT, which teaches an operator to stop seeing that space.
    * DAILY/WEEKLY REPORT HISTORY, newest first. Not yet investigated.
-   * RISK METRICS ABSENT in the AI advisory. portfolio_check appears in only 63
-     of 3,596 audit rows (1.8%), and risk_metrics() reads ONLY the last entry -
-     so the model has almost certainly never seen portfolio risk. It also drops
-     var_99, single_name_pct and sector_pct when it does fire. Two questions: why
-     is portfolio_check recorded so rarely, and should the read search back for
-     the most recent entry that HAS it - bounded by staleness, since M73's own
-     comment warns that a stale number reaching the model is the failure it was
-     written to prevent.
+   ✅ RISK METRICS - SHIPPED as M164, 3 September. The advisory and the tiles now
+     read the book actually held.
+   ✅ EQUITY CURVE Y AXIS - DECIDED, NOT OPEN. Change-from-day-start was chosen
+     and then withdrawn once the cost was stated: M56 seeds the chart across days
+     precisely so the axis can show the market was shut overnight. Revisit only
+     if the unreadable $137-on-$1M line becomes the greater cost.
 
-2. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window. An
+4. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window. An
    escaped hold now says "hold escaped (0.60R down)", so a blank is unambiguous
-   evidence of a bug rather than something to infer from prices.
+   evidence of a bug rather than something to infer from prices. Still unread
+   against a live session.
 
-3. Reach 20 closed trades (item 3). At SEVEN. Below 20 the sizer uses invented
-   constants; below 30 the promotion gate cannot be read. Needs market.
+5. Reach 20 closed trades. At EIGHT (TNE.AX closed 3 September, net -$147.68).
+   Below 20 the sizer uses invented constants; below 30 the promotion gate cannot
+   be read. Needs market.
 
-4. The long-standing FEATURES: M39 corporate actions, M41 earnings event risk,
+6. The long-standing FEATURES: M39 corporate actions, M41 earnings event risk,
    Stage 3 ASX auction rules (item 9), Stage 4 regime re-sourcing (item 30).
 
-5. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - scoped and measured 1 September,
+7. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - scoped and measured 1 September,
    docs/superpowers/specs/2026-09-01-regime-label-stability-scope.md. The finding
    SURVIVED all three tasks. Not acted on, deliberately.
+
+8. M164's OWN CARRIED MINORS, from its whole-branch review - none blocking, all
+   verified, recorded so they are not rediscovered:
+   * advisory_account.py's log line still uses dict truthiness, so a notes-only
+     book logs "risk metrics present" while the prompt says "none available".
+   * 15 RiskConsoleScreen construction sites do not stop the screen's QTimer.
+   * No guard binds a UI widget label to the manual's Section 6.1 element table;
+     a settings change IS guarded, a label change is not.
+   * BookRiskMonitor.start/stop/_run have no test.
 
 HOUSEKEEPING: C:\ holds NINE rollback directories, 3.53 GB, against 348 GB
 free — counted 2 September, correcting a standing claim of twenty-three and 7 GB
