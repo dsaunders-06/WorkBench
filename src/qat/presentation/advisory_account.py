@@ -33,6 +33,7 @@ that should raise.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -251,10 +252,17 @@ def risk_metrics(runtime: Any) -> dict[str, Any]:
     entries = runtime.risk_engine.audit_log.entries()
     portfolio_check = entries[-1].inputs.get("portfolio_check") if entries else None
     if portfolio_check:
+        # ⚠️ `math.isfinite`, not just `is not None`. The LIVE path was hardened
+        # against non-finite weights, equity and return observations across three
+        # review rounds; this group was widened from two names to five and never
+        # revisited, so it was the one route by which a nan or inf could still
+        # reach the model. A recorded `var_95` of inf renders "at last decision:
+        # inf%" on the Risk Console, and `nan > limit` is False, so a nan
+        # concentration passes every downstream comparison silently.
         at_last_decision = {
             name: float(value)
             for name in _DECISION_FIELDS
-            if (value := portfolio_check.get(name)) is not None
+            if (value := portfolio_check.get(name)) is not None and math.isfinite(value)
         }
         if at_last_decision:
             metrics["at_last_decision"] = at_last_decision

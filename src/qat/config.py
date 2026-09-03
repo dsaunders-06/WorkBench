@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from qat.paths import data_dir as default_data_dir
@@ -114,7 +114,31 @@ class Settings(BaseSettings):
     # recent stored value was two days old and measured on a book that no longer
     # existed; a live value with no age bound is the same failure with a fresher
     # face.
+    #
+    # ⚠️ "Three polls" is only true at the defaults, and the pair is checked
+    # below rather than merely asserted in a comment. Raise the poll interval
+    # past this bound and EVERY reading is stale on arrival: all four Risk
+    # Console tiles and the model's book_now go dark permanently, with nothing
+    # logged - visible as dashes rather than dangerous, but silent.
     book_risk_max_age_seconds: float = Field(default=180.0, gt=0)
+
+    @model_validator(mode="after")
+    def _book_risk_age_bound_outlives_its_poll(self) -> Settings:
+        """The staleness bound must survive at least two polls.
+
+        Without this, `book_risk_max_age_seconds` and `book_risk_poll_seconds`
+        are independent numbers whose documented relationship holds only at the
+        defaults - and the test asserting `180 == 3 * 60` cannot fail, because
+        it reads those same defaults.
+        """
+        if self.book_risk_max_age_seconds < 2 * self.book_risk_poll_seconds:
+            raise ValueError(
+                f"book_risk_max_age_seconds ({self.book_risk_max_age_seconds}) must be at "
+                f"least twice book_risk_poll_seconds ({self.book_risk_poll_seconds}), or "
+                "every measurement is stale before the next one replaces it and the risk "
+                "tiles go permanently blank."
+            )
+        return self
 
     # --- Interface (M45) -----------------------------------------------------
     # How much the interface explains, and how much it shows.

@@ -224,3 +224,37 @@ def test_book_now_carries_its_own_age_in_seconds():
 
     assert "book_now_age_seconds" in metrics
     assert metrics["book_now_age_seconds"] >= 0
+
+
+def test_a_non_finite_recorded_figure_never_reaches_the_model():
+    """⚠️ The LAST route by which a nan or inf could reach the advisory.
+
+    Three review rounds hardened the live path against non-finite weights,
+    equity and return observations. This group was widened from two field names
+    to five and never revisited, so it was filtered only on `is not None`. A
+    recorded `var_95` of 0.0 alongside an `es_975` of inf is the milestone's own
+    hazard - a measured zero about tail risk nobody measured - arriving through
+    the group that was not hardened. `nan > limit` is also always False, so a nan
+    concentration would pass every downstream comparison silently.
+    """
+    runtime = _runtime_with_audit_entries(
+        [
+            _entry(
+                inputs={
+                    "portfolio_check": {
+                        "var_95": 0.0108,
+                        "var_99": float("inf"),
+                        "es_975": float("nan"),
+                        "single_name_pct": float("-inf"),
+                        "sector_pct": 0.125,
+                    }
+                }
+            )
+        ]
+    )
+
+    at_last_decision = risk_metrics(runtime)["at_last_decision"]
+
+    assert at_last_decision == {"var_95": 0.0108, "sector_pct": 0.125}
+    for name in ("var_99", "es_975", "single_name_pct"):
+        assert name not in at_last_decision
