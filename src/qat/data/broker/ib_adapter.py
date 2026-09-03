@@ -39,6 +39,7 @@ from qat.data.broker.adapter import (
     balances_from_summary,
 )
 from qat.data.broker.ib_client_protocol import IBClientProtocol
+from qat.data.broker.ib_errors import ErrorAction, classify
 from qat.data.broker.ib_translate import (
     from_ib_account_values,
     from_ib_fill,
@@ -214,6 +215,24 @@ class IBAdapter:
                     "IBKR connected on attempt %d of %d", attempt, self.max_connect_attempts
                 )
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+            # ⚠️ The module docstring's "no ib_async Events" decision is about
+            # CONNECTION HEALTH, where an active heartbeat answers the same
+            # question - that stays right and is unaffected here. It does not
+            # extend to order rejections: there is no polling equivalent for
+            # one, Error 383 arrives on this event or nowhere (3 September).
+            # Read via getattr, like reqAllOpenOrdersAsync and the other
+            # optional capabilities below - errorEvent is not on
+            # IBClientProtocol, so a minimal test double need not model it,
+            # and only loses rejection delivery it never exercises.
+            #
+            # Reached only from THIS success path, never from
+            # `_reconnect_with_backoff`'s own connectAsync call, so a
+            # reconnect does not subscribe a second copy - eventkit invokes a
+            # listener once per time it was connected, and a duplicate would
+            # process every real error twice.
+            error_event = getattr(self.ib_client, "errorEvent", None)
+            if error_event is not None:
+                error_event += self._on_ib_error
             return
 
         logger.error(
@@ -826,6 +845,112 @@ class IBAdapter:
             if str(getattr(order, "permId", "")) == str(order_id):
                 found.append(order)
         return found
+
+    def _order_for_req_id(self, req_id: int) -> str | None:
+        """The app's order id for an IBKR reqId, or None if it is not ours.
+
+        ⚠️ THIS IS THE GATE THAT MAKES FAIL-CLOSED SAFE. `errorEvent` carries
+        connection and market-data notices as well as order errors, so an
+        error that matches no order of ours must never be classified as one -
+        see `ib_errors.classify`, whose `is_order_scoped` this feeds.
+
+        Matched on `orderId`, not `permId`: real `IB.placeOrder` assigns
+        `orderId` synchronously, before the request even reaches the socket
+        (`ib_async`'s `ib.py`), which is the only id that can possibly be
+        attached to a rejection arriving this early. `permId` (M99) is not
+        stamped until TWS acknowledges, moments later.
+
+        Bracket legs are searched too: a rejection can name a child's
+        orderId, and the group is the same order as far as this app is
+        concerned.
+        """
+        for app_id, ib_order in self._ib_orders.items():
+            if getattr(ib_order, "orderId", None) == req_id:
+                return app_id
+        for app_id, group in self._ib_groups.items():
+            if any(getattr(leg, "orderId", None) == req_id for leg in group):
+                return app_id
+        return None
+
+    def _on_ib_error(
+        self,
+        req_id: object,
+        error_code: object,
+        error_string: object,
+        contract: object = None,
+    ) -> None:
+        """React to an error IBKR reported over `errorEvent`.
+
+        Never raises. ib_async/eventkit calls this synchronously from its own
+        callback dispatch (see the `connect` subscription), not from a task
+        this application scheduled - an exception escaping here surfaces
+        inside the library's own loop rather than anywhere this app could
+        observe it, exactly what swallowed Error 383 on 3 September.
+
+        Marks the order rejected for BOTH `ErrorAction.REJECT` and
+        `ErrorAction.HALT` - a halting error is still, first, a rejection;
+        the order will not fill either way. Only whether trading continues
+        differs.
+
+        ⚠️ Does not yet tell the OMS. A later task publishes
+        `OrderRejectedEvent` from here so the optimistic booking sign-off
+        made can be reversed - this task only stops the order being believed
+        live and, for anything unrecognised, stops new ones being placed.
+        """
+        # Narrowed with isinstance rather than coerced with int(). The
+        # parameters are typed `object` because eventkit hands this whatever
+        # the library passes and a malformed call must not raise into its
+        # dispatch - but `int(...)` on an `object` does not type-check, and
+        # silencing that with a `type: ignore` would hide a real conversion
+        # failure behind a comment naming the wrong error code. `bool` is an
+        # `int` subclass and is excluded: a True reqId is not order 1.
+        if (
+            not isinstance(error_code, int)
+            or not isinstance(req_id, int)
+            or isinstance(error_code, bool)
+            or isinstance(req_id, bool)
+        ):
+            logger.debug("IBKR error with unusable ids: %r %r", req_id, error_code)
+            return
+        code = error_code
+        rid = req_id
+
+        try:
+            app_id = self._order_for_req_id(rid)
+            action = classify(code, is_order_scoped=app_id is not None)
+            if action is ErrorAction.IGNORE:
+                logger.debug(
+                    "IBKR error %s (reqId %s) matches no order: %s", code, rid, error_string
+                )
+                return
+
+            order = self._orders.get(app_id or "")
+            if order is not None:
+                order.status = "rejected"
+            logger.error(
+                "IBKR REJECTED order %s (reqId %s), code %s: %s. The order is marked "
+                "rejected and will not be retried.",
+                app_id,
+                rid,
+                code,
+                error_string,
+            )
+            if action is ErrorAction.HALT:
+                # ⚠️ Unrecognised, so it halts. Adding a code to
+                # BENIGN_ORDER_ERROR_CODES is the deliberate way to stop this.
+                asyncio.ensure_future(
+                    self.bus.publish(
+                        KillSwitchEvent(
+                            reason=(
+                                f"IBKR rejected an order with unrecognised code {code}: "
+                                f"{error_string}"
+                            ),
+                            triggered_by="ib-adapter",
+                        )
+                    )
+                )
+        except Exception:  # noqa: BLE001 - must not raise into ib_async's loop
+            logger.exception("Failed to handle IBKR error %r", error_code)
 
     async def balances(self) -> AccountBalances:
         """Derived from the account summary: the IB translation layer does not
