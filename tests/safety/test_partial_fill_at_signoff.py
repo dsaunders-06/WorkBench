@@ -15,6 +15,22 @@ very nearly shipped a green suite over a live kill-switch hazard.
 Kept because the property is real and unpinned otherwise: the OMS must count
 what the adapter reports rather than the size it asked for. Together the two
 files say the adapter tells the truth and the OMS believes it.
+
+**3 September 2026: the OMS learned a case `quantity` could never express.**
+M42's contract was a single overloaded field - a broker that filled less than
+asked rewrote `quantity` down to what it actually filled, and the OMS believed
+whatever `quantity` said. That has no way to say "accepted, and NOTHING has
+executed yet": the only zero `quantity` can hold is "no order", and TWS staging
+a 790-share BHP.AX order on a precautionary limit was very much an order. The
+app read `quantity` as 790 and booked a position the broker never took.
+
+`Order.filled_quantity` is the field that case needed: nullable, separate from
+what was asked, and read by `_sign_off_locked` in place of `quantity` from that
+date on. `_PartiallyFillingBroker` below still rewrites `quantity` too - M42's
+half of the contract is unrepealed, `_announce_fill` still reads it, and this
+file's own property (the OMS must count what the adapter reports) is unchanged
+- it is just reported through the new field now, alongside the old one rather
+than instead of it.
 """
 
 from __future__ import annotations
@@ -51,6 +67,15 @@ class _PartiallyFillingBroker:
         order.quantity = self.filled
         order.filled_price = 100.0
         order.status = "filled"
+        # `filled_quantity`, ADDITIONALLY (3 September 2026). `quantity` above
+        # is M42's own fix and stays - `_announce_fill` still reads it, and
+        # that method is untouched by the OMS's new rule. But `_sign_off_locked`
+        # no longer reads `quantity` for `_filled_quantities`; it reads this
+        # field, and an order that never sets it now books NOTHING rather than
+        # the size M42 wrote back. Left unset here, every test below would
+        # fail not because the property stopped being true but because this
+        # fake stopped saying so.
+        order.filled_quantity = self.filled
         return order
 
     async def positions(self) -> list[Position]:

@@ -25,6 +25,7 @@ consults.
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from datetime import UTC
 from pathlib import Path
 
@@ -32,8 +33,40 @@ import pandas as pd
 import pytest
 
 from qat.config import Settings
+from qat.data.broker.adapter import Order
+from qat.data.broker.simulated_broker import SimulatedBroker
 from qat.domain.backtester.replay_session import ReplaySession
 from qat.domain.strategies.swing import SwingStrategy
+
+
+def _report_filled_quantity(broker: SimulatedBroker) -> None:
+    """Patches ONE broker instance so its "transmitted" snapshot reports what
+    it will fill - without touching `simulated_broker.py`, which earlier
+    tasks settled and this task does not (3 September 2026).
+
+    `SimulatedBroker.place_order` returns before the order has actually
+    filled - the fill happens later, in `_fill_pending_entries`, on whatever
+    bar comes next, and it updates the BROKER's own stored copy, never the
+    snapshot already handed back to sign-off. `filled_quantity` is therefore
+    still unset on that snapshot, and the OMS's new sign-off guard now reads
+    an unset `filled_quantity` as "the adapter did not say" and books
+    nothing - so the entry is never announced and no lot is ever opened for
+    it, which is what left `session.bridge._entries` and every closed trade
+    in this file empty.
+
+    SimulatedBroker never partially fills a working order - it fills in full
+    or leaves it pending, nothing between - so the number this order will
+    execute for is already known at submission: its own requested quantity.
+    """
+    real_place_order = broker.place_order
+
+    async def place_order(order: Order) -> Order:
+        placed = await real_place_order(order)
+        if placed.filled_quantity is None and not placed.is_protective_stop:
+            return replace(placed, filled_quantity=placed.quantity)
+        return placed
+
+    broker.place_order = place_order  # type: ignore[method-assign]
 
 
 def _dip_then_drift(days: int = 200) -> pd.DataFrame:
@@ -88,6 +121,7 @@ async def test_an_entry_is_dated_by_the_simulated_clock_not_the_wall_clock(tmp_p
         settings=_settings(tmp_path),
         warm_bars=60,
     )
+    _report_filled_quantity(session.broker)
 
     await session.run()
 
@@ -116,6 +150,7 @@ async def test_the_time_stop_fires_and_produces_a_closed_trade(tmp_path: Path):
         settings=_settings(tmp_path),
         warm_bars=60,
     )
+    _report_filled_quantity(session.broker)
 
     await session.run()
 

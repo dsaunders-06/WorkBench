@@ -64,6 +64,15 @@ class _ExitAcknowledgingBroker(MockBroker):
         order.order_id = f"broker-{self._assigned}"
         order.status = "transmitted"
         order.filled_price = None  # there is no fill price yet. That is the point.
+        # But it DOES fill, in full - the buy twin's reasoning applies exactly:
+        # every test here calls `complete()` for this same order, never a
+        # fraction of it, and sign-off is the only place this app's own orders
+        # are counted (`_correct_announced_price` never revisits a quantity).
+        # Left at None, `_filled_quantities["AAA"]` would stay at the ADOPTED
+        # 10 shares forever - never zeroed by this sell - and reconciliation
+        # would disagree with the broker's flattened position the moment
+        # `complete()` runs.
+        order.filled_quantity = order.quantity
         self._orders[order.order_id] = order
         return order
 

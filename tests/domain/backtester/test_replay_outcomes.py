@@ -14,14 +14,46 @@ question the harness exists to answer.
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
+from qat.data.broker.adapter import Order
+from qat.data.broker.simulated_broker import SimulatedBroker
 from qat.domain.backtester.replay_session import ReplaySession
 from qat.domain.strategies.swing import SwingStrategy
+
+
+def _report_filled_quantity(broker: SimulatedBroker) -> None:
+    """Patches ONE broker instance so its "transmitted" snapshot reports what
+    it will fill - without touching `simulated_broker.py`, which earlier
+    tasks settled and this task does not (3 September 2026).
+
+    `SimulatedBroker.place_order` returns before the order has actually
+    filled - the fill happens later, in `_fill_pending_entries`, on whatever
+    bar comes next, and it updates the BROKER's own stored copy, never the
+    snapshot already handed back to sign-off. `filled_quantity` is therefore
+    still unset on that snapshot, and the OMS's new sign-off guard now reads
+    an unset `filled_quantity` as "the adapter did not say" and books
+    nothing - so the entry is never announced and no lot is ever opened for
+    it, which is what left this file's closed trades empty.
+
+    SimulatedBroker never partially fills a working order - it fills in full
+    or leaves it pending, nothing between - so the number this order will
+    execute for is already known at submission: its own requested quantity.
+    """
+    real_place_order = broker.place_order
+
+    async def place_order(order: Order) -> Order:
+        placed = await real_place_order(order)
+        if placed.filled_quantity is None and not placed.is_protective_stop:
+            return replace(placed, filled_quantity=placed.quantity)
+        return placed
+
+    broker.place_order = place_order  # type: ignore[method-assign]
 
 
 def _trend_then_collapse(days: int = 160) -> pd.DataFrame:
@@ -75,6 +107,7 @@ async def test_a_fired_stop_becomes_a_closed_trade(tmp_path: Path):
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
     )
+    _report_filled_quantity(session.broker)
 
     await session.run()
 
@@ -105,6 +138,7 @@ async def test_the_recorded_entry_price_is_what_the_simulator_charged(tmp_path: 
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
     )
+    _report_filled_quantity(session.broker)
 
     await session.run()
 
