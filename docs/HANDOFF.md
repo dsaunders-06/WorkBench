@@ -47,9 +47,9 @@ source.
 | Suite | **3,141 passed, 26 skipped** (was 3,076; M164 added 65). ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted", so `&&` hides a failure |
 | Watchlist | **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
-| Account | **TEN POSITIONS, 20 resting legs, all protected** — A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW, verified from the broker on every scan. Equity **1,007,638.94** at the 2 September close (+137.91 on the day, cash unchanged at 413,034.56). **No trade since 31 August** |
+| Account | ⚠️ **NINE POSITIONS, 18 resting legs, all protected** (3 Sept). TNE.AX stopped out at 30.69 overnight and was absorbed as a closed trade. ⚠️ **The app also tracks a PHANTOM 790 BHP.AX the broker does not hold** — a staged, never-transmitted order it booked anyway. Clears on restart. Previously: **TEN POSITIONS, 20 resting legs, all protected** — A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW, verified from the broker on every scan. Equity **1,007,638.94** at the 2 September close (+137.91 on the day, cash unchanged at 413,034.56). **No trade since 31 August** |
 | Broker | **TWS on 7497** since 1 September 17:40 (`QAT_IBKR_PORT` 4002 → 7497, backup `.env.bak-20260901-174044`). IB Gateway is closed. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
-| Kill switch | ✅ **CLEAR.** Tripped twice on 1 September, both TRUE POSITIVES and both self-inflicted by shutdown ORDER — closing the broker while the app still ran exhausted the adapter's reconnects. Reset 17:45:53 via the risk console; verified on disk (`{"tripped": false}`) and stayed clear through the whole 2 September session. ⚠️ **THE RULE: close the app FIRST, then the broker.** The reverse costs a reset every time. Quarantines: EMPTY |
+| Kill switch | ⚠️ **TRIPPED 3 September 14:56:18 — `Broker reconciliation mismatch: BHP.AX tracked=790 broker=0`. A TRUE POSITIVE, and the rail working exactly as intended.** It persists to disk; a restart clears the phantom but the switch needs an explicit reset via the risk console. Previously: ✅ **CLEAR.** Tripped twice on 1 September, both TRUE POSITIVES and both self-inflicted by shutdown ORDER — closing the broker while the app still ran exhausted the adapter's reconnects. Reset 17:45:53 via the risk console; verified on disk (`{"tripped": false}`) and stayed clear through the whole 2 September session. ⚠️ **THE RULE: close the app FIRST, then the broker.** The reverse costs a reset every time. Quarantines: EMPTY |
 | Ledgers | **7 closed trades.** ⚠️ **One LOV row is a REPAIR row with EMPTY costs**, so net P&L across LOV is **NOT summable from that file**. ⚠️ **All carry an EMPTY `entry_slippage`** — item 44: the field was never persisted, and M156 fixes that only for trades opened FROM NOW |
 
 
@@ -83,6 +83,127 @@ seconds, with equity sampling running straight through it. **The 1102 is the
 RECOVERY, logged at ERROR** — judge by content, never by count.
 
 ---
+---
+
+## ⚠️ 3 SEPTEMBER: THE FIRST ENTRY SINCE 31 AUGUST, AND IT NEVER REACHED THE MARKET
+
+The book went to NINE overnight — TNE.AX stopped out at 30.69 while the app was
+down, absorbed correctly on restart as a closed trade. That unblocked the first
+entry in three days. **The entry was placed, was never transmitted by TWS, and
+the app booked the position anyway.** The kill switch caught it.
+
+    14:52:24  Autonomy signed off order 9c7ebb7c...: buy 790 BHP.AX
+    14:56:18  ERROR  Broker reconciliation mismatch: BHP.AX tracked=790 broker=0
+    14:56:18  KILL-SWITCH TRIPPED: Broker reconciliation mismatch
+
+✅ **THE RAIL WORKED.** Every scan since has read `18 working leg(s) across 9
+symbol(s), nothing unjustified`. Nine real positions, all protected. Equity and
+cash unchanged — **nothing traded**. The retry is blocked every 60 seconds.
+
+### ⚠️ TWS STAGED THE ORDER, AND THE APP CANNOT TELL STAGED FROM WORKING
+
+Seen in the TWS Orders panel, not inferred: the BHP parent and both bracket legs
+all showed a blue **Transmit** button, while every other position's legs showed
+**Cancel**. A staged order is not at the exchange and cannot fill, which is
+exactly why the broker reported 0.
+
+**This is NOT our bracket bug.** `ib_translate.py:232` sets
+`legs[-1].transmit = True`, which is what releases an IBKR bracket, and it is
+correct. TWS held the group anyway — almost certainly an **order precaution**
+(Global Configuration → API → Precautions); a `BUY MKT` for ~$50,568 is the shape
+that trips a value/size precaution, and TWS then holds for manual confirmation
+rather than rejecting.
+
+⚠️ **The app has no way to see this.** `place_order` returns, the status maps to
+`transmitted`, and nothing distinguishes "IBKR accepted it into staging" from
+"it is live at the exchange". The only signal is the reconciliation mismatch five
+minutes later.
+
+### ⚠️ DEFECT B IS NOT FIXED. Its line is still live at `oms.py:861`
+
+The 31 August section below is headed **"DEFECT B — FIXED, M160"**. The line it
+names as the root cause is unchanged:
+
+    signed_qty = filled.quantity if filled.side == "buy" else -filled.quantity
+
+`filled` is the ORDER the broker returned and `.quantity` is the **order's size**,
+not the amount executed — so the app records the full 790 the instant IBKR
+accepts, whatever has actually filled. Today it accepted an order into staging
+and the app booked a position that has never existed.
+
+`Order` still has no executed-quantity field. **Treat "Defect B is fixed" as a
+claim to re-check, not a fact** — and note that what M160 fixed was something
+adjacent, because this heading and this line cannot both be right.
+
+### The operator's decision: LEFT STAGED
+
+Not transmitted, not cancelled. Staged it cannot fill, so the broker stays at 0
+and the nine real positions keep their eighteen legs. Transmitting was declined
+on two grounds: it is a **market order sized ~50 minutes earlier** whose
+price-drift check was skipped (item 37), and item 56's own warning on this order
+says its fill "WILL be absorbed as foreign, doubling the book" — the app already
+holds 790 in `_filled_quantities`, so a foreign-absorbed fill takes the ledger to
+1,580 against a real 790.
+
+⚠️ **THE STAGED BRACKET IS STILL IN TWS.** It survives an app restart. It is a
+`BUY MKT` one click from going to market. Decide it deliberately — cancel it, or
+know it is there.
+
+⚠️ **The kill switch is TRIPPED and persists to disk.** A restart re-reconciles
+from the broker and clears the phantom 790, but the switch needs an explicit
+reset via the risk console.
+
+---
+
+## ⚠️ 3 SEPTEMBER: THE FEED WAS DEAD FOR THE PROCESS AND ALIVE FOR EVERYONE ELSE
+
+From 14:52 to at least 15:16 the app logged `No usable quote for BHP.AX` every
+sixty seconds. In the same minutes, **a fresh Python process on the same machine
+pulled all 100 watchlist symbols in 3.7 seconds**, BHP included.
+
+**The running process's yfinance session is poisoned; a new one is fine.**
+`YfData` is a singleton (`SingletonMeta`, `_instances` at class level) caching its
+cookie and crumb for the life of the process, and **nothing in the 401 path
+clears them**. Whatever Yahoo did to that session at 14:51 stuck to it.
+
+### ⚠️ AND NOTHING IN THE APP COULD SAY SO
+
+Two independent reasons the outage was invisible, both verified:
+
+* **`yfinance.download()` never raises** on these failures — it logs its own
+  ERROR under `logger=yfinance` and returns a frame. Our own
+  `yfinance quote poll failed` warning has fired **ZERO** times today.
+* **The feed-health counter is all-or-nothing.** `stream_ticks` resets
+  `consecutive_failures = 0` if the poll yields *any* tick, so one symbol still
+  answering masks a 99-symbol outage. There is **not one** `poll produced no
+  ticks` or `MARKET DATA DOWN` line today, and the staleness rail cannot help —
+  it skips a symbol that has never printed.
+
+That combination is why the app placed a market order with the drift check
+skipped and never once reported a feed problem.
+
+### ⚠️ TWO WRONG DIAGNOSES, RECORDED SO NOBODY RE-CHASES THEM
+
+* **NOT the batch size.** Measured, in a fresh process: 100, 75, 50, 30, 20 and
+  10 symbols ALL returned complete data — 100/100 in 3.7s. The standing note that
+  "the 20 August block happened while polling 101" does not explain today.
+* **NOT the crumb, at least not on this endpoint.** A deliberately poisoned
+  `_crumb` still returned 295 rows from `download()`. The chart endpoint does not
+  use it; the `Invalid Crumb` 401s come from a `quoteSummary`-style path
+  (fundamentals/earnings), not the price poll.
+* **The 401 burst was BOUNDED** — 13 errors between 14:51:28 and 14:52:15, then
+  nothing. It was not the ongoing cause of the quote outage that followed it.
+
+### The fix wants two changes, neither of them yet made
+
+1. **Per-symbol feed health**, not all-or-nothing: a poll that returns 1 of 100
+   is a failure, and today it counted as success.
+2. **Reset the `YfData` singleton's cached cookie and crumb** after N consecutive
+   quote failures, so the feed can recover without restarting the application.
+
+⚠️ **`pyproject.toml` pins `yfinance>=0.2.40` with no upper bound and 1.5.2 is
+installed** — a major-version drift on an unofficial API that nobody chose.
+
 
 ## ⚠️ MEASURED 30 AUGUST 22:35, SO MONDAY IS A COMPARISON NOT A GUESS
 
@@ -4391,13 +4512,28 @@ Suite 3,141 passed / 26 skipped. ruff, black, mypy src, bandit clean.
 For the unpushed count read handoff_state.py, not this line. Tree clean, on master.
 
 Broker is TWS on 7497 (Gateway closed). Account DUQ200898, paper, AUD.
-TEN POSITIONS, 20 resting legs, all protected. Equity 1,007,638.94.
-KILL SWITCH CLEAR. Quarantines EMPTY. No trade since 31 August.
+NINE POSITIONS, 18 resting legs, all protected. Equity 1,005,820.86.
+Quarantines EMPTY.
 
-⚠️ Order flow is LIVE and the book is 10 of 10, so the position cap is the only
-gate. THE FIRST EXIT UNBLOCKS A REAL ENTRY with no halt behind it - and that
-entry is what M160's read-back and M159's three unread checks are still waiting
-on. Nothing has been within 3.4% of a leg since 1 September.
+⚠️ KILL SWITCH IS TRIPPED (3 Sept 14:56) - "Broker reconciliation mismatch:
+BHP.AX tracked=790 broker=0". A TRUE POSITIVE. TNE.AX stopped out overnight
+taking the book to nine, which unblocked the first entry since 31 August - and
+TWS STAGED that order instead of transmitting it, so the broker holds none of it
+while the app booked all 790. Nothing traded; equity and cash are unchanged.
+A restart re-reconciles and clears the phantom; the switch then needs an explicit
+reset via the risk console.
+
+⚠️ A STAGED BHP BUY MKT BRACKET IS STILL SITTING IN TWS, one click from the
+market. The operator chose to leave it staged on 3 Sept. Decide it deliberately.
+
+⚠️ THE EXIT CAME AND THE ENTRY FAILED IN A NEW WAY. The book is nine, so the
+position cap is open - but the kill switch is halting all new order flow until it
+is reset. Read the 3 September sections before restarting anything.
+
+⚠️ AND THE PRICE FEED WAS DEAD FOR THE PROCESS WHILE ALIVE FOR EVERYONE ELSE.
+The app logged "No usable quote" for 25 minutes while a fresh Python process
+pulled all 100 symbols in 3.7s. Nothing in the app reported a feed problem, on
+two independent counts. Both are written up below.
 
 OUTSTANDING, IN ORDER
 
