@@ -42,3 +42,13 @@ def test_the_benign_set_is_the_enumerated_one():
     """A guard against someone 'simplifying' this into a serious-code list."""
     assert 383 in BENIGN_ORDER_ERROR_CODES
     assert 9999 not in BENIGN_ORDER_ERROR_CODES
+
+
+def test_a_benign_code_is_still_ignored_when_it_matches_no_order():
+    """⚠️ Rule 2 outranks rule 1, and this is the only test that says so.
+
+    Checking code-membership before `is_order_scoped` passes every other test in
+    this file while returning REJECT here - marking an order rejected on the
+    strength of a message that was never about an order.
+    """
+    assert classify(383, is_order_scoped=False) is ErrorAction.IGNORE
