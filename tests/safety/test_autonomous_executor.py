@@ -47,11 +47,6 @@ class _Broker:
         self.placed.append(order)
         order.status = "filled"
         order.filled_price = order.reference_price or 100.0
-        # Fills synchronously and completely, like MockBroker - so what
-        # executed IS the order's size. Stated rather than left None, or the
-        # OMS's new filled_quantity guard reads "not reported" and books
-        # nothing, skipping the sign-off announcement these tests check for.
-        order.filled_quantity = order.quantity
         return order
 
     async def modify_order(self, order_id: str, **changes: object) -> Order:

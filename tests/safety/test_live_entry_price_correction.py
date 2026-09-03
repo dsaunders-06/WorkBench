@@ -76,16 +76,6 @@ class _AcknowledgingBroker(MockBroker):
         order.order_id = f"broker-{self._assigned}"
         order.status = "transmitted"
         order.filled_price = None  # there is no fill price yet. That is the point.
-        # But it DOES fill, in full - every test here calls `complete()` for
-        # this same order, never a fraction of it. The asynchrony this fixture
-        # models is about WHEN the price is learned, not whether or how much
-        # executes, so the true final size is already known at accept time.
-        # `_correct_announced_price` never revisits a quantity ("the fill was
-        # counted at sign-off, and counting it again is the M46 discrepancy
-        # that halted 4 August") - sign-off is the ONLY place this app's own
-        # orders are counted, so this has to be the real number now or
-        # reconciliation never agrees with the broker once `complete()` runs.
-        order.filled_quantity = order.quantity
         self._orders[order.order_id] = order
         return order
 

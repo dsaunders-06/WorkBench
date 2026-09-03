@@ -858,38 +858,7 @@ class OMS:
             )
             return filled
 
-        # ⚠️ `filled_quantity`, NOT `quantity`. `quantity` is what was ORDERED.
-        # On 3 September TWS staged a 790-share order on a precautionary size
-        # limit - it never reached the exchange - and reading the order's size
-        # here booked a position the broker did not hold. Reconciliation caught
-        # it, the kill switch halted flow, and the phantom counted toward the
-        # position cap, refusing a legitimate entry on a book of nine.
-        #
-        # `None` means the adapter does not report it, which all three live
-        # adapters do - so it is a programming error, not a runtime state. Book
-        # NOTHING and say so: an under-booked real fill is visible to
-        # reconciliation within five minutes, an over-booked phantom is not.
-        if filled.filled_quantity is None:
-            logger.error(
-                "%s reported no executed quantity for order %s, so nothing is booked - "
-                "broker reconciliation will settle the position. Every live adapter "
-                "populates filled_quantity; this is a bug in whichever one did not.",
-                filled.symbol,
-                order_id,
-            )
-            # Recorded, not just logged - like every other exit in this method
-            # (item 43, line ~726). The order really was transmitted, so this is
-            # not a rejection; it is a gap in what this booked, and the Blotter
-            # must show that rather than a blank reason column.
-            self._record(
-                filled,
-                "signed_off",
-                "transmitted to the broker but no executed quantity reported - booked nothing",
-                operator,
-            )
-            return filled
-        executed = filled.filled_quantity
-        signed_qty = executed if filled.side == "buy" else -executed
+        signed_qty = filled.quantity if filled.side == "buy" else -filled.quantity
         self._filled_quantities[filled.symbol] = (
             self._filled_quantities.get(filled.symbol, 0.0) + signed_qty
         )
