@@ -23,6 +23,22 @@ from qat.data.broker.adapter import Order
 from qat.data.broker.ib_adapter import IBAdapter
 
 
+class FakeErrorEvent:
+    """Minimal double for ib_async/eventkit's `errorEvent` - just enough to
+    prove `connect()` subscribed the handler with `+=`, which is eventkit's
+    own subscribe mechanism (`Event.__iadd__`), not a real dispatcher. No
+    `emit` - nothing here fires a listener, it only records that one was
+    attached, which is all `test_connect_subscribes_the_error_handler` needs.
+    """
+
+    def __init__(self) -> None:
+        self.listeners: list[Any] = []
+
+    def __iadd__(self, listener: Any) -> FakeErrorEvent:
+        self.listeners.append(listener)
+        return self
+
+
 class FakeIBClient:
     """Enough of ib_async's IB for `place_order` to register an order that a
     later `errorEvent` can be reported against.
@@ -40,6 +56,7 @@ class FakeIBClient:
     def __init__(self) -> None:
         self._next_order_id = 476  # the real reqId from the 3 September log
         self.placed_orders: list[tuple[Any, Any]] = []
+        self.errorEvent = FakeErrorEvent()
 
     def isConnected(self) -> bool:
         return True
@@ -111,3 +128,30 @@ async def order_on_the_wire(adapter: IBAdapter) -> SimpleNamespace:
     placed = await adapter.place_order(order)
     ib_order = adapter._ib_orders[placed.order_id]
     return SimpleNamespace(app_id=placed.order_id, req_id=ib_order.orderId)  # type: ignore[attr-defined]
+
+
+@pytest.fixture
+async def bracket_on_the_wire(adapter: IBAdapter) -> SimpleNamespace:
+    """A bracket entry plus its protective legs, on the wire (Task 5 CRITICAL
+    fix): registers parent, stop and target under `_ib_groups`, which is the
+    branch `_order_for_req_id` searches when a rejection names a CHILD's
+    orderId rather than the primary's - the "IBKR cancels the OCA sibling
+    itself when the other leg fills" shape a 202 arrives as.
+    """
+    order = Order(
+        symbol="BHP.AX",
+        side="buy",
+        quantity=790,
+        order_id="app-bracket-1",
+        stop_price=40.0,
+        take_profit_price=45.0,
+    )
+    placed = await adapter.place_order(order)
+    group = adapter._ib_groups[placed.order_id]
+    stop_leg = next(leg for leg in group if getattr(leg, "orderType", None) == "STP")
+    target_leg = next(leg for leg in group if getattr(leg, "orderType", None) == "LMT")
+    return SimpleNamespace(
+        app_id=placed.order_id,
+        stop_req_id=stop_leg.orderId,  # type: ignore[attr-defined]
+        target_req_id=target_leg.orderId,  # type: ignore[attr-defined]
+    )

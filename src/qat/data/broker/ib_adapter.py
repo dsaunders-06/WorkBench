@@ -66,6 +66,16 @@ _T = TypeVar("_T")
 _LIVE_PORTS = {4001, 7496}
 _PAPER_PORTS = {4002: "Gateway", 7497: "TWS"}
 
+# The statuses `_order_for_req_id` treats as CLOSED. Mirrors the exact set
+# oms.py's own `cancel_order` guard already uses to mean "nothing more can
+# happen to this order" (`if order.status in ("filled", "cancelled",
+# "rejected"):`) - not imported from there, because the adapter must not
+# import the OMS, but it is the SAME three statuses: a status the OMS itself
+# already treats as unchangeable is equally not something IBKR can still be
+# talking about. "new", "pending_signoff" and "transmitted" are deliberately
+# excluded - all three are still-open as far as the broker is concerned.
+_TERMINAL_ORDER_STATUSES = frozenset({"filled", "cancelled", "rejected"})
+
 
 class ReadOnlyModeError(Exception):
     """Raised when an order-placing call is attempted while read_only=True."""
@@ -233,6 +243,14 @@ class IBAdapter:
             error_event = getattr(self.ib_client, "errorEvent", None)
             if error_event is not None:
                 error_event += self._on_ib_error
+            else:
+                logger.warning(
+                    "IBKR client has no errorEvent attribute - order rejections will not "
+                    "reach this adapter at all. Harmless against a minimal test double that "
+                    "never modelled it; against the real ib_async client this is the exact "
+                    "silent-non-delivery shape that let Error 383 vanish on 3 September, and "
+                    "is a live-order-path regression, not routine degradation."
+                )
             return
 
         logger.error(
@@ -863,7 +881,30 @@ class IBAdapter:
         Bracket legs are searched too: a rejection can name a child's
         orderId, and the group is the same order as far as this app is
         concerned.
+
+        ⚠️ A DONE order is not order-scoped either, mirroring ib_async's own
+        `if not trade.isDone():` guard before it will touch a trade further
+        (`wrapper.py`'s `error` handler). Nothing ever removes an entry from
+        `_orders`/`_ib_orders`/`_ib_groups` - they have to stay matchable for
+        as long as a genuine late rejection could still arrive - which means
+        a filled or cancelled order's orderId stays matchable FOREVER too.
+        A 202 for an OCA sibling IBKR cancels when its twin fills, or any
+        other late lifecycle notice against an order already
+        filled/cancelled/rejected, must not resurrect it as "order-scoped"
+        and overwrite a settled status - let alone halt trading over
+        history.
         """
+        app_id = self._match_req_id(req_id)
+        if app_id is None:
+            return None
+        order = self._orders.get(app_id)
+        if order is not None and order.status in _TERMINAL_ORDER_STATUSES:
+            return None
+        return app_id
+
+    def _match_req_id(self, req_id: int) -> str | None:
+        """The raw orderId match, before `_order_for_req_id` filters it by
+        whether the matched order is still open."""
         for app_id, ib_order in self._ib_orders.items():
             if getattr(ib_order, "orderId", None) == req_id:
                 return app_id
