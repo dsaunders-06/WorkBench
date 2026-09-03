@@ -62,6 +62,78 @@ root cause, under a heading that says **"FIXED, M160"**:
 `filled` is the ORDER the broker returned and `.quantity` is the **order's size**,
 not the amount executed. An order merely *accepted* books a full position.
 
+⚠️ **That reading is incomplete, and the next section corrects it.** M42 already
+established a contract under which this line is CORRECT, and the real defect is
+both that IBKR never implemented it and that the contract cannot express the case
+that bit us.
+
+### ⚠️ M42 ALREADY OWNS THIS PROBLEM, AND CANNOT EXPRESS THE 3 SEPTEMBER CASE
+
+**Found during implementation, 3 September, when Task 3 turned 25 existing tests
+red.** This section is the corrected diagnosis; the paragraph above it was
+written without knowing M42 existed.
+
+**There is already a contract for "book what executed".** M42 established that
+the ADAPTER rewrites `Order.quantity` to the filled amount, and
+`tests/safety/test_partial_fill_at_signoff.py` states it plainly: *"the OMS must
+count what the adapter reports rather than the size it asked for."*
+`alpaca_adapter.py:646` implements it:
+
+    filled_qty = _as_float(getattr(placed, "filled_qty", None))
+    if filled_qty > 0:
+        order.quantity = filled_qty
+
+So `oms.py:861` reading `filled.quantity` was **correct for any adapter that
+honours M42**. That is why it survived review for months.
+
+**`from_ib_trade` never rewrites `quantity`.** IBKR never implemented M42's half.
+That alone looks like the whole answer, and it is not.
+
+### ⚠️ AND THE GUARD IS THE POINT. M42 EXCLUDES ZERO ON PURPOSE.
+
+`alpaca_adapter.py:641-643`, in M42's own words:
+
+> *"Guarded on being positive: an accepted-but-unfilled order reports filled_qty
+> of 0, and writing that back would read as 'this position was closed' rather
+> than 'it has not started'."*
+
+**That exclusion is exactly 3 September.** A staged order reports `filled=0`, so
+under M42 `quantity` stays at 790 and the OMS books 790 — the phantom — on an
+adapter that fully honours the contract.
+
+⚠️ **So teaching `IBAdapter` to honour M42 does NOT fix this.** It fixes partial
+fills, which were never the failure. The zero case is excluded by design, and
+for a good reason: `quantity` is one number carrying two meanings, and it cannot
+take a third.
+
+### Which is the real argument for a separate field
+
+The case needs **three** distinguishable states and `quantity` offers two:
+
+| state | `filled_quantity` | what `quantity` alone can say |
+|---|---|---|
+| adapter does not report executions | `None` | nothing — indistinguishable |
+| accepted, nothing executed (3 September) | `0.0` | collides with "closed" |
+| partially executed | `400.0` | fine — this is M42's case |
+
+A nullable field separates all three. `quantity` keeps its one honest meaning:
+what was **ordered**. That is also what M42's rewrite destroys, and why a bracket
+whose legs rest for 790 no longer matches an order object claiming 400.
+
+⚠️ **The cost, measured rather than estimated.** Task 3 turned **25 tests red
+across 6 files** — `test_live_entry_price_correction.py` (13),
+`test_live_exit_price_correction.py` (4), `test_partial_fill_at_signoff.py` (3),
+`test_replay_churn_rails.py` (2), `test_replay_outcomes.py` (2),
+`test_autonomous_executor.py` (1). Every one is a fake following M42's convention
+— rewriting `quantity`, never setting `filled_quantity`. They are fixture
+updates, not a signal the approach is wrong, and the plan must budget for them
+rather than discover them.
+
+⚠️ **Alpaca's guarded rewrite becomes vestigial and is LEFT ALONE.** Alpaca is
+dead for this system (item 13 keeps it as the US era's evidence trail), and
+editing dead code to match a live contract adds risk for no benefit. Recorded so
+the inconsistency is deliberate rather than missed.
+
 ### ✅ The data already exists. The recorded cost was overstated.
 
 The handoff states that fixing this "means adding one to the broker contract and

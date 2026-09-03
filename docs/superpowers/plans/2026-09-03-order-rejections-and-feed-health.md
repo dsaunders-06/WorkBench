@@ -414,17 +414,40 @@ with:
 what the rest of the method does on its other exits, and `order_id` must be a
 name that is actually in scope there.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 4: Update the 25 fixtures this breaks — MEASURED, not anticipated**
+
+⚠️ **This is budgeted work, not a surprise.** Running Task 3 against the suite on
+3 September turned **25 tests red across exactly these six files**:
+
+    tests/safety/test_live_entry_price_correction.py     13
+    tests/safety/test_live_exit_price_correction.py       4
+    tests/safety/test_partial_fill_at_signoff.py          3
+    tests/domain/backtester/test_replay_churn_rails.py    2
+    tests/domain/backtester/test_replay_outcomes.py       2
+    tests/safety/test_autonomous_executor.py              1
+
+Every one uses a fake that follows **M42's** convention — it rewrites
+`Order.quantity` to the filled amount and never sets `filled_quantity`. Under the
+new rule those orders report "the adapter did not say", so nothing is booked.
+
+**Fix the fakes: have each set `filled_quantity` to what it filled.** Do NOT
+weaken the production guard, and do NOT set `filled_quantity = order.quantity`
+blindly in a fake that deliberately fills a *fraction* — read what each fake is
+simulating and set the number it actually filled.
+
+⚠️ `tests/safety/test_partial_fill_at_signoff.py` is M42's own test and its
+docstring explains the contract being superseded. Read it before editing it, and
+leave that docstring's history intact — add to it rather than replacing it.
+
+- [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/domain/oms/ -v
+.venv/Scripts/python.exe -m pytest tests/domain/oms/ tests/safety/ tests/domain/backtester/ -v
 ```
 
-Expected: PASS. ⚠️ Existing OMS tests may fail if they construct orders without
-`filled_quantity` — that is Task 2's populated path not reaching them. Fix the
-**test fixtures**, never the production guard.
+Expected: PASS.
 
-- [ ] **Step 5: Run the FULL suite**
+- [ ] **Step 6: Run the FULL suite**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q
@@ -433,7 +456,7 @@ Expected: PASS. ⚠️ Existing OMS tests may fail if they construct orders with
 ⚠️ This change is on the live order path and the OMS is used everywhere. A
 targeted run is not sufficient evidence here.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/qat/domain/oms/oms.py tests/domain/oms/test_only_executed_quantity_is_booked.py
