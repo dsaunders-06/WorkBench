@@ -293,175 +293,28 @@ git commit -m "The fakes report executed quantity, so tests exercise the real pa
 
 ---
 
-### Task 3: The OMS books what executed
+### Task 3: ⛔ VOID — implemented, reviewed, reverted
 
-**Files:**
-- Modify: `src/qat/domain/oms/oms.py:861`
-- Create: `tests/domain/oms/test_only_executed_quantity_is_booked.py`
+**Do not implement this task.** It was written, reviewed and reverted on
+3 September (`5cf7168`, reverted by `f84b55c`). Making sign-off book
+`filled_quantity` is a live-path regression, reproduced by the review:
 
-**Interfaces:**
-- Consumes: `Order.filled_quantity` (Tasks 1, 2).
-- Produces: `OMS._filled_quantities` reflects executed amounts only.
+    AFTER  tracked=0.0   broker=790  ->  mismatch  ->  KILL SWITCH TRIPPED
+    BEFORE tracked=790.0 broker=790  ->  clean
 
-- [ ] **Step 1: Write the failing test**
+`place_order` returns before anything has executed — `_await_perm_id` waits for
+the permId only — so `filled_quantity` is legitimately `0.0` at sign-off. And
+nothing books it later, because `_is_foreign_unrecorded` excludes the app's own
+orders. **Sign-off is the only quantity-booking site for an own order**, so
+booking nothing there books nothing ever, and the protective stop later fires as
+a foreign fill and is subtracted — a phantom SHORT against a flat broker.
 
-Create `tests/domain/oms/test_only_executed_quantity_is_booked.py`:
+⚠️ `oms.py:861` stays exactly as it is. The optimistic-book-plus-reconcile design
+is not replaced; **Task 5b reverses the booking when a rejection proves the order
+will never fill**, which is the actual gap.
 
-```python
-"""The app booked 790 shares the exchange never took.
-
-3 September: TWS STAGED a 790-share BHP.AX order on a precautionary size limit,
-so it never reached the market. `oms.py:861` read `filled.quantity` - the ORDER's
-size - and booked all 790. Reconciliation caught it (`tracked=790 broker=0`), the
-kill switch halted flow, and the phantom then counted toward the position cap:
-NST.AX was refused "already at the 10-position limit" against nine real holdings.
-"""
-
-from __future__ import annotations
-
-from qat.data.broker.adapter import Order
-
-
-def _order(**kw) -> Order:
-    base = dict(symbol="BHP.AX", side="buy", quantity=790.0, order_id="app-1")
-    base.update(kw)
-    return Order(**base)
-
-
-def test_an_accepted_but_unfilled_order_books_nothing(oms):
-    """⚠️ THE TEST THIS TASK EXISTS FOR."""
-    oms._record_fill(_order(filled_quantity=0.0, status="transmitted"))
-
-    assert oms._filled_quantities.get("BHP.AX", 0.0) == 0.0
-
-
-def test_a_partial_fill_books_only_what_executed(oms):
-    oms._record_fill(_order(filled_quantity=400.0, status="transmitted"))
-
-    assert oms._filled_quantities["BHP.AX"] == 400.0
-
-
-def test_an_unreported_quantity_books_nothing_and_says_so(oms, caplog):
-    """`None` is a programming error - all three live adapters populate it.
-    Booking nothing is fail-closed: an under-booked real fill is visible to
-    reconciliation within five minutes; an over-booked phantom is the defect."""
-    import logging
-
-    with caplog.at_level(logging.ERROR):
-        oms._record_fill(_order(filled_quantity=None, status="transmitted"))
-
-    assert oms._filled_quantities.get("BHP.AX", 0.0) == 0.0
-    assert "BHP.AX" in caplog.text
-    assert any(r.levelno >= logging.ERROR for r in caplog.records)
-
-
-def test_a_sell_books_negative_what_executed(oms):
-    oms._filled_quantities["BHP.AX"] = 790.0
-    oms._record_fill(_order(side="sell", filled_quantity=790.0, status="filled"))
-
-    assert oms._filled_quantities["BHP.AX"] == 0.0
-```
-
-⚠️ `oms` is a fixture you must supply, and `_record_fill` is a placeholder for
-whatever the real method around `oms.py:861` is called. **Read the file first**
-and use the real name and the real construction path — an existing test under
-`tests/domain/oms/` will show how an `OMS` is built in this repo.
-
-- [ ] **Step 2: Run the tests to verify they fail**
-
-```bash
-.venv/Scripts/python.exe -m pytest tests/domain/oms/test_only_executed_quantity_is_booked.py -v
-```
-
-Expected: FAIL — the first test books 790 instead of 0.
-
-- [ ] **Step 3: Book the executed amount**
-
-In `src/qat/domain/oms/oms.py`, replace line 861:
-
-```python
-        signed_qty = filled.quantity if filled.side == "buy" else -filled.quantity
-```
-
-with:
-
-```python
-        # ⚠️ `filled_quantity`, NOT `quantity`. `quantity` is what was ORDERED.
-        # On 3 September TWS staged a 790-share order on a precautionary size
-        # limit - it never reached the exchange - and reading the order's size
-        # here booked a position the broker did not hold. Reconciliation caught
-        # it, the kill switch halted flow, and the phantom counted toward the
-        # position cap, refusing a legitimate entry on a book of nine.
-        #
-        # `None` means the adapter does not report it, which all three live
-        # adapters do - so it is a programming error, not a runtime state. Book
-        # NOTHING and say so: an under-booked real fill is visible to
-        # reconciliation within five minutes, an over-booked phantom is not.
-        if filled.filled_quantity is None:
-            logger.error(
-                "%s reported no executed quantity for order %s, so nothing is booked - "
-                "broker reconciliation will settle the position. Every live adapter "
-                "populates filled_quantity; this is a bug in whichever one did not.",
-                filled.symbol,
-                order_id,
-            )
-            return filled
-        executed = filled.filled_quantity
-        signed_qty = executed if filled.side == "buy" else -executed
-```
-
-⚠️ Read the surrounding lines before inserting: the early `return` must match
-what the rest of the method does on its other exits, and `order_id` must be a
-name that is actually in scope there.
-
-- [ ] **Step 4: Update the 25 fixtures this breaks — MEASURED, not anticipated**
-
-⚠️ **This is budgeted work, not a surprise.** Running Task 3 against the suite on
-3 September turned **25 tests red across exactly these six files**:
-
-    tests/safety/test_live_entry_price_correction.py     13
-    tests/safety/test_live_exit_price_correction.py       4
-    tests/safety/test_partial_fill_at_signoff.py          3
-    tests/domain/backtester/test_replay_churn_rails.py    2
-    tests/domain/backtester/test_replay_outcomes.py       2
-    tests/safety/test_autonomous_executor.py              1
-
-Every one uses a fake that follows **M42's** convention — it rewrites
-`Order.quantity` to the filled amount and never sets `filled_quantity`. Under the
-new rule those orders report "the adapter did not say", so nothing is booked.
-
-**Fix the fakes: have each set `filled_quantity` to what it filled.** Do NOT
-weaken the production guard, and do NOT set `filled_quantity = order.quantity`
-blindly in a fake that deliberately fills a *fraction* — read what each fake is
-simulating and set the number it actually filled.
-
-⚠️ `tests/safety/test_partial_fill_at_signoff.py` is M42's own test and its
-docstring explains the contract being superseded. Read it before editing it, and
-leave that docstring's history intact — add to it rather than replacing it.
-
-- [ ] **Step 5: Run the tests to verify they pass**
-
-```bash
-.venv/Scripts/python.exe -m pytest tests/domain/oms/ tests/safety/ tests/domain/backtester/ -v
-```
-
-Expected: PASS.
-
-- [ ] **Step 6: Run the FULL suite**
-
-```bash
-.venv/Scripts/python.exe -m pytest -q
-```
-
-⚠️ This change is on the live order path and the OMS is used everywhere. A
-targeted run is not sufficient evidence here.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/qat/domain/oms/oms.py tests/domain/oms/test_only_executed_quantity_is_booked.py
-git commit -m "The OMS books what executed, not what was ordered"
-```
+Tasks 1 and 2 remain in: `Order.filled_quantity` is correct and is what Task 5b
+uses to leave behind whatever really executed before the order died.
 
 ---
 
@@ -836,6 +689,139 @@ Expected: PASS.
 ```bash
 git add src/qat/data/broker/ib_adapter.py tests/data/broker/test_ib_adapter_hears_rejections.py
 git commit -m "IBAdapter hears IBKR's rejections instead of only its return values"
+```
+
+---
+
+### Task 5b: The OMS reverses a booking when an order is rejected
+
+**This is the task that actually fixes 3 September.** Sign-off books the ORDERED
+size optimistically; when a rejection proves the order will never fill, that
+booking must come back out — otherwise the phantom persists and the
+reconciliation rail trips every five minutes until a human intervenes, which is
+precisely what happened.
+
+**Files:**
+- Modify: `src/qat/domain/events.py` (a new event)
+- Modify: `src/qat/data/broker/ib_adapter.py` (publish it from `_on_ib_error`)
+- Modify: `src/qat/domain/oms/oms.py` (subscribe and reverse)
+- Create: `tests/domain/oms/test_a_rejected_order_gives_its_booking_back.py`
+
+**Interfaces:**
+- Consumes: `_on_ib_error` and the classification (Tasks 4, 5); `Order.filled_quantity` (Task 1).
+- Produces: `OrderRejectedEvent(symbol: str, order_id: str, booked_quantity: float, executed_quantity: float | None, reason: str)`.
+
+⚠️ **The adapter must NOT import the OMS.** It publishes over the bus exactly as
+it already does for `KillSwitchEvent` (`ib_adapter.py:268`); the OMS subscribes.
+That precedent is stated in the adapter's own module docstring.
+
+⚠️ **Reverse the BOOKED amount minus what actually EXECUTED.** A partially filled
+order that is then rejected or cancelled leaves a real position behind. Reversing
+the full booked size would create a phantom short — the same defect in the other
+direction, and the one the reverted Task 3 produced.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create `tests/domain/oms/test_a_rejected_order_gives_its_booking_back.py`:
+
+```python
+"""A rejected order kept its optimistic booking, and reconciliation paid for it.
+
+3 September: TWS staged a 790-share BHP.AX order on a precautionary size limit.
+Sign-off booked 790 - correctly, under a design that books optimistically and
+lets reconciliation catch divergence. IBKR then said Error 383, nothing read it,
+and the booking stood. `tracked=790 broker=0` tripped the kill switch every five
+minutes for two hours, and the phantom counted toward the position cap, refusing
+NST.AX with "already at the 10-position limit" against a book of nine.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_takes_the_whole_booking_back(oms):
+    """Nothing executed, so nothing should remain booked."""
+    await _sign_off_a_buy(oms, symbol="BHP.AX", quantity=790.0)
+    assert oms._filled_quantities["BHP.AX"] == 790.0
+
+    await _reject(oms, symbol="BHP.AX", booked=790.0, executed=0.0)
+
+    assert oms._filled_quantities.get("BHP.AX", 0.0) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_a_partially_filled_rejection_leaves_what_executed(oms):
+    """⚠️ Reversing the FULL booking here would create a phantom short - the
+    reverted Task 3's defect in the other direction."""
+    await _sign_off_a_buy(oms, symbol="BHP.AX", quantity=790.0)
+
+    await _reject(oms, symbol="BHP.AX", booked=790.0, executed=400.0)
+
+    assert oms._filled_quantities["BHP.AX"] == 400.0
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_executed_quantity_reverses_nothing(oms):
+    """`executed_quantity is None` means the adapter did not say. Reversing on a
+    guess could invent a short; leaving it lets reconciliation settle it, which
+    is the path that caught 3 September in four minutes."""
+    await _sign_off_a_buy(oms, symbol="BHP.AX", quantity=790.0)
+
+    await _reject(oms, symbol="BHP.AX", booked=790.0, executed=None)
+
+    assert oms._filled_quantities["BHP.AX"] == 790.0
+
+
+@pytest.mark.asyncio
+async def test_a_rejection_for_an_unknown_symbol_changes_nothing(oms):
+    await _reject(oms, symbol="NEVER.AX", booked=100.0, executed=0.0)
+
+    assert "NEVER.AX" not in oms._filled_quantities
+```
+
+⚠️ `oms`, `_sign_off_a_buy` and `_reject` are yours to write. **Read
+`tests/domain/oms/` for how an `OMS` is constructed in this repo and drive the
+real sign-off path** — a helper that writes `_filled_quantities` directly would
+test the assertion and not the code.
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+```bash
+.venv/Scripts/python.exe -m pytest tests/domain/oms/test_a_rejected_order_gives_its_booking_back.py -v
+```
+
+- [ ] **Step 3: Add the event, publish it, subscribe to it**
+
+Add `OrderRejectedEvent` to `src/qat/domain/events.py` following the shape of the
+events already there. Publish it from `_on_ib_error` in both the REJECT and HALT
+branches — a halting rejection still needs its booking reversed. Subscribe in the
+OMS beside its other bus subscriptions and reverse:
+
+```python
+        remaining = event.booked_quantity - event.executed_quantity
+        self._filled_quantities[event.symbol] = (
+            self._filled_quantities.get(event.symbol, 0.0) - remaining
+        )
+```
+
+with `executed_quantity is None` returning early and logging, per the third test.
+
+- [ ] **Step 4: Run the tests, then the FULL suite**
+
+```bash
+.venv/Scripts/python.exe -m pytest -q
+```
+
+⚠️ Live order path. A targeted run is not sufficient evidence. The baseline is
+**3,147 passed / 26 skipped**.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/qat/domain/events.py src/qat/data/broker/ib_adapter.py src/qat/domain/oms/oms.py tests/domain/oms/test_a_rejected_order_gives_its_booking_back.py
+git commit -m "A rejected order gives its optimistic booking back"
 ```
 
 ---
@@ -1586,15 +1572,17 @@ change `return ErrorAction.HALT` to `return ErrorAction.REJECT`, then:
 
 Expected: **FAIL.** Restore with `git checkout src/qat/data/broker/ib_errors.py`.
 
-**Rail two — executed quantity.** In `src/qat/domain/oms/oms.py`, change
-`executed = filled.filled_quantity` to `executed = filled.quantity`, then:
+**Rail two — the booking reversal.** In `src/qat/domain/oms/oms.py`, change
+the reversal to subtract `event.booked_quantity` instead of
+`booked_quantity - executed_quantity`, then:
 
 ```bash
-.venv/Scripts/python.exe -m pytest tests/domain/oms/test_only_executed_quantity_is_booked.py -v
+.venv/Scripts/python.exe -m pytest tests/domain/oms/test_a_rejected_order_gives_its_booking_back.py -v
 ```
 
-Expected: **FAIL**, showing 790 booked against 0 executed — the 3 September defect
-reproduced. Restore, then confirm:
+Expected: **FAIL** on `test_a_partially_filled_rejection_leaves_what_executed`,
+showing a phantom SHORT where 400 shares really executed — the reverted Task 3
+defect in the other direction. Restore, then confirm:
 
 ```bash
 git status --porcelain
