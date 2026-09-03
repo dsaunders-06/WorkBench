@@ -75,6 +75,10 @@ class MockBroker:
         fill_price = self._synthetic_price(order.symbol)
         order.status = "filled"
         order.filled_price = fill_price
+        # These fakes fill synchronously and completely, so what executed IS the
+        # order's size. Stated rather than left None, so OMS tests exercise the
+        # populated path the real adapter takes.
+        order.filled_quantity = order.quantity
         self._orders[order.order_id] = order
         self._apply_fill(order, fill_price)
 

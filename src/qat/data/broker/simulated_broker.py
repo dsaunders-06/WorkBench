@@ -290,6 +290,10 @@ class SimulatedBroker:
             fill_price = self._slipped(float(bar["open"]), order.side)
             order.status = "filled"
             order.filled_price = fill_price
+            # These fakes fill synchronously and completely, so what executed IS the
+            # order's size. Stated rather than left None, so OMS tests exercise the
+            # populated path the real adapter takes.
+            order.filled_quantity = order.quantity
             # Reported through `recent_fills` like any other execution, because
             # that is what the adapter this stands in for does. `AlpacaAdapter`
             # returns every filled order in the window, its own included - which
