@@ -36,8 +36,8 @@
 | `src/qat/domain/oms/oms.py` | **Modify.** `:861` books executed quantity; `:472-496` gains the broker-ceiling trim. |
 | `src/qat/data/broker/ib_errors.py` | **Create.** The benign-code set and the classification. Its own file so the rule is readable without the adapter around it. |
 | `src/qat/data/broker/ib_adapter.py` | **Modify.** Subscribe `errorEvent`, resolve `reqId` to an order, act on the classification. |
-| `src/qat/config.py` | **Modify.** `broker_max_order_shares`, `feed_down_symbol_fraction`. |
-| `scripts/manual_body.py` | **Modify.** Document both new settings. |
+| `src/qat/config.py` | **Modify.** `broker_max_order_shares` only (Task 6). |
+| `scripts/manual_body.py` | **Modify.** Document `broker_max_order_shares` (Task 6). |
 | `src/qat/data/yfinance_source.py` | **Modify.** Validate the poll result; per-symbol health; instrumentation. |
 | `pyproject.toml` | **Modify.** Pin yfinance. |
 
@@ -657,12 +657,23 @@ def test_an_error_matching_no_order_is_ignored(adapter, published, caplog):
     assert not any(type(e).__name__ == "KillSwitchEvent" for e in published)
 
 
-def test_the_handler_never_raises_into_the_callback(adapter):
+def test_the_handler_never_raises_into_the_callback(adapter, published):
     """ib_async calls this from its own event loop; an exception escaping here
-    would surface inside the library, not in our stack."""
+    would surface inside the library, not in our stack.
+
+    ⚠️ Asserts the CONSEQUENCES, not merely that nothing was raised. A test
+    whose only content is "it did not throw" passes against a handler that
+    silently swallows a real rejection, which is the failure mode this whole
+    task exists to remove."""
     adapter._orders.clear()
     adapter._ib_orders.clear()
+
     adapter._on_ib_error(None, None, None, None)  # deliberately malformed
+
+    assert not any(type(e).__name__ == "KillSwitchEvent" for e in published), (
+        "a malformed error must not halt trading"
+    )
+    assert adapter._orders == {}, "no order should have been invented"
 ```
 
 ⚠️ `adapter`, `order_on_the_wire` and `published` are fixtures you must build.
@@ -1021,7 +1032,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from qat.data.yfinance_source import YFinanceQuoteSource
+from qat.data.yfinance_source import YFinanceMarketDataSource
 
 
 class _Client:
@@ -1035,7 +1046,7 @@ class _Client:
 @pytest.mark.asyncio
 async def test_symbols_absent_from_the_response_are_reported():
     """⚠️ The 3 September shape: one symbol answers, the rest do not."""
-    source = YFinanceQuoteSource(client=_Client(_one_symbol_frame()))
+    source = YFinanceMarketDataSource(client=_Client(_one_symbol_frame()))
 
     ticks, missing = await source._poll_once(["BHP.AX", "CBA.AX", "WOW.AX"])
 
@@ -1045,7 +1056,7 @@ async def test_symbols_absent_from_the_response_are_reported():
 
 @pytest.mark.asyncio
 async def test_a_complete_response_reports_nothing_missing():
-    source = YFinanceQuoteSource(client=_Client(_all_symbols_frame()))
+    source = YFinanceMarketDataSource(client=_Client(_all_symbols_frame()))
 
     ticks, missing = await source._poll_once(["BHP.AX", "CBA.AX"])
 
@@ -1058,7 +1069,7 @@ async def test_an_exception_reports_every_symbol_missing():
         def download(self, tickers, **kwargs):
             raise RuntimeError("network gone")
 
-    source = YFinanceQuoteSource(client=_Boom())
+    source = YFinanceMarketDataSource(client=_Boom())
 
     ticks, missing = await source._poll_once(["BHP.AX", "CBA.AX"])
 
@@ -1071,8 +1082,9 @@ returning the multi-index frame shape `normalise_frame` expects. Read
 `normalise_frame` and the existing yfinance tests for the real shape — a frame of
 the wrong shape would make these tests pass for the wrong reason.
 
-⚠️ `YFinanceQuoteSource` is a placeholder for the real class name around line
-210. Read the file and use the real one.
+The class is `YFinanceMarketDataSource` (`yfinance_source.py:201`). Its
+constructor already takes `client`, `poll_seconds`, `max_consecutive_failures`
+and `max_backoff_seconds`, so a fake client is injected directly.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1140,14 +1152,25 @@ git commit -m "The feed poll reports which symbols did not answer"
 ### Task 8: Per-symbol health
 
 **Files:**
-- Modify: `src/qat/data/yfinance_source.py` (`stream_ticks`, `_delay_after`)
-- Modify: `src/qat/config.py`
-- Modify: `scripts/manual_body.py`
+- Modify: `src/qat/data/yfinance_source.py` (`__init__`, `stream_ticks`, `_delay_after`)
 - Create: `tests/data/test_one_symbol_cannot_mask_an_outage.py`
 
 **Interfaces:**
 - Consumes: `_poll_once -> tuple[list[RawTick], set[str]]` (Task 7).
-- Produces: `Settings.feed_down_symbol_fraction: float = 0.5`.
+- Produces: `YFinanceMarketDataSource.__init__` gains
+  `down_symbol_fraction: float = 0.5`.
+
+⚠️ **A CONSTRUCTOR ARGUMENT, NOT A `Settings` FIELD — and this corrects an
+earlier draft of this plan.** `max_consecutive_failures` is already a constructor
+argument with a default of 5 (`yfinance_source.py:210-217`), not a setting. The
+source is built at `runtime.py:217` as
+`YFinanceMarketDataSource(poll_seconds=settings.yfinance_poll_seconds)`. Adding a
+`Settings` field for the sibling of an existing constructor argument would put two
+knobs of the same kind in two different places.
+
+**Consequence: this task touches neither `config.py` nor `scripts/manual_body.py`**,
+and the Settings/manual constraint in the Global Constraints does not apply to it.
+It still applies to Task 6.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1171,16 +1194,101 @@ ended the stream at 10:04 waiting for data that arrived at 10:22, and the accoun
 sat flat and blind on an open market. That is the M119 regression this test set
 exists to prevent as much as the outage itself.
 """
+
+from __future__ import annotations
+
+import logging
+
+import pandas as pd
+import pytest
+
+from qat.data.yfinance_source import YFinanceMarketDataSource
+
+SYMBOLS = [f"S{i}.AX" for i in range(100)]
+
+
+class _PartialClient:
+    """Answers for `answering` and returns nothing for the rest, every poll."""
+
+    def __init__(self, answering: list[str]) -> None:
+        self.answering = answering
+
+    def download(self, tickers, **kwargs):
+        # ⚠️ Build the frame the way normalise_frame expects. Read
+        # `normalise_frame` before changing this - a frame of the wrong shape
+        # makes these tests pass for the wrong reason.
+        raise NotImplementedError("build the multi-index frame - see normalise_frame")
+
+
+async def _drain(source: YFinanceMarketDataSource, polls: int) -> None:
+    """Drive `stream_ticks` for a fixed number of polls without real sleeps."""
+    raise NotImplementedError("patch asyncio.sleep and step the generator")
+
+
+@pytest.mark.asyncio
+async def test_one_answering_symbol_does_not_mask_the_other_ninety_nine(caplog):
+    """⚠️ THE 3 SEPTEMBER CASE, and the test this task exists for."""
+    source = YFinanceMarketDataSource(
+        client=_PartialClient(answering=[SYMBOLS[0]]), max_consecutive_failures=5
+    )
+
+    with caplog.at_level(logging.ERROR):
+        await _drain(source, polls=6)
+
+    assert "market data is down" in caplog.text.lower()
+    assert "S1.AX" in caplog.text, "the DOWN line must NAME the failing symbols"
+
+
+@pytest.mark.asyncio
+async def test_a_single_absent_symbol_never_reports_down(caplog):
+    """One delisted or thinly-traded name is not an outage."""
+    source = YFinanceMarketDataSource(
+        client=_PartialClient(answering=SYMBOLS[1:]), max_consecutive_failures=5
+    )
+
+    with caplog.at_level(logging.ERROR):
+        await _drain(source, polls=6)
+
+    assert "market data is down" not in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_the_open_does_not_report_down(caplog):
+    """⚠️ THE M119 REGRESSION, ASSERTED DIRECTLY. At the open Yahoo has published
+    nothing yet, so ALL symbols are absent - legitimately, for ~20 minutes. On
+    21 August that shape ended the stream and the account sat blind on an open
+    market for two hours."""
+    source = YFinanceMarketDataSource(
+        client=_PartialClient(answering=[]), max_consecutive_failures=5
+    )
+
+    with caplog.at_level(logging.ERROR):
+        await _drain(source, polls=6)
+
+    assert "market data is down" not in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_coverage_returning_resets_the_counters(caplog):
+    """After the delay window clears, a full response must clear the state -
+    otherwise every session reports DOWN for the rest of the day."""
+    raise NotImplementedError("drive partial polls, then full ones, assert recovery")
 ```
 
-Then tests asserting: 1-of-100 for `max_consecutive_failures` polls reports DOWN
-and names the missing symbols; a full blind window at the open does **not** report
-DOWN; coverage recovering resets the counters; and a single permanently-absent
-symbol never reports DOWN on its own.
+⚠️ **The three `NotImplementedError` bodies above are yours to write**, and they
+are marked rather than guessed because none of them can be written correctly
+without reading the code first:
 
-⚠️ Write these against the real `stream_ticks` with a fake client, driving the
-async generator. Read the existing yfinance tests for how the loop is driven
-without waiting on real sleeps.
+* `_PartialClient.download` must return the multi-index frame shape
+  `normalise_frame` expects. Read `normalise_frame` (`yfinance_source.py:78`) and
+  copy the shape an existing test in `tests/data/test_yfinance_source.py` builds.
+* `_drain` must step `stream_ticks` without waiting on real 60-second sleeps.
+  Read `tests/data/test_feed_health.py` for how this repo drives an async
+  generator in a test.
+* The recovery test needs a client whose answers change between polls.
+
+⚠️ A frame of the wrong shape would make every one of these pass for the wrong
+reason, which is precisely the failure this project has hit three times.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1188,22 +1296,28 @@ without waiting on real sleeps.
 .venv/Scripts/python.exe -m pytest tests/data/test_one_symbol_cannot_mask_an_outage.py -v
 ```
 
-- [ ] **Step 3: Add the setting**
+- [ ] **Step 3: Add the constructor argument**
 
-In `src/qat/config.py`:
+In `src/qat/data/yfinance_source.py`, in `YFinanceMarketDataSource.__init__`
+beside `max_consecutive_failures`:
 
 ```python
-    # The share of watched symbols that must be failing before the market-data
-    # feed is reported DOWN. A symbol counts as failing once it has missed
-    # `market_data_max_consecutive_failures` polls in a row.
-    #
-    # ⚠️ Half, not "any". One delisted or thinly-traded symbol must never report
-    # the feed down; 99 of 100 silent for 25 minutes (3 September) must.
-    feed_down_symbol_fraction: float = Field(default=0.5, gt=0, le=1)
+        down_symbol_fraction: float = 0.5,
 ```
 
-⚠️ Use the real name of the existing consecutive-failure setting — read
-`yfinance_source.py` for what `max_consecutive_failures` is actually bound to.
+```python
+        # The share of watched symbols that must be failing before the feed is
+        # reported DOWN. A symbol counts as failing once it has missed
+        # `max_consecutive_failures` polls in a row.
+        #
+        # ⚠️ Half, not "any". One delisted or thinly-traded symbol must never
+        # report the feed down; 99 of 100 silent for twenty-five minutes
+        # (3 September) must, and did not.
+        self.down_symbol_fraction = down_symbol_fraction
+```
+
+⚠️ A constructor argument, matching `max_consecutive_failures` beside it — not a
+`Settings` field. See this task's Interfaces block for why.
 
 - [ ] **Step 4: Replace the counter**
 
@@ -1225,21 +1339,16 @@ entire reason for counting per symbol.
 ⚠️ `_delay_after` takes a single int today. Give it the failing count, or the
 backoff will no longer match the state it is backing off from.
 
-- [ ] **Step 5: Document the setting in the manual**
-
-⚠️ Required — see the Global Constraints. Add `QAT_FEED_DOWN_SYMBOL_FRACTION` to
-Appendix B of `scripts/manual_body.py`.
-
-- [ ] **Step 6: Run the tests, then the FULL suite**
+- [ ] **Step 5: Run the tests, then the FULL suite**
 
 ```bash
 .venv/Scripts/python.exe -m pytest -q
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add src/qat/data/yfinance_source.py src/qat/config.py scripts/manual_body.py tests/data/test_one_symbol_cannot_mask_an_outage.py
+git add src/qat/data/yfinance_source.py tests/data/test_one_symbol_cannot_mask_an_outage.py
 git commit -m "Feed health is measured per symbol, so one answer cannot mask an outage"
 ```
 
@@ -1266,10 +1375,77 @@ for it.
 
 - [ ] **Step 1: Write the failing test**
 
-A test asserting that when a poll returns nothing for symbols that were
-requested, the log carries enough to identify the mechanism next time: the count
-requested versus returned, and whether `YfData`'s cached `_cookie` and `_crumb`
-were present at that moment. Assert on the LOG, at WARNING.
+Create `tests/data/test_a_failed_poll_records_what_came_back.py`:
+
+```python
+"""Three hypotheses were tested on 3 September and all three failed.
+
+NOT the batch size: in a fresh process 100, 75, 50, 30, 20 and 10 symbols all
+returned complete data, 100/100 in 3.7s. NOT the crumb on the price path: a
+deliberately poisoned `_crumb` still returned 295 rows, because `download()` does
+not use it. NOT an ongoing 401 storm: the burst was 13 errors between 14:51:28 and
+14:52:15, then nothing, while the outage ran twenty-five minutes longer.
+
+So the mechanism is UNKNOWN, and this records what a failing poll actually saw
+rather than shipping a remedy for a guess.
+"""
+
+from __future__ import annotations
+
+import logging
+
+import pandas as pd
+import pytest
+
+from qat.data.yfinance_source import YFinanceMarketDataSource
+
+
+class _EmptyClient:
+    def download(self, tickers, **kwargs):
+        return pd.DataFrame()
+
+
+@pytest.mark.asyncio
+async def test_a_partial_poll_records_requested_against_returned(caplog):
+    source = YFinanceMarketDataSource(client=_EmptyClient())
+
+    with caplog.at_level(logging.WARNING):
+        await source._poll_once(["BHP.AX", "CBA.AX", "WOW.AX"])
+
+    assert "3" in caplog.text, "the number REQUESTED must be recorded"
+    assert "0" in caplog.text, "the number RETURNED must be recorded"
+
+
+@pytest.mark.asyncio
+async def test_the_probe_records_whether_a_session_was_cached(caplog):
+    """The one fact that separates a poisoned process from a poisoned account."""
+    source = YFinanceMarketDataSource(client=_EmptyClient())
+
+    with caplog.at_level(logging.WARNING):
+        await source._poll_once(["BHP.AX"])
+
+    lowered = caplog.text.lower()
+    assert "crumb" in lowered and "cookie" in lowered
+
+
+@pytest.mark.asyncio
+async def test_a_complete_poll_records_nothing(caplog):
+    """The probe must not add a line to every healthy poll - 60 a minute of
+    them would bury the one that matters."""
+    raise NotImplementedError("supply a client returning all requested symbols")
+
+
+@pytest.mark.asyncio
+async def test_the_probe_never_breaks_the_poll(caplog):
+    """⚠️ A diagnostic must never break the feed it is diagnosing. If reading
+    YfData's cached state raises, the poll still returns its ticks."""
+    raise NotImplementedError("monkeypatch the introspection to raise, assert the poll survives")
+```
+
+⚠️ **The two `NotImplementedError` bodies are yours**, and they are the two that
+cannot be written without reading the code: one needs a client returning the full
+multi-index frame `normalise_frame` expects, and one needs to know how the probe
+reaches `YfData`.
 
 ⚠️ Read `yfinance.data.YfData` before writing the probe — it is a singleton via
 `SingletonMeta`, so reading its cached state must not construct a second one or
@@ -1429,6 +1605,6 @@ log. Do not begin it as part of executing this plan.
 ## Self-review notes
 
 - **Spec coverage:** A → Tasks 1-3; B → Tasks 4-5; C → Task 6; D → Task 7; E → Task 8; F → no task, correctly (report-only means nothing changes); G → Task 9; H → Task 10. Error handling and Testing → each task's own steps plus Task 11.
-- **Deliberately unresolved, and flagged rather than guessed:** several tasks name a fixture or a class the plan could not verify without reading further (`oms`, `_record_fill`, `adapter`, `order_on_the_wire`, `YFinanceQuoteSource`). Each such step says to read the real file and use the real name. That is honest ignorance, not a placeholder — inventing a plausible name would be worse, because it would look correct.
+- **Deliberately unresolved, and flagged rather than guessed:** several tasks name a fixture or a class the plan could not verify without reading further (`oms`, `_record_fill`, `adapter`, `order_on_the_wire`, `YFinanceMarketDataSource`). Each such step says to read the real file and use the real name. That is honest ignorance, not a placeholder — inventing a plausible name would be worse, because it would look correct.
 - **Type consistency:** `filled_quantity: float | None` is used identically in Tasks 1, 2, 3. `ErrorAction`/`classify` signatures match between Tasks 4 and 5. `_poll_once`'s tuple return is introduced in Task 7 and consumed in Tasks 8 and 9.
 - **The riskiest task is 3**, because it changes the live order path and every OMS test runs through it. It is the only Part One task whose steps mandate a full-suite run before commit.
