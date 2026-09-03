@@ -15,8 +15,23 @@ warning codes like 404 that leave the order live) HALTED trading, and a
 filled order's status was silently overwritten by a stale late notice. The
 tests below pin both halves of that fix: a DONE order stops being
 order-scoped at all (`_order_for_req_id`), and the routine lifecycle codes
-are enumerated as benign (`ib_errors.BENIGN_ORDER_ERROR_CODES`) rather than
-falling through to HALT.
+are enumerated as benign (`ib_errors.BENIGN_ORDER_WARN_CODES` /
+`BENIGN_ORDER_REJECT_CODES`) rather than falling through to HALT.
+
+⚠️ A THIRD round lives here too (Task 5 review, round 2), on the SAME two
+methods, both still-open even after the above:
+
+1. The second cut still wrote `status = "rejected"` for every benign code,
+   including the ones (105, 110, 321, 329, 399, 404, 434) ib_async's own
+   wrapper.py keeps the order LIVE for - `ErrorAction.WARN` now exists
+   precisely so a still-live warning changes nothing about the order.
+2. `_order_for_req_id`'s terminal gate treated a LOCALLY, OPTIMISTICALLY
+   written "cancelled"/"rejected" as just as done as a broker-reported
+   "filled" - so `cancel_order`'s own immediate `status = "cancelled"`
+   write (before any broker confirmation; see its docstring's 19 August
+   case) could suppress a genuine LATER error about the same order,
+   resolving it to `None` -> IGNORE -> DEBUG instead of HALTing. The gate
+   now checks "filled" only.
 """
 
 from __future__ import annotations
@@ -127,6 +142,42 @@ def test_a_warning_lifecycle_code_does_not_halt(adapter, order_on_the_wire, publ
     assert not any(type(e).__name__ == "KillSwitchEvent" for e in published)
 
 
+def test_a_still_live_warning_code_leaves_status_unchanged_and_publishes_nothing(
+    adapter, order_on_the_wire, published
+):
+    """⚠️ IMPORTANT 1 (Task 5 review, round 2). 105 is ib_async's own
+    `warningCodes` - wrapper.py records it on the trade WITHOUT cancelling
+    it ("DO NOT delete the trade object because the order is STILL LIVE at
+    the broker"). Writing `status = "rejected"` here, as the previous round
+    did for every benign code alike, would tell the rest of the app - and,
+    from a later task, the OMS - that an order which can still fill never
+    would. `published == []`, not just "no KillSwitchEvent": a WARN must not
+    publish ANYTHING, since a later task wires a publish onto this same
+    branch for OTHER actions and that must not leak onto this one."""
+    before = adapter._orders[order_on_the_wire.app_id].status
+
+    adapter._on_ib_error(
+        order_on_the_wire.req_id,
+        105,
+        "order being modified does not match the original order",
+        None,
+    )
+
+    assert adapter._orders[order_on_the_wire.app_id].status == before
+    assert published == []
+
+
+def test_code_202_still_marks_rejected_and_does_not_halt(adapter, order_on_the_wire, published):
+    """⚠️ IMPORTANT 1, the other half. 202 means the order is DONE -
+    wrapper.py carves it out of its own `warningCodes` because it is
+    literally "Order Canceled" - so it belongs in `BENIGN_ORDER_REJECT_CODES`,
+    not the new WARN set, even though both come from the same enumeration."""
+    adapter._on_ib_error(order_on_the_wire.req_id, 202, "Order Canceled - Reason:", None)
+
+    assert adapter._orders[order_on_the_wire.app_id].status == "rejected"
+    assert not any(type(e).__name__ == "KillSwitchEvent" for e in published)
+
+
 def test_a_lifecycle_code_against_an_already_filled_order_is_ignored(
     adapter, order_on_the_wire, published
 ):
@@ -155,6 +206,27 @@ def test_an_unknown_code_against_an_already_filled_order_is_still_ignored(
 
     assert adapter._orders[order_on_the_wire.app_id].status == "filled"
     assert not any(type(e).__name__ == "KillSwitchEvent" for e in published)
+
+
+def test_an_unknown_code_against_a_locally_cancelled_order_still_halts(
+    adapter, order_on_the_wire, published
+):
+    """⚠️ IMPORTANT 2 (Task 5 review, round 2). `cancel_order` writes
+    `status = "cancelled"` the instant `cancelOrder` is issued, before any
+    broker confirmation - its own docstring records 19 August, when a cancel
+    reported `PendingCancel` while being rejected outright with error 10147.
+    Gating order-scoping on "cancelled" (as the previous round did, alongside
+    "filled") would let that OPTIMISTIC local write suppress the very next
+    real error about the same order - exactly the shape of a genuinely
+    orphaned protective stop going unremarked. Unlike the "already filled"
+    tests above, this one must NOT be ignored: it must resolve to
+    order-scoped and, for an unrecognised code, HALT."""
+    adapter._orders[order_on_the_wire.app_id].status = "cancelled"
+
+    adapter._on_ib_error(order_on_the_wire.req_id, 9999, "something nobody listed", None)
+
+    assert adapter._orders[order_on_the_wire.app_id].status == "rejected"
+    assert any(type(e).__name__ == "KillSwitchEvent" for e in published)
 
 
 @pytest.mark.asyncio

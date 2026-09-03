@@ -66,15 +66,35 @@ _T = TypeVar("_T")
 _LIVE_PORTS = {4001, 7496}
 _PAPER_PORTS = {4002: "Gateway", 7497: "TWS"}
 
-# The statuses `_order_for_req_id` treats as CLOSED. Mirrors the exact set
-# oms.py's own `cancel_order` guard already uses to mean "nothing more can
-# happen to this order" (`if order.status in ("filled", "cancelled",
-# "rejected"):`) - not imported from there, because the adapter must not
-# import the OMS, but it is the SAME three statuses: a status the OMS itself
-# already treats as unchangeable is equally not something IBKR can still be
-# talking about. "new", "pending_signoff" and "transmitted" are deliberately
-# excluded - all three are still-open as far as the broker is concerned.
-_TERMINAL_ORDER_STATUSES = frozenset({"filled", "cancelled", "rejected"})
+# The statuses `_order_for_req_id` treats as CLOSED - i.e. IBKR cannot still
+# be talking about this order, so a later error naming it is not
+# order-scoped.
+#
+# ⚠️ "filled" ONLY (Task 5 review, round 2). This USED to be the same three
+# statuses oms.py's own `cancel_order` guard uses (`if order.status in
+# ("filled", "cancelled", "rejected"):`) - not imported from there, the
+# adapter must not import the OMS, but the same three values - and that
+# equivalence was the bug. "filled" is the one status this adapter only
+# ever learns FROM THE BROKER (`from_ib_trade` reading
+# `trade.orderStatus`). "cancelled" and "rejected" can each be written
+# LOCALLY, by this adapter itself, on an assumption that has already been
+# wrong once: `cancel_order` (below) sets "cancelled" the instant
+# `cancelOrder` is issued, before any confirmation - its own docstring
+# records 19 August, when a cancel reported `PendingCancel` while being
+# rejected outright with error 10147, i.e. nothing was actually cancelled.
+# `_on_ib_error` itself sets "rejected" for `ErrorAction.REJECT`/`HALT`,
+# and a HALT is precisely a code this app does not understand yet - not a
+# broker confirmation either.
+#
+# Treating either optimistic write as CLOSED would let it suppress the very
+# next error about the same order: a "cancelled" write followed by a
+# genuine broker refusal (10147, or anything unrecognised) resolved to
+# `None` -> IGNORE -> logged at DEBUG instead of HALTing - the orphaned
+# protective stop stays live at the broker and nothing is told. "new",
+# "pending_signoff", "transmitted", "cancelled" and "rejected" are ALL
+# still order-scoped as far as this gate is concerned; only a
+# broker-reported fill is beyond argument.
+_TERMINAL_ORDER_STATUSES = frozenset({"filled"})
 
 
 class ReadOnlyModeError(Exception):
@@ -843,6 +863,9 @@ class IBAdapter:
                 )
                 self.ib_client.cancelOrder(trade.order)
 
+        # ⚠️ OPTIMISTIC - no broker confirmation yet, only that `cancelOrder`
+        # was issued. See `_TERMINAL_ORDER_STATUSES`, which deliberately does
+        # NOT treat this write as done, for exactly that reason.
         order.status = "cancelled"
         return order
 
@@ -882,17 +905,31 @@ class IBAdapter:
         orderId, and the group is the same order as far as this app is
         concerned.
 
-        ⚠️ A DONE order is not order-scoped either, mirroring ib_async's own
-        `if not trade.isDone():` guard before it will touch a trade further
-        (`wrapper.py`'s `error` handler). Nothing ever removes an entry from
-        `_orders`/`_ib_orders`/`_ib_groups` - they have to stay matchable for
-        as long as a genuine late rejection could still arrive - which means
-        a filled or cancelled order's orderId stays matchable FOREVER too.
-        A 202 for an OCA sibling IBKR cancels when its twin fills, or any
-        other late lifecycle notice against an order already
-        filled/cancelled/rejected, must not resurrect it as "order-scoped"
-        and overwrite a settled status - let alone halt trading over
-        history.
+        ⚠️ ONLY A "filled" ORDER IS DONE HERE (Task 5 review, round 2) - not
+        ib_async's own broader `isDone()` (which also covers Cancelled/
+        Inactive), and not the three-status set this used to share with
+        oms.py's `cancel_order` guard. Both would be WRONG for this gate
+        specifically, because "cancelled" and "rejected" on `self._orders`
+        can each be a LOCAL, OPTIMISTIC write THIS adapter made before any
+        broker confirmation - `cancel_order` sets "cancelled" the moment
+        `cancelOrder` is issued, and `_on_ib_error` sets "rejected" for a
+        REJECT or HALT action, the latter precisely when the code is not
+        understood yet. Excluding either from order-scoping would let it
+        suppress the very next real error about the SAME order: a
+        "cancelled" write followed by error 10147 (cancel actually refused,
+        19 August) or any other unrecognised code must still resolve to
+        order-scoped and HALT, not silently vanish into `None` -> IGNORE ->
+        DEBUG. "filled" is different in kind - `from_ib_trade` only ever
+        writes it from `trade.orderStatus`, the broker's own report - so a
+        filled order really is done, and a late 202 against it (an OCA
+        sibling IBKR cancels when its twin fills) must not resurrect it as
+        order-scoped, overwrite the fill, or halt trading over history.
+
+        Nothing ever removes an entry from `_orders`/`_ib_orders`/
+        `_ib_groups` - they have to stay matchable for as long as a genuine
+        late rejection could still arrive - which means a filled order's
+        orderId stays matchable FOREVER too, and this gate is what stops a
+        late notice against it from doing anything.
         """
         app_id = self._match_req_id(req_id)
         if app_id is None:
@@ -933,10 +970,19 @@ class IBAdapter:
         the order will not fill either way. Only whether trading continues
         differs.
 
+        ⚠️ `ErrorAction.WARN` changes NOTHING about the order, and returns
+        before either the status write or the HALT check (Task 5 review,
+        round 2). These are the codes `ib_errors.BENIGN_ORDER_WARN_CODES`
+        documents as ones ib_async's own wrapper.py keeps the trade LIVE
+        for - writing "rejected" onto an order that can still fill is the
+        exact defect this branch exists to avoid.
+
         ⚠️ Does not yet tell the OMS. A later task publishes
         `OrderRejectedEvent` from here so the optimistic booking sign-off
         made can be reversed - this task only stops the order being believed
         live and, for anything unrecognised, stops new ones being placed.
+        WARN must never feed that future event: reversing the booking of an
+        order that is still live would be wrong in the other direction.
         """
         # Narrowed with isinstance rather than coerced with int(). The
         # parameters are typed `object` because eventkit hands this whatever
@@ -965,6 +1011,20 @@ class IBAdapter:
                 )
                 return
 
+            if action is ErrorAction.WARN:
+                # ⚠️ STILL LIVE (Task 5 review, round 2). No status write, no
+                # publish, no halt - see `ib_errors.BENIGN_ORDER_WARN_CODES`
+                # and this method's own docstring for why.
+                logger.warning(
+                    "IBKR warning for order %s (reqId %s), code %s: %s. The order "
+                    "remains live at the broker; nothing changed.",
+                    app_id,
+                    rid,
+                    code,
+                    error_string,
+                )
+                return
+
             order = self._orders.get(app_id or "")
             if order is not None:
                 order.status = "rejected"
@@ -978,7 +1038,8 @@ class IBAdapter:
             )
             if action is ErrorAction.HALT:
                 # ⚠️ Unrecognised, so it halts. Adding a code to
-                # BENIGN_ORDER_ERROR_CODES is the deliberate way to stop this.
+                # BENIGN_ORDER_WARN_CODES or BENIGN_ORDER_REJECT_CODES is the
+                # deliberate way to stop this.
                 asyncio.ensure_future(
                     self.bus.publish(
                         KillSwitchEvent(
