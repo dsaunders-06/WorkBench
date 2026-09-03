@@ -1418,7 +1418,85 @@ from qat.domain.display_dates import format_display_date
 #    ⚠️ IT ALSO MAKES A BLANK CELL MEAN SOMETHING. With the escaped state
 #    labelled, an empty Status cell inside a hold window is now unambiguous
 #    evidence of a bug instead of something to reason about from prices.
-MILESTONE = "M163"
+# M164 - portfolio risk measured on the book actually held.
+#
+# ⚠️ THE MODEL HAD ALMOST CERTAINLY NEVER SEEN PORTFOLIO RISK. `risk_metrics()`
+# read the last risk DECISION's recorded `portfolio_check`, and that dict is
+# written at `engine.py:311`, one rail AFTER the governor's position-count
+# refusal returns at `:283`. With the book at 10 of 10 every candidate is refused
+# before the portfolio checker runs: 3,533 of 3,596 audit rows carry the single
+# reason "already at the 10-position limit", all buys, all stopping at the
+# `governor` key. And `AuditLog._entries` is IN-MEMORY and never rehydrated, so
+# `entries()` is empty at every startup regardless. The advisory was reading a
+# DECISION ARTEFACT while asking about the CURRENT BOOK.
+#
+# The same read fed the Risk Console's four tiles and the Workbench's VaR tile,
+# which is why they sat at "-" from 31 August. Two screens showed one label over
+# two different numbers until this milestone closed it.
+#
+# ✅ WHAT WAS MEASURED BEFORE ANYTHING WAS BUILT. The proposed fix was to search
+# back through the audit log for the most recent entry that HAS a check. That was
+# REFUSED on evidence: the most recent stored value was 1,161 rows and two days
+# old, computed on an EIGHT-position book that no longer existed, and the
+# in-memory log means a search back finds nothing at startup anyway. It would
+# have been code that changed nothing while looking like a fix.
+#
+# ⚠️ ABSENT IS None, NEVER 0.0 - the one rule the whole thing turns on.
+# `compute_historical_var` and `compute_expected_shortfall` both return 0.0 below
+# two observations, so a live path that called them blindly would hand the model
+# "no tail risk" about a book it could not measure. Every gate happens BEFORE the
+# call. Three review rounds each found a different input that defeated an earlier
+# version of that gate: an unvalidated `min_observations` (a caller passing 0 or 1
+# switched the rail off entirely), non-finite EQUITY (`nan <= 0` is False),
+# non-finite WEIGHTS (nan is truthy, so `if value` admitted it), and non-finite
+# RETURN OBSERVATIONS (`dropna()` does not remove inf, and `-inf - -inf` in
+# np.percentile becomes nan, which `max(0.0, -nan)` turns back into 0.0).
+# The last is reachable from real data: `pct_change()` yields inf on a 0.0 prior
+# close, and a SHORT position flips it negative.
+#
+# ⚠️ AND THE STALENESS BOUND MEASURED THE WRONG THING - item 6's own failure,
+# rebuilt inside item 6's fix. `AccountPoller` fails SOFT: `_degrade` keeps
+# serving the last good reading with `taken_at` carried forward and `error` set,
+# rather than raising, so `poll()`'s try/except never fired. `computed_at` was
+# stamped from the CLOCK, dating the computation rather than the data. Measured
+# against the real poller: a FOUR-HOUR-OLD book reaching a reader labelled sixty
+# seconds old, 80x the bound, notes empty, nothing logged. Now a snapshot carrying
+# `error` is refused, and `computed_at` comes from `snapshot.taken_at`.
+#
+# THE GENERALISATION, because it is not about this module: any component that
+# re-stamps a value it did not itself measure destroys the only evidence of that
+# value's age, and an upstream that fails soft defeats every try/except written
+# around it.
+#
+# ⚠️ TWO FIGURES THAT LOOK ALIKE AND ARE NOT. The decision path's
+# `single_name_pct` and `sector_pct` are the CANDIDATE's; there is no candidate in
+# a held book, so the live equivalents are the LARGEST in the book. They are
+# therefore labelled differently wherever they appear together - "Largest single
+# name" against "candidate at last decision" - because putting 12.5% beside 12.5%
+# under one label invites a reader to treat a coincidence as agreement. VaR and ES
+# have no such asymmetry and keep their labels.
+#
+# ⚠️ AND THE INSTRUMENT LESSON, AGAIN. A fix to make the tile reads type-checked
+# was verified by READING it and was wrong: `getattr(self.runtime,
+# "book_risk_monitor", None)` one line earlier returns `Any`, which poisons every
+# attribute read below it, so a deliberately misspelled `BookRisk` field
+# type-checked clean across all 173 files. Three of the four tiles could have
+# rendered "-" forever with the suite green. Found only by re-applying the typo
+# and RUNNING mypy.
+#
+# The live figure reuses `PortfolioRiskChecker`'s own internals rather than
+# reimplementing them, and a test asserts the two are EQUAL rather than similar -
+# they are displayed side by side, and measuring a rail with a different
+# instrument than the rail uses is how 8 August read 5.02% against a true 5.87%.
+#
+# Also: `risk_metrics()` had been dropping `var_99` and `single_name_pct`, which
+# are non-null in 63 of the 63 rows that carry a check, through a hardcoded
+# two-name tuple.
+#
+# INERT UNTIL IT MEASURES. `BookRiskMonitor` reads the SHARED throttled account
+# poller, never the broker, so it adds no broker traffic; it changes what the
+# operator and the model can SEE, not what the system does.
+MILESTONE = "M164"
 
 _UNKNOWN = "unknown"
 
