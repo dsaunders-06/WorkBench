@@ -20,6 +20,15 @@ class Order:
     status: OrderStatus = "new"
     limit_price: float | None = None
     filled_price: float | None = None
+    # The amount that actually EXECUTED, as distinct from `quantity`, which is
+    # what was ORDERED (3 September 2026).
+    #
+    # ⚠️ `None` means "this adapter does not report executed quantity", which is
+    # a DIFFERENT CLAIM from zero. Read as the order's size it re-creates the
+    # defect this field exists to fix - on 3 September TWS staged a 790-share
+    # order on a precautionary limit and the app booked all 790 against a broker
+    # holding none. Read as 0 it under-books a real fill.
+    filled_quantity: float | None = None
     # The price this order was sized against at submission. Kept so the
     # sign-off cash check has a known cost even when the broker cannot supply a
     # live quote - without it, an adapter that does not serve market data

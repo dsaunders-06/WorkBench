@@ -321,6 +321,10 @@ def from_ib_trade(trade: Trade, our_order: Order) -> Order:
     our_order.status = _IB_STATUS_MAP.get(trade.orderStatus.status, "transmitted")
     if trade.orderStatus.avgFillPrice:
         our_order.filled_price = trade.orderStatus.avgFillPrice
+    # Unconditional, unlike `filled_price` above: 0.0 is a MEANINGFUL executed
+    # quantity - it is the staged-order case - so an `if` here would leave it
+    # None and lose the very reading that matters.
+    our_order.filled_quantity = float(trade.orderStatus.filled)
     perm_id = trade.order.permId or trade.orderStatus.permId
     if perm_id:
         our_order.order_id = str(perm_id)
