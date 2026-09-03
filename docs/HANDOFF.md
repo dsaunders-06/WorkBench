@@ -42,9 +42,9 @@ source.
 | | |
 |---|---|
 | Deployed build | **M163 (`06d3156`)**, installed 2 September 17:28, SHA256 `655C29AB…59D7`, signature Valid on the installed copy. ✅ **READ BACK 17:28:59** off its own log — `Build: M163 (06d3156, built 02/09/2026 17:23:26 AEST, packaged)`, 100 symbols seeded, ten positions adopted with **10 of 10 carrying a stop**, 20 legs, excursion 10 of 10, resting scan clean, zero ERROR/CRITICAL. The dist hash MOVED (`ED2A768E…C181` → `299027EF…C76A` unsigned → `655C29AB…59D7` signed), which is the check M160 failed. Rollback: `C:\QuantAdvisoryTerminal.bak-0961752-20260902-1728` (M162). Previous: M162, M161, M159 (read back 3×) |
-| Deploy gap | ✅ **NONE — HEAD IS THE INSTALLED BUILD.** The manual position close (button + `PositionCloser` + `IBAdapter.cancel_order`) and the escaped-hold Status note both shipped in M163. The close button is **INERT until pressed** — no autonomous path reaches it — so this changed nothing unattended. ⚠️ **EXPECT THE FIRST PRESS TO REFUSE:** `cancelOrder` is fire-and-forget and `PendingCancel` is the ordinary transient of an HONOURED cancel, now correctly counted as a survivor. That branch deliberately does not recover, so the position is briefly **BARE** until `rearm_protective_stops` re-proposes a stop. The fix then is a bounded re-read (~3 polls over 2s) before declaring survivors — **NOT** a looser predicate |
+| Deploy gap | ⚠️ **M164 IS BUILT FROM NOTHING — 26 commits of live book risk are on `master` and NOT deployed.** The installed build is M163. Needs a build, a moved-hash check, sign, deploy and read-back. It changes only what is DISPLAYED and what the model is TOLD: the whole-branch review confirmed `git diff` over `oms/`, `engine.py`, `governor.py`, `kill_switch.py`, `delever.py` and `autonomy/` is EMPTY, and `book_risk` is imported by exactly two modules. Previously: ✅ **NONE — M163 WAS HEAD.** The manual position close (button + `PositionCloser` + `IBAdapter.cancel_order`) and the escaped-hold Status note both shipped in M163. The close button is **INERT until pressed** — no autonomous path reaches it — so this changed nothing unattended. ⚠️ **EXPECT THE FIRST PRESS TO REFUSE:** `cancelOrder` is fire-and-forget and `PendingCancel` is the ordinary transient of an HONOURED cancel, now correctly counted as a survivor. That branch deliberately does not recover, so the position is briefly **BARE** until `rearm_protective_stops` re-proposes a stop. The fix then is a bounded re-read (~3 polls over 2s) before declaring survivors — **NOT** a looser predicate |
 | Pushed | ⚠️ **DO NOT HARDCODE A COUNT HERE** — `handoff_state.py` derives it (`vs origin`), and every number written into this row has drifted within the hour. It said 17 on 2 September when the true count was 2. The M163 batch went up 2 September and CI ran green on it in 7m52s. ✅ **CI IS HEALTHY** — the billing wall cleared ~1 September and a 46-commit push ran green in **7m9s**. One push is one run, ~8.6 min of 2,000 at `windows-latest`'s 2× multiplier, so batch rather than push per commit |
-| Suite | **3,076 passed, 26 skipped.** ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted", so `&&` hides a failure |
+| Suite | **3,141 passed, 26 skipped** (was 3,076; M164 added 65). ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted", so `&&` hides a failure |
 | Watchlist | **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
 | Account | **TEN POSITIONS, 20 resting legs, all protected** — A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW, verified from the broker on every scan. Equity **1,007,638.94** at the 2 September close (+137.91 on the day, cash unchanged at 413,034.56). **No trade since 31 August** |
@@ -4360,9 +4360,25 @@ THE STATE
 Deployed M163 (06d3156), installed and READ BACK 2 September 17:28:59.
 Rollback: C:\QuantAdvisoryTerminal.bak-0961752-20260902-1728 (contains M162).
 
-✅ NO DEPLOY GAP. The manual position-close feature and the escaped-hold Status
-note both shipped in M163. The close button is INERT until pressed, so nothing
-unattended changed.
+⚠️ M164 IS ON master AND NOT DEPLOYED - 26 commits, the live book-risk work.
+The installed build is M163, which contains none of it. Needs a build, a
+moved-hash check, sign, deploy and read-back.
+
+WHAT IT CHANGES: only what is DISPLAYED and what the MODEL IS TOLD. The
+whole-branch review verified the order path is untouched - git diff over oms/,
+engine.py, governor.py, kill_switch.py, delever.py and autonomy/ is EMPTY, and
+book_risk is imported by exactly two modules. The new engine reads the SHARED
+throttled account poller, never the broker.
+
+WHAT IT FIXES: the AI advisory had almost certainly never seen portfolio risk,
+and the four Risk Console tiles plus the Workbench VaR tile had sat at "-" since
+31 August. All of them read the last risk DECISION's figures, which are written
+one rail AFTER the governor's position-count refusal - so at 10 of 10 no
+candidate ever reaches the portfolio checker (3,533 of 3,596 audit rows say
+exactly that) - and the audit log is in-memory, so it is empty at every startup.
+
+✅ The manual position-close feature and the escaped-hold Status note shipped in
+M163. The close button is INERT until pressed, so nothing unattended changed.
 
 ⚠️ THE CLOSE BUTTON HAS NEVER BEEN PRESSED against the real broker. Expect the
 FIRST press to REFUSE: cancelOrder is fire-and-forget and PendingCancel is the
@@ -4371,7 +4387,7 @@ That branch deliberately does not recover, so the position is briefly BARE until
 rearm_protective_stops re-proposes a stop. The fix then is a bounded re-read (~3
 polls over 2s) before declaring survivors - NOT a looser predicate.
 
-Suite 3,076 passed / 26 skipped. ruff, black, mypy src, bandit clean.
+Suite 3,141 passed / 26 skipped. ruff, black, mypy src, bandit clean.
 For the unpushed count read handoff_state.py, not this line. Tree clean, on master.
 
 Broker is TWS on 7497 (Gateway closed). Account DUQ200898, paper, AUD.
