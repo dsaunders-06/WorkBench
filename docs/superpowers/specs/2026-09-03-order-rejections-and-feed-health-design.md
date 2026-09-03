@@ -146,10 +146,46 @@ installed library (`ib_async 2.1.0`):
 
 `OrderStatus.filled` **is** the executed quantity. Nothing needs inventing.
 
-### The change
+### ⚠️ AND `oms.py:861` IS NOT CHANGED AFTER ALL. Third correction, and the last.
 
-`Order` gains `filled_quantity: float | None = None`. `from_ib_trade` populates it
-from `trade.orderStatus.filled`. `oms.py:861` books that.
+**Implemented, reviewed, and REVERTED on 3 September** (`5cf7168`, reverted by
+`f84b55c`). Making sign-off book `filled_quantity` is a live-path regression, and
+the review reproduced it rather than arguing it:
+
+    AFTER  tracked=0.0   broker=790  ->  mismatch  ->  KILL SWITCH TRIPPED
+    BEFORE tracked=790.0 broker=790  ->  clean
+
+**`place_order` returns before anything has executed.** `_await_perm_id` waits for
+the permId only — the order is live at the broker and unfilled — so
+`from_ib_trade` writes `filled_quantity = 0.0` at sign-off, correctly. Booking
+that books nothing.
+
+**And nothing books it later.** `_is_foreign_unrecorded` returns False for any id
+the app itself placed, so the later real fill is skipped as "already ours".
+**Sign-off is the ONLY quantity-booking site for an own order.** Booking nothing
+there means booking nothing, ever — and then the protective stop eventually fires
+as a foreign fill and is *subtracted*, giving a phantom SHORT against a flat
+broker. The mirror of 3 September.
+
+⚠️ **THE CONSTRAINT NOBODY HAD STATED:** there must be exactly one place that
+eventually books the executed quantity of an asynchronously-filling own order,
+and **there is none**. Sign-off cannot be it.
+
+### So what actually fixes 3 September
+
+**The existing design is optimistic-book-plus-reconcile, and it worked.** Sign-off
+books the ordered size; reconciliation catches divergence. On 3 September it did
+exactly that, in four minutes, and halted flow. What it cost was a blocked entry
+and an operator intervention — not a wrong position.
+
+**The gap is that nothing ever told the app the order was dead.** Error 383 said
+so and was not read. Once the app consumes it (§B), it can mark the order rejected
+**and reverse the optimistic booking**, which resolves the phantom inside the
+design that already exists rather than replacing it.
+
+`Order.filled_quantity` is KEPT — it is correct, reviewed, and it is what the
+rejection path uses to know how much was actually taken before the order died.
+Only the sign-off consumption is dropped.
 
 ⚠️ **`None` means "this adapter does not report executed quantity" — a DIFFERENT
 CLAIM from zero.** It must never fall back to the order size, which is the defect;
@@ -214,6 +250,24 @@ defect it was named for.
 Today's order sat as `transmitted` indefinitely: `retry_pending` kept finding it,
 autonomy kept blocking it, and it never resolved. A terminal status frees the slot
 so a correctly-sized entry can take it.
+
+### ⚠️ AND IT MUST REVERSE THE OPTIMISTIC BOOKING. This is the actual fix.
+
+Sign-off books the ORDERED size on the reasoning that the order will fill and
+reconciliation will catch it if not. When a rejection proves it will never fill,
+that booking has to come back out — otherwise the phantom persists exactly as it
+did on 3 September, and the reconciliation rail keeps tripping on it every five
+minutes until a human intervenes.
+
+The amount to reverse is what sign-off booked **minus whatever actually executed
+before the order died** — a partially-filled-then-cancelled order leaves a real
+position behind. That is what `Order.filled_quantity` is for, and it is the only
+consumer of that field in this design.
+
+⚠️ **The adapter must not reach into the OMS to do this.** It publishes over the
+bus, as it already does for `KillSwitchEvent` (`ib_adapter.py:268`), and the OMS
+subscribes. The adapter importing the OMS is the coupling the module docstring's
+`KillSwitchEvent` precedent exists to prevent.
 
 ## C. The sizer's ceiling
 
