@@ -1554,7 +1554,66 @@ from qat.domain.display_dates import format_display_date
 # and two TWS presets remain in play - the blind-trading precaution (which did its
 # job, and should stay) and Error 10349's TIF override. Those are configuration,
 # not code.
-MILESTONE = "M165"
+# M166 - the quote streams, and a rejected sell stops doubling the short.
+#
+# ⚠️ THE BROKER QUOTE WAS NEVER A WAITING PROBLEM, and M165's own note above
+# says the opposite. `get_market_data` has been wrong twice. It first called
+# reqMktData and yielded ONCE before reading a Ticker whose fields default to
+# nan; that was diagnosed as "not waiting long enough" and replaced with
+# reqTickersAsync, which genuinely waits. It STILL returned nan, and the app
+# logged `No broker quote` on Gateway while a probe pulled full quotes from the
+# same account and the same port.
+#
+# Read out of ib_async on 4 September: reqTickersAsync issues
+# `reqMktData(..., snapshot=True)`, and IBKR SERVES NO DELAYED QUOTE TO A
+# SNAPSHOT. Lengthening the wait would have produced another confident fix and
+# another silent log - the fourth wrong diagnosis of this one feed.
+#
+# Measured against Gateway the same afternoon, a STREAMING request returned the
+# first delayed price for BHP, ANZ, IAG, TAH and TWE in 0.11s to 0.77s. The
+# bound here is 2.0s: the slowest case with margin, and a CEILING rather than a
+# wait - a quote that arrives in a tenth of a second returns in a tenth.
+#
+# ⚠️ The subscription is cancelled in a `finally`. IBKR caps concurrent market
+# data lines, and leaking one per sign-off would take the feed down by the same
+# slow path this exists to protect. A nan or non-positive field is now ABSENT
+# from the returned dict rather than present and meaningless: `{"last": nan}`
+# reads as a quote to every `if quote:` downstream, which was the original
+# defect's exact shape.
+#
+# ⚠️ A REJECTED SELL WAS DOUBLING THE SHORT. Found by the M165 review that had
+# been left outstanding. `_filled_quantities` is SIGNED - sign-off books
+# `-quantity` for a sell - while OrderRejectedEvent carried the UNSIGNED
+# `Order.quantity` and the handler always subtracted:
+#
+#     booked -9636, reversal -= 9636  ->  -19272
+#
+# That is the phantom the handler exists to remove, in the other direction, and
+# it was reachable the same day: A2M's exit was refused FIVE times by Error 354.
+# Each refusal would have deepened the error it was correcting, with
+# reconciliation chasing a number the app itself was moving away from it. Every
+# test in the file used a buy, so the suite was green on a handler that was
+# wrong for half its inputs. `side` is now REQUIRED on the event, no default -
+# a default is how the omission arrived.
+#
+# ALSO IN THIS BUILD:
+#
+# * A FAILED POLL RECORDS WHAT IT ACTUALLY GOT - returned against requested, and
+#   whether a cookie and crumb were cached. NO REMEDY SHIPS: three hypotheses
+#   were tested on 3 September and all three failed (not the batch size, not the
+#   crumb on the price path, not a 401 storm), so the mechanism is UNKNOWN and
+#   this is evidence for the next occurrence. The probe reads YfData through
+#   SingletonMeta's registry rather than constructing one, because `YfData()`
+#   would create the very object being observed.
+#
+# * yfinance pinned `>=1.5.2,<2`. The floor read 0.2.40 with 1.5.2 installed.
+#
+# ⚠️ WHAT IS NOT FIXED: the sizer still knows nothing about the broker's own
+# ceilings. On 4 September a 64,229-share TAH.AX order was accepted while the
+# TWS limit was set to 20,000, so that preset is NOT a share count and nothing
+# in the app reads any ceiling at all. Plan Task 6 is that work, and it belongs
+# BEFORE max positions is raised.
+MILESTONE = "M166"
 
 _UNKNOWN = "unknown"
 
