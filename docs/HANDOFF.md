@@ -219,17 +219,84 @@ named the order ids.** Cancelled by the operator in TWS.
 does on its own exits, this one left both legs resting. Check the scan after
 every exit until that is understood.
 
+## ✅ 4 SEPTEMBER, LATE: THE BUY PATH WORKED, AND THE CHEAP BATCH CLEARED
+
+**The first app-driven ENTRIES of the saga**, 14:28, minutes after the kill
+switch was reset on Gateway:
+
+    TWE.AX trimmed from 20637 to 10412 by the per-order cap of 10% of SPENDABLE cash
+    No broker quote for TWE.AX, so the price-drift check uses the application's own feed (5.4900)
+    Order signed off and transmitted: broker=579188638  buy 10412 TWE.AX
+    Order signed off and transmitted: broker=579188641  buy 64229 TAH.AX
+
+Both accepted with real IBKR ids. No 383, no 354, no 10349 — all three gates
+that blocked the morning are clear, and the drift check ran on both orders for
+the first time since 12 August. The book is full at ten.
+
+⚠️ **64,229 shares passed a limit set to 20,000**, so that TWS preset is not a
+share count. Do not assume the manual limit protects anything until Task 6 puts
+the ceiling where the sizer can read it.
+
+### ✅ THE QUOTE WAS NEVER A WAITING PROBLEM
+
+The previous entry here said the fix was "a wait, not an entitlement." **That
+was wrong, and it was the third wrong diagnosis of this feed.** Read out of
+ib_async: `reqTickersAsync` issues `reqMktData(..., snapshot=True)`, and IBKR
+serves no delayed quote to a snapshot. Lengthening the wait would have produced
+another confident fix and another silent log.
+
+Measured against Gateway the same afternoon, a STREAMING request returned the
+first delayed price in **0.11s to 0.77s** across BHP, ANZ, IAG, TAH and TWE.
+`get_market_data` now streams with a 2.0s ceiling and cancels in a `finally` —
+IBKR caps concurrent data lines, and leaking one per sign-off would take the
+feed down by the slow path the guard exists to prevent.
+
+### ⚠️ A REJECTED SELL WAS DOUBLING THE SHORT
+
+Found by the Task 5b review that had been outstanding. `_filled_quantities` is
+SIGNED — sign-off books `-quantity` for a sell — while `OrderRejectedEvent`
+carried the unsigned `Order.quantity` and the handler always subtracted:
+
+    booked -9636, reversal -= 9636  ->  -19272
+
+**Reachable that same day:** A2M's exit was refused five times by Error 354.
+Each refusal would have deepened the error it was correcting, with
+reconciliation chasing a number the app itself was moving away from it. Every
+test in the file used a buy, so the suite was green on a handler wrong for half
+its inputs. `side` is now REQUIRED on the event, with no default.
+
+### What else shipped, all sabotage-checked
+
+* **Task 9** — a failed poll now records returned-against-requested and whether
+  a cookie and crumb were cached. **NO REMEDY**: three hypotheses were tested on
+  3 September and all three failed, so the mechanism is still unknown.
+* **Task 10** — `yfinance>=1.5.2,<2`. The floor read `0.2.40` with 1.5.2
+  installed.
+
+⚠️ **Sabotage caught a vacuous test of my own.** Forcing the probe's registry
+lookup to `None` left all four of its tests green, because the no-session
+message also contains the words "cookie" and "crumb". Both states are pinned now.
+
+⚠️ **AND `git checkout --` DISCARDED AN UNCOMMITTED FIX AGAIN**, for the second
+time in two days, on the sabotage-restore step. This is already written down
+here and still happened. **Commit, then sabotage.**
+
 ## ⚠️ STILL OPEN AFTER 4 SEPTEMBER
 
-* **The app still logs `No broker quote` even on Gateway.** The probe got ticks
-  from a 15-second streaming subscription; `get_market_data`'s `reqTickersAsync`
-  snapshot does not wait long enough for delayed data. The fallback covers the
-  drift check, so this is not urgent — but the broker-quote path is still dead
-  and the fix is a wait, not an entitlement.
-* **Task 5b is committed but only partly reviewed.** The protective-stop guard
-  was added and pinned; the rest has not been through a whole-branch review.
-* **Plan tasks 6-10 untouched** — sizer ceiling, per-symbol feed health, the
-  yfinance poisoning instrumentation, the dependency pin.
+* **Plan tasks 6, 7, 8 and 11.** Task 6 (the sizer reads the broker's ceiling)
+  is the one that matters before raising max positions, and the 64,229-share
+  order above is why.
+* **Two defects found while writing Task 9's fixture, both Task 7's remit:**
+  given a MultiIndex that LACKS the requested ticker, `normalise_frame` does not
+  return empty — it flattens to level 0 and hands back ANOTHER symbol's prices
+  under the missing symbol's name. And a NaN close passes the `price <= 0` guard
+  and becomes a tick priced `nan`.
+* **The regime engine published nothing before the two entries fired**
+  (`Gating 1 strategies on the sideways DEFAULT`, 14:27:20). Sizing ran on a
+  default rather than a classified regime. Normal at warm-up; confirm it
+  classifies, because if it stays silent the sizing is an assumption.
+* **A closing fill still does not cancel its own OCA group.** Check the resting
+  order scan after every exit until that is understood.
 
 
 ## ⚠️ 3 SEPTEMBER: THE FIRST ENTRY SINCE 31 AUGUST, AND IT NEVER REACHED THE MARKET
