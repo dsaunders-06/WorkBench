@@ -57,9 +57,13 @@ from qat.data.broker.ib_translate import (
 from qat.data.broker.ticks import round_to_tick
 from qat.data.symbols import from_ibkr
 from qat.domain.bus import EventBus
-from qat.domain.events import BrokerOrderIdResolvedEvent, KillSwitchEvent
+from qat.domain.events import BrokerOrderIdResolvedEvent, KillSwitchEvent, OrderRejectedEvent
 
 logger = logging.getLogger(__name__)
+
+# IBKR's market-data tiers: 1 real-time, 2 frozen, 3 delayed, 4 delayed-frozen.
+# 3 is free for ASX and about twenty minutes behind.
+_DELAYED_MARKET_DATA = 3
 
 _T = TypeVar("_T")
 
@@ -243,6 +247,49 @@ class IBAdapter:
             if attempt > 1:
                 logger.info(
                     "IBKR connected on attempt %d of %d", attempt, self.max_connect_attempts
+                )
+            # ⚠️ ASK FOR THE FREE DELAYED TIER, OR IBKR ANSWERS NOTHING.
+            #
+            # `reqMarketDataType` defaults to 1 (real-time) on every new API
+            # connection. This account has no real-time ASX subscription, so at
+            # that tier every quote field comes back `nan` - and IBKR's
+            # blind-trading precaution then REFUSES the order outright:
+            #
+            #   Error 354: You are trying to submit an order without having
+            #   market data for this instrument.
+            #
+            # On 4 September that refused an A2M.AX exit four times in four
+            # minutes while the position sat 0.61R down past its minimum hold.
+            #
+            # ⚠️ THE COST WAS THREE WEEKS, NOT ONE MORNING. `get_market_data`'s
+            # docstring records that no `has drifted` line exists in any log
+            # back to 12 August, diagnoses it as a `reqMktData`/`sleep(0)` bug
+            # and fixes it with `reqTickersAsync`. That fix could not work while
+            # the tier was wrong, and nobody re-checked, because a check that
+            # never runs and a check that runs and passes look identical: the
+            # log line is absent either way. The residual symptom was later
+            # blamed on a yfinance outage that was real but not the cause.
+            #
+            # The evidence was already in this repo, filed under the wrong
+            # question. `probe_halts.py:55` sets marketDataType=3 and gets a
+            # full quote - `BHP.AX last=66.515 bid=66.51 ask=66.52` on
+            # 31 August - but that measurement was made to answer M43 (trading
+            # halts), so "the app must request this too" was never written down
+            # as a finding of its own.
+            #
+            # 3 = delayed. Free for ASX, ~20 minutes behind, which is well
+            # inside what a daily-cadence system needs. `getattr` for the same
+            # reason as `errorEvent` below: it is not on IBClientProtocol, so a
+            # minimal test double need not model it.
+            set_data_type = getattr(self.ib_client, "reqMarketDataType", None)
+            if callable(set_data_type):
+                set_data_type(_DELAYED_MARKET_DATA)
+            else:
+                logger.warning(
+                    "This IBKR client cannot set the market-data type, so quotes will be "
+                    "requested at the real-time tier. Without a real-time subscription every "
+                    "field returns nan, the price-drift check is skipped, and IBKR refuses "
+                    "orders with error 354."
                 )
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
             # ⚠️ The module docstring's "no ib_async Events" decision is about
@@ -977,12 +1024,13 @@ class IBAdapter:
         for - writing "rejected" onto an order that can still fill is the
         exact defect this branch exists to avoid.
 
-        ⚠️ Does not yet tell the OMS. A later task publishes
-        `OrderRejectedEvent` from here so the optimistic booking sign-off
-        made can be reversed - this task only stops the order being believed
-        live and, for anything unrecognised, stops new ones being placed.
-        WARN must never feed that future event: reversing the booking of an
-        order that is still live would be wrong in the other direction.
+        Publishes `OrderRejectedEvent` for both REJECT and HALT (never WARN,
+        which returns above before reaching here) so the OMS can reverse the
+        optimistic booking sign-off made - see that event's own docstring for
+        why it carries BOTH the booked and the executed quantity rather than
+        just telling the OMS "this order is done". WARN must never feed it:
+        reversing the booking of an order that is still live would be wrong
+        in the other direction.
         """
         # Narrowed with isinstance rather than coerced with int(). The
         # parameters are typed `object` because eventkit hands this whatever
@@ -1036,6 +1084,24 @@ class IBAdapter:
                 code,
                 error_string,
             )
+            # ⚠️ REJECT and HALT both reach here - only WARN returned above.
+            # Published only when `order` resolved (the same guard the status
+            # write above uses): without it there is no symbol and no
+            # quantity to reverse anything against. See OrderRejectedEvent's
+            # own docstring for why both booked_quantity and
+            # order.filled_quantity are carried rather than just "reversed".
+            if order is not None:
+                asyncio.ensure_future(
+                    self.bus.publish(
+                        OrderRejectedEvent(
+                            order_id=order.order_id,
+                            symbol=order.symbol,
+                            booked_quantity=order.quantity,
+                            executed_quantity=order.filled_quantity,
+                            reason=f"IBKR error {code}: {error_string}",
+                        )
+                    )
+                )
             if action is ErrorAction.HALT:
                 # ⚠️ Unrecognised, so it halts. Adding a code to
                 # BENIGN_ORDER_WARN_CODES or BENIGN_ORDER_REJECT_CODES is the

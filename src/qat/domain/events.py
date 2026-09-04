@@ -232,6 +232,40 @@ class BrokerOrderIdResolvedEvent(Event):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class OrderRejectedEvent(Event):
+    """A broker rejection proved an order will never fill (3 September 2026).
+
+    Sign-off books the ORDERED size optimistically, before anything has
+    executed, and lets broker reconciliation catch any divergence later -
+    right for a transmit that stays live. But `IBAdapter._on_ib_error` can
+    also learn, from IBKR itself, that an order is already dead: Error 383
+    (a precautionary size limit) staged a 790-share BHP.AX order that was
+    never transmitted to the exchange, sign-off had booked all 790, and
+    nothing reversed it. `tracked=790 broker=0` tripped the kill switch every
+    five minutes for two hours, and the phantom counted toward the position
+    cap, refusing a real entry against a book of nine.
+
+    Published from `_on_ib_error` for both `ErrorAction.REJECT` and
+    `ErrorAction.HALT` - never `WARN`, which means ib_async's own wrapper.py
+    is keeping the order LIVE at the broker, and reversing anything would be
+    wrong in the other direction. Same precedent as `KillSwitchEvent`: the
+    adapter publishes and must not import the OMS, which subscribes instead.
+    """
+
+    order_id: str
+    symbol: str
+    booked_quantity: float
+    """What sign-off booked at transmit time: the ORDERED size, not what
+    actually executed."""
+    executed_quantity: float | None
+    """`Order.filled_quantity` at the moment of rejection. `None` means this
+    adapter does not report executed quantity - a different claim from zero -
+    so the OMS must not reverse on a guess: leaving the booking in place is
+    what let reconciliation catch 3 September in four minutes."""
+    reason: str
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MarketDataFeedEvent(Event):
     """The feed as a whole is up or down (spec M26).
 

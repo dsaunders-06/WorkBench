@@ -34,6 +34,7 @@ from qat.domain.events import (
     ExitPriceCorrectedEvent,
     OrderFilledEvent,
     OrderPendingSignoffEvent,
+    OrderRejectedEvent,
 )
 from qat.domain.oms.anomaly import PositionAnomalyStore
 from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
@@ -274,6 +275,12 @@ class OMS:
         # predating this) behaves exactly as before.
         if self.bus is not None:
             self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_broker_order_id_resolved)
+            # 3 September / Task 5b: the adapter learns a rejection is final
+            # (`IBAdapter._on_ib_error`) and publishes rather than reaching in
+            # here directly - same reasoning as BrokerOrderIdResolvedEvent
+            # just above. Optional bus, same as every other subscription in
+            # this constructor.
+            self.bus.subscribe(OrderRejectedEvent, self._on_order_rejected)
 
     def entry_permitted(self, symbol: str) -> str | None:
         """Why an entry in `symbol` would be refused by the allow lists, or None.
@@ -1000,6 +1007,57 @@ class OMS:
 
     async def _on_broker_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
         self.register_broker_order_id(event.order_id)
+
+    async def _on_order_rejected(self, event: OrderRejectedEvent) -> None:
+        """Gives back an optimistic sign-off booking once a rejection proves
+        the order is dead (3 September 2026) - see `OrderRejectedEvent`.
+
+        ⚠️ Reverses BOOKED minus EXECUTED, never the full booked size. A
+        partial fill that is then rejected or cancelled leaves a real
+        position behind; reversing all of it would invent a phantom SHORT -
+        the same defect this exists to fix, in the other direction, and the
+        one the reverted Task 3 produced.
+
+        Two guards fail closed rather than guess:
+        - `executed_quantity is None` means the adapter did not report it -
+          a different claim from zero. Reversing on a guess could
+          manufacture a short; leaving the booking in place is what let
+          reconciliation catch 3 September in four minutes, and it still can
+          here.
+        - A symbol this OMS never booked is left alone. There is nothing to
+          give back, and writing one in would book a phantom position rather
+          than correct one.
+        """
+        if event.executed_quantity is None:
+            logger.warning(
+                "OrderRejectedEvent for %s (order=%s) carries no executed quantity - "
+                "leaving the booking of %.2f in place for reconciliation to settle: %s",
+                event.symbol,
+                event.order_id,
+                event.booked_quantity,
+                event.reason,
+            )
+            return
+        if event.symbol not in self._filled_quantities:
+            logger.warning(
+                "OrderRejectedEvent for %s (order=%s) but this OMS has nothing booked "
+                "for that symbol - nothing to reverse: %s",
+                event.symbol,
+                event.order_id,
+                event.reason,
+            )
+            return
+        remaining = event.booked_quantity - event.executed_quantity
+        self._filled_quantities[event.symbol] -= remaining
+        logger.info(
+            "Reversed %.2f of the booking for %s (order=%s) after rejection: %s. "
+            "%.2f executed and stays booked.",
+            remaining,
+            event.symbol,
+            event.order_id,
+            event.reason,
+            event.executed_quantity,
+        )
 
     async def adopt_broker_positions(self) -> dict[str, float]:
         """Seeds the position baseline from whatever the account already holds.
