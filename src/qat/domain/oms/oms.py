@@ -1800,6 +1800,13 @@ class OMS:
                 # Ours, and already counted - but not therefore worthless. This
                 # is the only place the price we actually PAID arrives for an
                 # order this app sent, and it used to be dropped here (M70).
+                #
+                # It is also the only place the app learns its own order is
+                # DONE. Called before the price correction rather than inside
+                # it, because that method returns early on a missing or
+                # unchanged price - and whether an order completed has nothing
+                # to do with whether its price needed correcting.
+                self._close_out_own_order(raw)
                 await self._correct_announced_price(raw)
                 continue
             fill = self._unabsorbed_part(raw)
@@ -1934,6 +1941,48 @@ class OMS:
             if str(order.order_id) == broker_order_id:
                 return order
         return self._orders.get(broker_order_id)
+
+    def _close_out_own_order(self, raw: BrokerFill) -> None:
+        """Marks an order this app sent as filled once the broker completes it.
+
+        ⚠️ NOBODY DID THIS FOR A REAL BROKER. `MockBroker` and
+        `SimulatedBroker` fill synchronously and write `status = "filled"`
+        themselves, so every test in this suite passed against a broker that
+        closed its own orders out. `IBAdapter` writes "transmitted",
+        "cancelled" and "rejected" and never "filled": `from_ib_trade` can map
+        it, but it is only ever called at placement, when the trade is still
+        PreSubmitted.
+
+        Measured live on 4 September: TWE.AX and TAH.AX were filled by IBKR and
+        still read `transmitted` forty-five minutes later, with the autonomy
+        loop re-asking about each once a minute and the resting-order rail
+        quarantining both symbols.
+
+        ⚠️ Quantity, not merely arrival. A partial fill leaves the order
+        transmitted, because it genuinely is still working and every rail that
+        asks what is in flight needs that to stay true.
+
+        ⚠️ Only from "transmitted". A late fill notice must not rewrite the
+        outcome of an order this app cancelled or the broker rejected - the
+        same reasoning `_TERMINAL_ORDER_STATUSES` applies to a late 202 against
+        an order that already filled.
+        """
+        order = self._order_the_broker_calls(raw.order_id)
+        if order is None or order.side != raw.side:
+            return
+        if order.status != "transmitted":
+            return
+        if raw.quantity + 1e-9 < order.quantity:
+            return
+        order.status = "filled"
+        logger.info(
+            "Order %s (%s %s %g) is filled at the broker - it had been reading "
+            "'transmitted' since sign-off.",
+            order.order_id,
+            order.side,
+            order.symbol,
+            order.quantity,
+        )
 
     async def _correct_announced_price(self, raw: BrokerFill) -> None:
         """Announces what an order this app sent actually filled at (M70/M71).
