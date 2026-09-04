@@ -1613,7 +1613,85 @@ from qat.domain.display_dates import format_display_date
 # TWS limit was set to 20,000, so that preset is NOT a share count and nothing
 # in the app reads any ceiling at all. Plan Task 6 is that work, and it belongs
 # BEFORE max positions is raised.
-MILESTONE = "M166"
+# M167 - the feed says which symbols went dark, and the sizer knows the broker
+# has ceilings.
+#
+# Plan tasks 6, 7, 8 and the verification pass. ⚠️ The plan's own step 7 says to
+# bump to M165 with a particular comment block; M165 and M166 both shipped
+# hours before this task was reached, and that block is already recorded above.
+# This covers what is new since M166 instead.
+#
+# ⚠️ ONE ANSWERING SYMBOL HID A NINETY-NINE SYMBOL OUTAGE. `stream_ticks` held
+# ONE counter and reset it whenever a poll produced any tick. On 3 September
+# exactly one of 100 symbols answered for twenty-five minutes: the counter reset
+# every poll, nothing was logged, and the app placed an order whose price-drift
+# check was skipped for want of a quote. Counters are per symbol now, and the
+# DOWN line NAMES the failing ones - a count alone cannot separate "Yahoo has
+# stopped covering these names" from "the feed is down", and those need
+# different actions.
+#
+# ⚠️ AND THE OPEN NO LONGER CRIES WOLF, WHICH IS A MEASUREMENT. All seven DOWN
+# lines in the live log fired at 10:04 and every one was followed by a recovery:
+# seven fired, seven false, because Yahoo publishes ASX intraday about twenty
+# minutes late and at the open every symbol is legitimately absent. The one real
+# outage produced no line at all. A rail with a 100% false-positive rate and a
+# 0% true-positive rate teaches the operator to ignore it. A total outage
+# mid-session is still reported by MarketDataFeed's staleness rail, which can
+# fire once symbols have ticked at least once.
+#
+# ⚠️ THE POLL WAS MISLABELLING, NOT MERELY MISSING. Asked for a ticker absent
+# from a MultiIndex, `normalise_frame` did not return empty - it flattened to
+# level 0 and handed back ANOTHER symbol's prices under the missing symbol's
+# name. So a partial response counted every symbol as answered, and a wrong
+# price is worse than a missing one: the staleness rail and the sizer both
+# believe it. Separately, `dropna` does not drop infinity and `inf <= 0` is
+# False, so an infinite close became a tick priced `inf`.
+#
+# ⚠️ A PROTECTIVE FILL IN THE SAME CLOCK TICK AS THE SCAN WAS LOST FOREVER.
+# Found while running this plan's suite: nine safety tests failed that had
+# passed an hour earlier on identical code. Measured, not inferred -
+# `datetime.now(UTC)` on this machine advances about every 2ms and 199,967 of
+# 200,000 consecutive calls returned an IDENTICAL timestamp. Both the fill query
+# and the decision gate compared EXCLUSIVELY against `_last_fill_scan`, so a
+# fill landing in the same tick as a sweep was excluded from it and then sat
+# permanently below the advanced watermark. Nothing absorbed it,
+# `tracked=100 broker=0`, and the kill switch halted on a stop doing its job -
+# on the only exit path this system has. The fix admits ties and still refuses
+# anything genuinely older; both directions are pinned.
+#
+# THE SIZER RESPECTS `broker_max_order_shares`, and Error 383 audits it against
+# IBKR's own stated limit. It AUDITS, NEVER DECIDES: a rail depending on IBKR's
+# error wording staying stable would be one string change from silently doing
+# nothing.
+#
+# ⚠️ AND DO NOT COPY THE NUMBER OUT OF THE TWS DIALOG. Measured 4 September:
+# with that preset reading 20,000 the broker ACCEPTED a 64,229-share TAH.AX
+# order. Setting the ceiling to 20,000 on that evidence would have trimmed a
+# legitimate position by 69% to respect a limit that did not bind.
+#
+# ⚠️ THE 21 AUGUST IBKR NEWS FINDING IS RETRACTED. `config.py` recorded "IBKR
+# measured ZERO headlines for RIO.AX and NHF.AX over 90 days", and that drove an
+# operator decision to loosen `news_min_sources` from 2 to 1. The account has
+# EIGHT subscribed news providers and the same query returns headlines for both
+# symbols. With no provider codes supplied the query cannot return anything, so
+# the zero was a fact about how we asked - the SECOND time in one day a recorded
+# conclusion about IBKR turned out to be a conclusion about our own request.
+# Nothing else changed: eight provider codes are two publishers, one wire story
+# appears on several codes, and Dow Jones storage licensing is unresolved.
+#
+# WHAT DID NOT SHIP, DELIBERATELY: no yfinance session reset. Three hypotheses
+# for the process-local poisoning were tested on 3 September and all three
+# failed - not the batch size, not the crumb on the price path, not a 401 storm.
+# The mechanism is UNKNOWN, so M166 instruments it and this milestone still does
+# not guess.
+#
+# ⚠️ FOUR TESTS PROVED NOTHING UNTIL SABOTAGED, all found in this plan's
+# execution: a probe test whose no-session branch contained the words it
+# asserted; a NaN test passing for a reason unrelated to its guard; a
+# pre-baseline test stamping its fill below the query floor so it never reached
+# the gate; and an open test capturing at ERROR while the line is a WARNING. A
+# green guard test is a claim to check, not evidence.
+MILESTONE = "M167"
 
 _UNKNOWN = "unknown"
 
