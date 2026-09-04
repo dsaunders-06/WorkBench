@@ -94,10 +94,16 @@ async def test_a_fill_from_BEFORE_the_baseline_is_still_refused() -> None:
     older, inside the broker's own position list, and applying it again
     subtracts the same shares twice - the M50 trap, which is how this rail was
     made wrong in the opposite direction once before.
+
+    ⚠️ 500ms, INSIDE the query floor's one-second reach-back. Found by sabotage:
+    the first version of this test stamped the fill five seconds back, which put
+    it below the floor so it never reached the decision at all - the test passed
+    even with the gate replaced by `return True`. A guard has to be handed the
+    case it guards against.
     """
     broker, oms = await _opened(EventBus())
     broker.fill_resting_stop("AAA", price=95.0)
-    _restamp(broker, oms._last_fill_scan - timedelta(seconds=5))
+    _restamp(broker, oms._last_fill_scan - timedelta(milliseconds=500))
 
     absorbed = await oms.absorb_broker_fills()
 
