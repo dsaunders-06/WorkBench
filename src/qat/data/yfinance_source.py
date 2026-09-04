@@ -385,9 +385,12 @@ class YFinanceMarketDataSource:
                 continue
             last = frame.iloc[-1]
             price = float(last["close"])
-            # ⚠️ `isfinite` FIRST. `nan <= 0` is False, so a NaN close sailed
-            # past the non-positive guard and became a tick priced `nan` - which
-            # every downstream comparison then answers False to, silently.
+            # ⚠️ `isfinite` FIRST, for INFINITY. `normalise_frame` already
+            # drops NaN closes, so nan never reaches here - the finding as
+            # first recorded was wrong about that. But `dropna` does not drop
+            # infinity, and `inf <= 0` is False, so an infinite close became a
+            # tick priced `inf` and every downstream comparison against it
+            # answered in ways nobody intended.
             if not math.isfinite(price) or price <= 0:
                 missing.add(symbol)
                 continue

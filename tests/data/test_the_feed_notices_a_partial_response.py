@@ -13,7 +13,11 @@ A partial response has to be a measured fact, not an absence.
   It flattened to level 0 and handed back ANOTHER symbol's prices under the
   missing symbol's name, so a partial response MISLABELLED rather than omitted -
   and the poll counted the symbol as answered.
-* A NaN close passed the `price <= 0` guard and became a tick priced `nan`.
+* A non-finite close passed the `price <= 0` guard and became a tick priced
+  `inf`. ⚠️ The finding as first recorded said NaN, and that was WRONG -
+  `normalise_frame` already drops NaN closes. Infinity is the case that
+  survives, and the first version of this test asserted the wrong one and
+  passed with the guard removed.
 
 Either one alone would let this file's central assertion pass while the feed was
 silently wrong, which is why they are pinned here rather than left to Task 8.
@@ -75,13 +79,30 @@ async def test_an_absent_symbol_never_borrows_another_symbols_price() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_nan_close_is_missing_rather_than_a_tick_priced_nan() -> None:
-    """`nan <= 0` is False, so NaN sailed past the non-positive guard."""
+async def test_a_nan_close_is_dropped_before_it_reaches_the_poll() -> None:
+    """`normalise_frame` already drops NaN closes, so the poll never sees one.
+
+    Recorded here because the ledger's original finding claimed otherwise, and a
+    test written to that claim passed with the guard removed - proving nothing.
+    """
     source = YFinanceMarketDataSource(client=_Client(_frame(["BHP.AX"], close=None)))
 
     ticks, missing = await source._poll_once(["BHP.AX"])
 
-    assert all(math.isfinite(t.price) for t in ticks), "a tick priced nan was emitted"
+    assert ticks == []
+    assert missing == {"BHP.AX"}
+
+
+@pytest.mark.asyncio
+async def test_an_infinite_close_is_missing_rather_than_a_tick_priced_inf() -> None:
+    """⚠️ THE CASE THAT ACTUALLY SURVIVES. `dropna` does not drop infinity and
+    `inf <= 0` is False, so it sailed past the non-positive guard - and every
+    downstream comparison against it answers in ways nobody intended."""
+    source = YFinanceMarketDataSource(client=_Client(_frame(["BHP.AX"], close=math.inf)))
+
+    ticks, missing = await source._poll_once(["BHP.AX"])
+
+    assert all(math.isfinite(t.price) for t in ticks), "a tick priced inf was emitted"
     assert missing == {"BHP.AX"}
 
 
