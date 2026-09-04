@@ -1496,7 +1496,65 @@ from qat.domain.display_dates import format_display_date
 # INERT UNTIL IT MEASURES. `BookRiskMonitor` reads the SHARED throttled account
 # poller, never the broker, so it adds no broker traffic; it changes what the
 # operator and the model can SEE, not what the system does.
-MILESTONE = "M164"
+# M165 - ask IBKR for the delayed tier, and hear it when it says no.
+#
+# ⚠️ THE APP HAD NEVER ASKED IBKR FOR MARKET DATA. `reqMarketDataType` defaults
+# to 1 (real-time) on every new API connection, this account has no real-time ASX
+# subscription, and so every quote field came back `nan`. Two consequences, both
+# live for weeks:
+#
+#   * the price-drift check never ran. `get_market_data`'s own docstring records
+#     "No `has drifted` line exists in any log back to 12 August", diagnoses it as
+#     a reqMktData/sleep(0) bug, and fixes it with reqTickersAsync. THAT FIX
+#     COULD NOT WORK while the tier was wrong - and nobody re-checked, because a
+#     check that never runs and one that runs and passes leave identical logs.
+#   * IBKR's blind-trading precaution REFUSED the orders outright:
+#         Error 354: You are trying to submit an order without having market data
+#         for this instrument.
+#
+# ⚠️ ON 4 SEPTEMBER THAT COST AN EXIT. A2M.AX sat 0.61R down past its minimum
+# hold, the escaped-hold rule correctly called for the exit, and IBKR refused it
+# four times in four minutes - while the app re-issued the same order every sixty
+# seconds because nothing told it the previous four had failed. Each refusal was
+# booked optimistically, so the ledger read tracked=-38544 against a broker
+# holding 9,636, and the reconciliation rail tripped the kill switch. Nothing
+# traded; the rail did its job; the loop was stopped by hand.
+#
+# ⚠️ AND THE EVIDENCE WAS ALREADY IN THIS REPO, FILED UNDER THE WRONG QUESTION.
+# `probe_halts.py:55` sets marketDataType=3 and gets a full quote - BHP.AX
+# last=66.515 bid=66.51 ask=66.52 on 31 August. But that measurement was taken to
+# answer M43 (trading halts), so "the application must request this too" was never
+# written down as a finding of its own. Every later plan searched for a feed
+# problem, found the yfinance one - which was real - and stopped there.
+#
+# THE TEST ASSERTS THE REQUEST, NOT THE QUOTE. A quote can be missing for a dozen
+# honest reasons; the request either happened or it did not. That is the check
+# that would have caught this in August.
+#
+# ALSO IN THIS BUILD, and the reason the loop cannot repeat:
+#
+# * `errorEvent` IS CONSUMED. ib_async logged Error 383 and Error 354 and nothing
+#   in the app read either. Classification enumerates the BENIGN codes only, so an
+#   unfamiliar rejection HALTS - fail closed by construction, the shape that
+#   finally worked on the manual-close branch. Order-scope is established BEFORE
+#   classifying, because errorEvent also carries health notices (2104 is "market
+#   data farm connection is OK") and failing closed on those would halt daily.
+#   WARN (105, 110, 321, 329, 399, 404, 434) leaves the order alone: ib_async says
+#   it is STILL LIVE at the broker. REJECT (202, 383) marks it dead.
+#
+# * A REJECTION GIVES ITS OPTIMISTIC BOOKING BACK, minus whatever actually
+#   executed - a partial fill that is then rejected leaves a real position behind,
+#   and reversing all of it would invent a phantom SHORT.
+#
+#   ⚠️ NEVER FOR A PROTECTIVE STOP. Sign-off does not book one (M31d), so there is
+#   nothing to give back - and a stop's `quantity` is the size of the position it
+#   GUARDS, so reversing against it would zero out a real holding.
+#
+# ⚠️ WHAT IS NOT FIXED: the app still cannot exit a position TWS will not price,
+# and two TWS presets remain in play - the blind-trading precaution (which did its
+# job, and should stay) and Error 10349's TIF override. Those are configuration,
+# not code.
+MILESTONE = "M165"
 
 _UNKNOWN = "unknown"
 
