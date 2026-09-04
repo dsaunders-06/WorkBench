@@ -600,6 +600,30 @@ class Settings(BaseSettings):
     # ASX ComNews is licensed. Yahoo is not merely the lazy option here, it is
     # the only free one that returns anything on .AX at all.
     #
+    # ⚠️ THE IBKR HALF OF THAT IS RETRACTED, MEASURED 4 SEPTEMBER 2026. The
+    # account has EIGHT subscribed news providers (Briefing.com x2, Dow Jones
+    # x6), and `reqHistoricalNews` over the same 90 days returns headlines for
+    # RIO.AX and NHF.AX - the very symbols recorded as zero, NHF being the one
+    # the two-source rule was abandoned over. The zero was a fact about how we
+    # asked, not about IBKR: with no provider codes the query cannot return
+    # anything. Same shape as `reqMarketDataType` defaulting to the real-time
+    # tier - a measurement of what we GOT, written down as a property of the
+    # broker.
+    #
+    # ⚠️ THIS DOES NOT MAKE `news_min_sources = 2` SAFE TO RESTORE. Eight
+    # provider CODES are two PUBLISHERS, and one wire story appears on several
+    # of them - "Albermarle Hires BHP's Ragnar Udd" came back under both DJ-RTA
+    # and DJ-N on 3 September. Counting codes would report corroboration for a
+    # single Dow Jones story, which is the syndication trap `data/news.py`
+    # already warns about, and would leave the rule looking restored while being
+    # weaker than the one it replaced. Yahoo AND Dow Jones is a real second
+    # publisher; DJ-N and DJ-RTA are not.
+    #
+    # ⚠️ AND LICENSING IS UNRESOLVED. Dow Jones terms generally forbid storing
+    # and redistributing headlines, and this application writes them into the
+    # decision journal. Settle that against the actual subscription before
+    # adding "ibkr" to the literal below.
+    #
     # Opting IN by default does not weaken the injection stance: the two-source
     # rule still runs at the edge in `data/news.py`, the text still travels as
     # inert `news` rather than instruction, and `tests/safety/
