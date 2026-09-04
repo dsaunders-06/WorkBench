@@ -151,12 +151,22 @@ async def test_the_open_does_not_report_down(caplog) -> None:
     """⚠️ THE M119 REGRESSION, ASSERTED DIRECTLY. At the open Yahoo has published
     nothing yet, so ALL symbols are absent - legitimately, for ~20 minutes. On
     21 August that shape ended the stream and the account sat blind on an open
-    market for two hours."""
+    market for two hours.
+
+    ⚠️ Captured at WARNING, not ERROR. Found by sabotage: at ERROR this passed
+    even with the open's line reworded to say "market data is down", because the
+    call is `logger.warning`. A guard that only sees one severity does not guard
+    the phrase.
+    """
     client = _PartialClient(answering=[])
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.WARNING):
         await _drain(_source(client), client, polls=6)
 
     assert "market data is down" not in caplog.text.lower()
+    assert "no symbol has answered yet" in caplog.text, (
+        "the open must still SAY something - going silent would trade a false alarm "
+        "for no signal at all"
+    )
 
 
 @pytest.mark.asyncio
