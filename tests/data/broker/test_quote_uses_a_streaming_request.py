@@ -5,13 +5,23 @@ before reading a `Ticker` whose fields default to `nan`. That was diagnosed as
 "not waiting long enough" and replaced with `reqTickersAsync`, which genuinely
 waits. It still returned `nan`, and the price-drift check stayed dead.
 
-⚠️ The reason, read out of ib_async on 4 September, is that `reqTickersAsync`
-issues `reqMktData(..., snapshot=True)` — and IBKR does not serve a delayed
-quote to a snapshot request. The wait was never the problem, which is why
-lengthening it would have produced another confident fix and another silent log.
+⚠️ AND THE THIRD DIAGNOSIS WAS WRONG TOO, RETRACTED THE SAME EVENING. This file
+said `reqTickersAsync` issues `reqMktData(..., snapshot=True)` and that IBKR
+serves no delayed quote to a snapshot. A direct comparison against Gateway
+returned IDENTICAL prices from the snapshot and the streaming request - BHP
+62.2500 from both - so the snapshot was never the problem either.
 
-Measured on Gateway the same afternoon, a streaming request returned the first
-delayed price for five ASX symbols in 0.11s to 0.77s.
+⚠️ THE ACTUAL CAUSE: `to_ib_contract` builds a Stock with `conId=0`, and
+`reqMktData` RAISES `ValueError` on a conId-less contract. Measured: the
+unqualified call raised for BHP.AX and ANZ.AX while the qualified one returned
+62.25 and 37.95 in the same run. `_current_price` catches Exception and falls
+back, so the failure looked like "the broker has no quote" for weeks.
+`probe_halts.py` had carried the warning the whole time - "reqTickers hashes the
+contract and a conId-less one raises. The app's own adapter does this" - and the
+adapter did not.
+
+Streaming is kept because it is measured to work, not because the snapshot was
+proved broken. The 0.11s-0.77s first-tick measurement stands.
 """
 
 from __future__ import annotations
@@ -43,6 +53,12 @@ class _StreamingClient:
         self._ticker = ticker
         self.stream_calls: list[tuple[Any, ...]] = []
         self.cancelled: list[Any] = []
+        self.qualified: list[Any] = []
+
+    async def qualifyContractsAsync(self, contract: Any) -> list[Any]:  # noqa: N802
+        self.qualified.append(contract)
+        contract.conId = 4391
+        return [contract]
 
     def isConnected(self) -> bool:
         return True
@@ -113,3 +129,42 @@ async def test_a_client_that_cannot_stream_returns_no_quote() -> None:
         reqMktData = None  # type: ignore[assignment]
 
     assert await _adapter(_NoStreaming(_Ticker())).get_market_data("BHP.AX") == {}
+
+
+@pytest.mark.asyncio
+async def test_the_contract_is_qualified_before_any_quote_is_asked_for() -> None:
+    """⚠️ THE DEFECT THIS FILE WAS WRONG ABOUT FOR A DAY. `to_ib_contract`
+    builds a Stock with `conId=0`, and `reqMktData` RAISES on one. Measured
+    against Gateway: unqualified raised for BHP.AX and ANZ.AX; qualified
+    returned 62.25 and 37.95 in the same run."""
+    client = _StreamingClient(_Ticker(last=62.07))
+    await _adapter(client).get_market_data("BHP.AX")
+
+    assert len(client.qualified) == 1, "the contract reached reqMktData unqualified"
+    assert client.stream_calls[0][0].conId == 4391, "the QUALIFIED contract must be the one used"
+
+
+@pytest.mark.asyncio
+async def test_a_symbol_ibkr_cannot_qualify_yields_no_quote() -> None:
+    """No contract, no request - and no exception out of a method whose caller
+    treats any failure as 'the broker has no quote'."""
+
+    class _Unqualifiable(_StreamingClient):
+        async def qualifyContractsAsync(self, contract: Any) -> list[Any]:  # noqa: N802
+            return []
+
+    client = _Unqualifiable(_Ticker(last=62.07))
+    assert await _adapter(client).get_market_data("NOPE.AX") == {}
+    assert client.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_the_conid_is_looked_up_once_per_symbol() -> None:
+    """Qualification is a network round trip and a conId does not change
+    within a session."""
+    client = _StreamingClient(_Ticker(last=62.07))
+    adapter = _adapter(client)
+    await adapter.get_market_data("BHP.AX")
+    await adapter.get_market_data("BHP.AX")
+
+    assert len(client.qualified) == 1

@@ -216,6 +216,8 @@ class IBAdapter:
 
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._orders: dict[str, Order] = {}
+        # symbol -> contract carrying IBKR's conId. See `_qualified_contract`.
+        self._qualified_contracts: dict[str, object] = {}
         self._ib_orders: dict[str, object] = {}
         # One app Order can map to several IBKR orders (M95 Stage B): a
         # bracketed entry is a parent plus two legs, a standalone protective
@@ -446,9 +448,53 @@ class IBAdapter:
                 broker_limit,
             )
 
+    async def _qualified_contract(self, symbol: str) -> object | None:
+        """The contract with IBKR's own conId on it, or None.
+
+        ⚠️ THIS IS WHY `get_market_data` RETURNED NOTHING, and the reason was
+        misdiagnosed three times. `to_ib_contract` builds a Stock with
+        `conId=0`, and **`reqMktData` RAISES `ValueError` on a conId-less
+        contract** - measured against Gateway on 4 September, where the
+        unqualified call raised for both BHP.AX and ANZ.AX while the qualified
+        one returned 62.25 and 37.95 in the same run.
+
+        `probe_halts.py` has carried the warning since it was written: "reqTickers
+        hashes the contract and a conId-less one raises. The app's own adapter
+        does this" - which was not true of this method.
+
+        ⚠️ It is NOT that snapshots have no delayed tier. An earlier version of
+        this file said so, and a direct comparison the same evening returned
+        IDENTICAL prices from `reqTickersAsync` and a streaming request. That
+        claim is retracted. Streaming is kept because it is measured to work,
+        not because the snapshot was proved broken.
+
+        Cached: qualification is a network round trip and the conId for a
+        symbol does not change within a session. A failure is not cached, so a
+        transient one does not disable quotes for the rest of the run.
+        """
+        cached = self._qualified_contracts.get(symbol)
+        if cached is not None:
+            return cached
+        qualify = getattr(self.ib_client, "qualifyContractsAsync", None)
+        raw = to_ib_contract(symbol, self.settings.market)
+        if not callable(qualify):
+            # A test double that never modelled qualification. Returning the
+            # raw contract keeps those doubles working and loses nothing they
+            # exercise; the real client always has this method.
+            return raw
+        try:
+            qualified = await self._call(qualify(raw), f"qualifyContracts({symbol})")
+        except Exception:  # noqa: BLE001 - an unknown symbol is not an error here
+            logger.debug("IBKR could not qualify a contract for %s", symbol)
+            return None
+        if not qualified:
+            return None
+        contract: object = qualified[0]
+        self._qualified_contracts[symbol] = contract
+        return contract
+
     async def get_market_data(self, symbol: str) -> dict[str, float]:
-        """A quote, from a STREAMING request - because snapshots have no
-        delayed tier.
+        """A quote, from a QUALIFIED contract - which is what was missing.
 
         The history matters, because this line has now been wrong twice. It
         first called `reqMktData` and `await asyncio.sleep(0)` - one event-loop
@@ -456,13 +502,13 @@ class IBAdapter:
         diagnosed as "not waiting long enough" and replaced with
         `reqTickersAsync`, which does wait. It still returned `nan`.
 
-        ⚠️ The reason, read out of ib_async on 4 September, is that
-        `reqTickersAsync` calls `reqMktData(..., snapshot=True)`, and IBKR does
-        NOT serve a delayed quote to a snapshot request. The wait was never the
-        problem. Measured against Gateway the same afternoon, a STREAMING
-        request delivers the first delayed price in **0.11s to 0.77s** across
-        five ASX symbols - so the bound below is generous by more than double,
-        and lengthening it would not have helped the snapshot at all.
+        ⚠️ A THIRD DIAGNOSIS - "snapshots have no delayed tier" - was written
+        here and RETRACTED the same evening: a direct comparison returned
+        IDENTICAL prices from `reqTickersAsync` and a streaming request. The
+        real cause is in `_qualified_contract` below: an unqualified contract
+        makes `reqMktData` raise. Streaming is kept because it is measured to
+        work, and the 0.11s-0.77s first-tick measurement stands, which is what
+        the bound below is set from.
 
         Why it is worth fixing at all: `AutonomousExecutor._current_price` is
         the consumer, and its `None` return SKIPS the price-drift check - the
@@ -473,12 +519,18 @@ class IBAdapter:
         market data lines, and leaking one per sign-off would eventually take
         the feed down by the same slow path it is meant to protect.
         """
-        contract = to_ib_contract(symbol, self.settings.market)
         stream = getattr(self.ib_client, "reqMktData", None)
         if not callable(stream):
             return {}
+        contract = await self._qualified_contract(symbol)
+        if contract is None:
+            return {}
 
-        ticker = stream(contract, "", False, False)
+        try:
+            ticker = stream(contract, "", False, False)
+        except Exception:  # noqa: BLE001 - unresolvable contract, no quote
+            logger.debug("IBKR would not accept a market data request for %s", symbol)
+            return {}
         try:
             loop = asyncio.get_running_loop()
             deadline = loop.time() + _QUOTE_WAIT_SECONDS
