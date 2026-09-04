@@ -1556,6 +1556,18 @@ from qat.domain.display_dates import format_display_date
 # not code.
 # M166 - the quote streams, and a rejected sell stops doubling the short.
 #
+# ⚠️ RETRACTED 4 SEPTEMBER, SAME EVENING: the paragraph below concludes that
+# IBKR serves no delayed quote to a SNAPSHOT. That was reasoned from reading
+# ib_async's source and never tested. A direct comparison against Gateway
+# returned IDENTICAL prices from `reqTickersAsync` and a streaming request -
+# BHP 62.2500 from both. THE REAL CAUSE is an unqualified contract:
+# `to_ib_contract` builds a Stock with conId=0 and `reqMktData` RAISES on one,
+# measured for BHP.AX and ANZ.AX while the qualified call returned 62.25 and
+# 37.95 in the same run. So M166's streaming rewrite fixed nothing on its own -
+# it changed which exception `_current_price` swallowed. Fixed properly after
+# M167; see `IBAdapter._qualified_contract`. The 0.11s-0.77s first-tick
+# measurement below stands and is still what the 2.0s bound is set from.
+#
 # ⚠️ THE BROKER QUOTE WAS NEVER A WAITING PROBLEM, and M165's own note above
 # says the opposite. `get_market_data` has been wrong twice. It first called
 # reqMktData and yielded ONCE before reading a Ticker whose fields default to

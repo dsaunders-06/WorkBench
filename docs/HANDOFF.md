@@ -350,6 +350,37 @@ Both recorded, neither fixed; they are squarely Task 7's remit.
   branch also contains the words "cookie" and "crumb". Both states are pinned now.
 * **yfinance pinned `>=1.5.2,<2`** - the floor read 0.2.40 with 1.5.2 installed.
 
+## ⚠️ 4 SEPTEMBER, LATE: THE QUOTE NEEDED A QUALIFIED CONTRACT — FOURTH DIAGNOSIS
+
+**`get_market_data` has now been wrong four times, and three of the four
+explanations were confident and untested.**
+
+1. `reqMktData` + `sleep(0)` — one event-loop yield. Diagnosed as "not waiting
+   long enough".
+2. `reqTickersAsync`, which genuinely waits. Still `nan`.
+3. **"IBKR serves no delayed quote to a SNAPSHOT."** ⚠️ **RETRACTED.** Reasoned
+   from reading ib_async's source, never tested. A direct comparison the same
+   evening returned **IDENTICAL prices from the snapshot and the streaming
+   request** — BHP 62.2500 from both.
+4. ✅ **The contract was never qualified.** `to_ib_contract` builds a Stock with
+   `conId=0`, and **`reqMktData` RAISES `ValueError` on a conId-less contract**.
+   Measured: unqualified raised for BHP.AX and ANZ.AX; qualified returned 62.25
+   and 37.95 in the same run.
+
+⚠️ **SO M167'S STREAMING REWRITE FIXED NOTHING ON ITS OWN.** It changed which
+exception `_current_price` swallowed. `M167 as deployed still has the dead
+path`; the fix landed after it.
+
+⚠️ **AND `probe_halts.py` HAD CARRIED THE ANSWER THE WHOLE TIME:** *"reqTickers
+hashes the contract and a conId-less one raises. The app's own adapter does
+this."* The adapter did not. **Third time this week** a finding already in this
+repo was filed under a question nobody re-asked — after `marketDataType=3` filed
+under M43, and the IBKR news zero filed under coverage.
+
+Nothing unsafe followed: `_current_price` catches Exception and falls back to
+the app's own feed, which is exactly why weeks of this read as "the broker has
+no quotes" rather than as a fault.
+
 ## ✅ 4 SEPTEMBER, EVENING: M167 — THE FEED NAMES WHAT WENT DARK
 
 **M167 (`1e64fce`), deployed 18:39 and read back off the app's own log at
