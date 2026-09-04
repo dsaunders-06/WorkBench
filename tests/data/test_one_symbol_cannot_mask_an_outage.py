@@ -21,7 +21,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import time
 
 import pandas as pd
 import pytest
@@ -29,7 +28,11 @@ import pytest
 from qat.data.yfinance_source import YFinanceMarketDataSource, to_yfinance
 from qat.logging import BLIND_WINDOW_FILTER
 
-SYMBOLS = [f"S{i}.AX" for i in range(100)]
+# Twenty, not a hundred. The rail is a FRACTION, so the arithmetic is identical
+# either way - but each poll builds a frame with five fields per symbol, twice,
+# and at a hundred the recovery test did enough work to miss its own deadline on
+# CI while passing locally. Cheaper is also less flaky.
+SYMBOLS = [f"S{i}.AX" for i in range(20)]
 
 
 def _frame(symbols: list[str]) -> pd.DataFrame:
@@ -104,11 +107,17 @@ async def _drain(source: YFinanceMarketDataSource, client: _PartialClient, polls
             pass
 
     task = asyncio.create_task(consume())
-    try:
-        deadline = time.monotonic() + 5.0
-        while client.calls < polls and time.monotonic() < deadline:
+
+    async def until_polled() -> None:
+        while client.calls < polls:
             await asyncio.sleep(0.005)
-        assert client.calls >= polls, f"only {client.calls} polls ran - the loop stalled"
+
+    try:
+        # ⚠️ A GENEROUS timeout that only a genuine stall reaches, not a budget
+        # the polls have to finish inside. The first version used a 5s deadline
+        # and then ASSERTED on the poll count, which made the test a race
+        # against the machine: it passed locally and failed on CI at 13 of 14.
+        await asyncio.wait_for(until_polled(), timeout=60.0)
     finally:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
