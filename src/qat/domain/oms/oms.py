@@ -503,6 +503,22 @@ class OMS:
             )
             shares = trimmed
 
+        # The broker's own ceiling, applied AFTER the cash cap so the log reads
+        # in the order the trims happened. Not queryable through the API, so it
+        # is a configured belief that Error 383 audits rather than a fact.
+        ceiling = self.settings.broker_max_order_shares if self.settings is not None else None
+        if ceiling is not None and shares > ceiling:
+            logger.info(
+                "%s trimmed from %g to %g shares by the broker's order-size ceiling "
+                "(broker_max_order_shares). Above it the broker STAGES the order for "
+                "manual confirmation rather than transmitting it, which on 3 September "
+                "booked a position the exchange never took.",
+                candidate.symbol,
+                shares,
+                float(ceiling),
+            )
+            shares = float(ceiling)
+
         order = self._new_pending_order(
             candidate.symbol,
             candidate.side,

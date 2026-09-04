@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any, TypeVar
@@ -406,6 +407,43 @@ class IBAdapter:
         if self.read_only:
             raise ReadOnlyModeError(
                 "IBAdapter is in read-only mode - cannot place/modify/cancel orders"
+            )
+
+    _SIZE_LIMIT_PATTERN = re.compile(r"Size Limit of (\d+)")
+
+    def _audit_size_limit(self, message: str) -> None:
+        """Compare the broker's stated size limit with what we were configured.
+
+        ⚠️ AUDITS, NEVER DECIDES. The parsed number is not applied: a rail that
+        depended on IBKR's error wording staying stable would be one string
+        change away from silently doing nothing. The configured value is the
+        belief; this is what catches it drifting.
+
+        ⚠️ And the TWS dialog is not that source either. On 4 September the
+        preset read 20,000 while the broker accepted a 64,229-share order, so
+        the number an operator reads off the screen can disagree with what is
+        actually enforced. This line - the broker's own words at the moment it
+        refused - is the only figure worth trusting.
+        """
+        match = self._SIZE_LIMIT_PATTERN.search(message)
+        if match is None:
+            return
+        broker_limit = int(match.group(1))
+        configured = self.settings.broker_max_order_shares
+        if configured is None:
+            logger.warning(
+                "The broker enforces an order-size limit of %d shares and "
+                "broker_max_order_shares is UNSET, so the sizer will keep proposing "
+                "above it. Set it to %d.",
+                broker_limit,
+                broker_limit,
+            )
+        elif configured != broker_limit:
+            logger.warning(
+                "broker_max_order_shares is %d but the broker says its limit is %d. "
+                "One of them is wrong and the sizer is trusting the configured value.",
+                configured,
+                broker_limit,
             )
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
@@ -1159,6 +1197,8 @@ class IBAdapter:
                         )
                     )
                 )
+            if code == 383:
+                self._audit_size_limit(str(error_string))
             if action is ErrorAction.HALT:
                 # ⚠️ Unrecognised, so it halts. Adding a code to
                 # BENIGN_ORDER_WARN_CODES or BENIGN_ORDER_REJECT_CODES is the

@@ -2917,6 +2917,26 @@ def _config_reference(doc: Any) -> None:
                 "broker does not report cash the order is REFUSED, not waved through.",
             ),
             (
+                "QAT_BROKER_MAX_ORDER_SHARES",
+                "(unset)",
+                "The largest SHARE COUNT the broker will accept without holding the order "
+                "for manual confirmation. An order above it is TRIMMED to it, the same way "
+                "the cash cap trims. UNSET BY DEFAULT, and unset means nothing is trimmed - "
+                "a shipped default would impose one particular TWS installation's "
+                "configuration on every other one. This limit is NOT queryable through the "
+                "IBKR API: it lives in TWS's own Precautionary Settings, so the application "
+                "cannot discover it and has to be told. It matters because exceeding it does "
+                "not produce a clean refusal - on 3 September a 790-share order was STAGED "
+                "for confirmation rather than transmitted, while the application booked a "
+                "position the exchange never took. DO NOT SIMPLY COPY THE NUMBER OUT OF THE "
+                "TWS DIALOG: on 4 September that dialog read 20,000 while the broker "
+                "accepted a 64,229-share order, so the figure on screen is not always the "
+                "one enforced, and setting it here would have cut a legitimate position by "
+                "69%. The number to trust is the one in IBKR's own Error 383 text, which the "
+                "application reads back and warns about whenever it disagrees with this "
+                "setting - or when the broker enforces a limit and this is unset.",
+            ),
+            (
                 "QAT_ENTRY_ALLOW_LIST",
                 "(empty)",
                 "Symbols that may be newly ENTERED. Empty means no restriction. Distinct "

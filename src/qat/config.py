@@ -224,6 +224,27 @@ class Settings(BaseSettings):
     # than a misconfiguration. 1.0 disables the cap.
     max_order_pct_of_cash: float = Field(default=0.10, ge=0.0, le=1.0)
 
+    # The largest share count this broker will accept without holding the order
+    # for manual confirmation. NOT queryable through the IBKR API - it is a
+    # TWS-local Precautionary Settings value - so the app has to be told it.
+    #
+    # ⚠️ Defaults to None, meaning no ceiling is known and nothing is trimmed.
+    # A default of 500 would silently enforce one particular TWS instance's
+    # configuration on every install.
+    #
+    # On 3 September a 790-share order was STAGED rather than transmitted
+    # against a limit of 500, and the app booked a position the broker never
+    # held. Error 383 audits this value whenever IBKR rejects on size.
+    #
+    # ⚠️ DO NOT COPY THE NUMBER OUT OF THE TWS DIALOG WITHOUT CHECKING IT.
+    # Measured 4 September: with that preset reading 20,000 the broker ACCEPTED
+    # a 64,229-share TAH.AX order, so the dialog's figure is not a share count
+    # in the way this setting is - or was not being applied to these orders.
+    # Setting this to 20,000 on that evidence would have trimmed a legitimate
+    # position by 69% to respect a limit that did not bind. The trustworthy
+    # source is Error 383's own wording, which `_audit_size_limit` reads back.
+    broker_max_order_shares: int | None = Field(default=None, gt=0)
+
     # 40% -> 30%, and only now that the governor can trim to it (M31c). At 15%
     # single-name, 40% never bound before the third position in a sector was
     # already on; 30% bites at two-and-a-bit, which is the point - sector is
