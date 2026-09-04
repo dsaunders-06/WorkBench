@@ -73,6 +73,56 @@ async def test_the_probe_records_whether_a_session_was_cached(caplog):
 
 
 @pytest.mark.asyncio
+async def test_the_probe_distinguishes_a_cached_session_from_no_session(caplog, monkeypatch):
+    """The previous test passes even if the probe reads NOTHING.
+
+    Found by sabotage on 4 September: forcing the lookup to `None` left all
+    four tests green, because the no-session branch also contains the words
+    "cookie" and "crumb". A probe that always answers the same thing separates
+    a poisoned process from a poisoned account exactly as well as no probe.
+
+    So this puts a session in the registry and requires the log to change.
+    """
+    from yfinance.data import SingletonMeta, YfData
+
+    class _CachedSession:
+        _cookie = "a-cookie"
+        _crumb = "a-crumb"
+        _cookie_strategy = "basic"
+
+    monkeypatch.setitem(SingletonMeta._instances, YfData, _CachedSession())
+    source = YFinanceMarketDataSource(client=_EmptyClient())
+
+    with caplog.at_level(logging.WARNING):
+        await source._poll_once(["BHP.AX"])
+
+    assert "cookie=cached" in caplog.text
+    assert "crumb=cached" in caplog.text
+    assert "no yfinance session" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_probe_reports_an_absent_crumb_as_absent(caplog, monkeypatch):
+    """The other half: a session that exists but holds nothing must not read
+    as healthy."""
+    from yfinance.data import SingletonMeta, YfData
+
+    class _BareSession:
+        _cookie = None
+        _crumb = None
+        _cookie_strategy = "csrf"
+
+    monkeypatch.setitem(SingletonMeta._instances, YfData, _BareSession())
+    source = YFinanceMarketDataSource(client=_EmptyClient())
+
+    with caplog.at_level(logging.WARNING):
+        await source._poll_once(["BHP.AX"])
+
+    assert "cookie=absent" in caplog.text and "crumb=absent" in caplog.text
+    assert "strategy=csrf" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_a_complete_poll_records_nothing(caplog):
     """The probe must not add a line to every healthy poll - 60 a minute of
     them would bury the one that matters."""
