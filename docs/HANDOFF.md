@@ -84,6 +84,153 @@ RECOVERY, logged at ERROR** — judge by content, never by count.
 
 ---
 ---
+---
+
+## ⚠️ 4 SEPTEMBER: THE APP HAD NEVER ASKED IBKR FOR MARKET DATA
+
+**Measured, not inferred.** `reqMarketDataType` defaults to 1 (real-time) on
+every new API connection, and the application never called it. It appears in
+three probe scripts and **nowhere in `src/`**.
+
+Two consequences, both live for weeks:
+
+* **The price-drift check never ran.** `_current_price`'s docstring already said
+  so — *"No `has drifted` line exists in any log back to 12 August"* — diagnosed
+  it as a `reqMktData`/`sleep(0)` bug and fixed it with `reqTickersAsync`. **That
+  fix could not work while the tier was wrong**, and nobody re-checked, because a
+  check that never runs and one that runs and passes leave identical logs.
+* **IBKR refused the orders outright:** `Error 354 - you are trying to submit an
+  order without having market data for this instrument`.
+
+### ⚠️ THE EVIDENCE WAS IN THIS REPO, FILED UNDER THE WRONG QUESTION
+
+`marketDataType=3` appears twice in this file and both are the same 31 August
+measurement, made to answer **M43 (trading halts)**. "The application must
+request this too" was never written down as a finding of its own, so every later
+plan searched for a feed problem, found the yfinance one — which was real — and
+stopped there.
+
+### What it cost, 10:20 to 11:16
+
+A2M.AX sat 0.61R down past its minimum hold and the escaped-hold rule correctly
+called the exit. IBKR refused it, the app re-issued the same order **every sixty
+seconds**, and each refusal was booked optimistically:
+
+    tracked=-38544  broker=9636      (9,636 - 5 x 9,636, exactly five bookings)
+
+Reconciliation caught it and the kill switch halted flow. **Nothing traded.**
+Equity and cash unchanged all day. The rails worked; the loop was stopped by hand.
+
+### ⚠️ THREE GATES, DISCOVERED ONE BEHIND THE OTHER
+
+1. **TWS Size Limit 500** — raised to 20,000. Real, and it blocks EXITS as well
+   as entries: every position here is thousands of shares.
+2. **Error 354, no market data** — the subject of this section.
+3. **Error 10349, TIF forced to DAY by an order preset** — the app sends GTC and
+   IBKR cancels the mismatch. ⚠️ **The app cannot simply send DAY**: M31b records
+   that DAY killed every protective leg on 31 July, leaving ~$36,000 unprotected
+   through a three-day weekend. Fixed by changing the preset.
+
+## ✅ 4 SEPTEMBER: GATEWAY SERVES DELAYED DATA. TWS DOES NOT.
+
+The decisive measurement, after `reqMarketDataType(3)` was added and **still**
+returned nothing on TWS:
+
+    TWS   (7497)   A2M last=nan  BHP last=nan  CBA last=nan   type=3, ZERO raw ticks
+    GW    (4002)   A2M last=6.52 bid=6.51 ask=6.52 close=6.56  type=3, 24 raw ticks
+                   BHP last=62.15 bid=62.15 ask=62.16
+
+**Same account, same code, same `reqMarketDataType(3)`, and the same
+`err 10167 "not subscribed, displaying delayed"` on both.** Only the endpoint
+differs. US symbols were equally dead on TWS, so it was never ASX-specific.
+
+⚠️ **DO NOT BUY A MARKET DATA SUBSCRIPTION ON THIS EVIDENCE.** Delayed data is
+free and mirrored into paper; the entitlement is fine. An earlier conclusion in
+this session that the account lacked entitlement was WRONG and is retracted here.
+
+⚠️ **AND THE TWS SCREEN CANNOT TELL YOU.** The A2M price visible in the TWS
+portfolio is a POSITION MARK — IBKR provides those free for holdings you already
+own, by a different path from `reqMktData`. The window looked healthy while the
+API had nothing.
+
+**Operator lead, 4 September, not yet confirmed:** TWS may have had a **second
+login session**, and IBKR suspends market data on the first session when a second
+appears. That would explain the whole picture and fits the timeline — the silence
+began when the setup moved to TWS on 1 September.
+
+### ⚠️ NEITHER ENDPOINT IS SUFFICIENT ALONE
+
+    Gateway (4002)  delayed market data works, the exit path works, NO GUI
+    TWS     (7497)  the GUI you need to cancel orders, NO API market data
+
+Today's exit only succeeded on Gateway. Today's orphan cleanup only worked in
+TWS. Switching means closing QAT first, then the broker, then
+`scripts\set_ibkr_port.py`. Treat this as a standing operational constraint.
+
+## ✅ WHAT SHIPPED, AND WHAT IT CHANGED
+
+**M165 (`15ffd38`), deployed and read back 13:17 and 13:39.**
+
+* `reqMarketDataType(3)` on connect. Necessary; not sufficient on TWS.
+* **`errorEvent` is consumed.** ib_async logged 383 and 354 and nothing read
+  either. Classification enumerates the **benign** codes only, so an unfamiliar
+  rejection HALTS. Order-scope is established BEFORE classifying, because
+  `errorEvent` also carries health notices — 2104 is *"market data farm
+  connection is OK"* — and failing closed on those would halt daily.
+  WARN (105, 110, 321, 329, 399, 404, 434) leaves the order alone: ib_async says
+  it is still live. REJECT (202, 383) marks it dead.
+  ⚠️ **202 is sent for EVERY cancellation**, including when a bracket's stop
+  fills and the broker cancels the OCA sibling — treating it as unknown would
+  have halted on the first stop-out of any session.
+* **A rejection gives its optimistic booking back**, minus what executed.
+  ⚠️ **Never for a protective stop:** sign-off does not book one (M31d), and a
+  stop's `quantity` is the size of the position it GUARDS, so reversing would
+  zero out a real holding.
+* **The drift check has a price source at last** — the app's own yfinance feed,
+  the same one the order was sized against, so the comparison measures drift and
+  not the gap between two vendors.
+
+**Seen working at 13:47:**
+
+    No broker quote for A2M.AX, so the price-drift check uses the application's
+    own feed (6.4800) - the same source the order was sized against.
+
+**And the loop is broken.** This morning: five orders before reconciliation
+noticed. This afternoon: **one order, one halt, naming the broker's actual
+reason** — `IBKR rejected an order with unrecognised code 10349`.
+
+### ✅ THE EXIT FINALLY WENT THROUGH, 13:45
+
+    EXIT PRICE CORRECTED: A2M.AX filled at 6.4700, announced at 6.5100 (-61.4 bps)
+
+Signal → drift check → sign-off → transmit → fill → price correction. The first
+app-driven exit of this saga, on Gateway with the preset corrected.
+
+⚠️ **AND ITS PROTECTIVE LEGS WERE ORPHANED**, caught on the first scan after:
+
+    RESTING ORDER ORPHAN: A2M.AX SELL resting=9636 justified=0 excess=9636 FLAT
+      1216552518 sell LMT 9636@8.08   1216552519 sell STP 9636@6.24 (oca)
+
+A2M was flat and 9,636 shares of resting SELL remained — a naked short if the
+6.24 stop had filled against a last of ~6.47. **The orphan rail found it and
+named the order ids.** Cancelled by the operator in TWS.
+
+⚠️ **A closing FILL DOES NOT CANCEL ITS OWN OCA GROUP HERE.** Whatever the app
+does on its own exits, this one left both legs resting. Check the scan after
+every exit until that is understood.
+
+## ⚠️ STILL OPEN AFTER 4 SEPTEMBER
+
+* **The app still logs `No broker quote` even on Gateway.** The probe got ticks
+  from a 15-second streaming subscription; `get_market_data`'s `reqTickersAsync`
+  snapshot does not wait long enough for delayed data. The fallback covers the
+  drift check, so this is not urgent — but the broker-quote path is still dead
+  and the fix is a wait, not an entitlement.
+* **Task 5b is committed but only partly reviewed.** The protective-stop guard
+  was added and pinned; the rest has not been through a whole-branch review.
+* **Plan tasks 6-10 untouched** — sizer ceiling, per-symbol feed health, the
+  yfinance poisoning instrumentation, the dependency pin.
+
 
 ## ⚠️ 3 SEPTEMBER: THE FIRST ENTRY SINCE 31 AUGUST, AND IT NEVER REACHED THE MARKET
 
