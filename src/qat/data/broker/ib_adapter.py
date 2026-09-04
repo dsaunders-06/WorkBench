@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import Awaitable
 from datetime import datetime
 from typing import Any, TypeVar
@@ -63,6 +64,32 @@ logger = logging.getLogger(__name__)
 
 # IBKR's market-data tiers: 1 real-time, 2 frozen, 3 delayed, 4 delayed-frozen.
 # 3 is free for ASX and about twenty minutes behind.
+# Measured against IB Gateway on 4 September: the first delayed price for BHP,
+# ANZ, IAG, TAH and TWE arrived between 0.11s and 0.77s. Two seconds is that
+# slowest case with margin, and it is a CEILING - a quote that arrives in a
+# tenth of a second returns in a tenth of a second.
+_QUOTE_WAIT_SECONDS = 2.0
+_QUOTE_POLL_SECONDS = 0.05
+
+
+def _finite_quote(ticker: object) -> dict[str, float]:
+    """bid/ask/last, keeping only the fields that carry a real number.
+
+    An empty dict means "no quote", which is what the caller checks. Returning
+    `{"last": nan}` instead would read as a quote and defeat every `if quote:`
+    downstream - the shape of the original defect.
+    """
+    quote: dict[str, float] = {}
+    for field in ("bid", "ask", "last"):
+        try:
+            value = float(getattr(ticker, field, float("nan")))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(value) and value > 0:
+            quote[field] = value
+    return quote
+
+
 _DELAYED_MARKET_DATA = 3
 
 _T = TypeVar("_T")
@@ -382,36 +409,55 @@ class IBAdapter:
             )
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
-        """A quote, actually WAITED for (item 37).
+        """A quote, from a STREAMING request - because snapshots have no
+        delayed tier.
 
-        This used to call `reqMktData` and then `await asyncio.sleep(0)` - a
-        single event-loop yield - before reading a `Ticker` whose fields default
-        to `nan`. One yield is nowhere near enough for IBKR to deliver a tick,
-        so the caller almost always got `nan` on every field.
+        The history matters, because this line has now been wrong twice. It
+        first called `reqMktData` and `await asyncio.sleep(0)` - one event-loop
+        yield - then read a `Ticker` whose fields default to `nan`. That was
+        diagnosed as "not waiting long enough" and replaced with
+        `reqTickersAsync`, which does wait. It still returned `nan`.
 
-        That is not a cosmetic miss. `AutonomousExecutor._current_price` is the
-        only consumer, and its `None` return SKIPS the autonomy gate's
-        price-drift check - the one guard standing between an order parked for
-        eighty minutes and being signed at a price nobody chose. No
-        `has drifted` line exists in any log back to 12 August.
+        ⚠️ The reason, read out of ib_async on 4 September, is that
+        `reqTickersAsync` calls `reqMktData(..., snapshot=True)`, and IBKR does
+        NOT serve a delayed quote to a snapshot request. The wait was never the
+        problem. Measured against Gateway the same afternoon, a STREAMING
+        request delivers the first delayed price in **0.11s to 0.77s** across
+        five ASX symbols - so the bound below is generous by more than double,
+        and lengthening it would not have helped the snapshot at all.
 
-        `reqTickersAsync` waits for the ticker to be populated rather than
-        hoping, and is bounded by `_call`'s deadline like every other request
-        here, so "no data" now costs a timeout rather than an eternity.
+        Why it is worth fixing at all: `AutonomousExecutor._current_price` is
+        the consumer, and its `None` return SKIPS the price-drift check - the
+        one guard between an order parked for eighty minutes and being signed
+        at a price nobody chose.
+
+        ⚠️ The subscription is cancelled in a `finally`. IBKR caps concurrent
+        market data lines, and leaking one per sign-off would eventually take
+        the feed down by the same slow path it is meant to protect.
         """
         contract = to_ib_contract(symbol, self.settings.market)
-        request = getattr(self.ib_client, "reqTickersAsync", None)
-        if not callable(request):
+        stream = getattr(self.ib_client, "reqMktData", None)
+        if not callable(stream):
             return {}
-        tickers = await self._call(request(contract), f"reqTickers({symbol})")
-        if not tickers:
-            return {}
-        ticker = tickers[0]
-        return {
-            "bid": getattr(ticker, "bid", float("nan")),
-            "ask": getattr(ticker, "ask", float("nan")),
-            "last": getattr(ticker, "last", float("nan")),
-        }
+
+        ticker = stream(contract, "", False, False)
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + _QUOTE_WAIT_SECONDS
+            while True:
+                quote = _finite_quote(ticker)
+                if quote or loop.time() >= deadline:
+                    return quote
+                await asyncio.sleep(_QUOTE_POLL_SECONDS)
+        finally:
+            cancel = getattr(self.ib_client, "cancelMktData", None)
+            if callable(cancel):
+                try:
+                    cancel(contract)
+                except Exception:  # noqa: BLE001 - a failed cancel must not
+                    # cost the caller its quote; the line is reclaimed on
+                    # disconnect either way.
+                    logger.debug("Could not cancel the quote subscription for %s", symbol)
 
     async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
         contract = to_ib_contract(symbol, self.settings.market)
