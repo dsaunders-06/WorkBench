@@ -133,9 +133,9 @@ async def test_a_rejected_sell_gives_the_short_back_rather_than_doubling_it(oms)
         )
     )
 
-    assert oms._filled_quantities[symbol] == pytest.approx(9636.0), (
-        "the position the sell never closed must be back, not a 9636 short"
-    )
+    assert oms._filled_quantities[symbol] == pytest.approx(
+        9636.0
+    ), "the position the sell never closed must be back, not a 9636 short"
 
 
 @pytest.mark.asyncio
