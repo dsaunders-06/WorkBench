@@ -54,6 +54,28 @@ _COLUMN_MAP = {
     "Date": "ts",
 }
 
+
+def _cached_session_state() -> str:
+    """What yfinance's shared session already holds - WITHOUT constructing it.
+
+    `YfData` is a singleton via `SingletonMeta`, so calling `YfData()` here
+    would create the very object this is trying to observe, and on a fresh
+    process that means a network round trip inside a diagnostic. Reading the
+    metaclass's registry observes only what exists already, and mutates
+    nothing.
+    """
+    from yfinance.data import SingletonMeta, YfData
+
+    instance = SingletonMeta._instances.get(YfData)
+    if instance is None:
+        return "no yfinance session in this process yet, so no cookie and no crumb are cached"
+    return (
+        f"cookie={'cached' if getattr(instance, '_cookie', None) else 'absent'}, "
+        f"crumb={'cached' if getattr(instance, '_crumb', None) else 'absent'}, "
+        f"strategy={getattr(instance, '_cookie_strategy', 'unknown')}"
+    )
+
+
 DEFAULT_POLL_SECONDS = 60.0
 # Ceiling on the retry wait while the feed is down. Five minutes, so a feed
 # that comes back is picked up inside a couple of polls rather than after an
@@ -323,13 +345,20 @@ class YFinanceMarketDataSource:
 
         now = datetime.now(UTC)
         ticks: list[RawTick] = []
+        # The symbols that were asked for and produced no usable price. On
+        # 3 September `download()` returned an EMPTY frame without raising, so
+        # the exception path above never ran and the poll looked healthy while
+        # ninety-nine symbols went dark. This set is what that looks like.
+        missing: set[str] = set()
         for vendor_symbol, symbol in vendor.items():
             frame = normalise_frame(raw, vendor_symbol)
             if frame.empty:
+                missing.add(symbol)
                 continue
             last = frame.iloc[-1]
             price = float(last["close"])
             if price <= 0:
+                missing.add(symbol)
                 continue
             # M128. WAS `ts=now`, which stamped a twenty-minute-old price as if
             # it had just printed. The staleness rail measures price age from
@@ -351,5 +380,25 @@ class YFinanceMarketDataSource:
                     price=price,
                     volume=float(last["volume"]) if pd.notna(last["volume"]) else 0.0,
                 )
+            )
+
+        if missing:
+            # The introspection is wrapped on its own: a diagnostic must never
+            # break the feed it is diagnosing, and the counts are the part that
+            # matters - they survive even when yfinance moves its internals.
+            try:
+                state = _cached_session_state()
+            except Exception:  # noqa: BLE001 - unofficial internals, any failure
+                state = "cookie and crumb state could not be read"
+            logger.warning(
+                "yfinance returned %d of %d requested symbol(s); nothing for %s. "
+                "Session: %s. THE MECHANISM IS UNKNOWN - batch size, the crumb on "
+                "the price path, and a 401 storm were each tested on 3 September "
+                "and each ruled out. This line is evidence for the next "
+                "occurrence, not a remedy.",
+                len(vendor) - len(missing),
+                len(vendor),
+                ", ".join(sorted(missing)),
+                state,
             )
         return ticks
