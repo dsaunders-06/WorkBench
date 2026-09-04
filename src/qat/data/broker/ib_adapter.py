@@ -1090,7 +1090,17 @@ class IBAdapter:
             # quantity to reverse anything against. See OrderRejectedEvent's
             # own docstring for why both booked_quantity and
             # order.filled_quantity are carried rather than just "reversed".
-            if order is not None:
+            # ⚠️ NEVER FOR A PROTECTIVE STOP. Sign-off deliberately does not
+            # book one - `_record_fill` returns before the booking for
+            # `is_protective_stop` (M31d), because a resting stop does not fill
+            # and does not change the position. So there is nothing to give
+            # back, and a stop's `quantity` is the size of the position it
+            # GUARDS: reversing against it would zero out a real holding in the
+            # ledger and hand reconciliation a discrepancy that never happened.
+            #
+            # Reachable, not theoretical: error 354 refuses any order placed
+            # without market data, and a stop re-arm is an order.
+            if order is not None and not order.is_protective_stop:
                 asyncio.ensure_future(
                     self.bus.publish(
                         OrderRejectedEvent(
