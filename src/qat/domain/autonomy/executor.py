@@ -26,6 +26,7 @@ import asyncio
 import contextlib
 import logging
 import math
+from collections.abc import Callable
 
 from qat.config import Settings
 from qat.data import instruments
@@ -58,6 +59,7 @@ class AutonomousExecutor:
         equity_monitor: EquityMonitor | None = None,
         settings: Settings | None = None,
         retry_interval_seconds: float = 60.0,
+        fallback_price: Callable[[str], float | None] | None = None,
     ) -> None:
         self.bus = bus
         self.oms = oms
@@ -65,6 +67,20 @@ class AutonomousExecutor:
         self.journal = journal
         self.equity_monitor = equity_monitor
         self.settings = settings or Settings()
+        # ⚠️ THE BROKER IS NOT THE ONLY PLACE A PRICE LIVES, and for three weeks
+        # it was treated as though it were. This account has no ASX market-data
+        # entitlement, so `get_market_data` returns nothing at all - measured
+        # 4 September: marketDataType=3 accepted, snapshotPermissions=0, and not
+        # one price field populated. The drift check was skipped on every order
+        # since 12 August as a result.
+        #
+        # The application already HAS a price for every watched symbol: the
+        # yfinance feed the sizer itself used. Falling back to it makes the
+        # check work without any broker entitlement - and it compares like with
+        # like, because the price the order was SIZED against came from the same
+        # feed. A quote from a second source would measure the gap between two
+        # vendors as well as the drift.
+        self._fallback_price = fallback_price
         # Matches the market-data poll: there is no point re-examining an
         # order more often than the prices behind it change.
         self.retry_interval_seconds = retry_interval_seconds
@@ -234,6 +250,22 @@ class AutonomousExecutor:
             if math.isfinite(candidate) and candidate > 0:
                 price = candidate
                 break
+
+        if price is None and self._fallback_price is not None:
+            # The broker had nothing. Ask the feed the sizer used.
+            try:
+                fallback = self._fallback_price(symbol)
+            except Exception:  # noqa: BLE001 - a price lookup must not stop an order
+                fallback = None
+            if fallback is not None and math.isfinite(fallback) and fallback > 0:
+                logger.info(
+                    "No broker quote for %s, so the price-drift check uses the "
+                    "application's own feed (%.4f) - the same source the order was "
+                    "sized against.",
+                    symbol,
+                    fallback,
+                )
+                return fallback
 
         if price is None:
             # Logged, because a skipped drift check and a passed one were

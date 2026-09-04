@@ -700,6 +700,30 @@ class Runtime:
             return build_scorecard(strategy, trades, settings)
 
         autonomy_gate = AutonomyGate(settings, kill_switch, scorecard_source=_scorecard_for)
+
+        def _last_known_price(symbol: str) -> float | None:
+            """The most recent close the application itself has for `symbol`.
+
+            ⚠️ The price-drift check had no source. This account has no ASX
+            market-data entitlement, so `IBAdapter.get_market_data` returns
+            nothing at all - measured 4 September: marketDataType=3 accepted,
+            snapshotPermissions=0, every price field unset. The check was
+            therefore SKIPPED on every order since 12 August, which is why no
+            `has drifted` line exists in any log going back that far.
+
+            This is the same aggregator the sizer reads, so the comparison is
+            like with like: a quote from a second vendor would measure the gap
+            between two feeds as well as the drift it is looking for.
+            """
+            frame = signal_bridge.bars.frame_if_present(symbol)
+            if frame is None or frame.empty or "close" not in frame:
+                return None
+            try:
+                last = float(frame["close"].iloc[-1])
+            except (IndexError, TypeError, ValueError):
+                return None
+            return last if last > 0 else None
+
         autonomous_executor = AutonomousExecutor(
             bus,
             oms,
@@ -707,6 +731,7 @@ class Runtime:
             decision_journal,
             equity_monitor=equity_monitor,
             settings=settings,
+            fallback_price=_last_known_price,
         )
         if settings.autonomy_enabled:
             logger.warning(

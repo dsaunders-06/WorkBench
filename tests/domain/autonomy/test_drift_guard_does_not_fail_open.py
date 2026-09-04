@@ -46,6 +46,12 @@ class _Broker:
 def _executor(quote) -> AutonomousExecutor:
     ex = AutonomousExecutor.__new__(AutonomousExecutor)
     ex.oms = type("_O", (), {"broker": _Broker(quote)})()
+    # No fallback: this file pins what happens when NOTHING can price the
+    # symbol. The fallback added on 4 September is a second source, not a
+    # replacement for these rails - with one wired, a broker that cannot quote
+    # is no longer the end of the story, and none of the assertions below would
+    # be testing the case they are named for.
+    ex._fallback_price = None
     return ex
 
 
