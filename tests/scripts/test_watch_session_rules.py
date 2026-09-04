@@ -88,6 +88,19 @@ _REAL_LINES: tuple[tuple[str, str, str], ...] = (
         "ERROR",
         "FEED",
     ),
+    # ⚠️ The line above is HISTORY as of M167 - the source no longer emits it,
+    # because all seven of its appearances in the live log were the 10:04 open
+    # and every one was followed by a recovery. The rule stays so older logs
+    # still read correctly. The line below is what a real outage says now, and
+    # it must keep classifying: it is the only place a partial outage is
+    # reported, and 3 September proved a partial outage is the shape that
+    # actually happens.
+    (
+        "yfinance has returned nothing for 99 of 100 symbol(s) for 5 consecutive polls - "
+        "market data is down for most of the book. Retrying with backoff. Failing: BHP.AX",
+        "ERROR",
+        "FEED",
+    ),
     ("yfinance poll produced no ticks (3/5)", "WARNING", "FEED"),
     # Regressions - these worked before and must keep working.
     (

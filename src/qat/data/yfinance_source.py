@@ -247,11 +247,24 @@ class YFinanceMarketDataSource:
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         max_consecutive_failures: int = 5,
         max_backoff_seconds: float = MAX_BACKOFF_SECONDS,
+        down_symbol_fraction: float = 0.5,
     ) -> None:
         self._client = client
         self.poll_seconds = poll_seconds
         self.max_consecutive_failures = max_consecutive_failures
         self.max_backoff_seconds = max_backoff_seconds
+        # The share of watched symbols that must be failing before the feed is
+        # reported DOWN. A symbol counts as failing once it has missed
+        # `max_consecutive_failures` polls in a row.
+        #
+        # ⚠️ Half, not "any". One delisted or thinly-traded symbol must never
+        # report the feed down; 99 of 100 silent for twenty-five minutes
+        # (3 September) must, and did not.
+        #
+        # A constructor argument, matching `max_consecutive_failures` beside it,
+        # rather than a Settings field - two knobs of the same kind belong in
+        # the same place.
+        self.down_symbol_fraction = down_symbol_fraction
 
     @property
     def client(self) -> YFinanceClient:
@@ -265,11 +278,22 @@ class YFinanceMarketDataSource:
             return
 
         consecutive_failures = 0
+        # Per SYMBOL, because one counter could not tell 1-of-100 answering from
+        # 100-of-100. On 3 September it could not, for twenty-five minutes.
+        misses: dict[str, int] = {}
         while True:
-            # `missing` is unused here BY DESIGN in this task - per-symbol health
-            # is Task 8. Unpacked rather than ignored so the caller cannot quietly
-            # keep treating a tuple as a list of ticks.
-            ticks, _missing = await self._poll_once(symbol_list)
+            ticks, missing = await self._poll_once(symbol_list)
+
+            answered = {tick.symbol for tick in ticks}
+            for symbol in symbol_list:
+                if symbol in answered:
+                    misses[symbol] = 0
+                elif symbol in missing:
+                    misses[symbol] = misses.get(symbol, 0) + 1
+            failing = sorted(
+                symbol for symbol, n in misses.items() if n >= self.max_consecutive_failures
+            )
+            enough_to_call_it_down = len(failing) >= self.down_symbol_fraction * len(symbol_list)
 
             if ticks:
                 if consecutive_failures >= self.max_consecutive_failures:
@@ -288,6 +312,27 @@ class YFinanceMarketDataSource:
                     )
                 BLIND_WINDOW_FILTER.blind = False
                 consecutive_failures = 0
+                if enough_to_call_it_down:
+                    # ⚠️ Reported from the branch where ticks DID arrive, which
+                    # is the whole point: the 3 September outage never reached
+                    # the empty-poll branch below because one symbol of a
+                    # hundred kept answering, so the single counter reset every
+                    # poll and nothing was ever said.
+                    #
+                    # The line NAMES the symbols. A count alone would not have
+                    # distinguished "Yahoo has stopped covering these names"
+                    # from "the feed is down", and those need different actions.
+                    shown = ", ".join(failing[:10])
+                    logger.error(
+                        "yfinance has returned nothing for %d of %d symbol(s) for %d "
+                        "consecutive polls - market data is down for most of the book. "
+                        "Retrying with backoff. Failing: %s%s",
+                        len(failing),
+                        len(symbol_list),
+                        self.max_consecutive_failures,
+                        shown,
+                        f" and {len(failing) - 10} more" if len(failing) > 10 else "",
+                    )
                 for tick in ticks:
                     yield tick
             else:
@@ -297,6 +342,22 @@ class YFinanceMarketDataSource:
                 # polls is most of it already spent by the time the threshold
                 # is crossed.
                 BLIND_WINDOW_FILTER.blind = True
+                # ⚠️ NO `market data is down` HERE ANY MORE, and this is a
+                # MEASUREMENT rather than a preference. Every one of the seven
+                # DOWN lines in the live log fired at 10:04 - the open - and
+                # every one was followed by a recovery. Seven fired, seven
+                # false. Yahoo publishes ASX intraday about 20 minutes late, so
+                # at every open EVERY symbol is legitimately absent and this
+                # branch is the open, not an outage. Meanwhile the REAL
+                # twenty-five minute outage on 3 September produced no line at
+                # all, because one symbol kept answering. A rail with a 100%
+                # false-positive rate and a 0% true-positive rate teaches the
+                # operator to ignore it.
+                #
+                # A total outage MID-SESSION is still reported - by
+                # MarketDataFeed's staleness rail, which can fire once symbols
+                # have ticked at least once. It is only the open, where nothing
+                # has ticked yet, that goes quiet here.
                 if consecutive_failures == self.max_consecutive_failures:
                     # M119. Ending the stream here used to be the design, on the
                     # reasoning that a dead feed must not look alive. It could
@@ -315,9 +376,11 @@ class YFinanceMarketDataSource:
                     # Visibility is MarketDataFeed's job - it publishes
                     # MarketDataFeedEvent and logs MARKET DATA DOWN - which
                     # leaves this loop free to keep trying.
-                    logger.error(
-                        "yfinance has returned no data %d times consecutively - "
-                        "market data is down. Retrying with backoff.",
+                    logger.warning(
+                        "yfinance has returned no data %d times consecutively - no symbol "
+                        "has answered yet. At the open this is the vendor's ~20 minute "
+                        "delay, not an outage; if it persists after prices start "
+                        "printing, the staleness rail is what reports it.",
                         consecutive_failures,
                     )
                 elif consecutive_failures < self.max_consecutive_failures:
@@ -327,7 +390,18 @@ class YFinanceMarketDataSource:
                         self.max_consecutive_failures,
                     )
 
-            await asyncio.sleep(self._delay_after(consecutive_failures))
+            # ⚠️ The backoff must match the state it is backing off from. A
+            # partial outage never increments `consecutive_failures` - ticks
+            # arrived - so passing it alone would keep polling at full cadence
+            # while most of the book was dark, spending rate-limit budget on a
+            # feed already refusing.
+            await asyncio.sleep(
+                self._delay_after(
+                    self.max_consecutive_failures
+                    if enough_to_call_it_down
+                    else consecutive_failures
+                )
+            )
 
     def _delay_after(self, consecutive_failures: int) -> float:
         """Normal cadence while healthy, backing off while down.
