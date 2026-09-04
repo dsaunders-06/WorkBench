@@ -1601,7 +1601,22 @@ class OMS:
             # the question is whether anything NEW has executed, not whether the
             # id is familiar. `_unabsorbed_part` answers that.
             return fill.quantity > prior.quantity + 1e-9
-        return fill.filled_at > self._last_fill_scan
+        # ⚠️ `>=`, not `>`. This is the second exclusive comparison on the same
+        # coarse clock: measured on Windows 4 September, `datetime.now(UTC)`
+        # advances about every 2ms and 199,967 of 200,000 consecutive calls
+        # returned an IDENTICAL stamp. A protective fill landing in the same
+        # tick as the sweep that set `_last_fill_scan` read as "not new" and was
+        # never absorbed - `tracked=100 broker=0`, and the kill switch halting
+        # on a stop doing its job.
+        #
+        # ⚠️ THIS TRADES ONE NARROW RACE FOR ANOTHER, DELIBERATELY. A fill in
+        # the tick just BEFORE the baseline is already inside the adopted
+        # positions, and admitting it subtracts the same shares twice. Both
+        # errors trip the kill switch loudly rather than corrupting silently,
+        # and only the missed fill has actually been observed - on the only exit
+        # path this system has. An id seen before never reaches this line at
+        # all: the `prior is not None` branch above answers it.
+        return fill.filled_at >= self._last_fill_scan
 
     def _fill_query_floor(self) -> datetime:
         """How far back to ask, which is NOT simply the watermark (M53).
@@ -1628,7 +1643,20 @@ class OMS:
         stamp is dropped as soon as the order is complete, so this reaches back
         only while something genuinely is outstanding.
         """
-        floor = self._last_fill_scan
+        # ⚠️ A second before HERE TOO, not only when there are stamps below.
+        # The brokers' filters are EXCLUSIVE (`filled_at > since`) and
+        # `datetime.now(UTC)` is coarse: measured on Windows 4 September, it
+        # advances about every 2ms and 199,967 of 200,000 consecutive calls
+        # returned an IDENTICAL timestamp. A fill executing in the same tick as
+        # a sweep was therefore excluded from that sweep - and then sat
+        # permanently below the floor, because `_last_fill_scan` had advanced
+        # past it. The loss lands on protective stops, the only exits this
+        # system has: nothing absorbs the fill, `tracked=100 broker=0`, and the
+        # kill switch halts on a stop doing its job.
+        #
+        # Re-reading is free by the paragraph above - the delta is zero and it
+        # is skipped. Skipping one never was.
+        floor = self._last_fill_scan - timedelta(seconds=1)
         stamps = [seen.filled_at for seen in self._absorbed_fills.values()]
         stamps.extend(self._own_partial_fill_stamps.values())
         if stamps:
