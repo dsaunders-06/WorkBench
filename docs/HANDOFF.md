@@ -281,6 +281,75 @@ message also contains the words "cookie" and "crumb". Both states are pinned now
 time in two days, on the sabotage-restore step. This is already written down
 here and still happened. **Commit, then sabotage.**
 
+## ✅ 4 SEPTEMBER, LATE: M166 - THE QUOTE WAS NEVER A WAITING PROBLEM
+
+**M166 (`79adcae`), deployed and read back 16:08.** Ten positions adopted,
+`RESTING ORDER SCAN: 20 working leg(s) across 10 symbol(s), nothing unjustified`.
+
+⚠️ **`get_market_data` HAS NOW BEEN WRONG TWICE, THE SAME WAY.** It first
+called `reqMktData` and yielded ONCE; that was diagnosed as "not waiting long
+enough" and replaced with `reqTickersAsync`, which genuinely waits. It STILL
+returned nan. The reason, read out of ib_async: `reqTickersAsync` issues
+`reqMktData(..., snapshot=True)`, and **IBKR serves no delayed quote to a
+snapshot**. Lengthening the wait would have been the fourth wrong diagnosis of
+this one feed. Measured on Gateway: a STREAMING request returned the first
+delayed price for five ASX symbols in **0.11s to 0.77s**.
+
+⚠️ **A REJECTED SELL WAS DOUBLING THE SHORT.** Found by the Task 5b review
+that had been left outstanding. `_filled_quantities` is SIGNED - sign-off books
+`-quantity` for a sell - while `OrderRejectedEvent` carried the UNSIGNED
+`Order.quantity` and the handler always subtracted: booked -9636, reversed to
+-19272. Reachable the same day: A2M's exit was refused FIVE times by Error 354.
+**Every test in the file used a buy**, so the suite was green on a handler that
+was wrong for half its inputs. `side` is now required, with no default.
+
+### ✅ THE BUY PATH WORKED, AND IT HAD NEVER BEEN PROVEN
+
+TWE.AX 10,412 @ 5.4948 and TAH.AX 64,229 @ 0.8908, both bracketed, both
+accepted with real IBKR ids. The drift check logged a real comparison on each.
+The cash cap did the sizing: TWE trimmed 20,637 -> 10,412, TAH 70,693 ->
+64,229, both to ~$57k.
+
+⚠️ **THE 20,000 TWS LIMIT IS NOT A SHARE COUNT.** A 64,229-share order was
+accepted under it. Nothing in the app reads any broker ceiling at all - plan
+Task 6 - and that work belongs BEFORE max positions is raised.
+
+⚠️ **THE APP DID NOT RECORD THE FILLS.** Both entries stayed
+`status=transmitted` for 45 minutes while IBKR held the positions, so the
+autonomy loop re-evaluated them every 60s (blocked correctly each time by the
+M139 guard) and the resting-order rail raised a FALSE quarantine on both. It
+cleared on restart once the positions were adopted. The missed fill transition
+is a sibling of M165's `_TERMINAL_ORDER_STATUSES` narrowing and is unfixed.
+
+### ⚠️ A PIPE HID A BUILD FAILURE, AGAIN
+
+`invoke build` failed 5 safety tests; the re-run appeared to crash Qt. Both
+were artefacts of running `pytest ... | tail`, which discards the exit code and
+the crash header - **the same trap this file already records for
+`invoke build | tail`**. Without the pipe: `EXIT=0`, 3,203 passed. The five
+failures did not reproduce. Never pipe a gate command.
+
+### FOR PLAN TASK 7, FOUND BY A FIXTURE THAT WOULD NOT BEHAVE
+
+* Given a MultiIndex that LACKS the requested ticker, `normalise_frame` does
+  not return empty - it flattens to level 0 and hands back **another symbol's
+  prices under the missing symbol's name**. A partial yfinance response
+  MISLABELS rather than omits.
+* `float(last["close"])` on a NaN close passes the `price <= 0` guard and
+  appends a tick priced `nan`.
+
+Both recorded, neither fixed; they are squarely Task 7's remit.
+
+### ALSO IN M166
+
+* **A failed poll records what it actually got** - returned against requested,
+  and whether a cookie and crumb were cached. NO REMEDY: three hypotheses were
+  tested on 3 September and all three failed, so the mechanism is UNKNOWN.
+  ⚠️ Sabotage showed the first version of that test was VACUOUS - forcing
+  the registry lookup to None left all four tests green, because the no-session
+  branch also contains the words "cookie" and "crumb". Both states are pinned now.
+* **yfinance pinned `>=1.5.2,<2`** - the floor read 0.2.40 with 1.5.2 installed.
+
 ## ⚠️ STILL OPEN AFTER 4 SEPTEMBER
 
 * **Plan tasks 6, 7, 8 and 11.** Task 6 (the sizer reads the broker's ceiling)
