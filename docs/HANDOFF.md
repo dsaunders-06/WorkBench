@@ -350,16 +350,83 @@ Both recorded, neither fixed; they are squarely Task 7's remit.
   branch also contains the words "cookie" and "crumb". Both states are pinned now.
 * **yfinance pinned `>=1.5.2,<2`** - the floor read 0.2.40 with 1.5.2 installed.
 
+## ✅ 4 SEPTEMBER, EVENING: M167 — THE FEED NAMES WHAT WENT DARK
+
+**M167 (`1e64fce`), deployed 18:39 and read back off the app's own log at
+18:45.** Ten entry records, ten adopted positions, ten open lots,
+`RESTING ORDER SCAN: 20 working leg(s) across 10 symbol(s), nothing unjustified`.
+
+⚠️ **ONE ANSWERING SYMBOL HID A NINETY-NINE SYMBOL OUTAGE.** `stream_ticks` held
+ONE counter and reset it on any tick. Counters are per symbol now, DOWN needs
+half the book failing, and the line NAMES the failing symbols — a count alone
+cannot separate "Yahoo stopped covering these names" from "the feed is down".
+
+⚠️ **AND THE OPEN NO LONGER CRIES WOLF, decided by MEASUREMENT.** All seven DOWN
+lines in the live log fired at 10:04 and every one was followed by a recovery:
+**seven fired, seven false**, while the one real outage produced no line at all.
+A rail with a 100% false-positive rate and a 0% true-positive rate teaches the
+operator to ignore it. A total outage mid-session is still reported by
+MarketDataFeed's staleness rail.
+
+⚠️ **A PROTECTIVE FILL IN THE SAME CLOCK TICK AS THE SCAN WAS LOST FOREVER.**
+Found because nine safety tests failed that had passed an hour earlier on
+identical code — bisecting ruled out the diff, so the cause was the clock.
+**Measured: `datetime.now(UTC)` advances about every 2ms here and 199,967 of
+200,000 consecutive calls returned an IDENTICAL stamp.** Both the fill query and
+the decision gate compared EXCLUSIVELY against `_last_fill_scan`, so a fill in
+the same tick was excluded and then sat permanently below the advanced
+watermark. `tracked=100 broker=0`, kill switch, on the only exit path this
+system has.
+
+⚠️ **AN ORDER IBKR FILLED KEPT READING `transmitted`.** TWE.AX and TAH.AX were
+filled and still read transmitted 45 minutes later. **The fakes hid it:**
+`MockBroker` and `SimulatedBroker` fill synchronously and write
+`status = "filled"` themselves, so every OMS test passed against a broker that
+closed its own orders out. `IBAdapter` writes transmitted/cancelled/rejected and
+never filled.
+
+⚠️ **THE TWS SIZE PRESET IS NOT A SHARE COUNT.** With it reading 20,000 the
+broker ACCEPTED a 64,229-share TAH.AX order. `broker_max_order_shares` ships
+UNSET, and the config, manual and audit all warn against copying the dialog's
+number. Error 383's own text is the only figure worth trusting.
+
+⚠️ **THE 21 AUGUST IBKR NEWS FINDING IS RETRACTED.** `config.py` recorded "IBKR
+measured ZERO headlines for RIO.AX and NHF.AX", and that drove loosening
+`news_min_sources` from 2 to 1. The account has EIGHT subscribed providers and
+the same query returns headlines for both. **Second time in one day** a recorded
+conclusion about IBKR was really a conclusion about our own request.
+⚠️ It does NOT make `news_min_sources = 2` safe: eight provider codes are two
+publishers, one wire story appears on several codes, and Dow Jones storage
+licensing is unresolved.
+
+### ⚠️ FOUR TESTS PROVED NOTHING UNTIL SABOTAGED
+
+A probe test whose no-session branch contained the words it asserted; a NaN test
+passing for a reason unrelated to its guard; a pre-baseline test stamping its
+fill below the query floor so it never reached the gate; and an open test
+capturing at ERROR while the line is a WARNING. **A green guard test is a claim
+to check, not evidence** — and reading them was not enough to tell. Only
+sabotage was.
+
+**And one flaky test of mine reached CI**: `_drain` asserted on a poll count
+inside a 5s wall-clock deadline. Passed locally three times, failed CI at 13 of
+14 polls.
+
+### THE A2M QUARANTINE CANNOT AUTO-CLEAR, AND THAT IS CORRECT
+
+A2M is flat with no resting orders, and `saw_clean_scan` only advances symbols
+the scan could SEE (`{orders} | {positions}`). So it never appears and never
+lifts. Deliberate — lifting on absence of evidence is the fabricated-all-clear
+shape of items 34 and 37. **Use the Risk Console's clear button.**
+
 ## ⚠️ STILL OPEN AFTER 4 SEPTEMBER
 
-* **Plan tasks 6, 7, 8 and 11.** Task 6 (the sizer reads the broker's ceiling)
-  is the one that matters before raising max positions, and the 64,229-share
-  order above is why.
-* **Two defects found while writing Task 9's fixture, both Task 7's remit:**
-  given a MultiIndex that LACKS the requested ticker, `normalise_frame` does not
-  return empty — it flattens to level 0 and hands back ANOTHER symbol's prices
-  under the missing symbol's name. And a NaN close passes the `price <= 0` guard
-  and becomes a tick priced `nan`.
+* ✅ **Plan tasks 6, 7, 8 and 11 are DONE** — see the M167 section below. The
+  plan is complete; Task 3 stays deliberately void.
+* ✅ **Both Task 7 defects fixed**, and one of them was recorded WRONG here:
+  `normalise_frame`'s mislabelling was real, but the NaN claim was not.
+  `dropna(subset=["close"])` already drops NaN. **INFINITY** is the case that
+  survives, and a test written to the wrong claim passed with the guard removed.
 * **The regime engine published nothing before the two entries fired**
   (`Gating 1 strategies on the sideways DEFAULT`, 14:27:20). Sizing ran on a
   default rather than a classified regime. Normal at warm-up; confirm it
@@ -3397,12 +3464,20 @@ so it neither confirms nor contradicts any of it.
 
 ## Standing constraints
 
-* ⚠️⚠️ **DO NOT PUSH TO GITHUB.** Standing hold placed by the operator on
-  **27 August 2026**: *"no pushing to GitHub until I advise otherwise."* Commit
-  locally as normal — the hold is on `git push` alone. **Only the operator can
-  lift it**; do not infer it has been lifted from silence, from a new session,
-  or from a change looking safe. When reporting state, say plainly that commits
-  are local and unpushed, so nothing downstream assumes `origin` is level.
+* ~~⚠️⚠️ **DO NOT PUSH TO GITHUB.**~~ **LIFTED 30 August 2026 by the operator.**
+  Pushing is normal again and CI runs green (~7 minutes). Batch pushes rather
+  than pushing per commit, and **always check the run** —
+  `gh run list --limit 3`. A green local suite is not evidence CI passed: on
+  4 September a suite that passed locally three times went red on CI.
+* ⚠️⚠️ **RUN ANYTHING THAT TOUCHES LIVE DATA FROM POWERSHELL, NEVER BASH.**
+  The two shells resolve `%LOCALAPPDATA%` to DIFFERENT filesystems. From Bash,
+  `open_position_entries.json` reads as six US symbols last written **1 August**
+  and `qat.log` is dated **27 July**; from PowerShell both are today's. On
+  4 September `prune_entry_records.py` run from Bash reported
+  *"Nothing to remove"* against the stale copy — a confident, plausible, wrong
+  answer with no error. Same trap class as `invoke build | tail`: **the tool
+  succeeds and the success is meaningless.** Every live-data reading in the
+  4 September sessions came through PowerShell and is sound.
 * **PowerShell for `%LOCALAPPDATA%`** — see the top of this file.
 * ~~**Do not push until September.**~~ **TESTED AND FALSE, 24 August.** 43
   held-back commits were pushed at 13:07 and CI completed **green in 3m57s** on
