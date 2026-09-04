@@ -129,9 +129,13 @@ async def test_a_complete_poll_records_nothing(caplog):
     source = YFinanceMarketDataSource(client=_CompleteClient())
 
     with caplog.at_level(logging.WARNING):
-        ticks = await source._poll_once(["BHP.AX", "CBA.AX"])
+        ticks, missing = await source._poll_once(["BHP.AX", "CBA.AX"])
 
-    assert len(ticks) == 2, "the fixture must actually produce ticks, or this proves nothing"
+    # ⚠️ Unpacked. When `_poll_once` began returning a tuple (Task 7) the old
+    # `len(ticks) == 2` stayed green on the TUPLE's length whatever the feed
+    # did - a guard that had quietly stopped reading the thing it guarded.
+    assert {t.symbol for t in ticks} == {"BHP.AX", "CBA.AX"}
+    assert missing == set()
     assert "requested symbol" not in caplog.text
 
 
@@ -156,8 +160,9 @@ async def test_the_probe_never_breaks_the_poll(caplog, monkeypatch):
     source = YFinanceMarketDataSource(client=_EmptyClient())
 
     with caplog.at_level(logging.WARNING):
-        ticks = await source._poll_once(["BHP.AX", "CBA.AX"])
+        ticks, missing = await source._poll_once(["BHP.AX", "CBA.AX"])
 
     assert ticks == [], "the poll must return, not raise"
+    assert missing == {"BHP.AX", "CBA.AX"}
     lowered = caplog.text.lower()
     assert "cookie" in lowered and "crumb" in lowered, "and the counts must still be recorded"

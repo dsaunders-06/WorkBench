@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from typing import Any, Protocol, cast
@@ -113,6 +114,17 @@ def normalise_frame(raw: pd.DataFrame, symbol: str | None = None) -> pd.DataFram
     if isinstance(frame.columns, pd.MultiIndex):
         if symbol is not None and symbol in frame.columns.get_level_values(-1):
             frame = cast(pd.DataFrame, frame.xs(symbol, axis=1, level=-1))
+        elif symbol is not None:
+            # ⚠️ EMPTY, not flattened. Asked for a ticker this frame does not
+            # carry, the old `else` dropped to level 0 and handed back ANOTHER
+            # symbol's prices under this symbol's name - so a partial response
+            # MISLABELLED rather than omitted, and the poll counted the symbol
+            # as answered. A wrong price is worse than a missing one: the
+            # staleness rail and the sizer both believe it.
+            #
+            # `symbol is None` still flattens: that is the single-ticker call,
+            # where the caller is not asking about any particular column.
+            return pd.DataFrame(columns=["ts", "open", "high", "low", "close", "volume"])
         else:
             frame.columns = frame.columns.get_level_values(0)
 
@@ -254,7 +266,10 @@ class YFinanceMarketDataSource:
 
         consecutive_failures = 0
         while True:
-            ticks = await self._poll_once(symbol_list)
+            # `missing` is unused here BY DESIGN in this task - per-symbol health
+            # is Task 8. Unpacked rather than ignored so the caller cannot quietly
+            # keep treating a tuple as a list of ticks.
+            ticks, _missing = await self._poll_once(symbol_list)
 
             if ticks:
                 if consecutive_failures >= self.max_consecutive_failures:
@@ -325,7 +340,19 @@ class YFinanceMarketDataSource:
         over = consecutive_failures - self.max_consecutive_failures
         return float(min(self.poll_seconds * (2 ** min(over + 1, 5)), self.max_backoff_seconds))
 
-    async def _poll_once(self, symbols: list[str]) -> list[RawTick]:
+    async def _poll_once(self, symbols: list[str]) -> tuple[list[RawTick], set[str]]:
+        """The ticks that arrived, and the app-spelled symbols that did not.
+
+        ⚠️ MISSING SYMBOLS ARE RETURNED, NOT INFERRED. `yfinance.download` does
+        NOT raise on an authentication or rate-limit failure - it logs its own
+        ERROR and hands back a frame - so the `except` below never fired on
+        3 September and this method returned an empty list the caller read as
+        "the feed answered". A partial response is now a measured fact.
+
+        In the APP's spelling, never Yahoo's: a set containing BRK-B would not
+        match a position called BRK.B, and the caller is about to make health
+        decisions per symbol.
+        """
         # Requested in Yahoo's spelling, emitted in the app's. A tick labelled
         # BRK-B would never match a broker position called BRK.B, so the
         # translation has to close again on the way back out.
@@ -341,7 +368,8 @@ class YFinanceMarketDataSource:
             )
         except Exception:  # noqa: BLE001 - an unofficial feed fails in many ways
             logger.warning("yfinance quote poll failed", exc_info=True)
-            return []
+            # Nothing came back at all, so every symbol asked for is missing.
+            return [], set(symbols)
 
         now = datetime.now(UTC)
         ticks: list[RawTick] = []
@@ -357,7 +385,10 @@ class YFinanceMarketDataSource:
                 continue
             last = frame.iloc[-1]
             price = float(last["close"])
-            if price <= 0:
+            # ⚠️ `isfinite` FIRST. `nan <= 0` is False, so a NaN close sailed
+            # past the non-positive guard and became a tick priced `nan` - which
+            # every downstream comparison then answers False to, silently.
+            if not math.isfinite(price) or price <= 0:
                 missing.add(symbol)
                 continue
             # M128. WAS `ts=now`, which stamped a twenty-minute-old price as if
@@ -401,4 +432,4 @@ class YFinanceMarketDataSource:
                 ", ".join(sorted(missing)),
                 state,
             )
-        return ticks
+        return ticks, missing
