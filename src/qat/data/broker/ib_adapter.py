@@ -1152,6 +1152,7 @@ class IBAdapter:
                         OrderRejectedEvent(
                             order_id=order.order_id,
                             symbol=order.symbol,
+                            side=order.side,
                             booked_quantity=order.quantity,
                             executed_quantity=order.filled_quantity,
                             reason=f"IBKR error {code}: {error_string}",

@@ -254,9 +254,16 @@ class OrderRejectedEvent(Event):
 
     order_id: str
     symbol: str
+    side: str
+    """⚠️ "buy" or "sell". REQUIRED, because `_filled_quantities` is SIGNED -
+    sign-off books `-quantity` for a sell (oms.py, `signed_qty`) while
+    `Order.quantity` below is unsigned. Without this the reversal subtracts
+    from a short and DOUBLES it, which is the phantom this event exists to
+    remove, in the other direction. Found by review on 4 September; every
+    test until then had used a buy."""
     booked_quantity: float
     """What sign-off booked at transmit time: the ORDERED size, not what
-    actually executed."""
+    actually executed. Unsigned - `side` carries the direction."""
     executed_quantity: float | None
     """`Order.filled_quantity` at the moment of rejection. `None` means this
     adapter does not report executed quantity - a different claim from zero -

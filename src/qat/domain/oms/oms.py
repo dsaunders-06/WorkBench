@@ -1048,7 +1048,13 @@ class OMS:
             )
             return
         remaining = event.booked_quantity - event.executed_quantity
-        self._filled_quantities[event.symbol] -= remaining
+        # ⚠️ Signed exactly as `signed_qty` signs the booking above: a sell
+        # books NEGATIVE, so an unsigned `-= remaining` would drive a rejected
+        # sell further short and double the phantom rather than remove it.
+        # A2M's exit on 4 September was refused five times; under an unsigned
+        # reversal each refusal would have deepened the error it was correcting.
+        signed_remaining = remaining if event.side == "buy" else -remaining
+        self._filled_quantities[event.symbol] -= signed_remaining
         logger.info(
             "Reversed %.2f of the booking for %s (order=%s) after rejection: %s. "
             "%.2f executed and stays booked.",
