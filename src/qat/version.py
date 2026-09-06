@@ -1703,7 +1703,44 @@ from qat.domain.display_dates import format_display_date
 # pre-baseline test stamping its fill below the query floor so it never reached
 # the gate; and an open test capturing at ERROR while the line is a WARNING. A
 # green guard test is a claim to check, not evidence.
-MILESTONE = "M167"
+# M168 - the broker quote works for the first time.
+#
+# ⚠️ A SEPARATE MILESTONE ON PURPOSE. The only functional change since M167 is
+# `IBAdapter._qualified_contract`, but M167 is already installed and running.
+# Rebuilding at a later commit under the same milestone would put two different
+# binaries on disk both stamped M167, and the build stamp exists precisely so
+# "which build is this?" has one answer.
+#
+# ⚠️ FOURTH DIAGNOSIS OF ONE DEAD LINE, and the first measured end to end.
+# `get_market_data` has been wrong four times:
+#
+#   1. reqMktData + sleep(0) - one event-loop yield. "Not waiting long enough."
+#   2. reqTickersAsync, which genuinely waits. Still nan.
+#   3. "IBKR serves no delayed quote to a SNAPSHOT." ⚠️ RETRACTED - see the
+#      M167 block below. Reasoned from reading ib_async's source and never
+#      tested; a direct comparison returned IDENTICAL prices from the snapshot
+#      and a streaming request, BHP 62.2500 from both.
+#   4. ✅ The contract was never QUALIFIED. `to_ib_contract` builds a Stock
+#      with conId=0 and `reqMktData` RAISES ValueError on one. Measured: the
+#      unqualified call raised for BHP.AX and ANZ.AX while the qualified one
+#      returned 62.25 and 37.95 in the same run.
+#
+# So M166's streaming rewrite fixed nothing on its own - it changed which
+# exception `_current_price` swallowed, and the log kept reading
+# "No broker quote". THIS is the build where a broker quote actually arrives.
+#
+# ⚠️ AND `probe_halts.py` HAD CARRIED THE ANSWER SINCE IT WAS WRITTEN:
+# "reqTickers hashes the contract and a conId-less one raises. The app's own
+# adapter does this." The adapter did not. Third time this week a finding
+# already in this repo sat filed under a question nobody re-asked, after
+# marketDataType=3 filed under M43 and the IBKR news zero filed under coverage.
+#
+# Nothing unsafe preceded it: `_current_price` catches Exception and falls back
+# to the app's own feed, which is why weeks of this read as "the broker has no
+# quotes" rather than as a fault. The conId is cached per symbol - it cannot
+# change within a session - and a FAILURE is not cached, so a transient one
+# does not disable quotes for the rest of the run.
+MILESTONE = "M168"
 
 _UNKNOWN = "unknown"
 
