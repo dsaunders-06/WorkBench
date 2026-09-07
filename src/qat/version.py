@@ -1740,7 +1740,61 @@ from qat.domain.display_dates import format_display_date
 # quotes" rather than as a fault. The conId is cached per symbol - it cannot
 # change within a session - and a FAILURE is not cached, so a transient one
 # does not disable quotes for the rest of the run.
-MILESTONE = "M168"
+# M169 - the exits stop orphaning their protection, and the ledger is audited.
+#
+# ⚠️ AN AUTONOMOUS EXIT LEFT BOTH PROTECTIVE LEGS RESTING ON A FLAT POSITION.
+# On 4 September the escaped-hold rule exited A2M.AX, the sell filled, and 9,636
+# shares of resting SELL stayed behind with a stop about 4% under the last - a
+# naked short waiting to happen. The resting-order rail found it and NAMED the
+# ids; the operator cancelled them by hand, because that rail says in its own
+# words "The ORDERS ARE NOT CANCELLED by this."
+#
+# The careful work had gone into the path a HUMAN drives: `PositionCloser`
+# (M163) cancels, re-reads to prove, and recovers. The autonomous paths - the
+# time stop and the signal exit - called `submit_exit_order` and walked away.
+# Those are the exits that run when nobody is watching the scan.
+#
+# ⚠️ CANCEL FIRST, ON EVIDENCE. The failure modes are not symmetric:
+# cancel-first leaves a position UNPROTECTED, which `verify_position_stops`
+# detects and `signal_bridge` RE-ARMS on its own - self-healing, on a position
+# you meant to hold. Sell-first leaves legs ORPHANED, detected by a rail with no
+# remedy, and if one fills you own an unintended SHORT with no bound. If the
+# legs will not cancel, THE EXIT IS REFUSED and the position keeps its
+# protection. A partial exit leaves them alone: the de-lever trim still needs
+# protecting.
+#
+# ⚠️ AND EVERY BRACKET WAS ON IBKR'S DEFAULT OCA TYPE. Measured on all ten held
+# positions: `ocaType=3` - reduce remaining, NO block. `to_ib_protective_legs`
+# set neither ocaGroup nor ocaType and inherited it, while `to_ib_oca_pair` had
+# already set 1 and said why. Two functions build protective pairs; only one
+# said it. NEEDS LIVE VERIFICATION: no bracket has been placed under this code,
+# so read the first one off the broker and confirm type 1.
+#
+# ⚠️ THE SAMPLE-SIZE GATES COUNTED FILLS, NOT TRADES. Five LOV.AX rows shared
+# one order_id and closed within 25 seconds - ONE position filling its target,
+# recorded as five closed trades. `edge_min_trades = 20` is what keeps the sizer
+# on its invented priors until a real sample exists, and it counted rows, so it
+# would have opened on an unpredictable fraction of twenty real trades. The
+# collapse now lives at `TradeLedger.closed_trades()`, which the sizer, the
+# promotion gate, the Performance tab and the daily report all read.
+# ⚠️ The RECORD is untouched - closed_trades.csv is never regenerated from
+# memory - but the displayed trade count drops from 9 to 5.
+#
+# ⚠️ THE LEDGER FILE DISAGREED WITH THE APPLICATION AND NOTHING SAID SO.
+# `audit_closed_trades` found 20 discrepancies on its first run: two BLANK
+# derived columns on a row the 26 August repair script wrote, and EIGHTEEN stale
+# values on rows amended later - `ExitPriceCorrectedEvent` amends the price
+# columns and leaves the derived ones as first written. The app was never wrong;
+# these are computed properties. The FILE was, and the file is what a person
+# opens to check performance by hand. Reading one blank as zero turned a
+# +$13,558 winner into +$1,535 and the measured payoff from 2.32 to 0.87.
+# It reports rather than repairs: rewriting rows is what produced the blank.
+#
+# ALSO: the open is no longer an outage in `market_data` either - the sibling
+# alarm M167 left behind, 8 opens and 8 false alarms. And IBKR news maps
+# CHANNELS to PUBLISHERS so DJ-N and DJ-RTA cannot fake corroboration for one
+# wire story; not wired in, pending the Dow Jones storage licence.
+MILESTONE = "M169"
 
 _UNKNOWN = "unknown"
 
