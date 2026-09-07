@@ -189,7 +189,9 @@ def to_ib_parent(order: Order) -> IBOrder:
     return MarketOrder(action, order.quantity, tif="GTC", transmit=False)
 
 
-def to_ib_protective_legs(order: Order, parent_id: int) -> list[IBOrder]:
+def to_ib_protective_legs(
+    order: Order, parent_id: int, oca_group: str | None = None
+) -> list[IBOrder]:
     """The take-profit and stop legs of a bracket, attached to `parent_id`.
 
     Ordering is load-bearing. Only the LAST leg carries `transmit=True`, and
@@ -204,8 +206,29 @@ def to_ib_protective_legs(order: Order, parent_id: int) -> list[IBOrder]:
     31 July six positions filled with brackets attached, the take-profit legs
     expired at the close, the paired stops were cancelled with them as OCA
     does, and about $36,000 sat through a three-day weekend unprotected.
+
+    ⚠️ AND THE OCA TYPE IS SET EXPLICITLY, because leaving it to IBKR gets
+    type 3. Measured against the live account on 7 September: all ten held
+    positions carried `ocaType=3` on both legs - REDUCE remaining, NO block -
+    which is IBKR's default for the implicit group a bracket's children get,
+    and this function set neither ocaGroup nor ocaType.
+
+    `to_ib_oca_pair` had already decided the question for the OTHER path and
+    said why: "Reducing (2 and 3) would leave a partial resting against shares
+    already sold." Two functions create protective pairs; only one said it.
+
+    Type 3 is wrong in exactly the cases nobody watches. On a clean full
+    stop-out, reduce-to-zero looks identical to cancel - which is how this
+    survived. It bites on a PARTIAL fill, where the sibling is reduced rather
+    than cancelled, and "no block" means both can work against the same shares
+    while a fill is in flight.
+
+    ⚠️ Not the A2M orphan. That was an app-sent exit leaving non-member legs
+    untouched, and no ocaType could have helped: the exit was never in the
+    group. See `OMS._release_protective_legs`.
     """
     reverse = "SELL" if order.side == "buy" else "BUY"
+    group = oca_group or f"qat-{order.order_id}"
     legs: list[IBOrder] = []
     if order.take_profit_price is not None:
         legs.append(
@@ -229,6 +252,9 @@ def to_ib_protective_legs(order: Order, parent_id: int) -> list[IBOrder]:
                 transmit=False,
             )
         )
+    for leg in legs:
+        leg.ocaGroup = group
+        leg.ocaType = 1
     if legs:
         legs[-1].transmit = True
     return legs
