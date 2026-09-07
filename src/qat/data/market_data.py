@@ -196,12 +196,38 @@ class MarketDataFeed:
             if quiet <= self.feed_down_seconds:
                 continue
             self._feed_healthy = False
-            reason = (
-                f"no market data for {quiet / 60:.0f} minutes"
-                if self._last_tick_at is not None
-                else f"no market data since the feed started {quiet / 60:.0f} minutes ago"
-            )
-            logger.error("MARKET DATA DOWN: %s", reason)
+            # ⚠️ TWO DIFFERENT CONDITIONS, AND THEY WERE LOGGED THE SAME WAY.
+            # A feed that has NEVER ticked has not started; a feed that ticked
+            # and then went quiet has stopped. Only the second is an outage.
+            #
+            # Measured, not assumed: `MARKET DATA DOWN` appears eight times in
+            # the live log - 26, 27, 28 August, 31 August, 1, 2, 4 and
+            # 7 September - and every one is at 00:05 UTC, five minutes after
+            # the ASX opens, on a feed that had never ticked. Eight for eight
+            # false. Yahoo publishes ASX intraday about twenty minutes late, so
+            # at the open nothing has printed yet.
+            #
+            # ⚠️ The sibling of the yfinance rail corrected in M167, which had
+            # the identical defect and was fixed on the identical evidence.
+            # Removing that alarm alone only left the operator receiving this
+            # one, because nobody looked for the sibling.
+            #
+            # ⚠️ THE EVENT IS UNCHANGED. `MarketDataFeedEvent(healthy=False)` is
+            # still published below in both cases - the UI banner should still
+            # say the feed is not flowing, because at the open that is true.
+            # Only the severity and the wording change.
+            if self._last_tick_at is not None:
+                reason = f"no market data for {quiet / 60:.0f} minutes"
+                logger.error("MARKET DATA DOWN: %s", reason)
+            else:
+                reason = f"no market data since the feed started {quiet / 60:.0f} minutes ago"
+                logger.warning(
+                    "Market data has not started: %s. No symbol has printed yet, which at "
+                    "the open is this feed's own ~20 minute delay rather than an outage. "
+                    "If it persists once prices are printing, the per-symbol staleness "
+                    "rail is what reports it.",
+                    reason,
+                )
             await self.bus.publish(
                 MarketDataFeedEvent(healthy=False, reason=reason, seconds_since_last_tick=quiet)
             )
