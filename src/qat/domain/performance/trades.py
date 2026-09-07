@@ -1538,3 +1538,71 @@ def collapse_to_positions(trades: list[ClosedTrade]) -> list[ClosedTrade]:
         )
     merged.sort(key=lambda t: t.closed_at)
     return merged
+
+
+# Derived column -> (property name, decimal places `as_row` rounds it to).
+# Every one of these is a COMPUTED property written out for readers; nothing in
+# the application reads them back, which is exactly why they can drift unnoticed.
+_DERIVED_COLUMNS = {
+    "gross_pnl": ("gross_pnl", 2),
+    "net_pnl": ("net_pnl", 2),
+    "pnl_pct": ("pnl_pct", 6),
+    "r_multiple": ("r_multiple", 4),
+}
+
+
+def audit_closed_trades(path: Path) -> list[str]:
+    """Rows whose STORED derived columns disagree with the computed ones.
+
+    ⚠️ WHY THIS EXISTS. On 7 September the live ledger held a LOV.AX row with
+    2,843 shares, `gross_pnl` of 12,021.91 and `net_pnl` BLANK - written by the
+    26 August repair script rather than by `as_row`, which always writes the
+    computed value. The application was never wrong: `net_pnl` is a property, so
+    in memory that row reads 12,021.91. Only the FILE was wrong.
+
+    That is the dangerous shape. The CSV is what a person opens to check
+    performance by hand, and reading the blank as zero turned a +$13,558 winner
+    into a +$1,535 one - which flipped the measured payoff ratio from 2.32 to
+    0.87 and the Kelly fraction from positive to negative. Nothing reported a
+    problem, because nothing was comparing the two.
+
+    Returns one line per discrepancy, empty when the file agrees with itself.
+    A row `from_row` cannot parse is reported rather than skipped: unreadable
+    is a discrepancy too, and `_load_closed` drops such rows silently.
+    """
+    if not path.exists():
+        return []
+    findings: list[str] = []
+    with path.open(newline="", encoding="utf-8") as handle:
+        for number, row in enumerate(csv.DictReader(handle), start=2):
+            trade = ClosedTrade.from_row(row)
+            if trade is None:
+                findings.append(f"row {number}: could not be parsed, so it is invisible to the app")
+                continue
+            for column, (attribute, places) in _DERIVED_COLUMNS.items():
+                stored = (row.get(column) or "").strip()
+                computed = getattr(trade, attribute)
+                if computed is None:
+                    # Genuinely not computable - a trade with no stop has no R.
+                    if stored:
+                        findings.append(
+                            f"row {number} ({trade.symbol}): {column} stores {stored!r} but "
+                            f"the trade cannot produce one"
+                        )
+                    continue
+                if not stored:
+                    findings.append(
+                        f"row {number} ({trade.symbol}, qty {trade.quantity:g}): {column} is "
+                        f"BLANK but computes to {round(computed, places)} - anything reading "
+                        f"this file gets a wrong answer"
+                    )
+                    continue
+                try:
+                    if abs(float(stored) - round(computed, places)) > 10 ** (-places) / 2:
+                        findings.append(
+                            f"row {number} ({trade.symbol}): {column} stores {stored} but "
+                            f"computes to {round(computed, places)}"
+                        )
+                except ValueError:
+                    findings.append(f"row {number} ({trade.symbol}): {column} is not a number")
+    return findings
