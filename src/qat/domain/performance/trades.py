@@ -277,6 +277,7 @@ class OpenLot:
 
 @dataclass(frozen=True, slots=True)
 class ClosedTrade:
+
     symbol: str
     strategy: str | None
     quantity: float
@@ -1456,3 +1457,69 @@ __all__ = [
     "asdict",
     "field",
 ]
+
+
+def collapse_to_positions(trades: list[ClosedTrade]) -> list[ClosedTrade]:
+    """Ledger ROWS collapsed into distinct POSITIONS.
+
+    ⚠️ A POSITION CAN CLOSE IN PIECES, and each piece was written as its own
+    row. Measured in the live ledger on 7 September 2026: five LOV.AX rows
+    sharing one `opened_at`, one `order_id` (1216552509) and closing within 25
+    seconds of each other, in quantities 10 / 15 / 26 / 323 / 2843. One
+    position filling its target, recorded as five trades.
+
+    ⚠️ WHY THIS MATTERS MORE THAN THE DISPLAY. `edge_min_trades = 20` is what
+    stops the sizer using invented constants (win rate 0.55, payoff 1.5), and
+    it counts what `closed_trades()` returns. One fragmented exit yielded five,
+    so the gate flips to "measured" on an unpredictable fraction of twenty real
+    trades - the protection against acting on too small a sample was itself
+    miscounting. The promotion gate at thirty reads the same list.
+
+    And the statistics moved with it: the live ledger reported 9 trades, 55.6%
+    win rate and 0.47 payoff, where the distinct positions are 5 trades, 40%
+    and 0.87. Four winning fragments of ONE position outvoted three whole
+    losers.
+
+    ⚠️ QUANTITY-WEIGHTED prices, because `gross_pnl`, `net_pnl` and
+    `r_multiple` are computed properties over quantity, price and cost. Summing
+    quantity and costs and weighting price by quantity is the only merge that
+    leaves the arithmetic identical; a plain mean would quietly restate the P&L.
+
+    ⚠️ A MISSING `order_id` IS NOT A KEY. Older rows predate the field, and
+    absence is not evidence that two rows are the same position - merging on it
+    would silently combine unrelated history, so each such row stands alone.
+    """
+    groups: dict[object, list[ClosedTrade]] = {}
+    singles: list[ClosedTrade] = []
+    for trade in trades:
+        if not trade.order_id:
+            singles.append(trade)
+            continue
+        groups.setdefault((trade.order_id, trade.symbol, trade.opened_at), []).append(trade)
+
+    merged: list[ClosedTrade] = list(singles)
+    for members in groups.values():
+        if len(members) == 1:
+            merged.append(members[0])
+            continue
+        quantity = sum(m.quantity for m in members)
+        if quantity <= 0:
+            # Nothing to weight by, so no defensible average exists. Kept as
+            # separate rows rather than invented into one.
+            merged.extend(members)
+            continue
+        first = members[0]
+        merged.append(
+            replace(
+                first,
+                quantity=quantity,
+                entry_price=sum(m.entry_price * m.quantity for m in members) / quantity,
+                exit_price=sum(m.exit_price * m.quantity for m in members) / quantity,
+                entry_cost=sum(m.entry_cost for m in members),
+                exit_cost=sum(m.exit_cost for m in members),
+                opened_at=min(m.opened_at for m in members),
+                closed_at=max(m.closed_at for m in members),
+            )
+        )
+    merged.sort(key=lambda t: t.closed_at)
+    return merged

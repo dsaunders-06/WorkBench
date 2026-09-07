@@ -27,7 +27,7 @@ from typing import Literal, Protocol
 
 from qat.config import Settings
 from qat.domain.performance.metrics import compute_stats
-from qat.domain.performance.trades import ClosedTrade
+from qat.domain.performance.trades import ClosedTrade, collapse_to_positions
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,15 @@ class EdgeEstimator:
         # rate and a win/loss ratio, and those set POSITION SIZE - so a trade
         # from the Alpaca/US period, in another currency, on another broker,
         # must not be one of the twenty that switches measurement on.
-        trades = self.ledger.closed_trades(strategy, market=self.settings.market)
+        rows = self.ledger.closed_trades(strategy, market=self.settings.market)
+        # ⚠️ POSITIONS, NOT ROWS. A position that closes in pieces is written as
+        # one row per fill: five LOV.AX rows on 25 August were ONE position
+        # filling its target. Counting rows let `edge_min_trades` flip this
+        # estimator from "default" to "measured" on an unpredictable fraction of
+        # twenty real trades, and let four winning fragments of one position
+        # outvote three whole losers - 9 rows read 55.6% and 0.47, where the 5
+        # positions behind them read 40% and 0.87.
+        trades = collapse_to_positions(list(rows))
         if len(trades) < self.settings.edge_min_trades:
             return Edge(
                 win_rate=self.default_win_rate,
