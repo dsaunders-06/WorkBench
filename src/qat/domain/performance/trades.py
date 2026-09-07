@@ -1265,13 +1265,28 @@ class TradeLedger:
         so asking for swing's trades returned an Alpaca US loss alongside the
         ASX trial's - and `EdgeEstimator` turns exactly that list into a win
         rate that sets position size.
+
+        ⚠️ RETURNS POSITIONS, NOT ROWS. A position that closes in pieces is
+        written as one row per fill - five LOV.AX rows on 25 August 2026 shared
+        one `order_id` and closed within 25 seconds, and they were ONE position
+        filling its target. Every caller of this method is asking "how did the
+        strategy do", and the answer is a count of trades, not of fills:
+        `edge_min_trades` gates the position sizer on it, the promotion gate
+        reads it, and the Performance tab and daily report display it. Rows read
+        9 trades at 55.6% and 0.47 payoff; the 5 positions behind them read 40%
+        and 0.87.
+
+        ⚠️ THE RECORD ITSELF IS UNTOUCHED. `closed_trades.csv` is appended and
+        amended in place and is "never regenerated from `self._closed`", so
+        collapsing here changes what is REPORTED and never what is stored - the
+        fills remain individually recoverable from the file.
         """
         trades = list(self._closed)
         if strategy is not None:
             trades = [trade for trade in trades if trade.strategy == strategy]
         if market is not None:
             trades = [trade for trade in trades if trade.market == market]
-        return trades
+        return collapse_to_positions(trades)
 
     def open_lots(self, symbol: str | None = None) -> list[OpenLot]:
         if symbol is not None:

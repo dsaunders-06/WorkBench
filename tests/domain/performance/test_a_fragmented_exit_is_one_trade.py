@@ -130,7 +130,10 @@ class _LedgerOfFragments:
         ]
 
     def closed_trades(self, strategy=None, market=None):
-        return list(self._rows)
+        # ⚠️ Mirrors the REAL ledger's contract, which collapses fills into
+        # positions before returning them. A fake that handed back raw rows
+        # would be testing a ledger this application does not have.
+        return collapse_to_positions(list(self._rows))
 
 
 def test_the_sizer_gate_counts_positions_not_fills() -> None:
@@ -148,3 +151,36 @@ def test_the_sizer_gate_counts_positions_not_fills() -> None:
 
     assert result.trade_count == 1, "five fills of one position counted as five trades"
     assert result.source == "default", "the gate opened on one real trade"
+
+
+def test_the_LEDGER_itself_returns_positions() -> None:
+    """⚠️ The collapse lives at the accessor every consumer goes through -
+    the sizer, the promotion gate, the Performance tab and the daily report -
+    so none of them can be given fills by accident."""
+    from qat.domain.performance.trades import TradeLedger
+
+    ledger = TradeLedger.__new__(TradeLedger)
+    ledger._closed = [
+        _fill(10.0, 33.5, seconds=1),
+        _fill(3207.0, 34.2, seconds=26),
+    ]
+
+    returned = ledger.closed_trades()
+
+    assert len(returned) == 1, "the ledger handed out fills rather than positions"
+    assert returned[0].quantity == 3217.0
+
+
+def test_the_stored_rows_are_not_rewritten_by_the_collapse() -> None:
+    """⚠️ Reporting changes; the RECORD does not. `closed_trades.csv` is
+    appended and amended in place and is never regenerated from memory, so both
+    fills stay individually recoverable from the file."""
+    from qat.domain.performance.trades import TradeLedger
+
+    ledger = TradeLedger.__new__(TradeLedger)
+    rows = [_fill(10.0, 33.5, seconds=1), _fill(3207.0, 34.2, seconds=26)]
+    ledger._closed = rows
+
+    ledger.closed_trades()
+
+    assert ledger._closed == rows
