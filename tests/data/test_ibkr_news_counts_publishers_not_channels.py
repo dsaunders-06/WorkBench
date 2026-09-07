@@ -25,7 +25,6 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from qat.data.ibkr_news import IBKRNewsSource, publisher_for
-
 from qat.data.news import corroborate
 
 
