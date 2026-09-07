@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
-from qat.data.broker.adapter import BrokerAdapter, Order, RestingOrder
+from qat.data.broker.adapter import BrokerAdapter, Order, RestingOrder, is_protective_leg
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.resting_orders import TERMINAL_STATUSES, WORKING_STATUSES
 from qat.domain.oms.signal_bridge import PositionEntry
@@ -53,13 +53,10 @@ _SELL_IS_WORKING_OR_DONE = frozenset({"transmitted", "filled"})
 # target leg is a plain LMT), and the spec's "known interaction" section
 # already records that hand-placed orders on a managed symbol are outside what
 # this button reasons about.
-_PROTECTIVE_ORDER_TYPES = frozenset({"STP", "STP LMT", "LMT", "TRAIL", "TRAIL LIMIT"})
-
-
-def _is_protective_leg(order: RestingOrder) -> bool:
-    """A working SELL of a bracket type, i.e. something this close is entitled
-    to cancel. Everything else working on the symbol is an intruder - M139."""
-    return order.side.lower() == "sell" and order.order_type.upper() in _PROTECTIVE_ORDER_TYPES
+# Moved beside `RestingOrder` so the AUTONOMOUS exit path can share it - see
+# `adapter.is_protective_leg`. Re-exported under the old private name so this
+# module's many references read unchanged.
+_is_protective_leg = is_protective_leg
 
 
 class CloseOutcome(Enum):
@@ -700,7 +697,14 @@ class PositionCloser:
             )
 
         order = await self.oms.submit_exit_order(
-            symbol, quantity, entry.price, reason="manual_close"
+            symbol,
+            quantity,
+            entry.price,
+            reason="manual_close",
+            # `_cancel_legs` above already did this, with a re-read and the
+            # recovery `_recover` needs. Letting the OMS repeat it would have
+            # two layers judging the same broker state.
+            legs_already_released=True,
         )
         if order.status == "rejected":
             return await self._recover(symbol, report, "the exit order was rejected")

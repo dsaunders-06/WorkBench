@@ -423,3 +423,22 @@ class BrokerAdapter(Protocol):
     # and `announcements` use above - `OMS.check_resting_orders` treats that
     # identically to a real broker with nothing open, never as "unknown".
     async def open_orders(self) -> list[RestingOrder]: ...
+
+
+PROTECTIVE_ORDER_TYPES = frozenset({"STP", "STP LMT", "LMT", "TRAIL", "TRAIL LIMIT"})
+
+
+def is_protective_leg(order: RestingOrder) -> bool:
+    """A working SELL of a bracket type - something an exit is entitled to cancel.
+
+    Everything else working on the symbol is an intruder (M139): a working BUY
+    cancelled silently is how an account came to hold 4x the intended position
+    on 24 August.
+
+    ⚠️ Lives here, beside `RestingOrder`, rather than in `position_closer`
+    where it started. Both the OPERATOR close and the AUTONOMOUS exit need the
+    same answer, and `position_closer` imports `OMS`, so the OMS could not
+    import it back without a cycle. Two copies of a predicate that decides what
+    may be cancelled is not a thing to have.
+    """
+    return order.side.lower() == "sell" and order.order_type.upper() in PROTECTIVE_ORDER_TYPES

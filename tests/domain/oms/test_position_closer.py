@@ -186,7 +186,13 @@ class _FakeOms:
     def orders(self):
         return list(self._believed_orders)
 
-    async def submit_exit_order(self, symbol, quantity, price, reason="signal"):
+    async def submit_exit_order(
+        self, symbol, quantity, price, reason="signal", *, legs_already_released=False
+    ):
+        # ⚠️ `legs_already_released` is accepted and ignored here on purpose.
+        # This fake stands in for the OMS, and PositionCloser passes True
+        # because it cancelled the legs itself - the real OMS then SKIPS its
+        # own release rather than judging the same broker state twice.
         self.exit_orders.append((symbol, quantity, reason))
         status = "rejected" if self._exit_rejected else "pending_signoff"
         return Order(

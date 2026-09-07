@@ -271,7 +271,13 @@ async def test_autonomy_signs_the_exit_off_inside_submit_exit_order(auto_mode):
     broker = _IbkrLikeBroker()
     wiring = await auto_mode(broker)
 
-    order = await wiring.oms.submit_exit_order(SYMBOL, 100.0, 100.0, reason="manual_close")
+    # `legs_already_released=True` because this stands in for the CLOSER's own
+    # call, and the closer cancels the legs itself before getting here. Without
+    # it this would exercise a call the application never makes - the OMS would
+    # try to release legs the closer has already dealt with.
+    order = await wiring.oms.submit_exit_order(
+        SYMBOL, 100.0, 100.0, reason="manual_close", legs_already_released=True
+    )
 
     assert order.status == "transmitted", "the executor signed it off before this returned"
     assert order.order_id in wiring.oms._transmitted

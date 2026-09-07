@@ -24,7 +24,13 @@ from typing import Literal
 import pandas as pd
 
 from qat.config import Settings
-from qat.data.broker.adapter import BrokerAdapter, BrokerFill, Order, spendable_from
+from qat.data.broker.adapter import (
+    BrokerAdapter,
+    BrokerFill,
+    Order,
+    is_protective_leg,
+    spendable_from,
+)
 from qat.data.broker.mock_broker import new_order_id
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal, JournalEntry
@@ -535,8 +541,103 @@ class OMS:
         await self._announce_pending(order)
         return order
 
+    async def _release_protective_legs(self, symbol: str, quantity: float, reason: str) -> bool:
+        """Cancel this symbol's resting protective legs. False means do not sell.
+
+        ⚠️ CANCEL FIRST, NOT SELL FIRST, and the two failure modes are why -
+        they are not symmetric:
+
+        * cancel first and the sell then fails -> the position is UNPROTECTED,
+          which `verify_position_stops` detects and `signal_bridge` RE-ARMS on
+          its own ("Proposed protective stops for N unprotected position(s)").
+          Self-healing, on a position you meant to hold.
+        * sell first and the cancel then fails -> the legs are ORPHANED,
+          detected by a rail that explicitly does not cancel anything, and if
+          one fills you own an unintended SHORT with no bound.
+
+        ⚠️ A PARTIAL exit leaves the legs ALONE. The de-lever sweep trims a
+        position that still needs protecting; cancelling its legs would strip
+        the remainder, turning the transient cancel-first gap into a permanent
+        one. Their size is then larger than the holding, which is a real and
+        separate problem - resizing them is not this method's job and is not
+        done here.
+
+        ⚠️ Only protective legs, per `is_protective_leg`. A working BUY on the
+        symbol is an intruder and is left strictly alone: cancelling one
+        silently is how an account came to hold 4x the intended position on
+        24 August (M139).
+        """
+        source = getattr(self.broker, "open_orders", None)
+        cancel = getattr(self.broker, "cancel_order", None)
+        if source is None or cancel is None:
+            # An adapter that models neither cannot be orphaning anything.
+            return True
+        try:
+            working = await source()
+        except Exception:
+            logger.exception(
+                "Could not read open orders before exiting %s - refusing the exit rather "
+                "than selling into legs that may be resting",
+                symbol,
+            )
+            return False
+
+        legs = [o for o in working if o.symbol == symbol and is_protective_leg(o)]
+        if not legs:
+            return True
+
+        held = await self._broker_quantity(symbol)
+        if held is not None and abs(quantity) + 1e-9 < abs(held):
+            logger.info(
+                "Exit on %s is PARTIAL (%g of %g held), so its %d protective leg(s) are "
+                "left resting - the remainder still needs them. They now cover more than "
+                "is held, which the resting-order rail reports separately.",
+                symbol,
+                quantity,
+                held,
+                len(legs),
+            )
+            return True
+
+        for leg in legs:
+            try:
+                await cancel(leg.order_id)
+            except Exception:
+                logger.exception("Could not cancel protective leg %s on %s", leg.order_id, symbol)
+
+        # ⚠️ RE-READ. The cancel's own response is not evidence: on 19 August
+        # one reported PendingCancel while being rejected outright (10147).
+        try:
+            still = [o for o in await source() if o.symbol == symbol and is_protective_leg(o)]
+        except Exception:
+            logger.exception("Could not verify the leg cancellation on %s", symbol)
+            return False
+        if still:
+            logger.error(
+                "%d protective leg(s) on %s are STILL RESTING after a cancel was sent "
+                "(%s). The exit is refused: the position keeps its protection, and "
+                "selling into a resting leg is what orphaned A2M.AX.",
+                len(still),
+                symbol,
+                ", ".join(o.order_id for o in still),
+            )
+            return False
+        logger.info(
+            "Cancelled %d protective leg(s) on %s before exiting (%s)",
+            len(legs),
+            symbol,
+            reason,
+        )
+        return True
+
     async def submit_exit_order(
-        self, symbol: str, quantity: float, price: float, reason: str = "signal"
+        self,
+        symbol: str,
+        quantity: float,
+        price: float,
+        reason: str = "signal",
+        *,
+        legs_already_released: bool = False,
     ) -> Order:
         """Closes an existing position at exactly `quantity` shares (spec §I).
 
@@ -580,6 +681,38 @@ class OMS:
                 quantity,
             )
             quantity = held
+
+        # ⚠️ CANCEL THE PROTECTIVE LEGS BEFORE SELLING, and refuse the exit if
+        # they will not go. On 4 September the escaped-hold rule exited A2M.AX
+        # through this method, the sell filled, and BOTH OCA legs stayed at full
+        # size on a flat position - 9,636 shares of resting SELL with a stop
+        # about 4% under the last. A naked short waiting to happen. The
+        # resting-order rail found it and named the ids; the operator cancelled
+        # them by hand, because that rail says "The ORDERS ARE NOT CANCELLED by
+        # this."
+        #
+        # `PositionCloser` (M163) already did this properly for the OPERATOR's
+        # close. The autonomous paths - the time stop and the signal exit - came
+        # straight here and walked away, and those are the exits that run when
+        # nobody is watching the scan.
+        # ⚠️ `PositionCloser` passes True: it has ALREADY cancelled the legs,
+        # re-read to prove they are gone, and holds recovery logic to re-place
+        # the bracket if this sell then fails (M163). Repeating the work here
+        # let two layers disagree about the same broker state and refused six
+        # manual closes outright. The operator path owns its own release; every
+        # other caller gets the default.
+        if not legs_already_released and not await self._release_protective_legs(
+            symbol, quantity, reason
+        ):
+            return self._new_rejected_order_for(
+                symbol,
+                "sell",
+                0.0,
+                "protective legs are still resting at the broker and could not be "
+                "cancelled - selling into them is the double-fill that turns a "
+                "protected long into a short, so the exit is refused and the "
+                "position stays protected",
+            )
 
         self._exit_reasons[symbol] = reason
         decision = self.risk_engine.evaluate_exit(symbol, quantity, price)
