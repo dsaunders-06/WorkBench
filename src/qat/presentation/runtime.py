@@ -533,6 +533,14 @@ class Runtime:
     # same reason `closer` is: every existing construction of Runtime, including
     # tests that build one directly, stays unaffected.
     book_risk_monitor: BookRiskMonitor | None = None
+    # The FRED source, kept so a screen can read a series' HISTORY rather than
+    # the single current value `MacroFeed` publishes (2026-09-08 matrix spec).
+    # The feed deliberately publishes one event per series per poll - replaying
+    # nine thousand VIXCLS observations onto the bus every poll to communicate
+    # five current numbers - but the growth axis needs the series to compute a
+    # direction, so the matrix asks the source directly. Optional for the same
+    # reason `closer` is: every existing construction of Runtime stays working.
+    macro_source: MacroDataSource | None = None
 
     def opened_position_symbols(self) -> set[str]:
         """Symbols this app opened itself, from its own entry record (M33e).
@@ -976,4 +984,5 @@ class Runtime:
             benchmark_symbol=benchmark_symbol,
             history_source=history_source,
             news_source=resolve_news_source(settings),
+            macro_source=macro,
         )

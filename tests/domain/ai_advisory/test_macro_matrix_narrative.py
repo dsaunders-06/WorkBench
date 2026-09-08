@@ -203,3 +203,22 @@ def test_no_friction_object_behaves_as_before() -> None:
 
     assert "FRICTION" not in prompt
     assert "Write the macro regime read" in prompt
+
+
+def test_the_schemas_regime_tokens_are_the_programs_own() -> None:
+    """⚠️ A THIRD TAXONOMY IS THE BUG THIS PINS. The schema first listed
+    "shock" and "low_vol_drift" - names the matrix itself had already abandoned
+    for `domain.regime.Regime`, because `friction.py` compares the two engines
+    by equality and a renamed pair reads as disagreement on a quiet market.
+
+    `schema.py` cannot import `Regime` (it depends on nothing in the domain by
+    design), so the tokens are written out there and checked here.
+    """
+    from typing import get_args
+
+    from qat.domain.ai_advisory.schema import MacroMatrixNarrative
+    from qat.domain.regime import ALL_REGIMES
+
+    declared = set(get_args(MacroMatrixNarrative.model_fields["regime"].annotation))
+
+    assert declared == {regime.value for regime in ALL_REGIMES}

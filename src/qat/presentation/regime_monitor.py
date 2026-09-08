@@ -33,11 +33,21 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from qat.domain.ai_advisory.schema import MacroAssessment
+from qat.domain.ai_advisory.schema import MacroAssessment, MacroMatrixNarrative
 from qat.domain.display_dates import format_display_date, format_session_time
 from qat.domain.events import MacroEvent, MarketDataEvent, RegimeEvent
 from qat.domain.macro_analysis import compute_macro_signal
-from qat.domain.regime import ALL_REGIMES
+from qat.domain.macro_analysis.friction import RegimeFriction, compare
+from qat.domain.macro_analysis.growth import GrowthRead, read_growth
+from qat.domain.macro_analysis.matrix import (
+    MatrixRefusal,
+    RegimeDecision,
+    RegimeHysteresis,
+    baseline_from_risk_budget,
+    decide,
+)
+from qat.domain.macro_analysis.signal import MacroSignal, scaling_unit_for
+from qat.domain.regime import ALL_REGIMES, Regime
 from qat.presentation import theme
 from qat.presentation.runtime import Runtime
 from qat.presentation.ui_level import UiLevel
@@ -56,6 +66,15 @@ class RegimeMonitorScreen(QWidget):
         self._current_label: str | None = None
         self._regime_probs: dict[str, float] = {}
         self._driver_values: dict[str, float] = {}
+        # The HMM's own exposure scalar, kept so the matrix panel can state what
+        # the engine WITH monetary authority is doing beside its own advisory
+        # reading. Read from the event rather than from RiskEngine, for the same
+        # ordering reason `_refresh_eligibility` exists.
+        self._regime_scalar: float | None = None
+        # One gate per screen, held across clicks. `decide` is pure, so a value
+        # resting on a boundary would flip the regime every time the button is
+        # pressed - a scaled cut against halving the book, decided by noise.
+        self._matrix_gate = RegimeHysteresis()
 
         layout = QVBoxLayout(self)
 
@@ -112,6 +131,10 @@ class RegimeMonitorScreen(QWidget):
         self.macro_panel.setVisible(self.level.shows_advanced())
         layout.addWidget(self.macro_panel)
 
+        self.matrix_panel = self._build_matrix_panel()
+        self.matrix_panel.setVisible(self.level.shows_advanced())
+        layout.addWidget(self.matrix_panel)
+
         self.driver_header = QLabel("Feature drivers")
         self.driver_table = QTableWidget(0, 2)
         self.driver_table.setHorizontalHeaderLabels(["Driver", "Value"])
@@ -159,6 +182,232 @@ class RegimeMonitorScreen(QWidget):
         box_layout.addWidget(self.macro_ai_output)
 
         return box
+
+    def _build_matrix_panel(self) -> QGroupBox:
+        """The 7-regime matrix, kept SEPARATE from the 4-regime read above.
+
+        TWO BUTTONS ON PURPOSE. Running both from one click would spend two
+        model calls per press, and the two readings answer different questions -
+        the panel above classifies the tape into four states, this one runs the
+        volatility-and-growth rule table and states an exposure target. An
+        operator should choose which one to spend a call on.
+
+        ADVISORY, and the panel title says so rather than a tooltip. Operator
+        instruction, 8 September 2026: "this sits outside of the authority of
+        autonomy, resultant action must be human driven only for now." Nothing
+        on this panel reaches `RiskEngine.regime_scalar`, the sizer, or OMS.
+        """
+        box = QGroupBox("Regime matrix - 7 regimes (advisory, nothing is applied)")
+        box_layout = QVBoxLayout(box)
+
+        control_row = QHBoxLayout()
+        self.matrix_button = QPushButton("Run Regime Matrix")
+        self.matrix_button.clicked.connect(self._on_matrix_clicked)
+        control_row.addWidget(self.matrix_button)
+        control_row.addStretch(1)
+        box_layout.addLayout(control_row)
+
+        self.matrix_decision_label = QLabel("Matrix: (not yet run)")
+        self.matrix_decision_label.setWordWrap(True)
+        self.matrix_decision_label.setStyleSheet(theme.text(bold=True))
+        box_layout.addWidget(self.matrix_decision_label)
+
+        # Its own line, ABOVE the prose. The friction reading is a computed fact
+        # and must not be something the reader has to find inside a paragraph.
+        self.matrix_friction_label = QLabel("")
+        self.matrix_friction_label.setWordWrap(True)
+        box_layout.addWidget(self.matrix_friction_label)
+
+        self.matrix_ai_output = QTextEdit()
+        self.matrix_ai_output.setReadOnly(True)
+        self.matrix_ai_output.setMaximumHeight(180)
+        self.matrix_ai_output.setPlaceholderText(
+            "The matrix decides the regime and the exposure target in code; the "
+            "model only writes them up. Nothing here is applied."
+        )
+        box_layout.addWidget(self.matrix_ai_output)
+
+        return box
+
+    def _on_matrix_clicked(self) -> None:
+        asyncio.ensure_future(self._analyse_matrix())
+
+    async def _analyse_matrix(self) -> None:
+        self.matrix_button.setEnabled(False)
+        self.matrix_decision_label.setText("Matrix: computing...")
+        self.matrix_friction_label.setText("")
+        self.matrix_ai_output.clear()
+        try:
+            signal = await self._matrix_signal()
+            if signal is None:
+                self.matrix_decision_label.setText(
+                    "Matrix: not enough benchmark history yet - refused rather than "
+                    "estimated from a short window."
+                )
+                return
+
+            settings = self.runtime.settings
+            decision = self._matrix_gate.settle(
+                decide(
+                    signal,
+                    await self._growth_read(),
+                    scaling_unit=scaling_unit_for(settings.macro_risk_mandate),
+                    # NOT `signal.exposure_hint`: that is the FOUR-regime read's
+                    # answer, and lifting from it stacks two taxonomies. See
+                    # `baseline_from_risk_budget`.
+                    baseline=baseline_from_risk_budget(
+                        settings.max_gap_risk_at_shock_pct, settings.gap_shock_pct
+                    ),
+                )
+            )
+            friction = compare(self._execution_regime(), self._regime_scalar, decision)
+
+            # Both rendered BEFORE the model call, so the computed half is on
+            # screen even if the model then fails or hangs. Same rule the panel
+            # above follows.
+            self._render_matrix_decision(decision)
+            self._render_friction(friction)
+
+            narrative = await self.runtime.ai_service.get_macro_matrix_narrative(
+                decision,
+                positions=await self._held_positions(),
+                friction=friction,
+            )
+            self._render_matrix_narrative(narrative, decision)
+        except Exception as exc:  # noqa: BLE001 - surfaced to the operator below
+            logger.exception("Regime matrix analysis failed")
+            self.matrix_ai_output.setHtml(
+                f"<b style='color:{theme.DANGER}'>Matrix narrative unavailable:</b> {exc}<br>"
+                "Any computed reading above is unaffected."
+            )
+        finally:
+            self.matrix_button.setEnabled(True)
+
+    async def _matrix_signal(self) -> MacroSignal | None:
+        bars = await self.runtime.history_source.get_daily_bars(
+            self.runtime.benchmark_symbol, n_bars=_MACRO_BARS
+        )
+        return compute_macro_signal(bars, macro_series=self._macro_series())
+
+    async def _growth_read(self) -> GrowthRead | None:
+        """The growth axis, read from the series' own history.
+
+        `None` ON ANY FAILURE, WHICH MAKES THE MATRIX REFUSE. That is the
+        intended outcome rather than a degradation: every one of the seven
+        regimes keys on growth, and a matrix that answered without it would be
+        describing a market it had not measured. The refusal names the gap on
+        screen.
+
+        The history comes from the SOURCE, not the bus. `MacroFeed` publishes
+        one event per series per poll - the current value - because replaying
+        nine thousand observations every poll to communicate five numbers is
+        the wrong trade. A direction needs the series, so this asks for it.
+        """
+        series = self.runtime.settings.macro_growth_series.strip()
+        source = self.runtime.macro_source
+        if not series or source is None:
+            logger.warning(
+                "No growth series is configured (QAT_MACRO_GROWTH_SERIES) or no macro "
+                "source is available - the regime matrix will refuse"
+            )
+            return None
+        try:
+            observations = await source.fetch_series(series)
+        except Exception:
+            logger.warning(
+                "Could not fetch the growth series %s - the regime matrix will refuse "
+                "rather than read a regime without it",
+                series,
+                exc_info=True,
+            )
+            return None
+        return read_growth(series, observations)
+
+    def _execution_regime(self) -> Regime | None:
+        """The HMM's label as a `Regime`, or `None` before it has fitted.
+
+        An unrecognised label yields `None` rather than a guess. `compare`
+        treats `None` as "no comparison", which is honest; mapping a label it
+        does not know onto the nearest regime would manufacture agreement or
+        friction out of a parsing accident.
+        """
+        if self._current_label is None:
+            return None
+        try:
+            return Regime(self._current_label)
+        except ValueError:
+            logger.warning("Regime label %r is not a known Regime", self._current_label)
+            return None
+
+    async def _held_positions(self) -> dict[str, float] | None:
+        """What the book holds, or `None` when it could not be read.
+
+        `None` IS NOT `{}`. An empty dict means "measured, and flat", which the
+        prompt renders as advice for a flat account. A failed read must not be
+        dressed up as one - `advisory_account.py` records the day that exact
+        substitution put "given no current positions" in front of an operator
+        who held three.
+        """
+        try:
+            snapshot = await self.runtime.account_poller.snapshot()
+        except Exception:
+            logger.warning(
+                "Could not read the account for the regime matrix - the narrative will "
+                "be written WITHOUT the book, and must NOT be read as 'the account is flat'",
+                exc_info=True,
+            )
+            return None
+        return {position.symbol: position.quantity for position in snapshot.positions}
+
+    def _render_matrix_decision(self, decision: RegimeDecision | MatrixRefusal) -> None:
+        if isinstance(decision, MatrixRefusal):
+            self.matrix_decision_label.setText("Matrix: NO REGIME - " + "; ".join(decision.missing))
+            return
+        leverage = "  ABOVE 100% - IMPLIES LEVERAGE." if decision.implies_leverage else ""
+        self.matrix_decision_label.setText(
+            f"Matrix: {decision.display_regime}. Baseline (BM) {decision.baseline:.1%}, "
+            f"scaling unit (SB) {decision.scaling_unit:.2f}, change {decision.change:+.2%} "
+            f"-> target {decision.target_weight:.1%}.{leverage}"
+        )
+
+    def _render_friction(self, friction: RegimeFriction | None) -> None:
+        if friction is None:
+            self.matrix_friction_label.setText(
+                "Engine comparison: unavailable - one of the two readings is absent, "
+                "and one reading is not an agreement."
+            )
+            self.matrix_friction_label.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
+            return
+        self.matrix_friction_label.setText(friction.headline)
+        self.matrix_friction_label.setStyleSheet(
+            theme.text(theme.MUTED, size=theme.CAPTION)
+            if friction.agree
+            else theme.text(theme.WARNING, bold=True)
+        )
+
+    def _render_matrix_narrative(
+        self, narrative: MacroMatrixNarrative, decision: RegimeDecision | MatrixRefusal
+    ) -> None:
+        parts = [
+            f"<b>If:</b> {narrative.condition}",
+            f"<b>Then:</b> {narrative.action}",
+            f"<b>Because:</b> {narrative.justification}",
+        ]
+        # The figures come from the DECISION, never from the reply. The service
+        # already corrects a model that returned others and records the
+        # disagreement in `caveats`; rendering the reply's numbers here would
+        # undo that correction one layer later.
+        if isinstance(decision, RegimeDecision):
+            parts.append(
+                f"<b>Computed:</b> change {decision.change:+.2%}, "
+                f"target {decision.target_weight:.1%} "
+                "<i>(computed in code - the model copies these, it does not set them; "
+                "nothing is applied)</i>"
+            )
+        if narrative.caveats:
+            items = "".join(f"<li>{caveat}</li>" for caveat in narrative.caveats)
+            parts.append(f"<b>Caveats:</b><ul>{items}</ul>")
+        self.matrix_ai_output.setHtml("<br>".join(parts))
 
     def _on_analyse_clicked(self) -> None:
         asyncio.ensure_future(self._analyse_macro())
@@ -288,6 +537,7 @@ class RegimeMonitorScreen(QWidget):
             "while this regime holds."
         )
         self._regime_probs = event.probs
+        self._regime_scalar = event.exposure_scalar
         for label, prob in event.probs.items():
             bar = self.probability_bars.get(label)
             if bar is not None:

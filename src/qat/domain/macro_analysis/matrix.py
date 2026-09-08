@@ -22,10 +22,11 @@ RECOVERY adds its 0.05 kicker on top, SHOCK is a flat 0.10 and RECESSION halves
 the baseline outright. Reintroducing a clamp would be a regression, not a fix.
 
 ⚠️ **REFUSES RATHER THAN APPROXIMATES.** A regime whose inputs are absent is not
-guessed at. Today that means EVERY regime is refused, because
-`Settings.macro_growth_series` ships empty and all seven key on growth - see the
-spec's section 4. The refusal NAMES what was missing, so the reason is legible
-rather than a silent "sideways".
+guessed at. All seven key on growth, so a session without a readable growth
+series gets seven refusals rather than a default. Since 8 September the shipped
+series is `CFNAIMA3`, labelled in settings as what it honestly is - a global
+risk-appetite proxy, not Australian growth. The refusal NAMES what was missing,
+so the reason is legible rather than a silent "sideways".
 """
 
 from __future__ import annotations
@@ -85,6 +86,36 @@ _RECESSION_MULTIPLIER = 0.50
 # every day of a normal quarter and never speaks at all. This catches a series
 # that has genuinely stalled, not one between publications.
 MAX_GROWTH_AGE_DAYS = 200
+
+
+def baseline_from_risk_budget(gap_budget_pct: float, gap_shock_pct: float) -> float:
+    """`BM` - the exposure the deterministic rails alone justify holding.
+
+    ⚠️ `decide` REFUSES TO DEFAULT THIS, and its docstring says why: the default
+    used to be `MacroSignal.exposure_hint`, which is the FOUR-regime read's
+    answer, so the matrix could report a Bull market while lifting from a
+    baseline the other classifier had set because it saw Risk-Off. Two
+    taxonomies stacked, silently. The caller must therefore state `BM`, and this
+    is where it comes from: the account's own gap-risk budget, which owes
+    nothing to any regime classifier.
+
+    The arithmetic is already spelled out in `config.py` beside
+    `max_gap_risk_at_shock_pct` - a 5% gap budget against a 6% gap shock
+    "implies a gross-exposure ceiling of about 83% of equity". Derived rather
+    than typed in, so an operator who halves the budget has halved what the
+    matrix lifts from.
+
+    ⚠️ THE CLAMP IS ON `BM` AND ONLY ON `BM`. The matrix's TARGET is unclamped
+    by deliberate design - a lift may carry it past 100% and `implies_leverage`
+    surfaces that rather than trimming it. But the thing being lifted FROM is
+    fully invested at most: a budget implying a 167% normal state is not a
+    baseline.
+    """
+    if gap_shock_pct <= 0.0:
+        raise ValueError("gap shock must be positive - a baseline cannot divide by it otherwise")
+    if gap_budget_pct < 0.0:
+        raise ValueError("gap budget cannot be negative")
+    return min(1.0, gap_budget_pct / gap_shock_pct)
 
 
 @dataclass(frozen=True, slots=True)

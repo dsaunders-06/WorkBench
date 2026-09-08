@@ -60,7 +60,14 @@ class MacroMatrixNarrative(BaseModel):
     now." Nothing reads `target_pct` but a person.
     """
 
-    regime: Literal["bull", "bear", "shock", "low_vol_drift", "recession", "recovery", "sideways"]
+    # ⚠️ THESE ARE `domain.regime.Regime`'S OWN VALUES, and the first version's
+    # were not: it carried "shock" and "low_vol_drift", a THIRD taxonomy for the
+    # seven states the matrix and the HMM already share. `friction.py` records
+    # what that costs - comparing `low_vol` against `low_vol_drift` reads as
+    # disagreement when the engines agree. This module cannot import `Regime`
+    # (the schema deliberately depends on nothing in the domain), so the tokens
+    # are written out and a test pins them against the enum.
+    regime: Literal["bull", "bear", "high_vol", "low_vol", "recession", "recovery", "sideways"]
     condition: str
     """The "If": the market state in plain English, from the supplied figures."""
     action: str

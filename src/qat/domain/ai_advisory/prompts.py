@@ -176,9 +176,10 @@ def build_macro_matrix_prompt(
             "at a regime, do NOT describe the market as calm or sideways, and do NOT "
             "suggest an exposure change - an unmeasured input is not a neutral one."
             "\n\nWhat was missing: " + "; ".join(missing) + "\n\n"
-            "Return JSON matching the schema, with regime='sideways' as a placeholder, "
-            "change_pct=0 and target_pct set to the current baseline, and put the real "
-            "message in `condition` and `caveats`."
+            "Return JSON matching the schema, with regime='sideways' as a placeholder "
+            "and change_pct=0 and target_pct=0 - here ZERO MEANS NOT COMPUTED, not "
+            "'go to cash', and the screen renders this as a refusal rather than as a "
+            "target. Put the real message in `condition` and `caveats`."
         )
 
     # ⚠️ FRONT-LOADED, and computed rather than noticed. When the two engines
@@ -213,10 +214,23 @@ def build_macro_matrix_prompt(
         "to be.",
         "",
         f"Regime: {decision.display_regime}",  # type: ignore[attr-defined]
+        # ⚠️ THE TOKEN IS STATED, NOT INFERRED FROM THE DISPLAY NAME. A model
+        # shown "High Volatility Shock" and a schema listing `high_vol` has to
+        # guess which is which, and a guess here would make the caller's
+        # echo-check fire on agreement.
+        f'Return regime="{decision.regime}" exactly.',  # type: ignore[attr-defined]
         f"Baseline weight (BM): {decision.baseline:.1%}",  # type: ignore[attr-defined]
         f"Risk scaling unit (SB): {decision.scaling_unit:.2f}",  # type: ignore[attr-defined]
         f"Change: {decision.change:+.2%}",  # type: ignore[attr-defined]
         f"Target weight: {decision.target_weight:.1%}",  # type: ignore[attr-defined]
+        # ⚠️ THE UNITS ARE STATED. The schema's fields are named `change_pct` and
+        # `target_pct` and the lines above render as "+3.20%" and "86.5%", which
+        # leaves a model to decide between 3.2 and 0.032. The caller compares
+        # what comes back against what it sent, so an ambiguity here would fire
+        # the mismatch warning on a model that had done nothing wrong.
+        f"Copy these into the schema EXACTLY, as PERCENTAGES and not fractions: "
+        f"change_pct={decision.change * 100:.2f}, "  # type: ignore[attr-defined]
+        f"target_pct={decision.target_weight * 100:.2f}",  # type: ignore[attr-defined]
         "Evidence: " + "; ".join(reasons),
     ]
     if decision.implies_leverage:  # type: ignore[attr-defined]
