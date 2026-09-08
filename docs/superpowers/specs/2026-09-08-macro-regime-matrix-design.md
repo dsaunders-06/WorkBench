@@ -304,5 +304,37 @@ a conventional recession signal. Using it as the growth axis too would make one
 input drive two axes of the matrix, which is double-counting rather than
 corroboration. Recorded so it is not done by accident.
 
-Phase 3 - the matrix and the arithmetic - is next, and can be built for the
-volatility-driven regimes without waiting on the series choice.
+**Phase 3, the matrix - DONE, 8 September.**
+`domain/macro_analysis/matrix.py`: `decide(signal, growth, scaling_unit,
+baseline)` returns either a `RegimeDecision` - one regime, the signed change,
+the target and the figures behind it - or a `MatrixRefusal` naming what was
+missing.
+
+⚠️ **ALL SEVEN ROWS ARE BUILT, AND ALL SEVEN REFUSE TODAY.** An earlier note
+here said the volatility-driven regimes could be built without the growth
+series. That was wrong: EVERY row in the document carries a growth condition,
+including SHOCK ("Normal Growth + Sudden Vol Spike"). So the matrix is complete
+and returns a refusal until `QAT_MACRO_GROWTH_SERIES` is set. The tests supply
+growth directly, so every row is exercised.
+
+⚠️ **A REFUSAL IS AN ANSWER.** "We cannot tell" is not "sideways", and
+collapsing the first into the second is how a matrix reports calm it never
+measured. The refusal names each missing input.
+
+⚠️ **THE TESTS FOUND A PRECEDENCE ERROR.** SHOCK was firing on any volatility
+spike regardless of growth, so a spike on a CONTRACTING economy returned a flat
+10% trim where the BEAR row asks for 40% and RECESSION for 50%. SHOCK now
+requires non-negative growth, matching the document's own "Normal Growth"
+condition. Precedence is severity-first: recession, shock, bear, recovery, bull,
+low-vol drift, sideways.
+
+⚠️ **NOTHING CLAMPS TO `+/- SB`**, and a test asserts the bear cut exceeds it.
+Re-imposing a clamp would be a regression, not a fix - see the `SB` redefinition
+above. A target above 100% is surfaced via `implies_leverage` rather than
+trimmed.
+
+More conventional-not-measured thresholds, added to open question 8: the growth
+buckets (low 1.5%, high 3.0%) and the shock multiple (RV >= 1.5x HV).
+
+Phase 4 - the narrative - is next: hand `RegimeDecision` to the model as facts
+and forbid recalculation.
