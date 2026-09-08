@@ -70,7 +70,7 @@ def test_no_growth_series_refuses_every_regime() -> None:
     """⚠️ TODAY'S ACTUAL BEHAVIOUR, and the spec requires it. Every regime keys
     on growth; with no series named there is nothing to key on, and "sideways"
     would be calm this matrix never measured."""
-    result = decide(_signal(rv=8.74), growth=None, scaling_unit=_SB)
+    result = decide(_signal(rv=8.74), growth=None, scaling_unit=_SB, baseline=0.85)
 
     assert isinstance(result, MatrixRefusal)
     assert any("growth" in reason for reason in result.missing)
@@ -79,14 +79,14 @@ def test_no_growth_series_refuses_every_regime() -> None:
 
 def test_no_baseline_volatility_also_refuses() -> None:
     """Every formula divides by HV. Without it there is no arithmetic to do."""
-    result = decide(_signal(rv=8.74, hv=None), growth=_growth(2.0), scaling_unit=_SB)
+    result = decide(_signal(rv=8.74, hv=None), growth=_growth(2.0), scaling_unit=_SB, baseline=0.85)
 
     assert isinstance(result, MatrixRefusal)
     assert any("baseline volatility" in reason for reason in result.missing)
 
 
 def test_a_refusal_names_everything_that_was_missing() -> None:
-    result = decide(_signal(rv=8.74, hv=None), growth=None, scaling_unit=_SB)
+    result = decide(_signal(rv=8.74, hv=None), growth=None, scaling_unit=_SB, baseline=0.85)
 
     assert isinstance(result, MatrixRefusal)
     assert len(result.missing) == 2
