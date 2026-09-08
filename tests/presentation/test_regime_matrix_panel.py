@@ -393,3 +393,105 @@ async def test_a_refusal_still_shows_what_WAS_measured(qtbot, tmp_path) -> None:
 
     assert "NO REGIME" in screen.matrix_decision_label.text()
     assert "Realised vol" in screen.matrix_conditions_label.text()
+
+
+@pytest.mark.asyncio
+async def test_the_panel_reads_the_vix_series_the_operator_configured(qtbot, tmp_path) -> None:
+    """⚠️ FOUND BY SABOTAGE. Deleting the two keyword arguments that pass
+    `regime_vix_series` and `vix_shock_level` into `compute_macro_signal` left
+    every panel test green - so the wiring that stops an `^AXVI` operator from
+    silently losing the SHOCK regime was itself unguarded.
+
+    A screen falling back to the hardcoded "VIXCLS" would find nothing in a
+    driver table carrying `^AXVI`, and `vix_shock` would be `None`: not "no
+    shock", but no SHOCK ROW AT ALL.
+    """
+    runtime = Runtime.build_demo(
+        settings=Settings(
+            _env_file=None,
+            data_dir=str(tmp_path),
+            ui_level=UiLevel.PROFESSIONAL.label.lower(),
+            deployed_strategies="swing",
+            macro_growth_series=_SERIES,
+            regime_vix_series="^AXVI",
+            bar_macro_series=("^AXVI",),
+            vix_shock_level=14.0,
+        )
+    )
+    runtime.history_source = _Bars()
+    runtime.macro_source = _Growth()
+    runtime.account_poller = _Poller()
+    runtime.ai_service = _AIService(_narrative())
+    screen = RegimeMonitorScreen(runtime)
+    qtbot.addWidget(screen)
+    screen._driver_values["^AXVI"] = 22.0
+
+    await screen._analyse_matrix()
+
+    assert "VIX SHOCK" in screen.matrix_conditions_label.text()
+
+
+@pytest.mark.asyncio
+async def test_a_vix_series_nothing_publishes_reads_as_unmeasured(qtbot, tmp_path) -> None:
+    """The other side of it. The driver table carries VIXCLS and the setting
+    names ^AXVI, so there is no reading - and "not measured" is the honest
+    answer rather than "no shock"."""
+    runtime = Runtime.build_demo(
+        settings=Settings(
+            _env_file=None,
+            data_dir=str(tmp_path),
+            ui_level=UiLevel.PROFESSIONAL.label.lower(),
+            deployed_strategies="swing",
+            macro_growth_series=_SERIES,
+            regime_vix_series="^AXVI",
+            bar_macro_series=("^AXVI",),
+        )
+    )
+    runtime.history_source = _Bars()
+    runtime.macro_source = _Growth()
+    runtime.account_poller = _Poller()
+    runtime.ai_service = _AIService(_narrative())
+    screen = RegimeMonitorScreen(runtime)
+    qtbot.addWidget(screen)
+    screen._driver_values["VIXCLS"] = 40.0
+
+    await screen._analyse_matrix()
+
+    assert "VIX not measured" in screen.matrix_conditions_label.text()
+
+
+@pytest.mark.asyncio
+async def test_the_older_macro_panel_reads_the_same_configured_vix(qtbot, tmp_path) -> None:
+    """⚠️ THE SECOND CALL SITE, and it renders nothing that would reveal the
+    difference - `summary_line` carries no VIX field, so only the call itself
+    can be checked. Left unguarded, the two panels on one screen would read
+    different volatility series, which is worse than either choice.
+    """
+    import qat.presentation.regime_monitor as module
+
+    screen = _screen(qtbot, tmp_path)
+    screen.runtime.settings = Settings(
+        _env_file=None,
+        data_dir=str(tmp_path),
+        ui_level=UiLevel.PROFESSIONAL.label.lower(),
+        deployed_strategies="swing",
+        regime_vix_series="^AXVI",
+        bar_macro_series=("^AXVI",),
+        vix_shock_level=14.0,
+    )
+    seen: list[dict[str, object]] = []
+    real = module.compute_macro_signal
+
+    def spy(bars, **kwargs):
+        seen.append(kwargs)
+        return real(bars, **kwargs)
+
+    module.compute_macro_signal = spy
+    try:
+        await screen._analyse_macro()
+    finally:
+        module.compute_macro_signal = real
+
+    assert seen, "the panel never computed a signal"
+    assert seen[0]["vix_series"] == "^AXVI"
+    assert seen[0]["vix_shock_level"] == 14.0

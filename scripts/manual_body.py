@@ -2963,6 +2963,25 @@ def _config_reference(doc: Any) -> None:
                 "column is invisible: the model fits happily on a flat feature.",
             ),
             (
+                "QAT_VIX_SHOCK_LEVEL",
+                "25.0",
+                "The level this application's VIX must exceed for the macro matrix to call "
+                "a SHOCK. ⚠️ IT BELONGS TO THE SERIES, not to the concept, which is why it "
+                "is a setting rather than a constant. Measured on 8 September 2026 against "
+                "9,266 readings, 25.0 is the 82.7th percentile of the American VIX - true "
+                "on 17.3% of days, looser than the word suggests, and kept because it is "
+                "the figure the source method specifies. The Australian index is far "
+                "quieter: over the two years Yahoo serves, ^AXVI has a median of 11.52 and "
+                "a 99th percentile of 18.47, and touches 25.0 on 0.2% of ASX days. Point "
+                "QAT_REGIME_VIX_SERIES at ^AXVI and leave this at 25.0 and the SHOCK "
+                "regime is switched off for good, with no error anywhere - the pre-flight "
+                "WARNS on that pair for exactly that reason. No Australian default is "
+                "offered on purpose: translating by percentile gives 13.13, but that "
+                "figure comes from two years containing no crisis, so it marks a busy "
+                "Tuesday rather than a shock, and a stress threshold calibrated on a "
+                "sample with no stress in it is worse than none.",
+            ),
+            (
                 "QAT_REGIME_VIX_SERIES",
                 "VIXCLS",
                 "Which series fills the regime engine's volatility column. VIXCLS is the "

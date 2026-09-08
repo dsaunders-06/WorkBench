@@ -193,11 +193,37 @@ figures without parsing prose.
    slower, not more local.
 5. **Disclaimer** - adopt the self-suppressing pattern above, or follow the
    document's literal every-output footnote?
-8. **Are the Phase 1 thresholds right?** The flat-curve ceiling, the two
-   spread bands and the volatility-direction tolerance are conventional numbers,
-   not measured ones. The spread bands in particular decide BEAR versus
-   RECESSION, which is the largest single difference in the matrix - a bear cut
-   scales with volatility, a recession halves the baseline outright.
+8. ~~**Are the Phase 1 thresholds right?**~~ **ANSWERED 8 September: two were
+   wrong, three were fine, and one was a hidden switch.** Measured against FRED
+   and ^AXJO history rather than argued about:
+
+   | threshold | was | measured | now |
+   |---|---|---|---|
+   | flat-curve ceiling | 0.5 | 14.2nd pct of upward-sloping US curves; calls 22.3% of AU history flat vs 12.0% of US | **caller's argument**; US 0.50, AU 0.215 recorded |
+   | spreads widening | 2.5 | 68.5th pct - true on 31.5% of all days since 1986 | **3.0** (87.4th, 12.6%) |
+   | spreads distressed | 3.5 | 97.1st pct; 2.9% of days, 28.5% of GFC, 6.8% of COVID, 0.0% of 2024-26 | unchanged - it earns it |
+   | RV/HV shock multiple | 1.5 | 90.5th pct of ^AXJO RV20/HV252 (9.5% of days) | unchanged |
+   | VIX shock level | 25.0 | 82.7nd pct of VIXCLS (17.3% of days) | unchanged, now **per-series** |
+   | vol-direction tolerance | 0.15 | median move is 0.219, so it called 64.5% of days a TREND | **0.25** (54.9% steady) |
+   | index-direction tolerance | 0.10 | median monthly CFNAI move is 0.110 | unchanged |
+
+   The spread bands do decide BEAR versus RECESSION, and the measurement
+   vindicated the one that matters: `distressed` at 3.5 is rare and present in
+   genuine credit crises. `widening` was the weather.
+
+   ⚠️ **THE HIDDEN SWITCH.** `compute_macro_signal` looked up `"VIXCLS"` by a
+   hardcoded literal while `RegimeFeatureBuilder.vix_series` had been made
+   configurable. Pointing this application's VIX at `^AXVI` would have moved
+   the regime engine's column and stranded this reading on a series nobody
+   published - `vix_shock` `None` for the session, which removes the SHOCK row
+   rather than reporting a calm market. Both the series and its level are now
+   settings, and pre-flight warns when one moves without the other.
+
+   ⚠️ **NO AUSTRALIAN SHOCK LEVEL IS OFFERED.** ^AXVI reaches 25.0 on 0.2% of
+   ASX days, so the American figure cannot travel - but the percentile
+   translation (13.13) comes from two years containing no crisis, and a stress
+   threshold calibrated on a sample with no stress in it is worse than none.
+   What is needed is a longer ^AXVI history than Yahoo serves.
 
 7. ~~**Should `SB` actually CAP the change?**~~ **ANSWERED 8 September: NO.**
    `SB` is redefined as the Risk Scaling Unit - responsiveness, not a

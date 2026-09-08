@@ -299,10 +299,21 @@ class RegimeMonitorScreen(QWidget):
             self.matrix_button.setEnabled(True)
 
     async def _matrix_signal(self) -> MacroSignal | None:
+        # ⚠️ THE VIX SERIES AND ITS SHOCK LEVEL TRAVEL TOGETHER. The lookup
+        # inside `compute_macro_signal` used to be the hardcoded literal
+        # "VIXCLS", so an operator who moved this application's VIX to `^AXVI`
+        # left this reading hunting for a series nobody published - and
+        # `vix_shock` would be `None` all session, which removes the SHOCK row
+        # from the matrix rather than reporting a calm market.
         bars = await self.runtime.history_source.get_daily_bars(
             self.runtime.benchmark_symbol, n_bars=_MACRO_BARS
         )
-        return compute_macro_signal(bars, macro_series=self._macro_series())
+        return compute_macro_signal(
+            bars,
+            macro_series=self._macro_series(),
+            vix_series=self.runtime.settings.regime_vix_series,
+            vix_shock_level=self.runtime.settings.vix_shock_level,
+        )
 
     async def _growth_read(self) -> GrowthRead | None:
         """The growth axis, read from the series' own history.
@@ -434,7 +445,12 @@ class RegimeMonitorScreen(QWidget):
         try:
             benchmark = self.runtime.benchmark_symbol
             bars = await self.runtime.history_source.get_daily_bars(benchmark, n_bars=_MACRO_BARS)
-            signal = compute_macro_signal(bars, macro_series=self._macro_series())
+            signal = compute_macro_signal(
+                bars,
+                macro_series=self._macro_series(),
+                vix_series=self.runtime.settings.regime_vix_series,
+                vix_shock_level=self.runtime.settings.vix_shock_level,
+            )
 
             if signal is None:
                 self.macro_signal_label.setText(

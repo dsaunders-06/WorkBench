@@ -285,3 +285,50 @@ def test_the_shipped_default_passes() -> None:
     named = [check for check in checks if check.name == "regime VIX series"]
 
     assert named[0].status is Status.OK
+
+
+def test_swapping_the_vix_series_without_its_level_is_warned_about() -> None:
+    """⚠️ THE SECOND HALF OF THE SAME TRAP. `^AXVI` reaches 25.0 on 0.2% of ASX
+    days - median 11.52, 99th percentile 18.47 over the two years Yahoo serves.
+    Keeping the American level while pointing at the Australian index switches
+    the SHOCK regime off, and a regime that never fires looks exactly like a
+    market that never shocked."""
+    from qat.preflight import Status, settings_checks
+
+    checks = settings_checks(
+        Settings(
+            _env_file=None,
+            regime_vix_series="^AXVI",
+            bar_macro_series=("^AXVI",),
+            trading_mode="paper",
+        )
+    )
+    named = [check for check in checks if check.name == "VIX shock level"]
+
+    assert len(named) == 1
+    assert named[0].status is Status.WARN
+    assert "0.2%" in named[0].detail
+
+
+def test_moving_both_together_draws_no_warning() -> None:
+    from qat.preflight import settings_checks
+
+    checks = settings_checks(
+        Settings(
+            _env_file=None,
+            regime_vix_series="^AXVI",
+            bar_macro_series=("^AXVI",),
+            vix_shock_level=14.0,
+            trading_mode="paper",
+        )
+    )
+
+    assert [check for check in checks if check.name == "VIX shock level"] == []
+
+
+def test_the_shipped_pair_draws_no_warning() -> None:
+    from qat.preflight import settings_checks
+
+    checks = settings_checks(Settings(_env_file=None))
+
+    assert [check for check in checks if check.name == "VIX shock level"] == []

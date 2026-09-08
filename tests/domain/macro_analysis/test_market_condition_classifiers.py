@@ -73,10 +73,23 @@ def test_an_absent_curve_is_None_rather_than_normal() -> None:
 
 @pytest.mark.parametrize(
     ("baa10y", "expected"),
-    [(1.57, "normal"), (2.8, "widening"), (4.0, "distressed"), (6.0, "distressed")],
+    [
+        (1.57, "normal"),
+        (2.8, "normal"),
+        (3.2, "widening"),
+        (4.0, "distressed"),
+        (6.0, "distressed"),
+    ],
 )
 def test_spreads_are_classified_from_the_baa_series(baa10y: float, expected: str) -> None:
-    """1.57 is the live reading on 7 September 2026 - the calm end."""
+    """1.57 is the live reading on 7 September 2026 - the calm end.
+
+    ⚠️ 2.8 MOVED FROM "widening" TO "normal" ON 8 SEPTEMBER, and the measurement
+    is the reason: the old 2.5 boundary was true on 31.5% of 10,169 daily
+    readings since 1986. A state that holds a third of the time is the weather,
+    not a warning, and "widening" reads as a warning. 3.0 is the 87.4th
+    percentile - true on 12.6% of days.
+    """
     assert classify_spreads(baa10y) == expected
 
 

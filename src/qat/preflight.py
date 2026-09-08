@@ -159,6 +159,23 @@ def settings_checks(settings: Settings) -> list[Check]:
             )
         )
 
+    # ⚠️ THE SECOND HALF OF THE SAME TRAP. Swapping the VIX series without
+    # moving the shock level leaves the level calibrated for a different index.
+    # `^AXVI` reaches 25.0 on 0.2% of ASX days, so the SHOCK regime would be off
+    # for the session - and a regime that never fires looks exactly like a
+    # market that never shocked.
+    if settings.regime_vix_series != "VIXCLS" and settings.vix_shock_level == 25.0:
+        checks.append(
+            Check(
+                "VIX shock level",
+                Status.WARN,
+                f"regime_vix_series={settings.regime_vix_series!r} but vix_shock_level is "
+                f"still 25.0, the level measured for the US VIX. ^AXVI reaches 25.0 on 0.2% "
+                f"of ASX days - check this is the level you meant, or the SHOCK regime "
+                f"never fires.",
+            )
+        )
+
     # --- trading mode and port ---------------------------------------------
     live_ports = {4001, 7496}
     if not settings.is_live and settings.ibkr_port in live_ports:

@@ -660,6 +660,24 @@ class Settings(BaseSettings):
     # checks the pair and says so.
     regime_vix_series: str = "VIXCLS"
 
+    # The level this application's VIX must exceed to count as a SHOCK.
+    #
+    # ⚠️ IT TRAVELS WITH THE SERIES, and that is why it is a setting rather than
+    # a constant. Measured 8 September 2026: 25.0 is the 82.7nd percentile of
+    # 9,266 VIXCLS readings - true on 17.3% of days, looser than the word
+    # suggests but the source document's number. The S&P/ASX 200 VIX is a
+    # QUIETER index: over the two years Yahoo serves, `^AXVI` has a median of
+    # 11.52 and a 99th percentile of 18.47, and reaches 25.0 on 0.2% of ASX
+    # days. Point the series at `^AXVI` and leave this at 25.0 and the SHOCK
+    # regime is switched off, silently and permanently. Pre-flight warns.
+    #
+    # ⚠️ NO AUSTRALIAN DEFAULT IS OFFERED. The percentile translation gives
+    # 13.13, drawn from two years that contain no crisis - a busy Tuesday, not a
+    # shock. Calibrating a stress trigger on a sample with no stress in it is
+    # the confident-number-from-the-wrong-data failure this project keeps
+    # finding, so the number is left to whoever has better history.
+    vix_shock_level: float = Field(default=25.0, gt=0)
+
     # "synthetic" = the seeded random walk every milestone up to M13 ran on.
     # "yfinance" = real (free, delayed, rate-limited) market data.
     #

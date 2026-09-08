@@ -128,13 +128,64 @@ US_CURVE_FLAT_CEILING_PCT = 0.50
 # answer waiting for a daily Australian curve, not a switch to throw.
 AU_CURVE_FLAT_CEILING_PCT = 0.215
 # Moody's Baa over the 10-year. The live reading on 7 September 2026 was 1.57.
-_SPREAD_WIDENING_PCT = 2.5
+#
+# MEASURED 8 September 2026 against 10,169 daily readings, 1986-2026 (median
+# 2.13). The distressed line is well placed and the widening line was not:
+#
+#   2.5 -> 68.5th percentile, true on 31.5% of ALL DAYS
+#   3.0 -> 87.4th percentile, true on 12.6%
+#   3.5 -> 97.1st percentile, true on  2.9%
+#
+# ⚠️ A STATE TRUE A THIRD OF THE TIME IS NOT A WARNING, it is the weather, and
+# "widening" reads as a warning to anyone glancing at the panel. Raised to 3.0,
+# the 87th percentile, where the word matches the frequency.
+_SPREAD_WIDENING_PCT = 3.0
+
+# ⚠️ THIS ONE IS LOAD-BEARING AND STAYS. `spreads == "distressed"` is the single
+# condition separating BEAR (a scaled cut) from RECESSION (HALVING THE BOOK),
+# and the measurement says 3.5 earns it: 2.9% of all days, 28.5% of GFC days and
+# 6.8% of COVID days, against 0.0% of 2024-2026. Rare, and present in genuine
+# credit crises rather than merely in bad weather.
 _SPREAD_DISTRESSED_PCT = 3.5
-# The document's own SHOCK trigger.
-_VIX_SHOCK_LEVEL = 25.0
+
+# The document's own SHOCK trigger, against the US VIX.
+#
+# ⚠️ MEASURED, AND LOOSER THAN THE WORD SUGGESTS: 25.0 is the 82.7nd percentile
+# of 9,266 VIXCLS readings, true on 17.3% of days. Left at 25.0 because it is
+# the source document's number and because moving it changes which regime the
+# matrix reports; recorded here so the next reader argues with a measurement
+# rather than with a convention.
+US_VIX_SHOCK_LEVEL = 25.0
+
+# ⚠️ AND IT DOES NOT TRAVEL. The S&P/ASX 200 VIX is a quieter index: measured
+# over the two years available on 8 September 2026, `^AXVI` has a median of
+# 11.52, a 99th percentile of 18.47, and reaches 25.0 on 0.2% of ASX DAYS. An
+# operator who points this application's VIX at `^AXVI` and keeps 25.0 has
+# switched the SHOCK regime off, silently and permanently.
+#
+# ⚠️ NO AUSTRALIAN CONSTANT IS OFFERED, and the refusal is the honest answer.
+# The percentile translation gives 13.13 - but it is drawn from two years that
+# contain no crisis, so it marks a busy Tuesday rather than a shock. Calibrating
+# a stress trigger on a sample with no stress in it would produce a confident
+# number from the wrong data, which is the failure this codebase keeps finding.
+# What is needed is a longer `^AXVI` history than Yahoo serves.
+
 # How much realised vol must move between adjacent windows to count as a trend
 # rather than sampling noise.
-_VOL_DIRECTION_TOLERANCE = 0.15
+#
+# ⚠️ MEASURED, AND WRONG AT 0.15. Over ten years of ^AXJO the MEDIAN absolute
+# move between adjacent 20-day windows is 0.219 - so a 0.15 tolerance called
+# 64.5% of days a trend and 35.5% steady, which is backwards for a band whose
+# stated job is to separate a trend from noise. Share of days called steady:
+#
+#   0.15 -> 35.5%    0.22 -> 50.3%    0.30 -> 61.7%
+#   0.20 -> 45.7%    0.25 -> 54.9%    0.35 -> 67.3%
+#
+# ⚠️ THIS CHANGES A REGIME. RECOVERY requires `vol_direction == "falling"`, so a
+# tolerance that called noise a decline was firing RECOVERY on sampling error.
+# 0.25 makes steady the majority and leaves "falling" for moves that clear the
+# median.
+_VOL_DIRECTION_TOLERANCE = 0.25
 
 
 def classify_term_structure(
@@ -323,6 +374,8 @@ def compute_macro_signal(
     bars: pd.DataFrame,
     macro_series: dict[str, float] | None = None,
     vol_high_annualized_pct: float = _VOL_HIGH_ANNUALIZED_PCT,
+    vix_series: str = "VIXCLS",
+    vix_shock_level: float = US_VIX_SHOCK_LEVEL,
 ) -> MacroSignal | None:
     """Returns None when there is not enough history to measure honestly.
 
@@ -374,8 +427,14 @@ def compute_macro_signal(
                 vol_direction = "steady"
 
     series = dict(macro_series or {})
-    vix = series.get("VIXCLS")
-    vix_shock = None if vix is None else bool(vix > _VIX_SHOCK_LEVEL)
+    # ⚠️ THE SERIES NAME WAS HARDCODED HERE while `RegimeFeatureBuilder` had
+    # been made configurable - so an operator who switched this application's
+    # VIX to `^AXVI` would move the regime engine's column and leave THIS
+    # reading looking for a "VIXCLS" nobody publishes any more. `vix_shock`
+    # would then be `None` for the whole session, and `None` is not "no shock":
+    # it removes the SHOCK trigger from the matrix entirely.
+    vix = series.get(vix_series)
+    vix_shock = None if vix is None else bool(vix > vix_shock_level)
 
     trend = close.rolling(window=_TREND_WINDOW_DAYS).mean()
     latest_close = float(close.iloc[-1])
