@@ -1794,7 +1794,115 @@ from qat.domain.display_dates import format_display_date
 # alarm M167 left behind, 8 opens and 8 false alarms. And IBKR news maps
 # CHANNELS to PUBLISHERS so DJ-N and DJ-RTA cannot fake corroboration for one
 # wire story; not wired in, pending the Dow Jones storage licence.
-MILESTONE = "M169"
+# M170 - the macro matrix reaches a screen, and its constants are measured.
+#
+# ⚠️ FOUR PHASES OF TESTED CODE THAT HAD NEVER RUN. The 8 September spec's own
+# progress note ended: "NOT YET WIRED TO A SCREEN. Nothing calls
+# `build_macro_matrix_prompt` yet, so none of this has run against a live
+# model." The Regime Monitor now carries a second panel with its own button -
+# two buttons on purpose, because one click would spend two model calls and the
+# panels answer different questions.
+#
+# ⚠️ STILL ADVISORY, and that is an operator constraint rather than a stage.
+# 8 September: "This sits outside of the authority of autonomy, resultant action
+# must be human driven only for now." Nothing on the panel reaches
+# `RiskEngine.regime_scalar`, the sizer, or an order path.
+#
+# ⚠️ `BM` HAD NO SOURCE. `decide` refuses to default a baseline because the old
+# default was `MacroSignal.exposure_hint` - the FOUR-regime read's answer - so
+# the matrix could report a Bull market while lifting from a 0.30 baseline the
+# other classifier set because it saw Risk-Off. Two taxonomies stacked,
+# silently. `baseline_from_risk_budget` derives it from the account's own rails
+# instead: the 5% gap budget against the 6% gap shock, which `config.py` already
+# describes in prose as "a gross-exposure ceiling of about 83% of equity".
+#
+# ⚠️ AND NOTHING HAD EVER CHECKED THE MODEL'S ARITHMETIC. `MacroMatrixNarrative`
+# carries echoed figures precisely so "a model that quietly disagreed is CAUGHT
+# rather than believed", and with no caller nothing compared them. The service
+# now does, and CORRECTS rather than raises: refusing the whole reply over a
+# rounding difference would take the deterministic half off the screen with it,
+# and that half is the one with authority. On a REFUSAL any figure was invented,
+# so both are cleared.
+#
+# Two ambiguities the wiring exposed, both of which would have blamed the model
+# for the code's mistake. The prompt rendered "+3.20%" against a field named
+# `change_pct`, leaving a choice between 3.2 and 0.032 - the exact values and
+# their units are now stated. And the schema listed "shock" and "low_vol_drift",
+# a THIRD taxonomy for seven states the matrix and the HMM already share; the
+# tokens are now `Regime`'s own and a test pins them against the enum.
+#
+# ⚠️ THE FLAT-CURVE CEILING WAS BORROWED FROM A MARKET THIS ACCOUNT DOES NOT
+# TRADE. Measured 8 September against FRED readings since 2000: the US T10Y3M
+# median is +1.49 and Australia's is +0.40, so 0.50 calls 22.3% of Australian
+# history flat against 12.0% of American - and the live AU curve of +0.371 sits
+# at the FORTY-NINTH percentile of its own distribution. An ordinary curve, read
+# as a warning. The percentile translation gives +0.215. The ceiling is now the
+# caller's argument; the default does NOT move, because the Australian rate
+# series on FRED are monthly and were 99 days stale when measured.
+#
+# ⚠️ AND THE CLASSIFIER HAD NO READER AT ALL. `term_structure` was consumed by
+# nothing - not the matrix, which checks only `spreads`, not any prompt, not any
+# screen. Calibrating a threshold for an output nobody sees is decoration twice
+# over. `MacroSignal.conditions_line` now carries the whole Phase 1 set onto the
+# panel, including on a refusal, where the inputs that WERE present are as much
+# of the answer as the one that was missing.
+#
+# ⚠️ `^AXVI` COULD BE NAMED AND NOT FED. M169 made `vix_series` configurable and
+# its own test said what that was worth: "NAMING IT IS NOT FEEDING IT... pointing
+# this at it would leave the column at its default forever - silently."
+# `BarSeriesFeed` bridges a daily-bar ticker onto the bus as a `MacroEvent`.
+# It does NOT use `HistoricalBarSource`, and that is the point: that falls back
+# to SYNTHETIC bars by design, and a random walk entering the model as `^AXVI`
+# would size the book with nothing able to tell. It refuses synthetic, empty,
+# non-finite and older-than-five-days readings - measured, `^AJOVIX` 404s and
+# `AU3M=F` returns zero rows, so the empty case is not hypothetical.
+#
+# ⚠️ PRE-FLIGHT NOW FAILS ON A DEAD COLUMN. Naming a series nothing publishes
+# left `vix_level` at ZERO for a whole session - the column that led the raw
+# feature spread at 85.1% in the 8 September live fit - while the engine fitted
+# happily on a flat feature and nothing complained.
+#
+# ⚠️ THE PHASE 1 THRESHOLDS WERE CONVENTIONS AND THE MODULE SAID SO. Measured:
+#
+#   spreads widening    2.5  68.5th pct - true on 31.5% of days   -> 3.0
+#   spreads distressed  3.5  97.1st pct - 2.9% of days            -> unchanged
+#   RV/HV shock         1.5  90.5th pct of ^AXJO (9.5% of days)   -> unchanged
+#   VIX shock level    25.0  82.7nd pct of VIXCLS (17.3%)         -> unchanged
+#   vol direction      0.15  called 64.5% of days a TREND         -> 0.25
+#   index direction    0.10  median monthly move is 0.110         -> unchanged
+#
+# "Widening" was the weather - true on nearly a third of 10,169 readings since
+# 1986, while the panel prints a word that reads as a warning. The band that
+# MATTERS was vindicated: `distressed` is the single condition separating BEAR
+# from RECESSION, which HALVES THE BOOK, and it fires on 2.9% of all days, 28.5%
+# of GFC days, 6.8% of COVID days and 0.0% of 2024-2026.
+#
+# The volatility band was backwards on its own terms. Its stated job is to
+# separate a trend from sampling noise, and the median absolute move between
+# adjacent 20-day windows on ^AXJO is 0.219 - so 0.15 called 64.5% of days a
+# trend. RECOVERY requires `vol_direction == "falling"`, so it was firing on
+# sampling error.
+#
+# ⚠️ AND ONE THRESHOLD WAS A HIDDEN SWITCH. `compute_macro_signal` looked up
+# "VIXCLS" by a HARDCODED LITERAL while `vix_series` had been made configurable.
+# An operator pointing this application's VIX at `^AXVI` would move the regime
+# engine's column and strand this reading on a series nobody publishes -
+# `vix_shock` `None` for the session, and `None` is not "no shock": it removes
+# the SHOCK row from the matrix entirely. Both the series and its level are now
+# settings, both panels read them, and pre-flight WARNS when one moves without
+# the other. No Australian shock level is offered: `^AXVI` reaches 25.0 on 0.2%
+# of ASX days so the American figure cannot travel, but the percentile
+# translation (13.13) comes from two years containing no crisis, and a stress
+# threshold calibrated on a sample with no stress in it is worse than none.
+#
+# ⚠️ TWO SABOTAGES ESCAPED OUT OF TWENTY-FOUR, and both are closed. Deleting the
+# screen's two VIX keyword arguments left all seventeen panel tests green - the
+# wiring that keeps an `^AXVI` operator's SHOCK regime alive was itself
+# unguarded. And the unregistered-series refusal test fed a fixture the fallback
+# would have failed on anyway, so it passed whether the code refused or guessed.
+# Same shape both times: a test asserting ABSENCE must first prove the fixture
+# would produce PRESENCE.
+MILESTONE = "M170"
 
 _UNKNOWN = "unknown"
 
