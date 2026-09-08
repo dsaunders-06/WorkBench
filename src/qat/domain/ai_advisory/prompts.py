@@ -142,3 +142,80 @@ def build_regime_narrative_prompt(context: AdvisoryContext) -> str:
         "(use recommendation='hold' if this is a descriptive summary rather than a trade "
         "call).\n\n" + exposure + context.to_prompt_text()
     )
+
+
+def build_macro_matrix_prompt(decision: object, positions: dict[str, float] | None = None) -> str:
+    """The 7-regime matrix's reading, handed to the model as FACTS.
+
+    Phase 4 of `docs/superpowers/specs/2026-09-08-macro-regime-matrix-design.md`.
+
+    ⚠️ THE MODEL DOES NOT CALCULATE. The source document reads as one prompt
+    asking it to classify the regime AND compute `Lift = ((HV - RV) / HV) * SB`.
+    The regime, the change and the target are already decided by
+    `macro_analysis.matrix.decide` - deterministic, tested, same inputs same
+    answer. This prompt hands those over and asks for prose. An LLM doing
+    arithmetic that sets an exposure target is what `guards.py` exists for.
+
+    ⚠️ A REFUSAL IS RENDERED AS A REFUSAL. When the matrix could not identify a
+    regime the model is told to say so and name what was missing - never to
+    reach for the nearest plausible regime. "We cannot tell" is not "sideways".
+
+    Takes the decision rather than an `AdvisoryContext` because this module
+    imports nothing from the rest of the domain - the same isolation
+    `AdvisoryContext`'s plain dicts exist to preserve.
+    """
+    missing = getattr(decision, "missing", None)
+    if missing is not None:
+        return (
+            "The deterministic macro matrix COULD NOT identify a regime. Report that "
+            "plainly and name what was missing, in one short paragraph. Do NOT guess "
+            "at a regime, do NOT describe the market as calm or sideways, and do NOT "
+            "suggest an exposure change - an unmeasured input is not a neutral one."
+            "\n\nWhat was missing: " + "; ".join(missing) + "\n\n"
+            "Return JSON matching the schema, with regime='sideways' as a placeholder, "
+            "change_pct=0 and target_pct set to the current baseline, and put the real "
+            "message in `condition` and `caveats`."
+        )
+
+    reasons: tuple[str, ...] = decision.reasons  # type: ignore[attr-defined]
+    held = [reason for reason in reasons if "holding" in reason]
+    parts = [
+        "Write the macro regime read as ONE short paragraph in a strict "
+        "If/Then/Justification structure, professional and consultative:",
+        "  - the IF: the market condition in plain English, from the figures below",
+        "  - the THEN: the action, carrying the exact change and target weight",
+        "  - the JUSTIFICATION: why that serves the portfolio in THIS regime",
+        "",
+        "⚠️ THE ARITHMETIC IS ALREADY DONE AND IS NOT YOURS TO REDO. Copy "
+        "`change_pct` and `target_pct` into the schema EXACTLY as given. Do not "
+        "recompute them, round them differently, or reason about what they ought "
+        "to be.",
+        "",
+        f"Regime: {decision.display_regime}",  # type: ignore[attr-defined]
+        f"Baseline weight (BM): {decision.baseline:.1%}",  # type: ignore[attr-defined]
+        f"Risk scaling unit (SB): {decision.scaling_unit:.2f}",  # type: ignore[attr-defined]
+        f"Change: {decision.change:+.2%}",  # type: ignore[attr-defined]
+        f"Target weight: {decision.target_weight:.1%}",  # type: ignore[attr-defined]
+        "Evidence: " + "; ".join(reasons),
+    ]
+    if decision.implies_leverage:  # type: ignore[attr-defined]
+        parts.append("⚠️ This target is above 100% and therefore implies LEVERAGE. Say so.")
+    if held:
+        parts.append(
+            "⚠️ The reported regime is being HELD while a challenger builds "
+            "persistence - say that the reading is provisional."
+        )
+    if positions:
+        parts.append(
+            f"The account ALREADY HOLDS {len(positions)} position(s). Say what this "
+            "regime implies GIVEN that, rather than as though it were flat. ⚠️ This "
+            "is commentary and NOT a risk control - the rails decide what may be "
+            "ordered, this note decides nothing."
+        )
+    parts.append(
+        "Put only condition-specific caveats in `caveats` - a stale growth reading, "
+        "a held regime, a target implying leverage. Do NOT add a generic "
+        "disclaimer: the screen already carries one, and a disclaimer printed on "
+        "every result stops being read."
+    )
+    return "\n".join(parts)

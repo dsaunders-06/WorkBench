@@ -336,5 +336,25 @@ trimmed.
 More conventional-not-measured thresholds, added to open question 8: the growth
 buckets (low 1.5%, high 3.0%) and the shock multiple (RV >= 1.5x HV).
 
-Phase 4 - the narrative - is next: hand `RegimeDecision` to the model as facts
-and forbid recalculation.
+**Phase 4, the narrative - DONE, 8 September.** `build_macro_matrix_prompt`
+plus `MacroMatrixNarrative`. The model receives the regime, the change and the
+target as FACTS and is told in terms that the arithmetic is "NOT YOURS TO REDO"
+and must be copied "EXACTLY as given". `change_pct` and `target_pct` are
+structured fields so the caller can compare what came back against what it
+sent - a model that quietly disagreed is caught, not believed.
+
+A REFUSAL renders as a refusal: the prompt says do not guess, do not describe
+the market as calm or sideways, and do not suggest an exposure change.
+
+Condition-specific caveats only. Following `workbench.py`'s "a disclaimer
+printed on every result stops being read", the standing "research only, not
+financial advice" framing stays on the screen and the per-reading caveats carry
+what is true of THIS reading - a stale growth series, a held regime, a target
+implying leverage.
+
+⚠️ **NOT YET WIRED TO A SCREEN.** Nothing calls `build_macro_matrix_prompt`
+yet, so none of this has run against a live model. That is the remaining work,
+and it is small - but "tested" here means unit-tested, not exercised.
+
+**All four phases are built. What remains is a DECISION (the growth series) and
+one integration (a screen).**
