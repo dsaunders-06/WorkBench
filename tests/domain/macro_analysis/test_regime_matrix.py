@@ -7,6 +7,12 @@ reason the calculation is deterministic rather than asked of a model: an
 exposure target that is nearly right is a different number, and nobody would
 know which one they had.
 
+⚠️ THE REGIMES ARE THE PROGRAM'S OWN `Regime`, not a taxonomy this module
+invented. "Shock" is `HIGH_VOL` and "Low Volatility Drift" is `LOW_VOL` - the
+document's seven ARE this program's seven, and keeping a parallel set would have
+made every comparison against the HMM a string-mapping exercise that read as
+disagreement whenever the two engines agreed.
+
 ⚠️ NOTHING CLAMPS TO `+/- SB`, AND THE TESTS MUST NOT ASK IT TO. `SB` is the
 risk scaling unit, not a cap - operator definition, 8 September: "total
 portfolio swings are dynamic and can exceed this value during extreme market
@@ -25,6 +31,7 @@ import pytest
 from qat.domain.macro_analysis.growth import GrowthRead
 from qat.domain.macro_analysis.matrix import MatrixRefusal, RegimeDecision, decide
 from qat.domain.macro_analysis.signal import MacroSignal
+from qat.domain.regime import Regime
 
 _SB = 0.20
 
@@ -100,7 +107,7 @@ def test_bull_lifts_by_the_full_scaled_gap() -> None:
     result = decide(_signal(rv=8.74), growth=_growth(4.0), scaling_unit=_SB, baseline=0.85)
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "bull"
+    assert result.regime == Regime.BULL
     expected = ((15.0 - 8.74) / 15.0) * _SB
     assert result.change == pytest.approx(expected)
     assert result.target_weight == pytest.approx(0.85 + expected)
@@ -113,7 +120,7 @@ def test_bear_cuts_and_is_not_capped_at_the_scaling_unit() -> None:
     result = decide(_signal(rv=45.0), growth=_growth(-1.0), scaling_unit=_SB, baseline=0.85)
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "bear"
+    assert result.regime == Regime.BEAR
     expected = ((45.0 - 15.0) / 15.0) * _SB  # 0.40
     assert result.change == pytest.approx(-expected)
     assert expected > _SB, "the fixture must actually exceed SB or it proves nothing"
@@ -135,7 +142,7 @@ def test_shock_is_a_flat_reduction_regardless_of_the_scaling_unit() -> None:
     )
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "shock"
+    assert result.regime == Regime.HIGH_VOL
     assert result.change == pytest.approx(-0.10)
     assert result.target_weight == pytest.approx(0.75)
 
@@ -147,14 +154,14 @@ def test_a_volatility_spike_alone_triggers_shock_without_the_vix() -> None:
     )
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "shock"
+    assert result.regime == Regime.HIGH_VOL
 
 
 def test_low_volatility_drift_lifts_by_half() -> None:
     result = decide(_signal(rv=8.74), growth=_growth(1.0), scaling_unit=_SB, baseline=0.85)
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "low_vol_drift"
+    assert result.regime == Regime.LOW_VOL
     expected = ((15.0 - 8.74) / 15.0) * _SB * 0.5
     assert result.change == pytest.approx(expected)
 
@@ -170,7 +177,7 @@ def test_recession_halves_the_baseline_and_ignores_the_scaling_unit() -> None:
     )
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "recession"
+    assert result.regime == Regime.RECESSION
     assert result.target_weight == pytest.approx(0.425)
 
 
@@ -183,7 +190,7 @@ def test_recovery_adds_its_kicker_on_top_of_the_scaled_lift() -> None:
     )
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "recovery"
+    assert result.regime == Regime.RECOVERY
     expected = ((15.0 - 8.74) / 15.0) * _SB + 0.05
     assert result.change == pytest.approx(expected)
 
@@ -194,7 +201,7 @@ def test_sideways_holds_the_baseline_exactly() -> None:
     result = decide(_signal(rv=15.0), growth=_growth(2.0), scaling_unit=_SB, baseline=0.85)
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "sideways"
+    assert result.regime == Regime.SIDEWAYS
     assert result.change == 0.0
     assert result.target_weight == 0.85
 
@@ -213,7 +220,7 @@ def test_recession_outranks_bear_when_both_are_true() -> None:
     )
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "recession"
+    assert result.regime == Regime.RECESSION
 
 
 def test_the_mandate_changes_the_size_of_the_move() -> None:

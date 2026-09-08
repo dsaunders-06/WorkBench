@@ -35,25 +35,27 @@ from typing import Literal
 
 from qat.domain.macro_analysis.growth import GrowthRead
 from qat.domain.macro_analysis.signal import MacroSignal
+from qat.domain.regime import Regime
 
-MatrixRegime = Literal[
-    "bull",
-    "bear",
-    "shock",
-    "low_vol_drift",
-    "recession",
-    "recovery",
-    "sideways",
-]
-
-MATRIX_REGIME_DISPLAY: dict[str, str] = {
-    "bull": "Bull Market",
-    "bear": "Bear Market",
-    "shock": "High Volatility Shock",
-    "low_vol_drift": "Low Volatility Drift",
-    "recession": "Recession",
-    "recovery": "Recovery / Early Cycle",
-    "sideways": "Sideways / Choppy",
+# ⚠️ THE PROGRAM'S OWN `Regime`, NOT A PARALLEL ONE. The first version of this
+# module declared its own seven-member Literal - "shock", "low_vol_drift" and
+# five names identical to `domain/regime.py`'s. That was a second taxonomy for
+# the same seven states, and it would have made every comparison against the HMM
+# a string-mapping exercise: `low_vol` against `low_vol_drift` reads as
+# disagreement when the two engines actually agree, and an alert that fires on
+# every quiet market is ignored within a week.
+#
+# The document's seven ARE this program's seven. "High Volatility Shock" is
+# HIGH_VOL and "Low Volatility Drift" is LOW_VOL; the rest match by name. Only
+# the DISPLAY strings differ, and those are presentation.
+MATRIX_REGIME_DISPLAY: dict[Regime, str] = {
+    Regime.BULL: "Bull Market",
+    Regime.BEAR: "Bear Market",
+    Regime.HIGH_VOL: "High Volatility Shock",
+    Regime.LOW_VOL: "Low Volatility Drift",
+    Regime.RECESSION: "Recession",
+    Regime.RECOVERY: "Recovery / Early Cycle",
+    Regime.SIDEWAYS: "Sideways / Choppy",
 }
 
 # ⚠️ CONVENTIONAL, NOT MEASURED - the same caveat Phase 1 and 2's thresholds
@@ -88,7 +90,7 @@ MAX_GROWTH_AGE_DAYS = 200
 class RegimeDecision:
     """One regime, and the arithmetic that produced its target."""
 
-    regime: MatrixRegime
+    regime: Regime
     baseline: float
     """`BM` - the exposure the deterministic read alone justifies."""
     scaling_unit: float
@@ -198,7 +200,7 @@ def decide(
         reasons.append("credit spreads distressed")
         target = bm * _RECESSION_MULTIPLIER
         return RegimeDecision(
-            regime="recession",
+            regime=Regime.RECESSION,
             baseline=bm,
             scaling_unit=scaling_unit,
             change=target - bm,
@@ -218,7 +220,7 @@ def decide(
         reasons.append("VIX above the shock level" if signal.vix_shock else "RV far above HV")
         target = bm - _SHOCK_REDUCTION
         return RegimeDecision(
-            regime="shock",
+            regime=Regime.HIGH_VOL,
             baseline=bm,
             scaling_unit=scaling_unit,
             change=-_SHOCK_REDUCTION,
@@ -230,7 +232,7 @@ def decide(
     if bucket == "negative" and rv >= hv:
         cut = ((rv - hv) / hv) * scaling_unit
         return RegimeDecision(
-            regime="bear",
+            regime=Regime.BEAR,
             baseline=bm,
             scaling_unit=scaling_unit,
             change=-cut,
@@ -245,7 +247,7 @@ def decide(
         reasons.append("growth accelerating as volatility subsides")
         lift = ((hv - rv) / hv) * scaling_unit + _RECOVERY_KICKER
         return RegimeDecision(
-            regime="recovery",
+            regime=Regime.RECOVERY,
             baseline=bm,
             scaling_unit=scaling_unit,
             change=lift,
@@ -257,7 +259,7 @@ def decide(
     if bucket == "high" and rv < hv:
         lift = ((hv - rv) / hv) * scaling_unit
         return RegimeDecision(
-            regime="bull",
+            regime=Regime.BULL,
             baseline=bm,
             scaling_unit=scaling_unit,
             change=lift,
@@ -269,7 +271,7 @@ def decide(
     if bucket in ("low", "normal") and rv < hv:
         lift = ((hv - rv) / hv) * scaling_unit * 0.5
         return RegimeDecision(
-            regime="low_vol_drift",
+            regime=Regime.LOW_VOL,
             baseline=bm,
             scaling_unit=scaling_unit,
             change=lift,
@@ -281,7 +283,7 @@ def decide(
     # above did not match, never as a stand-in for an input nobody measured;
     # that case returned a refusal at the top.
     return RegimeDecision(
-        regime="sideways",
+        regime=Regime.SIDEWAYS,
         baseline=bm,
         scaling_unit=scaling_unit,
         change=0.0,
@@ -317,12 +319,12 @@ class RegimeHysteresis:
 
     def __init__(self, min_persistence: int = 3) -> None:
         self.min_persistence = min_persistence
-        self._current: MatrixRegime | None = None
-        self._challenger: MatrixRegime | None = None
+        self._current: Regime | None = None
+        self._challenger: Regime | None = None
         self._streak = 0
 
     @property
-    def current(self) -> MatrixRegime | None:
+    def current(self) -> Regime | None:
         return self._current
 
     def settle(self, result: RegimeDecision | MatrixRefusal) -> RegimeDecision | MatrixRefusal:

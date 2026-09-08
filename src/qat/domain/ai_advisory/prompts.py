@@ -144,7 +144,11 @@ def build_regime_narrative_prompt(context: AdvisoryContext) -> str:
     )
 
 
-def build_macro_matrix_prompt(decision: object, positions: dict[str, float] | None = None) -> str:
+def build_macro_matrix_prompt(
+    decision: object,
+    positions: dict[str, float] | None = None,
+    friction: object | None = None,
+) -> str:
     """The 7-regime matrix's reading, handed to the model as FACTS.
 
     Phase 4 of `docs/superpowers/specs/2026-09-08-macro-regime-matrix-design.md`.
@@ -177,9 +181,26 @@ def build_macro_matrix_prompt(decision: object, positions: dict[str, float] | No
             "message in `condition` and `caveats`."
         )
 
+    # ⚠️ FRONT-LOADED, and computed rather than noticed. When the two engines
+    # disagree the reader must meet that BEFORE any strategic justification -
+    # a tidy unified narrative over a real divergence is the failure this
+    # guards. The comparison itself is done in `macro_analysis.friction`,
+    # because asking a model to spot a mismatch is a request, not a control.
+    friction_lines: list[str] = []
+    if friction is not None and not friction.agree:  # type: ignore[attr-defined]
+        friction_lines = [
+            "⚠️ FRICTION ALERT - PUT THIS FIRST, BEFORE ANY JUSTIFICATION.",
+            friction.headline,  # type: ignore[attr-defined]
+            "Do NOT write a single tidy narrative that reconciles the two. Say "
+            "plainly that the engines disagree, that only the execution engine "
+            "moves capital, and that this rule-based reading LAGS it. Put the "
+            "divergence in `caveats` as well.",
+            "",
+        ]
+
     reasons: tuple[str, ...] = decision.reasons  # type: ignore[attr-defined]
     held = [reason for reason in reasons if "holding" in reason]
-    parts = [
+    parts = friction_lines + [
         "Write the macro regime read as ONE short paragraph in a strict "
         "If/Then/Justification structure, professional and consultative:",
         "  - the IF: the market condition in plain English, from the figures below",

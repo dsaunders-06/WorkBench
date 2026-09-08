@@ -26,6 +26,7 @@ from qat.domain.macro_analysis.matrix import (
     decide,
 )
 from qat.domain.macro_analysis.signal import MacroSignal
+from qat.domain.regime import Regime
 
 _SB = 0.20
 
@@ -66,7 +67,7 @@ def test_the_first_reading_is_reported_as_it_stands() -> None:
     result = _read(gate, rv=8.74, yoy=4.0)
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "bull"
+    assert result.regime == Regime.BULL
 
 
 def test_a_single_contrary_reading_does_not_flip_the_regime() -> None:
@@ -78,7 +79,7 @@ def test_a_single_contrary_reading_does_not_flip_the_regime() -> None:
     flipped = _read(gate, rv=45.0, yoy=-1.0)
 
     assert isinstance(flipped, RegimeDecision)
-    assert flipped.regime == "bull", "one contrary reading changed the reported regime"
+    assert flipped.regime == Regime.BULL, "one contrary reading changed the reported regime"
 
 
 def test_a_challenger_that_persists_does_take_over() -> None:
@@ -90,7 +91,7 @@ def test_a_challenger_that_persists_does_take_over() -> None:
         result = _read(gate, rv=45.0, yoy=-1.0)
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "bear"
+    assert result.regime == Regime.BEAR
 
 
 def test_an_interrupted_challenge_starts_over() -> None:
@@ -105,7 +106,7 @@ def test_an_interrupted_challenge_starts_over() -> None:
     result = _read(gate, rv=45.0, yoy=-1.0)
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "bull"
+    assert result.regime == Regime.BULL
 
 
 def test_a_held_regime_still_reports_todays_arithmetic() -> None:
@@ -117,7 +118,7 @@ def test_a_held_regime_still_reports_todays_arithmetic() -> None:
     held = _read(gate, rv=45.0, yoy=-1.0)
 
     assert isinstance(held, RegimeDecision)
-    assert held.regime == "bull"
+    assert held.regime == Regime.BULL
     assert "45.0" in " ".join(held.reasons), "the held decision hid the live reading"
     assert any("holding" in reason for reason in held.reasons)
 
@@ -144,4 +145,4 @@ def test_a_refusal_does_not_advance_a_challenger() -> None:
     result = _read(gate, rv=45.0, yoy=-1.0)
 
     assert isinstance(result, RegimeDecision)
-    assert result.regime == "bull", "the refusal counted toward the challenge"
+    assert result.regime == Regime.BULL, "the refusal counted toward the challenge"

@@ -152,3 +152,40 @@ def test_the_prompt_never_instructs_the_system_to_trade() -> None:
 
     assert "place an order" not in lowered
     assert "submit" not in lowered
+
+
+def test_a_friction_alert_is_front_loaded_before_any_justification() -> None:
+    """⚠️ THE ORDERING IS THE POINT. A reader meeting a tidy narrative first and
+    a caveat last has already formed a view. The alert goes above everything."""
+    from qat.domain.macro_analysis.friction import compare
+    from qat.domain.regime import Regime
+
+    decision = _decision()
+    friction = compare(Regime.BEAR, 0.5, decision)
+
+    prompt = build_macro_matrix_prompt(decision, friction=friction)
+
+    assert prompt.index("FRICTION ALERT") < prompt.index("Write the macro regime read")
+    assert "Do NOT write a single tidy narrative" in prompt
+
+
+def test_agreement_adds_no_alert_at_all() -> None:
+    """⚠️ An alert printed when the engines agree is the alarm-fatigue shape
+    this project has removed twice. Silence when there is nothing to say."""
+    from qat.domain.macro_analysis.friction import compare
+    from qat.domain.regime import Regime
+
+    decision = _decision()
+    friction = compare(Regime.BULL, 1.0, decision)
+
+    prompt = build_macro_matrix_prompt(decision, friction=friction)
+
+    assert "FRICTION" not in prompt
+
+
+def test_no_friction_object_behaves_as_before() -> None:
+    """The comparison is optional - the HMM may not have fitted yet."""
+    prompt = build_macro_matrix_prompt(_decision(), friction=None)
+
+    assert "FRICTION" not in prompt
+    assert "Write the macro regime read" in prompt

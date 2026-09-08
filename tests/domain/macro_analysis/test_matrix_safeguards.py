@@ -146,6 +146,10 @@ def test_no_trading_path_module_imports_the_matrix() -> None:
         root / "domain" / "oms",
         root / "domain" / "autonomy",
         root / "domain" / "strategies",
+        # ⚠️ Added when the friction detector was built: `regime_engine` OWNS
+        # `RiskEngine.regime_scalar`, so it is as much the trading path as the
+        # sizer is. It was missing from the first version of this guard.
+        root / "domain" / "regime_engine",
     ]
     # ⚠️ `source_files`, not `rglob`. Caught by
     # `test_source_scanning_guards_cannot_go_blind` on this file's FIRST run:
