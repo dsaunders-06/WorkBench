@@ -50,12 +50,31 @@ class RegimeFeatureBuilder:
     _breadth_panel: dict[str, list[float]] = field(default_factory=dict)
     _rows: list[list[float]] = field(default_factory=list)
 
+    # Which series fills the `vix_level` column.
+    #
+    # ⚠️ WAS HARDCODED TO "VIXCLS", the CBOE VIX - a US measure feeding a
+    # regime engine that sizes an ASX book. `^AXVI`, the S&P/ASX 200 VIX, is the
+    # local equivalent and is free: measured 8 September 2026, 129 daily closes
+    # and a last of 11.97.
+    #
+    # ⚠️ NAMING IT DOES NOT YET FEED IT. The column is filled from `MacroEvent`,
+    # which the macro feed publishes from FRED alone, and `^AXVI` is a Yahoo
+    # ticker. Setting this to it without a bridge leaves the column at its
+    # default forever - which is why the default stays VIXCLS and the swap is
+    # deliberate rather than implied.
+    #
+    # ⚠️ AND THIS IS THE EXECUTION LAYER. `vix_level` led the raw feature spread
+    # at 85.1% in today's live fit. The matrix is standardised before hmmlearn
+    # sees it, so that is not the bias it looks like - but this column is not a
+    # minor input, and changing what fills it changes what sizes the book.
+    vix_series: str = "VIXCLS"
+
     _vix: float = 0.0
     _yield_curve_slope: float = 0.0
     _credit_spread: float = 0.0
 
     def update_macro(self, series: str, value: float) -> None:
-        if series == "VIXCLS":
+        if series == self.vix_series:
             self._vix = value
         elif series == "T10Y3M":
             self._yield_curve_slope = value
