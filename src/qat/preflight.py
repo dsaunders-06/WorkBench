@@ -130,6 +130,35 @@ def settings_checks(settings: Settings) -> list[Check]:
     """
     checks: list[Check] = []
 
+    # --- the regime engine's volatility column ------------------------------
+    #
+    # ⚠️ THE SILENT FAILURE THIS EXISTS FOR. `regime_vix_series` names which
+    # series fills `vix_level`; nothing publishes a series it was not asked to
+    # fetch. Point it at `^AXVI` without adding `^AXVI` to `bar_macro_series`
+    # and the column stays at ZERO for the whole session - and the engine fits
+    # happily on a flat feature, so nothing else complains. The column led the
+    # raw feature spread at 85.1% in the 8 September live fit.
+    published = {*settings.fred_series, *settings.bar_macro_series}
+    if settings.regime_vix_series not in published:
+        checks.append(
+            Check(
+                "regime VIX series",
+                Status.FAIL,
+                f"regime_vix_series={settings.regime_vix_series!r} but nothing publishes it. "
+                f"Add it to fred_series (FRED) or bar_macro_series (daily bars), or the "
+                f"regime engine runs the whole session with its volatility column at ZERO "
+                f"and says nothing.",
+            )
+        )
+    else:
+        checks.append(
+            Check(
+                "regime VIX series",
+                Status.OK,
+                f"{settings.regime_vix_series} fills vix_level and is published.",
+            )
+        )
+
     # --- trading mode and port ---------------------------------------------
     live_ports = {4001, 7496}
     if not settings.is_live and settings.ibkr_port in live_ports:

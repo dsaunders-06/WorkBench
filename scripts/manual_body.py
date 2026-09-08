@@ -2943,6 +2943,40 @@ def _config_reference(doc: Any) -> None:
                 "matrix then declines to name a regime.",
             ),
             (
+                "QAT_BAR_MACRO_SERIES",
+                "(empty)",
+                "Daily-bar tickers bridged onto the internal event bus so a Yahoo series "
+                "can fill a regime-engine column that FRED cannot reach. Comma-separated; "
+                "EMPTY BY DEFAULT, because this reaches the network and feeds the engine "
+                "that sizes the book, and opting in should be a decision rather than "
+                "something a fresh install starts doing. The case it exists for is "
+                "^AXVI, the S&P/ASX 200 VIX - the local equivalent of the American VIX "
+                "this application otherwise runs on, free, and carrying 129 daily closes "
+                "when checked on 8 September 2026. It is IGNORED unless "
+                "QAT_MARKET_DATA_SOURCE is yfinance: there is no real ticker behind a "
+                "synthetic feed, and a generated series must never enter the regime "
+                "engine wearing a real ticker's name. A reading is published only if it "
+                "is real, finite and no more than five days old - five covering a long "
+                "weekend with a holiday either side. Anything else publishes NOTHING and "
+                "says so in the log, because republishing the last available close would "
+                "freeze the column at a price the market has left behind, and a frozen "
+                "column is invisible: the model fits happily on a flat feature.",
+            ),
+            (
+                "QAT_REGIME_VIX_SERIES",
+                "VIXCLS",
+                "Which series fills the regime engine's volatility column. VIXCLS is the "
+                "CBOE VIX - an AMERICAN measure - and it remains the default DELIBERATELY: "
+                "that column led the raw feature spread in the 8 September 2026 live fit "
+                "at 85.1%, and what fills it ends up sizing an Australian book, so "
+                "swapping it is an operator's decision rather than a default. The "
+                "Australian equivalent is ^AXVI. ⚠️ NAMING A SERIES IS NOT FEEDING ONE: "
+                "set this to ^AXVI without also adding ^AXVI to QAT_BAR_MACRO_SERIES and "
+                "the column sits at ZERO for the entire session while the model fits "
+                "happily on it. The pre-flight check now FAILS on that pair rather than "
+                "letting a session start with a dead input.",
+            ),
+            (
                 "QAT_MACRO_RISK_MANDATE",
                 "moderate",
                 "Risk appetite for the MACRO REGIME MATRIX, the deterministic read that "

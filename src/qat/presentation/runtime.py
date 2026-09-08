@@ -28,6 +28,7 @@ import requests
 
 from qat.config import Settings
 from qat.data import universe
+from qat.data.bar_series_feed import resolve_bar_series_feed
 from qat.data.broker.account_poller import AccountPoller
 from qat.data.broker.adapter import BrokerAdapter
 from qat.data.broker.ib_client_protocol import IBClientProtocol
@@ -810,6 +811,9 @@ class Runtime:
 
         macro = macro_source or resolve_macro_source(settings)
         macro_feed = MacroFeed(bus, macro, settings.fred_series, poll_interval_seconds=3600.0)
+        # The daily-bar bridge, so a Yahoo ticker can fill a regime-engine
+        # column FRED cannot reach. `None` unless the operator named one.
+        bar_series_feed = resolve_bar_series_feed(settings, bus)
 
         fundamentals = fundamentals_source or resolve_fundamentals_source(
             settings, history_source, watchlist
@@ -867,6 +871,7 @@ class Runtime:
             bar_interval_seconds=settings.bar_interval_seconds,
             bar_tz=MARKET_TIMEZONES[settings.market],
             features=settings.regime_features,
+            vix_series=settings.regime_vix_series,
         )
 
         # Seeds every rolling buffer from daily history before the feed starts
@@ -953,6 +958,13 @@ class Runtime:
             session_controller,
         ):
             orchestrator.register(engine)
+
+        # ⚠️ REGISTERED LAST, ON PURPOSE. Engines start in registration order,
+        # and this one PUBLISHES to a column `regime_engine` fills on ITS start.
+        # Starting the bridge first would put its opening poll on the bus before
+        # the engine had subscribed - one reading lost per session, invisibly.
+        if bar_series_feed is not None:
+            orchestrator.register(bar_series_feed)
 
         return cls(
             settings=settings,

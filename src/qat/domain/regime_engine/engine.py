@@ -78,6 +78,7 @@ class RegimeEngine:
         # defect as the price aggregators - and its label sets the exposure
         # scalar on every position.
         bar_tz: tzinfo | None = None,
+        vix_series: str = "VIXCLS",
     ) -> None:
         self.bus = bus
         self.benchmark_symbol = benchmark_symbol
@@ -91,7 +92,7 @@ class RegimeEngine:
         # `_column` both need the names, and reaching through the builder made
         # `_fit` depend on an object it does not otherwise use.
         self._features = tuple(features)
-        self._feature_builder = RegimeFeatureBuilder(features=self._features)
+        self._feature_builder = RegimeFeatureBuilder(features=self._features, vix_series=vix_series)
         self._hmm = HMMRegimeModel(n_states=n_states, features=features)
         self._fusion = RegimeFusion()
         self._hysteresis = HysteresisGate()

@@ -239,3 +239,49 @@ async def test_it_points_at_the_risk_console_rather_than_answering_for_it(qtbot,
     await _publish(screen, _bull_event())
 
     assert "risk console" in screen.elsewhere_hint.text().lower()
+
+
+def test_a_named_but_unpublished_vix_series_fails_preflight() -> None:
+    """⚠️ THE SILENT FAILURE, MADE LOUD. `regime_vix_series` names which series
+    fills `vix_level`, and nothing publishes a series it was not asked to
+    fetch. Point it at `^AXVI` without adding `^AXVI` to `bar_macro_series` and
+    the column sits at ZERO all session while the engine fits happily on a flat
+    feature. It led the raw feature spread at 85.1% in the 8 September fit.
+    """
+    from qat.preflight import Status, settings_checks
+
+    checks = settings_checks(
+        Settings(_env_file=None, regime_vix_series="^AXVI", trading_mode="paper")
+    )
+    named = [check for check in checks if check.name == "regime VIX series"]
+
+    assert len(named) == 1
+    assert named[0].status is Status.FAIL
+    assert "nothing publishes it" in named[0].detail
+
+
+def test_the_same_series_passes_once_it_is_bridged() -> None:
+    from qat.preflight import Status, settings_checks
+
+    checks = settings_checks(
+        Settings(
+            _env_file=None,
+            regime_vix_series="^AXVI",
+            bar_macro_series=("^AXVI",),
+            trading_mode="paper",
+        )
+    )
+    named = [check for check in checks if check.name == "regime VIX series"]
+
+    assert named[0].status is Status.OK
+
+
+def test_the_shipped_default_passes() -> None:
+    """VIXCLS is in `fred_series`, so a fresh install is not greeted by a
+    failure it did not cause."""
+    from qat.preflight import Status, settings_checks
+
+    checks = settings_checks(Settings(_env_file=None))
+    named = [check for check in checks if check.name == "regime VIX series"]
+
+    assert named[0].status is Status.OK

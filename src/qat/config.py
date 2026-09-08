@@ -636,6 +636,30 @@ class Settings(BaseSettings):
     data_dir: str = Field(default_factory=lambda: str(default_data_dir()))
     fred_series: tuple[str, ...] = _DEFAULT_FRED_SERIES
 
+    # Daily-bar tickers bridged onto the bus as MacroEvent, so a Yahoo series
+    # can fill a regime-engine column that only FRED could reach before
+    # (2026-09-08). `^AXVI` is the S&P/ASX 200 VIX - measured 8 September 2026,
+    # 129 daily closes with a last of 11.97, while the proposed `^AJOVIX` 404s.
+    #
+    # ⚠️ EMPTY BY DEFAULT. This reaches the network and feeds the engine that
+    # sizes the book; opting in is an operator decision, not something a fresh
+    # install starts doing on its own.
+    bar_macro_series: tuple[str, ...] = ()
+
+    # Which series fills the regime engine's `vix_level` column.
+    #
+    # ⚠️ THE DEFAULT DOES NOT MOVE, and that is deliberate rather than lazy.
+    # `vix_level` led the raw feature spread at 85.1% in the 8 September live
+    # fit; the matrix is standardised before hmmlearn sees it, so that is not
+    # the bias it appears to be, but what fills this column ends up sizing the
+    # book. Swapping the US VIX for the Australian one is the operator's call.
+    #
+    # ⚠️ AND NAMING IT IS NOT FEEDING IT. Pointing this at `^AXVI` without
+    # adding `^AXVI` to `bar_macro_series` leaves the column at zero forever -
+    # silently, because the engine fits happily on a flat feature. `preflight`
+    # checks the pair and says so.
+    regime_vix_series: str = "VIXCLS"
+
     # "synthetic" = the seeded random walk every milestone up to M13 ran on.
     # "yfinance" = real (free, delayed, rate-limited) market data.
     #
