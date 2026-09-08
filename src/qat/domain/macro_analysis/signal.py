@@ -47,6 +47,30 @@ MACRO_REGIME_EXPOSURE_HINT: dict[str, float] = {
 
 _TRADING_DAYS_PER_YEAR = 252
 _VOL_LOOKBACK_DAYS = 20
+
+# The window `HV` is measured over - one trading year.
+#
+# ⚠️ A BASELINE, NOT A THRESHOLD. `_VOL_HIGH_ANNUALIZED_PCT` below is the line
+# above which volatility counts as elevated; this is the level volatility
+# normally sits at, which is a different question and the one the 7-regime
+# matrix asks. Every formula in that matrix divides by it - see
+# `docs/superpowers/specs/2026-09-08-macro-regime-matrix-design.md`.
+#
+# ⚠️ MEASURED, NOT CONFIGURED. The source document supplies HV as a constant
+# (15.0%). Measuring it from the same bars the rest of this signal uses keeps it
+# true of THIS market rather than of whichever one the constant came from.
+BASELINE_VOL_WINDOW_DAYS = 252
+# ⚠️ THE BASELINE EXCLUDES THE WINDOW IT IS COMPARED AGAINST, and that is a
+# correction to the first version of this rather than a refinement.
+#
+# Measured while building it: a fixture of one calm year (about 6% annualised)
+# followed by thirty violent days read HV = 24.67%, because the spike sat inside
+# the baseline window and dominated its variance. The bias always runs the same
+# way - RV rises and HV rises with it - so `((RV - HV) / HV)` UNDERSTATES the
+# cut exactly when a shock is under way, which is when the matrix is supposed to
+# de-risk hardest. Ending the baseline where the realised window begins is what
+# makes "how does now compare with normal" an honest question.
+MIN_BARS_FOR_BASELINE_VOL = BASELINE_VOL_WINDOW_DAYS + _VOL_LOOKBACK_DAYS + 1
 _VOL_HIGH_ANNUALIZED_PCT = 25.0
 _TREND_WINDOW_DAYS = 50
 _RECENT_HIGH_WINDOW_DAYS = 20
@@ -63,6 +87,18 @@ class MacroSignal:
     modelled - this object is the same for the same bars, always."""
 
     realized_vol_annualized_pct: float
+    # `HV` - what volatility normally is, over BASELINE_VOL_WINDOW_DAYS.
+    #
+    # ⚠️ OPTIONAL, AND THAT IS LOAD-BEARING. This needs 253 bars where the
+    # signal itself needs 55. Making it a requirement would silently stop the
+    # whole deterministic read on any market with under a year of history -
+    # callers treat a `None` signal as "skip this cycle", so the cost would be
+    # the entire macro read rather than one field.
+    #
+    # ⚠️ `None`, NEVER `0.0`. A zero baseline is not a smaller baseline: it is a
+    # division by zero in every formula that consumes it, and it reads as a
+    # measurement that was taken. The rule `BookRisk` already follows.
+    baseline_vol_annualized_pct: float | None
     pct_above_trend: float
     drawdown_from_recent_high_pct: float
     suggested_regime: MacroRegime
@@ -135,6 +171,18 @@ def compute_macro_signal(
     if pd.isna(realized_vol_annualized_pct):
         return None
 
+    baseline_vol_annualized_pct: float | None = None
+    if len(close) >= MIN_BARS_FOR_BASELINE_VOL:
+        # Ends where the realised window begins - see BASELINE_VOL_WINDOW_DAYS.
+        baseline_returns = daily_returns.iloc[
+            -(BASELINE_VOL_WINDOW_DAYS + _VOL_LOOKBACK_DAYS) : -_VOL_LOOKBACK_DAYS
+        ]
+        candidate = float(baseline_returns.std() * (_TRADING_DAYS_PER_YEAR**0.5) * 100)
+        # A NaN here is not a small baseline - it is no baseline, and letting it
+        # through would put a nan into every formula downstream.
+        if not pd.isna(candidate) and candidate > 0:
+            baseline_vol_annualized_pct = candidate
+
     trend = close.rolling(window=_TREND_WINDOW_DAYS).mean()
     latest_close = float(close.iloc[-1])
     latest_trend = float(trend.iloc[-1])
@@ -161,6 +209,7 @@ def compute_macro_signal(
 
     return MacroSignal(
         realized_vol_annualized_pct=realized_vol_annualized_pct,
+        baseline_vol_annualized_pct=baseline_vol_annualized_pct,
         pct_above_trend=pct_above_trend,
         drawdown_from_recent_high_pct=drawdown_from_recent_high_pct,
         suggested_regime=suggested_regime,

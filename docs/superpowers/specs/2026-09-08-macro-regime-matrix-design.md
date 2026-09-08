@@ -174,5 +174,27 @@ figures without parsing prose.
 4. **US macro driving ASX exposure** - deliberate, or a reason to seek AU series?
 5. **Disclaimer** - adopt the self-suppressing pattern above, or follow the
    document's literal every-output footnote?
-6. **Does the target ever apply automatically?** The recommendation here is no,
-   consistent with every other advisory output in this system.
+6. ~~**Does the target ever apply automatically?**~~ **ANSWERED 8 September:
+   NO.** Operator decision: *"This sits outside of the authority of autonomy,
+   resultant action must be human driven only for now."* The matrix computes and
+   the operator acts; nothing this produces may reach `RiskEngine.regime_scalar`
+   or any order path. This is now a constraint on the build, not a preference.
+
+---
+
+## 8. Progress
+
+**Phase 1, `HV` - DONE, 8 September.** `MacroSignal.baseline_vol_annualized_pct`,
+measured over 252 trading days, `None` when the history cannot support it and
+never `0.0`.
+
+⚠️ **The baseline EXCLUDES the realised window, and a test found that.** The
+first version ended the baseline at the last bar, so the 20 days `RV` measures
+sat inside `HV` too. A fixture of one calm year plus thirty violent days read
+`HV = 24.67%` against a calm year of about 6%. The bias always runs one way -
+RV rises and HV rises with it - so `((RV - HV) / HV)` understates the cut
+exactly when a shock is under way and the matrix should be de-risking hardest.
+`MIN_BARS_FOR_BASELINE_VOL` is therefore 273, not 253.
+
+Remaining in Phase 1: `SB`, volatility rate-of-change, the spreads-distress and
+term-structure classifiers, and the VIX threshold.
