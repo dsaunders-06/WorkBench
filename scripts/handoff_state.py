@@ -211,7 +211,7 @@ REPO = Path(__file__).resolve().parent.parent
 # Updated in the same minute as the copy, which is the whole of item 29. This
 # line was wrong for a day after M104, across the whole M130 deploy, and for
 # two hours after M139.
-DEPLOYED = "a23a98f"
+DEPLOYED = "0639a7c"
 HANDOFF = REPO / "docs" / "HANDOFF.md"
 
 

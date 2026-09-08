@@ -1,4 +1,4 @@
-# Handoff — 2 September 2026, after the manual-close merge and M162
+# Handoff — 8 September 2026, after M170 (the macro matrix reaches a screen)
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -14,7 +14,13 @@ misleading. Nothing was deleted; it was archived and this was written fresh.
 .\.venv\Scripts\python.exe scripts\handoff_state.py
 ```
 
-Everything below was true at the close on 21 August. Assume nothing still is.
+Everything below was true when written. Assume nothing still is.
+
+⚠️ **THE ROWS BELOW ARE NOT ALL AS FRESH AS EACH OTHER.** Deployed build,
+deploy gap, pushed and suite were re-derived on 8 September. **Account, broker,
+kill switch and watchlist were NOT** - they date from 3-4 September and are
+marked. Re-read them from `session_check.ps1` before quoting one; a stale row
+that looks like a current one is how this file went wrong before.
 
 ---
 
@@ -41,15 +47,15 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M163 (`06d3156`)**, installed 2 September 17:28, SHA256 `655C29AB…59D7`, signature Valid on the installed copy. ✅ **READ BACK 17:28:59** off its own log — `Build: M163 (06d3156, built 02/09/2026 17:23:26 AEST, packaged)`, 100 symbols seeded, ten positions adopted with **10 of 10 carrying a stop**, 20 legs, excursion 10 of 10, resting scan clean, zero ERROR/CRITICAL. The dist hash MOVED (`ED2A768E…C181` → `299027EF…C76A` unsigned → `655C29AB…59D7` signed), which is the check M160 failed. Rollback: `C:\QuantAdvisoryTerminal.bak-0961752-20260902-1728` (M162). Previous: M162, M161, M159 (read back 3×) |
-| Deploy gap | ⚠️ **M164 IS BUILT FROM NOTHING — 26 commits of live book risk are on `master` and NOT deployed.** The installed build is M163. Needs a build, a moved-hash check, sign, deploy and read-back. It changes only what is DISPLAYED and what the model is TOLD: the whole-branch review confirmed `git diff` over `oms/`, `engine.py`, `governor.py`, `kill_switch.py`, `delever.py` and `autonomy/` is EMPTY, and `book_risk` is imported by exactly two modules. Previously: ✅ **NONE — M163 WAS HEAD.** The manual position close (button + `PositionCloser` + `IBAdapter.cancel_order`) and the escaped-hold Status note both shipped in M163. The close button is **INERT until pressed** — no autonomous path reaches it — so this changed nothing unattended. ⚠️ **EXPECT THE FIRST PRESS TO REFUSE:** `cancelOrder` is fire-and-forget and `PendingCancel` is the ordinary transient of an HONOURED cancel, now correctly counted as a survivor. That branch deliberately does not recover, so the position is briefly **BARE** until `rearm_protective_stops` re-proposes a stop. The fix then is a bounded re-read (~3 polls over 2s) before declaring survivors — **NOT** a looser predicate |
+| Deployed build | **M170 (`0639a7c`)**, installed 8 September 22:17, SHA256 `6C838193…1489`, signature **Valid on the installed copy** and the sha256 matched after the copy. ⏳ **NOT YET READ BACK** — `deploy.ps1` says it plainly: *"Launch, then read the build stamp off its own log - the copy is not the check."* The app was closed for the deploy and has not been launched since, so the stamp in the log is still M169's. **First launch: confirm `Build: M170 (0639a7c, ...)` before trusting anything below about M170.** Rollback: `C:\QuantAdvisoryTerminal.bak-a23a98f-20260908-2217` (M169). Previous: M169, M168, M167, M166 |
+| Deploy gap | ✅ **NONE — M170 IS HEAD.** `handoff_state.py` derives it and says *"none - src/ is level with the deployed build"*. ⚠️ **Do not hardcode a gap here**; the row above it has been wrong ten times by being typed. The M170 change is ADVISORY ONLY by operator instruction — a second panel on the Regime Monitor that computes an exposure target and applies nothing — plus one execution-layer setting that is **off by default** (`QAT_REGIME_VIX_SERIES` stays `VIXCLS`, `QAT_BAR_MACRO_SERIES` ships empty). Two calibration constants DID move and they are not cosmetic: `_SPREAD_WIDENING_PCT` 2.5 → 3.0 and `_VOL_DIRECTION_TOLERANCE` 0.15 → 0.25. Both feed `MacroSignal`, which the matrix reads and the sizer does not |
 | Pushed | ⚠️ **DO NOT HARDCODE A COUNT HERE** — `handoff_state.py` derives it (`vs origin`), and every number written into this row has drifted within the hour. It said 17 on 2 September when the true count was 2. The M163 batch went up 2 September and CI ran green on it in 7m52s. ✅ **CI IS HEALTHY** — the billing wall cleared ~1 September and a 46-commit push ran green in **7m9s**. One push is one run, ~8.6 min of 2,000 at `windows-latest`'s 2× multiplier, so batch rather than push per commit |
-| Suite | **3,141 passed, 26 skipped** (was 3,076; M164 added 65). ruff, black, mypy src, bandit clean. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted", so `&&` hides a failure |
-| Watchlist | **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
+| Suite | **3,467 passed, 26 skipped** at `0639a7c` (was 3,141 at M164; M166-M170 added 326). ruff, black, mypy src, bandit all clean, and **CI green on every push of 8 September** — `d5d4260` 7m36s, `5d2bb7e` 8m6s, `8150b25` 8m25s. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted", so `&&` hides a failure. ⚠️ And never pipe `pytest` or `invoke build` through `tail`: it discards the exit code and the crash header. That has cost this project twice |
+| Watchlist | ⚠️ **AS AT 2 SEPTEMBER — NOT RE-CHECKED 8 SEPTEMBER.** **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
-| Account | ⚠️ **NINE POSITIONS, 18 resting legs, all protected** (3 Sept). TNE.AX stopped out at 30.69 overnight and was absorbed as a closed trade. ⚠️ **The app also tracks a PHANTOM 790 BHP.AX the broker does not hold** — a staged, never-transmitted order it booked anyway. Clears on restart. Previously: **TEN POSITIONS, 20 resting legs, all protected** — A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW, verified from the broker on every scan. Equity **1,007,638.94** at the 2 September close (+137.91 on the day, cash unchanged at 413,034.56). **No trade since 31 August** |
-| Broker | **TWS on 7497** since 1 September 17:40 (`QAT_IBKR_PORT` 4002 → 7497, backup `.env.bak-20260901-174044`). IB Gateway is closed. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
-| Kill switch | ⚠️ **TRIPPED 3 September 14:56:18 — `Broker reconciliation mismatch: BHP.AX tracked=790 broker=0`. A TRUE POSITIVE, and the rail working exactly as intended.** It persists to disk; a restart clears the phantom but the switch needs an explicit reset via the risk console. Previously: ✅ **CLEAR.** Tripped twice on 1 September, both TRUE POSITIVES and both self-inflicted by shutdown ORDER — closing the broker while the app still ran exhausted the adapter's reconnects. Reset 17:45:53 via the risk console; verified on disk (`{"tripped": false}`) and stayed clear through the whole 2 September session. ⚠️ **THE RULE: close the app FIRST, then the broker.** The reverse costs a reset every time. Quarantines: EMPTY |
+| Account | ⚠️ **AS AT 3 SEPTEMBER — NOT RE-CHECKED 8 SEPTEMBER, and the app has traded since: the operator reported 5 closed trades and a 40% win rate on 8 September, against the 7 rows this row's neighbour still quotes.** ⚠️ **NINE POSITIONS, 18 resting legs, all protected** (3 Sept). TNE.AX stopped out at 30.69 overnight and was absorbed as a closed trade. ⚠️ **The app also tracks a PHANTOM 790 BHP.AX the broker does not hold** — a staged, never-transmitted order it booked anyway. Clears on restart. Previously: **TEN POSITIONS, 20 resting legs, all protected** — A2M ANZ ASX BOQ IAG JHX SEK SUN TNE WOW, verified from the broker on every scan. Equity **1,007,638.94** at the 2 September close (+137.91 on the day, cash unchanged at 413,034.56). **No trade since 31 August** |
+| Broker | ⚠️ **AS AT 1 SEPTEMBER — NOT RE-CHECKED.** **TWS on 7497** since 1 September 17:40 (`QAT_IBKR_PORT` 4002 → 7497, backup `.env.bak-20260901-174044`). IB Gateway is closed. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
+| Kill switch | ⚠️ **RESET BY THE OPERATOR ON 8 SEPTEMBER and the session ran clean; the text below is the 3 September trip it was reset FROM.** ⚠️ **TRIPPED 3 September 14:56:18 — `Broker reconciliation mismatch: BHP.AX tracked=790 broker=0`. A TRUE POSITIVE, and the rail working exactly as intended.** It persists to disk; a restart clears the phantom but the switch needs an explicit reset via the risk console. Previously: ✅ **CLEAR.** Tripped twice on 1 September, both TRUE POSITIVES and both self-inflicted by shutdown ORDER — closing the broker while the app still ran exhausted the adapter's reconnects. Reset 17:45:53 via the risk console; verified on disk (`{"tripped": false}`) and stayed clear through the whole 2 September session. ⚠️ **THE RULE: close the app FIRST, then the broker.** The reverse costs a reset every time. Quarantines: EMPTY |
 | Ledgers | **7 closed trades.** ⚠️ **One LOV row is a REPAIR row with EMPTY costs**, so net P&L across LOV is **NOT summable from that file**. ⚠️ **All carry an EMPTY `entry_slippage`** — item 44: the field was never persisted, and M156 fixes that only for trades opened FROM NOW |
 
 
@@ -84,6 +90,128 @@ RECOVERY, logged at ERROR** — judge by content, never by count.
 
 ---
 ---
+---
+
+## ✅ 8 SEPTEMBER: M170 — FOUR PHASES OF TESTED CODE THAT HAD NEVER RUN
+
+The 8 September macro-matrix spec ended its own progress note with the problem:
+*"NOT YET WIRED TO A SCREEN. Nothing calls `build_macro_matrix_prompt` yet, so
+none of this has run against a live model."* Everything was unit-tested and
+nothing had executed. Four items, in the operator's order.
+
+⚠️ **STILL ADVISORY, AND THAT IS A CONSTRAINT ON THE BUILD.** Operator
+instruction, 8 September: *"This sits outside of the authority of autonomy,
+resultant action must be human driven only for now."* Nothing on the new panel
+reaches `RiskEngine.regime_scalar`, the sizer, or an order path.
+
+### 1. The matrix reaches a screen
+
+A second panel on the Regime Monitor — *Regime matrix — 7 regimes (advisory,
+nothing is applied)* — with its own button. **Two buttons on purpose:** one
+click running both would spend two model calls per press, and the panels answer
+different questions.
+
+Three things the wiring forced into the open:
+
+* **`BM` had no source.** `decide` refuses to default a baseline because the old
+  default was `MacroSignal.exposure_hint` — the FOUR-regime read's answer — so
+  the matrix could report Bull while lifting from a 0.30 baseline the other
+  classifier set because it saw Risk-Off. `baseline_from_risk_budget` derives it
+  from the account's own rails: the 5% gap budget against the 6% gap shock,
+  which `config.py` already describes as *"about 83% of equity"*.
+* **Nothing had ever checked the model's arithmetic.** `MacroMatrixNarrative`
+  carries echoed figures precisely so a disagreeing model is caught, and with no
+  caller nothing compared them. The service now does, and **corrects rather than
+  raises** — refusing the whole reply over a rounding difference would take the
+  deterministic half off the screen, and that half is the one with authority.
+* **Two ambiguities that would have blamed the model for the code's mistake.**
+  The prompt rendered `+3.20%` against a field named `change_pct`, leaving a
+  choice between 3.2 and 0.032. And the schema listed `shock`/`low_vol_drift` —
+  a THIRD taxonomy for seven states the matrix and the HMM already share.
+
+### 2. The flat-curve ceiling was borrowed from a market this account does not trade
+
+Measured against FRED readings since 2000. US `T10Y3M` median **+1.49**;
+Australian **+0.40**. The 0.50 ceiling calls **22.3% of Australian history flat**
+against 12.0% of American — and the live AU curve of **+0.371** sits at the
+**49th percentile of its own distribution**. An ordinary curve, read as a
+warning. Percentile-translated, the Australian ceiling is **+0.215**.
+
+**The default did NOT move.** The Australian rate series on FRED are monthly and
+were 99 days stale when measured. Naming a series is not feeding one.
+
+⚠️ **And `term_structure` had no reader at all** — not the matrix, which checks
+only `spreads`, not any prompt, not any screen. `MacroSignal.conditions_line`
+now carries the whole Phase 1 set onto the panel, **including on a refusal**.
+
+### 3. `^AXVI` could be named and not fed
+
+M169 made `vix_series` configurable; its own test said what that was worth.
+`BarSeriesFeed` bridges a daily-bar ticker onto the bus as a `MacroEvent`.
+
+⚠️ **It does NOT use `HistoricalBarSource`, and that is the point.** That falls
+back to SYNTHETIC bars by design, and a random walk entering the model as
+`^AXVI` would size the book with nothing able to tell. It refuses synthetic,
+empty, non-finite and older-than-five-days readings — measured, `^AJOVIX` 404s
+and `AU3M=F` returns zero rows, so the empty case is not hypothetical.
+
+⚠️ **Pre-flight now FAILS on a dead column.** Naming a series nothing publishes
+left `vix_level` at ZERO for a whole session — the column that led the raw
+feature spread at **85.1%** — while the engine fitted happily on a flat feature.
+
+### 4. The Phase 1 thresholds were conventions, and the module said so
+
+| threshold | was | measured | now |
+|---|---|---|---|
+| spreads widening | 2.5 | 68.5th pct — true on **31.5% of days** since 1986 | **3.0** (12.6%) |
+| spreads distressed | 3.5 | 97.1st pct — 2.9% of days, 28.5% of GFC, 6.8% of COVID, 0.0% of 2024‑26 | unchanged |
+| RV/HV shock | 1.5 | 90.5th pct of ^AXJO (9.5% of days) | unchanged |
+| VIX shock level | 25.0 | 82.7nd pct of VIXCLS (17.3%) | unchanged, now per‑series |
+| vol direction | 0.15 | called **64.5% of days a TREND** | **0.25** (54.9% steady) |
+| index direction | 0.10 | median monthly move 0.110 | unchanged |
+
+"Widening" was the weather. The band that MATTERS was vindicated: `distressed`
+is the single condition separating BEAR from RECESSION, which **halves the
+book**, and it is rare and present in genuine credit crises.
+
+The volatility band was backwards on its own terms — its stated job is to
+separate a trend from sampling noise, and the median move exceeds it. RECOVERY
+requires `vol_direction == "falling"`, so it was firing on sampling error.
+
+⚠️ **AND ONE THRESHOLD WAS A HIDDEN SWITCH.** `compute_macro_signal` looked up
+`"VIXCLS"` by a **hardcoded literal** while `vix_series` had been made
+configurable. Pointing this application's VIX at `^AXVI` would move the regime
+engine's column and strand this reading on a series nobody publishes —
+`vix_shock` `None` all session, and **`None` is not "no shock": it removes the
+SHOCK row from the matrix entirely.** Both series and level are now settings,
+both panels read them, and pre-flight WARNS when one moves without the other.
+
+**No Australian shock level is offered.** `^AXVI` reaches 25.0 on 0.2% of ASX
+days so the American figure cannot travel — but the percentile translation
+(13.13) comes from two years containing no crisis, and a stress threshold
+calibrated on a sample with no stress in it is worse than none. What is needed
+is a longer `^AXVI` history than Yahoo serves.
+
+### ⚠️ TWO SABOTAGES ESCAPED OUT OF TWENTY-FOUR
+
+Both closed and re-verified:
+
+* deleting the screen's two VIX keyword arguments left **all seventeen panel
+  tests green** — the wiring keeping an `^AXVI` operator's SHOCK regime alive
+  was itself unguarded;
+* the unregistered-series refusal test fed a fixture the fallback would have
+  failed on anyway, so it passed whether the code refused or guessed.
+
+**Same shape both times, and it is the lesson worth carrying:** a test asserting
+ABSENCE must first prove the fixture would produce PRESENCE.
+
+### What an operator can now do, and the pair that must move together
+
+To localise the volatility input: set `QAT_REGIME_VIX_SERIES=^AXVI`, add `^AXVI`
+to `QAT_BAR_MACRO_SERIES`, set `QAT_MARKET_DATA_SOURCE=yfinance`, **and move
+`QAT_VIX_SHOCK_LEVEL` off 25.0.** Miss the second and pre-flight FAILS; miss the
+fourth and it WARNS. Both were silent before today.
+
 ---
 
 ## ⚠️ 4 SEPTEMBER: THE APP HAD NEVER ASKED IBKR FOR MARKET DATA
