@@ -31,7 +31,6 @@ rather than a silent "sideways".
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 from qat.domain.macro_analysis.growth import GrowthRead
 from qat.domain.macro_analysis.signal import MacroSignal
@@ -58,11 +57,13 @@ MATRIX_REGIME_DISPLAY: dict[Regime, str] = {
     Regime.SIDEWAYS: "Sideways / Choppy",
 }
 
-# ⚠️ CONVENTIONAL, NOT MEASURED - the same caveat Phase 1 and 2's thresholds
-# carry, and the same reason they are named: so they can be argued with. Year-on
-# -year real growth, in per cent.
-_GROWTH_LOW_PCT = 1.5
-_GROWTH_HIGH_PCT = 3.0
+# ⚠️ THE GROWTH BUCKETS LIVE WITH THE READER THAT KNOWS THE UNITS, not here.
+# This module used to derive them from a year-on-year percentage with thresholds
+# it invented (1.5% and 3.0%) - which works for a level series and is MEANINGLESS
+# for an activity index, where zero already IS trend growth. `GrowthRead.bucket`
+# now arrives decided, and choosing CFNAI-MA3 replaces those two invented
+# numbers with the Chicago Fed's published bands.
+#
 # How far a shock's realised volatility must exceed the baseline to count as a
 # SPIKE rather than merely elevated. The document writes it "RV >> HV".
 _SHOCK_VOL_MULTIPLE = 1.5
@@ -133,16 +134,6 @@ class MatrixRefusal:
         )
 
 
-def _growth_bucket(yoy_pct: float) -> Literal["negative", "low", "normal", "high"]:
-    if yoy_pct < 0.0:
-        return "negative"
-    if yoy_pct < _GROWTH_LOW_PCT:
-        return "low"
-    if yoy_pct < _GROWTH_HIGH_PCT:
-        return "normal"
-    return "high"
-
-
 def decide(
     signal: MacroSignal,
     growth: GrowthRead | None,
@@ -189,9 +180,11 @@ def decide(
     hv = signal.baseline_vol_annualized_pct
     rv = signal.realized_vol_annualized_pct
     bm = baseline
-    bucket = _growth_bucket(growth.yoy_pct)
+    bucket = growth.bucket
     reasons = [
-        f"growth {growth.yoy_pct:+.1f}% y/y ({bucket})",
+        # ⚠️ The reading in ITS OWN units. This module cannot format a number
+        # whose units it does not know, and must not try.
+        f"growth {growth.summary} ({bucket})",
         f"RV {rv:.1f}% vs HV {hv:.1f}%",
     ]
 

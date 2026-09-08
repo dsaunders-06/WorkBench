@@ -60,9 +60,23 @@ def _signal(
     )
 
 
+def _bucket(yoy: float) -> str:
+    """Mirrors `classify_growth`'s own bucketing, so a fixture's yoy value still
+    implies the regime the test is reasoning about."""
+    if yoy < 0.0:
+        return "negative"
+    if yoy < 1.5:
+        return "low"
+    if yoy < 3.0:
+        return "normal"
+    return "high"
+
+
 def _growth(yoy: float, direction: str | None = "flattening") -> GrowthRead:
     return GrowthRead(
         series="GDPC1",
+        bucket=_bucket(yoy),  # type: ignore[arg-type]
+        summary=f"{yoy:+.1f}% y/y",
         yoy_pct=yoy,
         direction=direction,  # type: ignore[arg-type]
         as_of=datetime(2026, 6, 30, tzinfo=UTC),
