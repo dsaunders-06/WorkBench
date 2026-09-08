@@ -2921,24 +2921,27 @@ def _config_reference(doc: Any) -> None:
                 "moderate",
                 "Risk appetite for the MACRO REGIME MATRIX, the deterministic read that "
                 "proposes an exposure target from volatility and market conditions. Three "
-                "named mandates, each fixing the safety buffer the matrix scales its "
-                "suggested lifts and cuts by: CONSERVATIVE (buffer 0.10) for wealth "
+                "named mandates, each fixing the BASELINE SCALING UNIT the matrix scales "
+                "its proposed exposure shifts by: CONSERVATIVE (0.10) for wealth "
                 "preservation or a regulated client account; MODERATE (0.20), the balanced "
                 "baseline and the default; AGGRESSIVE (0.35) for absolute-return mandates "
-                "using heavy leverage or large cash swings. A NAMED MANDATE rather than a "
-                'free number on purpose - "why is the buffer 0.27?" has no answer anyone '
-                'can audit afterwards, where "the account is on a conservative mandate" '
-                "does. AN UNRECOGNISED VALUE IS A STARTUP ERROR, not a silent fallback to "
-                "the default: an account running on a buffer nobody chose is the failure "
-                "this refuses. ADVISORY ONLY - the matrix computes a suggested exposure "
-                "target and the OPERATOR decides whether to act on it. Nothing it produces "
-                "reaches the risk engine, the sizer or any order path, and that is a "
-                "standing instruction rather than a current limitation. NOTE that the "
-                "mandates are described as capping the exposure change at plus or minus the "
-                "buffer, and the source method does not keep that promise in every regime - "
-                "a bear-market cut is unbounded above, the recovery case adds a further 5%, "
-                "and the recession case halves the baseline outright regardless of the "
-                "buffer. Read the figure the screen reports rather than assuming the cap.",
+                "using heavy leverage or large cash swings. THIS IS A SCALING UNIT, NOT A "
+                "CAP. It sets how hard the portfolio leans into a given deviation from "
+                "normal volatility - a higher unit means a larger shift for the same "
+                "signal - and total swings are DYNAMIC and CAN EXCEED it under extreme "
+                "market stress, deliberately, so that downside protection stays adequate "
+                "when it matters most. In practice a bear-market cut is unbounded above, "
+                "the recovery case adds a further 5%, the volatility-shock case is a flat "
+                "10% regardless, and the recession case halves the baseline outright. Read "
+                "the figure the screen reports rather than assuming a boundary. A NAMED "
+                'MANDATE rather than a free number on purpose - "why is the unit 0.27?" '
+                'has no answer anyone can audit afterwards, where "the account is on a '
+                'conservative mandate" does. AN UNRECOGNISED VALUE IS A STARTUP ERROR, '
+                "not a silent fallback to the default: an account running at a "
+                "responsiveness nobody chose is the failure this refuses. ADVISORY ONLY - "
+                "the matrix computes and the OPERATOR decides whether to act. Nothing it "
+                "produces reaches the risk engine, the sizer or any order path, and that "
+                "is a standing instruction rather than a current limitation.",
             ),
             (
                 "QAT_BROKER_MAX_ORDER_SHARES",

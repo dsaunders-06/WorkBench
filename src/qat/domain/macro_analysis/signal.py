@@ -47,25 +47,30 @@ MACRO_REGIME_EXPOSURE_HINT: dict[str, float] = {
 
 RiskMandate = Literal["conservative", "moderate", "aggressive"]
 
-# `SB` - the safety buffer every lift and cut in the 7-regime matrix is scaled
-# by, and so the single most consequential constant in the calculation.
+# `SB` - the BASELINE SCALING UNIT the 7-regime matrix scales its exposure
+# shifts by. Operator definition, 8 September 2026:
 #
-# ⚠️ A NAMED MANDATE, NOT A FREE FLOAT, at the operator's direction. "Why is the
-# buffer 0.27?" has no answer a reader can audit; "the account is on a
-# conservative mandate" does. Same reasoning as `trading_mode` and
-# `execution_mode`.
+#   "The baseline multiplier used to scale exposure shifts. Total portfolio
+#    swings are dynamic and CAN EXCEED this value during extreme market stress
+#    to ensure adequate downside protection."
 #
-# ⚠️ THE DESCRIPTIONS PROMISE A CAP THE DOCUMENT'S MATH DOES NOT KEEP, and that
-# is recorded here rather than quietly assumed away. Each mandate is written as
-# "caps the maximum exposure change at +/- SB". True for the two LIFT regimes,
-# where `(HV - RV) / HV` cannot exceed 1 while RV is positive. NOT true for:
-#   * BEAR - `((RV - HV) / HV) * SB` is unbounded above. RV at three times HV
-#     gives a cut of 2 * SB, double the stated cap.
-#   * RECOVERY - adds a flat 0.05 kicker ON TOP of the buffer.
-#   * SHOCK - a flat 0.10, regardless of SB.
-#   * RECESSION - `BM * 0.50`, which ignores SB entirely.
-# Whether to clamp is a Phase 3 decision; see the spec. Nothing here clamps.
-MANDATE_SAFETY_BUFFER: dict[str, float] = {
+# ⚠️ NOT A CAP, AND THE NAME SAYS SO NOW. An earlier version of this called it a
+# "safety buffer" that "caps the maximum exposure change at +/- SB", and the
+# arithmetic never kept that promise: `((RV - HV) / HV) * SB` is unbounded above
+# in a BEAR regime, RECOVERY adds a flat 0.05 on top, SHOCK is a flat 0.10 and
+# RECESSION halves the baseline outright. On a moderate mandate a bear market
+# with RV at three times HV computes a 40% cut.
+#
+# That behaviour is INTENDED - a downside response that stopped at the buffer
+# would under-protect in exactly the conditions it exists for - so the
+# definition changed rather than the maths. `MANDATE_SAFETY_BUFFER` and
+# `safety_buffer_for` were renamed with it: a constant named "buffer" re-teaches
+# the misconception every time someone reads it.
+#
+# What SB DOES set is RESPONSIVENESS: how hard the portfolio leans into a given
+# deviation from normal volatility. Higher unit, larger swing for the same
+# signal.
+MANDATE_SCALING_UNIT: dict[str, float] = {
     # Wealth preservation, or a highly regulated client account.
     "conservative": 0.10,
     # The balanced baseline.
@@ -75,13 +80,13 @@ MANDATE_SAFETY_BUFFER: dict[str, float] = {
 }
 
 
-def safety_buffer_for(mandate: str) -> float:
-    """The buffer for a named mandate.
+def scaling_unit_for(mandate: str) -> float:
+    """The baseline scaling unit `SB` for a named mandate.
 
     ⚠️ Raises on an unknown name rather than falling back. A default here would
-    run the account on a buffer nobody chose and say nothing about it.
+    run the account on a responsiveness nobody chose and say nothing about it.
     """
-    return MANDATE_SAFETY_BUFFER[mandate]
+    return MANDATE_SCALING_UNIT[mandate]
 
 
 _TRADING_DAYS_PER_YEAR = 252

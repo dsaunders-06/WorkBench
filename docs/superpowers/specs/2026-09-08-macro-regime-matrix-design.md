@@ -174,11 +174,11 @@ figures without parsing prose.
 4. **US macro driving ASX exposure** - deliberate, or a reason to seek AU series?
 5. **Disclaimer** - adopt the self-suppressing pattern above, or follow the
    document's literal every-output footnote?
-7. **Should `SB` actually CAP the change?** The mandate descriptions say it
-   does; the source arithmetic says otherwise for four of the seven regimes (see
-   section 8). Either clamp every regime to `+/- SB` - which changes the
-   document's stated maths - or reword the mandates to describe what they
-   really do. Doing neither leaves a setting whose description is wrong.
+7. ~~**Should `SB` actually CAP the change?**~~ **ANSWERED 8 September: NO.**
+   `SB` is redefined as the Baseline Scaling Unit - responsiveness, not a
+   boundary - and swings may exceed it under stress by design. The maths stands
+   as the source document writes it; the description and the constant names
+   changed instead.
 
 6. ~~**Does the target ever apply automatically?**~~ **ANSWERED 8 September:
    NO.** Operator decision: *"This sits outside of the authority of autonomy,
@@ -207,10 +207,19 @@ mandate rather than a free float at the operator's direction:
 conservative 0.10, moderate 0.20 (default), aggressive 0.35. An unrecognised
 value is a startup error, never a silent fallback.
 
-⚠️ **THE MANDATE DESCRIPTIONS PROMISE A CAP THE DOCUMENT'S MATH DOES NOT KEEP,
-and Phase 3 must decide what to do about it.** Each mandate is described as
-"caps the maximum exposure change at +/- SB". That holds only for the two LIFT
-regimes, where `(HV - RV) / HV` cannot exceed 1 while RV is positive:
+⚠️ **`SB` IS A SCALING UNIT, NOT A CAP - RESOLVED 8 September.** The mandates
+were first described as "caps the maximum exposure change at +/- SB", and the
+arithmetic never kept that promise. The operator's correction redefines the
+variable rather than changing the maths:
+
+> *"Baseline Scaling Unit: the baseline multiplier used to scale exposure
+> shifts. Total portfolio swings are dynamic and can exceed this value during
+> extreme market stress to ensure adequate downside protection."*
+
+So exceeding `SB` is INTENDED, not a defect - a downside response that stopped at
+the unit would under-protect in exactly the conditions it exists for. The table
+below records where that happens, and it is behaviour to preserve rather than
+clamp:
 
 | Regime | Formula | Bounded by SB? |
 |---|---|---|
@@ -221,9 +230,12 @@ regimes, where `(HV - RV) / HV` cannot exceed 1 while RV is positive:
 | RECESSION | `BM * 0.50` | **NO - ignores SB** |
 | SIDEWAYS | `BM` | n/a, no change |
 
-⚠️ On a moderate mandate a bear market with RV at three times HV computes a
-**40% cut** where the setting's own description says 20%. Nothing clamps today.
-**Phase 3 open question 7 (below) is whether it should.**
+On a moderate mandate a bear market with RV at three times HV computes a **40%
+cut**. That is the intended dynamic response. ⚠️ **Phase 3 must NOT clamp**, and
+must not reintroduce the word "cap" anywhere near `SB`: the constants were
+renamed from `MANDATE_SAFETY_BUFFER` / `safety_buffer_for` to
+`MANDATE_SCALING_UNIT` / `scaling_unit_for` precisely because a name carrying
+"buffer" re-teaches the misconception to every later reader.
 
 Remaining in Phase 1: volatility rate-of-change, the spreads-distress and
 term-structure classifiers, and the VIX threshold.
