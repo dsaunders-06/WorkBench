@@ -174,6 +174,12 @@ figures without parsing prose.
 4. **US macro driving ASX exposure** - deliberate, or a reason to seek AU series?
 5. **Disclaimer** - adopt the self-suppressing pattern above, or follow the
    document's literal every-output footnote?
+7. **Should `SB` actually CAP the change?** The mandate descriptions say it
+   does; the source arithmetic says otherwise for four of the seven regimes (see
+   section 8). Either clamp every regime to `+/- SB` - which changes the
+   document's stated maths - or reword the mandates to describe what they
+   really do. Doing neither leaves a setting whose description is wrong.
+
 6. ~~**Does the target ever apply automatically?**~~ **ANSWERED 8 September:
    NO.** Operator decision: *"This sits outside of the authority of autonomy,
    resultant action must be human driven only for now."* The matrix computes and
@@ -196,5 +202,28 @@ RV rises and HV rises with it - so `((RV - HV) / HV)` understates the cut
 exactly when a shock is under way and the matrix should be de-risking hardest.
 `MIN_BARS_FOR_BASELINE_VOL` is therefore 273, not 253.
 
-Remaining in Phase 1: `SB`, volatility rate-of-change, the spreads-distress and
+**Phase 1, `SB` - DONE, 8 September.** `Settings.macro_risk_mandate`, a named
+mandate rather than a free float at the operator's direction:
+conservative 0.10, moderate 0.20 (default), aggressive 0.35. An unrecognised
+value is a startup error, never a silent fallback.
+
+⚠️ **THE MANDATE DESCRIPTIONS PROMISE A CAP THE DOCUMENT'S MATH DOES NOT KEEP,
+and Phase 3 must decide what to do about it.** Each mandate is described as
+"caps the maximum exposure change at +/- SB". That holds only for the two LIFT
+regimes, where `(HV - RV) / HV` cannot exceed 1 while RV is positive:
+
+| Regime | Formula | Bounded by SB? |
+|---|---|---|
+| BULL, LOW VOL DRIFT | `((HV - RV) / HV) * SB` | yes |
+| BEAR | `((RV - HV) / HV) * SB` | **NO - unbounded above.** RV at 3x HV gives 2 * SB |
+| RECOVERY | `... * SB + 0.05` | **NO - exceeds SB by the kicker** |
+| SHOCK | flat `0.10` | **NO - ignores SB** |
+| RECESSION | `BM * 0.50` | **NO - ignores SB** |
+| SIDEWAYS | `BM` | n/a, no change |
+
+⚠️ On a moderate mandate a bear market with RV at three times HV computes a
+**40% cut** where the setting's own description says 20%. Nothing clamps today.
+**Phase 3 open question 7 (below) is whether it should.**
+
+Remaining in Phase 1: volatility rate-of-change, the spreads-distress and
 term-structure classifiers, and the VIX threshold.

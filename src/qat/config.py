@@ -224,6 +224,30 @@ class Settings(BaseSettings):
     # than a misconfiguration. 1.0 disables the cap.
     max_order_pct_of_cash: float = Field(default=0.10, ge=0.0, le=1.0)
 
+    # Risk appetite for the macro regime matrix, which scales every lift and cut
+    # it computes by the mandate's safety buffer (`SB`):
+    #
+    #   conservative  SB 0.10  - wealth preservation, regulated client accounts
+    #   moderate      SB 0.20  - the balanced baseline (default)
+    #   aggressive    SB 0.35  - absolute-return mandates, heavy leverage
+    #
+    # ⚠️ A NAMED MANDATE rather than a free float, deliberately: "why is the
+    # buffer 0.27?" has no auditable answer, "the account is on a conservative
+    # mandate" does. The values live in `domain/macro_analysis/signal.py`
+    # (`MANDATE_SAFETY_BUFFER`) beside the exposure hints they work with.
+    #
+    # ⚠️ ADVISORY ONLY, AND THAT IS AN OPERATOR CONSTRAINT rather than a
+    # preference: "this sits outside of the authority of autonomy, resultant
+    # action must be human driven only for now" (8 September 2026). Nothing this
+    # buffer feeds may reach `RiskEngine.regime_scalar` or any order path.
+    #
+    # ⚠️ The mandate descriptions say "caps the change at +/- SB", and the
+    # source document's own arithmetic does NOT keep that promise everywhere -
+    # the BEAR cut is unbounded above, RECOVERY adds 0.05 on top, SHOCK is a
+    # flat 0.10 and RECESSION halves the baseline outright. See
+    # `MANDATE_SAFETY_BUFFER` and the design spec; nothing clamps yet.
+    macro_risk_mandate: Literal["conservative", "moderate", "aggressive"] = "moderate"
+
     # The largest share count this broker will accept without holding the order
     # for manual confirmation. NOT queryable through the IBKR API - it is a
     # TWS-local Precautionary Settings value - so the app has to be told it.

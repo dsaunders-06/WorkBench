@@ -45,6 +45,45 @@ MACRO_REGIME_EXPOSURE_HINT: dict[str, float] = {
     "risk_off": 0.3,
 }
 
+RiskMandate = Literal["conservative", "moderate", "aggressive"]
+
+# `SB` - the safety buffer every lift and cut in the 7-regime matrix is scaled
+# by, and so the single most consequential constant in the calculation.
+#
+# ⚠️ A NAMED MANDATE, NOT A FREE FLOAT, at the operator's direction. "Why is the
+# buffer 0.27?" has no answer a reader can audit; "the account is on a
+# conservative mandate" does. Same reasoning as `trading_mode` and
+# `execution_mode`.
+#
+# ⚠️ THE DESCRIPTIONS PROMISE A CAP THE DOCUMENT'S MATH DOES NOT KEEP, and that
+# is recorded here rather than quietly assumed away. Each mandate is written as
+# "caps the maximum exposure change at +/- SB". True for the two LIFT regimes,
+# where `(HV - RV) / HV` cannot exceed 1 while RV is positive. NOT true for:
+#   * BEAR - `((RV - HV) / HV) * SB` is unbounded above. RV at three times HV
+#     gives a cut of 2 * SB, double the stated cap.
+#   * RECOVERY - adds a flat 0.05 kicker ON TOP of the buffer.
+#   * SHOCK - a flat 0.10, regardless of SB.
+#   * RECESSION - `BM * 0.50`, which ignores SB entirely.
+# Whether to clamp is a Phase 3 decision; see the spec. Nothing here clamps.
+MANDATE_SAFETY_BUFFER: dict[str, float] = {
+    # Wealth preservation, or a highly regulated client account.
+    "conservative": 0.10,
+    # The balanced baseline.
+    "moderate": 0.20,
+    # Absolute-return mandates using heavy leverage or large cash swings.
+    "aggressive": 0.35,
+}
+
+
+def safety_buffer_for(mandate: str) -> float:
+    """The buffer for a named mandate.
+
+    ⚠️ Raises on an unknown name rather than falling back. A default here would
+    run the account on a buffer nobody chose and say nothing about it.
+    """
+    return MANDATE_SAFETY_BUFFER[mandate]
+
+
 _TRADING_DAYS_PER_YEAR = 252
 _VOL_LOOKBACK_DAYS = 20
 
