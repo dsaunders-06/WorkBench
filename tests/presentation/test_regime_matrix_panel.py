@@ -365,3 +365,31 @@ async def test_the_regime_is_held_rather_than_flipped_by_one_contrary_reading(
     text = screen.matrix_decision_label.text()
     assert "Bull Market" in text, "one contrary reading changed the reported regime"
     assert isinstance(screen._matrix_gate.settle(MatrixRefusal(missing=("x",))), MatrixRefusal)
+
+
+@pytest.mark.asyncio
+async def test_the_measured_inputs_are_shown_beside_the_regime(qtbot, tmp_path) -> None:
+    """⚠️ Every Phase 1 classifier was computed and displayed nowhere. A panel
+    that states a regime without the readings it came from cannot be argued
+    with."""
+    screen = _screen(qtbot, tmp_path)
+
+    await screen._analyse_matrix()
+
+    conditions = screen.matrix_conditions_label.text()
+    assert "Realised vol" in conditions
+    assert "curve" in conditions
+    assert "spreads" in conditions
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_still_shows_what_WAS_measured(qtbot, tmp_path) -> None:
+    """⚠️ A refusal names the missing input. Without this it names nothing
+    else, and an operator cannot tell a matrix short one series from one that
+    measured nothing at all."""
+    screen = _screen(qtbot, tmp_path, growth=_RaisingGrowth())
+
+    await screen._analyse_matrix()
+
+    assert "NO REGIME" in screen.matrix_decision_label.text()
+    assert "Realised vol" in screen.matrix_conditions_label.text()

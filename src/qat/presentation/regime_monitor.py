@@ -212,6 +212,15 @@ class RegimeMonitorScreen(QWidget):
         self.matrix_decision_label.setStyleSheet(theme.text(bold=True))
         box_layout.addWidget(self.matrix_decision_label)
 
+        # The measured inputs the regime was read FROM. Without this the whole
+        # Phase 1 classifier set - curve, spreads, VIX shock, the baseline
+        # volatility every formula divides by - is computed and never seen, and
+        # a refusal names what was missing without ever showing what was there.
+        self.matrix_conditions_label = QLabel("")
+        self.matrix_conditions_label.setWordWrap(True)
+        self.matrix_conditions_label.setStyleSheet(theme.text(theme.MUTED, size=theme.CAPTION))
+        box_layout.addWidget(self.matrix_conditions_label)
+
         # Its own line, ABOVE the prose. The friction reading is a computed fact
         # and must not be something the reader has to find inside a paragraph.
         self.matrix_friction_label = QLabel("")
@@ -235,6 +244,7 @@ class RegimeMonitorScreen(QWidget):
     async def _analyse_matrix(self) -> None:
         self.matrix_button.setEnabled(False)
         self.matrix_decision_label.setText("Matrix: computing...")
+        self.matrix_conditions_label.setText("")
         self.matrix_friction_label.setText("")
         self.matrix_ai_output.clear()
         try:
@@ -245,6 +255,11 @@ class RegimeMonitorScreen(QWidget):
                     "estimated from a short window."
                 )
                 return
+
+            # Rendered whatever the matrix then decides, INCLUDING a refusal -
+            # the inputs that were present are as much a part of the answer as
+            # the one that was missing.
+            self.matrix_conditions_label.setText(signal.conditions_line())
 
             settings = self.runtime.settings
             decision = self._matrix_gate.settle(
