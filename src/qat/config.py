@@ -249,6 +249,27 @@ class Settings(BaseSettings):
     # feeds may reach `RiskEngine.regime_scalar` or any order path.
     macro_risk_mandate: Literal["conservative", "moderate", "aggressive"] = "moderate"
 
+    # The FRED series the macro regime matrix reads its GROWTH axis from -
+    # `GDPC1` for US real GDP, `INDPRO` for US industrial production, and so on.
+    #
+    # ⚠️ EMPTY BY DEFAULT, AND DELIBERATELY SO. Every regime in the matrix keys
+    # on growth, and QAT has never measured any: what it has is PRICE TREND
+    # against a 50-day average, which is a share index and not an economy.
+    # Reading one as the other is the category error the design spec forbids, so
+    # until a series is named there is NO growth axis and the matrix refuses the
+    # regimes that need one rather than approximating them.
+    #
+    # ⚠️ CHOOSING THIS ALSO CHOOSES AN ECONOMY. The book is ASX; every FRED
+    # series already polled here is US. A US growth reading driving exposure on
+    # an Australian book is a claim worth making deliberately rather than
+    # inheriting - see section 5.1 of the spec.
+    #
+    # ⚠️ AND EVERY CANDIDATE IS LAGGED. Real GDP is quarterly, published a month
+    # or more after the quarter closes, and Australian GDP later still - a
+    # reading can be five months old before it moves. `GrowthRead.age_days`
+    # carries that so it can be judged rather than discovered.
+    macro_growth_series: str = ""
+
     # The largest share count this broker will accept without holding the order
     # for manual confirmation. NOT queryable through the IBKR API - it is a
     # TWS-local Precautionary Settings value - so the app has to be told it.

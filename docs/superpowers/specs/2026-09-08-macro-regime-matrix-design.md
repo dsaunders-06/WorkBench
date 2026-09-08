@@ -268,4 +268,41 @@ bands (2.5 widening, 3.5 distressed) and the direction tolerance (15%) are
 judgement calls from common usage, NOT validated against this account's history.
 They are named constants so they can be argued with. **Open question 8 below.**
 
-Phase 1 is done. Phase 2 - the growth axis - is next and is the research task.
+**Phase 2, the growth axis - MACHINERY DONE, SERIES UNCHOSEN, 8 September.**
+`domain/macro_analysis/growth.py`: `classify_growth(observations)` over any FRED
+history, returning year-on-year growth, its direction (accelerating / flattening
+/ decelerating) and how old the reading is.
+
+⚠️ **FROM A LEVEL, NOT A RATE.** `GDPC1` and `INDPRO` are index levels. Reading
+one straight off would report "growth" of 22,000; the year-on-year change is what
+the matrix's growth axis means.
+
+⚠️ **`Settings.macro_growth_series` SHIPS EMPTY, AND THAT IS THE POINT.** Naming
+a default would silently answer open question 3 - and with it question 4, since
+choosing a series chooses an economy and every FRED series polled today is US
+while the book is ASX. Until one is named there is no growth axis and Phase 3
+refuses the regimes that need one. **The remaining work of Phase 2 is a decision,
+not code.**
+
+⚠️ **EVERY CANDIDATE IS LAGGED.** Real GDP is quarterly and published a month or
+more after the quarter closes; Australian GDP later still - five months stale is
+achievable. `GrowthRead.age_days` carries that so Phase 3 can judge it. The
+module deliberately does NOT refuse on age: what counts as too stale depends on
+the series, and inventing a limit before the series exists is guessing twice.
+
+Candidates, with the trade-off that matters:
+
+| Series | Economy | Frequency | Practical lag |
+|---|---|---|---|
+| `GDPC1` | US | quarterly | ~1 month after quarter end |
+| `INDPRO` | US | monthly | ~2 weeks - timelier, narrower |
+| `GDPNOW` | US | ~weekly | current, but a model estimate |
+| AU real GDP | Australia | quarterly | ~2 months after quarter end |
+
+⚠️ Note that `T10Y3M` - already polled, already classified in Phase 1 - is itself
+a conventional recession signal. Using it as the growth axis too would make one
+input drive two axes of the matrix, which is double-counting rather than
+corroboration. Recorded so it is not done by accident.
+
+Phase 3 - the matrix and the arithmetic - is next, and can be built for the
+volatility-driven regimes without waiting on the series choice.

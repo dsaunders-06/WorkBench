@@ -2917,6 +2917,27 @@ def _config_reference(doc: Any) -> None:
                 "broker does not report cash the order is REFUSED, not waved through.",
             ),
             (
+                "QAT_MACRO_GROWTH_SERIES",
+                "(empty)",
+                "The FRED series the macro regime matrix reads its GROWTH axis from - for "
+                "example GDPC1 for US real GDP, or INDPRO for US industrial production. "
+                "EMPTY BY DEFAULT, AND DELIBERATELY: every regime in that matrix keys on "
+                "growth, and this application has never measured any. What it has is PRICE "
+                "TREND against a 50-day average, which describes a share index rather than "
+                "an economy, and reading one as the other would put a market's momentum "
+                "where a country's output belongs. Until a series is named there is NO "
+                "growth axis, and the matrix REFUSES the regimes that need one rather than "
+                "approximating them - so a blank here costs you the recession and recovery "
+                "readings and nothing else. CHOOSING THIS ALSO CHOOSES AN ECONOMY: this "
+                "account trades the ASX, and every FRED series already polled is American, "
+                "so a US growth reading steering an Australian book is a decision to make "
+                "on purpose rather than inherit. AND EVERY CANDIDATE IS LAGGED - real GDP "
+                "is quarterly and published a month or more after the quarter closes, "
+                "Australian GDP later still, so a reading can be five months old before it "
+                "moves at all. The screen reports how old the figure is; read that before "
+                "acting on it.",
+            ),
+            (
                 "QAT_MACRO_RISK_MANDATE",
                 "moderate",
                 "Risk appetite for the MACRO REGIME MATRIX, the deterministic read that "
