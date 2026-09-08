@@ -174,8 +174,14 @@ figures without parsing prose.
 4. **US macro driving ASX exposure** - deliberate, or a reason to seek AU series?
 5. **Disclaimer** - adopt the self-suppressing pattern above, or follow the
    document's literal every-output footnote?
+8. **Are the Phase 1 thresholds right?** The flat-curve ceiling, the two
+   spread bands and the volatility-direction tolerance are conventional numbers,
+   not measured ones. The spread bands in particular decide BEAR versus
+   RECESSION, which is the largest single difference in the matrix - a bear cut
+   scales with volatility, a recession halves the baseline outright.
+
 7. ~~**Should `SB` actually CAP the change?**~~ **ANSWERED 8 September: NO.**
-   `SB` is redefined as the Baseline Scaling Unit - responsiveness, not a
+   `SB` is redefined as the Risk Scaling Unit - responsiveness, not a
    boundary - and swings may exceed it under stress by design. The maths stands
    as the source document writes it; the description and the constant names
    changed instead.
@@ -212,7 +218,7 @@ were first described as "caps the maximum exposure change at +/- SB", and the
 arithmetic never kept that promise. The operator's correction redefines the
 variable rather than changing the maths:
 
-> *"Baseline Scaling Unit: the baseline multiplier used to scale exposure
+> *"Risk Scaling Unit: the baseline multiplier used to scale exposure
 > shifts. Total portfolio swings are dynamic and can exceed this value during
 > extreme market stress to ensure adequate downside protection."*
 
@@ -237,5 +243,29 @@ renamed from `MANDATE_SAFETY_BUFFER` / `safety_buffer_for` to
 `MANDATE_SCALING_UNIT` / `scaling_unit_for` precisely because a name carrying
 "buffer" re-teaches the misconception to every later reader.
 
-Remaining in Phase 1: volatility rate-of-change, the spreads-distress and
-term-structure classifiers, and the VIX threshold.
+**Phase 1 COMPLETE, 8 September.** The remaining four landed together, all on
+`MacroSignal`:
+
+| Field | Source | Serves |
+|---|---|---|
+| `vol_direction` | RV this window vs the one before | RECOVERY's "subsiding volatility" |
+| `vix_shock` | `VIXCLS > 25` | SHOCK's second trigger |
+| `term_structure` | `T10Y3M` -> normal / flat / inverted | the document's named input |
+| `spreads` | `BAA10Y` -> normal / widening / distressed | **the BEAR/RECESSION split** |
+
+`VIXCLS`, `T10Y3M` and `BAA10Y` had been fetched every session and read by
+nothing. Volatility DIRECTION was never computed at all - and a level alone
+cannot tell a market coming out of a shock from one going into it.
+
+⚠️ **ABSENT IS `None`, NEVER A DEFAULT, in all four.** A missing series must not
+read as a normal curve, calm spreads or a quiet market - `vix_shock` is `None`
+rather than `False` because `False` claims the market was checked. This is what
+lets Phase 3 REFUSE a regime instead of approximating it.
+
+⚠️ **THE THRESHOLDS ARE CONVENTIONAL, NOT MEASURED, and this is open.** An
+inverted curve below zero is definitional. The flat ceiling (0.5), the spread
+bands (2.5 widening, 3.5 distressed) and the direction tolerance (15%) are
+judgement calls from common usage, NOT validated against this account's history.
+They are named constants so they can be argued with. **Open question 8 below.**
+
+Phase 1 is done. Phase 2 - the growth axis - is next and is the research task.

@@ -225,7 +225,7 @@ class Settings(BaseSettings):
     max_order_pct_of_cash: float = Field(default=0.10, ge=0.0, le=1.0)
 
     # Risk appetite for the macro regime matrix, which scales every exposure
-    # shift it proposes by the mandate's BASELINE SCALING UNIT (`SB`):
+    # shift it proposes by the mandate's RISK SCALING UNIT (`SB`):
     #
     #   conservative  SB 0.10  - wealth preservation, regulated client accounts
     #   moderate      SB 0.20  - the balanced baseline (default)

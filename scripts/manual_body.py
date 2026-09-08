@@ -2921,7 +2921,7 @@ def _config_reference(doc: Any) -> None:
                 "moderate",
                 "Risk appetite for the MACRO REGIME MATRIX, the deterministic read that "
                 "proposes an exposure target from volatility and market conditions. Three "
-                "named mandates, each fixing the BASELINE SCALING UNIT the matrix scales "
+                "named mandates, each fixing the RISK SCALING UNIT the matrix scales "
                 "its proposed exposure shifts by: CONSERVATIVE (0.10) for wealth "
                 "preservation or a regulated client account; MODERATE (0.20), the balanced "
                 "baseline and the default; AGGRESSIVE (0.35) for absolute-return mandates "

@@ -1,4 +1,4 @@
-"""`SB` - the baseline scaling unit, chosen as a named mandate.
+"""`SB` - the risk scaling unit, chosen as a named mandate.
 
 Phase 1 of `docs/superpowers/specs/2026-09-08-macro-regime-matrix-design.md`.
 Every exposure shift the 7-regime matrix proposes is scaled by `SB`, so it is

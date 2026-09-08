@@ -47,7 +47,7 @@ MACRO_REGIME_EXPOSURE_HINT: dict[str, float] = {
 
 RiskMandate = Literal["conservative", "moderate", "aggressive"]
 
-# `SB` - the BASELINE SCALING UNIT the 7-regime matrix scales its exposure
+# `SB` - the RISK SCALING UNIT the 7-regime matrix scales its exposure
 # shifts by. Operator definition, 8 September 2026:
 #
 #   "The baseline multiplier used to scale exposure shifts. Total portfolio
@@ -81,12 +81,63 @@ MANDATE_SCALING_UNIT: dict[str, float] = {
 
 
 def scaling_unit_for(mandate: str) -> float:
-    """The baseline scaling unit `SB` for a named mandate.
+    """The risk scaling unit `SB` for a named mandate.
 
     ⚠️ Raises on an unknown name rather than falling back. A default here would
     run the account on a responsiveness nobody chose and say nothing about it.
     """
     return MANDATE_SCALING_UNIT[mandate]
+
+
+TermStructure = Literal["normal", "flat", "inverted"]
+SpreadState = Literal["normal", "widening", "distressed"]
+VolDirection = Literal["rising", "falling", "steady"]
+
+# ⚠️ CONVENTIONAL, NOT MEASURED. An inverted curve below zero is definitional;
+# every other boundary here is a judgement call from common usage, NOT validated
+# against this account's history. Named so they can be argued with, and listed
+# as open in the design spec. "The number we are using, stated out loud" - not
+# "the right number".
+_CURVE_FLAT_CEILING_PCT = 0.5
+# Moody's Baa over the 10-year. The live reading on 7 September 2026 was 1.57.
+_SPREAD_WIDENING_PCT = 2.5
+_SPREAD_DISTRESSED_PCT = 3.5
+# The document's own SHOCK trigger.
+_VIX_SHOCK_LEVEL = 25.0
+# How much realised vol must move between adjacent windows to count as a trend
+# rather than sampling noise.
+_VOL_DIRECTION_TOLERANCE = 0.15
+
+
+def classify_term_structure(t10y3m: float | None) -> TermStructure | None:
+    """The yield curve as a state rather than a number.
+
+    ⚠️ `None` when the series is absent, never "normal". A missing reading must
+    not read as a healthy curve - that is the fabricated-all-clear shape.
+    """
+    if t10y3m is None:
+        return None
+    if t10y3m < 0.0:
+        return "inverted"
+    if t10y3m <= _CURVE_FLAT_CEILING_PCT:
+        return "flat"
+    return "normal"
+
+
+def classify_spreads(baa10y: float | None) -> SpreadState | None:
+    """Credit spreads as a state.
+
+    ⚠️ THIS IS WHAT SEPARATES BEAR FROM RECESSION in the 7-regime matrix - they
+    differ only by "distressed spreads". Reading an absent series as calm would
+    silently pick the milder of the two, so absent is `None`.
+    """
+    if baa10y is None:
+        return None
+    if baa10y >= _SPREAD_DISTRESSED_PCT:
+        return "distressed"
+    if baa10y >= _SPREAD_WIDENING_PCT:
+        return "widening"
+    return "normal"
 
 
 _TRADING_DAYS_PER_YEAR = 252
@@ -131,6 +182,19 @@ class MacroSignal:
     modelled - this object is the same for the same bars, always."""
 
     realized_vol_annualized_pct: float
+    # Whether realised volatility is CLIMBING or SUBSIDING - a derivative, not a
+    # level. RECOVERY requires it and nothing computed it: a level alone cannot
+    # tell a market coming out of a shock from one going into it.
+    #
+    # ⚠️ `None` when there is not enough history for two comparable windows. One
+    # window is not a smaller comparison.
+    vol_direction: VolDirection | None
+    # The document's SHOCK trigger. ⚠️ `None`, never `False`, when VIXCLS is
+    # absent: `False` claims the market was checked and found calm, which is a
+    # different fact from not having looked.
+    vix_shock: bool | None
+    term_structure: TermStructure | None
+    spreads: SpreadState | None
     # `HV` - what volatility normally is, over BASELINE_VOL_WINDOW_DAYS.
     #
     # ⚠️ OPTIONAL, AND THAT IS LOAD-BEARING. This needs 253 bars where the
@@ -227,6 +291,25 @@ def compute_macro_signal(
         if not pd.isna(candidate) and candidate > 0:
             baseline_vol_annualized_pct = candidate
 
+    # Direction: this window against the one before it. Needs two full windows
+    # plus a return, and says nothing when it cannot have them.
+    vol_direction: VolDirection | None = None
+    if len(daily_returns) >= _VOL_LOOKBACK_DAYS * 2:
+        prior = daily_returns.iloc[-_VOL_LOOKBACK_DAYS * 2 : -_VOL_LOOKBACK_DAYS]
+        prior_vol = float(prior.std() * (_TRADING_DAYS_PER_YEAR**0.5) * 100)
+        if not pd.isna(prior_vol) and prior_vol > 0:
+            change = (realized_vol_annualized_pct - prior_vol) / prior_vol
+            if change > _VOL_DIRECTION_TOLERANCE:
+                vol_direction = "rising"
+            elif change < -_VOL_DIRECTION_TOLERANCE:
+                vol_direction = "falling"
+            else:
+                vol_direction = "steady"
+
+    series = dict(macro_series or {})
+    vix = series.get("VIXCLS")
+    vix_shock = None if vix is None else bool(vix > _VIX_SHOCK_LEVEL)
+
     trend = close.rolling(window=_TREND_WINDOW_DAYS).mean()
     latest_close = float(close.iloc[-1])
     latest_trend = float(trend.iloc[-1])
@@ -253,11 +336,15 @@ def compute_macro_signal(
 
     return MacroSignal(
         realized_vol_annualized_pct=realized_vol_annualized_pct,
+        vol_direction=vol_direction,
+        vix_shock=vix_shock,
+        term_structure=classify_term_structure(series.get("T10Y3M")),
+        spreads=classify_spreads(series.get("BAA10Y")),
         baseline_vol_annualized_pct=baseline_vol_annualized_pct,
         pct_above_trend=pct_above_trend,
         drawdown_from_recent_high_pct=drawdown_from_recent_high_pct,
         suggested_regime=suggested_regime,
         elevated_volatility=elevated_volatility,
         below_trend=below_trend,
-        macro_series=dict(macro_series or {}),
+        macro_series=series,
     )
