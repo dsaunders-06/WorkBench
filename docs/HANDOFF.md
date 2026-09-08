@@ -590,8 +590,22 @@ shape of items 34 and 37. **Use the Risk Console's clear button.**
   (`Gating 1 strategies on the sideways DEFAULT`, 14:27:20). Sizing ran on a
   default rather than a classified regime. Normal at warm-up; confirm it
   classifies, because if it stays silent the sizing is an assumption.
-* **A closing fill still does not cancel its own OCA group.** Check the resting
-  order scan after every exit until that is understood.
+* ~~**A closing fill still does not cancel its own OCA group.**~~ ✅ **FIXED
+  7 September in M169 (`e0c780d`), deployed and running in M170.**
+  `submit_exit_order` cancels the protective legs before selling and REFUSES the
+  exit if they will not go. ⚠️ **AND THE DIAGNOSIS IN THIS HEADING WAS WRONG.**
+  The exit order was never a MEMBER of that OCA group — it was a fresh
+  `MarketOrder` (broker id 1638546985) while the legs sat in group
+  `oca:1216552517`. A group cancels its own members; a non-member filling is
+  invisible to it. So IBKR behaved correctly and there was never an OCA defect
+  to understand — the app simply never cleaned up after its own autonomous exit,
+  which is a different bug with a different fix.
+
+⚠️ **THIS SECTION WENT STALE AND COST A SESSION.** On 9 September its bullets
+were copied into the paste prompt as live work; all three of the code-level ones
+had shipped days earlier. A "STILL OPEN" heading is a claim with a date on it,
+and this one had no mechanism to expire. **Audit each bullet against the code
+and the deployed commit before repeating it anywhere.**
 
 
 ## ⚠️ 3 SEPTEMBER: THE FIRST ENTRY SINCE 31 AUGUST, AND IT NEVER REACHED THE MARKET
@@ -5076,25 +5090,44 @@ rollback path for its build.
 
 OUTSTANDING, IN ORDER
 
-1. ⚠️ A CLOSING FILL DOES NOT CANCEL ITS OWN OCA GROUP. On 4 September A2M went
-   flat and 9,636 shares of resting SELL remained - a naked short if the 6.24
-   stop had filled against a last of ~6.47. The orphan rail found it and named
-   the order ids; the operator cancelled them in TWS. CHECK THE RESTING ORDER
-   SCAN AFTER EVERY EXIT until this is understood. Unfixed, and it is the one
-   open item that can lose money on an ordinary day.
+⚠️ EVERY ITEM BELOW WAS AUDITED AGAINST THE CODE AND THE DEPLOYED COMMIT ON
+9 SEPTEMBER, NOT AGAINST ITS OWN PROSE. The first version of this list, written
+the same morning, carried THREE items forward from "STILL OPEN AFTER
+4 SEPTEMBER" that had all been fixed and deployed days earlier. Audit again
+before trusting it; do not copy it forward.
 
-2. ⚠️ THE APP DOES NOT RECORD ITS FILLS. Both 4 September entries stayed
-   status=transmitted for 45 minutes while IBKR held the positions, so the
-   autonomy loop re-evaluated them every 60s (blocked correctly by the M139
-   guard) and the resting-order rail raised a FALSE quarantine on both. Cleared
-   on restart once the positions were adopted. Sibling of M165's
-   _TERMINAL_ORDER_STATUSES narrowing. Unfixed.
+1. ⚠️ THE ORPHAN RAIL STILL CANNOT CANCEL, BY CHOICE.
+   resting_order_cancel_enabled defaults False and is UNSET in the live .env, so
+   when the rail finds an orphan it names the order ids and quarantines the
+   symbol - "The ORDERS ARE NOT CANCELLED by this" - and a human clears them in
+   TWS. Deliberate (M141, item 23): choosing which OCA group dies is a judgement
+   made badly unattended, and getting it wrong strips the stop from a real long.
+   ✅ THE EXIT THAT CREATED THE 4 SEPTEMBER ORPHAN IS FIXED AND DEPLOYED -
+   submit_exit_order now cancels the protective legs FIRST and REFUSES the sell
+   if they will not go (e0c780d, M169). Cancel-first was chosen on asymmetry:
+   it leaves a position unprotected, which verify_position_stops detects and
+   signal_bridge re-arms; sell-first leaves legs orphaned with no remedy.
+   ⚠️ A PARTIAL exit deliberately leaves the legs alone, so their size then
+   exceeds the holding. That is real, separate, and not resized anywhere.
 
-3. ⚠️ NOTHING IN THE APP READS ANY BROKER CEILING. The TWS precautionary limit
-   was raised to 20,000 - and a 64,229-share order was ACCEPTED under it, so
-   that preset is NOT a share count and does not protect anything. The sizer
-   still cannot see the broker's ceiling. This belongs BEFORE max positions is
-   raised.
+2. ⚠️ NO BROKER CEILING IS ENFORCED, and the machinery is waiting on a
+   trustworthy number rather than on code. broker_max_order_shares EXISTS and
+   _audit_size_limit reads Error 383's own wording back (e4cf371), but the
+   setting defaults to None and is unset, so nothing is trimmed.
+   ⚠️ DO NOT COPY THE FIGURE OUT OF THE TWS DIALOG. Measured 4 September: with
+   that preset reading 20,000 the broker ACCEPTED a 64,229-share TAH.AX order,
+   so the dialog's number is not a share count in the way this setting is.
+   Setting 20,000 on that evidence would have trimmed a legitimate position by
+   69% to respect a limit that did not bind.
+
+3. ✅ FIXED AND DEPLOYED, recorded so it is not rediscovered: an order the
+   broker filled no longer reads "transmitted" (_close_out_own_order, 1e64fce,
+   M168). It cites the 4 September TWE/TAH case by name - both filled and still
+   reading transmitted 45 minutes later, with the autonomy loop re-asking every
+   minute and the resting-order rail quarantining both. ⚠️ The reason every test
+   missed it: MockBroker and SimulatedBroker fill synchronously and write
+   "filled" themselves, so the whole suite passed against a broker that closed
+   its own orders out. IBAdapter never writes "filled".
 
 4. CONFIRM THE REGIME ENGINE CLASSIFIES BEFORE SIZING RUNS. It published nothing
    before the 4 September entries fired - "Gating 1 strategies on the sideways
