@@ -143,19 +143,22 @@ def decide(
     asks for "the single dominant active regime". Reporting the milder of two
     true readings would understate exactly when it matters.
     """
-    missing: list[str] = []
-    if growth is None:
-        missing.append(
-            "no growth reading (set QAT_MACRO_GROWTH_SERIES - every regime keys on growth)"
-        )
-    if signal.baseline_vol_annualized_pct is None:
-        missing.append("no baseline volatility HV (not enough history)")
-    if missing:
+    # ⚠️ ONE COMBINED GUARD, so the types NARROW without an `assert`. The first
+    # version used two asserts to satisfy mypy, and bandit was right to refuse
+    # them (B101): `assert` is stripped under `python -O`, and these two guard
+    # the values every formula below DIVIDES BY. A guard that disappears under
+    # an optimisation flag is not a guard.
+    if growth is None or signal.baseline_vol_annualized_pct is None:
+        missing: list[str] = []
+        if growth is None:
+            missing.append(
+                "no growth reading (set QAT_MACRO_GROWTH_SERIES - every regime keys on growth)"
+            )
+        if signal.baseline_vol_annualized_pct is None:
+            missing.append("no baseline volatility HV (not enough history)")
         return MatrixRefusal(missing=tuple(missing))
 
-    assert growth is not None
     hv = signal.baseline_vol_annualized_pct
-    assert hv is not None
     rv = signal.realized_vol_annualized_pct
     bm = signal.exposure_hint if baseline is None else baseline
     bucket = _growth_bucket(growth.yoy_pct)
