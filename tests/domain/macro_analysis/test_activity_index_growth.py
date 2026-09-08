@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from qat.data.macro_fred import MacroObservation
-from qat.domain.macro_analysis.growth import classify_activity_index
+from qat.domain.macro_analysis.growth import classify_activity_index, classify_growth
 
 _SERIES = "CFNAIMA3"
 
@@ -130,3 +130,57 @@ def test_a_single_observation_has_no_direction() -> None:
 
     assert read is not None
     assert read.direction is None
+
+
+# --- the dispatcher -------------------------------------------------------
+
+
+def test_the_configured_default_reaches_the_index_reader() -> None:
+    """⚠️ THE OPERATOR'S CHOICE, PINNED. `CFNAIMA3` must route to
+    `classify_activity_index`; sending it through the year-on-year path would
+    compute the change of a DEVIATION measure and report it as growth."""
+    from qat.config import Settings
+    from qat.domain.macro_analysis.growth import read_growth
+
+    read = read_growth(Settings(_env_file=None).macro_growth_series, _monthly([-0.2, -0.85]))
+
+    assert read is not None
+    assert read.yoy_pct is None, "an index was read through the level path"
+    assert read.bucket == "negative"
+
+
+def test_a_level_series_still_takes_the_year_on_year_reader() -> None:
+    from datetime import timedelta as _td
+
+    from qat.domain.macro_analysis.growth import read_growth
+
+    end = datetime(2026, 6, 30, tzinfo=UTC)
+    levels = [
+        MacroObservation(series="GDPC1", ts=end - _td(days=91 * (11 - i)), value=100.0 * 1.005**i)
+        for i in range(12)
+    ]
+
+    read = read_growth("GDPC1", levels)
+
+    assert read is not None
+    assert read.yoy_pct is not None, "a level was read through the index path"
+
+
+def test_an_unregistered_series_is_refused_rather_than_guessed() -> None:
+    """⚠️ Defaulting to either reader would produce a confident number from the
+    wrong arithmetic, and nothing downstream could tell. GDPC1 sits near 23,000
+    - every CFNAI band would call that a boom.
+
+    ⚠️ THE FIXTURE MUST BE ONE THE FALLBACK WOULD SUCCEED ON, and the first
+    version was not. It passed two observations a month apart, so the
+    year-on-year reader found no base and returned `None` too - the test passed
+    whether the code refused or guessed. Found by sabotage. Thirty months of
+    history makes the guess produce an answer, so refusing is the only way to
+    get `None`.
+    """
+    from qat.domain.macro_analysis.growth import read_growth
+
+    plenty = _monthly([0.1 + 0.01 * i for i in range(30)])
+    assert classify_growth(plenty) is not None, "the fixture must let a guess succeed"
+
+    assert read_growth("SOMETHING_NEW", plenty) is None

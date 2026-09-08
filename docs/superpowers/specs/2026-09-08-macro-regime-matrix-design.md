@@ -170,8 +170,27 @@ figures without parsing prose.
 
 1. **`SB = 0.20`** - accept, or derive it from something?
 2. **`HV`** - measured over a long window, or a configured constant per market?
-3. **The growth series** - which one, and for which economy? This decides 5.1.
-4. **US macro driving ASX exposure** - deliberate, or a reason to seek AU series?
+3. ~~**The growth series**~~ **ANSWERED 8 September: `CFNAIMA3`**, the Chicago
+   Fed National Activity Index (three-month average), read by
+   `classify_activity_index` against the Chicago Fed's OWN bands - which retires
+   two thresholds this project had invented rather than adding a third. A
+   quarterly print was rejected: the matrix sits beside a daily engine and a
+   figure published a quarter in arrears is blind to a turn.
+4. ~~**US macro driving ASX exposure**~~ **ANSWERED 8 September: DELIBERATE,
+   AND LABELLED.** The growth axis is a GLOBAL RISK-APPETITE proxy, not
+   Australian growth, and every surface says so. Measured before choosing:
+   AU real GDP (`NGDPRSAXDCAUQ`) is quarterly and was 160 days old; `AUSRECDM`
+   has not updated since July 2022; ABS and Melbourne Institute releases are not
+   on FRED. A timely global proxy named as one beats a domestic figure too stale
+   to describe the present.
+   ⚠️ **The localisation that IS worth doing is `^AXVI`** - the S&P/ASX 200 VIX,
+   129 daily closes and free. `RegimeFeatureBuilder.vix_series` is configurable
+   for it now; the bridge from the daily-bar source into `MacroEvent` is the
+   remaining work, because the macro feed publishes FRED only.
+   ⚠️ **Not worth doing: localising the curve and credit inputs.** The AU
+   equivalents on FRED are MONTHLY and were stale to 1 June, against the daily
+   US series they would replace - the swap would make the execution engine
+   slower, not more local.
 5. **Disclaimer** - adopt the self-suppressing pattern above, or follow the
    document's literal every-output footnote?
 8. **Are the Phase 1 thresholds right?** The flat-curve ceiling, the two

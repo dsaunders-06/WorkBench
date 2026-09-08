@@ -248,3 +248,37 @@ def classify_activity_index(observations: list[MacroObservation]) -> GrowthRead 
         yoy_pct=None,
         direction=direction,
     )
+
+
+# Which reader a series needs, because getting it wrong is silent.
+#
+# ⚠️ AN INDEX READ AS A LEVEL PRODUCES NONSENSE THAT LOOKS LIKE AN ANSWER.
+# CFNAI is normalised so zero IS trend growth; its year-on-year "change" from
+# -0.5 to -0.1 computes as +80% and means "still below trend, improving". A
+# level read as an index is equally wrong in the other direction - GDPC1 sits
+# near 23,000, which every band here would call "high".
+_INDEX_SERIES = frozenset({"CFNAI", "CFNAIMA3"})
+_LEVEL_SERIES = frozenset({"GDPC1", "INDPRO", "NGDPRSAXDCAUQ", "GDPC1CTM"})
+
+
+def read_growth(series_id: str, observations: list[MacroObservation]) -> GrowthRead | None:
+    """The right reader for the named series, or `None` if we do not know it.
+
+    ⚠️ REFUSES AN UNKNOWN SERIES RATHER THAN GUESSING. Defaulting to either
+    reader would produce a confident number from the wrong arithmetic, and
+    nothing downstream could tell. Add the series to one of the sets above
+    deliberately - that edit IS the statement of what kind of number it is.
+    """
+    name = series_id.strip().upper()
+    if name in _INDEX_SERIES:
+        return classify_activity_index(observations)
+    if name in _LEVEL_SERIES:
+        return classify_growth(observations)
+    logger.warning(
+        "No growth reader is registered for %s, so the growth axis stays unset and the "
+        "regime matrix will refuse. Register it in _INDEX_SERIES (normalised around a "
+        "trend, like CFNAI) or _LEVEL_SERIES (a level to take year-on-year, like GDPC1) "
+        "- reading one as the other produces a confident wrong answer.",
+        series_id,
+    )
+    return None

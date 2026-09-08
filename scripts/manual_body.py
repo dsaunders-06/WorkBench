@@ -2918,24 +2918,29 @@ def _config_reference(doc: Any) -> None:
             ),
             (
                 "QAT_MACRO_GROWTH_SERIES",
-                "(empty)",
-                "The FRED series the macro regime matrix reads its GROWTH axis from - for "
-                "example GDPC1 for US real GDP, or INDPRO for US industrial production. "
-                "EMPTY BY DEFAULT, AND DELIBERATELY: every regime in that matrix keys on "
-                "growth, and this application has never measured any. What it has is PRICE "
-                "TREND against a 50-day average, which describes a share index rather than "
-                "an economy, and reading one as the other would put a market's momentum "
-                "where a country's output belongs. Until a series is named there is NO "
-                "growth axis, and the matrix REFUSES the regimes that need one rather than "
-                "approximating them - so a blank here costs you the recession and recovery "
-                "readings and nothing else. CHOOSING THIS ALSO CHOOSES AN ECONOMY: this "
-                "account trades the ASX, and every FRED series already polled is American, "
-                "so a US growth reading steering an Australian book is a decision to make "
-                "on purpose rather than inherit. AND EVERY CANDIDATE IS LAGGED - real GDP "
-                "is quarterly and published a month or more after the quarter closes, "
-                "Australian GDP later still, so a reading can be five months old before it "
-                "moves at all. The screen reports how old the figure is; read that before "
-                "acting on it.",
+                "CFNAIMA3",
+                "The FRED series the macro regime matrix reads its GROWTH axis from. THIS "
+                "IS A GLOBAL RISK-APPETITE PROXY, NOT AUSTRALIAN GROWTH, and the label "
+                "matters more than the choice does. CFNAI-MA3 is the Chicago Fed National "
+                "Activity Index on a three-month average - 85 AMERICAN indicators - while "
+                "this account trades the ASX. It was chosen because every honest "
+                "Australian alternative is worse: real GDP for Australia is quarterly and "
+                "was 160 days old when checked, the OECD's Australian recession indicator "
+                "has not been updated since July 2022, and the ABS and Melbourne Institute "
+                "releases are not carried by FRED at all. A timely global proxy, NAMED as "
+                "one, beats a domestic figure too stale to describe the present - but read "
+                "the regime it produces as a statement about world risk conditions rather "
+                "than about the Australian economy. Its thresholds are the Chicago Fed's "
+                "own published bands (below -0.70 signals a recession has likely begun), "
+                "which is the real argument for it: those replace boundaries this "
+                "application would otherwise have invented. A quarterly print was rejected "
+                "because the matrix sits beside a DAILY engine and a figure published a "
+                "quarter in arrears would leave it blind to a turn. NOTE that an activity "
+                "index and a level series are read by DIFFERENT code - an index is "
+                "normalised so that zero means trend growth, so taking its year-on-year "
+                "change would be taking the change of a deviation. A series the "
+                "application does not recognise is REFUSED rather than guessed at, and the "
+                "matrix then declines to name a regime.",
             ),
             (
                 "QAT_MACRO_RISK_MANDATE",

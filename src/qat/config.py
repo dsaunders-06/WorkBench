@@ -249,26 +249,33 @@ class Settings(BaseSettings):
     # feeds may reach `RiskEngine.regime_scalar` or any order path.
     macro_risk_mandate: Literal["conservative", "moderate", "aggressive"] = "moderate"
 
-    # The FRED series the macro regime matrix reads its GROWTH axis from -
-    # `GDPC1` for US real GDP, `INDPRO` for US industrial production, and so on.
+    # The FRED series the macro regime matrix reads its GROWTH axis from.
+    # Operator decision, 8 September 2026.
     #
-    # ⚠️ EMPTY BY DEFAULT, AND DELIBERATELY SO. Every regime in the matrix keys
-    # on growth, and QAT has never measured any: what it has is PRICE TREND
-    # against a 50-day average, which is a share index and not an economy.
-    # Reading one as the other is the category error the design spec forbids, so
-    # until a series is named there is NO growth axis and the matrix refuses the
-    # regimes that need one rather than approximating them.
+    # ⚠️ THIS IS A GLOBAL RISK-APPETITE PROXY, NOT AUSTRALIAN GROWTH, and the
+    # label matters more than the choice. CFNAI-MA3 is the Chicago Fed National
+    # Activity Index - 85 US indicators, three-month average. The book is ASX.
+    # It is here because the honest Australian options are all worse: AU real
+    # GDP (NGDPRSAXDCAUQ) is quarterly and was 160 days old when measured, the
+    # OECD's AUSRECDM has not updated since July 2022, and the ABS and Melbourne
+    # Institute releases are not on FRED at all. A timely global proxy, named as
+    # one, beats a domestic figure too stale to describe the present.
     #
-    # ⚠️ CHOOSING THIS ALSO CHOOSES AN ECONOMY. The book is ASX; every FRED
-    # series already polled here is US. A US growth reading driving exposure on
-    # an Australian book is a claim worth making deliberately rather than
-    # inheriting - see section 5.1 of the spec.
+    # ⚠️ Its bands are the CHICAGO FED'S OWN (-0.70 recession, +0.20 strong),
+    # which is the real argument for it: it retires two thresholds this project
+    # had invented rather than adding a third. See `classify_activity_index`.
     #
-    # ⚠️ AND EVERY CANDIDATE IS LAGGED. Real GDP is quarterly, published a month
-    # or more after the quarter closes, and Australian GDP later still - a
-    # reading can be five months old before it moves. `GrowthRead.age_days`
-    # carries that so it can be judged rather than discovered.
-    macro_growth_series: str = ""
+    # ⚠️ AN ACTIVITY INDEX NEEDS `classify_activity_index`, NOT
+    # `classify_growth` - CFNAI is normalised so ZERO IS TREND GROWTH, and
+    # taking its year-on-year change would be taking the change of a DEVIATION.
+    # `read_growth` dispatches on the series name and REFUSES one it does not
+    # recognise, because guessing wrong here is silent.
+    #
+    # ⚠️ NAMING IT IS NOT FEEDING IT. Nothing reads this yet: the matrix has no
+    # screen, and the growth axis needs the series' HISTORY rather than the
+    # latest value the macro feed publishes. Until that wiring exists the matrix
+    # refuses, which is the correct answer rather than a bug.
+    macro_growth_series: str = "CFNAIMA3"
 
     # The largest share count this broker will accept without holding the order
     # for manual confirmation. NOT queryable through the IBKR API - it is a
