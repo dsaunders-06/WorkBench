@@ -88,6 +88,7 @@ def test_the_benign_sets_are_the_enumerated_ones():
     """A guard against someone 'simplifying' this into a serious-code list."""
     assert 383 in BENIGN_ORDER_REJECT_CODES
     assert 202 in BENIGN_ORDER_REJECT_CODES
+    assert 10148 in BENIGN_ORDER_REJECT_CODES
     assert 105 in BENIGN_ORDER_WARN_CODES
     assert 9999 not in BENIGN_ORDER_REJECT_CODES
     assert 9999 not in BENIGN_ORDER_WARN_CODES
@@ -130,3 +131,41 @@ def test_a_benign_warn_code_is_still_ignored_when_it_matches_no_order():
     a code that would warn about a MATCHED order must not warn about one
     that was never ours."""
     assert classify(105, is_order_scoped=False) is ErrorAction.IGNORE
+
+
+def test_code_10148_rejects_without_halting():
+    """⚠️ MEASURED THREE TIMES ON 9 September 2026, and it halted the account
+    on every one.
+
+        Error 10148, reqId 615: OrderId 615 that needs to be cancelled
+        cannot be cancelled, state: PendingCancel.
+        Error 10148, reqId 616: ... state: Cancelled.
+
+    It is 202's twin and arrives for the same reason. `cancel_order` cancels
+    EVERY leg of a group rather than trusting IBKR's OCA cascade - "cascades is
+    not a guarantee this project accepts on trust" - so when cancelling leg 615
+    auto-cancels its sibling 616, our explicit cancel of 616 asks IBKR to cancel
+    something already gone. 10148 is the answer.
+
+    ⚠️ THE RAIL IS RIGHT AND THE CLASSIFICATION WAS WRONG. Not trusting the
+    cascade is worth keeping - an orphaned stop against a position that no
+    longer exists is what puts the account short. What must change is treating
+    that rail's own expected reply as an unrecognised rejection.
+
+    Safe by the meaning of the code itself: 10148 is only ever emitted when the
+    cancel target is already `PendingCancel` or `Cancelled`, which is the state
+    the cancel was asking for. It cannot report a live order.
+
+    WHAT IT COST. Each halt blocked the sign-off that the re-arm rail needed to
+    replace IAG.AX's protection, so a held 6,699-share position sat unprotected
+    while the only mechanism that could protect it was the order flow the halt
+    existed to stop. Aggregate risk-at-stop reached 8.12% against a 5.00% cap.
+    """
+    assert classify(10148, is_order_scoped=True) is ErrorAction.REJECT
+
+
+def test_10148_is_ignored_when_it_matches_no_order():
+    """Order-scope is established BEFORE classification, as for every other
+    code here: `errorEvent` also carries health notices, and failing closed on
+    those would halt daily."""
+    assert classify(10148, is_order_scoped=False) is ErrorAction.IGNORE

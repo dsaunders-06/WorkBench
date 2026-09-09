@@ -1943,7 +1943,32 @@ from qat.domain.display_dates import format_display_date
 # second time". That is a broker that does not exist. Same lesson as the
 # manual-close branch: a green suite proves only that the fakes agree with the
 # code.
-MILESTONE = "M171"
+# ---------------------------------------------------------------------------
+# M172 - 10148 IS 202'S TWIN, AND M171 FIXED THE WRONG HALF
+#
+# ⚠️ THE EVIDENCE TO TELL THE TWO PATHS APART WAS ALREADY IN THE LOG. The
+# 11:21:46 trip carried "IBKR leg 423 survived the group cancel", so it came
+# from the survivor re-check - which M171 fixed, and whose new wording has not
+# appeared since. The 12:20:56 and 12:54:51 trips carried NO such line: those
+# 10148s come from the GROUP CANCEL ITSELF, `for leg in group: cancelOrder`.
+# IBKR cascades an OCA cancel, so cancelling leg 615 auto-cancels sibling 616
+# and our explicit cancel of 616 asks it to cancel something already gone.
+#
+# I read the first incident carefully and generalised to the second without
+# checking the mechanism was the same. One careful reading is not two.
+#
+# ⚠️ THE RAIL IS RIGHT AND THE CLASSIFICATION WAS WRONG. Cancelling every leg
+# rather than trusting the cascade is worth keeping - an orphaned stop against a
+# position that no longer exists is what puts the account short. What changed is
+# treating that rail's own expected reply as an unrecognised rejection.
+#
+# ⚠️ A HALT THAT PREVENTS DE-RISKING IS NOT A CONSERVATIVE HALT. Each trip
+# blocked the sign-off the re-arm rail needed to replace IAG.AX's protection, so
+# a held 6,699-share position sat unprotected while the only mechanism that
+# could protect it was the order flow the halt existed to stop. Aggregate
+# risk-at-stop reached 8.12% against a 5.00% cap. Nothing traded through any of
+# it.
+MILESTONE = "M172"
 
 _UNKNOWN = "unknown"
 

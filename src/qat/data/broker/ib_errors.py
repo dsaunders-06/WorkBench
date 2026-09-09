@@ -64,7 +64,32 @@ class ErrorAction(Enum):
 #       when a bracket's stop fills, IBKR cancels the OCA sibling itself and
 #       reports 202 against THAT leg's orderId. The order is dead, but
 #       expectedly so - it must not halt the rest of the session.
-BENIGN_ORDER_REJECT_CODES: frozenset[int] = frozenset({383, 202})
+# 10148 - "OrderId N that needs to be cancelled cannot be cancelled, state:
+#       PendingCancel/Cancelled." 202's TWIN, and it halted the account three
+#       times on 9 September 2026 before it was enumerated here.
+#
+#       ⚠️ IT IS THIS APPLICATION'S OWN RAIL TALKING BACK. `cancel_order`
+#       cancels EVERY leg of a group rather than trusting IBKR's OCA cascade -
+#       "cascades is not a guarantee this project accepts on trust" - so when
+#       cancelling leg 615 auto-cancels sibling 616, our explicit cancel of 616
+#       asks IBKR to cancel something already gone. 10148 is the answer to a
+#       question we were right to ask.
+#
+#       The rail stays: an orphaned stop against a position that no longer
+#       exists is what puts the account short. What was wrong was treating the
+#       rail's own expected reply as an unrecognised rejection.
+#
+#       Safe by the meaning of the code: 10148 is emitted ONLY when the cancel
+#       target is already PendingCancel or Cancelled - the state the cancel was
+#       asking for. It cannot report a live order.
+#
+#       ⚠️ WHAT IT COST, because "must not halt" is abstract until it does.
+#       Each halt blocked the sign-off the re-arm rail needed to replace
+#       IAG.AX's protection, so a held 6,699-share position sat unprotected
+#       while the only mechanism that could protect it was the order flow the
+#       halt existed to stop. Aggregate risk-at-stop reached 8.12% against a
+#       5.00% cap. A halt that prevents de-risking is not a conservative halt.
+BENIGN_ORDER_REJECT_CODES: frozenset[int] = frozenset({383, 202, 10148})
 
 # Order-scoped codes wrapper.py's OWN `warningCodes` set records on the trade
 # WITHOUT cancelling it ("DO NOT delete the trade object because the order is
