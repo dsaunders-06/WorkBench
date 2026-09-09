@@ -589,3 +589,52 @@ async def test_contract_checks_surfaces_a_session_hours_disagreement() -> None:
     assert any(c.status is Status.WARN and "15:30" in c.detail for c in hours), [
         (c.status, c.detail) for c in hours
     ]
+
+
+async def test_the_feed_check_reads_the_yfinance_signature() -> None:
+    """Found on 10 September by RUNNING the pre-flight, not by this suite.
+
+    `feed_checks` was written against `AlpacaSource._poll_once`, which returns
+    a bare `list[RawTick]`. `YFinanceSource._poll_once` returns
+    `(list[RawTick], set[str])`, and yfinance is what `QAT_MARKET_DATA_SOURCE`
+    selects. Iterating the 2-tuple bound `t` to the inner LIST, so `t.price`
+    raised AttributeError - one line below the `except` that would have caught
+    it - and killed the whole script before the broker half ran.
+
+    Every other fake in this file returns the Alpaca shape, so the suite agreed
+    with the code and the code disagreed with the only source in use.
+    """
+    from qat.preflight import feed_checks
+
+    class _Tick:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+            self.price = 10.0
+
+    class _YFinanceShaped:
+        async def _poll_once(self, symbols: list[str]) -> tuple[list[_Tick], set[str]]:
+            return [_Tick(s) for s in symbols], set()
+
+    check = (await feed_checks(["RIO.AX", "APA.AX"], _YFinanceShaped()))[0]
+
+    assert check.status is Status.OK, check.detail
+
+
+async def test_the_feed_check_names_a_missing_symbol_on_the_yfinance_signature() -> None:
+    """And it still reaches the real verdict through the tuple, rather than
+    merely not raising."""
+    from qat.preflight import feed_checks
+
+    class _Tick:
+        def __init__(self, symbol: str) -> None:
+            self.symbol = symbol
+            self.price = 10.0
+
+    class _YFinancePartial:
+        async def _poll_once(self, symbols: list[str]) -> tuple[list[_Tick], set[str]]:
+            return [_Tick("RIO.AX")], {"APA.AX"}
+
+    check = (await feed_checks(["RIO.AX", "APA.AX"], _YFinancePartial()))[0]
+
+    assert check.status is Status.FAIL
+    assert "APA.AX" in check.detail

@@ -761,9 +761,22 @@ async def feed_checks(symbols: list[str], source: object) -> list[Check]:
         return [Check("feed", Status.UNKNOWN, "the source cannot be polled directly")]
 
     try:
-        ticks = await poll(list(symbols))
+        polled = await poll(list(symbols))
     except Exception as exc:  # noqa: BLE001
         return [Check("feed", Status.UNKNOWN, f"{type(exc).__name__}: {exc}")]
+
+    # TWO SOURCES, TWO SIGNATURES. `AlpacaSource._poll_once` returns a bare
+    # `list[RawTick]`; `YFinanceSource._poll_once` returns `(ticks, missing)`.
+    # This was written against the first, and the second is the one
+    # `QAT_MARKET_DATA_SOURCE` actually selects - so `t` bound to the inner
+    # LIST and `t.price` raised AttributeError on every real run, one line
+    # below the `except` that would have caught it, taking the whole script
+    # down before the broker half executed.
+    #
+    # Found on 10 September by running the pre-flight, not by the suite: all
+    # three fakes here returned the Alpaca shape, so the tests agreed with the
+    # code and the code disagreed with the only source in use.
+    ticks = polled[0] if isinstance(polled, tuple) else polled
 
     priced = {t.symbol for t in ticks if t.price > 0}
     missing = [s for s in symbols if s not in priced]
