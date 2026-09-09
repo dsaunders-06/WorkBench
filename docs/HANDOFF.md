@@ -53,10 +53,10 @@ source.
 | Suite | **3,510 passed, 26 skipped** at `77d5485` (was 3,467 at M170). ruff, black, mypy src, bandit all clean. ⚠️ Run the four checks SEPARATELY — `black --check` can exit 0 while printing "1 file would be reformatted". ⚠️ And never pipe `pytest` or `invoke build` through `tail`: it discards the exit code and the crash header |
 | Watchlist | ⚠️ **AS AT 2 SEPTEMBER — NOT RE-CHECKED 8 SEPTEMBER.** **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
-| Account | ⚠️ **AS AT 9 SEPTEMBER 13:21, and it changed today.** **NINE POSITIONS** — ANZ ASX BOQ JHX SEK SUN TAH TWE WOW — all protected, 18 resting legs, scan clean. **IAG.AX SOLD 13:19:17**, 6,699 @ 7.68, net **−1,798.73**, r −0.415, `signal`. Cash **509,555.49** (was 458,219.38 all day until that fill), equity **994,498.11**. Account `DUQ200898`, paper, AUD |
+| Account | ⚠️ **AS AT 9 SEPTEMBER 14:53, app closed cleanly.** **NINE POSITIONS**, all protected, 18 resting legs — **verified at the broker**, not inferred: `IB.positions()` returned nine and `reqAllOpenOrders` two legs for each. ANZ ASX BHP BOQ JHX SUN TAH TWE WOW. **BHP.AX ENTERED 14:05**, 793 @ 64.07, the first app-driven entry since 4 September. **IAG.AX and SEK.AX both SOLD today**, both losses, both on `signal`. Cash **497,174.93**, equity **994,177.74**. Account `DUQ200898`, paper, AUD |
 | Broker | ⚠️ **AS AT 1 SEPTEMBER — NOT RE-CHECKED.** **TWS on 7497** since 1 September 17:40 (`QAT_IBKR_PORT` 4002 → 7497, backup `.env.bak-20260901-174044`). IB Gateway is closed. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
-| Kill switch | ⚠️ **TRIPPED, DELIBERATELY LEFT SO.** Reason: `unrecognised code 10349: Order TIF was set to GTC based on order preset`. **FOUR TRIPS TODAY** — three on 10148 from two different code paths (M171 and M172 fixed one each), one on 10349. ✅ **Harmless as it stands**: IAG is flat, the book is nine and fully protected, so the halt blocks only new entries. ⚠️ **10349 IS A GATEWAY PRESET MISMATCH, NOT A CODE DEFECT**, it is the mirror of 4 September, **and the order filled anyway** — do NOT enumerate it as benign until that is understood. Quarantines: EMPTY |
-| Ledgers | **10 rows = SIX POSITIONS.** ⚠️ **COUNT POSITIONS, NOT ROWS** - `collapse_to_positions` (trades.py:1477) is applied inside `TradeLedger.closed_trades()`, so `edge_min_trades`, the promotion gate and the Performance tab all see positions. Four LOV rows are one exit filling in pieces, which is where the old "7 closed trades" in this row came from. ⚠️ One LOV row is a REPAIR row with EMPTY costs, so net P&L across LOV is NOT summable from the file. At **6 of 20** for the sizer's calibration gate |
+| Kill switch | ⚠️ **TRIPPED on 10349, app closed with it tripped.** **FIVE TRIPS TODAY** — three on 10148 from two different code paths (M171 and M172 fixed one each), **two on 10349**. ⚠️ **10349 IS NOT A ONE-OFF: it fires on EVERY app-driven market exit.** It is a Gateway order-preset mismatch, the mirror of the 4 September fix, and **the order fills anyway** — do NOT enumerate it as benign the way 10148 was until that is understood. ⚠️ **The fifth trip PREVENTED A NAKED SHORT** — see the 9 September afternoon section. Quarantines: EMPTY |
+| Ledgers | **11 rows = SEVEN POSITIONS**, so the sizer's calibration gate is at **7 of 20**. ⚠️ **COUNT POSITIONS, NOT ROWS** — `collapse_to_positions` (trades.py:1477) is applied inside `TradeLedger.closed_trades()`, so every consumer sees positions. ⚠️ **SEK.AX's ROW IS KNOWN WRONG**: it records exit 12.90, the sized-against price, while the executions averaged 12.93. `_correct_announced_price` never ran because the trip and shutdown intervened. Expect `absorb_broker_fills` to amend it on the next launch — CHECK THAT IT DOES. ⚠️ One LOV row is a REPAIR row with EMPTY costs |
 
 
 ### The account is AUD-base. Verified, not assumed.
@@ -114,8 +114,10 @@ and assuming the next one matched.
 | 13:19:17 | **IAG SELLS**, 6,699 @ 7.68, net −1,798.73, r −0.415 |
 | 13:19:17 | **TRIP 4** — a different code, **10349** |
 
-**Nothing traded through any of it until the exit.** Cash sat at 458,219.38 all
-day and moved once, to 509,555.49.
+**Nothing traded through any of it until the exit.** Cash sat at 458,219.38 from
+the open until 13:19, then moved three times: the IAG sale to 509,555.49, the
+BHP entry, and the SEK sale, closing at **497,174.93**. The afternoon section
+below covers the second half of the day.
 
 ### ⚠️ THE DEADLOCK IS THE FINDING, not the trip
 
@@ -194,6 +196,67 @@ Kill switch **TRIPPED** on 10349, and that is now harmless: IAG is flat, the boo
 is **nine**, and the scan reads 18 legs across 9 symbols with nothing
 unjustified. The halt blocks only new entries. **It was left tripped
 deliberately** rather than spend a fourth deploy on a live account.
+
+
+### ⚠️ THE AFTERNOON: A FIFTH TRIP, AND A NAKED SHORT THE HALT PREVENTED
+
+The switch was reset at 13:44 on the reasoning above — a clear switch overnight
+means tomorrow's session can re-arm protection unattended. Within fourteen
+seconds a BHP.AX entry was sized and refused by the phase rail; it entered at
+14:05 when the phase turned to Afternoon. **793 shares @ 64.07**, the first
+app-driven entry since 4 September, bracketed and protected.
+
+Then at **14:49:09** a signal exit fired on SEK.AX, and 10349 halted the account
+for the fifth time. **10349 is not a one-off: it fires on every app-driven
+market exit.**
+
+⚠️ **AND THE HALT PREVENTED A NAKED SHORT, by accident rather than design.**
+
+SEK filled in **THIRTEEN partial executions over 28 seconds** — 1706, 285, 36,
+3, 6, 15, 2, 20, 262, 643 … to `cumQty=2978` at 12.93, completing 14:49:40. The
+app read the position at **14:49:12**, twelve seconds in, when 2,030 had filled:
+
+    SEK.AX partially exited - keeping its entry record for the shares that remain
+    Protective OCO proposed for unprotected position SEK.AX x948 at 12.78
+
+**SEK was flat at the broker and the app proposed a protective SELL of 948
+shares against it.** Signed off, that is a short position created by the
+re-arming rail — the A2M shape, arriving through the mechanism that exists to
+prevent it. It was retried every sixty seconds and blocked every time **by the
+kill switch alone**.
+
+Settled by asking the broker rather than reading the log: `IB.positions()`
+returned **nine** positions and SEK was not among them; `reqAllOpenOrders`
+returned two resting legs for each of the nine, BHP included. The app was
+closed cleanly, which discards a `pending_signoff` order permanently — order
+identity does not survive a restart — so the stale proposal is gone in a way
+resetting the switch could never have achieved.
+
+⚠️ **THE FINDING, and it generalises past today: THE APP'S POSITION BELIEF CAN
+LAG THE BROKER BY TENS OF SECONDS ACROSS A MULTI-EXECUTION FILL, and a
+protective order proposed inside that window is sized against a position that no
+longer exists.** Nothing currently re-checks the holding between proposing a
+protective order and signing it off. The re-arm rail is otherwise the most
+reliable thing in this system; this is the one state where it is dangerous.
+
+⚠️ **SEK's ledger row is KNOWN WRONG.** It records exit **12.90**, the price the
+order was sized against; the executions averaged **12.93**. `_correct_announced_price`
+never ran, because the trip and then the shutdown intervened. Expect
+`absorb_broker_fills` to pick the executions up on the next launch and amend the
+row, as it did for IAG at 13:24. **Check that it does.**
+
+### The day's trading, and it is not flattering
+
+| | |
+|---|---|
+| IAG.AX | 6,699 @ 7.67, **−1,865.63**, −0.43R, signal |
+| SEK.AX | 2,978 @ 12.93, **−6,021.32**, −0.96R, signal (row says 12.90, see above) |
+| BHP.AX | entered 793 @ 64.07, held |
+
+Equity **994,177.74**, cash **497,174.93**. Ledger **11 rows = 7 positions**, so
+the sizer's calibration gate is at **7 of 20**. Both exits were losses and both
+fired on `signal` rather than a stop.
+
 
 ### ⚠️ FOUR VACUOUS TESTS IN ONE DAY
 
@@ -5161,7 +5224,7 @@ and on operator instruction, and the section explains what it cost.
 ⚠️ CLOSE THE APP FIRST, THEN THE BROKER.
 ⚠️ COMMIT BEFORE SABOTAGING A RAIL.
 
-THE STATE - measured 9 September 13:21, not carried forward
+THE STATE - measured 9 September 14:53, after a clean shutdown
 
 Deployed M172 (77d5485), installed 13:14 and READ BACK 13:18:05: "Build: M172
 (77d5485, built 09/09/2026 13:11:21 AEST, packaged)" in the app's own log.
@@ -5175,20 +5238,32 @@ BROKER: IB GATEWAY on 4002. TWS CLOSED. Neither endpoint is sufficient alone -
 Gateway has delayed market data and no GUI; TWS has the GUI and no API market
 data. Account DUQ200898, paper, AUD.
 
-NINE POSITIONS, all protected, 18 resting legs, scan clean: ANZ ASX BOQ JHX SEK
-SUN TAH TWE WOW. Cash 509,555.49, equity 994,498.11.
-⚠️ IAG.AX SOLD 9 September 13:19:17 - 6,699 @ 7.68, net -1,798.73, r -0.415,
-reason `signal`. The only trade of the day, after a three-hour deadlock.
+NINE POSITIONS, all protected, 18 resting legs - VERIFIED AT THE BROKER, not
+inferred: IB.positions() returned nine and reqAllOpenOrders two legs for each.
+ANZ ASX BHP BOQ JHX SUN TAH TWE WOW. Cash 497,174.93, equity 994,177.74.
 
-LEDGER: 10 rows = SIX POSITIONS. Count positions, not rows -
-collapse_to_positions is applied inside TradeLedger.closed_trades(), so every
-consumer including edge_min_trades sees positions. 6 of 20 for the sizer's gate.
+TODAY'S TRADING: IAG.AX sold 6,699 @ 7.67 (-1,865.63, -0.43R, signal);
+SEK.AX sold 2,978 @ 12.93 (-6,021.32, -0.96R, signal); BHP.AX ENTERED 793 @
+64.07 at 14:05, the first app-driven entry since 4 September. Both exits were
+losses and both fired on `signal` rather than a stop.
 
-⚠️ KILL SWITCH IS TRIPPED AND WAS LEFT SO DELIBERATELY:
+LEDGER: 11 rows = SEVEN POSITIONS, so the sizer's gate is at 7 of 20. Count
+positions, not rows - collapse_to_positions is applied inside
+TradeLedger.closed_trades().
+⚠️ SEK.AX's ROW IS KNOWN WRONG: exit recorded 12.90, executions averaged 12.93.
+_correct_announced_price never ran because the trip and shutdown intervened.
+Expect absorb_broker_fills to amend it on the next launch - CHECK THAT IT DOES.
+
+⚠️ KILL SWITCH IS TRIPPED - the app was CLOSED with it tripped:
     "unrecognised code 10349: Order TIF was set to GTC based on order preset."
-✅ HARMLESS AS IT STANDS - IAG is flat, the book is nine and fully protected, so
-the halt blocks only new entries. It was left rather than spend a fourth deploy
-on a live account. Reset it via the Risk Console when you want the book trading.
+FIVE TRIPS on 9 September: three on 10148 from two different code paths (M171
+and M172 fixed one each), two on 10349.
+⚠️ THE FIFTH TRIP PREVENTED A NAKED SHORT. SEK filled in THIRTEEN executions
+over 28 seconds; the app read the position twelve seconds in, believed 948
+shares remained, and proposed a protective SELL of 948 against a position that
+was already flat. The kill switch blocked it every 60s until the app was closed
+- and closing discards a pending_signoff order permanently, which resetting the
+switch could never have done. Read the afternoon section before resetting.
 
 OUTSTANDING, IN ORDER
 
@@ -5196,7 +5271,9 @@ OUTSTANDING, IN ORDER
 before trusting it; do not copy it forward. The first version of this list
 carried FOUR items that were already fixed and deployed.
 
-1. ⚠️ 10349, THE GATEWAY ORDER PRESET, AND IT IS NOT A CODE DEFECT. The mirror
+1. ⚠️ 10349, THE GATEWAY ORDER PRESET - THE BLOCKING ISSUE, AND NOT A CODE
+   DEFECT. It fired on BOTH app-driven market exits today, so it is not a
+   one-off: every such exit trips the account. The mirror
    of 4 September: then the preset forced DAY while the app sent GTC, and it was
    fixed by setting the preset to GTC; now the preset forces GTC onto a market
    exit the app sends as DAY. The 4 September fix solved brackets and broke
