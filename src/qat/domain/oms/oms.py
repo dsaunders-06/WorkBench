@@ -54,6 +54,10 @@ from qat.domain.risk_engine.kill_switch import KillSwitch
 
 logger = logging.getLogger(__name__)
 
+# Share counts are floats on the wire, so an exact == 0 comparison is not safe.
+# The same 1e-6 the reconciliation and cancel paths already use.
+_POSITION_EPSILON = 1e-6
+
 
 @dataclass(frozen=True, slots=True)
 class _AbsorbedFill:
@@ -913,6 +917,96 @@ class OMS:
                 order, "rejected", f"kill-switch tripped: {self.kill_switch.reason}", operator
             )
             return order
+
+        # ⚠️ RE-READ THE POSITION. A protective order is sized when PROPOSED and
+        # transmitted when SIGNED OFF, and the holding can change in between.
+        #
+        # MEASURED 9 September 2026, and it was a near-miss rather than a loss.
+        # A signal exit on SEK.AX filled in TEN partial executions over 28
+        # seconds. `rearm_protective_stops` read the position at TWELVE seconds,
+        # when 2,030 of 2,978 had filled, and proposed a protective sell of the
+        # 948 it thought remained. Twenty-eight seconds later SEK was FLAT -
+        # `IB.positions()` returned nine positions with no SEK among them - and
+        # that order was retried every sixty seconds against a position that did
+        # not exist. Signed off, it is a SHORT created by the rail whose entire
+        # purpose is preventing one. What blocked it was the kill switch,
+        # tripped seconds earlier on an unrelated error: luck, not design.
+        #
+        # Same shape as the resting-order cancel loop's TOCTOU guard, and for
+        # the same reason - re-read immediately before committing, because the
+        # snapshot the decision was made on is already stale.
+        #
+        # ⚠️ REFUSE, DO NOT RESIZE. The buy branch below says why: "silently
+        # changing a quantity a human just approved would defeat the point of
+        # the approval." A refusal is cheap because the protection sweep
+        # proposes a correctly-sized replacement within
+        # `protection_sweep_seconds`; a silent resize transmits a quantity
+        # nobody approved.
+        #
+        # ⚠️ ONLY A SHORTFALL REFUSES. A protective order SMALLER than the
+        # holding under-protects, which is a real problem and a far less urgent
+        # one than selling shares that are not there - and refusing it would
+        # leave the position with no protection at all.
+        if order.is_protective_stop:
+            held = await self._broker_quantity(order.symbol)
+            if held is None:
+                # Fails CLOSED, and `None` is not zero: `_broker_quantity`
+                # keeps that distinction precisely so this branch can.
+                order.status = "rejected"
+                logger.warning(
+                    "Sign-off blocked - the broker could not be read to confirm %s is still "
+                    "held, and a protective sell cannot be sized against a position that "
+                    "cannot be seen: order=%s operator=%s",
+                    order.symbol,
+                    order_id,
+                    operator,
+                )
+                self._record(
+                    order,
+                    "rejected",
+                    f"broker unreadable - cannot confirm {order.symbol} is still held",
+                    operator,
+                )
+                return order
+            if held <= _POSITION_EPSILON:
+                order.status = "rejected"
+                logger.warning(
+                    "Sign-off blocked - %s is FLAT at the broker, so this protective sell of "
+                    "%g would open a SHORT. It was sized when proposed and the position "
+                    "closed before sign-off: order=%s operator=%s",
+                    order.symbol,
+                    order.quantity,
+                    order_id,
+                    operator,
+                )
+                self._record(
+                    order,
+                    "rejected",
+                    f"{order.symbol} is flat at the broker - a protective sell would short it",
+                    operator,
+                )
+                return order
+            if held + _POSITION_EPSILON < order.quantity:
+                order.status = "rejected"
+                logger.warning(
+                    "Sign-off blocked - %s has shrunk to %g since this protective order was "
+                    "sized at %g, so it would be short by %g. The protection sweep will "
+                    "propose one at the current size: order=%s operator=%s",
+                    order.symbol,
+                    held,
+                    order.quantity,
+                    order.quantity - held,
+                    order_id,
+                    operator,
+                )
+                self._record(
+                    order,
+                    "rejected",
+                    f"{order.symbol} shrank to {held:g} since this was sized at "
+                    f"{order.quantity:g} - refusing rather than resizing",
+                    operator,
+                )
+                return order
 
         # Re-check cash against the CURRENT balance, not the balance at
         # submission (spec M12). This is load-bearing rather than belt-and-
