@@ -193,6 +193,10 @@ class OMS:
         # governor can measure aggregate risk-at-stop without re-querying open
         # orders from the broker on every candidate.
         self._position_stops: dict[str, float] = {}
+        # Symbols that have already spent their one-check reprieve while a
+        # replacement protective order sits awaiting sign-off. Cleared the
+        # moment a stop is seen resting again. See `verify_position_stops`.
+        self._protection_grace_used: set[str] = set()
         # Watermark for absorbing broker-side executions (M34), now surviving a
         # restart (M50).
         #
@@ -555,12 +559,27 @@ class OMS:
           detected by a rail that explicitly does not cancel anything, and if
           one fills you own an unintended SHORT with no bound.
 
-        ⚠️ A PARTIAL exit leaves the legs ALONE. The de-lever sweep trims a
-        position that still needs protecting; cancelling its legs would strip
-        the remainder, turning the transient cancel-first gap into a permanent
-        one. Their size is then larger than the holding, which is a real and
-        separate problem - resizing them is not this method's job and is not
-        done here.
+        ⚠️ A PARTIAL exit RELEASES ITS LEGS TOO, reversed 9 September 2026.
+        This used to leave them alone, reasoning that the de-lever sweep trims a
+        position which still needs protecting. That is true of the intent and
+        false of the result: the legs keep the PRE-TRIM size, so a 100-share
+        bracket ends up guarding a 60-share holding, and a stop firing then
+        sells 100 against 60 held and puts the account SHORT 40 - in a falling
+        market, which is when stops fire. The sweep trims EVERY position at
+        once, so one breach left the whole book over-covered.
+
+        ⚠️ WHY CANCEL RATHER THAN RESIZE, and it is the same asymmetry again:
+        `naked_positions` reports a position with NO stop resting and is BLIND
+        to one that is merely the wrong SIZE. Resizing in place fails into a
+        state nothing detects; cancelling fails into one that
+        `verify_position_stops` shouts about and `rearm_protective_stops` heals
+        by itself, at `abs(quantity)` - the current holding - off the recorded
+        entry stop. Cancelling fails into the state the system can see.
+
+        ⚠️ The remainder is therefore briefly unprotected, bounded by
+        `protection_sweep_seconds`. That is a real cost, accepted deliberately,
+        and it is the same window this method already accepts when a full exit
+        is cancelled and then fails.
 
         ⚠️ Only protective legs, per `is_protective_leg`. A working BUY on the
         symbol is an intruder and is left strictly alone: cancelling one
@@ -588,16 +607,19 @@ class OMS:
 
         held = await self._broker_quantity(symbol)
         if held is not None and abs(quantity) + 1e-9 < abs(held):
-            logger.info(
+            logger.warning(
                 "Exit on %s is PARTIAL (%g of %g held), so its %d protective leg(s) are "
-                "left resting - the remainder still needs them. They now cover more than "
-                "is held, which the resting-order rail reports separately.",
+                "RELEASED like any other exit - they carry the pre-trim size and would "
+                "guard %g shares against a %g holding. The remainder is left unprotected "
+                "on purpose: that state is what `naked_positions` can see, and "
+                "`rearm_protective_stops` re-arms it at the reduced size.",
                 symbol,
                 quantity,
                 held,
                 len(legs),
+                held,
+                abs(held) - abs(quantity),
             )
-            return True
 
         for leg in legs:
             try:
@@ -1426,11 +1448,42 @@ class OMS:
             if actual is None:
                 lost.append(symbol)
                 continue
+            # Protection is resting again, so the grace is spent and available
+            # afresh. Without this a symbol reprieved once could never be
+            # reprieved again, and the second re-protection of its life would
+            # drop the belief on the very first check.
+            self._protection_grace_used.discard(symbol)
             if abs(actual - believed) > _STOP_LEVEL_TOLERANCE * abs(believed):
                 drifted.append((symbol, believed, actual))
 
+        # ⚠️ "REPLACEMENT IN FLIGHT" IS NOT "UNPROTECTED", and until 9 September
+        # they were the same state. `submit_protective_stop` only ever proposes
+        # - nothing reaches the broker without sign-off - so every re-protection
+        # has a window where the old leg is cancelled and nothing rests yet.
+        # Dropping the belief there reprices the position at FULL VALUE in
+        # `PortfolioGovernor._per_share_risk`, which inflates aggregate
+        # risk-at-stop by roughly an order of magnitude and drives the de-lever
+        # sweep to trim again - during a breach, which is the only time it runs.
+        #
+        # ⚠️ THE GRACE LASTS ONE CHECK. `verify_position_stops` exists because a
+        # stop that quietly stopped existing makes the book look safer than it
+        # is - six positions at once on 31 July. A belief held open forever
+        # because something is "pending" would be that defect with an excuse
+        # attached, so a sign-off that has not happened by the next check loses
+        # the position its belief anyway.
+        reprieved: list[str] = []
         for symbol in lost:
+            pending = any(
+                order.symbol == symbol and order.is_protective_stop
+                for order in self.awaiting_signoff()
+            )
+            if pending and symbol not in self._protection_grace_used:
+                self._protection_grace_used.add(symbol)
+                reprieved.append(symbol)
+                continue
+            self._protection_grace_used.discard(symbol)
             self._position_stops.pop(symbol, None)
+        lost = [symbol for symbol in lost if symbol not in reprieved]
         for symbol, _believed, actual in drifted:
             # Replaced, not dropped. The position IS protected - just not where
             # this app thought - and the broker is the authority on what rests.
@@ -1438,6 +1491,18 @@ class OMS:
             # overstate the aggregate the governor gates new entries on.
             self._position_stops[symbol] = actual
 
+        if reprieved:
+            # WARNING, not ERROR: this is the expected transient of a
+            # re-protection, and it is bounded to one check. It is logged at all
+            # because a symbol appearing here twice in a row means the sign-off
+            # is not happening, and the line after it will be the ERROR.
+            logger.warning(
+                "PROTECTION PENDING on %s: nothing rests at the broker, but a protective "
+                "order is awaiting sign-off, so the recorded stop is KEPT for one check "
+                "rather than repricing the position at full value. If sign-off does not "
+                "happen before the next check the belief is dropped.",
+                ", ".join(sorted(reprieved)),
+            )
         if lost:
             logger.error(
                 "POSITION UNPROTECTED: %s held with no stop resting at the broker. The stop "

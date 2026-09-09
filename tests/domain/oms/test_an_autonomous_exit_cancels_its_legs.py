@@ -88,6 +88,22 @@ class _BrokerWithLegs(MockBroker):
     async def open_orders(self) -> list[RestingOrder]:
         return list(self._legs)
 
+    async def resting_stops(self) -> dict[str, float]:
+        """⚠️ DERIVED FROM `_legs`, not a fixed dict, and that is the point.
+
+        `naked_positions` reads THIS, not `open_orders`. A fixture that did not
+        model it reported AAA unprotected whether or not the legs were still
+        there, so the test asserting the remainder becomes visible passed
+        against the unfixed code - vacuous, and in the exact shape this project
+        keeps rediscovering: a test asserting ABSENCE must first prove the
+        fixture can produce PRESENCE.
+        """
+        return {
+            leg.symbol: leg.stop_price
+            for leg in self._legs
+            if leg.order_type == "STP" and leg.stop_price is not None
+        }
+
     async def cancel_order(self, order_id: str) -> Order:
         self.cancelled.append(order_id)
         if self._cancel_succeeds:
@@ -138,17 +154,58 @@ async def test_the_exit_is_REFUSED_when_a_leg_will_not_cancel() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_PARTIAL_exit_leaves_the_legs_alone() -> None:
-    """⚠️ The delever sweep trims a position that STILL NEEDS protection.
-    Cancelling its legs would strip the remainder - the cancel-first failure
-    made permanent instead of transient."""
+async def test_a_PARTIAL_exit_releases_its_legs_too() -> None:
+    """⚠️ REVERSED 9 September, and the reasoning matters more than the change.
+
+    This test previously asserted the OPPOSITE - that a partial exit leaves its
+    legs alone, because "the remainder still needs protecting". That is true of
+    the INTENT and false of the RESULT: the legs keep the size of the position
+    before the trim, so a 100-share bracket now guards a 60-share holding. If
+    the stop then fires it sells 100 against 60 held and the account is SHORT 40
+    - the same naked short this file exists to prevent, reached by a different
+    route and at the worst possible moment, since a stop fires in a falling
+    market.
+
+    ⚠️ The de-lever sweep trims EVERY position at once ("trimming every position
+    by {fraction:.1%}"), so one breach would leave the whole book over-covered,
+    not one symbol.
+    """
     broker = _BrokerWithLegs()
     oms = _oms(broker)
 
     await oms.submit_exit_order("AAA", quantity=40.0, price=100.0, reason="delever")
 
-    assert broker.cancelled == []
-    assert len(await broker.open_orders()) == 2
+    assert sorted(broker.cancelled) == ["leg-stop", "leg-target"]
+    assert await broker.open_orders() == []
+
+
+@pytest.mark.asyncio
+async def test_the_remainder_of_a_PARTIAL_exit_is_VISIBLE_as_unprotected() -> None:
+    """⚠️ THE WHOLE JUSTIFICATION FOR CANCELLING RATHER THAN RESIZING.
+
+    `naked_positions` reports a held position with NO stop resting. It cannot
+    see a stop that is merely the WRONG SIZE - that state is invisible to every
+    rail in this application. So the two candidate designs fail differently:
+
+      * resize in place, and a failure leaves a stop of the wrong size, which
+        nothing detects and nothing heals;
+      * cancel, and a failure leaves the position FULLY unprotected - which
+        `naked_positions` sees, `verify_position_stops` shouts about, and
+        `rearm_protective_stops` fixes on its own at `abs(quantity)`, the
+        CURRENT holding, using the recorded entry stop.
+
+    Cancelling fails into the state the system can see. That is the argument.
+    """
+    broker = _BrokerWithLegs()
+    oms = _oms(broker)
+
+    await oms.submit_exit_order("AAA", quantity=40.0, price=100.0, reason="delever")
+
+    naked = await oms.naked_positions()
+
+    assert [symbol for symbol, _ in naked] == [
+        "AAA"
+    ], "the remainder must be detectable as unprotected, or nothing re-arms it"
 
 
 @pytest.mark.asyncio
