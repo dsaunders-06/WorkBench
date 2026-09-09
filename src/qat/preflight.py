@@ -21,9 +21,42 @@ from __future__ import annotations
 import socket
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import date, time
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 from qat.config import Settings
+from qat.data.broker.ib_hours import parse_ib_hours
+from qat.domain.market_calendar import (
+    MARKET_TIMEZONES,
+    auction_tail_minutes,
+    is_trading_day,
+    regular_hours,
+    trading_date,
+)
+
+# (market, boundary) -> (app value, IBKR value, when measured, why accepted)
+#
+# A disagreement recorded here has been LOOKED AT and accepted, which is why
+# each entry carries the date it was measured and the reason: an undated
+# exception is indistinguishable from one nobody has re-examined.
+#
+# An allowlist of exactly one, NOT a tolerance band - a band would swallow the
+# next disagreement too.
+_ACCEPTED_HOURS_DIVERGENCES: dict[tuple[str, str], tuple[time, time, str, str]] = {
+    ("ASX", "open"): (
+        time(10, 0),
+        time(9, 59),
+        "2026-08-21",
+        "IBKR reports 0959 for every ASX contract probed; 10:00 is when ASX "
+        "continuous trading starts, so this reads as broker-side rounding. See "
+        "docs/superpowers/specs/2026-08-21-asx-session-hours-raw.md",
+    ),
+}
+
+# IBKR names some zones by their legacy aliases. Australia/NSW and
+# Australia/Sydney are the same zone; the label differing is not a finding.
+_IB_ZONE_ALIASES: dict[str, str] = {"Australia/NSW": "Australia/Sydney"}
 
 
 class Status(Enum):
@@ -540,6 +573,132 @@ async def book_checks(broker: object) -> list[Check]:
     return checks
 
 
+def compare_session_hours(
+    trading_hours: str,
+    liquid_hours: str,
+    time_zone_id: str,
+    market: str,
+    days: Sequence[date],
+) -> list[Check]:
+    """Does the hand-maintained calendar still agree with the exchange?
+
+    `_REGULAR_HOURS`, `asx_holidays()`, `_EARLY_CLOSE_TIMES`, `EXTRA_CLOSURES`
+    and `_AUCTION_TAIL_MINUTES` are all maintained by hand. IBKR states the
+    same facts per contract and per day, and this is the only thing that would
+    notice if the two drifted apart. On 21 August a hand-maintained constant in
+    `handoff_state.py` was found wrong for a day for want of exactly this.
+
+    **WARN, never FAIL, and never UNKNOWN - a deliberate departure from this
+    module's rule that a check which could not be performed is not a check that
+    passed.** Every other check here asks whether something the session DEPENDS
+    ON is true, so an unanswerable one should stop the session. This one asks
+    whether a constant still matches the broker; the calendar is authoritative
+    at runtime either way, so nothing about the session degrades when the
+    comparison cannot be made. UNKNOWN would let an odd vendor string block
+    trading over a disagreement that is cosmetic by construction.
+    """
+    tz = MARKET_TIMEZONES[market]  # type: ignore[index]
+    trading = parse_ib_hours(trading_hours, tz)
+    liquid = parse_ib_hours(liquid_hours, tz)
+    if not trading or not liquid:
+        return [
+            Check(
+                "session hours",
+                Status.WARN,
+                "IBKR returned trading hours this cannot read, so the calendar "
+                "constants were not compared against the exchange this session",
+            )
+        ]
+
+    open_time, close_time = regular_hours(market)  # type: ignore[arg-type]
+    tail = auction_tail_minutes(market)  # type: ignore[arg-type]
+    warnings: list[Check] = []
+
+    for day in sorted(days):
+        windows = liquid.get(day)
+        if windows is None:
+            continue
+        if not windows:
+            if is_trading_day(market, day):  # type: ignore[arg-type]
+                warnings.append(
+                    Check(
+                        "session hours",
+                        Status.WARN,
+                        f"IBKR reports {day.isoformat()} CLOSED; the calendar calls it a "
+                        "trading day. The holiday table is hand-maintained and this is "
+                        "the exchange contradicting it",
+                    )
+                )
+            continue
+        if not is_trading_day(market, day):  # type: ignore[arg-type]
+            warnings.append(
+                Check(
+                    "session hours",
+                    Status.WARN,
+                    f"IBKR reports {day.isoformat()} as trading; the calendar calls it closed",
+                )
+            )
+            continue
+
+        start, end = windows[0]
+        if start.time() != open_time and not _accepted(market, "open", open_time, start.time()):
+            warnings.append(
+                Check(
+                    "session hours",
+                    Status.WARN,
+                    f"{day.isoformat()} opens at {start.time():%H:%M} on IBKR, "
+                    f"{open_time:%H:%M} in the calendar",
+                )
+            )
+        if end.time() != close_time and not _accepted(market, "close", close_time, end.time()):
+            warnings.append(
+                Check(
+                    "session hours",
+                    Status.WARN,
+                    f"{day.isoformat()} closes at {end.time():%H:%M} on IBKR, "
+                    f"{close_time:%H:%M} in the calendar",
+                )
+            )
+
+        trading_windows = trading.get(day)
+        if trading_windows:
+            measured = round((trading_windows[0][1] - end).total_seconds() / 60)
+            if measured != tail:
+                warnings.append(
+                    Check(
+                        "session hours",
+                        Status.WARN,
+                        f"{day.isoformat()} auction tail is {measured} minute(s) on IBKR, "
+                        f"{tail} in the model",
+                    )
+                )
+
+    if time_zone_id and ZoneInfo(_IB_ZONE_ALIASES.get(time_zone_id, time_zone_id)) != tz:
+        warnings.append(
+            Check(
+                "session hours",
+                Status.WARN,
+                f"IBKR reports timezone {time_zone_id}, the calendar uses {tz}",
+            )
+        )
+
+    if warnings:
+        return warnings
+    return [
+        Check(
+            "session hours",
+            Status.OK,
+            f"{market} hours, auction tail and trading days all match IBKR "
+            f"across {len(days)} day(s)",
+        )
+    ]
+
+
+def _accepted(market: str, boundary: str, app_value: time, ib_value: time) -> bool:
+    entry = _ACCEPTED_HOURS_DIVERGENCES.get((market, boundary))
+    return entry is not None and entry[0] == app_value and entry[1] == ib_value
+
+
 async def contract_checks(symbols: list[str], market: str, ib_client: object) -> list[Check]:
     """Does every symbol the session will trade resolve to a real contract?
 
@@ -555,6 +714,7 @@ async def contract_checks(symbols: list[str], market: str, ib_client: object) ->
         return [Check("contracts", Status.UNKNOWN, "the client cannot resolve contracts")]
 
     unresolved: list[str] = []
+    first: object | None = None
     for symbol in symbols:
         try:
             details = await request(to_ib_contract(symbol, market))
@@ -563,6 +723,8 @@ async def contract_checks(symbols: list[str], market: str, ib_client: object) ->
             continue
         if not details:
             unresolved.append(symbol)
+        elif first is None:
+            first = details[0]
 
     if unresolved:
         return [
@@ -573,7 +735,19 @@ async def contract_checks(symbols: list[str], market: str, ib_client: object) ->
                 f"{', '.join(unresolved)}. Entries in these cannot be placed.",
             )
         ]
-    return [Check("contracts", Status.OK, f"all {len(symbols)} resolve on {market}")]
+    checks = [Check("contracts", Status.OK, f"all {len(symbols)} resolve on {market}")]
+    if first is not None:
+        today = trading_date(market)  # type: ignore[arg-type]
+        checks.extend(
+            compare_session_hours(
+                str(getattr(first, "tradingHours", "")),
+                str(getattr(first, "liquidHours", "")),
+                str(getattr(first, "timeZoneId", "")),
+                market,
+                [today],
+            )
+        )
+    return checks
 
 
 async def feed_checks(symbols: list[str], source: object) -> list[Check]:

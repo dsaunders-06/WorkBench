@@ -18,6 +18,9 @@ same thing - it would be an alarm that cannot fire.
 
 from __future__ import annotations
 
+from datetime import date
+
+from qat import preflight
 from qat.config import Settings
 from qat.preflight import Check, Status, Verdict, settings_checks, verdict_for
 
@@ -454,3 +457,135 @@ async def test_some_symbols_missing_still_names_them() -> None:
 
     assert check.status is Status.FAIL
     assert "APA.AX" in check.detail
+
+
+# --- Session hours against the broker (Stage 3) -------------------------------
+
+_TRADING = "20260824:0959-20260824:1611;20260825:0959-20260825:1611;20260822:CLOSED"
+_LIQUID = "20260824:0959-20260824:1600;20260825:0959-20260825:1600;20260822:CLOSED"
+_DAYS = [date(2026, 8, 24), date(2026, 8, 25), date(2026, 8, 22)]
+
+
+def test_agreement_reports_one_ok_line_not_four():
+    """Four green lines for one round trip is noise in an instrument read at
+    the open."""
+    checks = preflight.compare_session_hours(_TRADING, _LIQUID, "Australia/NSW", "ASX", _DAYS)
+    assert len(checks) == 1
+    assert checks[0].status is preflight.Status.OK
+
+
+def test_a_different_continuous_close_warns_and_quotes_both():
+    checks = preflight.compare_session_hours(
+        _TRADING, _LIQUID.replace("1600", "1530"), "Australia/NSW", "ASX", _DAYS
+    )
+    assert any(c.status is preflight.Status.WARN and "15:30" in c.detail for c in checks)
+
+
+def test_a_different_auction_tail_warns():
+    """The eleven minutes is the one measured auction constant. If IBKR stops
+    saying eleven, the model is wrong and this is the only thing that would
+    say so."""
+    checks = preflight.compare_session_hours(
+        _TRADING.replace("1611", "1620"), _LIQUID, "Australia/NSW", "ASX", _DAYS
+    )
+    assert any(c.status is preflight.Status.WARN and "auction" in c.detail for c in checks)
+
+
+def test_a_day_ibkr_calls_closed_that_the_calendar_calls_open_warns():
+    """This is the valuable one: asx_holidays(), _EARLY_CLOSE_TIMES and
+    EXTRA_CLOSURES are all hand-maintained, and this is the first thing that
+    contradicts them out of the exchange's own mouth."""
+    checks = preflight.compare_session_hours(
+        "20260824:CLOSED", "20260824:CLOSED", "Australia/NSW", "ASX", [date(2026, 8, 24)]
+    )
+    assert any(c.status is preflight.Status.WARN and "2026-08-24" in c.detail for c in checks)
+
+
+def test_the_accepted_open_divergence_stays_silent():
+    """IBKR reports 0959 for every ASX contract; the app says 10:00. Recorded
+    as accepted on 21 August 2026. A check that warns on every run is a check
+    people stop reading."""
+    checks = preflight.compare_session_hours(_TRADING, _LIQUID, "Australia/NSW", "ASX", _DAYS)
+    assert all("09:59" not in c.detail for c in checks)
+
+
+def test_an_unaccepted_open_difference_does_warn():
+    """The allowlist is one entry, not a tolerance band. A band would swallow
+    the next disagreement too."""
+    checks = preflight.compare_session_hours(
+        _TRADING.replace("0959", "0930"),
+        _LIQUID.replace("0959", "0930"),
+        "Australia/NSW",
+        "ASX",
+        _DAYS,
+    )
+    assert any(c.status is preflight.Status.WARN and "09:30" in c.detail for c in checks)
+
+
+def test_an_unparseable_string_warns_and_does_not_block_ready():
+    """A deliberate departure from this module's UNKNOWN rule; see the comment
+    at the call site. Every other check asks whether something the session
+    DEPENDS ON is true. This one asks whether a constant still agrees with the
+    broker, and the calendar is authoritative at runtime either way."""
+    checks = preflight.compare_session_hours("nonsense", "nonsense", "", "ASX", _DAYS)
+    assert checks
+    assert all(c.status is preflight.Status.WARN for c in checks)
+    assert preflight.verdict_for(checks) is preflight.Verdict.READY
+
+
+def _ib_hours_for(day: date, close: str = "1600", tail_close: str = "1611") -> tuple[str, str]:
+    stamp = day.strftime("%Y%m%d")
+    return (
+        f"{stamp}:0959-{stamp}:{tail_close}",
+        f"{stamp}:0959-{stamp}:{close}",
+    )
+
+
+class _Details:
+    """Shaped like the ib_async ContractDetails the wiring reads by getattr."""
+
+    def __init__(self, trading: str, liquid: str) -> None:
+        self.tradingHours = trading  # noqa: N803
+        self.liquidHours = liquid  # noqa: N803
+        self.timeZoneId = "Australia/NSW"  # noqa: N803
+
+
+async def _checks_for(details: _Details) -> list[Check]:
+    from qat.preflight import contract_checks
+
+    class _IB:
+        async def reqContractDetailsAsync(self, contract: object) -> list[object]:
+            return [details]
+
+    return await contract_checks(["BHP.AX"], "ASX", _IB())
+
+
+async def test_contract_checks_asks_the_broker_about_session_hours() -> None:
+    """The comparison is worth nothing unless something calls it. The only
+    pre-existing contract_checks test takes the FAIL path, which returns before
+    this code, so without this the wiring could be deleted and stay green."""
+    from qat.domain.market_calendar import trading_date
+
+    trading, liquid = _ib_hours_for(trading_date("ASX"))
+
+    checks = await _checks_for(_Details(trading, liquid))
+
+    hours = [c for c in checks if c.name == "session hours"]
+    assert hours, [(c.name, c.status) for c in checks]
+    assert hours[0].status is Status.OK
+    assert _named(checks, "contracts").status is Status.OK
+
+
+async def test_contract_checks_surfaces_a_session_hours_disagreement() -> None:
+    """And it carries the comparison's verdict rather than a fixed line - the
+    same fixture, one boundary moved, has to come back WARN quoting it."""
+    from qat.domain.market_calendar import trading_date
+
+    trading, liquid = _ib_hours_for(trading_date("ASX"), close="1530")
+
+    checks = await _checks_for(_Details(trading, liquid))
+
+    hours = [c for c in checks if c.name == "session hours"]
+    assert any(c.status is Status.WARN and "15:30" in c.detail for c in hours), [
+        (c.status, c.detail) for c in hours
+    ]
