@@ -98,11 +98,52 @@ AUTONOMOUS_ELIGIBLE_PHASES: frozenset[str] = frozenset(
 )
 
 
+# What the exchange is DOING, as distinct from whether continuous trading is
+# available. `is_open` keeps its existing meaning - continuous trading is
+# available - because every caller already assumes it, and redefining it would
+# change the autonomy gate, the feed and the stand-down at once.
+TradingState = Literal["pre_open", "opening_auction", "continuous", "closing_auction", "closed"]
+
+# MEASURED, 21 August 2026 against the live paper Gateway and RE-MEASURED
+# 9 September. IBKR reports the ASX as tradingHours 0959-1611 against
+# liquidHours 0959-1600: an eleven-minute tail after continuous trading, which
+# is the pre-CSPA and the closing auction. Unchanged across both probes and
+# across a broker round trip to TWS and back.
+# See docs/superpowers/specs/2026-09-09-asx-session-hours-raw.md.
+_AUCTION_TAIL_MINUTES: dict[Market, int] = {"US": 0, "ASX": 11}
+
+# A JUDGEMENT, not a measurement, and the difference matters. The ASX opens in
+# staggered alphabetical groups across roughly the first ten minutes, so an
+# early-alphabet symbol is trading while a late one is still in its auction.
+# IBKR does NOT expose this: all fourteen contracts probed across the alphabet
+# returned identical hours on both probe dates, and the delta at the open is
+# zero. Ten minutes is a deliberately conservative blanket over a window the
+# broker cannot confirm.
+#
+# US is 0 on both tables, so a US session reaches only pre_open, continuous and
+# closed and its behaviour is bit-identical to before this existed.
+_OPENING_AUCTION_MINUTES: dict[Market, int] = {"US": 0, "ASX": 10}
+
+
+def auction_tail_minutes(market: Market) -> int:
+    """Minutes of auction after continuous trading ends.
+
+    Public because pre-flight compares this against what IBKR reports, and a
+    consumer reaching into `_AUCTION_TAIL_MINUTES` across a module boundary
+    would be importing a private name to do it.
+    """
+    return _AUCTION_TAIL_MINUTES[market]
+
+
 @dataclass(frozen=True, slots=True)
 class MarketSession:
     market: Market
     is_open: bool
     phase: str | None
+    # REQUIRED, with no default. Constructed in exactly four places, all in this
+    # module, and a default here would be silently wrong wherever it was
+    # omitted - the shape `ts=now` already had once.
+    trading_state: TradingState
     local_time: datetime
     opens_at: datetime | None
     closes_at: datetime | None
@@ -286,6 +327,7 @@ def session_for(market: Market, now: datetime | None = None) -> MarketSession:
             market=market,
             is_open=False,
             phase=None,
+            trading_state="closed",
             local_time=local,
             opens_at=None,
             closes_at=None,
@@ -307,6 +349,7 @@ def session_for(market: Market, now: datetime | None = None) -> MarketSession:
             market=market,
             is_open=False,
             phase=None,
+            trading_state="pre_open",
             local_time=local,
             opens_at=opens_at,
             closes_at=closes_at,
@@ -314,23 +357,40 @@ def session_for(market: Market, now: datetime | None = None) -> MarketSession:
             closed_reason="before open",
         )
     if local > closes_at:
+        # The auction is a separate mechanism bolted to the end of continuous
+        # trading, not a stretch of the session. `is_open` stays False through
+        # it - a market order into a single-price auction fills at the auction
+        # price - and only the REASON changes, so an operator reading a refusal
+        # at 16:05 is told the exchange is mid-auction rather than shut.
+        #
+        # ⚠️ On an early close the tail is ASSUMED to be the same eleven
+        # minutes after the earlier close. No half-day fell inside either
+        # probe's six-day window, so there is nothing to assert it against.
+        # Task 4's pre-flight comparison is what will surface it when one
+        # arrives.
+        auction_end = closes_at + timedelta(minutes=_AUCTION_TAIL_MINUTES[market])
+        in_auction = local <= auction_end
         return MarketSession(
             market=market,
             is_open=False,
             phase=None,
+            trading_state="closing_auction" if in_auction else "closed",
             local_time=local,
             opens_at=opens_at,
             closes_at=closes_at,
             is_early_close=is_early,
-            closed_reason="after close",
+            closed_reason="closing auction" if in_auction else "after close",
         )
 
     span = (closes_at - opens_at).total_seconds()
     elapsed = (local - opens_at).total_seconds() / span if span > 0 else 1.0
+    auction_ends = opens_at + timedelta(minutes=_OPENING_AUCTION_MINUTES[market])
     return MarketSession(
         market=market,
         is_open=True,
         phase=session_phase(elapsed),
+        # Half-open: 10:10:00 exactly is continuous, not still in the auction.
+        trading_state="opening_auction" if local < auction_ends else "continuous",
         local_time=local,
         opens_at=opens_at,
         closes_at=closes_at,
