@@ -5274,17 +5274,32 @@ OUTSTANDING, IN ORDER
 before trusting it; do not copy it forward. The first version of this list
 carried FOUR items that were already fixed and deployed.
 
-1. ⚠️ 10349, THE GATEWAY ORDER PRESET - THE BLOCKING ISSUE, AND NOT A CODE
-   DEFECT. It fired on BOTH app-driven market exits today, so it is not a
-   one-off: every such exit trips the account. The mirror
-   of 4 September: then the preset forced DAY while the app sent GTC, and it was
-   fixed by setting the preset to GTC; now the preset forces GTC onto a market
-   exit the app sends as DAY. The 4 September fix solved brackets and broke
-   market exits. The app cannot send one TIF for everything - M31b records that
-   DAY killed every protective leg on 31 July.
-   ⚠️ AND THE ORDER FILLED ANYWAY, so 10349 was not a refusal here. DO NOT
-   enumerate it as benign the way 10148 was until that is understood. The
-   evidence rule on BENIGN_ORDER_REJECT_CODES exists for this.
+1. ✅ 10349 - FIXED IN CODE 9 September (`e5b16ca`), NOT DEPLOYED.
+   ⚠️ **AND I CALLED IT "NOT A CODE DEFECT" REPEATEDLY. IT WAS ONE.** The
+   final two returns of `to_ib_order` - the plain market and limit branches -
+   were the only paths in `ib_translate` that left the TIF implicit. ib_async
+   defaults to DAY, the Gateway preset imposes GTC, and IBKR rejects the
+   mismatch. Both app-driven market exits of the day went through that branch.
+
+   ⚠️ THE MODULE ALREADY KNEW. `to_ib_parent` has carried the lesson since
+   4 September - "leaving it unset does not mean IBKR's default" - and it was
+   applied to the bracket and stop paths and not to that one. Same defect, one
+   branch over, five days later. That is why it looked like the preset's fault
+   both times.
+
+   ⚠️ THE PRESET CANNOT STAND ASIDE, checked in the Gateway UI: Time in Force
+   is a dropdown with no disable option across all three "Show" views. And it
+   must be GTC, because the protective legs must be - DAY killed every stop on
+   31 July. Confirmed at the BROKER rather than the dialog: all 18 resting legs
+   read `tif='GTC'`.
+
+   ⚠️ STATING THE TIF IS NECESSARY AND NOT SUFFICIENT. On 4 September the app
+   sent GTC explicitly and the preset - then DAY - overrode it and rejected
+   anyway. The value must AGREE with the preset, not merely be present.
+
+   ⚠️ **NEEDS A BUILD AND DEPLOY TO TAKE EFFECT.** The installed M172 still
+   has the implicit TIF, so the next app-driven market exit will trip 10349
+   again until this ships.
 
 2. ✅ SEK.AX LEDGER DOUBLE-COUNT - REPAIRED 9 September 17:18, backed up to
    closed_trades.csv.bak-repair-20260909-071800. The ledger is now 11 rows with
