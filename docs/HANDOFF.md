@@ -2424,8 +2424,31 @@ because reading a list is not auditing it. Item 2 needed four.
    > `value.currency` and lets the last matching row win. Harmless while the
    > account is single-currency AUD — which it is — and worth fixing before it
    > ever holds a second one.
-9. **Stage 3 ASX rules — DESIGNED AND PLANNED, execution parked to Sunday
-   23 August by operator choice.** Spec
+9. ~~**Stage 3 ASX rules — DESIGNED AND PLANNED, execution parked.**~~
+   **DONE — M174.** All five tasks shipped: the IBKR hours parser (`6e46f1e`),
+   `trading_state` on the session (`690650e`), the refusal of discretionary
+   orders into the opening auction (`0266844`), the pre-flight comparison
+   against the broker (`ad546fb`), and the live verification below.
+   **Verified against the live paper Gateway on 10 September**, which is the
+   half only a Gateway can answer: the pre-flight reports
+   `session hours  OK — ASX hours, auction tail and trading days all match
+   IBKR`, and a re-run of `asx_session_probe.py` three weeks after the original
+   found every weekday still 0959-1611 trading against 0959-1600 liquid, tz
+   Australia/NSW, minTick 0.001, identical across all fourteen contracts. **The
+   exchange has not moved.** ⚠️ The probe's six-day window ROLLS, so the raw
+   report's dates always differ between runs and only the times are evidence —
+   the plan's "only the timestamp line differs" cannot hold on a different
+   weekday.
+   ⚠️ **THE MINIMUM PARCEL AND T+2 WERE DEFERRED, NOT DELIVERED**, as live-only
+   concerns with no bite in a paper account, by operator decision on 21 August.
+   The residual stands and is carried forward deliberately so it does not read
+   later as an oversight: **if IBKR paper fills a sub-$500 order the live
+   exchange would refuse, the paper record is optimistic by exactly the trades
+   that could not have happened.**
+   ⚠️ And Task 5 found a defect of its own — `feed_checks` had never run to
+   completion on this configuration, having been written against Alpaca's
+   `_poll_once` signature while yfinance is what is configured. See M174.
+   Original scope note follows. Spec
    `docs/superpowers/specs/2026-08-21-asx-auctions-design.md`, plan
    `docs/superpowers/plans/2026-08-21-asx-auctions.md` (5 tasks, bottom-up).
    **Scope was narrowed:** the minimum marketable parcel and T+2 were dropped

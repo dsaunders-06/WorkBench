@@ -1122,7 +1122,35 @@ git commit -m "Pre-flight asks IBKR whether the calendar constants are still tru
 
 ---
 
-### Task 5: Verify against the live Gateway, and record it
+### ✅ Task 5: Verify against the live Gateway, and record it — DONE 10 September 2026
+
+Run against the live paper Gateway at 09:31 and 09:33, read-only throughout.
+Result: `session hours  OK — ASX hours, auction tail and trading days all match
+IBKR across 1 day(s)`, whole pre-flight `VERDICT: READY`, exit 0. Deviations and
+findings:
+
+* ⚠️ **Step 1 failed on first run, and the defect was NOT in this plan's code.**
+  `feed_checks` was written against `AlpacaSource._poll_once` (`list[RawTick]`)
+  while `YFinanceSource._poll_once` returns `(ticks, missing)` — and yfinance is
+  what `QAT_MARKET_DATA_SOURCE` selects. `t.price` raised AttributeError one
+  line below the `except` that would have caught it, killing the script before
+  the broker half ran. **The pre-flight's feed check had therefore never once
+  completed on this configuration.** Fixed with two tests; all three pre-existing
+  fakes returned the Alpaca shape, so the suite agreed with the code and the code
+  disagreed with the only source in use.
+* ⚠️ **Step 2's expectation cannot hold.** It says only the probe timestamp
+  should differ. IBKR reports a ROLLING six-day window: 21 August was a Friday
+  and 10 September is a Thursday, so the weekend sits at a different index and
+  every hours line differs. Compared by resolving dates to weekdays instead —
+  every weekday `0959-1611`/`0959-1600`, every weekend CLOSED, tz
+  `Australia/NSW`, minTick `0.001`, all fourteen contracts, both runs. **The
+  exchange has not moved.**
+* **Step 3's milestone guess was stale.** It suggested M136; the constant read
+  M173, so this is **M174**.
+* **Step 4's "Do not push — Actions minutes are exhausted until September"
+  is out of date.** It is September, the billing wall cleared ~1 September and CI
+  has run green on every push since. Pushing is allowed, batched.
+
 
 **Files:**
 - Modify: `docs/HANDOFF.md`

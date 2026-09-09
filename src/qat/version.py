@@ -1997,7 +1997,44 @@ from qat.domain.display_dates import format_display_date
 # transmitted (flat -> refuse, shrunk -> refuse, broker unreadable -> refuse),
 # which is the fix for the SEK.AX near-miss where a protective sell of 948 was
 # proposed against a position that finished flat 28 seconds later.
-MILESTONE = "M173"
+# M174. THE CALENDAR IS NOW CHECKED AGAINST THE EXCHANGE, and the check found a
+# defect in the instrument that carries it.
+#
+# `compare_session_hours` reads IBKR's own tradingHours, liquidHours and
+# timeZoneId back against `_REGULAR_HOURS`, `asx_holidays()`,
+# `_EARLY_CLOSE_TIMES`, `EXTRA_CLOSURES` and `_AUCTION_TAIL_MINUTES` - five
+# constants maintained by hand and never once contradicted out of the
+# exchange's own mouth. Wired into `contract_checks`, so it costs no extra
+# round trip. It WARNs and never FAILs: every other pre-flight check asks
+# whether something the session depends on is true, while this one asks only
+# whether a constant still matches the broker, and the calendar is
+# authoritative at runtime either way.
+#
+# The accepted-divergence table is an allowlist of exactly ONE - IBKR's 0959
+# against the app's 10:00 - and not a tolerance band, because a band would
+# swallow the next disagreement too. Each entry carries the date it was
+# measured and the reason it was accepted.
+#
+# ⚠️ AND THE PRE-FLIGHT'S FEED CHECK HAD NEVER ONCE RUN TO COMPLETION.
+# `feed_checks` was written against `AlpacaSource._poll_once`, which returns a
+# bare `list[RawTick]`. `YFinanceSource._poll_once` returns `(ticks, missing)`,
+# and yfinance is what `QAT_MARKET_DATA_SOURCE` selects - so iterating the
+# 2-tuple bound the loop variable to the inner LIST and `t.price` raised
+# AttributeError, one line below the `except` that would have caught it,
+# killing the script before the broker half executed. Verified live on
+# 10 September: it now reports "all 20 priced".
+#
+# ⚠️ ALL THREE FAKES IN `test_preflight.py` RETURNED THE ALPACA SHAPE, so the
+# suite agreed with the code and the code disagreed with the only source in
+# use. Found by RUNNING the pre-flight, which is the same lesson as M99 and
+# M102 - and again it arrived inside the instrument built to catch it.
+#
+# Measured against the live paper Gateway, 10 September: the session-hours
+# comparison reports OK, and a re-run of `asx_session_probe.py` three weeks
+# after the original found every weekday still 0959-1611 trading against
+# 0959-1600 liquid, tz Australia/NSW, minTick 0.001, identical across all
+# fourteen contracts from A2M to XRO. The exchange has not moved.
+MILESTONE = "M174"
 
 _UNKNOWN = "unknown"
 
