@@ -591,7 +591,29 @@ git commit -m "A session knows whether it is in an auction, not just whether it 
 
 ---
 
-### Task 3: Refuse discretionary orders into the opening auction
+### ✅ Task 3: Refuse discretionary orders into the opening auction — DONE 9 September 2026 (`0266844`)
+
+Implemented as specified. Deviations:
+
+* **Fixtures use 10 September 2026**, per Task 0's re-measurement.
+* **Two tests added.** A BUY in the auction is now refused naming the auction
+  rather than "Opening Volatility" — no behaviour change, but a visible message
+  change in the blotter, so it is pinned as deliberate rather than left to be
+  discovered. And the CLOSING auction is pinned as handled by the existing
+  closed-market rule, naming itself, which is Task 2's `closed_reason` paying
+  off.
+* **The reachability note is on the test, not just the design.** See below.
+
+⚠️ **The design named the wrong caller and it is worth not re-deriving.** The
+exit that reaches this window is the CLOCK-driven one — the time stop or the
+escaped hold — not a price signal, because the feed is blind for its first ~20
+minutes and a signal is computed on tick arrival. `Order` carries no exit
+reason, so neither the gate nor the test can distinguish them; the note exists
+so that someone later asking "has this rule ever fired?" does not look for
+signal exits, find none, and conclude it is dead code.
+
+Sabotage-checked: four breaks, four caught, including moving the refusal above
+the `is_protective_stop` return.
 
 **Files:**
 - Modify: `src/qat/domain/autonomy/gate.py`
