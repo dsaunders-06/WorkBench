@@ -5247,12 +5247,13 @@ SEK.AX sold 2,978 @ 12.93 (-6,021.32, -0.96R, signal); BHP.AX ENTERED 793 @
 64.07 at 14:05, the first app-driven entry since 4 September. Both exits were
 losses and both fired on `signal` rather than a stop.
 
-LEDGER: 11 rows = SEVEN POSITIONS, so the sizer's gate is at 7 of 20. Count
-positions, not rows - collapse_to_positions is applied inside
-TradeLedger.closed_trades().
-⚠️ SEK.AX's ROW IS KNOWN WRONG: exit recorded 12.90, executions averaged 12.93.
-_correct_announced_price never ran because the trip and shutdown intervened.
-Expect absorb_broker_fills to amend it on the next launch - CHECK THAT IT DOES.
+LEDGER: 12 rows, and ⚠️ SEK.AX IS DOUBLE-COUNTED - two rows, 2,978 @ 12.90 and
+2,027 @ 12.93, so 5,005 shares are booked against a 2,978 position. The true
+position count is SEVEN, not the eight a naive collapse reports, so the sizer's
+gate is at 7 of 20. See item 2 and
+docs/superpowers/specs/2026-09-09-sek-execution-record.md, which preserves the
+thirteen executions because reqExecutions is SAME-DAY ONLY. No money is
+affected; the broker was correct throughout.
 
 ⚠️ KILL SWITCH IS TRIPPED - the app was CLOSED with it tripped:
     "unrecognised code 10349: Order TIF was set to GTC based on order preset."
@@ -5283,44 +5284,77 @@ carried FOUR items that were already fixed and deployed.
    enumerate it as benign the way 10148 was until that is understood. The
    evidence rule on BENIGN_ORDER_REJECT_CODES exists for this.
 
-2. ⚠️ THE ORPHAN RAIL STILL CANNOT CANCEL, by choice.
+2. ⚠️ REPAIR THE SEK.AX LEDGER DOUBLE-COUNT. `closed_trades.csv` holds TWO
+   SEK rows - 2,978 @ 12.90 and 2,027 @ 12.93 - so 5,005 shares are booked
+   against a 2,978 position. The first was written optimistically at transmit
+   with the sized-against price; the second was booked by absorb_broker_fills on
+   the 14:58 restart, which replayed the same executions and misclassified them
+   as a broker-side protective fill, because the trip at 14:49:11 and the
+   shutdown at 14:52:40 left no reconciliation pass between them.
+   THE REPAIR IS ONE ROW REPLACING BOTH: 2,978 @ 12.93, `signal`.
+   ✅ The evidence is PRESERVED and does not expire:
+   docs/superpowers/specs/2026-09-09-sek-execution-record.md holds the thirteen
+   executions read from the Gateway, which matters because reqExecutions is
+   SAME-DAY ONLY. No money is affected - the broker was right throughout - but
+   this file is what edge_min_trades and the promotion gate read.
+
+3. ⚠️ RE-READ THE POSITION AT SIGN-OFF, NOT ONLY WHEN PROPOSING. This is the
+   fix for the near-miss, and closing the app only DISPOSED of the stale order
+   rather than fixing anything: a pending_signoff order lives in memory, so a
+   restart clears it, and relying on that is an operator working around a defect.
+   The pattern already exists in this codebase - the resting-order cancel loop's
+   TOCTOU guard, "Re-read immediately before committing to the loop, and refuse
+   on either of two INDEPENDENT signals - the broker's fresh answer, and this
+   app's own tracked fill count". Protective sign-off has no equivalent. It
+   should: flat -> drop the order; held < order quantity -> resize or refuse;
+   broker unreadable -> refuse, because a protective sell cannot be sized
+   against a position you cannot see. That alone would have stopped today's
+   near-miss - at sign-off the broker said zero.
+   ⚠️ AND DO NOT DECIDE PARTIAL-VS-FULL FROM A MID-FILL READ. "SEK.AX
+   partially exited - keeping its entry record for the shares that remain" was
+   written TWELVE SECONDS into a 28-second, thirteen-execution fill. That
+   decision must wait for the order to reach a terminal state.
+
+4. ⚠️ THE ORPHAN RAIL STILL CANNOT CANCEL, by choice.
    resting_order_cancel_enabled is False and unset, so the rail names ids and
    quarantines but a human clears them. Deliberate (M141, item 23).
 
-3. ⚠️ NO BROKER CEILING IS ENFORCED. broker_max_order_shares exists and
+5. ⚠️ NO BROKER CEILING IS ENFORCED. broker_max_order_shares exists and
    _audit_size_limit reads Error 383's wording back, but the setting is None and
    unset. ⚠️ DO NOT copy the TWS dialog figure: a 64,229-share order was
    ACCEPTED under a preset reading 20,000.
 
-4. ASX AUCTIONS - Tasks 0, 1, 2, 3 DONE 9 September; TASK 4 IS NEXT.
+6. ASX AUCTIONS - Tasks 0, 1, 2, 3 DONE 9 September; TASK 4 IS NEXT.
    docs/superpowers/plans/2026-08-21-asx-auctions.md. Task 4 is
    compare_session_hours, the accepted-divergence table, and capturing
    ContractDetails in contract_checks. Task 5 was promoted to Task 0 and is done.
    ⚠️ Re-take the suite baseline before starting; the plan's was 955 out of date.
 
-5. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window.
+7. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window.
 
-6. MILESTONE ITEMS still open:
+8. MILESTONE ITEMS still open:
    * CORPORATE-ACTION BANNER is permanent furniture - a standing condition
      rendered as an ALERT. It fired again at every startup today, in the same
      visual space as four real kill-switch alerts.
    * DAILY/WEEKLY REPORT HISTORY, newest first. reporter.py writes them; nothing
      reads them back and there is no reports screen.
 
-7. REACH 20 CLOSED TRADES. At SIX POSITIONS. The book is nine, so a slot is
-   open - but the kill switch halts new entries until reset.
+9. REACH 20 CLOSED TRADES. ⚠️ THE COUNT IS UNCERTAIN UNTIL ITEM 2 IS DONE -
+   the ledger holds 12 rows but SEK is double-counted, so the true figure is
+   SEVEN positions, not the eight a naive collapse reports. The book is nine, so
+   a slot is open, but the kill switch halts new entries until reset.
 
-8. THE LONG-STANDING FEATURES: M39 corporate actions (highest-severity gap; IBKR
+10. THE LONG-STANDING FEATURES: M39 corporate actions (highest-severity gap; IBKR
    serves no announcements so it has no input), Stage 3 ASX auction rules
    (item 9, now in progress as above), Stage 4 regime re-sourcing (item 30,
    gated on the ablation question).
    ⚠️ M41 earnings event risk is NOT open - it shipped as M57.
 
-9. A PARTIAL EXIT leaves protective legs at the pre-trim size and nothing
+11. A PARTIAL EXIT leaves protective legs at the pre-trim size and nothing
    resizes them. Only delever.py produces one and the sweep is off, so it is
    latent. See the partial-exit work of 9 September.
 
-10. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - measured 1 September, survived
+12. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - measured 1 September, survived
     all three tasks, not acted on deliberately.
 
 WHAT 9 SEPTEMBER ESTABLISHED
