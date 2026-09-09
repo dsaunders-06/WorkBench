@@ -312,7 +312,24 @@ git commit -m "Parse IBKR's trading-hours strings at the vendor boundary"
 
 ---
 
-### Task 2: `trading_state` on the session
+### ✅ Task 2: `trading_state` on the session — DONE 9 September 2026 (`690650e`)
+
+Implemented as specified. Deviations:
+
+* **Fixtures use 10 September 2026**, which the 9 September probe reports as a
+  normal session in as many words, rather than 24 August.
+* **Two tests added.** One pins `auction_tail_minutes` as the public accessor —
+  the plan specified it but wrote no test for it, so nothing stopped it
+  returning the opening table, and sabotage confirmed that break was
+  undetected. The other pins that the opening auction sits inside Opening
+  Volatility, which is the actual reason buys need no new rule; it was asserted
+  in prose in the design and nowhere in code.
+
+No caller was constructing `MarketSession` positionally — the full suite went
+from 3,481 to 3,497 with no failures.
+
+Sabotage-checked: seven breaks, seven caught, including folding the auction
+into the phase denominator and both US-inheritance cases.
 
 **Files:**
 - Modify: `src/qat/domain/market_calendar.py`
