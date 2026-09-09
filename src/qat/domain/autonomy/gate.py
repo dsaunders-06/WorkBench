@@ -156,6 +156,33 @@ class AutonomyGate:
         if not session.is_open:
             return block(f"{market} market is closed ({session.closed_reason})")
 
+        # The exchange is running a single-price auction, so there is no quoted
+        # price to hit. A market order placed into one fills at whatever the
+        # auction strikes - the same unpriced fill the closed-market rule above
+        # refuses, arriving through a door the calendar used to leave open,
+        # because it reported the ASX open at 10:00 when the opening auction
+        # runs to roughly 10:10.
+        #
+        # ⚠️ DELIBERATELY BELOW the `is_protective_stop` return, which outranks
+        # every rule here. A resting GTC stop is already at the broker and takes
+        # part in the auction whether or not this process transmits anything, so
+        # refusing a DISCRETIONARY exit removes no protection - it delays a
+        # signal or time stop by minutes. Inserted above that return instead,
+        # this would kill the repair path in the window it exists for, which is
+        # the M33c defect one boundary further in.
+        #
+        # ⚠️ AND IT OUTRANKS THE PHASE RULE ON PURPOSE, which changes what a BUY
+        # is told. The auction window sits inside Opening Volatility, so a buy
+        # was already refused and no behaviour moves; but the exchange running
+        # an auction is a fact about the EXCHANGE and outranks this app's own
+        # risk-appetite phase as an explanation. "Opening Volatility" therefore
+        # stops appearing as a refusal reason in the first ten ASX minutes.
+        if session.trading_state == "opening_auction":
+            return block(
+                "the opening auction is running - a market order into a single-price "
+                "auction fills at the auction price, not a quoted one"
+            )
+
         # --- Sells: risk-reducing, so the risk-appetite rails do not apply ---
         if order.side == "sell":
             return GateDecision(

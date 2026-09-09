@@ -47,6 +47,7 @@ def _order(
     strategy: str | None = "swing",
     reference_price: float | None = 100.0,
     status: str = "pending_signoff",
+    order_type: str = "market",
 ) -> Order:
     return Order(
         symbol=symbol,
@@ -56,6 +57,7 @@ def _order(
         status=status,  # type: ignore[arg-type]
         reference_price=reference_price,
         strategy=strategy,
+        order_type=order_type,  # type: ignore[arg-type]
     )
 
 
@@ -390,3 +392,105 @@ def test_recommend_mode_still_outranks_a_protective_order():
     )
 
     assert decision.allowed is False
+
+
+# --- The opening auction (Stage 3) -------------------------------------------
+#
+# 10 September 2026 is a Thursday, and the 9 September probe reports it as a
+# normal session: "20260910:0959-20260910:1611". The ASX opening auction runs
+# to roughly 10:10 - a JUDGEMENT, not a measurement, because IBKR reports no
+# opening auction at all.
+
+ASX_OPENING_AUCTION = datetime(2026, 9, 10, 10, 5, tzinfo=_SYD)
+ASX_CONTINUOUS = datetime(2026, 9, 10, 10, 15, tzinfo=_SYD)
+ASX_CLOSING_AUCTION = datetime(2026, 9, 10, 16, 5, tzinfo=_SYD)
+
+
+def test_a_market_sell_into_the_opening_auction_is_refused():
+    """Sells return allowed BEFORE the session-phase check, which is correct -
+    risk-reducing orders are not gated on appetite. But a market order into a
+    single-price auction fills at the auction price, not a quoted one, which is
+    the same unpriced fill this gate already refuses into a closed market.
+
+    ⚠️ WHICH CALLER ACTUALLY REACHES THIS, because it is not the obvious one
+    and a later reader measuring "has this rule ever fired?" will look in the
+    wrong place. The yfinance feed is blind for roughly its first twenty
+    minutes every session - measured live at 10:08 on 9 September, "yfinance
+    returned 0 of 100 requested symbol(s)" - and a price signal is computed on
+    tick arrival. So no signal-driven exit can fire inside 10:00-10:10 at all.
+    The exit that gets here is the CLOCK-driven one: the time stop, or the
+    escaped-hold rule that exited A2M.AX on 4 September. `Order` carries no
+    exit reason, so the gate cannot tell them apart and this test cannot
+    either - hence the note.
+    """
+    decision = _gate().evaluate(
+        _order(side="sell", symbol="BHP.AX", strategy=None),
+        _account(),
+        now=ASX_OPENING_AUCTION,
+    )
+    assert decision.allowed is False
+    assert "opening auction" in decision.reason
+
+
+def test_the_same_sell_is_allowed_once_continuous_trading_starts():
+    decision = _gate().evaluate(
+        _order(side="sell", symbol="BHP.AX", strategy=None),
+        _account(),
+        now=ASX_CONTINUOUS,
+    )
+    assert decision.allowed is True
+
+
+def test_a_resting_protective_order_is_still_allowed_in_the_auction():
+    """This is what makes the refusal cheap. A GTC stop already rests at the
+    broker and participates in the auction whether or not the app will transmit
+    anything, so refusing a discretionary exit removes no protection. If this
+    test fails, the block was inserted ABOVE the is_protective_stop early
+    return and the repair path is dead in the window it exists for - which is
+    exactly the M33c defect, one boundary further in."""
+    decision = _gate().evaluate(
+        _order(side="sell", symbol="BHP.AX", strategy=None, order_type="stop"),
+        _account(),
+        now=ASX_OPENING_AUCTION,
+    )
+    assert decision.allowed is True
+
+
+def test_the_us_open_is_unaffected():
+    """US is 0 minutes on the opening-auction table, so a US sell just after
+    the bell is still allowed and this work did not narrow the US record."""
+    decision = _gate().evaluate(_order(side="sell", strategy=None), _account(), now=OPENING_BELL_US)
+    assert decision.allowed is True
+
+
+def test_a_BUY_in_the_auction_is_refused_naming_the_auction_not_the_phase():
+    """⚠️ A DELIBERATE MESSAGE CHANGE, pinned because it is easy to undo.
+
+    A buy at 10:05 was already refused - the window sits inside Opening
+    Volatility, which is excluded from unattended execution - so this changes
+    no behaviour. It changes what the operator is TOLD: the exchange running a
+    single-price auction is a fact about the exchange, and outranks this app's
+    own risk-appetite phase as an explanation. The consequence is that
+    "Opening Volatility" no longer appears as a refusal reason during the
+    first ten minutes of an ASX session, which is a visible change in the
+    blotter and is meant.
+    """
+    decision = _gate().evaluate(
+        _order(side="buy", symbol="BHP.AX"), _account(), now=ASX_OPENING_AUCTION
+    )
+    assert decision.allowed is False
+    assert "opening auction" in decision.reason
+
+
+def test_the_CLOSING_auction_is_handled_by_the_closed_market_rule_and_names_itself():
+    """No new rule was needed at the close: `is_open` is already False from
+    16:00, so the existing closed-market refusal fires. Task 2 is what makes it
+    say WHICH kind of closed - an operator reading a refusal at 16:05 is told
+    the exchange is mid-auction rather than simply shut."""
+    decision = _gate().evaluate(
+        _order(side="sell", symbol="BHP.AX", strategy=None),
+        _account(),
+        now=ASX_CLOSING_AUCTION,
+    )
+    assert decision.allowed is False
+    assert "closing auction" in decision.reason
