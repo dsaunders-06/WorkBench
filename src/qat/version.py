@@ -1968,7 +1968,36 @@ from qat.domain.display_dates import format_display_date
 # could protect it was the order flow the halt existed to stop. Aggregate
 # risk-at-stop reached 8.12% against a 5.00% cap. Nothing traded through any of
 # it.
-MILESTONE = "M172"
+# ---------------------------------------------------------------------------
+# M173 - EVERY ORDER STATES ITS TIME-IN-FORCE
+#
+# 10349 was a CODE defect, and I called it a Gateway preset problem repeatedly
+# before finding it. The final two returns of `to_ib_order` - the plain market
+# and limit branches - were the only paths in `ib_translate` that left the TIF
+# implicit. ib_async defaults to DAY, the Gateway preset imposes GTC, IBKR
+# rejects the mismatch, and each rejection halted order flow and blocked the
+# sign-off the re-arm rail needed to restore protection. Both app-driven market
+# exits of 9 September went through that branch.
+#
+# ⚠️ THE MODULE ALREADY KNEW. `to_ib_parent` has carried the lesson since
+# 4 September - "leaving it unset does not mean IBKR's default" - applied to the
+# bracket and stop paths and not to that one. Same defect, one branch over, five
+# days later, which is why it presented as the preset's fault both times.
+#
+# ⚠️ THE PRESET CANNOT STAND ASIDE: Time in Force is a dropdown with no disable
+# option, and it must be GTC because the protective legs must be - DAY killed
+# every stop on 31 July. Confirmed at the BROKER rather than the dialog: all 18
+# resting legs read tif='GTC'.
+#
+# ⚠️ STATING IT IS NECESSARY AND NOT SUFFICIENT. On 4 September the app sent GTC
+# explicitly and the preset - then DAY - overrode it and rejected anyway. The
+# value must AGREE with the preset.
+#
+# ALSO IN THIS BUILD: a protective order is re-read at sign-off before it is
+# transmitted (flat -> refuse, shrunk -> refuse, broker unreadable -> refuse),
+# which is the fix for the SEK.AX near-miss where a protective sell of 948 was
+# proposed against a position that finished flat 28 seconds later.
+MILESTONE = "M173"
 
 _UNKNOWN = "unknown"
 
