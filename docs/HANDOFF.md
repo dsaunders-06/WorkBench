@@ -5306,22 +5306,28 @@ carried FOUR items that were already fixed and deployed.
    SAME-DAY ONLY. No money is affected - the broker was right throughout - but
    this file is what edge_min_trades and the promotion gate read.
 
-3. ⚠️ RE-READ THE POSITION AT SIGN-OFF, NOT ONLY WHEN PROPOSING. This is the
-   fix for the near-miss, and closing the app only DISPOSED of the stale order
-   rather than fixing anything: a pending_signoff order lives in memory, so a
-   restart clears it, and relying on that is an operator working around a defect.
-   The pattern already exists in this codebase - the resting-order cancel loop's
-   TOCTOU guard, "Re-read immediately before committing to the loop, and refuse
-   on either of two INDEPENDENT signals - the broker's fresh answer, and this
-   app's own tracked fill count". Protective sign-off has no equivalent. It
-   should: flat -> drop the order; held < order quantity -> resize or refuse;
-   broker unreadable -> refuse, because a protective sell cannot be sized
-   against a position you cannot see. That alone would have stopped today's
-   near-miss - at sign-off the broker said zero.
-   ⚠️ AND DO NOT DECIDE PARTIAL-VS-FULL FROM A MID-FILL READ. "SEK.AX
-   partially exited - keeping its entry record for the shares that remain" was
-   written TWELVE SECONDS into a 28-second, thirteen-execution fill. That
-   decision must wait for the order to reach a terminal state.
+3. ✅ RE-READ THE POSITION AT SIGN-OFF - DONE 9 September (`b4ea566`).
+   `_sign_off_locked` now re-reads the broker before transmitting a protective
+   order: flat -> refuse (it would open a SHORT), shrunk below the order size ->
+   refuse, broker unreadable -> refuse. REFUSE rather than resize, following the
+   buy branch's own rule that silently changing an approved quantity defeats the
+   approval; the protection sweep proposes a correctly-sized replacement.
+   Only a SHORTFALL refuses - an order smaller than the holding under-protects,
+   which is far less urgent than selling shares that are not there, and refusing
+   it would leave the position with nothing.
+   Five sabotages, five caught. Suite 3,515.
+
+   ⚠️ CORRECTION TO HOW THIS WAS FIRST WRITTEN UP. The earlier note said the
+   app "read the position twelve seconds into the fill" as though that were the
+   error, and proposed a second fix: stop deciding partial-vs-full from a
+   mid-fill read. That premise is WRONG. `rearm_protective_stops` reads
+   `naked_positions()`, which reads the BROKER - and the broker genuinely held
+   948 at that instant, because 2,030 of 2,978 had filled. The app read
+   correctly and the reading was true when taken.
+   The defect was never the read. It was ACTING on it 28 seconds later without
+   re-checking, which is precisely what sign-off now does. **There is no second
+   fix to make here**, and building one would have been building on a
+   misdiagnosis.
 
 4. ⚠️ THE ORPHAN RAIL STILL CANNOT CANCEL, by choice.
    resting_order_cancel_enabled is False and unset, so the rail names ids and
