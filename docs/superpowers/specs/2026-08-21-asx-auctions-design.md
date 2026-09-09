@@ -26,6 +26,15 @@ every sell before it consults the session phase, so a market exit transmitted
 at 10:02 is transmitted into an auction. The gate already refuses this exact
 thing in the closed-market case, and says why —
 
+> ⚠️ **NARROWED 9 September, and it changes which test Task 3 should write.**
+> The exit that reaches the auction window is the CLOCK-DRIVEN one — the time
+> stop, or the escaped-hold rule that exited A2M.AX on 4 September — not a
+> price signal. The yfinance feed is blind for roughly its first twenty minutes
+> every session (measured live at 10:08 on 9 September: *"yfinance returned 0
+> of 100 requested symbol(s)"*), and a signal is computed on tick arrival, so
+> no price-driven exit can fire inside 10:00–10:10 at all. **Task 3's test must
+> use a time-stop exit at 10:05**, or it pins a path that cannot occur.
+
 > *"A market sell transmitted into a closed market is an unpriced fill at the
 > open, and stays blocked."*
 
@@ -228,9 +237,12 @@ vendors:
 # (market, boundary) -> (app value, IBKR value, when measured, why accepted)
 _ACCEPTED_HOURS_DIVERGENCES: dict[tuple[Market, str], tuple[time, time, str, str]] = {
     ("ASX", "open"): (
-        time(10, 0), time(9, 59), "2026-08-21",
+        time(10, 0), time(9, 59), "2026-09-09",
         "IBKR reports 0959 for every ASX contract probed; 10:00 is when ASX "
-        "continuous trading starts. Reads as broker-side rounding. See "
+        "continuous trading starts. Reads as broker-side rounding. Measured "
+        "21 August and RE-MEASURED 9 September - unchanged across both, and "
+        "across a broker round trip to TWS and back. See "
+        "docs/superpowers/specs/2026-09-09-asx-session-hours-raw.md and "
         "docs/superpowers/specs/2026-08-21-asx-session-hours-raw.md",
     ),
 }

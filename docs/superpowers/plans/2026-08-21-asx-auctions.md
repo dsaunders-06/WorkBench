@@ -15,12 +15,12 @@
 ## Global Constraints
 
 - **PowerShell for anything touching `%LOCALAPPDATA%\QuantAdvisoryTerminal`**, including Python that only reads it and anything that builds `Settings()`. The Bash sandbox serves a frozen snapshot and does NOT error.
-- **DO NOT PUSH.** GitHub Actions minutes are exhausted until September. The local suite is the only gate: run it in full and read the actual summary line, never a piped tail.
+- ~~**DO NOT PUSH.** GitHub Actions minutes are exhausted until September.~~ **CORRECTED 9 September: PUSHING IS ALLOWED, batched.** The billing wall cleared around 1 September and CI ran green three times on 8 September (7m36s, 8m6s, 8m25s). One push is one run, ~8.6 of 2,000 minutes. Still run the full local suite and read the actual summary line, never a piped tail.
 - **Lint with ruff, format with BLACK**, through the venv interpreter: `.venv\Scripts\python.exe -m ruff check .`, `-m black --check .`, `-m mypy src`, `-m bandit -q -r src`.
 - **US behaviour must not change.** Both new minute tables are `0` for `"US"`. The 499-session replay harness and the US trial record stay comparable, and Task 2 has a test that enforces it.
 - **The phase table is not touched.** `SESSION_PHASES`, `AUTONOMOUS_ELIGIBLE_PHASES` and `closes_at` keep their current values. Task 2 has a test that enforces it.
 - **Every test that builds an OMS passes its own `data_dir`** — `conftest` sets `QAT_DATA_DIR` session-wide and the anomaly store persists there.
-- Run the full suite with `.venv\Scripts\python.exe -m pytest -q` and read the summary line. Current baseline: **2517 passed, 25 skipped**.
+- Run the full suite with `.venv\Scripts\python.exe -m pytest -q` and read the summary line. ~~Current baseline: **2517 passed, 25 skipped**.~~ ⚠️ **BASELINE AS AT 9 September: 3,472 passed, 26 skipped.** The 21 August figure is 955 tests out of date, and a baseline that stale reads as a catastrophic regression to whoever compares against it. **Re-take it before Task 1 rather than trusting this line** — it will have moved again.
 
 ---
 
@@ -38,6 +38,43 @@
 | `tests/test_preflight.py` | **Modify.** Comparison tests against a stub `ContractDetails`. |
 
 Task order is bottom-up: the parser has no dependencies, the calendar depends on nothing new, the gate depends on the calendar, and preflight depends on both the parser and the calendar.
+
+---
+
+## ✅ TASK 0 — RE-MEASURE FIRST. DONE 9 September 2026.
+
+⚠️ **Task 5 used to be last and that was the wrong place for it.** Every
+constant in the design traces to a probe taken on 21 August, the design's own
+rule is *"Measured, not recalled"*, and nineteen days plus a broker round trip
+(4002 → TWS 7497 on 1 September → back to 4002) had passed. Had the strings
+moved, the 11-minute tail, the 09:59 divergence and the timezone label would all
+have moved with them — and discovering that after four tasks of code means
+re-deriving them. The probe is read-only and takes seconds. **Re-run it before
+writing code, not after.**
+
+Re-run 9 September 00:12 UTC against the live paper Gateway, read-only,
+clientId 99 — its own id, because *"a second connection using one already in use
+silently displaces the first"* and the app holds clientId 1. Raw report:
+`docs/superpowers/specs/2026-09-09-asx-session-hours-raw.md`. The running
+application was checked afterwards and was undisturbed.
+
+**Every constant survived, unchanged:**
+
+| Checked | 21 Aug | 9 Sep |
+|---|---|---|
+| all 14 contracts identical (no staggered open reported) | yes | yes |
+| `tradingHours` − `liquidHours` | 11 min (1611 vs 1600) | 11 min |
+| opening delta (both strings start 0959) | zero | zero |
+| `timeZoneId` | `Australia/NSW` | `Australia/NSW` |
+| open: app 10:00 vs IBKR | 09:59 | 09:59 |
+
+So the auction tail is confirmed rather than assumed, the ten-minute opening
+window remains a judgement (IBKR still reports no opening auction at all), and
+the accepted divergence is still exactly one entry.
+
+⚠️ **The early-close tail is STILL unverified.** No half-day fell inside the
+9–14 September window either, exactly as the design predicted. It stays a WARN
+in the preflight check rather than an assertion.
 
 ---
 
