@@ -122,3 +122,40 @@ async def test_the_grace_lasts_ONE_check_so_a_stuck_signoff_cannot_blind_the_rai
 
     await oms.verify_position_stops()
     assert oms.position_stops() == {}, "the second check must drop it anyway"
+
+
+@pytest.mark.asyncio
+async def test_the_grace_is_RENEWED_once_protection_rests_again(tmp_path):
+    """⚠️ FOUND BY SABOTAGE, and it escaped the first three tests.
+
+    Deleting the `discard` that releases the grace when a stop is seen resting
+    again left every test green. It is not cosmetic: the reprieve is spent
+    per-symbol and never returned, so the SECOND re-protection in a symbol's
+    life would drop its belief on the very first check - reinstating the
+    full-value-at-risk repricing, and the de-lever feedback loop with it, for
+    exactly the positions that have been re-protected before.
+
+    A position is re-protected on every stop-out and every trim, so "twice in
+    one symbol" is ordinary, not an edge case.
+    """
+    broker, oms = _build(tmp_path)
+    await oms.adopt_broker_positions()
+
+    # First re-protection: the grace is granted and spent.
+    broker.resting = {}
+    await oms.submit_protective_stop("AAPL", 30.0, 95.0)
+    await oms.verify_position_stops()
+    assert oms.position_stops() == {"AAPL": 95.0}
+
+    # Protection rests again, which must RETURN the grace.
+    broker.resting = {"AAPL": 95.0}
+    await oms.verify_position_stops()
+
+    # Second re-protection: must be reprieved exactly as the first was.
+    broker.resting = {}
+    await oms.verify_position_stops()
+
+    assert oms.position_stops() == {"AAPL": 95.0}, (
+        "the grace must be renewed once a stop rests again, or a symbol is "
+        "protected on its first re-arm and exposed on every one after it"
+    )
