@@ -78,7 +78,24 @@ in the preflight check rather than an assertion.
 
 ---
 
-### Task 1: The IBKR hours parser
+### ✅ Task 1: The IBKR hours parser — DONE 9 September 2026 (`6e46f1e`)
+
+Implemented as specified. Three deviations, all deliberate and all recorded in
+the commit:
+
+* **Fixtures come from the 9 September probe**, not the 21 August one quoted
+  below. Both are real measurements and they agree; the fresher one is the one
+  somebody actually took.
+* **Two tests added beyond the plan's seven.** One asserts `utcoffset() is not
+  None`, because comparing one naive datetime against another passes and the
+  plan's timezone test would not have caught a naive parser — confirmed by
+  sabotage. The other pins that a partially-readable string returns `{}` rather
+  than the days that did parse, which is a decision that reads as a bug without
+  a test saying otherwise.
+* **Accumulates into lists and freezes to tuples at the end**, rather than
+  rebuilding a tuple per window. Same behaviour, not quadratic.
+
+Sabotage-checked: five breaks, five caught. Suite 3,481 passed / 26 skipped.
 
 **Files:**
 - Create: `src/qat/data/broker/ib_hours.py`
