@@ -166,9 +166,29 @@ def to_ib_order(order: Order) -> IBOrder:
             "placing it unprotected"
         )
 
+    # ⚠️ GTC EXPLICITLY, and the silence here halted the account twice on
+    # 9 September. Both app-driven market exits of the day were rejected with
+    # "Error 10349: Order TIF was set to GTC based on order preset", because
+    # these two returns were the only paths in this module that left the TIF
+    # implicit - ib_async defaults to DAY, the Gateway preset imposed GTC, and
+    # IBKR rejected the mismatch. Each rejection then halted order flow and
+    # blocked the sign-off the re-arm rail needed to restore protection.
+    #
+    # THE PRESET CANNOT STAND ASIDE. Checked in the Gateway UI: Time in Force
+    # is a dropdown with no disable option, so it ALWAYS imposes a value. And it
+    # must be GTC, because the protective legs must be - DAY killed every stop
+    # this system ever placed on 31 July. Confirmed at the broker rather than
+    # from the dialog: all 18 resting legs read tif='GTC'.
+    #
+    # So every order is GTC at the broker whatever this function says. Sending
+    # DAY never achieved DAY; it achieved a rejection.
+    #
+    # `to_ib_parent` twenty lines below already carried this exact lesson from
+    # 4 September - "leaving it unset does not mean IBKR's default" - and these
+    # two branches were the ones it was not applied to.
     if order.limit_price is not None:
-        return LimitOrder(action, order.quantity, order.limit_price)
-    return MarketOrder(action, order.quantity)
+        return LimitOrder(action, order.quantity, order.limit_price, tif="GTC")
+    return MarketOrder(action, order.quantity, tif="GTC")
 
 
 def to_ib_parent(order: Order) -> IBOrder:
