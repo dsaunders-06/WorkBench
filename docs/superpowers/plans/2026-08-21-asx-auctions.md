@@ -761,7 +761,30 @@ git commit -m "Refuse a market order into the ASX opening auction"
 
 ---
 
-### Task 4: Pre-flight compares the constants against the broker
+### ✅ Task 4: Pre-flight compares the constants against the broker — DONE 10 September 2026 (`ad546fb`)
+
+Implemented as specified. Deviations:
+
+* **Two tests beyond the seven listed, covering the Step 5 wiring.** The plan
+  tests `compare_session_hours` in isolation and nothing asserted that
+  `contract_checks` calls it; the one pre-existing `contract_checks` test takes
+  the FAIL path, which returns before the new code. Verified by removing the
+  `checks.extend(...)` block: all seven of the plan's tests stayed green and
+  only the two new ones failed.
+* **Step 2's `-k` expression selects 5 of the 7 tests.**
+  `test_a_different_continuous_close_warns_and_quotes_both` and
+  `test_a_day_ibkr_calls_closed_that_the_calendar_calls_open_warns` match none
+  of its keywords. Ran the whole file instead.
+* **Step 6's expected count was stale.** It said "2527+ passed, 25 skipped"; the
+  re-measured baseline was **3,526 passed / 26 skipped** and the result is
+  **3,535 / 26**.
+* `tests/test_preflight.py` imported names directly and never imported the
+  module, so `from qat import preflight` was needed alongside the plan's
+  `from datetime import date`.
+* One string written as a single f-string rather than the plan's two-line
+  implicit concatenation, which black joins into adjacent literals on one line.
+* The Interfaces line names `_AUCTION_TAIL_MINUTES`; the code uses the public
+  `auction_tail_minutes()`, which is what exists.
 
 **Files:**
 - Modify: `src/qat/preflight.py`
