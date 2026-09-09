@@ -60,6 +60,7 @@ from qat.data.broker.ticks import round_to_tick
 from qat.data.symbols import from_ibkr
 from qat.domain.bus import EventBus
 from qat.domain.events import BrokerOrderIdResolvedEvent, KillSwitchEvent, OrderRejectedEvent
+from qat.domain.oms.resting_orders import WORKING_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,12 @@ _PAPER_PORTS = {4002: "Gateway", 7497: "TWS"}
 # still order-scoped as far as this gate is concerned; only a
 # broker-reported fill is beyond argument.
 _TERMINAL_ORDER_STATUSES = frozenset({"filled"})
+
+# How many times to re-read `openTrades()` before calling a leg a survivor, and
+# how long to wait between reads. ~3 polls over ~2s, the shape the handoff
+# prescribed for this defect before it fired. See `_legs_still_working`.
+_CANCEL_CONFIRM_POLLS = 3
+_CANCEL_CONFIRM_INTERVAL_SECONDS = 0.7
 
 
 class ReadOnlyModeError(Exception):
@@ -1032,17 +1039,12 @@ class IBAdapter:
         # than failing on a client that does not serve it.
         open_trades = getattr(self.ib_client, "openTrades", None)
         if callable(open_trades):
-            ours = {id(leg) for leg in group}
-            still_resting = [
-                trade
-                for trade in open_trades()
-                if any(getattr(trade, "order", None) is leg for leg in group)
-                or id(getattr(trade, "order", None)) in ours
-            ]
-            for trade in still_resting:
+            for trade in await self._legs_still_working(group, open_trades):
                 logger.warning(
-                    "IBKR leg %s survived the group cancel - cancelling it individually",
+                    "IBKR leg %s is STILL WORKING after the group cancel (status %s) - "
+                    "cancelling it individually",
                     getattr(trade.order, "orderId", "?"),
+                    getattr(getattr(trade, "orderStatus", None), "status", "?"),
                 )
                 self.ib_client.cancelOrder(trade.order)
 
@@ -1051,6 +1053,63 @@ class IBAdapter:
         # NOT treat this write as done, for exactly that reason.
         order.status = "cancelled"
         return order
+
+    async def _legs_still_working(self, group: list[object], open_trades: Any) -> list[Any]:
+        """Legs of `group` that IBKR is still working, after a bounded re-read.
+
+        ⚠️ ASKING THIS IMMEDIATELY AFTER `cancelOrder` HALTED THE ACCOUNT TWICE
+        on 9 September. The old check matched on IDENTITY alone - is this trade
+        one of the legs we just cancelled - and read once, the instant the
+        cancels went out. A cancel IBKR is honouring sits in `PendingCancel`
+        and stays VISIBLE in `openTrades()`, so every leg looked like a
+        survivor, each got a redundant second cancel, and IBKR answered 10148
+        ("cannot be cancelled, state: PendingCancel"). 10148 is not enumerated
+        in `ib_errors`, so the kill switch halted - correctly, on a rejection
+        this code manufactured. IAG.AX then sat 6,699 shares unprotected,
+        because the re-arm rail's replacement stop needs the sign-off the halt
+        was blocking.
+
+        Two things fix it, and the handoff prescribed both before the incident:
+        *"a bounded re-read (~3 polls over 2s) before declaring survivors - NOT
+        a looser predicate."*
+
+        * **Status, not just identity.** `WORKING_STATUSES` is this project's
+          CAPTURE vocabulary - "what must I cancel" - and that is exactly the
+          question here. A leg in `PendingCancel` has a cancel in flight; one in
+          `Cancelled` is done. Neither needs another.
+        * **Re-read, because one read is a race.** A status filter alone still
+          reads before the broker has moved the leg, and would send the
+          redundant cancel anyway on a slower round trip.
+
+        ⚠️ THIS DOES NOT LOOSEN THE SELL-SIDE RULE, and the distinction is the
+        whole reason `resting_orders` keeps two vocabularies. VERIFICATION -
+        "is it definitely gone, may I sell into this?" - stays fail-closed on
+        `not in TERMINAL_STATUSES`, with `PendingCancel` deliberately in
+        neither set, and lives in `OMS._release_protective_legs`, which does its
+        own re-read. This method answers a third question - "is a second cancel
+        worth sending?" - where a false negative costs nothing and a false
+        positive halts the account.
+        """
+        ours = {id(leg) for leg in group}
+        survivors: list[Any] = []
+        for attempt in range(_CANCEL_CONFIRM_POLLS):
+            survivors = [
+                trade
+                for trade in open_trades()
+                if (
+                    any(getattr(trade, "order", None) is leg for leg in group)
+                    or id(getattr(trade, "order", None)) in ours
+                )
+                and getattr(getattr(trade, "orderStatus", None), "status", "") in WORKING_STATUSES
+            ]
+            if not survivors:
+                return []
+            if attempt + 1 < _CANCEL_CONFIRM_POLLS:
+                await asyncio.sleep(_CANCEL_CONFIRM_INTERVAL_SECONDS)
+        # Bounded on purpose: a leg that has not moved after the last poll is a
+        # genuine survivor and must be cancelled again. Waiting indefinitely for
+        # a status that is not coming would leave a real orphan resting.
+        return survivors
 
     def _resolve_from_open_trades(self, order_id: str) -> list[object]:
         """Live orders matching `order_id`, matched on permId.
