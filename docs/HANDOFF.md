@@ -56,7 +56,7 @@ source.
 | Account | ⚠️ **AS AT 9 SEPTEMBER 14:53, app closed cleanly.** **NINE POSITIONS**, all protected, 18 resting legs — **verified at the broker**, not inferred: `IB.positions()` returned nine and `reqAllOpenOrders` two legs for each. ANZ ASX BHP BOQ JHX SUN TAH TWE WOW. **BHP.AX ENTERED 14:05**, 793 @ 64.07, the first app-driven entry since 4 September. **IAG.AX and SEK.AX both SOLD today**, both losses, both on `signal`. Cash **497,174.93**, equity **994,177.74**. Account `DUQ200898`, paper, AUD |
 | Broker | ⚠️ **AS AT 1 SEPTEMBER — NOT RE-CHECKED.** **TWS on 7497** since 1 September 17:40 (`QAT_IBKR_PORT` 4002 → 7497, backup `.env.bak-20260901-174044`). IB Gateway is closed. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
 | Kill switch | ⚠️ **TRIPPED on 10349, app closed with it tripped.** **FIVE TRIPS TODAY** — three on 10148 from two different code paths (M171 and M172 fixed one each), **two on 10349**. ⚠️ **10349 IS NOT A ONE-OFF: it fires on EVERY app-driven market exit.** It is a Gateway order-preset mismatch, the mirror of the 4 September fix, and **the order fills anyway** — do NOT enumerate it as benign the way 10148 was until that is understood. ⚠️ **The fifth trip PREVENTED A NAKED SHORT** — see the 9 September afternoon section. Quarantines: EMPTY |
-| Ledgers | **11 rows = SEVEN POSITIONS**, so the sizer's calibration gate is at **7 of 20**. ⚠️ **COUNT POSITIONS, NOT ROWS** — `collapse_to_positions` (trades.py:1477) is applied inside `TradeLedger.closed_trades()`, so every consumer sees positions. ⚠️ **SEK.AX's ROW IS KNOWN WRONG**: it records exit 12.90, the sized-against price, while the executions averaged 12.93. `_correct_announced_price` never ran because the trip and shutdown intervened. Expect `absorb_broker_fills` to amend it on the next launch — CHECK THAT IT DOES. ⚠️ One LOV row is a REPAIR row with EMPTY costs |
+| Ledgers | **11 rows = SEVEN POSITIONS**, so the sizer's calibration gate is at **7 of 20**. ✅ The SEK.AX double-count was REPAIRED 9 September 17:18 - see `docs/superpowers/specs/2026-09-09-sek-execution-record.md`, which also preserves the ten executions because `reqExecutions` is SAME-DAY ONLY. SEK is booked at 2,978, matching the broker. ⚠️ **The 9 September DAILY REPORT was written before the repair and is still wrong** - "3 closed trade(s), net $-11,924.91" against a true 2 and -7,797.75. ⚠️ One LOV row is a REPAIR row with EMPTY costs |
 
 
 ### The account is AUD-base. Verified, not assumed.
@@ -212,7 +212,7 @@ market exit.**
 
 ⚠️ **AND THE HALT PREVENTED A NAKED SHORT, by accident rather than design.**
 
-SEK filled in **THIRTEEN partial executions over 28 seconds** — 1706, 285, 36,
+SEK filled in **TEN partial executions over 28 seconds** — 1706, 285, 36,
 3, 6, 15, 2, 20, 262, 643 … to `cumQty=2978` at 12.93, completing 14:49:40. The
 app read the position at **14:49:12**, twelve seconds in, when 2,030 had filled:
 
@@ -5247,19 +5247,21 @@ SEK.AX sold 2,978 @ 12.93 (-6,021.32, -0.96R, signal); BHP.AX ENTERED 793 @
 64.07 at 14:05, the first app-driven entry since 4 September. Both exits were
 losses and both fired on `signal` rather than a stop.
 
-LEDGER: 12 rows, and ⚠️ SEK.AX IS DOUBLE-COUNTED - two rows, 2,978 @ 12.90 and
-2,027 @ 12.93, so 5,005 shares are booked against a 2,978 position. The true
-position count is SEVEN, not the eight a naive collapse reports, so the sizer's
-gate is at 7 of 20. See item 2 and
+LEDGER: 11 rows = SEVEN POSITIONS, so the sizer's gate is at 7 of 20.
+✅ The SEK.AX double-count was REPAIRED 9 September 17:18 - SEK is booked at
+2,978, matching the broker, and today's true net is -7,797.75. Backup at
+closed_trades.csv.bak-repair-20260909-071800. See
 docs/superpowers/specs/2026-09-09-sek-execution-record.md, which preserves the
-thirteen executions because reqExecutions is SAME-DAY ONLY. No money is
-affected; the broker was correct throughout.
+ten executions because reqExecutions is SAME-DAY ONLY.
+⚠️ THE 9 SEPTEMBER DAILY REPORT IS STILL WRONG - written 16:04:48, before the
+repair: "3 closed trade(s), net $-11,924.91" against a true 2 and -7,797.75. It
+is a derived artefact and was not regenerated.
 
 ⚠️ KILL SWITCH IS TRIPPED - the app was CLOSED with it tripped:
     "unrecognised code 10349: Order TIF was set to GTC based on order preset."
 FIVE TRIPS on 9 September: three on 10148 from two different code paths (M171
 and M172 fixed one each), two on 10349.
-⚠️ THE FIFTH TRIP PREVENTED A NAKED SHORT. SEK filled in THIRTEEN executions
+⚠️ THE FIFTH TRIP PREVENTED A NAKED SHORT. SEK filled in TEN executions
 over 28 seconds; the app read the position twelve seconds in, believed 948
 shares remained, and proposed a protective SELL of 948 against a position that
 was already flat. The kill switch blocked it every 60s until the app was closed
@@ -5284,8 +5286,14 @@ carried FOUR items that were already fixed and deployed.
    enumerate it as benign the way 10148 was until that is understood. The
    evidence rule on BENIGN_ORDER_REJECT_CODES exists for this.
 
-2. ⚠️ REPAIR THE SEK.AX LEDGER DOUBLE-COUNT. `closed_trades.csv` holds TWO
-   SEK rows - 2,978 @ 12.90 and 2,027 @ 12.93 - so 5,005 shares are booked
+2. ✅ SEK.AX LEDGER DOUBLE-COUNT - REPAIRED 9 September 17:18, backed up to
+   closed_trades.csv.bak-repair-20260909-071800. The ledger is now 11 rows with
+   SEK booked at 2,978, matching the broker, and today's true net is -7,797.75.
+   ⚠️ BUT THE 9 SEPTEMBER DAILY REPORT IS STILL WRONG: written 16:04:48, it says
+   "3 closed trade(s), net $-11,924.91" against a true 2 and -7,797.75. It is a
+   derived artefact of the corrupted ledger and was NOT regenerated.
+   Kept for the record - `closed_trades.csv` HAD held TWO
+   SEK rows - 2,978 @ 12.90 and 2,027 @ 12.93 - so 5,005 shares were booked
    against a 2,978 position. The first was written optimistically at transmit
    with the sized-against price; the second was booked by absorb_broker_fills on
    the 14:58 restart, which replayed the same executions and misclassified them
@@ -5339,10 +5347,8 @@ carried FOUR items that were already fixed and deployed.
    * DAILY/WEEKLY REPORT HISTORY, newest first. reporter.py writes them; nothing
      reads them back and there is no reports screen.
 
-9. REACH 20 CLOSED TRADES. ⚠️ THE COUNT IS UNCERTAIN UNTIL ITEM 2 IS DONE -
-   the ledger holds 12 rows but SEK is double-counted, so the true figure is
-   SEVEN positions, not the eight a naive collapse reports. The book is nine, so
-   a slot is open, but the kill switch halts new entries until reset.
+9. REACH 20 CLOSED TRADES. At SEVEN POSITIONS after the SEK repair. The book is
+   nine, so a slot is open, but the kill switch halts new entries until reset.
 
 10. THE LONG-STANDING FEATURES: M39 corporate actions (highest-severity gap; IBKR
    serves no announcements so it has no input), Stage 3 ASX auction rules
