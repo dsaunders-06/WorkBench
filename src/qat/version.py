@@ -1902,7 +1902,48 @@ from qat.domain.display_dates import format_display_date
 # would have failed on anyway, so it passed whether the code refused or guessed.
 # Same shape both times: a test asserting ABSENCE must first prove the fixture
 # would produce PRESENCE.
-MILESTONE = "M170"
+#
+# ---------------------------------------------------------------------------
+# M171 - A CANCEL ALREADY IN FLIGHT IS NOT A LEG THAT SURVIVED
+#
+# ⚠️ SHIPPED MID-SESSION, 9 September, deliberately and on the operator's
+# instruction, because the alternative was worse. The standing rule is that a
+# deploy is never mid-session; this is the second exception in the project's
+# history (M146 was the first) and it is recorded as one.
+#
+# WHAT IT FIXES, measured live twice in one hour. A signal exit on IAG.AX
+# cancelled its two bracket legs; the group cancel WORKED; and the still-resting
+# re-check declared both legs survivors and cancelled them again:
+#
+#     IBKR leg 423 survived the group cancel - cancelling it individually
+#     Error 10148, reqId 423: ... cannot be cancelled, state: PendingCancel.
+#     KILL-SWITCH TRIPPED: ... unrecognised code 10148
+#
+# The halt was correct by construction - 10148 is not enumerated and an
+# unfamiliar rejection must stop the account - but the rejection was
+# MANUFACTURED by this code asking IBKR to cancel what it was already
+# cancelling.
+#
+# ⚠️ AND THE COST WAS A DEADLOCK, not merely a halt. IAG.AX sat 6,699 shares
+# UNPROTECTED for 59 minutes, because the re-arm rail's replacement stop needs
+# the sign-off the halt was blocking: the only thing that could restore
+# protection was the order flow the switch exists to stop. Aggregate risk-at-stop
+# read 8.12% against a 5.00% cap, since an unprotected position counts its full
+# value. Resetting the switch reproduced the whole cycle in 49 seconds. Nothing
+# traded, and cash never moved.
+#
+# The old check matched on IDENTITY alone and read ONCE, the instant the cancels
+# went out. Both halves of why that fails were already written down here -
+# `adapter.py:151` and `ib_adapter.py:638`: after a cancel IBKR STILL SHOWS the
+# order reporting PendingCancel, and VISIBLE IS NOT GONE.
+#
+# ⚠️ WHY THE SUITE WAS GREEN OVER IT. `_RecordingIB` POPS a cancelled order out
+# of `openTrades()`, and its docstring says so: "so the group-cancel's own
+# still-resting re-check does not see a just-cancelled leg and cancel it a
+# second time". That is a broker that does not exist. Same lesson as the
+# manual-close branch: a green suite proves only that the fakes agree with the
+# code.
+MILESTONE = "M171"
 
 _UNKNOWN = "unknown"
 
