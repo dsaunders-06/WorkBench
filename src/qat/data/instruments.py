@@ -225,6 +225,27 @@ _ASX_NAMES: dict[str, str] = {
     # Rebranded to Dyno Nobel in 2025 - see module docstring.
     "IPL.AX": "Incitec Pivot Limited",
     "ALQ.AX": "ALS Limited",
+    # The five M161 added to the megacap watchlist. Their SECTORS were fixed in
+    # M162 and their NAMES were not, so the Screener rendered the ticker in the
+    # Name column until 10 September - `name_for` falls back to the symbol, so
+    # nothing raised and no cell was blank.
+    #
+    # Identities confirmed against IBKR `ContractDetails.longName`, read-only,
+    # 10 September 2026. ⚠️ The broker's STRINGS were not copied: it answers
+    # in upper case with abbreviated suffixes, and truncates at 28 characters -
+    # "CLEANAWAY WASTE MANAGEMENT L". Checked by re-reading two symbols already
+    # in this table, which came back "AURIZON HOLDINGS LTD" and "ALS LTD"
+    # against the "Limited" spelled out here. So IBKR settles WHICH company;
+    # the rendering follows this module's own convention.
+    # No "Limited": ALX is a STAPLED security (Atlas Arteria Limited stapled to
+    # Atlas Arteria International Limited), so no single entity carries the
+    # name. IBKR answers bare "ATLAS ARTERIA" for the same reason. The only
+    # entry here that deviates from the suffix pattern, deliberately.
+    "ALX.AX": "Atlas Arteria",
+    "CWY.AX": "Cleanaway Waste Management Limited",
+    "SDF.AX": "Steadfast Group Limited",
+    "SOL.AX": "Washington H. Soul Pattinson and Company Limited",
+    "ANN.AX": "Ansell Limited",
     "STW.AX": "SPDR S&P/ASX 200 Fund",
     "IOZ.AX": "iShares Core S&P/ASX 200 ETF",
 }

@@ -5528,6 +5528,58 @@ not, and neither is a timeline reconstructed from the log.**
 (`final_shares` there reads 815.77 against the 363 ordered - the audit trail
 deliberately keeps the sizer's own figure before the per-order cap trims it.)
 
+72. ~~**⚠️ THE SCREENER SHOWED FIVE TICKERS WHERE COMPANY NAMES BELONG - THE
+    SAME WIDENING, THE OTHER FIELD.**~~ **FIXED 10 September 2026.** Found by
+    the operator in the Screener:
+
+        93  AZJ.AX  Aurizon Holdings Limited   Industrials
+        94  ALQ.AX  ALS Limited                Industrials
+        95  ALX.AX  ALX.AX                     Industrials   ← ticker, not a name
+        96  CWY.AX  CWY.AX                     Industrials
+        97  SDF.AX  SDF.AX                     Financials
+        98  SOL.AX  SOL.AX                     Financials
+        99  ANN.AX  ANN.AX                     Health Care
+
+    **The same five symbols as item 59's sector gap** - ALX, CWY, SDF, SOL, ANN,
+    added to the megacap watchlist by M161. They were missing from BOTH
+    `SECTOR_BY_SYMBOL` and `INSTRUMENT_NAMES`. M162 fixed the sectors and added
+    `test_watchlist_symbols_all_have_sectors` *"so a future widening cannot
+    forget"*. **The names were not fixed and got no guard**, which is why the
+    Sector column reads correctly in the screenshot above and the Name column
+    does not.
+
+    ⚠️ **A GUARD WAS BUILT FOR ONE FIELD OF THE SAME WIDENING AND NOT THE
+    OTHER.** That is 10349's shape - the TIF lesson applied to the bracket and
+    stop paths and not the market branch - and item 69's - the orphan rail
+    taught "in flight" on the protection side and not the entry side. **Three
+    instances of one habit in one day.**
+
+    ⚠️ **AND IT HID FOR WEEKS BECAUSE THE FALLBACK IS GOOD.** `name_for()`
+    returns the symbol for an unknown ticker, deliberately, *"so callers can
+    render the result unconditionally"* - nothing raised, no cell was blank, and
+    a ticker in a Name column reads as a formatting quirk rather than missing
+    data. `has_name()` has existed all along to tell a real name from the echo,
+    **and nothing called it.** The new guard does.
+
+    **Two tests, not one:** the key must exist, AND `name_for(symbol)` must not
+    equal the symbol. A table entry mapping a symbol to itself would satisfy the
+    first and still render a ticker - the second asserts what the operator
+    actually sees.
+
+    ✅ **IDENTITIES CONFIRMED AT THE BROKER, WORDING DELIBERATELY NOT.** Read
+    read-only from IBKR `ContractDetails.longName`, 10 September. ⚠️ **The
+    broker's strings were NOT copied**: IBKR answers upper case with abbreviated
+    suffixes and truncates at 28 characters - `CLEANAWAY WASTE MANAGEMENT L`.
+    Caught by re-reading two symbols the table already held as a CONTROL, which
+    came back `AURIZON HOLDINGS LTD` and `ALS LTD` against the "Limited" spelled
+    out here. **So the broker settles WHICH company and this module's own
+    convention settles the rendering.** Taking the broker's strings straight
+    would have added five entries in a foreign style, one truncated mid-word.
+
+    `ALX.AX` is "Atlas Arteria" with no suffix, and that is deliberate and
+    commented: it is a STAPLED security, so no single entity carries the name.
+    IBKR returns bare `ATLAS ARTERIA` for the same reason.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ⚠️ **REGENERATE THIS WHOLE SECTION AT THE END OF EVERY SESSION, from the state
