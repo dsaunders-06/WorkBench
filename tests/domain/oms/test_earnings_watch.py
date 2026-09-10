@@ -82,3 +82,39 @@ def test_nothing_is_logged_when_nothing_is_due(caplog) -> None:
         report(_HELD, _calendar(BHP=99, TAH=99, WOW=99), within=5)
 
     assert "EARNINGS WITHIN" not in caplog.text
+
+
+def test_it_says_NOTHING_until_the_calendar_has_been_warmed(caplog) -> None:
+    """⚠️ SEEN LIVE ON THE FIRST M174 LAUNCH, 10 September 16:28:23.
+
+        EARNINGS UNREADABLE for 10 held symbol(s): ANZ.AX, ASX.AX, ...
+        (16:32:11) Earnings calendar warmed for 99 symbol(s)
+
+    The protection sweep runs about four minutes BEFORE the calendar warms, so
+    every launch reported all ten holdings unreadable when the cache on disk had
+    a real `next_earnings` for every one of them. The next sweep was silent.
+
+    **M39's lesson is that "nothing pending" and "I could not find out" are
+    different facts. This is one level finer: "I could not find out" and "I have
+    not looked yet" are also different**, and reporting the second as the first
+    puts a safety warning on screen that is false at every startup - the
+    furniture problem, in a warning that matters.
+    """
+    with caplog.at_level(logging.WARNING):
+        report(_HELD, _calendar(), within=5, calendar_ready=False)
+
+    assert caplog.text == ""
+
+
+def test_a_genuinely_unreadable_symbol_STILL_reports_once_warmed(caplog) -> None:
+    """⚠️ THE CONTROL. The gate is about NOT HAVING LOOKED, not about silence.
+
+    A calendar that has warmed and still cannot answer for a held symbol is the
+    M39 case and must say so - otherwise this fix would have silenced the very
+    thing the module exists for.
+    """
+    with caplog.at_level(logging.WARNING):
+        report(_HELD, _calendar(BHP=2), within=5, calendar_ready=True)
+
+    assert "EARNINGS UNREADABLE" in caplog.text
+    assert "TAH.AX" in caplog.text

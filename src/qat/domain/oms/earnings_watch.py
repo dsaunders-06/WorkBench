@@ -105,8 +105,28 @@ def report(
     held: dict[str, float],
     days_to_earnings: Callable[[str], int | None],
     within: int = DEFAULT_WITHIN_TRADING_DAYS,
+    calendar_ready: bool = True,
 ) -> Sequence[EarningsExposure]:
-    """Log the exposure and return it. Never raises."""
+    """Log the exposure and return it. Never raises.
+
+    ⚠️ `calendar_ready=False` MEANS NOTHING IS SAID AT ALL, and that is the
+    point. Seen live on the first M174 launch, 10 September 16:28:23:
+
+        EARNINGS UNREADABLE for 10 held symbol(s): ANZ.AX, ASX.AX, ...
+        (16:32:11) Earnings calendar warmed for 99 symbol(s)
+
+    The protection sweep runs about four minutes BEFORE the calendar warms, so
+    every launch reported all ten holdings unreadable while the cache on disk
+    held a real `next_earnings` for every one. The next sweep was silent.
+
+    **M39's lesson is that "nothing pending" and "I could not find out" are
+    different facts. This is one level finer: "I could not find out" and "I have
+    not looked yet" are different too**, and reporting the second as the first
+    puts a false safety warning on screen at every startup - which is how a
+    warning that matters becomes furniture.
+    """
+    if not calendar_ready:
+        return []
     exposures = positions_facing_earnings(held, days_to_earnings, within)
     unreadable = unreadable_symbols(held, days_to_earnings)
     if exposures:

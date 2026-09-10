@@ -357,6 +357,9 @@ class SignalToOrderBridge:
         # distance and the event-risk rail abstains - which is the behaviour
         # this bridge had before the rail existed.
         self.earnings_calendar: EarningsCalendar = earnings_calendar or NullEarningsCalendar()
+        # Whether `_warm_earnings` has completed. Until it has, the earnings
+        # report says NOTHING rather than calling every holding unreadable.
+        self._earnings_calendar_warmed = False
         # What to pre-fetch dates for at startup (M57c). Empty means no warm
         # pass, which is what every test and the null calendar want.
         self._warm_symbols = warm_symbols
@@ -435,6 +438,7 @@ class SignalToOrderBridge:
             logger.warning("Could not warm the earnings calendar", exc_info=True)
             return
         if fetched:
+            self._earnings_calendar_warmed = True
             logger.info(
                 "Earnings calendar warmed for %d symbol(s) - trades within %d trading days of a "
                 "print are sized at %.0f%%",
@@ -931,7 +935,14 @@ class SignalToOrderBridge:
             if abs(float(position.quantity)) > 1e-9
         }
         if held:
-            earnings_watch.report(held, self._days_to_earnings)
+            # ⚠️ `calendar_ready` gates the "unreadable" line. The protection
+            # sweep runs BEFORE `_warm_earnings` completes - about four minutes,
+            # measured on the first M174 launch - and without this every startup
+            # reported every holding unreadable while the cache held a real date
+            # for each. "I have not looked yet" is not "I could not find out".
+            earnings_watch.report(
+                held, self._days_to_earnings, calendar_ready=self._earnings_calendar_warmed
+            )
 
     async def rearm_protective_stops(self) -> list[str]:
         """Proposes a stop for every held position that has none (M31d).
