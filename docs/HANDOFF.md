@@ -5794,7 +5794,41 @@ and report in the system uses the re-derived figure.
 * **Store prices at higher precision** - safe and forward-only, fixes nothing
   historical, and touches a CSV format that has its own migration guard.
 
-**Operator's call.** ⚠️ The rebuild itself is now defensible: a known 20c
+✅ **FIXED AND REPAIRED, 10 September, on operator instruction.**
+
+**The code fix: prices now store at EIGHT decimals, not four.** The derivation
+stays - it is right, and the SEK repair is why: when a ledger is repaired the
+PRICES are corrected, and an app trusting a stored P&L column would carry the
+old number forever. **A derivation is only as good as what it derives from.**
+
+**The data repair: `scripts/repair_entry_price_precision.py`.** ⚠️ **FOUR rows
+were affected, not one, and the worst was not the one that surfaced it:**
+
+    A2M.AX   9,636 sh   -0.4104
+    IAG.AX   6,699 sh   +0.2030
+    PNI.AX   2,973 sh   +0.1134
+    RHC.AX   1,194 sh   -0.0060
+
+✅ **RESTORATION, NOT INVENTION.** `gross_pnl` was written from the
+full-precision price, so `entry = exit_price - gross_pnl / quantity` recovers it
+exactly. The script verifies each row closes its own gap and REFUSES if one does
+not. Backup: `closed_trades.csv.bak-20260910-045239-precision`.
+**All 11 rows now derive their stored gross; 0 fail the check.**
+⚠️ `closed_trades.csv` sha256 is now `93C38C09...` - the handoff's old
+`CB4703C7...` is superseded.
+
+**The 9 September report is now exact: `2 closed trade(s), net $-7,797.75`.**
+The file carries three entries for that day - the original wrong one, the
+count-corrected one at 20c off, and this - each marked as superseding the one
+above. ⚠️ **That chain is the append-only design working, not clutter:** the
+original is the record of what was reported at the time, and deleting it would
+destroy the evidence that it was wrong.
+
+⚠️ **A cosmetic blemish, unfixed:** the REGENERATED label stamps UTC
+("10 Sep 04:48") while the operator reads AEST. Harmless, and it looks like
+early morning.
+
+ORIGINAL NOTE: ⚠️ The rebuild itself is now defensible: a known 20c
 residual against a live report wrong by **$4,127**. Applying it is a large
 improvement with an understood defect, not a mystery.
 

@@ -436,9 +436,25 @@ class ClosedTrade:
             "symbol": self.symbol,
             "strategy": self.strategy or "",
             "quantity": round(self.quantity, 6),
-            "entry_price": round(self.entry_price, 4),
-            "exit_price": round(self.exit_price, 4),
-            "stop_price": round(self.stop_price, 4) if self.stop_price is not None else "",
+            # ⚠️ EIGHT DECIMALS ON PRICES, NOT FOUR, AND THE REASON IS SHARE
+            # COUNT. `gross_pnl` and `net_pnl` are DERIVED from these on
+            # read-back - `from_row`'s docstring says recomputing them is the
+            # point, and it is right: when the SEK.AX ledger was repaired on
+            # 9 September the prices were corrected, and an app that trusted a
+            # stored P&L column would have carried the old number forever.
+            #
+            # But a derivation is only as good as what it derives from. At four
+            # decimals, IAG.AX's true entry of ~7.92697 stored as 7.9270, and
+            # across 6,699 shares that fifth decimal became **twenty cents** -
+            # so the 9 September report said -7,797.95 where the ledger said
+            # -7,797.75. The error scales with quantity, and TAH is 64,229
+            # shares.
+            #
+            # Eight decimals costs a few bytes a row and makes the round trip
+            # exact to well under a cent at any size this account will hold.
+            "entry_price": round(self.entry_price, 8),
+            "exit_price": round(self.exit_price, 8),
+            "stop_price": round(self.stop_price, 8) if self.stop_price is not None else "",
             "gross_pnl": round(self.gross_pnl, 2),
             "entry_cost": round(self.entry_cost, 2),
             "exit_cost": round(self.exit_cost, 2),
@@ -463,13 +479,13 @@ class ClosedTrade:
                 round(self.gross_r_multiple, 4) if self.gross_r_multiple is not None else ""
             ),
             "risk_per_share": (
-                round(self.risk_per_share, 4) if self.risk_per_share is not None else ""
+                round(self.risk_per_share, 8) if self.risk_per_share is not None else ""
             ),
             "reference_price": (
-                round(self.reference_price, 4) if self.reference_price is not None else ""
+                round(self.reference_price, 8) if self.reference_price is not None else ""
             ),
-            "worst_price": round(self.worst_price, 4) if self.worst_price is not None else "",
-            "best_price": round(self.best_price, 4) if self.best_price is not None else "",
+            "worst_price": round(self.worst_price, 8) if self.worst_price is not None else "",
+            "best_price": round(self.best_price, 8) if self.best_price is not None else "",
             "earnings_at_entry": (
                 self.earnings_at_entry.isoformat() if self.earnings_at_entry is not None else ""
             ),

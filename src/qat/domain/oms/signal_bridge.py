@@ -57,6 +57,7 @@ from qat.domain.events import (
     OrderFilledEvent,
     SignalEvent,
 )
+from qat.domain.oms import earnings_watch
 from qat.domain.oms.oms import OMS
 from qat.domain.performance.edge import ClosedTradeSource, EdgeEstimator
 from qat.domain.risk_engine.engine import OrderCandidate
@@ -920,6 +921,18 @@ class SignalToOrderBridge:
             for symbol, entry in self._entries.items()
         }
 
+    async def _report_earnings_exposure(self) -> None:
+        """Name the held positions whose scheduled print lands inside the
+        window (M41's hold-through half). Reports; changes nothing."""
+        positions = await self.oms.broker.positions()
+        held = {
+            position.symbol: float(position.quantity)
+            for position in positions
+            if abs(float(position.quantity)) > 1e-9
+        }
+        if held:
+            earnings_watch.report(held, self._days_to_earnings)
+
     async def rearm_protective_stops(self) -> list[str]:
         """Proposes a stop for every held position that has none (M31d).
 
@@ -937,6 +950,22 @@ class SignalToOrderBridge:
         Orders are pending sign-off, not transmitted. The gate holds even for
         an order that only reduces risk.
         """
+        # ⚠️ EARNINGS EXPOSURE IS REPORTED HERE, and this is the only component
+        # that can: it holds the earnings calendar AND sees held positions -
+        # the same reason this method lives here at all.
+        #
+        # ⚠️ BEFORE the early return below. `naked` is EMPTY on a healthy book,
+        # which is the normal case, so anything placed after it would report
+        # only on days something was already wrong.
+        #
+        # Detection only - it places, cancels and resizes nothing. Wrapped so a
+        # diagnostic can never stop stops being re-armed: a rail that prevents
+        # de-risking is the 9 September deadlock's shape.
+        try:
+            await self._report_earnings_exposure()
+        except Exception:  # noqa: BLE001
+            logger.debug("Earnings exposure report failed", exc_info=True)
+
         try:
             naked = await self.oms.naked_positions()
         except Exception:
