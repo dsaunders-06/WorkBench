@@ -54,7 +54,7 @@ source.
 | Watchlist | ⚠️ **AS AT 2 SEPTEMBER — NOT RE-CHECKED 8 SEPTEMBER.** **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
 | Account | **NINE POSITIONS**, all protected, 18 resting legs — **verified at the broker** on 9 September, not inferred: `IB.positions()` returned nine and `reqAllOpenOrders` two legs for each, all `tif='GTC'`. ANZ ASX BHP BOQ JHX SUN TAH TWE WOW. Cash **497,174.93**, equity **994,558.13**. Account `DUQ200898`, paper, AUD |
-| Broker | ⚠️ **AS AT 1 SEPTEMBER — NOT RE-CHECKED.** **TWS on 7497** since 1 September 17:40 (`QAT_IBKR_PORT` 4002 → 7497, backup `.env.bak-20260901-174044`). IB Gateway is closed. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
+| Broker | **IB GATEWAY on 4002. TWS IS CLOSED.** ✅ **MEASURED 10 September 09:33**, not inferred: `ibgateway` PID 10416 started 08:43:30 is the sole listener on 4002, nothing answers on 7496/7497, no TWS process exists, and `QAT_IBKR_PORT=4002` in the live `.env`. ⚠️ **This row said "TWS on 7497, as at 1 September" until 10 September and was wrong** - the 1 September change was reverted at some point and the row was never re-measured. Gateway has delayed market data and no GUI; TWS has the GUI and no API market data, so neither endpoint is sufficient alone. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
 | Kill switch | ⚠️ **TRIPPED, and the app was closed with it tripped.** Reason: `unrecognised code 10349`. ✅ **The cause is FIXED in M173** — it was our own implicit TIF, not the Gateway. Harmless as it stands: the book is nine and fully protected, so the halt blocks only new entries. **Reset via the Risk Console after tomorrow's launch and read-back.** FIVE TRIPS on 9 September: three on 10148 from two different code paths, two on 10349. Quarantines: EMPTY |
 | Ledgers | **11 rows = SEVEN POSITIONS**, so the sizer's calibration gate is at **7 of 20**. ✅ The SEK.AX double-count was repaired 9 September 17:18; SEK is booked at 2,978, matching the broker. See `docs/superpowers/specs/2026-09-09-sek-execution-record.md`. ⚠️ **The 9 September daily report was written BEFORE the repair and is still wrong** — "3 closed trade(s), net $-11,924.91" against a true 2 and **-7,797.75**. ⚠️ One LOV row is a REPAIR row with EMPTY costs |
 
@@ -87,6 +87,63 @@ cooperate; nothing was wrong.
 The only ERRORs were an IBKR 1100/1102 blip at 14:17 that self-healed in 29
 seconds, with equity sampling running straight through it. **The 1102 is the
 RECOVERY, logged at ERROR** — judge by content, never by count.
+
+---
+---
+---
+
+## 10 SEPTEMBER: THE OPEN, AND A GATING WINDOW THAT RUNS BLIND EVERY DAY
+
+M173 was **read back off the app's own log** at 09:08 - `Build: M173 (97c536b,
+built 09/09/2026 18:58:59 AEST, packaged)` - closing the one item yesterday left
+pending. Kill switch reset by the operator at 09:11:05, confirmed in the log
+rather than assumed. Session activated 10:00:05.
+
+### ✅ THE FEED'S 20-MINUTE HOLE AT THE OPEN IS THE VENDOR, AND IT IS NOW PINNED
+
+yfinance returned **0 of 100 symbols for twenty minutes** from the bell, 113
+ERRORs, five consecutive empty polls and then a 120s backoff. It recovered at
+**10:20:33**. Yesterday it recovered at **10:20:34**.
+
+**One second apart on two consecutive days.** That is Yahoo's ASX publication
+delay, exactly as `yfinance_source`'s M119 comment says - *"all five 60s polls
+from the open landed inside the delay window"* - and it is neither a rate limit
+nor an outage. ⚠️ **Do not read the ERROR count at the open as a fault**; a
+recovery line follows it every day, and 1,111 per-symbol errors were suppressed
+inside the known window.
+
+⚠️ **AND THE SESSION-CHECK REGIME BANNER WAS STALE ALL MORNING.** It read
+`bull, exposure scalar 1.00` from 9 September 15:02 until the engine actually
+classified at 10:20:36, which produced **`recovery`, exposure scalar 0.90**.
+Today's sizing is at 0.90 and not 1.00. The script says of its own banner *"not
+proof it classified tonight"* and that caveat earned itself.
+
+### ⚠️ THE FINDING: STRATEGY GATING RUNS ON A DEFAULT FOR THE FIRST 20 MINUTES
+
+At 10:20:33, one instant before the first classification:
+
+    Gating 1 strategies on the sideways DEFAULT - the regime engine has
+    published nothing. Strategies are being permitted or refused without any
+    reading of the market: swing=...
+
+From activation at 10:00:05 to 10:20:33, **every open**, gating uses a hardcoded
+`sideways` default rather than a measured regime. It was harmless today only
+because the same vendor delay that causes the window also starved it of prices,
+so there were no signals to gate. **Harmless by coincidence, not by design** -
+the same shape as `delever_sweep_enabled=False` preventing a cascade by luck on
+9 September. The two causes are the same event, so the day the feed is early is
+the day this bites.
+
+### WHAT IS STILL UNPROVEN LIVE
+
+* **M173's TIF fix.** No app-driven market exit has fired, so 10349 has not been
+  retested. Still the first thing to watch.
+* **Task 3, the opening-auction refusal.** It did NOT get exercised: no prices
+  during 10:00-10:10 means no signals reached the rail.
+* Protection held throughout regardless - 15 resting-order scans, every one
+  `18 working leg(s) across 9 symbol(s), nothing unjustified`, 0 unprotected,
+  kill switch clear. **The stops rest at the broker and do not depend on the
+  feed.**
 
 ---
 ---
