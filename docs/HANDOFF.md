@@ -5381,7 +5381,35 @@ shares its shape.
     Every one was caught by grepping for the string just written. The habit that
     works is the edit tool, which ERRORS on a failed match.
 
-69. **⚠️ THE ORPHAN RAIL CANNOT TELL AN ENTRY IN FLIGHT FROM AN ORPHAN.**
+69. ~~**⚠️ THE ORPHAN RAIL CANNOT TELL AN ENTRY IN FLIGHT FROM AN ORPHAN.**~~
+    **FIXED 10 September 2026.** `explain_entries_in_flight` splits the scan's
+    divergences into unexplained and explained-by-a-working-parent, and the
+    explained ones are logged plainly rather than raised as ORPHANs or
+    quarantined.
+
+    ✅ **DECIDED AT THE BROKER'S WORD, not from app state** - it reads only what
+    the broker reports as working, never `_orders` or `_transmitted`. TNE.AX on
+    24 August was flat with sixteen legs and **no working parent**; an entry in
+    flight has one, and that is the whole discriminator.
+
+    ✅ **BOUNDED BY QUANTITY, NOT BY SYMBOL.** A working buy of Q on a flat
+    symbol justifies itself and up to Q of resting sell. Beyond Q it is still
+    reported and still quarantines - tested, so a one-share pending entry cannot
+    exempt a symbol's whole sell side.
+
+    ✅ **AND IT ENDS BY ITSELF.** When the parent stops working it leaves
+    `orders` and the next scan reports normally, so the exemption needs no
+    timeout and cannot become permanent.
+
+    ⚠️ **WHAT WAS DELIBERATELY GIVEN UP, so it is not discovered later:** a
+    genuinely orphaned WORKING buy on a flat symbol is now explained rather than
+    reported. That is the price of letting normal entries through, and it is the
+    smaller risk: a working buy that fills creates a LONG, which reconciliation
+    catches on the share count. The 24 August failure was orphaned SELLs
+    creating a naked short, and that side keeps its cover except up to a
+    matching in-flight buy.
+
+    ORIGINAL:
     Seen live on 10 September on the COH.AX entry, and it will recur on every
     entry. At **10:29:05, the same second as sign-off and five minutes before
     the fill**, the scan read the bracket's legs against a book still flat in

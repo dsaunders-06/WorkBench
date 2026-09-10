@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from qat.data.broker.adapter import Position, RestingOrder
 
@@ -246,3 +246,73 @@ def unjustified_resting_risk(
             )
         )
     return divergences
+
+
+def explain_entries_in_flight(
+    divergences: Sequence[SymbolOrderDivergence],
+    orders: Sequence[RestingOrder],
+    positions: Sequence[Position],
+) -> tuple[list[SymbolOrderDivergence], list[SymbolOrderDivergence]]:
+    """Split divergences into (unexplained, explained by an entry in flight).
+
+    ⚠️ A BRACKET'S LEGS ARE UNJUSTIFIED WHILE ITS PARENT IS STILL WORKING, BY
+    CONSTRUCTION. Measured live on COH.AX, 10 September 2026, at 10:29:05 - the
+    same second as sign-off and five minutes before the fill:
+
+        RESTING ORDER ORPHAN: COH.AX BUY  resting=363 justified=-0 excess=363 FLAT
+        RESTING ORDER ORPHAN: COH.AX SELL resting=363 justified=0  excess=363 FLAT
+
+    Nothing was wrong. The legs reach the broker before the entry fills, so a
+    window where resting quantity exceeds the book is what an entry IS. It cost
+    two ERROR lines and a 15-minute quarantine on a normal entry - and an ERROR
+    raised by routine activity is how a REAL orphan comes to be scrolled past.
+
+    ⚠️ **THIS IS NOT A WEAKENING OF THE 24 AUGUST RAIL, and the difference is
+    measurable AT THE BROKER rather than inferred from app state.** TNE.AX was
+    flat with sixteen legs and **no working parent**. An entry in flight has
+    one. Nothing here consults `_orders`, `_transmitted` or any belief of this
+    application - only what the broker reports as working.
+
+    ⚠️ **AND IT IS BOUNDED BY QUANTITY, NOT BY SYMBOL.** A working buy of Q on a
+    flat symbol justifies itself and up to Q of resting sell - the bracket it is
+    about to protect. Anything beyond Q is still reported and still quarantines.
+    Without that bound a one-share pending entry would exempt a symbol's entire
+    sell side, and the 24 August shape could hide behind it.
+
+    ⚠️ **WHAT IS DELIBERATELY GIVEN UP:** a genuinely orphaned WORKING buy on a
+    flat symbol is now explained rather than reported. That is the cost of
+    letting normal entries through, and it is the smaller risk of the two: a
+    working buy that fills creates a LONG, which reconciliation catches on the
+    share count. The 24 August failure was orphaned SELLs creating a naked
+    short, and that side keeps its cover except up to a matching in-flight buy.
+
+    The exemption ends by itself. When the parent stops working - filled or
+    cancelled - it is no longer in `orders`, and the next scan reports normally.
+    It cannot become permanent, which is why it needs no timeout.
+    """
+    held = {position.symbol: float(position.quantity) for position in positions}
+    in_flight: dict[str, float] = defaultdict(float)
+    for order in orders:
+        if order.status not in WORKING_STATUSES or order.side != "buy":
+            continue
+        if abs(held.get(order.symbol, 0.0)) > _TOLERANCE:
+            # Only a FLAT symbol can have its legs explained this way. A held
+            # position justifies its own protection through the ordinary path,
+            # and a buy against a long is the unaccounted-long case the rail is
+            # also there to catch.
+            continue
+        in_flight[order.symbol] += float(order.quantity)
+
+    unexplained: list[SymbolOrderDivergence] = []
+    explained: list[SymbolOrderDivergence] = []
+    for divergence in divergences:
+        allowance = in_flight.get(divergence.symbol, 0.0)
+        if allowance <= _TOLERANCE:
+            unexplained.append(divergence)
+            continue
+        remaining = divergence.excess - allowance
+        if remaining <= _TOLERANCE:
+            explained.append(divergence)
+            continue
+        unexplained.append(replace(divergence, excess=remaining))
+    return unexplained, explained

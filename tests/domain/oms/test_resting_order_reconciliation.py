@@ -417,3 +417,74 @@ async def test_a_clean_scan_lifts_a_quarantine_the_reconciler_declared(oms_facto
         "it declared can still only be lifted by hand (item 59)"
     )
     assert "LIFTED by the reconciler" in caplog.text
+
+
+def _entry(order_id, symbol="COH.AX", qty=363.0):
+    """The parent BUY of a bracket, as it rests while waiting to fill."""
+    return RestingOrder(
+        symbol=symbol,
+        order_id=str(order_id),
+        side="buy",
+        order_type="MKT",
+        quantity=qty,
+        status="PreSubmitted",
+        oca_group=None,
+        owner_client_id=1,
+        stop_price=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_flat_symbol_whose_entry_is_still_in_flight_is_not_an_orphan(oms_factory):
+    """⚠️ SEEN LIVE on COH.AX, 10 September 2026, at 10:29:05 - the same second
+    as sign-off and five minutes before the fill.
+
+    A bracket's legs reach the broker before the entry fills, so a window in
+    which resting orders exceed the book is what an entry IS. The scan landed
+    inside that window and raised two ERROR-level ORPHANs and two quarantines
+    against a normal entry.
+    """
+    broker = _Broker(
+        [
+            _entry(1),
+            # ⚠️ ONE OCA GROUP, as a real bracket's legs carry. `_netted` takes
+            # the MAX within a group, so these net to 363 - which is exactly
+            # what the live COH.AX line showed: "resting=363" across TWO legs.
+            # Left ungrouped they sum to 726 and the fixture stops resembling
+            # the thing it is named after.
+            _order(2, symbol="COH.AX", side="sell", qty=363.0, oca="qat-coh"),
+            _order(3, symbol="COH.AX", side="sell", qty=363.0, oca="qat-coh"),
+        ],
+        [Position(symbol="COH.AX", quantity=0.0, avg_price=0.0)],
+    )
+    oms = oms_factory(broker)
+
+    found = await oms.check_resting_orders()
+
+    assert found == [], [d.describe() for d in found]
+    assert not oms.resting_order_anomalies.is_quarantined("COH.AX")
+
+
+@pytest.mark.asyncio
+async def test_resting_sell_BEYOND_the_in_flight_entry_is_still_an_orphan(oms_factory):
+    """⚠️ THE BOUND. The exemption is the in-flight quantity and not the symbol.
+
+    Without this, one pending entry would exempt a symbol's whole sell side and
+    the 24 August shape could hide behind a 1-share buy.
+    """
+    broker = _Broker(
+        [
+            _entry(1, qty=363.0),
+            _order(2, symbol="COH.AX", side="sell", qty=363.0),
+            _order(3, symbol="COH.AX", side="sell", qty=5000.0),
+        ],
+        [Position(symbol="COH.AX", quantity=0.0, avg_price=0.0)],
+    )
+    oms = oms_factory(broker)
+
+    found = await oms.check_resting_orders()
+
+    sells = [d for d in found if d.side == "sell"]
+    assert sells, [d.describe() for d in found]
+    assert sells[0].excess == pytest.approx(5000.0), sells[0].describe()
+    assert oms.resting_order_anomalies.is_quarantined("COH.AX")

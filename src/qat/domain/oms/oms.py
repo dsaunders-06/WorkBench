@@ -47,6 +47,7 @@ from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
 from qat.domain.oms.resting_orders import (
     WORKING_STATUSES,
     SymbolOrderDivergence,
+    explain_entries_in_flight,
     unjustified_resting_risk,
 )
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
@@ -2613,6 +2614,20 @@ class OMS:
         positions = await self.broker.positions()
         working = [order for order in orders if order.status in WORKING_STATUSES]
         divergences = unjustified_resting_risk(orders, positions)
+        # A bracket's legs are unjustified while its parent is still working -
+        # that is what an entry IS, not an orphan. Split at the BROKER's word,
+        # bounded by the in-flight quantity, and said out loud rather than
+        # silently dropped. See `explain_entries_in_flight` for what this gives
+        # up and why it cannot become permanent.
+        divergences, entries_in_flight = explain_entries_in_flight(divergences, orders, positions)
+        for explained in entries_in_flight:
+            logger.info(
+                "RESTING ORDER: %s %s %g rests against a FLAT book with an entry still in "
+                "flight - expected, not an orphan. The legs precede the fill.",
+                explained.symbol,
+                explained.side.upper(),
+                explained.excess,
+            )
 
         # The heartbeat. Unconditional and always the same prefix - unlike the
         # per-divergence ERROR below, which is throttled once landed (I5) -
