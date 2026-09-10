@@ -5596,6 +5596,69 @@ deliberately keeps the sizer's own figure before the per-order cap trims it.)
     commented: it is a STAPLED security, so no single entity carries the name.
     IBKR returns bare `ATLAS ARTERIA` for the same reason.
 
+## 10 SEPTEMBER: IBKR NEWS AND WSH, MEASURED WITH A POSITIVE CONTROL
+
+Run at the operator's request, read-only against the live paper Gateway.
+
+### ✅ WSH - THE API EXISTS, THE ENTITLEMENT DOES NOT
+
+`reqWshEventData` / `reqWshMetaData` ARE in ib_async 2.1.0 (which corrects the
+announcements spec - see the audit). But `getWshMetaDataAsync()` returned **0
+characters** with `Error 10276: News feed is not allowed`. **No Wall Street
+Horizon entitlement on this account.** So M39 via WSH is a PAID path, not an
+available one - and against a measured ASX base rate of ~0.04 material events a
+year with zero forward splits in ten years, it is not worth buying.
+
+### ⚠️ IBKR NEWS IS NOT RETRIEVABLE OVER THE API HERE - AND THE 4 SEPTEMBER
+CLAIM IN `ibkr_news.py` IS NOT REPRODUCIBLE
+
+That module's docstring says: *"With codes supplied, both symbols return
+headlines - including NHF.AX, the symbol the two-source rule was abandoned
+over."* **Measured today, it does not.**
+
+| test | result |
+|---|---|
+| RIO.AX, NHF.AX, BHP.AX - 90d, all 8 codes, `readonly=True` | **0 headlines each** |
+| Same, `readonly=False` | **0 headlines** - connection mode is NOT the cause |
+| **AAPL and MSFT - 30d - THE POSITIVE CONTROL** | **0 headlines** |
+| Streaming news ticks (`mdoff,292`), BHP.AX and AAPL | **0 ticks** |
+| `reqNewsProviders` | all **8** returned correctly |
+| Gateway → API → News Configuration | **all 8 ticked** |
+
+⚠️ **THE POSITIVE CONTROL IS THE POINT.** Six ASX queries returning zero proved
+nothing - "no ASX coverage" and "the path is shut" predict the same result. A US
+megacap on a Dow Jones wire returning zero over 30 days is not credible as a
+true absence, and it relocates the cause. **Absence is only evidence once the
+fixture is shown capable of presence** - the same rule the sabotage tests run on.
+
+**Leading hypothesis, NOT proven:** IBKR news entitlements do not extend to
+PAPER accounts over the API. `DUQ200898` is paper and 10276 is the canonical
+response. The Gateway's list is *pre-configured providers* - what may be passed
+through - not proof this account may retrieve them. It also explains the
+operator seeing abundant ASX news in IBKR Desktop, if Desktop carries the live
+account. **Settling it needs a live account and that was not tested.**
+
+⚠️ **Whichever way that falls, it does NOT unblock IBKR news for this app.**
+`IBKRNewsSource.fetch` raises `NotImplementedError` on a SECOND, independent
+blocker: the Dow Jones storage licence, unresolved, against an app that writes
+headlines into the decision journal. Two locks, one door.
+
+### ✅ THE CORROBORATION CONSTRAINT IS ALREADY AT ITS FLOOR
+
+The operator asked for the "credible sources" constraint to be removed if news
+was blocked. **There is nothing to remove.** `news_min_sources` is
+`Field(default=1, ge=1)` - already the minimum the field permits, loosened from
+2 on 21 August. At 1, every fresh story with a title and a provider passes;
+`corroborate` skips a cluster only when `not primary and len(outlets) <
+min_sources`. There is no publisher allowlist, and exchange filings bypass the
+bar entirely as `primary`. **No change made, deliberately.**
+
+**Status quo: yfinance news, single source already sufficient.**
+
+---
+---
+---
+
 ## 🔎 10 SEPTEMBER: AUDIT OF THE OUTSTANDING LIST
 
 Requested by the operator, who suspected the list had drifted. It had. **Read

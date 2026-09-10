@@ -24,6 +24,21 @@ query had been sent with no provider codes, which cannot return anything. With
 codes supplied, both symbols return headlines - including NHF.AX, the symbol the
 two-source rule was abandoned over.
 
+⚠️⚠️ **NOT REPRODUCIBLE ON 10 SEPTEMBER 2026 - DO NOT BUILD ON THE PARAGRAPH
+ABOVE WITHOUT RE-MEASURING.** Same symbols, same 90 days, all eight codes
+supplied, both `readonly=True` and `readonly=False`: **zero headlines.** And the
+POSITIVE CONTROL is what makes that meaningful - AAPL and MSFT over 30 days also
+returned zero, which is not credible as a true absence for US megacaps on a Dow
+Jones wire. Streaming news ticks (`mdoff,292`) returned zero for BHP.AX and AAPL
+alike. `reqNewsProviders` still lists all eight, and all eight are ticked in the
+Gateway's API news configuration, so the ACCOUNT subscribes and the GATEWAY
+permits - the retrieval path is what answers nothing.
+
+Leading hypothesis, unproven: IBKR news does not reach PAPER accounts over the
+API (`DUQ200898` is paper, and `Error 10276: News feed is not allowed` is the
+canonical response). Settling it needs a live account, which was not tested.
+See the 10 September section of docs/HANDOFF.md for the full measurement.
+
 ⚠️ NOT WIRED IN BY DEFAULT, AND DELIBERATELY. Dow Jones terms generally forbid
 storing and redistributing headlines, and this application writes them into the
 decision journal. Settle that against the actual subscription before adding
