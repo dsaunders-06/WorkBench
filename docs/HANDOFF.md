@@ -5730,9 +5730,25 @@ work."** Not built. What has to be decided before it is:
 * **Where** - a new CSV beside `equity_curve.csv`, or columns on an existing
   artefact. It must survive restarts; `open_position_entries.json` discarding
   `entry_slippage` on every restart is the warning here (M44).
-* **From what** - derived from the daily bars already warm-started (300 per
-  symbol), so no new data source is needed. Consistent with keeping the delayed
-  feed.
+* **From what** - ✅ **SETTLED 10 September, and it must be the DAILY BARS.**
+  Derived from the 300 daily bars already warm-started per symbol, so no new
+  data source is needed and the delayed feed stays as it is.
+
+  ⚠️ **AND NOT FROM INTRADAY TICKS, because the app never sees the close.**
+  Measured at today's close: the feed goes idle at `16:00:08` and never polls
+  again, so with a ~20 minute publication delay **the last per-symbol prices it
+  saw were roughly 15:40's.** It does not see the closing auction, and nothing
+  arrives at 16:20 because nothing is asking. A weekly close captured from the
+  live feed would be a 15:40 price wearing a 16:00 label.
+
+  ✅ A COMPLETED DAILY BAR carries the official open and close, and warm start
+  fetches it on the next launch. That is the correct source and it already runs.
+
+  ⚠️ **ACCOUNT EQUITY IS DIFFERENT and is not affected** - it keeps sampling
+  past the close from IBKR's own account values (`16:03:06`, equity
+  993,996.26), which are the broker's real marks rather than the delayed feed.
+  Anything computed at ~16:04 from PER-SYMBOL prices is on 15:40 data; equity
+  is not.
 
 ⚠️ **"Once the machinery is proven"** is the operator's own precondition: the
 sizer's calibration gate is at **7 of 20 closed trades**, so proving is what
