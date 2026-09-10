@@ -113,10 +113,15 @@ async def test_the_regime_is_measured_rather_than_defaulted(tmp_path, caplog):
         "Strategy gating now uses the classified regime" in caplog.text
     ), "the sideways default was never superseded, so nothing read the market"
     # ONCE, on the first replayed bar, and no more. The regime for bar N is
-    # published during bar N's dispatch, so consumers hold the default until
-    # N+1 - a one-bar lag the live system has too, not a harness artefact. An
+    # published during bar N's dispatch, so consumers have no regime until N+1 -
+    # a one-bar lag the live system has too, not a harness artefact. An
     # assertion of "never" would be asserting something untrue of production.
-    assert caplog.text.count("sideways DEFAULT") == 1
+    #
+    # ⚠️ THE WORDING CHANGED ON 10 SEPTEMBER and so did what it means. This
+    # counted "sideways DEFAULT", from a message saying strategies were being
+    # GATED on that default. They are now REFUSED instead, so the lag is one bar
+    # of no entries rather than one bar of trading on an unread market.
+    assert caplog.text.count("NO ENTRIES until the regime engine publishes") == 1
 
 
 @pytest.mark.asyncio

@@ -5650,6 +5650,73 @@ deliberately keeps the sizer's own figure before the per-order cap trims it.)
     commented: it is a STAPLED security, so no single entity carries the name.
     IBKR returns bare `ATLAS ARTERIA` for the same reason.
 
+## 🧭 10 SEPTEMBER: THE OPERATOR'S LONGER-TERM VISION, AND WHAT IT DECIDES
+
+Stated by the operator, and it settles a design question that had been open all
+day:
+
+* **Positions held up to 60 days.**
+* **Weekly OPEN and weekly CLOSE become the important figures** in buy and exit
+  decisions.
+* **The 20-minute delayed feed is NOT to be replaced.** It is adequate at this
+  cadence and is not a defect to fix.
+
+### ✅ IT DECIDES THE BLIND-WINDOW GATE: FAIL CLOSED
+
+The gate now REFUSES entries until the regime engine has published, instead of
+gating on a hardcoded `sideways` default for the first ~20 minutes of every
+session. **The holding period is what decided it, not the defect.** Waiting
+twenty minutes costs a signal that is still there at 10:21; entering blind costs
+a position carried for up to sixty days, sized under a label nobody read. The
+asymmetry runs one way.
+
+⚠️ **TWO TESTS ASSERTED THE OPPOSITE AND WERE DELIBERATE** - one called it *"the
+documented fail-open"*. They are REVERSED rather than deleted, each carrying why.
+Do not restore the fail-open without revisiting the holding period.
+
+✅ **EXITS ARE UNAFFECTED** (M56c): `on_features` still runs for an ineligible
+strategy and `_closes_an_open_position` still lets its sells through, so this
+cannot become the 9 September deadlock.
+
+### ⚠️⚠️ AND IT CONTRADICTS A LIVE SETTING - A 60-DAY HOLD IS NOT REACHABLE
+
+    QAT_TIME_STOP_TRADING_DAYS=30      ← forces an exit at 30 TRADING days
+    QAT_MIN_HOLDING_TRADING_DAYS=10
+    QAT_ENFORCE_TIME_STOP=true
+
+**30 trading days is about 42 calendar days.** A position intended to run to 60
+days would be closed by the time stop first - **on the clock rather than on the
+thesis.** The two settings are each individually sensible and jointly describe
+something the operator does not want, which is M106's shape exactly ("two
+settings each valid, jointly useless").
+
+It has not bitten yet: IAG closed at **14.97** days held and SEK at **13.98**,
+both on `signal`. **It caps the intent, not today's trades.** ⚠️ Not changed -
+the right value is the operator's call, and 60 days of holding is a different
+risk profile from 30, not just a longer one.
+
+### 📌 NEW REQUIREMENT, RECORDED SO IT IS NOT LOST
+
+**"Weekly open and weekly close to be SAVED, once the machinery is proven to
+work."** Not built. What has to be decided before it is:
+
+* **Whose open and close** - every watchlist symbol, or only held positions?
+* **Which days** - the week's first and last TRADING days (a Monday holiday
+  moves it), which `market_calendar._is_last_trading_day_of_week` already knows
+  how to answer.
+* **Where** - a new CSV beside `equity_curve.csv`, or columns on an existing
+  artefact. It must survive restarts; `open_position_entries.json` discarding
+  `entry_slippage` on every restart is the warning here (M44).
+* **From what** - derived from the daily bars already warm-started (300 per
+  symbol), so no new data source is needed. Consistent with keeping the delayed
+  feed.
+
+⚠️ **"Once the machinery is proven"** is the operator's own precondition: the
+sizer's calibration gate is at **7 of 20 closed trades**, so proving is what
+comes first.
+
+---
+
 ## ✅ 10 SEPTEMBER: A WRONG REPORT CAN NOW BE REBUILT
 
 `PerformanceReporter.regenerate_daily(day)` plus

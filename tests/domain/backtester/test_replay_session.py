@@ -92,6 +92,7 @@ async def test_a_signal_becomes_an_order_at_the_broker(tmp_path):
         bars={"AAA": _trending_bars()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
+        benchmark="AAA",
     )
 
     await session.run()

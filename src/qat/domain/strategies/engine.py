@@ -60,6 +60,7 @@ class StrategyEngine:
         position_source: PositionSource | None = None,
         position_cache_seconds: float = 5.0,
         regime_eligibility_mass: float = 0.5,
+        requires_regime: bool = True,
     ) -> None:
         self.position_source = position_source
         self.position_cache_seconds = position_cache_seconds
@@ -83,6 +84,19 @@ class StrategyEngine:
         # on 29 July a strategy being gated off had to be reconstructed
         # afterwards from a blank field on screen.
         self._regime_is_real = False
+        # ⚠️ "HAS NOT SPOKEN YET" AND "IS NOT RUNNING AT ALL" ARE DIFFERENT
+        # STATES and only the first should refuse entries.
+        #
+        # The blind-window gate above closes until a regime arrives. The
+        # ABLATION harness deliberately runs with no regime engine at all
+        # (`ReplaySession(start_regime=False)`) precisely to measure the system
+        # WITHOUT the regime gate - and an ablated arm that takes zero trades
+        # measures nothing, which would quietly destroy the comparison item 30
+        # depends on.
+        #
+        # So the caller says whether a regime is EXPECTED. Live expects one;
+        # an ablated replay does not.
+        self.requires_regime = requires_regime
         self._warned_about_default = False
         self._deployment_listeners: list[Callable[[], None]] = []
         # Views that must not read this engine's eligibility mid-update - see
@@ -250,6 +264,26 @@ class StrategyEngine:
         near-tie into a certainty. A strategy trades when the market is *more
         likely than not* in a regime it was built for.
         """
+        # ⚠️ NOTHING IS ELIGIBLE UNTIL THE MARKET HAS ACTUALLY BEEN READ.
+        # Measured 10 September 2026: from session activation at 10:00:05 to the
+        # first classification at 10:20:33 - twenty minutes, EVERY open - this
+        # answered from a hardcoded `sideways` DEFAULT, so strategies were
+        # permitted or refused with no reading of the market at all.
+        #
+        # It had never bitten because the SAME vendor delay that opens the
+        # window also starves it of prices, so nothing asked. Two causes, one
+        # event: **harmless by coincidence, not by design** - item 33's finding
+        # about a seven-minute margin nobody enforces. The day the feed is early
+        # is the day the default decides something.
+        #
+        # ⚠️ ENTRIES ONLY. `on_features` still runs for an ineligible strategy
+        # and `_closes_an_open_position` still lets its exits through (M56c), so
+        # this cannot become the 9 September deadlock - a halt that prevents
+        # de-risking is not a conservative halt.
+        #
+        # It lifts by itself the moment a RegimeEvent arrives.
+        if self.requires_regime and not self._regime_is_real:
+            return False
         mass = self._eligible_mass(strategy)
         if mass is None:
             return self._current_regime in strategy.suitable_regimes()
@@ -374,9 +408,10 @@ class StrategyEngine:
         if not self._regime_is_real and not self._warned_about_default:
             self._warned_about_default = True
             logger.warning(
-                "Gating %d strategies on the %s DEFAULT - the regime engine has published "
-                "nothing. Strategies are being permitted or refused without any reading of "
-                "the market: %s",
+                "NO ENTRIES until the regime engine publishes - it has read nothing yet, "
+                "so %d strategies are refused rather than gated on the %s default. Exits are "
+                "UNAFFECTED. At the open this is the feed's own ~20 minute delay and lifts on "
+                "the first classification: %s",
                 len(self.strategies),
                 self.default_regime.value,
                 ", ".join(

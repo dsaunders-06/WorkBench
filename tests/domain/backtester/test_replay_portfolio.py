@@ -48,7 +48,15 @@ async def test_several_symbols_share_one_book(tmp_path):
         "BBB": _bars_with_pullback_at(140),
         "CCC": _bars_with_pullback_at(160),
     }
-    session = ReplaySession(bars=bars, strategies=[SwingStrategy()], settings=_settings(tmp_path))
+    session = ReplaySession(
+        bars=bars,
+        strategies=[SwingStrategy()],
+        settings=_settings(tmp_path),
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
+    )
 
     await session.run()
 
@@ -73,7 +81,15 @@ async def test_the_position_limit_refuses_an_entry_and_says_so(tmp_path):
         "BBB": _bars_with_pullback_at(124),  # while AAA is still held
     }
     settings = _settings(tmp_path).model_copy(update={"max_concurrent_positions": 1})
-    session = ReplaySession(bars=bars, strategies=[SwingStrategy()], settings=settings)
+    session = ReplaySession(
+        bars=bars,
+        strategies=[SwingStrategy()],
+        settings=settings,
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
+    )
 
     await session.run()
 

@@ -20,7 +20,7 @@ import pytest
 from qat.data.fundamentals import MockFundamentalsSource
 from qat.data.market_data import MarketDataFeed, RawTick
 from qat.domain.bus import EventBus
-from qat.domain.events import DataStaleEvent, MarketDataEvent, SignalEvent
+from qat.domain.events import DataStaleEvent, MarketDataEvent, RegimeEvent, SignalEvent
 from qat.domain.strategies.engine import StrategyEngine
 
 
@@ -151,6 +151,12 @@ async def test_a_stale_symbol_stops_producing_signals_and_others_continue():
     strategy: Strategy = _AlwaysSignals()  # type: ignore[assignment]
     engine = StrategyEngine(bus, [strategy], MockFundamentalsSource(seed=1))
     await engine.start()
+
+    # ⚠️ A REGIME FIRST, or this tests the wrong thing. Since 10 September the
+    # engine refuses ALL entries until one is published, so without this every
+    # symbol is excluded and the assertion below would pass for a reason that
+    # has nothing to do with staleness - which is what it exists to measure.
+    await bus.publish(RegimeEvent(label="sideways", probs={}, exposure_scalar=1.0))
 
     await bus.publish(DataStaleEvent(symbol="BRK.B", seconds_since_update=63_017.0, stale=True))
     for symbol in ("BRK.B", "AAPL"):

@@ -6,6 +6,7 @@ Sideways (engine-level gating) as well as internally during a strong trend
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 
@@ -104,7 +105,19 @@ async def test_mean_reversion_active_in_sideways_regime_on_oversold_drop():
 
 
 @pytest.mark.asyncio
-async def test_default_regime_is_sideways_before_any_regime_event():
+async def test_NO_ENTRY_SIGNAL_before_any_regime_event():
+    """⚠️ REVERSED 10 September 2026 - this asserted `len(...) > 0`.
+
+    It pinned the fail-open: with no RegimeEvent the engine defaulted to
+    SIDEWAYS and mean reversion, which is a sideways strategy, was free to open
+    positions. Twenty minutes every open, on no reading of the market.
+
+    Reversed because positions are intended to be held up to 60 days with
+    decisions keyed to weekly opens and closes. A twenty-minute wait costs a
+    signal that is still there at 10:21; a blind entry costs a sixty-day
+    position. **Exits are unaffected** - see
+    `test_an_exit_still_flows_while_the_regime_is_unread`.
+    """
     bus = EventBus()
     received: list[SignalEvent] = []
 
@@ -116,12 +129,75 @@ async def test_default_regime_is_sideways_before_any_regime_event():
         bus, [MeanReversionStrategy(rsi_window=3)], MockFundamentalsSource(seed=1)
     )
     await engine.start()
-    # no RegimeEvent published - engine should default to Sideways
+    # no RegimeEvent published - nothing has read the market, so nothing enters
 
     prices = [100.0] * 30 + [90.0, 80.0, 70.0]
     await _feed_ticks(bus, "AAA", prices)
 
     mean_reversion_signals = [s for s in received if s.strategy == "mean_reversion"]
-    assert len(mean_reversion_signals) > 0
+    assert mean_reversion_signals == [], "an entry was taken on an unread market"
 
     await engine.stop()
+
+
+# --- The blind window at the open (10 September 2026) -------------------------
+
+
+def _engine_with_no_regime(bus) -> StrategyEngine:
+    return StrategyEngine(
+        bus, [MultiFactorStrategy(top_quintile=1.0)], MockFundamentalsSource(seed=1)
+    )
+
+
+@pytest.mark.asyncio
+async def test_no_strategy_is_eligible_before_a_regime_is_published():
+    """⚠️ MEASURED 10 September 2026. From session activation at 10:00:05 until
+    the first classification at 10:20:33 - twenty minutes, EVERY open - gating
+    ran on a hardcoded `sideways` DEFAULT:
+
+        Gating 1 strategies on the sideways DEFAULT - the regime engine has
+        published nothing. Strategies are being permitted or refused without
+        any reading of the market
+
+    It was harmless that day only because the same vendor delay that opens the
+    window also starved it of prices, so there were no signals to gate. **Two
+    causes, one event - harmless by coincidence rather than by design**, which
+    is item 33's finding about the seven-minute margin nobody enforces.
+
+    `multi_factor` is the sharpest case: it is eligible in EVERY regime, so
+    under the default it was permitted unconditionally.
+    """
+    engine = _engine_with_no_regime(EventBus())
+
+    assert not any(engine.is_eligible(s) for s in engine.strategies)
+
+
+@pytest.mark.asyncio
+async def test_eligibility_returns_once_a_regime_arrives():
+    """⚠️ THE CONTROL. A refusal that never lifts is not conservatism, it is an
+    outage - and it would pass the test above on its own."""
+    bus = EventBus()
+    engine = _engine_with_no_regime(bus)
+    await engine.start()
+
+    await bus.publish(RegimeEvent(label=Regime.BULL.value, probs={}, exposure_scalar=1.0))
+    try:
+        assert any(engine.is_eligible(s) for s in engine.strategies)
+    finally:
+        await engine.stop()
+
+
+@pytest.mark.asyncio
+async def test_an_exit_still_flows_while_the_regime_is_unread():
+    """⚠️ M56c IS NOT BEING UNDONE. Eligibility gates ENTRIES, never exits.
+
+    A blind window that also blocked exits would be the 9 September deadlock in
+    a new place: a halt that prevents de-risking is not a conservative halt.
+    """
+    bus = EventBus()
+    engine = _engine_with_no_regime(bus)
+
+    held = SimpleNamespace(held_quantity=lambda symbol: 100.0)
+    sell = SignalEvent(symbol="AAA", side="sell", strategy="multi_factor", conviction=1.0)
+
+    assert engine._closes_an_open_position(sell, held)

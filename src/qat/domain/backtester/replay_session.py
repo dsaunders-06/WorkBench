@@ -189,6 +189,10 @@ class ReplaySession:
         self.engine = StrategyEngine(
             self.bus,
             list(strategies),  # type: ignore[arg-type]
+            # An ablated arm runs with NO regime engine, so it must not be held
+            # to the blind-window gate - "not running" is not "has not spoken
+            # yet", and an ablated arm that trades nothing measures nothing.
+            requires_regime=start_regime,
             # Deterministic and synthetic, deliberately. A live vendor answers
             # as of TODAY, so a 2016 replay asking about a symbol would be
             # handed 2026's balance sheet - the same look-ahead the earnings

@@ -222,15 +222,31 @@ async def test_an_uninformative_classifier_lets_breadth_decide():
 
 
 @pytest.mark.asyncio
-async def test_without_a_regime_event_it_falls_back_to_the_default_label():
-    """There is no distribution to read before the engine has classified
-    anything, so the old membership test still applies - and SIDEWAYS is inside
-    swing's set, which is the documented fail-open."""
+async def test_without_a_regime_event_NOTHING_is_eligible():
+    """⚠️ REVERSED 10 September 2026. This asserted the opposite - that SIDEWAYS
+    sits inside swing's set and the gate therefore FAILS OPEN before any
+    classification. That was deliberate and it is now deliberately undone.
+
+    Measured: from session activation at 10:00:05 to the first classification at
+    10:20:33, twenty minutes EVERY open, entries were permitted or refused with
+    no reading of the market. It had never bitten only because the same vendor
+    delay that opens the window also starves it of prices - **harmless by
+    coincidence, not by design.**
+
+    **What decided it was the HOLDING PERIOD, not the defect.** Positions are
+    intended to be held up to 60 days with decisions keyed to weekly opens and
+    closes. Waiting twenty minutes costs a signal that is still there at 10:21;
+    entering blind costs a position carried for up to sixty days, sized under a
+    label nobody read. The asymmetry runs one way.
+
+    `_eligible_mass` still returns None - there is genuinely no distribution -
+    but the ANSWER to eligibility is now no.
+    """
     engine = _engine()
     swing = engine.strategies[0]
 
     assert engine._eligible_mass(swing) is None
-    assert engine.is_eligible(swing) is True
+    assert engine.is_eligible(swing) is False
 
 
 @pytest.mark.asyncio

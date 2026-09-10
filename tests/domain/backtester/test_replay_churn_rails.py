@@ -87,6 +87,10 @@ async def test_an_entry_is_dated_by_the_simulated_clock_not_the_wall_clock(tmp_p
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
         warm_bars=60,
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
     )
 
     await session.run()
@@ -115,6 +119,10 @@ async def test_the_time_stop_fires_and_produces_a_closed_trade(tmp_path: Path):
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
         warm_bars=60,
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
     )
 
     await session.run()

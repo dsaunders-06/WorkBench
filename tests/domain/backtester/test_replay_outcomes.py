@@ -74,6 +74,10 @@ async def test_a_fired_stop_becomes_a_closed_trade(tmp_path: Path):
         bars={"AAA": _trend_then_collapse()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
     )
 
     await session.run()
@@ -104,6 +108,10 @@ async def test_the_recorded_entry_price_is_what_the_simulator_charged(tmp_path: 
         bars={"AAA": _trend_then_collapse()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
     )
 
     await session.run()
@@ -130,6 +138,10 @@ async def test_the_ledger_is_wired_to_the_session(tmp_path: Path):
         bars={"AAA": _trend_then_collapse()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
     )
 
     assert session.ledger is not None

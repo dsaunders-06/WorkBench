@@ -127,6 +127,29 @@ async def _rails_that_bound(directory: Path, limit: int) -> set[str]:
         strategies=[SwingStrategy()],
         settings=settings,
         warm_bars=60,
+        # ⚠️ THE REGIME ENGINE IS OFF HERE, DELIBERATELY - the seam the ablation
+        # harness already provides for exactly this.
+        #
+        # This helper measures WHICH RAILS BIND (the position limit, the cash
+        # cap) and the regime gate is not one of them. Once the gate began
+        # refusing entries until a regime is published (10 September), the
+        # fixture produced ONE entry instead of three, so the position limit
+        # never had a second entry to refuse and the test proved nothing.
+        #
+        # ⚠️ The cause is worth keeping: under the old fail-open, bars 128 and
+        # 138 fell back to the SIDEWAYS default, which swing IS suitable for.
+        # **This fixture generated its entries from the default rather than from
+        # a regime.** Feeding it varying macro made it WORSE - the fitted regime
+        # is one swing is never eligible in, and entries went from one to zero.
+        #
+        # `start_regime=False` says "no regime engine is running", which sets
+        # `StrategyEngine.requires_regime=False`. That is what an ablated regime
+        # MEANS, and it removes a confound from a test about a different rail.
+        start_regime=False,
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
     )
     await session.run()
     return {
@@ -167,6 +190,10 @@ async def test_the_regime_gate_is_ablated_by_not_starting_the_engine(tmp_path: P
         settings=settings,
         warm_bars=60,
         start_regime=False,
+        # The regime gate refuses entries until a regime is published, so a
+        # replay needs a benchmark it actually has bars for. In a single-symbol
+        # fixture that symbol IS the market proxy.
+        benchmark="AAA",
     )
     session.bus.subscribe(RegimeEvent, count)
 
