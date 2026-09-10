@@ -233,11 +233,15 @@ async def test_without_a_regime_event_NOTHING_is_eligible():
     delay that opens the window also starves it of prices - **harmless by
     coincidence, not by design.**
 
-    **What decided it was the HOLDING PERIOD, not the defect.** Positions are
-    intended to be held up to 60 days with decisions keyed to weekly opens and
-    closes. Waiting twenty minutes costs a signal that is still there at 10:21;
-    entering blind costs a position carried for up to sixty days, sized under a
-    label nobody read. The asymmetry runs one way.
+    **What decided it was the HOLDING PERIOD, not the defect.** A blind entry
+    commits the book for at least `QAT_MIN_HOLDING_TRADING_DAYS=10` trading
+    days, against a 30-day time stop, sized under a label nobody read - while
+    waiting twenty minutes costs a signal still there at 10:21.
+
+    ⚠️ An earlier version cited "up to 60 days". **That is an aspiration and NOT
+    a parameter**, ruled out of decision-making by the operator the same day.
+    The argument is rebased on the 10/30-day rails that actually govern, and it
+    survives - the asymmetry is smaller and runs the same way.
 
     `_eligible_mass` still returns None - there is genuinely no distribution -
     but the ANSWER to eligibility is now no.

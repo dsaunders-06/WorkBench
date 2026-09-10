@@ -112,10 +112,15 @@ async def test_NO_ENTRY_SIGNAL_before_any_regime_event():
     SIDEWAYS and mean reversion, which is a sideways strategy, was free to open
     positions. Twenty minutes every open, on no reading of the market.
 
-    Reversed because positions are intended to be held up to 60 days with
-    decisions keyed to weekly opens and closes. A twenty-minute wait costs a
-    signal that is still there at 10:21; a blind entry costs a sixty-day
-    position. **Exits are unaffected** - see
+    Reversed because a blind entry commits the book for at least the minimum
+    hold - `QAT_MIN_HOLDING_TRADING_DAYS=10`, against a 30-day time stop - sized
+    under a label nobody read, while a twenty-minute wait costs a signal that is
+    still there at 10:21.
+
+    ⚠️ An earlier version of this docstring justified the reversal on a "60-day
+    hold". **That is an aspiration and NOT a parameter** - the operator ruled it
+    out of decision-making the same day. The 10/30-day rails are what govern and
+    the argument stands on them. **Exits are unaffected** - see
     `test_an_exit_still_flows_while_the_regime_is_unread`.
     """
     bus = EventBus()

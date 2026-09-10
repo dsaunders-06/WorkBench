@@ -5650,25 +5650,43 @@ deliberately keeps the sizer's own figure before the per-order cap trims it.)
     commented: it is a STAPLED security, so no single entity carries the name.
     IBKR returns bare `ATLAS ARTERIA` for the same reason.
 
-## 🧭 10 SEPTEMBER: THE OPERATOR'S LONGER-TERM VISION, AND WHAT IT DECIDES
+## ⚠️ 10 SEPTEMBER: A LONGER-TERM ASPIRATION THAT IS **NOT** A BASIS FOR ANY DECISION
 
-Stated by the operator, and it settles a design question that had been open all
-day:
+⚠⚠ **CORRECTED BY THE OPERATOR, SAME DAY, AND THE CORRECTION IS THE POINT:**
 
-* **Positions held up to 60 days.**
-* **Weekly OPEN and weekly CLOSE become the important figures** in buy and exit
-  decisions.
-* **The 20-minute delayed feed is NOT to be replaced.** It is adequate at this
-  cadence and is not a defect to fix.
+> *"The 60 day horizon is not to be relied upon in any decision making, nothing
+> has changed in regards to the current Position hold strategy."*
+
+**THE CURRENT POSITION HOLD STRATEGY IS UNCHANGED AND IS THE ONLY ONE THAT
+GOVERNS:** `QAT_MIN_HOLDING_TRADING_DAYS=10`, `QAT_TIME_STOP_TRADING_DAYS=30`,
+both enforced. **Do not size, gate, time or justify anything against sixty
+days.** It is an aspiration, not a parameter, and it is recorded here only so
+that a future reader knows it was raised and explicitly set aside.
+
+⚠️ **I HAD ALREADY BUILT ON IT WITHIN THE HOUR** - the blind-window gate's
+justification and two test docstrings all cited "up to 60 days" before the
+correction arrived. All are rewritten to rest on the 10/30-day rails instead.
+**An aspiration mentioned in passing became a premise in three files that fast.**
+
+What DOES stand from the same conversation, unretracted:
+
+* **The 20-minute delayed feed is NOT to be replaced.** Adequate at this
+  cadence, not a defect to fix.
+* **Weekly OPEN and weekly CLOSE are to be SAVED** once the machinery is proven
+  - a stated requirement in its own right, recorded below.
 
 ### ✅ IT DECIDES THE BLIND-WINDOW GATE: FAIL CLOSED
 
 The gate now REFUSES entries until the regime engine has published, instead of
 gating on a hardcoded `sideways` default for the first ~20 minutes of every
-session. **The holding period is what decided it, not the defect.** Waiting
-twenty minutes costs a signal that is still there at 10:21; entering blind costs
-a position carried for up to sixty days, sized under a label nobody read. The
-asymmetry runs one way.
+session.
+
+⚠️ **THE JUSTIFICATION IS REBASED ON THE ACTUAL RAILS, and it survives.** The
+original argument cited a sixty-day hold, which is not a parameter. On the rails
+that DO govern - a 10-day minimum hold and a 30-day time stop - a blind entry
+still commits the book for **at least ten trading days**, sized under a label
+nobody read, while waiting twenty minutes costs a signal that is still there at
+10:21. **The asymmetry is smaller than first stated and runs the same way.**
 
 ⚠️ **TWO TESTS ASSERTED THE OPPOSITE AND WERE DELIBERATE** - one called it *"the
 documented fail-open"*. They are REVERSED rather than deleted, each carrying why.
@@ -5678,22 +5696,17 @@ Do not restore the fail-open without revisiting the holding period.
 strategy and `_closes_an_open_position` still lets its sells through, so this
 cannot become the 9 September deadlock.
 
-### ⚠️⚠️ AND IT CONTRADICTS A LIVE SETTING - A 60-DAY HOLD IS NOT REACHABLE
+### ✅ WITHDRAWN: THERE IS NO TIME-STOP CONFLICT
 
-    QAT_TIME_STOP_TRADING_DAYS=30      ← forces an exit at 30 TRADING days
-    QAT_MIN_HOLDING_TRADING_DAYS=10
-    QAT_ENFORCE_TIME_STOP=true
+This section claimed `QAT_TIME_STOP_TRADING_DAYS=30` contradicted a 60-day
+intent and that "a 60-day hold is not reachable". **Withdrawn by the operator's
+correction the same day: the 60-day horizon is not a target, so there is nothing
+for the time stop to contradict.** The 10/30-day rails are the strategy, they
+are enforced, and **no change is required or wanted.**
 
-**30 trading days is about 42 calendar days.** A position intended to run to 60
-days would be closed by the time stop first - **on the clock rather than on the
-thesis.** The two settings are each individually sensible and jointly describe
-something the operator does not want, which is M106's shape exactly ("two
-settings each valid, jointly useless").
-
-It has not bitten yet: IAG closed at **14.97** days held and SEK at **13.98**,
-both on `signal`. **It caps the intent, not today's trades.** ⚠️ Not changed -
-the right value is the operator's call, and 60 days of holding is a different
-risk profile from 30, not just a longer one.
+⚠️ Kept as a withdrawal rather than deleted, because the finding was circulated
+as a live conflict and a silent deletion would leave the next reader wondering
+whether it was fixed or forgotten. **It was neither: the premise was wrong.**
 
 ### 📌 NEW REQUIREMENT, RECORDED SO IT IS NOT LOST
 
