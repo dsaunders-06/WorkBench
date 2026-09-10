@@ -5979,6 +5979,80 @@ bar entirely as `primary`. **No change made, deliberately.**
 ---
 ---
 
+## 🔎 10 SEPTEMBER: THE AUDIT, COMPLETED - **SIX OF ELEVEN ITEMS WERE WRONG**
+
+Finished at the operator's instruction after five stale entries had already been
+found by tripping over them. **Every claim below was checked against code,
+config or the ledger. Do not act on this list without doing the same.**
+
+| # | claim | verdict |
+|---|---|---|
+| 1 | Verify M173 against a real market exit | ✅ **TRUE, still open** - no app-driven exit fired today |
+| 2 | Orphan rail cannot cancel, by choice | ✅ **TRUE** - `resting_order_cancel_enabled=False`, verified |
+| 3 | No broker ceiling is enforced | ⚠️ **TRUE BUT MISLEADING** - see the decision above; the notional cap already binds and setting it would be a guess |
+| 4 | ASX auctions - Task 4 is next | ❌ **STALE** - all five tasks done 10 September |
+| 5 | Watch the status column for a blank cell | ✅ **STANDS** - an observation to make, not a claim to check |
+| 6a | Corporate-action banner is permanent furniture | ✅ **TRUE** - fired again at 09:09:05 today |
+| 6b | Report history: nothing reads them back, no reports screen | ❌ **FALSE** - `performance.py::_render_reports` renders BOTH daily and weekly |
+| 6c | Reports cannot be regenerated | ✅ **WAS TRUE, FIXED TODAY** |
+| 7 | Reach 20 closed trades | ✅ **TRUE** - 11 rows collapse to 7 positions |
+| 8 | M41 earnings risk is NOT open, it shipped as M57 | ✅ **THE PROMPT WAS RIGHT** and the main list was wrong |
+| 9 | A partial exit leaves legs at the pre-trim size | ❌ **STALE** - fixed 9 September, two tests pin it |
+| 10 | HMM sensitivity to a seventh column | ✅ **STANDS** - measured, deliberately not acted on |
+| 11 | Cost model overestimates commission by ~57% | ❌❌ **FALSE - AND IT IS THE WORST OF THEM** |
+
+### ❌❌ ITEM 11 IS NOT STALE. IT IS WRONG, AND IT DEFAMED A CORRECT MODEL.
+
+    modelled commission = 33.88     IBKR actual commission = 33.88   <- EXACT
+    modelled slippage   = 19.25
+    modelled TOTAL      = 53.13     ledger exit_cost    = 53.13
+
+**The commission model is exact to the cent** - 8.8 bps on the ASX fixed
+profile, which is IBKR's actual rate. The "57% overestimate" compared a modelled
+**TOTAL COST** against an actual **COMMISSION**. 53.13 / 33.88 = 1.57, and that
+ratio IS the slippage component - not an error.
+
+⚠️ It has been telling every session since that the cost model is broken. Any
+work to "fix" the commission rate would have broken a correct one.
+
+### ⚠️ THE LEDGER'S COSTS ARE MODELLED, NOT ACTUAL - and the actuals are on the wire
+
+`entry_cost` and `exit_cost` come from `CostModel`, so **every `net_pnl` in the
+ledger is modelled-cost-based.** Meanwhile IBKR sends real ones and nothing
+consumes them:
+
+    commissionReport: CommissionReport(execId='...', commission=0.625434, currency='AUD', ...)
+
+⚠️ **Sharpened by today's precision work:** `gross_pnl` is now exact to the
+cent while the cost side is an estimate. **Precision is not accuracy.** The
+commission half happens to be exact; the slippage half has never been measured
+against a fill.
+
+✅ **AND M44's OWN CORRECTION IS CONFIRMED STRONGER.** `entry_slippage` and
+`reference_price` are populated on **0 of 11** rows. The instrument has never
+once been fed, so trade count was never the blocker.
+
+### ✅ ITEM 33 IS NOW ENFORCED, by today's gate
+
+It said the feed's blind window and the entry gate *"line up by COINCIDENCE, and
+nothing checks that they do"*. `is_eligible` now refuses until a regime is
+published, so the coincidence is a rail. **Not previously connected to item 8** -
+they were the same finding from two directions.
+
+### The tally
+
+**Six of eleven wrong**, plus M39's severity label and the announcements premise
+found earlier. **Three cost real time today and one produced a recommendation to
+the operator that was simply false** (trimming into earnings, "blocked" by an
+item fixed the day before).
+
+⚠️ **The list's own warning - "audit again before trusting it; do not copy it
+forward" - is now measured rather than asserted.**
+
+---
+---
+---
+
 ## 🔎 10 SEPTEMBER: AUDIT OF THE OUTSTANDING LIST
 
 Requested by the operator, who suspected the list had drifted. It had. **Read
