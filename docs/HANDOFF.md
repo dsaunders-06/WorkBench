@@ -5339,6 +5339,60 @@ shares its shape.
     Every one was caught by grepping for the string just written. The habit that
     works is the edit tool, which ERRORS on a failed match.
 
+69. **⚠️ THE ORPHAN RAIL CANNOT TELL AN ENTRY IN FLIGHT FROM AN ORPHAN.**
+    Seen live on 10 September on the COH.AX entry, and it will recur on every
+    entry. At **10:29:05, the same second as sign-off and five minutes before
+    the fill**, the scan read the bracket's legs against a book still flat in
+    COH.AX:
+
+        RESTING ORDER SCAN: 21 working leg(s) across 10 symbol(s),
+                            2 symbol/side divergence(s) unjustified
+        ERROR  RESTING ORDER ORPHAN: COH.AX BUY  resting=363 justified=-0 excess=363 FLAT
+        ERROR  RESTING ORDER ORPHAN: COH.AX SELL resting=363 justified=0  excess=363 FLAT
+        WARNING RESTING ORDER QUARANTINE on COH.AX  (twice - buy side and sell side)
+
+    **Nothing was wrong.** A bracket's legs reach the broker before the entry
+    fills, so a window in which resting orders exceed the book is what an entry
+    IS. It self-cleared at 10:34:05 on the fill and item 59's auto-lift released
+    the quarantine at 10:44:06 after three clean scans, so no harm was done -
+    **this time, and by a mechanism built for a different purpose.**
+
+    ⚠️ **THIS IS THE EXACT TWIN OF A DEFECT ALREADY FIXED ON THE PROTECTION
+    SIDE.** The 9 September partial-exit work fixed `verify_position_stops`,
+    which "could not tell *unprotected* from *re-protection in flight*". Same
+    blind spot, same cause - a rail reading an instantaneous broker state as
+    though it were a settled one - one side over. **Same defect, one branch
+    over** is precisely how 10349 survived from 4 September to 9 September.
+
+    Two costs, neither yet paid in full:
+    * **It quarantines the symbol for ~15 minutes after every normal entry.**
+      Today the entry was already transmitted so nothing was refused. An entry
+      that needed a second order in that symbol inside the window would be.
+    * **It emits ERROR-level ORPHAN lines for routine activity.** That is the
+      corporate-action banner's failure mode - a standing condition rendered as
+      an ALERT - and it is how a REAL orphan comes to be scrolled past. The
+      orphan rail is the one that stands between us and a naked short.
+
+    The fix is not to weaken the rail. It is to give the scan the same
+    in-flight awareness the protection side already has: a leg belonging to an
+    order transmitted and not yet resolved is not unjustified.
+
+⚠️ **AND SESSION_CHECK REPORTS AGGREGATES AS THOUGH THEY WERE CURRENT STATE.**
+Both instruments below were read wrong on 10 September, in opposite directions,
+within an hour:
+
+* **Check 1 (regime)** showed yesterday's `bull / 1.00` all morning, then after
+  classification showed today's FIRST label (`recovery / 0.90`, 10:20:36) while
+  the live one was already `bull / 1.00` (10:23:43). It reports A classification,
+  never THE current one. The script's own caveat - *"not proof it classified
+  tonight"* - covers the first case and not the second.
+* **Check 5 (orphans)** read `*** RESTING ORDER ORPHAN x2 divergence(s), 3 leg(s)
+  named ***` at 10:47, counting orphan EVENTS across the session, while the three
+  most recent scans all read `20 working leg(s) across 10 symbol(s), nothing
+  unjustified` and the quarantine had been lifted.
+
+**A count over a session is not a state.** Read the LAST scan line, not the tally.
+
 ## 📋 PROMPT TO PASTE — next session
 
 ⚠️ **REGENERATE THIS WHOLE SECTION AT THE END OF EVERY SESSION, from the state
