@@ -5759,10 +5759,44 @@ exactly (258.49), so the gap is in GROSS: the ledger rows sum to -7,539.26 and
 the report says -7,539.46; its "worst" reads -1,865.83 where the IAG row reads
 -1,865.63.
 
-**The report disagrees with the ledger it is derived from.** Immaterial in
-dollars and not immaterial in kind - the whole warrant for regeneration is that
-the two agree. **NOT chased, NOT applied.** ⚠️ Settle this before running
-`--apply`, or the corrected record inherits the discrepancy permanently.
+**The report disagrees with the ledger it is derived from.**
+
+✅ **DIAGNOSED 10 September, and it is not rounding noise - it is a LOSSY
+ROUND TRIP.** `ClosedTrade.gross_pnl` and `net_pnl` are **properties that
+recompute** from the price fields:
+
+    return (self.exit_price - self.entry_price) * self.quantity
+
+while the writer stores `entry_price` as `round(self.entry_price, 4)`. At write
+time the P&L is computed from FULL-PRECISION prices and stored in its own
+column. **On read-back the property recomputes from the ROUNDED price and the
+stored `gross_pnl`/`net_pnl` columns are never read at all.**
+
+Measured on the two 9 September trades:
+
+| | stored gross | (exit-entry) x qty | diff |
+|---|---|---|---|
+| IAG.AX, 6,699 sh | -1,721.44 | -1,721.643 | **0.203** |
+| SEK.AX, 2,978 sh | -5,817.82 | -5,817.8208 | 0.0008 |
+
+IAG's true entry was ~**7.92697**, stored as **7.9270**. Across 6,699 shares
+that fifth decimal becomes twenty cents. SEK ties because its figures round
+cleanly - **so the size of the error scales with share count, and TAH is 64,229
+shares.**
+
+⚠️ **THE STORED COLUMN IS THE MORE ACCURATE ONE.** The ledger recorded what
+happened; the reader re-derives it from a lossier copy. Every metric, R-multiple
+and report in the system uses the re-derived figure.
+
+**NOT FIXED - both candidate fixes change the financial record:**
+* **Read the stored columns when present** - most correct, and silently changes
+  every historical metric.
+* **Store prices at higher precision** - safe and forward-only, fixes nothing
+  historical, and touches a CSV format that has its own migration guard.
+
+**Operator's call.** ⚠️ The rebuild itself is now defensible: a known 20c
+residual against a live report wrong by **$4,127**. Applying it is a large
+improvement with an understood defect, not a mystery.
 
 ---
 
