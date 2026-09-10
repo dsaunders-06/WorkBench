@@ -140,3 +140,41 @@ async def test_the_order_is_still_reachable_under_the_original_id() -> None:
     await oms.sign_off(original, operator="alice")
 
     assert oms.get_order(original).symbol == "AAA"
+
+
+@pytest.mark.asyncio
+async def test_an_aliased_order_is_ENUMERATED_only_once() -> None:
+    """⚠️ SEEN LIVE on the Order Blotter, 10 September 2026: one COH.AX entry,
+    two identical rows, "2 of 2 orders".
+
+    The alias above is correct and must stay - it is what makes an order
+    reachable under both ids, and the three tests above are its warrant. But
+    `orders()` is `list(self._orders.values())`, so two keys pointing at ONE
+    object enumerate that object TWICE.
+
+    LOOKUP wants the alias; ENUMERATION must not see it. The blotter renders a
+    row per returned object and prints `order.order_id` - which is the permId on
+    both - so the duplicate is invisible as a duplicate: every column matches.
+
+    ⚠️ `position_closer.preview_protective_orders` reads the same list, filtered
+    to transmitted stops, and its own docstring states the invariant this breaks:
+    "this normally returns zero or one order, not two". The aliasing happens in
+    `_sign_off_locked`, and sign_off is the sole path to the broker, so a
+    protective stop is aliased exactly like an entry - putting a double-counted
+    stop in front of the close-position confirmation dialog.
+    """
+    oms = _oms()
+    order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
+    await oms.sign_off(order.order_id, operator="alice")
+
+    # ⚠️ PROVE THE ALIAS EXISTS FIRST. Without this the assertions below pass
+    # trivially on any OMS that never aliased at all, and would keep passing if
+    # someone "fixed" this by deleting the alias - which the three tests above
+    # exist to forbid.
+    assert oms.get_order(order.order_id) is oms.get_order(_PERM_ID), "no alias - test is vacuous"
+
+    listed = oms.orders()
+    ids = [listed_order.order_id for listed_order in listed]
+
+    assert len(ids) == len(set(ids)), f"the same order enumerated twice: {ids}"
+    assert sum(1 for listed_order in listed if listed_order.symbol == "AAA") == 1, ids

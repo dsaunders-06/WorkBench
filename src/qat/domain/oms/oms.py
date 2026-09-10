@@ -1257,7 +1257,39 @@ class OMS:
         return self._orders[order_id]
 
     def orders(self) -> list[Order]:
-        return list(self._orders.values())
+        """Every order ONCE, whatever it happens to be keyed under.
+
+        ⚠️ `_orders` deliberately ALIASES a transmitted order under the
+        broker's permId as well as its own id (item 56, and the three tests in
+        `test_order_id_survives_rekeying.py` forbid removing that). So
+        `.values()` yields the SAME OBJECT TWICE.
+
+        **Lookup wants the alias; enumeration must not see it.** Measured live
+        on 10 September 2026: the Order Blotter showed one COH.AX entry as two
+        rows reading `2 of 2 orders`, identical in every column - because both
+        rows render `order.order_id`, which is the permId on both, so the
+        duplicate does not look like one.
+
+        ⚠️ Not only cosmetic. `position_closer.preview_protective_orders`
+        filters this list to transmitted stops for the close-position
+        confirmation dialog, and its docstring states the invariant the alias
+        breaks: *"this normally returns zero or one order, not two"*. The
+        aliasing is in `_sign_off_locked` and sign_off is the sole path to the
+        broker, so protective stops are aliased exactly as entries are.
+
+        Deduplicated on the order's OWN id, not on object identity: the id is
+        what every caller means by "the same order". Insertion order is kept,
+        because the blotter's rows are ordered by it.
+        """
+        seen: set[str] = set()
+        unique: list[Order] = []
+        for order in self._orders.values():
+            key = str(order.order_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(order)
+        return unique
 
     def register_broker_order_id(self, order_id: str) -> None:
         """Record a broker identifier learned AFTER transmit (item 56).

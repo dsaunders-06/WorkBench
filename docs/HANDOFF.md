@@ -5467,6 +5467,67 @@ within an hour:
     **The model's NUMERIC fidelity is good; the failure was entirely in free
     text.**
 
+71. ~~**⚠️ ONE ORDER, TWO BLOTTER ROWS - `orders()` ENUMERATED AN ALIAS.**~~
+    **FIXED 10 September 2026.** Found by the operator reading the Order
+    Blotter, which showed the COH.AX entry twice:
+
+        1  34732497  COH.AX  buy  363  136.54  ...  filled     2 of 2 orders
+        2  34732497  COH.AX  buy  363  136.54  ...  filled
+
+    **Same Order ID, identical in every column** - because `_orders` is a dict
+    keyed by id and cannot hold two entries under one key. It was ONE object,
+    returned twice.
+
+    `_sign_off_locked` deliberately ALIASES a transmitted order under the
+    broker's permId as well as its own id (item 56, 31 August): `_orders[uuid]`
+    and `_orders[permId]` point at the same `Order`. `orders()` was
+    `list(self._orders.values())`, so enumeration yielded it twice. Both rows
+    render `order.order_id`, which is the permId on both, **so the duplicate
+    does not look like a duplicate**.
+
+    ⚠️ **THE ALIAS IS CORRECT AND STAYS.** It is what lets an order be found
+    under either id, and `test_order_id_survives_rekeying.py` has three tests
+    forbidding its removal - re-keying instead would trade one KeyError for
+    another. **Lookup wants the alias; ENUMERATION must not see it.** Fixed in
+    `orders()` alone, deduplicating on the order's own id.
+
+    ⚠️ **AND IT WAS NOT ONLY COSMETIC.**
+    `position_closer.preview_protective_orders` reads the same list, filtered to
+    `status == "transmitted"` and `order_type == "stop"`, to itemise a
+    confirmation dialog before a position is closed. Its own docstring states
+    the invariant: *"this normally returns zero or one order, not two"*. The
+    aliasing is in `_sign_off_locked` and **sign_off is the sole path to the
+    broker**, so a protective stop is aliased exactly as an entry is - putting a
+    double-counted stop in front of a destructive action. Not observed live;
+    derived from the code path and now covered.
+
+    ✅ **NO TRADING-PATH IMPACT, and this was checked rather than assumed.**
+    `orders()` has exactly three consumers - the blotter's rows, the blotter's
+    total, and that preview. The risk engine, sizer, reconciliation and order
+    path all read positions or the broker, never this list. The resting-order
+    scan read `20 working leg(s) across 10 symbol(s), nothing unjustified`
+    throughout, and the position was 363 - one order at the broker.
+
+    ⚠️ **THE BLOTTER'S `Reason` COLUMN IS STALE ON A FILLED ORDER**, visible
+    in the same screenshot: status `filled` beside *"order is not pending
+    sign-off (status=transmitted)"*, the last refusal the autonomy executor
+    recorded while the order was in flight. Harmless, and it reads as though
+    something was refused. **Open.**
+
+⚠️ **AND THE SIZING REGIME WAS `recovery`, NOT `bull` - I GOT THIS WRONG
+TWICE IN ONE SESSION.** First from the stale session_check banner, then by
+assuming the order followed the 10:23:43 change to bull. `risk_decisions.csv`
+settles it, which is what M94 put `regime_label` in the row for:
+
+    2026-09-10T00:21:37+00:00  COH.AX  approved
+      regime_scalar: 0.9   regime_label: "recovery"   position_count: 9.0
+
+The order was created at **10:21:37**, two minutes BEFORE the regime moved to
+bull. **The audit trail is the authority on what a decision saw; the banner is
+not, and neither is a timeline reconstructed from the log.**
+(`final_shares` there reads 815.77 against the 363 ordered - the audit trail
+deliberately keeps the sizer's own figure before the per-order cap trims it.)
+
 ## 📋 PROMPT TO PASTE — next session
 
 ⚠️ **REGENERATE THIS WHOLE SECTION AT THE END OF EVERY SESSION, from the state
