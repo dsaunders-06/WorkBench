@@ -5622,6 +5622,52 @@ deliberately keeps the sizer's own figure before the per-order cap trims it.)
     commented: it is a STAPLED security, so no single entity carries the name.
     IBKR returns bare `ATLAS ARTERIA` for the same reason.
 
+## ✅ DECIDED 10 SEPTEMBER: `broker_max_order_shares` STAYS UNSET
+
+**Investigated as an action item ("NO BROKER CEILING IS ENFORCED") and the
+investigation changed the answer. Do not set it to a number.**
+
+**What the broker has actually said, from the logs rather than the dialog:**
+`Error 383` has fired **seven times, every one reading `Size Limit of 500`**,
+between 3 September 15:02 and 4 September 10:24 - and **never since**. 10:24 on
+4 September is when the operator raised the preset. The 20,000 figure the
+handoff warns about was never the broker's word; it was the dialog's.
+
+**What the broker accepts NOW, asked directly rather than inferred:**
+
+    TAH   position 64229   resting: 64229 STP tif=GTC | 64229 LMT tif=GTC
+
+**A 64,229-share order is resting at this broker at this moment.** Ten positions,
+twenty legs, every one GTC. ✅ **So the exit path for the largest position is
+NOT blocked** - which was the real worry, since the 500 limit blocked exits as
+well as entries.
+
+**Why setting it would be wrong:**
+* The only measured limit (500) belongs to a configuration that no longer
+  applies - TWS-era, and this session runs on the **Gateway**.
+* The current limit is unmeasured; all we know is it is **≥ 64,229**.
+* `broker_max_order_shares` is documented as *"a configured belief that Error
+  383 audits"*. **We have no current belief worth configuring**, and typing one
+  would trim entries against a number we invented.
+* ⚠️ **A NOTIONAL CEILING ALREADY EXISTS AND IS WORKING.** The per-order cap of
+  10% of spendable cash trimmed COH.AX from 815 to 363 shares today
+  (49,617 of 496,175). Against ~497k cash that bounds any order to ~49.6k of
+  notional - **a tighter and better-founded constraint than a share count,
+  because the risk scales with notional and not with share count.** TAH's 64,229
+  predates that cap and would be trimmed under it today.
+
+✅ **AND THE ABSENCE IS SELF-CORRECTING.** `_audit_size_limit` parses the
+broker's own wording out of Error 383 and logs *"the broker enforces an
+order-size limit of N shares and broker_max_order_shares is UNSET, so the sizer
+will keep proposing above it. Set it to N."* **The instrument that would tell us
+the right number is already armed.** Leaving it unset is not the same as being
+blind to it.
+
+**WHAT WOULD CHANGE THIS:** Error 383 firing again. At that moment the log names
+the number and it should be set to exactly that, not to a dialog reading.
+
+---
+
 ## ✅ DECIDED 10 SEPTEMBER: IBKR NEWS IS NOT PURSUED - STAY ON YFINANCE
 
 **Operator decision, taken on the measurement below.** IBKR company news is
