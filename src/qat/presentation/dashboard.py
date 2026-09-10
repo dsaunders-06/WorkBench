@@ -142,7 +142,9 @@ def _format_pnl(pnl_pct: float | None, pnl_r: float | None) -> str:
     return f"{text} ({pnl_r:+.2f}R)"
 
 
-def corporate_action_banner_text(monitor: object | None, acting: bool) -> str | None:
+def corporate_action_banner_text(
+    monitor: object | None, acting: bool, standing_condition_stated: bool = False
+) -> str | None:
     """The Dashboard's corporate-action banner, or None to hide it.
 
     Pure and module-level so the WORDING is testable without a Qt widget.
@@ -162,6 +164,26 @@ def corporate_action_banner_text(monitor: object | None, acting: bool) -> str | 
 
     supported = getattr(monitor, "detection_supported", None)
     if callable(supported) and not supported():
+        # ⚠️ STATED ONCE, THEN IT STOPS - operator decision, 10 September 2026,
+        # restoring a call they made originally and were talked out of.
+        #
+        # A broker that publishes no corporate-action feed cannot start
+        # publishing one mid-session. The condition is TRUE for the life of the
+        # connection, so repeating it makes it furniture: it fired at every
+        # startup, in the same visual space as five real kill-switch alerts on
+        # 9 September. **A banner that is always there is a banner nobody
+        # reads, and it was crowding ones that meant something.**
+        #
+        # ⚠️ Scoped to THIS branch only. The unreadable-symbol and
+        # pending-action branches below are per-occurrence facts that CAN change
+        # between passes, and silencing those would be this banner's own disease
+        # in a new place.
+        #
+        # The first pass still says it: silence there would be
+        # indistinguishable from a quiet book, which is the invariant this
+        # banner exists for.
+        if standing_condition_stated:
+            return None
         return (
             "CORPORATE-ACTION DETECTION UNAVAILABLE on this broker - it publishes no "
             "corporate-action feed, so a split cannot be seen before its ex-date. Entries "
@@ -231,6 +253,10 @@ class DashboardScreen(QWidget):
         # colour for itself was the one the guard was blind to.
         self.corporate_action_banner.setStyleSheet(theme.banner(theme.WARNING))
         self.corporate_action_banner.setVisible(False)
+        # Whether the "this broker publishes no feed" standing condition has
+        # been shown once this session. Per-window, so a fresh launch says it
+        # again - a new operator at a new session has not seen it.
+        self._standing_condition_stated = False
         layout.addWidget(self.corporate_action_banner)
 
         # What the operator's acknowledgement is recorded AGAINST. `None` until
@@ -400,10 +426,16 @@ class DashboardScreen(QWidget):
         """
         monitor = getattr(self.runtime, "corporate_action_monitor", None)
         acting = self.runtime.settings.corporate_action_mode == "act"
-        text = corporate_action_banner_text(monitor, acting)
+        text = corporate_action_banner_text(monitor, acting, self._standing_condition_stated)
         if text is None:
             self.corporate_action_banner.setVisible(False)
             return
+        # Latched only once the standing condition has actually been SHOWN, not
+        # when it was merely computed - a pass that hid the banner for any other
+        # reason must not consume the one statement.
+        supported = getattr(monitor, "detection_supported", None)
+        if callable(supported) and not supported():
+            self._standing_condition_stated = True
         self.corporate_action_banner.setText(text)
         self.corporate_action_banner.setVisible(True)
 

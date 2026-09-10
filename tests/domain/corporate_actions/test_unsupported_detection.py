@@ -257,3 +257,60 @@ def test_the_dashboard_is_silent_when_it_can_see_and_nothing_is_pending() -> Non
     from qat.presentation.dashboard import corporate_action_banner_text
 
     assert corporate_action_banner_text(_Monitor(supported=True), acting=False) is None
+
+
+# --- The standing condition is stated ONCE (10 September 2026) ----------------
+
+
+def test_the_standing_condition_is_stated_the_first_time() -> None:
+    """⚠️ OPERATOR DECISION, 10 September 2026, restoring a call they made
+    originally and were talked out of.
+
+    The invariant above still holds - silence on the FIRST pass would be
+    indistinguishable from a quiet book, so it is still said.
+    """
+    from qat.presentation.dashboard import corporate_action_banner_text
+
+    text = corporate_action_banner_text(
+        _Monitor(supported=False), acting=False, standing_condition_stated=False
+    )
+
+    assert text is not None
+    assert "UNAVAILABLE" in text
+
+
+def test_the_standing_condition_is_NOT_repeated() -> None:
+    """A permanent banner is furniture, not an alert.
+
+    It fired at EVERY startup, in the same visual space as five real
+    kill-switch alerts on 9 September. A condition that cannot change while
+    this broker is connected is stated once and then stops competing with
+    things that CAN change.
+    """
+    from qat.presentation.dashboard import corporate_action_banner_text
+
+    text = corporate_action_banner_text(
+        _Monitor(supported=False), acting=False, standing_condition_stated=True
+    )
+
+    assert text is None
+
+
+def test_a_REAL_failure_still_alarms_every_time() -> None:
+    """⚠️ THE CONTROL, and it is what stops this becoming a silencer.
+
+    The gate is scoped to the STANDING condition. A symbol the detector could
+    not read is a per-occurrence fact that can change between passes, and
+    suppressing it would be the corporate-action banner's own disease in a new
+    place - a rail that stops reporting.
+    """
+    from qat.presentation.dashboard import corporate_action_banner_text
+
+    text = corporate_action_banner_text(
+        _Monitor(supported=True, unreadable=["BHP.AX"]),
+        acting=False,
+        standing_condition_stated=True,
+    )
+
+    assert text is not None
+    assert "COULD NOT BE READ" in text
