@@ -2303,7 +2303,17 @@ because reading a list is not auditing it. Item 2 needed four.
 
 ### Turns an ordinary market event into a loss
 
-4. **M39 — corporate actions.** The readiness document calls this *the
+4. **M39 — corporate actions.** ⚠️ **THE SEVERITY LABEL AND THE "NO INPUT"
+   PREMISE WERE BOTH AUDITED 10 September — see the audit section. In short:**
+   (a) *highest-severity* is a US-era judgement never re-scored against this
+   project's own ASX measurement of **ZERO forward splits in ten years** and
+   ~0.04 expected material events a year; and (b) **`reqWshEventData` /
+   `reqWshMetaData` exist in the installed ib_async 2.1.0 and were never
+   called** — the "no announcements" finding tested `reqFundamentalData` and
+   `reqHistoricalNews` only, and the operator has since received an IBKR email
+   about a voluntary action on a held paper position. **IBKR has the data
+   somewhere.** `reqWshMetaData` is the free entitlement probe and has not been
+   run. The original text follows. The readiness document calls this *the
    highest-severity gap*. The machinery exists (`domain/corporate_actions/`, plus
    M60's quarantine) but **IBKR serves no announcements**, so it has no input and
    a split cannot be seen before its ex-date. One ordinary 2-for-1 produces four
@@ -2376,8 +2386,14 @@ because reading a list is not auditing it. Item 2 needed four.
    symbol that stops ticking while its peers keep ticking — and that is a
    heuristic, not a report. It would also collide with the staleness rail, which
    already treats a silent symbol as excluded rather than halted.
-6. **M41 — earnings event risk.** M120 fixed the DATE the blackout is computed
-   against; the risk itself is untouched. With a 10-day minimum hold and a 30-day
+6. **M41 — earnings event risk.** ⚠️ **"THE RISK ITSELF IS UNTOUCHED" IS STALE
+   — CORRECTED 10 September.** The ENTRY half shipped as **M57**:
+   `RiskEngine._earnings_scalar` halves size into a scheduled print and
+   `enforce_earnings_event_risk` defaults **True** — verified in `config.py`,
+   and COH.AX's audit row on 10 September carried `days_to_earnings: 108`, so it
+   is live and reading. **What follows describes only the HOLD-THROUGH case,
+   which is genuinely still open.** M120 fixed the DATE the blackout is computed
+   against; With a 10-day minimum hold and a 30-day
    time stop, holding through an announcement is unavoidable — roughly quarterly
    per position. The 6% gap budget was measured across 28,987 ORDINARY nights;
    earnings gaps run 15–20% and a stop does not help, because the price never
@@ -5579,6 +5595,133 @@ deliberately keeps the sizer's own figure before the per-order cap trims it.)
     `ALX.AX` is "Atlas Arteria" with no suffix, and that is deliberate and
     commented: it is a STAPLED security, so no single entity carries the name.
     IBKR returns bare `ATLAS ARTERIA` for the same reason.
+
+## 🔎 10 SEPTEMBER: AUDIT OF THE OUTSTANDING LIST
+
+Requested by the operator, who suspected the list had drifted. It had. **Read
+this before trusting any item heading below.**
+
+**Method:** every claim checked against the code, `config.py`, the live `.env`
+or the installed library - not against the list. Where something was not
+verified, it says so.
+
+### Closed today, so the list is shorter than it reads
+
+* **ASX auctions - ALL FIVE TASKS DONE** (item 9, items 4 and 8 of the prompt
+  block). Task 4 `ad546fb`, Task 5 verified live against the Gateway.
+* **Four defects found and fixed that were on no list**: the pre-flight feed
+  check that had never once completed (M174), the fabricated AI risk caveat
+  (item 70), the blotter's duplicate row (item 71), and five missing company
+  names (item 72).
+
+### ⚠️ CORRECTION 1 - M41 IS NOT "UNTOUCHED"
+
+Item 6 of the readiness list says *"the risk itself is untouched"*. **Wrong.**
+`RiskEngine._earnings_scalar` halves size into a scheduled print, tagged M57,
+and `enforce_earnings_event_risk` defaults **True** - verified in `config.py`,
+and COH.AX's audit row on 10 September carried `days_to_earnings: 108`, so the
+rail is live and reading.
+
+What IS still open is the **hold-through** case, and only that: a 10-day minimum
+hold and 30-day time stop make holding through an announcement unavoidable,
+earnings gaps run 15-20% against a 6% gap budget measured on ORDINARY nights,
+and a stop does not help because the price never trades there. **The entry half
+shipped; the holding half did not.** Item 64's disease, again.
+
+### ⚠️ CORRECTION 2 - M39's "HIGHEST SEVERITY" IS A US-ERA LABEL, NEVER
+RE-SCORED AGAINST THE ASX BASE RATE THIS PROJECT ITSELF MEASURED
+
+The readiness document calls M39 *the highest-severity gap*. Its own decision
+spec measured the opposite for this market:
+
+| | |
+|---|---|
+| Split events, 100 ASX megacaps, 10 years | **10 total** = 0.0106 per symbol-year |
+| Material events (outside ±15%) | **4 in 940 symbol-years** |
+| Expected material events holding 10 names for a year | **~0.04** |
+| **Forward splits - the MNST direction that liquidates a position** | **ZERO in ten years** |
+
+The operator's independent research agrees: corporate actions are materially
+rarer on the ASX than in the US. **The severity label was set when this was a US
+book and has never been re-scored.** It is not that the gap is harmless - it is
+that "highest severity" is now doing work the evidence does not support, and it
+has been steering priority for weeks.
+
+### ⚠️ CORRECTION 3 - "IBKR SERVES NO ANNOUNCEMENTS" IS NARROWER THAN IT READS
+
+The decision spec states: *"IBKR has no structured corporate-action feed.
+Measured against ib_async 2.1.0: `reqFundamentalData` returns XML report
+documents and `reqHistoricalNews` returns unstructured headline text."*
+
+**Two calls were tested and the conclusion was written about the whole surface.**
+Measured 10 September against the SAME installed ib_async 2.1.0:
+
+    reqWshEventData   reqWshMetaData   getWshEventDataAsync   cancelWshEventData
+
+**Wall Street Horizon event data - IBKR's structured corporate-event API,
+covering splits, dividends, M&A and earnings - exists in the library the spec
+measured against and was never called.**
+
+✅ **AND THE OPERATOR HAS INDEPENDENT EVIDENCE**: IBKR emailed them about an
+upcoming VOLUNTARY corporate action on a position held in this very paper
+account. So IBKR demonstrably holds forward-looking, position-scoped action data
+and delivers it. **"It has no input" was never true of IBKR; it was true of the
+two endpoints that were tried.**
+
+⚠️ **WHAT THIS DOES NOT ESTABLISH, stated so it is not over-read:**
+* A voluntary action (tender, rights issue, election) is a DIFFERENT CLASS from
+  a mandatory forward split. The MNST failure was a split. The email proves
+  notification for the first, not the second.
+* WSH event data is **subscription-gated** and this account's entitlement is
+  unknown. ASX coverage is unknown.
+* An email is not an API. The account-notification channel and the market-data
+  channel may be entirely separate systems.
+
+**THE CHEAP NEXT STEP, and it costs nothing:** `reqWshMetaData` returns the
+CATALOGUE of available event types and is the standard way to discover
+entitlement without buying anything. One read-only call answers whether this is
+a real path or a dead end. **Not yet run.**
+
+⚠️ Priority should still follow the BASE RATE, not the severity label. Even if
+WSH works, ~0.04 expected material ASX events per year is what it buys.
+
+### Rails that exist and are SWITCHED OFF - verified in `config.py`, not assumed
+
+| setting | value | note |
+|---|---|---|
+| `broker_max_order_shares` | **`None`** | No ceiling. ⚠️ A 64,229-share order was ACCEPTED under a preset reading 20,000 - and TAH.AX is 64,229 shares today |
+| `resting_order_cancel_enabled` | `False` | Deliberate (M141): the rail names and quarantines, a human clears |
+| `delever_sweep_enabled` | `false` | Off for an UNRELATED reason; it is what stopped the 8.12% breach cascading on 9 September |
+| `enforce_earnings_event_risk` | **`True`** | Live - see Correction 1 |
+
+### The gate under everything else
+
+**7 of 20 closed trades.** Below 20 the sizer uses invented constants; below 30
+the promotion gate cannot be read at all. Two trades closed in the last
+fortnight, and the book is now **10 of 10, AT THE CAP** - nothing enters until
+something exits. ⚠️ **Every conclusion about edge, cost and sizing is partly
+speculative until then**, which is the list's own standing caveat and is easy to
+forget while shipping fixes that feel like progress.
+
+### ⚠️ THE PATTERN THIS AUDIT FOUND, and it is the day's real finding
+
+**Three defects today were the same habit: a fix applied to one branch and not
+its twin.**
+
+1. The TIF lesson applied to the bracket and stop paths, not the market branch
+   (10349, five days).
+2. The orphan rail taught "in flight" on the protection side, not the entry
+   side (item 69).
+3. A widening guarded for sectors, not for names (item 72) - same five symbols.
+
+**And two of this audit's three corrections are the same shape again:** a
+conclusion true of what was tested, written as though true of everything
+(Corrections 1 and 3). ⚠️ **The question worth asking of any fix here is not
+"is it right?" but "where else does this apply?"**
+
+---
+---
+---
 
 ## 📋 PROMPT TO PASTE — next session
 
