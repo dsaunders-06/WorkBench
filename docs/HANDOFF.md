@@ -5111,6 +5111,16 @@ shares its shape.
 
 66. ~~**⚠️ HALF THE REGIME FEATURES ARE US DATA ON AN AUSTRALIAN BOOK**~~
     **MEASURED 28 Aug: `credit_spread` moves the label on ZERO of 249 bars.**
+    ❌❌ **SUPERSEDED - DO NOT ACT ON THIS ITEM. The full ablation measured all
+    three and reversed it.** `credit_spread` moves **104 of 249 (42%)**, not
+    zero; `vix_level` moves **213 of 249 (86%)**; `yield_curve_slope` **75 of
+    249 (30%)** - and every one beats the ASX-derived `breadth` control at 27%.
+    The marginal +0.004 correlation said the column was worthless and the joint
+    model says it moves 42% of labels. See the ablation table below.
+    ⚠️ **This heading was read as current on 10 September and produced a wrong
+    recommendation on Stage 4** - that the columns might be inert and the stage
+    might disappear. The opposite is true: the US columns DOMINATE, so
+    re-sourcing is more justified, not less. Original text follows.
     Two US columns still unmeasured - `vix_level` and `yield_curve_slope`.
     ORIGINAL: **Half the regime features are US data on an Australian book, and one of
     THEM MEASURES +0.004.** Raised by the operator on 28 August. Recorded here
