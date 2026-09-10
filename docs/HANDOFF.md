@@ -2303,8 +2303,34 @@ because reading a list is not auditing it. Item 2 needed four.
 
 ### Turns an ordinary market event into a loss
 
-4. **M39 — corporate actions.** ⚠️ **THE SEVERITY LABEL AND THE "NO INPUT"
-   PREMISE WERE BOTH AUDITED 10 September — see the audit section. In short:**
+4. ~~**M39 — corporate actions.**~~ ✅ **CLOSED 10 September 2026 — DECIDED, not
+   abandoned.** The 19 August decision (option 1: accept the gap and report it
+   as a CAPABILITY rather than a FAILURE, shipped as M100) **stands, and now
+   rests on measurement rather than on the absence of an alternative.**
+
+   **What was settled today:** `reqWshEventData`/`reqWshMetaData` exist in
+   ib_async 2.1.0 and were never tried — so the old "IBKR has no feed" premise
+   was too broad — but `getWshMetaDataAsync()` returns **0 characters** with
+   `Error 10276`. **No WSH entitlement on this account: it is a PAID path.**
+   Against this project's own measured ASX base rate — ~0.04 material events a
+   year holding ten names, and **ZERO forward splits among 100 megacaps in ten
+   years** — buying it is not justified. The operator's independent research
+   agrees that ASX corporate actions are materially rarer than US.
+
+   ⚠️ **WHAT IS BEING ACCEPTED, STATED SO IT IS NOT REDISCOVERED AS AN
+   OVERSIGHT:** a split on a held ASX position will **not** be detected before
+   the ex-date open. The ex-date gate and M60's quarantine stay inert. The app
+   says so plainly rather than pretending otherwise, and **reconciliation still
+   catches the CONSEQUENCE** — a share-count divergence trips the kill-switch —
+   so it is a degraded net, not no net. For a forward split the stop may already
+   have fired at the open.
+
+   ⚠️ **WHAT WOULD REOPEN IT:** any forward split appearing among held names
+   (the base rate is ten years of history, not a guarantee); **a return to US
+   symbols, where the severity label came from and where it may well be right
+   again**; or WSH entitlement arriving with the account for other reasons.
+
+   ORIGINAL AUDIT NOTE AND TEXT FOLLOW. **In short:**
    (a) *highest-severity* is a US-era judgement never re-scored against this
    project's own ASX measurement of **ZERO forward splits in ten years** and
    ~0.04 expected material events a year; and (b) **`reqWshEventData` /
@@ -5595,6 +5621,42 @@ deliberately keeps the sizer's own figure before the per-order cap trims it.)
     `ALX.AX` is "Atlas Arteria" with no suffix, and that is deliberate and
     commented: it is a STAPLED security, so no single entity carries the name.
     IBKR returns bare `ATLAS ARTERIA` for the same reason.
+
+## ✅ DECIDED 10 SEPTEMBER: IBKR NEWS IS NOT PURSUED - STAY ON YFINANCE
+
+**Operator decision, taken on the measurement below.** IBKR company news is
+**not** wired into this application. `news_source` stays `yfinance`, and
+`news_min_sources` stays at 1, where a single outlet is already sufficient.
+
+**Why, in one line each:**
+* **The API cannot retrieve it here.** Measured with a positive control - see
+  below. Not a coverage gap, not a config error, not the connection mode.
+* **And even if it could, a second lock holds.** `IBKRNewsSource.fetch` raises
+  on the unresolved **Dow Jones storage licence**, against an app that writes
+  headlines into the decision journal. That is a legal question, not an
+  engineering one, and nobody is going to answer it incidentally.
+* **The value on offer is low.** yfinance already supplies the advisory screen,
+  and the corroboration bar is already at its floor.
+
+⚠️ **WHAT IS BEING ACCEPTED:** the advisory screen sees Yahoo headlines only,
+single-source, uncorroborated. The eight subscribed IBKR providers - two
+publishers, Briefing.com and Dow Jones - remain visible to the Desktop and
+unreachable to this app.
+
+⚠️ **WHAT STAYS UNPROVEN, and is a FACT rather than an open action:** whether
+the API block is the paper account. Settling it needs a live account. **Do not
+re-run the probes hoping for a different answer** - the measurement below is
+controlled and the second lock makes the answer academic either way.
+
+✅ **KEEP `ibkr_news.py`.** Its publisher MAPPING is correct, tested, and the
+thing that stops eight provider codes counting as eight outlets for one wire
+story. It costs nothing to keep and would have to be rebuilt.
+
+**WHAT WOULD REOPEN IT:** the Dow Jones storage licence being resolved
+permissively, or a decision to stop writing headlines into the decision journal.
+Both are decisions, not discoveries.
+
+---
 
 ## 10 SEPTEMBER: IBKR NEWS AND WSH, MEASURED WITH A POSITIVE CONTROL
 
