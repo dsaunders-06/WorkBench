@@ -6239,9 +6239,21 @@ carried FOUR items that were already fixed and deployed.
    the ablation question).
    ⚠️ M41 earnings event risk is NOT open - it shipped as M57.
 
-9. A PARTIAL EXIT leaves protective legs at the pre-trim size and nothing
-   resizes them. Only delever.py produces one and the sweep is off, so it is
-   latent.
+9. ~~A PARTIAL EXIT leaves protective legs at the pre-trim size and nothing
+   resizes them.~~ ✅ **ALREADY FIXED - reversed 9 September, found stale on
+   10 September when it was picked up as work.** `submit_exit_order` calls
+   `_release_protective_legs` for a PARTIAL as well as a full exit, and two
+   tests pin it: `test_a_PARTIAL_exit_releases_its_legs_too` (at
+   `reason="delever"`, the exact path this item names) and
+   `test_the_remainder_of_a_PARTIAL_exit_is_VISIBLE_as_unprotected`.
+   **CANCEL, not resize, deliberately:** `naked_positions` reports a position
+   with NO stop and is blind to one that is merely the wrong SIZE, so resizing
+   fails into a state nothing detects while cancelling fails into one
+   `verify_position_stops` shouts about and the sweep heals.
+   ⚠️ **THE FIFTH STALE ENTRY FOUND ON 10 SEPTEMBER**, after M41, M39's
+   severity label, the announcements premise and item 3's broker ceiling. It
+   also caused a wrong recommendation: trimming into an earnings print was
+   described as blocked by this defect, and it is not.
 
 10. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - measured 1 September, survived
     all three tasks, not acted on deliberately.

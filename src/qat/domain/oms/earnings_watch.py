@@ -7,10 +7,13 @@ options are not equal:
 * **Exit before it** closes on the calendar rather than the thesis, and collides
   with `QAT_MIN_HOLDING_TRADING_DAYS` when the print falls inside the minimum
   hold.
-* **Trim into it** would activate a KNOWN LATENT DEFECT - a partial exit leaves
-  the protective legs at the pre-trim size and nothing resizes them. Today only
-  `delever.py` produces one and the sweep is off, so it stays latent; trimming
-  quarterly per position would make it live.
+* **Trim into it** is AVAILABLE. ⚠️ An earlier version of this docstring said it
+  was blocked by a latent partial-exit defect. **That was read off a stale
+  outstanding item** - `submit_exit_order` has released its protective legs on a
+  partial since 9 September, tested at `reason="delever"`, and the remainder is
+  re-armed by the protection sweep at the current holding. The remainder is
+  briefly unprotected, bounded by `protection_sweep_seconds`, which is a cost
+  accepted deliberately there.
 * **Accept it**, which is the status quo and is what this module makes visible.
 
 **The gap this closes is that the exposure was INVISIBLE.** `_days_to_earnings`
