@@ -162,6 +162,41 @@ class PerformanceReporter:
         logger.info("Daily report written for %s: %s", day, report.stats.summary_line())
         return report
 
+    async def regenerate_daily(self, day: date) -> PerformanceReport:
+        """Rebuild a day's report from the ledger AS IT STANDS NOW.
+
+        ⚠️ WHY THIS EXISTS. The 9 September daily report was written at 16:04:48,
+        before the SEK.AX double-count was repaired at 17:18. It reported "3
+        closed trade(s), net $-11,924.91" against a true 2 and -7,797.75. The
+        ledger beneath it was corrected and the report was not, because
+        `maybe_report` refuses a day it has already done and was the only entry
+        point. **A derived artefact that cannot be re-derived is a permanent
+        error**, and one was being added every time a ledger repair landed after
+        the close.
+
+        ⚠️ **APPENDS, NEVER OVERWRITES.** The original is the record of what was
+        reported at the time and stays as exactly that; this supersedes it and
+        says so in its own label. Silently replacing it would destroy the
+        evidence that the first was wrong - the rule
+        `_hold_the_model_to_the_arithmetic` already follows.
+
+        ⚠️ **AND IT DOES NOT TOUCH THE SCHEDULE.** `maybe_report` is gated on
+        `last_daily`. Writing that key here would make a rebuild of an OLD day
+        suppress TODAY's scheduled report; clearing it would make the scheduler
+        write the day a third time. It reads no state and saves none.
+        """
+        stamp = self.clock().strftime("%d %b %H:%M")
+        label = f"{day:%A %d %B %Y} - REGENERATED {stamp}, supersedes the report above"
+        report = await self._build("daily", label, day, day)
+        self.daily_writer.append(report)
+        logger.warning(
+            "Daily report REGENERATED for %s from the ledger as it stands now: %s. "
+            "The original is kept above it - this supersedes rather than replaces.",
+            day,
+            report.stats.summary_line(),
+        )
+        return report
+
     async def _write_weekly(self, start: date, end: date) -> PerformanceReport:
         report = await self._build(
             "weekly", f"Week of {start:%d %b %Y} to {end:%d %b %Y}", start, end

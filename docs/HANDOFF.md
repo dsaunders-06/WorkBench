@@ -5650,6 +5650,42 @@ deliberately keeps the sizer's own figure before the per-order cap trims it.)
     commented: it is a STAPLED security, so no single entity carries the name.
     IBKR returns bare `ATLAS ARTERIA` for the same reason.
 
+## ✅ 10 SEPTEMBER: A WRONG REPORT CAN NOW BE REBUILT
+
+`PerformanceReporter.regenerate_daily(day)` plus
+`scripts/regenerate_report.py --date YYYY-MM-DD` (dry run by default,
+`--apply` to write). **Half of the reports item; the history SCREEN is still
+open** - that half does not get worse by waiting and this one did.
+
+The 9 September report was written at 16:04:48, before the SEK.AX repair at
+17:18: *"3 closed trade(s), net $-11,924.91"* against a true 2 and -7,797.75.
+`maybe_report` refuses a day it has already done and was the only entry point,
+so a derived artefact could not be re-derived - **a permanent error, one more
+every time a ledger repair lands after the close.**
+
+**Three properties, each tested:**
+* **Appends, never overwrites.** The original stays as the record of what was
+  reported at the time; the rebuild supersedes it and says so in its heading.
+  Replacing it would destroy the evidence that the first was wrong.
+* **Does not touch the schedule.** Writing `last_daily` would make a rebuild of
+  an OLD day suppress TODAY's report; clearing it would write the day twice. It
+  reads no state and saves none.
+* **Rebuilds from the ledger as it stands now**, which is the entire point.
+
+⚠️ **AND THE DRY RUN FOUND SOMETHING - 20 CENTS, AND IT MATTERS BECAUSE OF
+WHAT IT IS.** The rebuilt 9 September report reads **2 closed trades, net
+-7,797.95**. Summing the ledger's own `net_pnl` gives **-7,797.75**. Costs agree
+exactly (258.49), so the gap is in GROSS: the ledger rows sum to -7,539.26 and
+the report says -7,539.46; its "worst" reads -1,865.83 where the IAG row reads
+-1,865.63.
+
+**The report disagrees with the ledger it is derived from.** Immaterial in
+dollars and not immaterial in kind - the whole warrant for regeneration is that
+the two agree. **NOT chased, NOT applied.** ⚠️ Settle this before running
+`--apply`, or the corrected record inherits the discrepancy permanently.
+
+---
+
 ## ✅ DECIDED 10 SEPTEMBER: `broker_max_order_shares` STAYS UNSET
 
 **Investigated as an action item ("NO BROKER CEILING IS ENFORCED") and the
