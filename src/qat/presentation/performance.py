@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import date, timedelta
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QDate, QTimer
 from PySide6.QtGui import QColor, QHideEvent, QShowEvent
 from PySide6.QtWidgets import (
+    QCheckBox,
+    QDateEdit,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -31,6 +34,12 @@ from PySide6.QtWidgets import (
 
 from qat.data import instruments
 from qat.domain.display_dates import format_display_date, format_session_time
+from qat.domain.performance.report_index import (
+    days_available,
+    for_day,
+    parse_reports,
+    week_of,
+)
 from qat.domain.performance.reports import (
     DAILY_REPORT_FILENAME,
     WEEKLY_REPORT_FILENAME,
@@ -240,9 +249,43 @@ class PerformanceScreen(QWidget):
         self.trades_table.setSortingEnabled(self.level.prefers_density())
         tabs.addTab(self.trades_table, "Closed trades")
 
+        # ⚠️ THE CURRENT WEEK, NEWEST FIRST - not the whole file.
+        #
+        # `ReportWriter.append` writes newest LAST, so rendering the file as one
+        # blob put the report you want at the BOTTOM of an ever-growing scroll.
+        # Operator design, 10 September 2026: show this week, reach earlier days
+        # with the picker.
+        daily_tab = QWidget()
+        daily_layout = QVBoxLayout(daily_tab)
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Day:"))
+        self.report_day = QDateEdit()
+        self.report_day.setCalendarPopup(True)
+        self.report_day.setDisplayFormat("ddd d MMM yyyy")
+        self.report_day.dateChanged.connect(self._render_reports)
+        controls.addWidget(self.report_day)
+        self.report_this_week = QCheckBox("This week")
+        self.report_this_week.setChecked(True)
+        self.report_this_week.toggled.connect(self._render_reports)
+        controls.addWidget(self.report_this_week)
+        # ⚠️ OFF by default. A day can carry several reports because
+        # `regenerate_daily` APPENDS - the original stays as the record of what
+        # was reported at the time. The newest is what you want to read; the
+        # superseded ones are evidence and stay one click away rather than in
+        # the way.
+        # Set the picker to the newest available day ONCE, then leave the
+        # operator's choice alone - re-setting it on every refresh would
+        # yank the selection back while they were reading an older day.
+        self._first_report_render = True
+        self.report_show_superseded = QCheckBox("Include superseded")
+        self.report_show_superseded.toggled.connect(self._render_reports)
+        controls.addWidget(self.report_show_superseded)
+        controls.addStretch(1)
+        daily_layout.addLayout(controls)
         self.daily_view = QTextEdit()
         self.daily_view.setReadOnly(True)
-        tabs.addTab(self.daily_view, "Daily reports")
+        daily_layout.addWidget(self.daily_view, stretch=1)
+        tabs.addTab(daily_tab, "Daily reports")
 
         self.weekly_view = QTextEdit()
         self.weekly_view.setReadOnly(True)
@@ -463,9 +506,64 @@ class PerformanceScreen(QWidget):
         data_dir = self.runtime.settings.data_dir
         daily = ReportWriter(data_dir, DAILY_REPORT_FILENAME).read()
         weekly = ReportWriter(data_dir, WEEKLY_REPORT_FILENAME).read()
-        self.daily_view.setPlainText(
-            daily or "No daily reports yet. One is written after each market close."
-        )
+        self.daily_view.setPlainText(self._daily_text(daily))
         self.weekly_view.setPlainText(
             weekly or "No weekly reports yet. One is written after the week's last close."
         )
+
+    def _daily_text(self, raw: str) -> str:
+        """This week newest-first, or one chosen day. Pure enough to test.
+
+        ⚠️ An UNPARSEABLE file falls back to the raw text rather than showing
+        nothing. A reports screen that goes blank because a heading changed
+        would hide the reports instead of reporting - and the operator would
+        have no way to tell "no reports" from "could not read them".
+        """
+        entries = parse_reports(raw)
+        if not entries:
+            return raw or "No daily reports yet. One is written after each market close."
+
+        available = days_available(entries)
+        if available:
+            # Bound the picker to days that exist, so an empty pick is not
+            # reachable by accident.
+            self.report_day.blockSignals(True)
+            self.report_day.setDateRange(
+                QDate(available[-1].year, available[-1].month, available[-1].day),
+                QDate(available[0].year, available[0].month, available[0].day),
+            )
+            if not self.report_day.date().isValid() or self._first_report_render:
+                newest = available[0]
+                self.report_day.setDate(QDate(newest.year, newest.month, newest.day))
+                self._first_report_render = False
+            self.report_day.blockSignals(False)
+
+        if self.report_this_week.isChecked():
+            anchor = available[0] if available else date.today()
+            chosen = week_of(entries, anchor)
+            heading = f"THIS WEEK - week of {anchor - timedelta(days=anchor.weekday()):%d %b %Y}"
+        else:
+            # Built explicitly rather than through `toPython()`, which is typed
+            # as `object` and would make the day a runtime surprise.
+            chosen_qdate = self.report_day.date()
+            picked = date(chosen_qdate.year(), chosen_qdate.month(), chosen_qdate.day())
+            chosen = for_day(entries, picked)
+            heading = f"{picked:%A %d %B %Y}"
+
+        visible = [e for e in chosen if not e.superseded or self.report_show_superseded.isChecked()]
+        if not visible:
+            return f"{heading}\n\nNo report for this selection."
+
+        hidden = len(chosen) - len(visible)
+        parts = [heading, ""]
+        for entry in visible:
+            if entry.superseded:
+                parts.append("[SUPERSEDED - a later report for this day replaces it]")
+            parts.append(entry.body)
+            parts.append("")
+        if hidden:
+            parts.append(
+                f"({hidden} superseded report(s) hidden - tick 'Include superseded' to read "
+                f"what was reported at the time.)"
+            )
+        return "\n".join(parts)
