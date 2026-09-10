@@ -234,7 +234,33 @@ def _hold_the_model_to_the_arithmetic(
 
     expected_change = decision.change * 100.0
     expected_target = decision.target_weight * 100.0
-    caveats = list(narrative.caveats)
+
+    # ⚠️ CAVEATS WERE THE ONE CHANNEL WITH NO COUNTER-CHECK, and on
+    # 10 September that is exactly where a fabrication landed: the panel showed
+    # "Target weight implies leverage" against a computed target of 85.02%.
+    # `implies_leverage` had already evaluated False - the Matrix line carried no
+    # "ABOVE 100%" suffix and the prompt never appended its leverage instruction
+    # - so the model was not told to say it and said it regardless.
+    #
+    # A fabricated RISK claim is the worst thing to pass through unchecked on a
+    # panel whose entire warrant is that the deterministic half has authority.
+    # The code already holds the boolean, so it can hold the model to it exactly
+    # as it holds it to the arithmetic.
+    kept = list(narrative.caveats)
+    invented_leverage: list[str] = []
+    if not decision.implies_leverage:
+        kept = [caveat for caveat in narrative.caveats if "leverage" not in caveat.lower()]
+        invented_leverage = [caveat for caveat in narrative.caveats if "leverage" in caveat.lower()]
+
+    caveats = list(kept)
+    appended_from = len(kept)
+
+    if invented_leverage:
+        caveats.append(
+            f"The model claimed leverage - {'; '.join(invented_leverage)} - where the "
+            f"computed target of {decision.target_weight:.1%} is below 100%. The claim "
+            f"was REMOVED: it rests on no computed figure."
+        )
 
     if abs(narrative.change_pct - expected_change) > _ECHO_TOLERANCE_PCT:
         caveats.append(
@@ -252,12 +278,16 @@ def _hold_the_model_to_the_arithmetic(
             f"'{decision.regime.value}'; the computed regime is shown."
         )
 
-    if len(caveats) == len(narrative.caveats):
+    # ⚠️ CONTENT, NOT LENGTH. This compared counts until 10 September, which
+    # was sound while caveats were only ever ADDED. Now that one can be removed
+    # and a note appended in its place, a length test reads a corrected reply as
+    # an untouched one.
+    if caveats == list(narrative.caveats):
         return narrative
 
     logger.warning(
         "The macro matrix narrative disagreed with the computed arithmetic: %s",
-        "; ".join(caveats[len(narrative.caveats) :]),
+        "; ".join(caveats[appended_from:]),
     )
     return narrative.model_copy(
         update={

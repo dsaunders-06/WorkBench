@@ -5393,6 +5393,80 @@ within an hour:
 
 **A count over a session is not a state.** Read the LAST scan line, not the tally.
 
+70. ~~**⚠️ THE MACRO AI FABRICATED A RISK CAVEAT, AND CAVEATS WERE THE ONE
+    CHANNEL NOTHING CHECKED.**~~ **FIXED 10 September 2026.** Found by the
+    operator, reading the Regime Monitor - the same way item 62 was found.
+
+    The panel showed:
+
+        Caveats:
+          • Stale growth reading (CFNAIMA3 -0.04 below trend)
+          • Held regime with 10 positions
+          • Target weight implies leverage        ← FALSE
+
+    against `Matrix: Low Volatility Drift. Baseline (BM) 83.3% ... -> target
+    85.0%`. **85.02% is not leverage, and the code had already said so.**
+    `implies_leverage` is `target_weight > 1.0`, so it evaluated False twice
+    over: `regime_monitor.py` appended no `ABOVE 100% - IMPLIES LEVERAGE`
+    suffix, and `prompts.py` never appended its *"this target is above 100% and
+    therefore implies LEVERAGE. Say so."* instruction. **The model was not told
+    to say it and said it anyway.**
+
+    ⚠️ **THE PROMPT HANDED IT THE ANSWER TO COPY.** The instruction read
+    *"Put only condition-specific caveats in `caveats` - a stale growth reading,
+    a held regime, a target implying leverage."* All three caveats above are
+    that list, in that order. Two were true only because `held` and `positions`
+    had separately been signalled into the prompt by their own branches; the
+    third was signalled by nothing. **An illustrative list is answerable by
+    copying it.**
+
+    ⚠️ **AND `_hold_the_model_to_the_arithmetic` CHECKED EVERYTHING EXCEPT
+    THIS.** `change_pct`, `target_pct` and `regime` were each compared against
+    `decide`'s own figures and corrected; `caveats` were copied verbatim. So the
+    single part of the reply with no deterministic counter-check is where the
+    fabrication landed - **and it landed as a RISK claim, on a panel whose whole
+    warrant is that the deterministic half has authority.**
+
+    **The fix, both halves:**
+    * The prompt states the RULE and no longer names instances: every caveat
+      must rest on evidence stated above, and a condition not given cannot be
+      caveated. The comment there says why, so it is not re-added as a kindness.
+    * The service holds the model to `implies_leverage` exactly as it holds it
+      to the arithmetic - a leverage claim against a sub-100% computed target is
+      REMOVED and replaced by a note that quotes it. **Corrected, not raised;
+      and not silent either**, per that function's existing rule.
+    * ⚠️ Its "did anything change" test compared LENGTHS, which was sound
+      while caveats could only be added. A removal plus a replacement is
+      length-neutral, so it now compares CONTENT.
+
+    ⚠️ **WHAT WAS NOT FIXED, AND IS THE LARGER POINT: only the leverage claim
+    is checkable.** "Stale growth reading" and "Held regime" happen to be true;
+    nothing verifies them either. The check added here works because a boolean
+    already existed to check against. **Every free-text caveat without one still
+    passes through unchallenged** - the general problem is unsolved and this is
+    one instance of it closed.
+
+    **Three exposure numbers, two reconciled.** The same screen carries
+    **1.00** applied, **0.60** deterministic hint, **0.60** AI proposal and
+    **85.0%** matrix target. The FRICTION line reconciles 1.00 against 85.0% and
+    says neither should be leaned on - which is the panel working as designed -
+    but says nothing about 0.60. The AI prose compounds it: *"we keep the
+    exposure scalar unchanged at 0.60"*, where **the exposure scalar is 1.00 and
+    printed in the header**. It means the HINT, and item 62's own exemplar says
+    *"we keep IT unchanged"*. The label below is correct - *"proposal only - not
+    applied"* - and carries the mitigation. **Left open: the prose names the
+    live quantity while meaning the advisory one.**
+
+    ✅ What this validation CONFIRMED working, so it is not re-derived: `BM`
+    83.3% is exactly `QAT_MAX_GAP_RISK_AT_SHOCK_PCT / QAT_GAP_SHOCK_PCT` =
+    0.05/0.06, read from the live `.env` - derived from the account's rails and
+    not defaulted from `exposure_hint`, which was the M170 fix. The echoed
+    arithmetic agreed (83.33 + 1.68 = 85.01 ≈ 85.02, no mismatch caveat fired).
+    All five macro figures quoted by the model - 3MO 3.94, 10Y 4.80, T10Y3M
+    0.88, BAA10Y 1.57, VIX 15.72 - match the session's own FRED lines exactly.
+    **The model's NUMERIC fidelity is good; the failure was entirely in free
+    text.**
+
 ## 📋 PROMPT TO PASTE — next session
 
 ⚠️ **REGENERATE THIS WHOLE SECTION AT THE END OF EVERY SESSION, from the state

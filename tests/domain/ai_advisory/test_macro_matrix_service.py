@@ -201,3 +201,85 @@ async def test_a_held_book_keeps_the_call_on_the_local_engine() -> None:
 
     assert local.prompts, "a held book went to the cloud slot"
     assert not cloud.prompts
+
+
+@pytest.mark.asyncio
+async def test_a_leverage_caveat_the_arithmetic_does_not_support_is_dropped() -> None:
+    """⚠️ SEEN LIVE on the Regime Monitor, 10 September 2026.
+
+    The panel showed `Caveats: Target weight implies leverage` against a
+    computed target of 85.02%. `implies_leverage` is `target_weight > 1.0`, so
+    the code had already decided it was False - the Matrix line carried no
+    "ABOVE 100%" suffix and `build_macro_matrix_prompt` never appended its
+    leverage instruction. The model was not told to say it and said it anyway.
+
+    Caveats were the ONLY part of the reply with no deterministic counter-check:
+    `change_pct`, `target_pct` and `regime` were all compared and this was
+    copied verbatim. A fabricated RISK claim is the worst thing to pass through
+    unchecked on a panel whose whole warrant is that the deterministic half has
+    authority.
+    """
+    decision = _decision()
+    assert not decision.implies_leverage, "fixture must not imply leverage or this proves nothing"
+    engine = _RecordingEngine(_narrative(caveats=["Target weight implies leverage"]))
+
+    result = await _service(engine).get_macro_matrix_narrative(decision)
+
+    # Membership, not substring: the replacement note QUOTES the claim it
+    # removed, deliberately - correcting silently would leave a model free to
+    # disagree on every call with nobody the wiser. What must be gone is the
+    # bare assertion standing on its own as though the matrix had made it.
+    assert "Target weight implies leverage" not in result.caveats, result.caveats
+    assert any(
+        "REMOVED" in caveat and "below 100%" in caveat for caveat in result.caveats
+    ), result.caveats
+
+
+@pytest.mark.asyncio
+async def test_a_leverage_caveat_survives_when_the_target_really_does_imply_leverage() -> None:
+    """The drop must be driven by the arithmetic, not by the word.
+
+    ⚠️ A test asserting ABSENCE has to prove the fixture can produce PRESENCE -
+    otherwise a filter that removed every caveat unconditionally would pass the
+    test above.
+    """
+    decision = decide(_signal(), _growth(), scaling_unit=0.20, baseline=1.0)
+    assert decision.implies_leverage, "fixture must imply leverage or this proves nothing"
+    payload = {
+        "regime": decision.regime.value,
+        "condition": "Realised volatility is well below its baseline.",
+        "action": "Lift exposure toward the stated target.",
+        "justification": "A calm, growing tape rewards being invested.",
+        "change_pct": decision.change * 100.0,
+        "target_pct": decision.target_weight * 100.0,
+        "caveats": ["Target weight implies leverage"],
+    }
+    engine = _RecordingEngine(MacroMatrixNarrative.model_validate(payload))
+
+    result = await _service(engine).get_macro_matrix_narrative(decision)
+
+    assert result.caveats == ["Target weight implies leverage"]
+
+
+@pytest.mark.asyncio
+async def test_the_prompt_hands_the_model_no_example_caveats_to_copy() -> None:
+    """The three caveats on screen were the prompt's own three examples.
+
+    `"a stale growth reading, a held regime, a target implying leverage"` came
+    back as "Stale growth reading (...)", "Held regime with 10 positions" and
+    "Target weight implies leverage". Two were true because `held` and
+    `positions` had separately been signalled; the third was signalled by
+    nothing. An illustrative list is answerable by copying, so it must not name
+    conditions the model is not otherwise told about.
+    """
+    engine = _RecordingEngine(_narrative())
+
+    await _service(engine).get_macro_matrix_narrative(_decision())
+
+    prompt = engine.prompts[0]
+    assert "a stale growth reading" not in prompt
+    assert "a target implying leverage" not in prompt
+    # The instruction itself must survive - dropping the examples must not drop
+    # the rule they were illustrating.
+    assert "caveats" in prompt
+    assert "disclaimer" in prompt

@@ -248,8 +248,17 @@ def build_macro_matrix_prompt(
             "ordered, this note decides nothing."
         )
     parts.append(
-        "Put only condition-specific caveats in `caveats` - a stale growth reading, "
-        "a held regime, a target implying leverage. Do NOT add a generic "
+        # ⚠️ NO EXAMPLES HERE, DELIBERATELY. This read "a stale growth reading,
+        # a held regime, a target implying leverage" until 10 September, and on
+        # that day the model returned those three back as its findings. Two were
+        # true only because `held` and `positions` above had separately said so;
+        # the third contradicted the computed target on the same screen. An
+        # illustrative list is answerable by copying it, so the rule is stated
+        # and the instances are not.
+        "Every caveat in `caveats` must rest on evidence stated ABOVE. If a "
+        "condition was not given to you here, you cannot caveat it - do not "
+        "reason from what a reading like this usually carries. Name the "
+        "evidence inside each caveat so it can be checked. Do NOT add a generic "
         "disclaimer: the screen already carries one, and a disclaimer printed on "
         "every result stops being read."
     )
