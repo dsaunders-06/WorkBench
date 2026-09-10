@@ -47,10 +47,10 @@ source.
 
 | | |
 |---|---|
-| Deployed build | **M173 (`97c536b`)**, installed 9 September 19:01, sha256 `745864FA…74A6`, signature **Valid**. ✅ **READ BACK 10 September 09:08** off the app's own log: `Build: M173 (97c536b, built 09/09/2026 18:58:59 AEST, packaged)`. Rollback: `C:\QuantAdvisoryTerminal.bak-77d5485-20260909-1901` (M172) |
-| Deploy gap | ⚠️ **src is M174, installed is M173.** `handoff_state.py` derives it - *"1 milestone across 14 commits"* - and this row must never hardcode it. **TEN fixes are in M174 and none is live**; the prompt block lists them |
-| Pushed | ✅ **NOTHING UNPUSHED as at 10 September 16:16** - 25 commits went up (`aefb978..913d340`). ⚠️ **DO NOT HARDCODE A COUNT HERE** - `handoff_state.py` derives it (`vs origin`), and every number typed into this row has drifted within the hour |
-| Suite | **3,573 passed, 26 skipped** at `913d340`. ruff, black, mypy src, bandit all clean. ⚠️ Run the four checks SEPARATELY - `black --check` can exit 0 while printing "1 file would be reformatted". ⚠️ Never pipe `pytest` or `invoke build` through `tail` |
+| Deployed build | ✅ **M174 (`33d0ef6`)**, installed 10 September 16:26, sha256 `0DB8E1BA…`, signature **Valid**, dist hash confirmed moved. ✅ **READ BACK 16:27:14** off the app's own log: `Build: M174 (33d0ef6, built 10/09/2026 16:20:34 AEST, packaged)`. Rollback: `C:\QuantAdvisoryTerminal.bak-97c536b-20260910-1626` (M173) |
+| Deploy gap | ⚠️ **ONE commit ahead (`000f07e`) with NO milestone bump** - a build would still call itself M174. It fixes a false "EARNINGS UNREADABLE" warning M174 emits at every startup. Cosmetic, self-clearing, left for the next ordinary deploy. `handoff_state.py` derives this - never hardcode it |
+| Pushed | ✅ **NOTHING UNPUSHED as at 10 September 16:45** - 26 commits went up today and **CI is GREEN** (9m29s). ⚠️ **DO NOT HARDCODE A COUNT HERE** - `handoff_state.py` derives it (`vs origin`) |
+| Suite | **3,575 passed, 26 skipped** at `000f07e`. ruff, black, mypy src, bandit all clean. ⚠️ Run the four checks SEPARATELY - `black --check` can exit 0 while printing "1 file would be reformatted". ⚠️ Never pipe `pytest` or `invoke build` through `tail` |
 | Watchlist | ⚠️ **AS AT 2 SEPTEMBER — NOT RE-CHECKED 8 SEPTEMBER.** **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
 | Account | **TEN POSITIONS**, all protected, **20 resting legs, every one `tif='GTC'`** - **verified at the broker** 10 September, not inferred. ANZ 640, ASX 1314, BHP 793, BOQ 13586, COH 363, JHX 1097, SUN 3192, TAH 64229, TWE 10412, WOW 1098. Cash **447,859.39**, equity **993,996.26** (16:03, from IBKR's own account values). Account `DUQ200898`, paper, AUD. ⚠️ **AT THE CAP** - `max_concurrent_positions=10` and the governor refuses at `>=`, so nothing enters until something exits |
@@ -6252,12 +6252,20 @@ BUILD FIRST AND CHECK THE DIST HASH MOVED.
 
 THE STATE - measured 10 September 16:16, after the close
 
-HEAD 913d340, tree clean, NOTHING UNPUSHED. Suite 3,573 passed / 26 skipped.
-ruff, black, mypy src, bandit clean.
+HEAD 000f07e, tree clean, NOTHING UNPUSHED, CI GREEN. Suite 3,575 passed /
+26 skipped. ruff, black, mypy src, bandit clean.
 
-⚠️ **DEPLOY GAP: src is M174, the installed build is M173 (97c536b).**
-handoff_state.py derives it - do not hardcode it. M174 carries TEN fixes and
-NONE of them is live. See "what M174 contains" below.
+✅ **M174 IS DEPLOYED AND READ BACK.** Installed 10 September 16:26, sha256
+`0DB8E1BA…`, signature Valid, dist hash confirmed moved. Read off the app's own
+log at 16:27:14: `Build: M174 (33d0ef6, built 10/09/2026 16:20:34 AEST,
+packaged)`. Rollback: `C:\QuantAdvisoryTerminal.bak-97c536b-20260910-1626`.
+
+⚠️ **ONE UNDEPLOYED COMMIT AFTER IT** (`000f07e`) with NO milestone bump, so a
+build would still call itself M174. It fixes a FALSE "EARNINGS UNREADABLE for N
+held symbol(s)" warning that M174 emits at every startup - the protection sweep
+runs ~4 minutes before the earnings calendar warms. Cosmetic and self-clearing;
+left for the next ordinary deploy on purpose. handoff_state.py derives all of
+this - do not hardcode it.
 
 BROKER: IB GATEWAY on 4002. TWS CLOSED. ✅ Measured 10 September, not inferred:
 ibgateway is the sole listener on 4002, nothing on 7496/7497, QAT_IBKR_PORT=4002.
@@ -6282,7 +6290,7 @@ TODAY'S TRADING: COH.AX ENTERED 363 @ 135.736 at 10:34 (sized 815, trimmed by
 the 10%-of-spendable cap; regime_label "recovery", scalar 0.9). NO EXITS.
 Session stood down 16:00:08, daily report written 16:04:09.
 
-WHAT M174 CONTAINS, none of it live
+WHAT M174 CONTAINS - ALL OF IT NOW LIVE
  1. Pre-flight compares the calendar against IBKR (ASX auctions Tasks 4+5)
  2. ⚠️ The pre-flight's FEED CHECK had never once run to completion
  3. The macro AI's fabricated risk caveat is now counter-checked
