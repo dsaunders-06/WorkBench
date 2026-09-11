@@ -70,6 +70,7 @@ from qat.domain.performance import (
     PerformanceReporter,
     TradeLedger,
 )
+from qat.domain.performance.commission_audit import CommissionAuditor
 from qat.domain.performance.scorecard import StrategyScorecard, build_scorecard
 from qat.domain.regime_engine.engine import RegimeEngine
 from qat.domain.risk_engine.book_risk import BookRiskMonitor
@@ -606,6 +607,12 @@ class Runtime:
         # ledger is the only source of truth about whether anything worked;
         # the journal records only what was decided.
         trade_ledger = TradeLedger(bus, settings.data_dir, settings=settings)
+        # IBKR's own commission, checked against the model the ledger records
+        # (M175). Only an adapter that reports commissions offers the hook.
+        commission_auditor = CommissionAuditor(settings.data_dir, settings=settings)
+        set_commission_listener = getattr(broker, "set_commission_listener", None)
+        if callable(set_commission_listener):
+            set_commission_listener(commission_auditor.check)
         signal_bridge = SignalToOrderBridge(
             bus,
             oms,
