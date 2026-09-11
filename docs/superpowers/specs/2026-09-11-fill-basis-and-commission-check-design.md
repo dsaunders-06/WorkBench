@@ -142,14 +142,21 @@ model stays authoritative (approach 2).
 `scripts/repair_fill_basis.py`, modelled on `repair_entry_price_precision.py`:
 PowerShell only, dry run by default, `--apply` to write.
 
-* **Refuses while the app runs** (process check plus `session_running.json`).
+* **Refuses while the app runs** — the `tasklist` check `prune_entry_records.py`
+  already uses, where a check that cannot run counts as running.
+  (`session_running.json` is not used: it survives a crash, so it cannot say
+  whether the app is up.)
 * **Backs up** `closed_trades.csv` and `open_position_entries.json` before any write.
 * **Per-row evidence, never blanket.** A row is inflated only if a logged M65
   line (`Corrected the recorded entry price for <SYM> -> <price>`) set that
   entry price. True fill = the logged `execDetails` average where the 24–25
   August logs hold it (LOV, RHC, PNI, A2M, IAG, TNE), else `avg ÷ 1.00088`.
   **Self-check first:** the formula must reproduce every logged fill, or the
-  script writes nothing. Rows without evidence are listed and left untouched.
+  script writes nothing. Measured 11 September: it does, the worst residual
+  being TNE at $0.14 across 3,051 shares (a price stored at 4 dp before the
+  precision fix) - so the bound is $0.25 per order. A row WITHOUT an M65 line
+  keeps its entry price and is listed; its COSTS are still recomputed, because
+  option A needs no evidence - slippage is simply no longer charged.
 * Costs recomputed with `charge()`, one floor per order (rows grouped by the
   exit `order_id` — every row carries one, and LOV's five share `1216552509`;
   entry cost apportioned by quantity across rows from one lot), including the
@@ -191,12 +198,20 @@ re-inflate them at startup. Steps 3–5 happen together, with the app closed.
 * `price_source` round-trips through `open_position_entries.json`; a pre-M175
   record loads as `None`.
 * `OrderFilledEvent.price_is_fill` is set from `filled_price`, not reference.
-* Adapter: per-`permId` totalling across executions; completes only when
-  quantity and reports are both complete; a report before its execution is held.
+* Adapter: per-`permId` totalling across executions; completes only when the
+  reported executions cover the order's quantity; a repeated report is not
+  counted twice; IBKR's UNSET_DOUBLE commission suppresses the check; an order
+  with no known total is skipped, not guessed. (ib_async delivers each
+  commission WITH its execution in one event, so "a report before its
+  execution" cannot occur and is not tested.)
 * `CommissionAuditor`: agree, disagree, currency mismatch, CSV header and append.
-* Repair script: dry run writes nothing; refuses with the app running; refuses
-  when the self-check fails; untouched rows stay byte-identical; post-repair
-  audit passes — against a fixture ledger, never the live one.
+* Repair logic (in `qat.domain.performance.fill_basis_repair`, so it is typed
+  and tested; the script is a thin CLI): evidence from the real M65 and
+  execDetails line formats; refuses when the self-check fails; a row without
+  evidence keeps its price but loses its slippage charge; one floor per exit
+  order; the TNE fragment rule; the rewritten rows pass `audit_closed_trades`
+  — against fixtures, never the live ledger. (No row stays byte-identical:
+  every row's costs change under option A.)
 
 ## Out of scope
 
