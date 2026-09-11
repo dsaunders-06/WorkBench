@@ -283,6 +283,10 @@ class IBAdapter:
         self._commission_listener: Callable[[BrokerCommission], None] | None = None
         self._commission_tallies: dict[str, _CommissionTally] = {}
         self._commission_unknown_total: set[str] = set()
+        # M175 fix. reqExecutions runs every ~5 minutes and IBKR re-sends the
+        # day's commission reports, which ib_async re-emits - an order already
+        # settled (reported or skipped as unusable) must never be re-tallied.
+        self._commission_settled: set[str] = set()
 
     async def connect(self) -> None:
         """Connect, retrying a refused port for a bounded time (M125).
@@ -1278,6 +1282,8 @@ class IBAdapter:
         exec_id = str(getattr(execution, "execId", "") or "")
         if side is None or not order_id or not exec_id:
             return
+        if order_id in self._commission_settled:
+            return
         tally = self._commission_tallies.get(order_id)
         if tally is None:
             total = _order_total_quantity(trade)
@@ -1311,6 +1317,7 @@ class IBAdapter:
         if tally.shares + 1e-9 < tally.total_quantity:
             return
         del self._commission_tallies[order_id]
+        self._commission_settled.add(order_id)
         if not tally.usable:
             logger.info(
                 "IBKR sent no usable commission for part of order %s (%s) - its commission "

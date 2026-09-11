@@ -137,3 +137,15 @@ def test_a_listener_that_raises_never_escapes_into_ib_async(adapter, caplog):
 
     assert "Could not tally an IBKR commission report" in caplog.text
     assert "listener failed" in caplog.text  # the traceback was kept, not swallowed
+
+
+def test_a_report_redelivered_after_completion_is_not_reported_again(adapter):
+    """reqExecutions runs every ~5 minutes, and IBKR re-sends the day's
+    commission reports; ib_async re-emits each one. An order already reported
+    must not be reported - or written to commission_checks.csv - again."""
+    seen = _listen(adapter)
+
+    adapter._on_ib_commission(_trade(793), _fill("e1", 793, 60.40), _report("e1", 42.149536))
+    adapter._on_ib_commission(_trade(793), _fill("e1", 793, 60.40), _report("e1", 42.149536))
+
+    assert len(seen) == 1
