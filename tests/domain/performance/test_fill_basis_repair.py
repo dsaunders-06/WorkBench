@@ -398,9 +398,7 @@ def test_an_open_record_with_a_logged_fill_takes_the_logged_average():
         },
     }
     buys = parse_logged_buys([_exec("b1", "BOQ", 2000.0, 6.3801, 777000111)], market="ASX")
-    repaired, [change], _left = repair_open_records(
-        records, {"BOQ.AX": {"6.38561"}}, buys, _COSTS
-    )
+    repaired, [change], _left = repair_open_records(records, {"BOQ.AX": {"6.38561"}}, buys, _COSTS)
 
     assert repaired["BOQ.AX"]["price"] == pytest.approx(6.3801, abs=1e-12)
     assert repaired["BOQ.AX"]["price_source"] == "fill"
@@ -745,9 +743,7 @@ def test_the_dry_run_audits_the_repair_and_writes_nothing(monkeypatch, tmp_path,
     assert _backups(data) == []
 
 
-def test_the_dry_run_lists_corrected_and_left_for_m65_records_apart(
-    monkeypatch, tmp_path, capsys
-):
+def test_the_dry_run_lists_corrected_and_left_for_m65_records_apart(monkeypatch, tmp_path, capsys):
     data = _script_data_dir(tmp_path)
 
     assert _run(monkeypatch, data) == 0

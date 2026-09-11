@@ -149,7 +149,9 @@ async def test_an_absorbed_broker_buy_is_stamped_fill(tmp_path):
             filled_at=datetime(2026, 8, 10, 13, 30, tzinfo=UTC),
         )
     )
-    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings)
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
     bridge = SignalToOrderBridge(bus=bus, oms=oms, settings=settings)
     bus.subscribe(OrderFilledEvent, bridge._on_fill)
     await oms.adopt_broker_positions()

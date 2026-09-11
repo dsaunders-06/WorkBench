@@ -243,7 +243,7 @@ def main() -> int:
     )
 
     print(f"\n=== open_position_entries.json: {len(records)} record(s) ===")
-    print(f" corrected from a logged fill, stamped \"fill\" ({len(changes)}):")
+    print(f' corrected from a logged fill, stamped "fill" ({len(changes)}):')
     for c in changes:
         print(f"   {c.symbol:7} {c.before:>13.8f} -> {c.after:>13.8f}  {c.evidence.source}")
     print(
@@ -251,7 +251,10 @@ def main() -> int:
         f"derives these from the broker's real quantity ({len(left_for_m65)}):"
     )
     for c in left_for_m65:
-        print(f"   {c.symbol:7} {c.before:>13.8f}  kept (the formula alone would give {c.after:.8f})")
+        print(
+            f"   {c.symbol:7} {c.before:>13.8f}  kept (the formula alone would give "
+            f"{c.after:.8f})"
+        )
     untouched = sorted(set(records) - {c.symbol for c in (*changes, *left_for_m65)})
     print(f" unchanged - no M65 line ({len(untouched)}):")
     for symbol in untouched:
