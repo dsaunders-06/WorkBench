@@ -78,6 +78,30 @@ def test_checks_append_under_one_header(tmp_path):
     assert [r["symbol"] for r in _rows(tmp_path)] == ["BHP.AX", "SEK.AX"]
 
 
+def test_a_restart_does_not_record_the_same_order_twice(tmp_path, caplog):
+    """ib_async loads completed orders at connect and re-emits their
+    commission reports, and the adapter's memory of what it reported does not
+    survive a restart - so the file itself is the memory."""
+    _auditor(tmp_path).check(_report())
+
+    caplog.set_level(logging.DEBUG)
+    again = _auditor(tmp_path).check(_report())  # the next launch, same order
+
+    assert again.agrees  # the comparison is still returned
+    assert [r["order_id"] for r in _rows(tmp_path)] == ["750830217"]
+    assert not [r for r in caplog.records if r.levelno >= logging.INFO]
+
+
+def test_a_commission_file_that_cannot_be_read_records_nothing_as_seen(tmp_path):
+    (tmp_path / COMMISSION_CHECKS_FILENAME).write_bytes(b"\xff\xfe\x00garbage")
+
+    _auditor(tmp_path).check(_report())
+
+    assert "750830217" in (tmp_path / COMMISSION_CHECKS_FILENAME).read_bytes().decode(
+        "utf-8", errors="replace"
+    )
+
+
 def test_an_unwritable_file_is_logged_never_raised(tmp_path, caplog):
     blocker = tmp_path / "not-a-directory"
     blocker.write_text("x", encoding="utf-8")
