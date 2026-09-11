@@ -591,7 +591,28 @@ class SignalToOrderBridge:
                 continue
             paid = float(position.avg_price)
             if includes_commission:
-                paid = costs.fill_price_from_average_cost(paid, float(position.quantity))
+                quantity = float(position.quantity)
+                if costs.average_cost_on_floor(paid, quantity):
+                    # On the floor branch the conversion needs the ENTRY
+                    # order's quantity, and IBKR's avgCost does not move on a
+                    # sell - so after a partial sell the position's quantity is
+                    # not it. Bought 5,000 at 2.00 and sold down to 1,000, the
+                    # conversion gives 1.99516: 24 bp under the real fill.
+                    # Nothing here can tell the two apart, so no guess.
+                    logger.warning(
+                        "Did not correct the recorded entry price for %s: at %g shares, "
+                        "IBKR's average cost of %g puts the commission on the %.2f floor, and "
+                        "converting it back to the fill needs the ENTRY order's quantity - "
+                        "which the position's quantity stops being once any of it is sold. The "
+                        "average cost cannot be converted without it, so the record keeps %g.",
+                        position.symbol,
+                        abs(quantity),
+                        paid,
+                        costs.min_commission,
+                        entry.price,
+                    )
+                    continue
+                paid = costs.fill_price_from_average_cost(paid, quantity)
             if abs(paid - entry.price) <= _ENTRY_PRICE_TOLERANCE * abs(entry.price):
                 continue
             self._entries[position.symbol] = replace(entry, price=paid)

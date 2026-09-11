@@ -109,12 +109,23 @@ class CostModel:
         qty = abs(quantity)
         if qty <= 0 or average_cost <= 0:
             return average_cost
-        rate = self.commission_bps / 10_000.0
         third = self.third_party_bps / 10_000.0
-        proportional = average_cost / (1.0 + rate + third)
-        if proportional * qty * rate >= self.min_commission:
-            return proportional
+        if not self.average_cost_on_floor(average_cost, qty):
+            return average_cost / (1.0 + self.commission_bps / 10_000.0 + third)
         return (average_cost * qty - self.min_commission) / (qty * (1.0 + third))
+
+    def average_cost_on_floor(self, average_cost: float, quantity: float) -> bool:
+        """True when the commission inside a commission-inclusive average cost
+        over `quantity` is the FLOOR - the branch of
+        `fill_price_from_average_cost` whose answer is only right if `quantity`
+        was the whole order (M175). Above the floor the answer is the same at
+        any quantity."""
+        qty = abs(quantity)
+        if qty <= 0 or average_cost <= 0:
+            return False
+        rate = self.commission_bps / 10_000.0
+        proportional = average_cost / (1.0 + rate + self.third_party_bps / 10_000.0)
+        return proportional * qty * rate < self.min_commission
 
     def apply(self, notional: float) -> float:
         """Dollar cost of ONE transaction of the given notional value."""

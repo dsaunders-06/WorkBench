@@ -19,6 +19,7 @@ is the authority on what is held. That also heals the records already written.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime
 
@@ -247,13 +248,47 @@ async def test_a_record_already_at_the_fill_is_left_alone(tmp_path):
     assert await bridge.reconcile_entry_prices() == []
 
 
+def _skip_warnings(caplog, symbol: str) -> list[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+        and "Did not correct the recorded entry price" in r.getMessage()
+        and symbol in r.getMessage()
+    ]
+
+
 @pytest.mark.asyncio
-async def test_below_the_floor_the_conversion_takes_the_floor_off(tmp_path):
+async def test_below_the_floor_the_record_is_left_and_the_skip_is_logged(tmp_path, caplog):
+    """Below the floor the conversion needs the ENTRY ORDER's quantity, and
+    the position's quantity is only that until something is sold - IBKR's
+    avgCost does not move on a sell. So the record is left, and said so."""
     bridge = _ib_bridge(tmp_path, {"XYZ.AX": (10.0, 50.66)})
     bridge._entries["XYZ.AX"] = _entry(51.00, stop=45.0)
 
-    assert await bridge.reconcile_entry_prices() == ["XYZ.AX"]
-    assert bridge._entries["XYZ.AX"].price == pytest.approx(50.0)
+    with caplog.at_level(logging.WARNING):
+        assert await bridge.reconcile_entry_prices() == []
+
+    assert bridge._entries["XYZ.AX"].price == 51.00
+    [warning] = _skip_warnings(caplog, "XYZ.AX")
+    assert "10" in warning
+
+
+@pytest.mark.asyncio
+async def test_a_partly_sold_position_on_the_floor_branch_is_not_guessed(tmp_path, caplog):
+    """Bought 5,000 at 2.00 (avgCost 2.00176: 8.80 of commission), then sold
+    down to 1,000 - avgCost stays 2.00176. Converted at 1,000 the floor branch
+    gives 1.99516, 24 bp under the real fill. Nothing here can tell 1,000 from
+    the entry order's 5,000, so the record is not touched."""
+    bridge = _ib_bridge(tmp_path, {"XYZ.AX": (1000.0, 2.00176)})
+    bridge._entries["XYZ.AX"] = _entry(2.00176, stop=1.80)
+
+    with caplog.at_level(logging.WARNING):
+        assert await bridge.reconcile_entry_prices() == []
+
+    assert bridge._entries["XYZ.AX"].price == 2.00176
+    [warning] = _skip_warnings(caplog, "XYZ.AX")
+    assert "1000" in warning
 
 
 def test_the_ibkr_adapter_declares_its_average_cost_commission_inclusive():
