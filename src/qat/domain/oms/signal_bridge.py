@@ -50,6 +50,7 @@ from qat.data.broker.adapter import Position
 from qat.data.earnings import EarningsCalendar, NullEarningsCalendar
 from qat.data.features import compute_atr
 from qat.data.sectors import SECTOR_BY_SYMBOL
+from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import (
     EntryPriceCorrectedEvent,
@@ -567,10 +568,20 @@ class SignalToOrderBridge:
             logger.exception("Could not read positions to reconcile recorded entry prices")
             return []
 
+        # M175. IBKR's `avgCost` is commission-INCLUSIVE (Alpaca's average was
+        # not), so read raw it put every entry 8.8 bp high and charged the
+        # commission twice - once in the price, once in `entry_cost`. An adapter
+        # that says so has it converted back to the fill first.
+        includes_commission = bool(getattr(self.oms.broker, "avg_price_includes_commission", False))
+        costs = CostModel.from_settings(self.settings)
         corrected: list[str] = []
         for position in positions:
             entry = self._entries.get(position.symbol)
             if entry is None or not position.avg_price:
+                continue
+            if entry.price_source == "fill":
+                # An OBSERVED fill beats anything derived from an average - the
+                # JHX.AX and COH.AX regression, where this overwrote M70's price.
                 continue
             # A corporate action changes avg_entry_price legitimately - a
             # 2-for-1 split halves it - so correcting to the post-event figure
@@ -579,6 +590,8 @@ class SignalToOrderBridge:
             if self.oms.anomalies.is_quarantined(position.symbol):
                 continue
             paid = float(position.avg_price)
+            if includes_commission:
+                paid = costs.fill_price_from_average_cost(paid, float(position.quantity))
             if abs(paid - entry.price) <= _ENTRY_PRICE_TOLERANCE * abs(entry.price):
                 continue
             self._entries[position.symbol] = replace(entry, price=paid)

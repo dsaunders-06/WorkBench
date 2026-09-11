@@ -178,6 +178,11 @@ class CancelNotResolvedError(Exception):
 class IBAdapter:
     name = "ib-adapter"
 
+    # IBKR's position `avgCost` INCLUDES the commission (M175): avgCost x qty =
+    # fill x qty + commission. Measured 11 September on 17 orders. M65 reads
+    # this to convert back to the fill; every other broker is read raw.
+    avg_price_includes_commission = True
+
     def __init__(
         self,
         ib_client: IBClientProtocol,

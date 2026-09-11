@@ -19,6 +19,7 @@ is the authority on what is held. That also heals the records already written.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -194,3 +195,70 @@ async def test_it_runs_before_the_ledger_is_rebuilt(tmp_path):
     assert lot is not None
     lots = bridge._lot_store().open_lots("AMD")  # type: ignore[union-attr]
     assert lots[0].price == pytest.approx(510.267)
+
+
+# --- M175: IBKR's average cost is commission-INCLUSIVE --------------------------
+#
+# Every restart rewrote every position to avgCost, because the 1 bp tolerance is
+# tighter than the 8.8 bp commission - and it undid M70's correct price:
+#   31 Aug 10:35  ENTRY PRICE CORRECTED: JHX.AX filled at 41.9185
+#   31 Aug 13:38  Corrected the recorded entry price for JHX.AX -> 41.9554
+
+
+class _IBLikeBroker(_Broker):
+    avg_price_includes_commission = True
+
+
+def _ib_bridge(tmp_path, positions: dict[str, tuple[float, float]]):
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), market="ASX")
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = _IBLikeBroker(positions)
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, settings=settings)
+    return SignalToOrderBridge(bus=bus, oms=oms, settings=settings)
+
+
+@pytest.mark.asyncio
+async def test_an_observed_fill_is_never_overwritten(tmp_path):
+    bridge = _ib_bridge(tmp_path, {"JHX.AX": (1097.0, 41.95541155)})
+    bridge._entries["JHX.AX"] = replace(_entry(41.9185, stop=39.39), price_source="fill")
+
+    assert await bridge.reconcile_entry_prices() == []
+    assert bridge._entries["JHX.AX"].price == pytest.approx(41.9185)
+
+
+@pytest.mark.asyncio
+async def test_ibkr_average_cost_is_converted_back_to_the_fill(tmp_path):
+    """BHP.AX: a record still at the 64.08 reference, avgCost 64.1263816."""
+    bridge = _ib_bridge(tmp_path, {"BHP.AX": (793.0, 64.1263816)})
+    bridge._entries["BHP.AX"] = replace(_entry(64.08, stop=60.45), price_source="reference")
+
+    assert await bridge.reconcile_entry_prices() == ["BHP.AX"]
+    assert bridge._entries["BHP.AX"].price == pytest.approx(64.07, abs=1e-6)
+
+
+@pytest.mark.asyncio
+async def test_a_record_already_at_the_fill_is_left_alone(tmp_path):
+    """The regression itself: an unstamped record holding the true fill must
+    NOT be 'corrected' up to avgCost."""
+    bridge = _ib_bridge(tmp_path, {"COH.AX": (363.0, 135.85548075)})
+    bridge._entries["COH.AX"] = _entry(135.73603304, stop=126.09)
+
+    assert await bridge.reconcile_entry_prices() == []
+
+
+@pytest.mark.asyncio
+async def test_below_the_floor_the_conversion_takes_the_floor_off(tmp_path):
+    bridge = _ib_bridge(tmp_path, {"XYZ.AX": (10.0, 50.66)})
+    bridge._entries["XYZ.AX"] = _entry(51.00, stop=45.0)
+
+    assert await bridge.reconcile_entry_prices() == ["XYZ.AX"]
+    assert bridge._entries["XYZ.AX"].price == pytest.approx(50.0)
+
+
+def test_the_ibkr_adapter_declares_its_average_cost_commission_inclusive():
+    from qat.data.broker.ib_adapter import IBAdapter
+    from qat.data.broker.mock_broker import MockBroker
+
+    assert IBAdapter.avg_price_includes_commission is True
+    assert getattr(MockBroker(seed=1), "avg_price_includes_commission", False) is False
