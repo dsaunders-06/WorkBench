@@ -36,6 +36,7 @@ from qat.domain.performance.fill_basis_repair import (  # noqa: E402
     parse_logged_buys,
     parse_m65_corrections,
     prior_repair,
+    read_exit_order_quantities,
     read_log_messages,
     repair_closed_rows,
     repair_open_records,
@@ -111,6 +112,25 @@ def _write_ledger(path: Path, repairs: list[RowRepair]) -> None:
         writer.writerows(r.after.as_row() for r in repairs)
 
 
+def _exit_order_quantities(path: Path) -> dict[str, float]:
+    """How much each broker order absorbed, so an exit order LARGER than the
+    ledger's rows for it is charged as a fragment. No file, or one that cannot
+    be read, means no sizes: every exit group is then charged as a whole order."""
+    if not path.exists():
+        print(f"exits   : {path.name} not found - no exit order sizes, every exit is a whole order")
+        return {}
+    try:
+        sizes = read_exit_order_quantities(path)
+    except (OSError, ValueError) as exc:
+        print(
+            f"exits   : {path.name} could not be read ({exc!r}) - no exit order sizes, "
+            f"every exit is a whole order"
+        )
+        return {}
+    print(f"exits   : {len(sizes)} exit order size(s) from {path.name}")
+    return sizes
+
+
 def _dry_run_audit(repairs: list[RowRepair]) -> int:
     """The same audit gate `--apply` passes through, run on a copy written
     OUTSIDE the data dir - so a repair `--apply` would refuse is refused by
@@ -172,13 +192,14 @@ def main() -> int:
     corrections = parse_m65_corrections(messages)
     buys = parse_logged_buys(messages, settings.market)
     print(f"evidence: {len(corrections)} symbol(s) with M65 lines, {len(buys)} logged buy order(s)")
+    exit_sizes = _exit_order_quantities(data / "absorbed_fills.json")
 
     with ledger.open(newline="", encoding="utf-8") as handle:
         rows = list(csv.DictReader(handle))
     records = json.loads(entries.read_text(encoding="utf-8"))
 
     try:
-        repairs = repair_closed_rows(rows, corrections, buys, costs)
+        repairs = repair_closed_rows(rows, corrections, buys, costs, exit_sizes)
         repaired_records, changes, left_for_m65 = repair_open_records(
             records, corrections, buys, costs
         )
@@ -200,7 +221,12 @@ def main() -> int:
     for r in repairs:
         b, a = r.before, r.after
         ev = r.evidence.source if r.evidence else "NO M65 LINE - price kept"
-        flag = "  [FRAGMENT: no floor]" if r.fragment else ""
+        flag = (
+            f"  [FRAGMENT: exit order {b.order_id} absorbed {exit_sizes[b.order_id or '']:g} - "
+            f"charged its share of the whole order]"
+            if r.fragment
+            else ""
+        )
         slip = f"{a.entry_slippage:+.4f}" if a.entry_slippage is not None else "-"
         rb = f"{b.r_multiple:.4f}" if b.r_multiple is not None else "-"
         ra = f"{a.r_multiple:.4f}" if a.r_multiple is not None else "-"

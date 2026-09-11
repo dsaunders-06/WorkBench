@@ -16,13 +16,16 @@ Evidence, never blanket:
   * SELF-CHECK: where a logged fill exists, the formula must reproduce it within
     SELF_CHECK_DOLLARS over the order, or nothing is written.
 
-Costs are recomputed on EVERY row - option A needs no evidence.
+Costs are recomputed on EVERY row - option A needs no evidence. An exit order
+is a fragment only when `absorbed_fills.json` says it absorbed MORE than the
+ledger's rows for it hold (see `repair_closed_rows`).
 
 ONE RUN ONLY. After a repair the stored entries no longer match the %g strings
-M65 printed, so a second run would find no evidence for a fragment, drop its
-no-floor treatment and charge it whole floors; and once M175 is deployed, M65's
-own log lines would be read as fresh inflation and deflate prices a second
-time. `prior_repair` detects a completed repair so the script can refuse.
+M65 printed, so a second run would find no evidence for a lot, lose its entry
+order's size and charge the lot a whole entry floor of its own; and once M175
+is deployed, M65's own log lines would be read as fresh inflation and deflate
+prices a second time. `prior_repair` detects a completed repair so the script
+can refuse.
 """
 
 from __future__ import annotations
@@ -89,6 +92,7 @@ class RowRepair:
     after: ClosedTrade
     evidence: Evidence | None
     fragment: bool
+    """The row's EXIT order was larger than the ledger holds for it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +128,27 @@ def prior_repair(data_dir: Path) -> str | None:
                 f'"price_source": "fill" - those prices are already fills'
             )
     return None
+
+
+def read_exit_order_quantities(path: Path) -> dict[str, float]:
+    """order_id -> the quantity the OMS absorbed for that broker order, from
+    `absorbed_fills.json`. An entry whose quantity is unknown - the M50
+    bare-timestamp shape, or `quantity_known: false` - is left out: an unknown
+    size is no size, and the repair then treats the rows as the whole order.
+    Raises OSError / ValueError when the file cannot be read; the caller
+    decides what that means."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    absorbed = payload.get("absorbed") if isinstance(payload, dict) else None
+    if not isinstance(absorbed, dict):
+        raise ValueError(f"{path.name} has no 'absorbed' mapping")
+    quantities: dict[str, float] = {}
+    for order_id, entry in absorbed.items():
+        if not isinstance(entry, dict) or entry.get("quantity_known") is False:
+            continue
+        quantity = float(entry.get("quantity") or 0.0)
+        if quantity > 0:
+            quantities[str(order_id)] = quantity
+    return quantities
 
 
 def read_log_messages(log_dir: Path) -> list[str]:
@@ -223,11 +248,6 @@ def evidence_for(
     return Evidence(derived, "IBKR avgCost / (1 + commission rate)", None)
 
 
-def _proportional(costs: CostModel, notional: float) -> float:
-    """The rate without the floor - for a fragment of an order of unknown size."""
-    return abs(notional) * (costs.commission_bps + costs.third_party_bps) / 10_000.0
-
-
 def _reseed(
     current: float | None,
     seed: float,
@@ -251,7 +271,20 @@ def repair_closed_rows(
     corrections: dict[str, set[str]],
     buys: list[LoggedBuy],
     costs: CostModel,
+    exit_order_quantities: dict[str, float] | None = None,
 ) -> list[RowRepair]:
+    """Every row's entry and costs on the fill basis.
+
+    Entry cost: one charge on the whole ENTRY order (its logged size, else the
+    lot), shared by quantity. Exit cost: one charge per EXIT order. When
+    `exit_order_quantities` (order_id -> absorbed quantity) says that order was
+    LARGER than the rows the ledger holds for it, the rows are a FRAGMENT: the
+    whole order is charged and they carry their share, which never invents a
+    floor for a fragment. Otherwise - size unknown, or no larger - the rows are
+    the whole order and pay its charge, floor included: a manual partial sell
+    is a whole broker order that paid its own floor, however small its lot is
+    against the entry."""
+    exit_sizes = exit_order_quantities or {}
     trades: list[ClosedTrade] = []
     for number, row in enumerate(rows):
         trade = ClosedTrade.from_row(row)
@@ -265,7 +298,6 @@ def repair_closed_rows(
 
     fill_of: dict[int, float] = {}
     evidence_of: dict[int, Evidence | None] = {}
-    fragment_of: dict[int, bool] = {}
     entry_cost_of: dict[int, float] = {}
     for (symbol, opened_at), members in lots.items():
         stored = trades[members[0]].entry_price
@@ -293,20 +325,29 @@ def repair_closed_rows(
         for i in members:
             fill_of[i] = fill
             evidence_of[i] = ev
-            fragment_of[i] = lot_quantity + 1e-9 < whole
             entry_cost_of[i] = order_charge * trades[i].quantity / whole
 
     exit_groups: dict[str, list[int]] = defaultdict(list)
     for index, trade in enumerate(trades):
         exit_groups[trade.order_id or f"row-{index}"].append(index)
     exit_cost_of: dict[int, float] = {}
-    for members in exit_groups.values():
+    fragment_of: dict[int, bool] = {}
+    for key, members in exit_groups.items():
         quantity = sum(trades[i].quantity for i in members)
         notional = sum(trades[i].quantity * trades[i].exit_price for i in members)
-        fragment = any(fragment_of[i] for i in members)
-        total = _proportional(costs, notional) if fragment else costs.charge(notional)
+        order_size = exit_sizes.get(key, 0.0)  # 0.0: unknown - the rows are the order
+        fragment = order_size > quantity + 1e-9
+        if fragment:
+            # The whole order at the rows' exit price, shared over the ORDER's
+            # size: above the floor this is the proportional rate exactly.
+            per_share = costs.charge(order_size * notional / quantity) / order_size
+            shares = {i: per_share * trades[i].quantity for i in members}
+        else:
+            total = costs.charge(notional)
+            shares = {i: total * trades[i].quantity / quantity for i in members}
         for i in members:
-            exit_cost_of[i] = total * trades[i].quantity / quantity
+            exit_cost_of[i] = shares[i]
+            fragment_of[i] = fragment
 
     repairs: list[RowRepair] = []
     for index, before in enumerate(trades):

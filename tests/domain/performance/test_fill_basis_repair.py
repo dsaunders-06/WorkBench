@@ -23,6 +23,7 @@ from qat.domain.performance.fill_basis_repair import (
     parse_logged_buys,
     parse_m65_corrections,
     prior_repair,
+    read_exit_order_quantities,
     repair_closed_rows,
     repair_open_records,
 )
@@ -151,7 +152,10 @@ def test_one_exit_order_across_rows_pays_one_floor():
 
 
 def test_a_fragment_is_charged_its_share_and_never_a_whole_floor():
-    """TNE.AX: 60 shares of a 3,051-share entry; the rest left another way."""
+    """TNE.AX: 60 shares of a 3,051-share entry; the rest left another way.
+    It is a fragment because its EXIT order (509334700) absorbed 3,051 shares
+    and the ledger holds 60 of them - so the exit is charged as a share of the
+    WHOLE order, which never invents a floor for the fragment."""
     buys = parse_logged_buys([_exec("t1", "TNE", 3051.0, 32.94925926, 509334698)], market="ASX")
     row = _row(
         symbol="TNE.AX",
@@ -164,12 +168,75 @@ def test_a_fragment_is_charged_its_share_and_never_a_whole_floor():
         worst_price="30.6858",
         best_price="33.5",
     )
-    [repair] = repair_closed_rows([row], {"TNE.AX": {"32.9783"}}, buys, _COSTS)
+    [repair] = repair_closed_rows(
+        [row], {"TNE.AX": {"32.9783"}}, buys, _COSTS, exit_order_quantities={"509334700": 3051.0}
+    )
 
     assert repair.fragment
     assert repair.after.entry_price == 32.94925926
     assert repair.after.entry_cost == pytest.approx(_COSTS.charge(3051 * 32.94925926) * 60 / 3051)
+    assert repair.after.exit_cost == pytest.approx(_COSTS.charge(3051 * 30.6858) * 60 / 3051)
+    # Above the floor that IS the proportional rate - the number pinned before.
     assert repair.after.exit_cost == pytest.approx(60 * 30.6858 * 8.8 / 10_000)
+
+
+@pytest.mark.parametrize("exit_sizes", [{"MS100": 100.0}, {}], ids=["known", "unknown"])
+def test_a_partial_manual_sell_is_a_whole_order_and_pays_its_own_floor(exit_sizes):
+    """100 BOQ.AX sold by hand out of a logged 2,000-share entry. The LOT is
+    smaller than its entry order, but the SELL is a whole broker order that
+    paid its own floor - IBKR billed 6.60, and the proportional rate would
+    book 0.56. Entry cost is still a share of the one entry order."""
+    buys = parse_logged_buys([_exec("b0", "BOQ", 2000.0, 6.38, 777000100)], market="ASX")
+    row = _row(
+        symbol="BOQ.AX",
+        quantity="100.0",
+        entry_price="6.3856144",
+        stop_price="6.07",
+        exit_price="6.40",
+        order_id="MS100",
+        reference_price="",
+        worst_price="6.3",
+        best_price="6.45",
+    )
+    [repair] = repair_closed_rows(
+        [row], {"BOQ.AX": {"6.38561"}}, buys, _COSTS, exit_order_quantities=exit_sizes
+    )
+
+    assert not repair.fragment
+    assert repair.after.entry_price == 6.38
+    assert repair.after.entry_cost == pytest.approx(_COSTS.charge(2000 * 6.38) * 100 / 2000)
+    assert repair.after.exit_cost == pytest.approx(_COSTS.charge(100 * 6.40))
+    assert repair.after.exit_cost == pytest.approx(6.60)
+
+
+def test_absorbed_quantities_are_read_per_order_and_unknown_ones_dropped(tmp_path):
+    path = tmp_path / "absorbed_fills.json"
+    path.write_text(
+        json.dumps(
+            {
+                "watermark": "2026-09-11T06:00:00+00:00",
+                "absorbed": {
+                    "509334700": {
+                        "filled_at": "2026-09-02T05:10:00+00:00",
+                        "quantity": 3051.0,
+                        "price": 30.6858,
+                        "quantity_known": True,
+                    },
+                    # M50 shape: a bare timestamp, no quantity.
+                    "111": "2026-09-01T05:10:00+00:00",
+                    "222": {
+                        "filled_at": "2026-09-01T05:10:00+00:00",
+                        "quantity": 0.0,
+                        "price": 0.0,
+                        "quantity_known": False,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert read_exit_order_quantities(path) == {"509334700": 3051.0}
 
 
 def test_the_repaired_rows_pass_the_ledgers_own_audit(tmp_path):
@@ -653,6 +720,46 @@ def test_the_dry_run_lists_corrected_and_left_for_m65_records_apart(
     assert "BOQ.AX" in corrected and "777000100" in corrected
     assert "WOW.AX" not in corrected
     assert "WOW.AX" in left and "BOQ.AX" not in left
+
+
+def test_without_absorbed_fills_the_script_says_so_and_charges_whole_orders(
+    monkeypatch, tmp_path, capsys
+):
+    data = _script_data_dir(tmp_path)
+
+    assert _run(monkeypatch, data) == 0
+
+    out = capsys.readouterr().out
+    assert "absorbed_fills.json" in out and "not found" in out
+    assert "FRAGMENT" not in out
+
+
+def test_the_script_sizes_exit_orders_from_absorbed_fills(monkeypatch, tmp_path, capsys):
+    """Wiring: the LOV.AX exit order absorbed MORE than the ledger's five rows
+    hold, so every row is a fragment of it."""
+    data = _script_data_dir(tmp_path)
+    (data / "absorbed_fills.json").write_text(
+        json.dumps(
+            {
+                "watermark": "2026-08-26T06:00:00+00:00",
+                "absorbed": {
+                    "1216552509": {
+                        "filled_at": "2026-08-26T05:10:00+00:00",
+                        "quantity": 5000.0,
+                        "price": 28.45,
+                        "quantity_known": True,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert _run(monkeypatch, data) == 0
+
+    out = capsys.readouterr().out
+    assert "1 exit order size(s)" in out
+    assert out.count("FRAGMENT") == len(_LOV_QUANTITIES)
 
 
 def test_a_dry_run_whose_repair_fails_the_audit_exits_1(monkeypatch, tmp_path, capsys):
