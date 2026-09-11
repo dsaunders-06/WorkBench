@@ -963,6 +963,8 @@ class SignalToOrderBridge:
                 stop_price=entry.stop_price,
                 target_price=entry.target_price,
                 strategy=entry.strategy,
+                reference_price=entry.reference_price,
+                price_source=entry.price_source,
             )
             for symbol, entry in self._entries.items()
         }
