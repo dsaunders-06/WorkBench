@@ -9,7 +9,10 @@ Evidence, never blanket:
   * a price is inflated ONLY if a logged M65 line wrote it (matched on the %g
     string M65 printed);
   * the true fill is the logged execDetails average where the logs hold the
-    entry, else `CostModel.fill_price_from_average_cost`;
+    entry, else `CostModel.fill_price_from_average_cost` - for CLOSED rows
+    only. An open record is corrected (and stamped "fill") only from a logged
+    fill; a formula-only one is left for the M175 build's M65, which derives
+    it from the broker's real quantity at launch;
   * SELF-CHECK: where a logged fill exists, the formula must reproduce it within
     SELF_CHECK_DOLLARS over the order, or nothing is written.
 
@@ -325,18 +328,31 @@ def repair_open_records(
     corrections: dict[str, set[str]],
     buys: list[LoggedBuy],
     costs: CostModel,
-) -> tuple[dict[str, dict[str, Any]], list[RecordChange]]:
-    """Open entry records: price -> fill, stamped "fill". Quantity is not on
-    the record, so the formula takes its proportional branch - every open
-    position is far above the ~AUD 7,500 floor crossover."""
+) -> tuple[dict[str, dict[str, Any]], list[RecordChange], list[RecordChange]]:
+    """Open entry records whose evidence is a LOGGED FILL: price -> that fill,
+    stamped "fill". Returns (records, corrected, left_for_m65).
+
+    The stamp means OBSERVED, and M65 never overwrites a record carrying it -
+    so a price that was only DERIVED must never get it. A record whose only
+    evidence is the formula (an M65 line and no logged execDetails fill - a
+    manual TWS buy is never logged as one) is left byte-for-byte UNCHANGED and
+    listed in `left_for_m65`, its `after` being what the formula alone would
+    give. The quantity is not on the record, and the formula's floor branch
+    depends on it; the M175 build's M65 derives the price at launch from the
+    broker's real quantity instead."""
     repaired: dict[str, dict[str, Any]] = {}
     changes: list[RecordChange] = []
+    left_for_m65: list[RecordChange] = []
     for symbol, record in records.items():
         stored = float(record["price"])
+        # 1e12: the no-logged-fill path would otherwise refuse on the floor
+        # branch - and that path now changes nothing anyway.
         ev = evidence_for(symbol, stored, 1e12, corrections, buys, costs)
-        if ev is None:
+        if ev is None or ev.order_quantity is None:
             repaired[symbol] = dict(record)
+            if ev is not None:
+                left_for_m65.append(RecordChange(symbol, stored, ev.fill, ev))
             continue
         repaired[symbol] = {**record, "price": ev.fill, "price_source": "fill"}
         changes.append(RecordChange(symbol, stored, ev.fill, ev))
-    return repaired, changes
+    return repaired, changes, left_for_m65

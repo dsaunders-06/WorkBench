@@ -278,12 +278,43 @@ def test_open_records_get_the_fill_and_the_stamp():
             "reference_price": None,
         },
     }
-    repaired, changes = repair_open_records(records, {"BOQ.AX": {"6.38561"}}, [], _COSTS)
+    # The stamp says OBSERVED, so only a logged fill earns it (the formula-only
+    # case is the next test).
+    buys = parse_logged_buys([_exec("b0", "BOQ", 2000.0, 6.38, 777000100)], market="ASX")
+    repaired, changes, _left = repair_open_records(records, {"BOQ.AX": {"6.38561"}}, buys, _COSTS)
 
     assert repaired["BOQ.AX"]["price"] == pytest.approx(6.38, abs=1e-6)
     assert repaired["BOQ.AX"]["price_source"] == "fill"
     assert repaired["XYZ.AX"] == records["XYZ.AX"]  # no evidence, untouched
     assert [c.symbol for c in changes] == ["BOQ.AX"]
+
+
+def test_a_formula_only_open_record_is_left_unchanged_for_m65_and_listed():
+    """WOW.AX: an M65 line, but no logged execDetails fill (a manual TWS buy is
+    never logged as one). The formula's answer is DERIVED - over a quantity the
+    record does not hold - and stamping it "fill" would lock it there for good.
+    It is left exactly as it is; the M175 build's M65 derives it at launch from
+    the broker's real quantity."""
+    records = {
+        "WOW.AX": {
+            "opened_at": "2026-09-01T00:30:04+00:00",
+            "price": 33.52948,
+            "stop_price": 31.2,
+            "target_price": 36.4,
+            "strategy": "swing",
+            "reference_price": 33.51,
+        },
+    }
+    before = json.dumps(records["WOW.AX"])
+
+    repaired, changes, left = repair_open_records(records, {"WOW.AX": {"33.5295"}}, [], _COSTS)
+
+    assert json.dumps(repaired["WOW.AX"]) == before  # byte-for-byte, and no stamp
+    assert changes == []
+    assert [c.symbol for c in left] == ["WOW.AX"]
+    assert left[0].before == 33.52948
+    assert left[0].after == pytest.approx(33.52948 / 1.00088)  # what the formula alone gives
+    assert left[0].evidence.order_quantity is None
 
 
 def test_an_open_record_with_a_logged_fill_takes_the_logged_average():
@@ -300,7 +331,9 @@ def test_an_open_record_with_a_logged_fill_takes_the_logged_average():
         },
     }
     buys = parse_logged_buys([_exec("b1", "BOQ", 2000.0, 6.3801, 777000111)], market="ASX")
-    repaired, [change] = repair_open_records(records, {"BOQ.AX": {"6.38561"}}, buys, _COSTS)
+    repaired, [change], _left = repair_open_records(
+        records, {"BOQ.AX": {"6.38561"}}, buys, _COSTS
+    )
 
     assert repaired["BOQ.AX"]["price"] == pytest.approx(6.3801, abs=1e-12)
     assert repaired["BOQ.AX"]["price_source"] == "fill"
@@ -522,6 +555,15 @@ _OPEN_RECORDS = {
         "strategy": "swing",
         "reference_price": None,
     },
+    # An M65 line and no logged fill: left for the M175 build's M65 (I1).
+    "WOW.AX": {
+        "opened_at": "2026-09-01T00:30:04+00:00",
+        "price": 33.52948,
+        "stop_price": 31.2,
+        "target_price": 36.4,
+        "strategy": "swing",
+        "reference_price": 33.51,
+    },
 }
 
 
@@ -547,8 +589,9 @@ def _script_data_dir(tmp_path: Path, rows: list[dict[str, str]] | None = None) -
             for m in (
                 _M65_LOV,
                 _lov_buy(),
-                "Corrected the recorded entry price for BOQ.AX -> 6.38561 to what the "
-                "broker charged.",
+                "Corrected the recorded entry price for BOQ.AX -> 6.38561, WOW.AX -> 33.5295 "
+                "to what the broker charged.",
+                _exec("b0", "BOQ", 2000.0, 6.38, 777000100),
             )
         )
         + "\n",
@@ -597,6 +640,21 @@ def test_the_dry_run_audits_the_repair_and_writes_nothing(monkeypatch, tmp_path,
     assert _backups(data) == []
 
 
+def test_the_dry_run_lists_corrected_and_left_for_m65_records_apart(
+    monkeypatch, tmp_path, capsys
+):
+    data = _script_data_dir(tmp_path)
+
+    assert _run(monkeypatch, data) == 0
+
+    out = capsys.readouterr().out
+    corrected = out.split("corrected from a logged fill", 1)[1].split("left for M65", 1)[0]
+    left = out.split("left for M65", 1)[1].split("unchanged - no M65 line", 1)[0]
+    assert "BOQ.AX" in corrected and "777000100" in corrected
+    assert "WOW.AX" not in corrected
+    assert "WOW.AX" in left and "BOQ.AX" not in left
+
+
 def test_a_dry_run_whose_repair_fails_the_audit_exits_1(monkeypatch, tmp_path, capsys):
     """⚠️ The dry run used to return BEFORE the audit, so the operator's dry run
     looked clean and the refusal appeared only at --apply."""
@@ -636,6 +694,7 @@ def test_apply_rewrites_both_files_and_a_second_run_is_refused(monkeypatch, tmp_
     assert records["BOQ.AX"]["price_source"] == "fill"
     assert records["BOQ.AX"]["price"] == pytest.approx(6.38, abs=1e-6)
     assert records["XYZ.AX"] == _OPEN_RECORDS["XYZ.AX"]
+    assert records["WOW.AX"] == _OPEN_RECORDS["WOW.AX"]  # formula-only: left for M65
     assert not list(data.glob("*.tmp-*"))
     capsys.readouterr()
 

@@ -179,7 +179,9 @@ def main() -> int:
 
     try:
         repairs = repair_closed_rows(rows, corrections, buys, costs)
-        repaired_records, changes = repair_open_records(records, corrections, buys, costs)
+        repaired_records, changes, left_for_m65 = repair_open_records(
+            records, corrections, buys, costs
+        )
     except SelfCheckFailed as exc:
         print(f"\nSELF-CHECK FAILED - nothing written.\n  {exc}")
         return 1
@@ -212,11 +214,20 @@ def main() -> int:
         f"{sum(r.after.net_pnl for r in repairs):,.2f}"
     )
 
-    print(f"\n=== open_position_entries.json: {len(changes)} of {len(records)} record(s) ===")
+    print(f"\n=== open_position_entries.json: {len(records)} record(s) ===")
+    print(f" corrected from a logged fill, stamped \"fill\" ({len(changes)}):")
     for c in changes:
         print(f"   {c.symbol:7} {c.before:>13.8f} -> {c.after:>13.8f}  {c.evidence.source}")
-    for symbol in sorted(set(records) - {c.symbol for c in changes}):
-        print(f"   {symbol:7} unchanged - no M65 line")
+    print(
+        f" left for M65 at launch - no logged fill, so NOT changed here; the M175 build "
+        f"derives these from the broker's real quantity ({len(left_for_m65)}):"
+    )
+    for c in left_for_m65:
+        print(f"   {c.symbol:7} {c.before:>13.8f}  kept (the formula alone would give {c.after:.8f})")
+    untouched = sorted(set(records) - {c.symbol for c in (*changes, *left_for_m65)})
+    print(f" unchanged - no M65 line ({len(untouched)}):")
+    for symbol in untouched:
+        print(f"   {symbol:7}")
 
     if not args.apply:
         return _dry_run_audit(repairs)
@@ -284,7 +295,10 @@ def main() -> int:
     except OSError as exc:
         _partial(ledger, entries, entries_tmp, stamp, repr(exc))
         return 1
-    print(f"\nWRITTEN. {len(repairs)} row(s) rewritten, {len(changes)} record(s) corrected.")
+    print(
+        f"\nWRITTEN. {len(repairs)} row(s) rewritten, {len(changes)} record(s) corrected, "
+        f"{len(left_for_m65)} left for M65 at launch."
+    )
     print("Deploy M175 BEFORE launching - an older build re-inflates the records.")
     return 0
 
