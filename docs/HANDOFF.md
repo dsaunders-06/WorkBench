@@ -1,4 +1,4 @@
-# Handoff — 9 September 2026, after M173 (five kill-switch trips, and 10349 was ours)
+# Handoff — 11 September 2026: M175 written and reviewed, on a PR, NOT merged, NOT deployed
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -16,11 +16,11 @@ misleading. Nothing was deleted; it was archived and this was written fresh.
 
 Everything below was true when written. Assume nothing still is.
 
-⚠️ **THE ROWS BELOW ARE NOT ALL AS FRESH AS EACH OTHER.** Deployed build,
-deploy gap, pushed and suite were re-derived on 8 September. **Account, broker,
-kill switch and watchlist were NOT** - they date from 3-4 September and are
-marked. Re-read them from `session_check.ps1` before quoting one; a stale row
-that looks like a current one is how this file went wrong before.
+⚠️ **THE ROWS BELOW ARE NOT ALL AS FRESH AS EACH OTHER.** Every row except
+Watchlist and Entry allow list was re-measured on **11 September** (evening,
+after the close). **Watchlist dates from 2 September** and is marked. Re-read
+them from `session_check.ps1` before quoting one; a stale row that looks like a
+current one is how this file went wrong before.
 
 ---
 
@@ -47,16 +47,17 @@ source.
 
 | | |
 |---|---|
-| Deployed build | ✅ **M174 (`33d0ef6`)**, installed 10 September 16:26, sha256 `0DB8E1BA…`, signature **Valid**, dist hash confirmed moved. ✅ **READ BACK 16:27:14** off the app's own log: `Build: M174 (33d0ef6, built 10/09/2026 16:20:34 AEST, packaged)`. Rollback: `C:\QuantAdvisoryTerminal.bak-97c536b-20260910-1626` (M173) |
-| Deploy gap | ⚠️ **ONE commit ahead (`000f07e`) with NO milestone bump** - a build would still call itself M174. It fixes a false "EARNINGS UNREADABLE" warning M174 emits at every startup. Cosmetic, self-clearing, left for the next ordinary deploy. `handoff_state.py` derives this - never hardcode it |
-| Pushed | ✅ **NOTHING UNPUSHED as at 10 September 16:45** - 26 commits went up today and **CI is GREEN** (9m29s). ⚠️ **DO NOT HARDCODE A COUNT HERE** - `handoff_state.py` derives it (`vs origin`) |
-| Suite | **3,575 passed, 26 skipped** at `000f07e`. ruff, black, mypy src, bandit all clean. ⚠️ Run the four checks SEPARATELY - `black --check` can exit 0 while printing "1 file would be reformatted". ⚠️ Never pipe `pytest` or `invoke build` through `tail` |
+| Deployed build | ✅ **M174 (`33d0ef6`)** - unchanged since 10 September 16:26 (sha256 `0DB8E1BA…`, signature Valid). Read back again off the log at the 11 September 09:57:19 launch. Rollback: `C:\QuantAdvisoryTerminal.bak-97c536b-20260910-1626` (M173). ⚠️ **M175 IS NOT DEPLOYED** |
+| Deploy gap | ⚠️ **M175 lives on branch `m175-fill-basis`, open as a PR into master (`gh pr view m175-fill-basis`), NOT MERGED.** 23 commits ahead of `origin/master`, 19 touching `src/`, and it carries `000f07e` (the cosmetic EARNINGS UNREADABLE fix). The operator chose a PR on 11 September rather than a local merge. `handoff_state.py` derives this - never hardcode it |
+| Pushed | Branch `m175-fill-basis` pushed 11 September evening with the PR. ⚠️ Local `master` is 2 docs commits (the M175 spec and plan) ahead of `origin/master`; both ride in the PR, so after the PR merges `git pull` fast-forwards master. Check CI with `gh run list --limit 3` - a branch push AND the PR each trigger a run |
+| Suite | **3,677 passed, 26 skipped** on `m175-fill-basis` at `be33172` - run twice independently on 11 September. ruff, black, mypy src, bandit all clean. ⚠️ Run the four checks SEPARATELY - `black --check` can exit 0 while printing "1 file would be reformatted". ⚠️ Never pipe `pytest` or `invoke build` through `tail` |
 | Watchlist | ⚠️ **AS AT 2 SEPTEMBER — NOT RE-CHECKED 8 SEPTEMBER.** **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
-| Account | **TEN POSITIONS**, all protected, **20 resting legs, every one `tif='GTC'`** - **verified at the broker** 10 September, not inferred. ANZ 640, ASX 1314, BHP 793, BOQ 13586, COH 363, JHX 1097, SUN 3192, TAH 64229, TWE 10412, WOW 1098. Cash **447,859.39**, equity **993,996.26** (16:03, from IBKR's own account values). Account `DUQ200898`, paper, AUD. ⚠️ **AT THE CAP** - `max_concurrent_positions=10` and the governor refuses at `>=`, so nothing enters until something exits |
-| Broker | **IB GATEWAY on 4002. TWS IS CLOSED.** ✅ **MEASURED 10 September 09:33**, not inferred: `ibgateway` PID 10416 started 08:43:30 is the sole listener on 4002, nothing answers on 7496/7497, no TWS process exists, and `QAT_IBKR_PORT=4002` in the live `.env`. ⚠️ **This row said "TWS on 7497, as at 1 September" until 10 September and was wrong** - the 1 September change was reverted at some point and the row was never re-measured. Gateway has delayed market data and no GUI; TWS has the GUI and no API market data, so neither endpoint is sufficient alone. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
-| Kill switch | ✅ **CLEAR.** Reset by the operator at **09:11:05** on 10 September, confirmed in the log rather than assumed, and **NO TRIP ALL DAY**. The 10349 cause was fixed in M173; ⚠️ that fix is still **UNPROVEN LIVE** after two sessions - it needs an app-driven market SELL. Quarantines: EMPTY |
-| Ledgers | **11 rows = SEVEN POSITIONS**, so the sizer's calibration gate is at **7 of 20**. sha256 **`93C38C09…`** ⚠️ the old `CB4703C7…` is superseded: **four rows were repaired 10 September** for entry-price precision (A2M -0.41, IAG +0.20, PNI +0.11, RHC -0.01), and all 11 now derive their stored gross. ⚠️ One LOV row is a REPAIR row with EMPTY costs. ⚠️ **Costs are MODELLED, not actual** - IBKR's `commissionReport` is discarded |
+| Account | **NINE POSITIONS**, all protected, **18 resting legs** - **read at the broker 11 September 19:45** (read-only probe): ANZ 640, ASX 1314, BOQ 13586, COH 363, JHX 1097, SUN 3192, TAH 64229, TWE 10412, WOW 1098. **BHP 793 was stopped out at the 11 September open** (60.40 against a 60.45 stop). Cash **495,714.44**, equity **989,519.22** at the close (equity curve). Account `DUQ200898`, paper, AUD. ⚠️ **THE ENTRY GATE IS NOW THE AGGREGATE CAP, not the position count**: 9 of 10 held, but aggregate risk-at-stop ~7.6% against a 5.00% cap, so the governor refused **all 449** entry decisions on 11 September (`governor.py:312` rejects at `headroom <= 0`). Nothing enters until the aggregate falls below 5% |
+| Broker | **IB GATEWAY on 4002. TWS IS CLOSED.** ✅ **MEASURED 11 September 21:32**: `ibgateway` started 08:29:03 is the sole listener on 4002, nothing on 7496/7497. ⚠️ **This row said "TWS on 7497, as at 1 September" until 10 September and was wrong** - the 1 September change was reverted at some point and the row was never re-measured. Gateway has delayed market data and no GUI; TWS has the GUI and no API market data, so neither endpoint is sufficient alone. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
+| Kill switch | ✅ **CLEAR** - `kill_switch.json` reads `tripped: false` (read 11 September 21:32), and the 11 September session had **0 kill-switch mentions and 0 reconciliation mismatches**, including through BHP's broker-side stop fill. The 10349 fix (M173) is still **UNPROVEN LIVE** - BHP was a resting stop, not an app-driven market SELL |
+| Ledgers | **12 rows = EIGHT POSITIONS** (BHP added 11 September), so the sizer's gate is at **8 of 20**. sha256 **`88C25985…`** (supersedes `93C38C09…`). ⚠️ **EVERY ROW'S COSTS ARE WRONG UNTIL THE M175 REPAIR RUNS** - entry commission charged twice (price AND cost), modelled slippage charged on real fills, the floor charged per absorbed piece - and the file **fails its own `audit_closed_trades` with 15 findings** (12 a rounding bug in `as_row`, 3 from the 26 August LOV script). The dry run on 11 September: net P&L across the 12 rows **−4,065.73 → −3,495.02** |
+| Local LLM | **LM Studio on port 1234**, serving `openai/gpt-oss-20b`. The live `.env` was changed 11 September 09:56 from `http://localhost:8000` to `QAT_LOCAL_LLM_BASE_URL=http://localhost:1234/v1` (backup `.env.bak-20260911-095650` beside it) at the operator's request; the 09:57 relaunch reached it. The engine is chosen ONCE at launch - if LM Studio is down then, the AI panels run on the demo engine all session (the trading path has no LLM in it) |
 
 
 ### The account is AUD-base. Verified, not assumed.
@@ -72,21 +73,106 @@ with USD 1,000,000"* and now carries a correction at that sentence, because on
 risk model divided USD by AUD and undersized every position by 28%. **The
 account's own tags are the authority on its currency, not a plan document.**
 
-### The session, as it finished
+### The session, as it finished (11 September)
 
-Stood down cleanly at 16:00:19; daily and weekly reports written at 16:02. **No
-trades, no signals, no sizing decisions.** Equity +$109.93 (+0.01%) with cash
-unchanged — **accrued interest**, queried from the account rather than guessed
-at. An earlier note here called it FX drift; the account is single-currency AUD,
-so there is no FX to drift.
+Launched 09:47, relaunched 09:57 for the LLM port change, activated 10:00:02,
+stood down 16:00:05, daily report 16:03:31. The app was closed some time after
+its last resting-order scan at 16:58.
 
-31 of 94 symbols were armed all afternoon and **none crossed**. At the close the
-nearest were A2M +0.29%, NHF +0.48%, ANZ +0.59%. The market declined to
-cooperate; nothing was wrong.
+* **BHP.AX stopped out in the opening auction.** The STP at 60.45 filled at
+  **60.40** (793 shares, order 750830217) at 10:00:00; IBKR cancelled the OCA
+  target, which is the `Error 202, reqId 668: Order Canceled` at 10:00:00 - a
+  sibling cancel, not a fault. The app absorbed it at the next reconciliation
+  poll, **10:03:22**, with **no kill-switch trip and no mismatch**, and the scan
+  went to 18 legs across 9 symbols. Cash reconciles exactly: +47,855.05 =
+  793 x 60.40 - 42.15 commission.
+* **Regime classified after 1,395 s: `sideways`, exposure scalar 0.70.**
+* **449 entry decisions, all refused** on the aggregate cap (IAG 238, COL 120,
+  CPU 86, AGL 5) - see the Account row.
+* The ERROR count at the open (114) is the known yfinance publication window,
+  recovered 10:20:32 - judge by content, never by count.
+* **No out-of-app trades happened.** The operator announced a manual-trading
+  test and then did not trade; a read-only broker probe at 19:45 showed BHP's
+  stop as the day's ONLY execution.
 
-The only ERRORs were an IBKR 1100/1102 blip at 14:17 that self-healed in 29
-seconds, with equity sampling running straight through it. **The 1102 is the
-RECOVERY, logged at ERROR** — judge by content, never by count.
+---
+---
+---
+
+## 11 SEPTEMBER: M175 - THE LEDGER'S COSTS WERE NEVER THE COMMISSION
+
+**Status: written, reviewed, on PR `m175-fill-basis`, NOT merged, NOT deployed,
+the repair NOT run.** Spec:
+`docs/superpowers/specs/2026-09-11-fill-basis-and-commission-check-design.md`.
+Plan, with the operator runbook at its end:
+`docs/superpowers/plans/2026-09-11-fill-basis-and-commission-check.md`.
+
+### What was measured (item 3, "A & B")
+
+* **IBKR's commission equals the model on 17 of 17 logged orders**, to the cent
+  (`max(6.60, 8.8 bp)`, joined from the 24-25 August `commissionReport` lines).
+  The commission was never the defect.
+* **M65 wrote IBKR's commission-INCLUSIVE `avgCost` over every entry at every
+  restart** (1 bp tolerance vs 8.8 bp commission) - undoing M70's correct fill
+  for JHX.AX (31 Aug) and COH.AX (10 Sep). Entry commission was charged twice:
+  in the price and in `entry_cost`. **All 9 open records carry it now.**
+* **Modelled slippage (5 bp) was charged on fills that already contain it** -
+  live, and in replays (`SimulatedBroker` slips its prices too).
+* **The floor was charged per absorbed piece** (LOV's one exit paid four).
+* BHP was the first row ever closed with `reference_price`, and its slippage
+  read **+0.0464**; the truth is **−0.01** (fill 64.07, an exact tick).
+* **The ledger file failed its own audit** - see the Ledgers row. `as_row` now
+  derives every column from exactly what it stores, which affects every write.
+* A read-only probe as a SECOND client got BHP's execution with commission 0.0
+  and no report: commissions arrive only to a connected client, live.
+
+### What M175 does
+
+`CostModel.charge()` (commission only) is what the ledger records, one floor
+per order; slippage is measured (`entry_slippage`), never charged. Entry records
+carry `price_source`; M65 never overwrites a `"fill"` and de-commissions
+avgCost when it corrects - but SKIPS (with a warning) when that would take the
+floor branch at the current quantity. `IBAdapter` totals `commissionReportEvent`
+per order and `CommissionAuditor` writes `commission_checks.csv`
+(`COMMISSION VERIFIED` / `COMMISSION DISAGREES`) - the model stays
+authoritative, IBKR's figure checks it. `scripts/repair_fill_basis.py`
+rewrites the existing rows and records from logged evidence.
+
+### ⚠️ THE DEPLOY IS A SEQUENCE, AND THE ORDER MATTERS
+
+After the PR merges, after a close, with the app closed and IB Gateway up:
+**build + sign → `deploy.ps1` dry run → operator OK → `deploy.ps1 -Apply` (it
+does NOT launch the app) → `repair_fill_basis.py` dry run → operator reads it →
+`--apply` → operator launches.**
+
+* **Deploy BEFORE the repair**, so the old build is never installed over
+  repaired records (M174's M65 would re-inflate them at its first startup).
+* **The repair is ONE-SHOT.** It refuses once it has run (backups or `"fill"`
+  stamps present) and once any `Build: M175`+ line is in the log.
+* **Expected dry run** (measured with the app closed, 11 September): 12 rows,
+  `audit: clean`, net −4,065.73 → −3,495.02; open records: **4 corrected from
+  logged fills (BOQ ASX SUN ANZ), 5 left for M65 (WOW JHX TWE TAH COH)**; TNE
+  the only `[FRAGMENT]`; SEK and BHP the only formula-sourced rows; BHP slip
+  −0.0100. Any NEW row since then is a real change - read it.
+* **At first launch, M65 lines for WOW, JHX, TWE, TAH and COH are EXPECTED**
+  (the new M65 converts their avgCost). Read them; any other symbol needs a
+  reason. Read back `Build: M175` off the log.
+* If the deploy fails AFTER the repair was applied, restore both
+  `.bak-fill-basis-*` files before any launch.
+* **The evidence lives in rotated logs** (`qat.log` .. `qat.log.5`, the 24-25
+  August `execDetails` lines). Measured 11 September: `qat.log` is 4.42 of
+  ~5.0 MB, and the next rotation deletes only `qat.log.6`, which holds none of
+  it. Do not clear the logs before the repair has run.
+
+### Accepted, with reasons - not open defects
+
+* Self-check failure refuses the WHOLE repair (spec, approved). A reviewer
+  suggested per-row degradation; not taken. If the dry run refuses, it names
+  the row - decide then.
+* An exit order absorbed SMALLER than its ledger rows is charged as a whole
+  order, unflagged - absent from the live data, and the repair cannot run again.
+* Commit `cf01c9d`'s trailer reads "Claude Sonnet 5" (a subagent's own
+  instruction). Cosmetic.
 
 ---
 ---
@@ -6225,8 +6311,9 @@ READ THE STATE FIRST, and trust it over anything in this prompt:
     & "C:\Claude Programming\scripts\session_check.ps1"     # NO ARGUMENTS, EVER
     .\.venv\Scripts\python.exe scripts\handoff_state.py
 
-Then read docs\HANDOFF.md from "Where this stands", and the 10 SEPTEMBER AUDIT
-section before touching the outstanding list.
+Then read docs\HANDOFF.md from "Where this stands" - including "11 SEPTEMBER:
+M175" BEFORE any merge, build or deploy - and the 10 SEPTEMBER AUDIT section
+before touching the outstanding list.
 
 ⚠️ POWERSHELL for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal -
 including Python that only READS it, and anything that builds Settings(). The
@@ -6240,7 +6327,8 @@ Bash sandbox serves a frozen snapshot and does NOT error. The log is at
 
 ⚠️ DO NOT REFERENCE ALPACA. Broker IBKR, market ASX, price source yfinance.
 
-⚠️ PUSHING IS ALLOWED - batch it. 25 commits went up 10 September.
+⚠️ PUSHING IS ALLOWED - batch it. A push AND a pull request each trigger CI.
+⚠️ CHECK CI AFTER PUSHING: gh run list --limit 3.
 
 ⚠️ DEPLOY WITH scripts\deploy.ps1 (dry run, then -Apply). ASK before -Apply.
 BUILD FIRST AND CHECK THE DIST HASH MOVED.
@@ -6250,128 +6338,106 @@ BUILD FIRST AND CHECK THE DIST HASH MOVED.
 ⚠️ CLOSE THE APP FIRST, THEN THE BROKER.
 ⚠️ COMMIT BEFORE SABOTAGING A RAIL.
 
-THE STATE - measured 10 September 16:16, after the close
+THE STATE - measured 11 September 21:32, after the close, app CLOSED
 
-HEAD 000f07e, tree clean, NOTHING UNPUSHED, CI GREEN. Suite 3,575 passed /
-26 skipped. ruff, black, mypy src, bandit clean.
+⚠️ **M175 IS WRITTEN AND REVIEWED BUT NOT MERGED AND NOT DEPLOYED.** It lives on
+branch `m175-fill-basis`, open as a PR into master (`gh pr view
+m175-fill-basis`). The operator chose a PR over a local merge on 11 September.
+Suite on the branch: 3,677 passed / 26 skipped; ruff, black, mypy src, bandit
+clean. Check CI: `gh run list --limit 3`. Local `master` is 2 docs commits
+ahead of `origin/master` (the M175 spec and plan) - both ride in the PR.
 
-✅ **M174 IS DEPLOYED AND READ BACK.** Installed 10 September 16:26, sha256
-`0DB8E1BA…`, signature Valid, dist hash confirmed moved. Read off the app's own
-log at 16:27:14: `Build: M174 (33d0ef6, built 10/09/2026 16:20:34 AEST,
-packaged)`. Rollback: `C:\QuantAdvisoryTerminal.bak-97c536b-20260910-1626`.
+✅ **DEPLOYED: M174 (`33d0ef6`)**, unchanged since 10 September 16:26, read back
+off the log at the 11 September 09:57:19 launch. Rollback:
+`C:\QuantAdvisoryTerminal.bak-97c536b-20260910-1626`.
 
-⚠️ **ONE UNDEPLOYED COMMIT AFTER IT** (`000f07e`) with NO milestone bump, so a
-build would still call itself M174. It fixes a FALSE "EARNINGS UNREADABLE for N
-held symbol(s)" warning that M174 emits at every startup - the protection sweep
-runs ~4 minutes before the earnings calendar warms. Cosmetic and self-clearing;
-left for the next ordinary deploy on purpose. handoff_state.py derives all of
-this - do not hardcode it.
+⚠️ **THE M175 DEPLOY IS A SEQUENCE - read "11 SEPTEMBER: M175" in HANDOFF.md
+before starting it.** After the PR merges (`git pull` on master), after a close,
+app closed, Gateway up: build + sign → deploy dry run → OPERATOR OK →
+`deploy.ps1 -Apply` (does not launch) → `repair_fill_basis.py` dry run →
+operator reads it → `--apply` → operator launches. Deploy BEFORE repair. The
+repair is ONE-SHOT and refuses after any `Build: M175`+ line exists. Expected
+first-launch M65 lines: WOW JHX TWE TAH COH - read them, do not treat them as
+failures.
 
-BROKER: IB GATEWAY on 4002. TWS CLOSED. ✅ Measured 10 September, not inferred:
-ibgateway is the sole listener on 4002, nothing on 7496/7497, QAT_IBKR_PORT=4002.
-Account DUQ200898, paper, AUD. Gateway has delayed data and no GUI.
+BROKER: IB GATEWAY on 4002 (started 08:29:03 11 Sep), sole listener, nothing on
+7496/7497. Account DUQ200898, paper, AUD.
 
-TEN POSITIONS, ALL PROTECTED, 20 resting legs, every one tif='GTC' - VERIFIED AT
-THE BROKER 10 September: ANZ 640, ASX 1314, BHP 793, BOQ 13586, COH 363,
-JHX 1097, SUN 3192, TAH 64229, TWE 10412, WOW 1098.
-Cash 447,859.39, equity 993,996.26 (16:03, from IBKR's own account values).
+NINE POSITIONS, ALL PROTECTED, 18 resting legs - READ AT THE BROKER 11 Sep
+19:45: ANZ 640, ASX 1314, BOQ 13586, COH 363, JHX 1097, SUN 3192, TAH 64229,
+TWE 10412, WOW 1098. BHP 793 STOPPED OUT at the 11 Sep open, 60.40 vs a 60.45
+stop, absorbed 10:03:22 with no trip. Cash 495,714.44, equity 989,519.22.
 
-⚠️ THE BOOK IS AT THE CAP. max_concurrent_positions=10 and the governor refuses
-at >=, so NOTHING ENTERS until something exits. That also means the M174 gate
-and orphan-rail fixes cannot be exercised by an entry.
+⚠️ THE ENTRY GATE IS THE AGGREGATE CAP NOW. 9 of 10 held, but aggregate
+risk-at-stop ~7.6% vs the 5.00% cap, so all 449 entry decisions on 11 Sep were
+refused. Nothing enters until it falls below 5%. (session_check.ps1's footer
+still says the position count is the gate - it is not, today.)
 
-✅ KILL SWITCH CLEAR. Reset by the operator 09:11:05 and NO TRIP ALL DAY.
+✅ KILL SWITCH CLEAR - kill_switch.json tripped:false; no trip and no
+reconciliation mismatch all 11 Sep.
 
-LEDGER: 11 rows = SEVEN POSITIONS, so the sizer's gate is at 7 of 20.
-sha256 93C38C09... ⚠️ The old CB4703C7... is superseded - four rows were
-repaired 10 September (entry-price precision). One LOV row has EMPTY costs.
+LEDGER: 12 rows = EIGHT POSITIONS (sizer gate 8 of 20). sha256 88C25985...
+⚠️ Every row's costs are wrong until the M175 repair runs, and the file fails
+its own audit_closed_trades with 15 findings. Dry run: net -4,065.73 ->
+-3,495.02.
 
-TODAY'S TRADING: COH.AX ENTERED 363 @ 135.736 at 10:34 (sized 815, trimmed by
-the 10%-of-spendable cap; regime_label "recovery", scalar 0.9). NO EXITS.
-Session stood down 16:00:08, daily report written 16:04:09.
+LOCAL LLM: LM Studio on port 1234 (.env changed 11 Sep 09:56 from 8000;
+backup .env.bak-20260911-095650). Chosen ONCE at launch - if LM Studio is down
+then, the AI panels are demo all session. The trading path has no LLM.
 
-WHAT M174 CONTAINS - ALL OF IT NOW LIVE
- 1. Pre-flight compares the calendar against IBKR (ASX auctions Tasks 4+5)
- 2. ⚠️ The pre-flight's FEED CHECK had never once run to completion
- 3. The macro AI's fabricated risk caveat is now counter-checked
- 4. Blotter: one order no longer renders as two rows
- 5. Five missing company names (ALX CWY SDF SOL ANN)
- 6. Orphan rail can tell an entry in flight from an orphan
- 7. ⚠️ NO ENTRIES until the regime engine has read the market (was a
-    hardcoded `sideways` default for ~20 min every open)
- 8. Daily reports can be REGENERATED, and show this week newest-first
- 9. P&L precision: prices store at 8dp, not 4
-10. Earnings detection on held positions; corporate-action banner says its
-    standing condition ONCE
+OUTSTANDING. ⚠️ Only items 3 and 7 were re-checked 11 September; the rest are
+carried from the 10 September audit - verification has a shelf life, check the
+code before acting on any of them.
 
-OUTSTANDING - ✅ AUDITED AGAINST THE CODE 10 SEPTEMBER. Six of the previous
-eleven were wrong. This list is verified; verification has a shelf life.
-
-1. VERIFY M173's TIF FIX AGAINST A REAL MARKET EXIT. Still unproven after TWO
-   sessions - it needs an app-driven market SELL. The oldest unverified thing
-   here. Watch for: no 10349, no kill-switch trip, resting-order scan clean
-   immediately after the fill.
+1. VERIFY M173's TIF FIX AGAINST A REAL MARKET EXIT. Still unproven - BHP's
+   exit on 11 Sep was a RESTING STOP, not an app-driven market SELL. Watch
+   for: no 10349, no kill-switch trip, resting-order scan clean after the fill.
 2. ⚠️ THE ORPHAN RAIL STILL CANNOT CANCEL, by choice.
    resting_order_cancel_enabled is False (M141, item 23).
-3. A & B - THE LEDGER'S COSTS AND SLIPPAGE ARE MODELLED WHILE THE BROKER'S
-   ACTUALS ARE DISCARDED. One job, not two. IBKR sends commissionReport events
-   with real figures and nothing consumes them; entry_slippage and
-   reference_price are populated on 0 of 11 rows. Operator scheduled: Friday.
-4. WEEKLY OPEN/CLOSE TO BE SAVED, once the machinery is proven. ✅ Source
-   settled: the DAILY BARS already warm-started, NOT intraday ticks - the feed
-   goes idle at 16:00:08 and the app never sees the close.
-5. M41 HOLD-THROUGH EARNINGS - a POLICY decision, not a build. Detection ships
-   in M174. Exit / trim / accept are all available (trimming is NOT blocked -
-   that claim came from a stale item). ⚠️ Nobody has measured how many of our
-   ~40 announcements a year actually gapped.
-6. STAGE 4 REGIME RE-SOURCING. ✅ The ablation ANSWERED it: vix_level moves
-   213 of 249 labels (86%), credit_spread 104 (42%), yield_curve_slope 75 (30%)
-   - all three US columns beat the ASX-derived breadth control at 27%. The
-   label is DOMINATED by American data. ⚠️ The open question is DATA, not need:
-   M170 measured the AU FRED series as monthly and 99 days stale.
-7. REACH 20 CLOSED TRADES. At SEVEN. Book at cap, so nothing moves until
-   something exits. Everything about edge, cost and sizing is partly
-   speculative until then.
+3. A & B - ✅ BUILT AS M175 (11 Sep), NOT DEPLOYED. Remaining: merge the PR,
+   run the deploy sequence, then watch for the first `COMMISSION VERIFIED` on
+   an app-transmitted order (the positive control) and whether a broker-side
+   stop ever produces one (unmeasured - a second client gets no commission).
+4. WEEKLY OPEN/CLOSE TO BE SAVED, once the machinery is proven. Source: the
+   DAILY BARS, not intraday ticks - the feed goes idle at 16:00.
+5. M41 HOLD-THROUGH EARNINGS - a POLICY decision, not a build. Detection
+   shipped in M174. ⚠️ Nobody has measured how many of our ~40 announcements
+   a year actually gapped.
+6. STAGE 4 REGIME RE-SOURCING. The label is dominated by US data (vix_level
+   moves 86% of labels). The open question is DATA: the AU FRED series are
+   monthly and 99 days stale (M170).
+7. REACH 20 CLOSED TRADES. At EIGHT. The aggregate cap (not the position
+   count) now blocks every entry, so nothing new closes until protection or
+   targets close what is held.
 8. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window.
 9. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - measured 1 September, not acted
    on deliberately.
-10. M39 CORPORATE ACTIONS - ✅ CLOSED 10 September, DECIDED not abandoned.
-    Accepted: a split on a held ASX position will not be seen before the
-    ex-date. Reopen on any forward split among held names, or a return to US
-    symbols. Do not re-litigate.
-11. IBKR NEWS - ✅ CLOSED 10 September. Not retrievable over the API here
-    (measured with a positive control) and the Dow Jones storage licence blocks
-    it anyway. Stay on yfinance. Do not re-run the probes.
+10. M39 CORPORATE ACTIONS - CLOSED 10 Sep, decided. Do not re-litigate.
+11. IBKR NEWS - CLOSED 10 Sep. Stay on yfinance. Do not re-run the probes.
 
-HOUSEKEEPING: NINE rollback directories, 3.53 GB, against 343.2 GB free -
-counted 10 September 16:16. Ask before deleting; each is the only rollback path
-for its build.
+HOUSEKEEPING: TEN rollback directories, 3.92 GB, against 340.5 GB free -
+counted 11 September 21:32. Ask before deleting; each is the only rollback path
+for its build. The M175 deploy will add an eleventh.
 
-WHAT 10 SEPTEMBER ESTABLISHED
+WHAT 11 SEPTEMBER ESTABLISHED
 
-⚠️⚠️ SIX OF ELEVEN OUTSTANDING ITEMS WERE WRONG, and acting on them cost real
-time three times. Item 11 was not merely stale - it was FALSE, and it defamed a
-correct cost model: the "57% commission overestimate" compared a modelled TOTAL
-COST against an actual COMMISSION. The modelled commission is 33.88 and IBKR
-charged 33.88. **Check the code before acting on any heading here.**
+⚠️ THE ITEM WAS SCOPED WRONG, AND MEASURING FIRST FOUND IT. "Record the actual
+commission" was the plan. Joining 938 logged commissionReport lines showed the
+commission was exact on 17 of 17 orders - the defects were the price basis
+(M65 writing commission-inclusive avgCost), slippage charged twice, and the
+floor per piece. **Measure the thing before building the fix for it.**
 
-⚠️ THE SAME HABIT PRODUCED FIVE SEPARATE DEFECTS: a fix applied to one branch
-and not its twin. The TIF on brackets but not market orders. The orphan rail on
-protection but not entry. A widening guarded for sectors but not names. Two
-audit conclusions written broader than what they tested. And a gate verified on
-one package and reported as done, which then failed ten tests in the full suite.
-**The question that catches all of them is "where else does this apply?"**
+⚠️ A GUARD THAT PASSES ITS OWN DATA CAN STILL BE WRONG ON THE REAL DATA. The
+repair's self-check, as planned, would have REFUSED tonight: it converted TNE's
+avgCost on the ledger's 60-share fragment instead of the 3,051-share order. And
+the repaired file would have failed `audit_closed_trades` on rounding - found
+only because a reviewer ran the pure functions against the live rows. Both
+passed every fixture. **Run the gate on the real shape before trusting it.**
 
-⚠️ ABSENCE IS ONLY EVIDENCE ONCE THE FIXTURE CAN PRODUCE PRESENCE. Six ASX
-symbols returning zero news proved nothing until AAPL and MSFT also returned
-zero - that is what moved the cause from "no ASX coverage" to "the path is
-shut". The same rule caught a sabotage that would otherwise have passed.
+⚠️ THE LEDGER FAILED ITS OWN AUDIT AND NOTHING SAID SO. 15 findings, some from
+every ordinary write (`as_row` rounded what it stored but derived from what it
+did not). The audit exists; nothing runs it on a schedule.
 
-⚠️ AN ASPIRATION BECAME A PREMISE IN THREE FILES WITHIN THE HOUR. A 60-day
-holding horizon was mentioned, used to justify a live trading-gate change and
-two test docstrings, then withdrawn by the operator. **The current hold strategy
-is unchanged: 10-day minimum, 30-day time stop.**
-
-✅ PRECISION IS NOT ACCURACY. gross_pnl is now exact to the cent while the cost
-side remains an estimate, because the broker's real commissions are discarded.
-Being exact about the wrong number is not progress.
+✅ AN ERROR THAT LOOKS ALARMING CAN BE THE MACHINERY WORKING. `Error 202 ...
+Order Canceled` at 10:00:00 was IBKR cancelling BHP's target because its stop
+filled - read the broker before reading the log line as a fault.
