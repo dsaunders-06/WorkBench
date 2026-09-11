@@ -950,13 +950,17 @@ def test_an_order_with_no_known_total_is_skipped_not_guessed(adapter):
     assert seen == []
 
 
-def test_a_listener_that_raises_never_escapes_into_ib_async(adapter):
+def test_a_listener_that_raises_never_escapes_into_ib_async(adapter, caplog):
     def boom(_: BrokerCommission) -> None:
         raise RuntimeError("listener failed")
 
     adapter.set_commission_listener(boom)
 
+    # Reaching the assertion at all is half the test: nothing propagated.
     adapter._on_ib_commission(_trade(793), _fill("e1", 793, 60.40), _report("e1", 42.15))
+
+    assert "Could not tally an IBKR commission report" in caplog.text
+    assert "listener failed" in caplog.text  # the traceback was kept, not swallowed
 ```
 
 - [ ] **Step 2: Run to verify they fail**
