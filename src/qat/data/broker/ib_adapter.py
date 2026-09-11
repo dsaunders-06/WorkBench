@@ -23,9 +23,10 @@ import asyncio
 import logging
 import math
 import re
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from ib_async import ExecutionFilter
 
@@ -33,6 +34,7 @@ from qat.config import Settings
 from qat.data.broker.adapter import (
     AccountBalances,
     AccountSummary,
+    BrokerCommission,
     BrokerFill,
     Order,
     Position,
@@ -82,13 +84,13 @@ def _finite_quote(ticker: object) -> dict[str, float]:
     downstream - the shape of the original defect.
     """
     quote: dict[str, float] = {}
-    for field in ("bid", "ask", "last"):
+    for attr in ("bid", "ask", "last"):
         try:
-            value = float(getattr(ticker, field, float("nan")))
+            value = float(getattr(ticker, attr, float("nan")))
         except (TypeError, ValueError):
             continue
         if math.isfinite(value) and value > 0:
-            quote[field] = value
+            quote[attr] = value
     return quote
 
 
@@ -134,6 +136,45 @@ _TERMINAL_ORDER_STATUSES = frozenset({"filled"})
 # prescribed for this defect before it fired. See `_legs_still_working`.
 _CANCEL_CONFIRM_POLLS = 3
 _CANCEL_CONFIRM_INTERVAL_SECONDS = 0.7
+
+# IBKR's execution sides - the same strict mapping `from_ib_fill` applies.
+_COMMISSION_SIDES: dict[str, Literal["buy", "sell"]] = {"BOT": "buy", "SLD": "sell"}
+
+# IBKR reports a commission it does not have as UNSET_DOUBLE (~1.8e308).
+# Anything at or above this is "no figure", never a charge.
+_UNUSABLE_COMMISSION = 1e9
+
+
+@dataclass
+class _CommissionTally:
+    """One order's commission reports so far (M175)."""
+
+    symbol: str
+    side: Literal["buy", "sell"]
+    total_quantity: float
+    shares: float = 0.0
+    notional: float = 0.0
+    commission: float = 0.0
+    currency: str = ""
+    usable: bool = True
+    exec_ids: set[str] = field(default_factory=set)
+
+
+def _order_total_quantity(trade: object) -> float | None:
+    """The order's full size, or None when the report cannot say.
+
+    `order.totalQuantity` first; `filled + remaining` from the status second.
+    None means the check cannot tell when the order is complete - which is
+    reported, never guessed.
+    """
+    order = getattr(trade, "order", None)
+    total = float(getattr(order, "totalQuantity", 0.0) or 0.0)
+    if total > 0:
+        return total
+    status = getattr(trade, "orderStatus", None)
+    filled = float(getattr(status, "filled", 0.0) or 0.0)
+    remaining = float(getattr(status, "remaining", 0.0) or 0.0)
+    return filled + remaining if filled + remaining > 0 else None
 
 
 class ReadOnlyModeError(Exception):
@@ -237,6 +278,11 @@ class IBAdapter:
         # existing single-order path is untouched; group operations - cancel,
         # and repricing the right leg - use this.
         self._ib_groups: dict[str, list[object]] = {}
+
+        # M175. Where a completed order's commission goes; None until wired.
+        self._commission_listener: Callable[[BrokerCommission], None] | None = None
+        self._commission_tallies: dict[str, _CommissionTally] = {}
+        self._commission_unknown_total: set[str] = set()
 
     async def connect(self) -> None:
         """Connect, retrying a refused port for a bounded time (M125).
@@ -360,6 +406,14 @@ class IBAdapter:
                     "silent-non-delivery shape that let Error 383 vanish on 3 September, and "
                     "is a live-order-path regression, not routine degradation."
                 )
+
+            # M175. The ONLY place IBKR's own commission arrives - a second
+            # client's reqExecutions returned BHP's stop with commission 0.0 on
+            # 11 September. Same getattr rule as errorEvent, and subscribed on
+            # this success path only, so a reconnect adds no duplicate.
+            commission_event = getattr(self.ib_client, "commissionReportEvent", None)
+            if commission_event is not None:
+                commission_event += self._on_ib_commission
             return
 
         logger.error(
@@ -806,21 +860,21 @@ class IBAdapter:
         and "on tick" were the same thing. On the ASX between $0.10 and $2.00
         the step is half a cent, and an ATR-derived stop lands off it.
         """
-        for field in ("limit_price", "stop_price", "take_profit_price"):
-            price = getattr(order, field)
+        for attr in ("limit_price", "stop_price", "take_profit_price"):
+            price = getattr(order, attr)
             if price is None:
                 continue
-            rounded = round_to_tick(price, self.settings.market, self._price_side(order, field))
+            rounded = round_to_tick(price, self.settings.market, self._price_side(order, attr))
             if rounded != price:
                 logger.info(
                     "%s %s moved onto the %s tick: %s -> %s",
                     order.symbol,
-                    field,
+                    attr,
                     self.settings.market,
                     price,
                     rounded,
                 )
-                setattr(order, field, rounded)
+                setattr(order, attr, rounded)
 
     async def place_order(self, order: Order) -> Order:
         self._check_not_read_only()
@@ -1196,6 +1250,87 @@ class IBAdapter:
             if any(getattr(leg, "orderId", None) == req_id for leg in group):
                 return app_id
         return None
+
+    def set_commission_listener(self, listener: Callable[[BrokerCommission], None]) -> None:
+        """Where each completed order's commission is handed (M175)."""
+        self._commission_listener = listener
+
+    def _on_ib_commission(self, trade: object, fill: object, report: object) -> None:
+        """ib_async's `commissionReportEvent`. Never raises - like
+        `_on_ib_error`, it runs inside the library's own dispatch, where an
+        exception would vanish. A check that fails costs a check, not an order.
+        """
+        try:
+            self._tally_commission(trade, fill, report)
+        except Exception:  # noqa: BLE001 - see docstring
+            logger.exception(
+                "Could not tally an IBKR commission report - that order's commission "
+                "goes unchecked"
+            )
+
+    def _tally_commission(self, trade: object, fill: object, report: object) -> None:
+        execution = getattr(fill, "execution", None)
+        contract = getattr(fill, "contract", None)
+        if execution is None or contract is None:
+            return
+        side = _COMMISSION_SIDES.get(str(getattr(execution, "side", "")).upper())
+        order_id = str(getattr(execution, "permId", 0) or "")
+        exec_id = str(getattr(execution, "execId", "") or "")
+        if side is None or not order_id or not exec_id:
+            return
+        tally = self._commission_tallies.get(order_id)
+        if tally is None:
+            total = _order_total_quantity(trade)
+            if total is None:
+                if order_id not in self._commission_unknown_total:
+                    self._commission_unknown_total.add(order_id)
+                    logger.info(
+                        "IBKR order %s reported no total quantity, so the commission check "
+                        "cannot tell when it is complete - skipped, not guessed",
+                        order_id,
+                    )
+                return
+            tally = _CommissionTally(
+                symbol=from_ibkr(str(getattr(contract, "symbol", "")), self.settings.market),
+                side=side,
+                total_quantity=total,
+            )
+            self._commission_tallies[order_id] = tally
+        if exec_id in tally.exec_ids:
+            return
+        tally.exec_ids.add(exec_id)
+        shares = float(getattr(execution, "shares", 0.0) or 0.0)
+        tally.shares += shares
+        tally.notional += shares * float(getattr(execution, "price", 0.0) or 0.0)
+        commission = float(getattr(report, "commission", math.nan))
+        if math.isfinite(commission) and 0.0 <= commission < _UNUSABLE_COMMISSION:
+            tally.commission += commission
+        else:
+            tally.usable = False
+        tally.currency = str(getattr(report, "currency", "") or tally.currency)
+        if tally.shares + 1e-9 < tally.total_quantity:
+            return
+        del self._commission_tallies[order_id]
+        if not tally.usable:
+            logger.info(
+                "IBKR sent no usable commission for part of order %s (%s) - its commission "
+                "check is skipped",
+                order_id,
+                tally.symbol,
+            )
+            return
+        if self._commission_listener is not None:
+            self._commission_listener(
+                BrokerCommission(
+                    order_id=order_id,
+                    symbol=tally.symbol,
+                    side=tally.side,
+                    quantity=tally.shares,
+                    notional=tally.notional,
+                    commission=tally.commission,
+                    currency=tally.currency,
+                )
+            )
 
     def _on_ib_error(
         self,
