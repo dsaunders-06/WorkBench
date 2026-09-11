@@ -14,6 +14,12 @@ Evidence, never blanket:
     SELF_CHECK_DOLLARS over the order, or nothing is written.
 
 Costs are recomputed on EVERY row - option A needs no evidence.
+
+ONE RUN ONLY. After a repair the stored entries no longer match the %g strings
+M65 printed, so a second run would find no evidence for a fragment, drop its
+no-floor treatment and charge it whole floors; and once M175 is deployed, M65's
+own log lines would be read as fresh inflation and deflate prices a second
+time. `prior_repair` detects a completed repair so the script can refuse.
 """
 
 from __future__ import annotations
@@ -21,16 +27,24 @@ from __future__ import annotations
 import json
 import re
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from qat.data.symbols import from_ibkr
 from qat.domain.backtester.costs import CostModel
-from qat.domain.performance.trades import ClosedTrade, _reseeded
+from qat.domain.performance.trades import ClosedTrade
 
 SELF_CHECK_DOLLARS = 0.25
+
+_BACKUP_PATTERNS = (
+    "closed_trades.csv.bak-fill-basis-*",
+    "open_position_entries.json.bak-fill-basis-*",
+)
+_SEED_TOLERANCE = 1e-4
+"""Relative. A seed stored at 4 dp (RHC.AX's 44.4523 for 44.45230503) sits
+5e-6 from its entry, and 4-dp rounding never moves a price more than 5e-5."""
 
 _M65_RE = re.compile(
     r"Corrected the recorded entry price for (?P<body>.+?) to what the broker charged"
@@ -78,6 +92,33 @@ class RecordChange:
     before: float
     after: float
     evidence: Evidence
+
+
+def prior_repair(data_dir: Path) -> str | None:
+    """Why this data dir has already been repaired, or None if it has not.
+
+    Evidence of a repair: a backup the script's `--apply` made, or an open
+    record stamped `"price_source": "fill"` (only the repair and an M175 build
+    write that stamp - either way the stored prices are no longer M65's).
+    """
+    for pattern in _BACKUP_PATTERNS:
+        backups = sorted(p.name for p in data_dir.glob(pattern))
+        if backups:
+            return f"{data_dir / backups[0]} exists - the fill-basis repair was already applied"
+    entries = data_dir / "open_position_entries.json"
+    if entries.exists():
+        records = json.loads(entries.read_text(encoding="utf-8"))
+        stamped = sorted(
+            symbol
+            for symbol, record in records.items()
+            if isinstance(record, dict) and record.get("price_source") == "fill"
+        )
+        if stamped:
+            return (
+                f"{entries} already stamps {', '.join(stamped)} with "
+                f'"price_source": "fill" - those prices are already fills'
+            )
+    return None
 
 
 def read_log_messages(log_dir: Path) -> list[str]:
@@ -161,12 +202,42 @@ def evidence_for(
             f"refusing to write anything"
         )
     derived = costs.fill_price_from_average_cost(stored_price, quantity)
+    # With no logged order, the caller's quantity is the only size there is -
+    # and the floor branch depends on it. Above the floor the answer is the
+    # same at any size (avgCost / (1 + rate)); ON the floor branch it is only
+    # right if this quantity really was the whole order. A fragment whose entry
+    # order rotated out of the logs looks exactly like a small order, and
+    # there is nothing here to tell them apart - so refuse rather than guess.
+    if derived * quantity * costs.commission_bps / 10_000.0 < costs.min_commission:
+        raise SelfCheckFailed(
+            f"{symbol}: no logged buy, and at quantity {quantity:g} the formula takes the "
+            f"${costs.min_commission:.2f} floor branch ({stored_price} -> {derived:.8f}) - "
+            f"that is only right if {quantity:g} was the whole entry order, and a fragment "
+            f"whose order rotated out of the logs cannot be told apart - refusing to write anything"
+        )
     return Evidence(derived, "IBKR avgCost / (1 + commission rate)", None)
 
 
 def _proportional(costs: CostModel, notional: float) -> float:
     """The rate without the floor - for a fragment of an order of unknown size."""
     return abs(notional) * (costs.commission_bps + costs.third_party_bps) / 10_000.0
+
+
+def _reseed(
+    current: float | None,
+    seed: float,
+    actual: float,
+    pick: Callable[[float, float], float],
+) -> float | None:
+    """`trades._reseeded`, except a seed stored at LOWER PRECISION is still the
+    seed. RHC.AX's best_price is 44.4523 for an entry of 44.45230503; exact
+    equality misses it, and pick(max) then keeps the inflated average - a price
+    that never traded - as the trade's best."""
+    if current is None:
+        return actual
+    if abs(current - seed) <= _SEED_TOLERANCE * abs(seed):
+        return actual
+    return pick(current, actual)
 
 
 def repair_closed_rows(
@@ -190,10 +261,26 @@ def repair_closed_rows(
     evidence_of: dict[int, Evidence | None] = {}
     fragment_of: dict[int, bool] = {}
     entry_cost_of: dict[int, float] = {}
-    for (symbol, _), members in lots.items():
+    for (symbol, opened_at), members in lots.items():
         stored = trades[members[0]].entry_price
+        prices = sorted({trades[i].entry_price for i in members})
+        if prices[-1] - prices[0] > 1e-9:
+            raise ValueError(
+                f"{symbol} opened {opened_at}: the rows of this lot carry different entry "
+                f"prices {prices} - one lot has one entry price; refusing to rewrite the file"
+            )
         lot_quantity = sum(trades[i].quantity for i in members)
         ev = evidence_for(symbol, stored, lot_quantity, corrections, buys, costs)
+        if (
+            ev is not None
+            and ev.order_quantity is not None
+            and ev.order_quantity + 1e-9 < lot_quantity
+        ):
+            raise SelfCheckFailed(
+                f"{symbol} opened {opened_at}: the lot is {lot_quantity:g} shares but the "
+                f"matched order ({ev.source}) is only {ev.order_quantity:g} - the lot came "
+                f"from more than one order, or the log undercounts; refusing to write anything"
+            )
         fill = ev.fill if ev is not None else stored
         whole = ev.order_quantity if ev is not None and ev.order_quantity else lot_quantity
         order_charge = costs.charge(fill * whole)
@@ -223,8 +310,8 @@ def repair_closed_rows(
             entry_price=fill,
             entry_cost=entry_cost_of[index],
             exit_cost=exit_cost_of[index],
-            worst_price=_reseeded(before.worst_price, before.entry_price, fill, min),
-            best_price=_reseeded(before.best_price, before.entry_price, fill, max),
+            worst_price=_reseed(before.worst_price, before.entry_price, fill, min),
+            best_price=_reseed(before.best_price, before.entry_price, fill, max),
         )
         repairs.append(RowRepair(index, before, after, evidence_of[index], fragment_of[index]))
     return repairs

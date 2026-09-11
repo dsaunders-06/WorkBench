@@ -31,6 +31,7 @@ from qat.domain.performance.fill_basis_repair import (  # noqa: E402
     SelfCheckFailed,
     parse_logged_buys,
     parse_m65_corrections,
+    prior_repair,
     read_log_messages,
     repair_closed_rows,
     repair_open_records,
@@ -57,7 +58,16 @@ def _app_is_running() -> bool:
     except Exception:  # noqa: BLE001 - a failed check must not silently permit
         print("  could not determine whether the app is running - refusing")
         return True
+    if out.returncode != 0:
+        # Empty stdout from a tasklist that FAILED is not "no such process".
+        print(f"  tasklist failed (exit {out.returncode}): {(out.stderr or '').strip()} - refusing")
+        return True
     return "QuantAdvisoryTerminal.exe" in (out.stdout or "")
+
+
+def _remove(*paths: Path) -> None:
+    for path in paths:
+        path.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -73,6 +83,17 @@ def main() -> int:
     data = Path(settings.data_dir)
     ledger = data / "closed_trades.csv"
     entries = data / "open_position_entries.json"
+
+    already = prior_repair(data)
+    if already is not None:
+        print(f"REFUSING: {already}.")
+        print(
+            "This script runs ONCE. A second run would corrupt the fragment rows (their "
+            "evidence no longer matches, so they would be charged whole floors) and "
+            "re-deflate prices that are already fills. Nothing written."
+        )
+        return 1
+
     costs = CostModel.from_settings(settings)
     print(f"data    : {data}")
     print(
@@ -129,26 +150,64 @@ def main() -> int:
         print("\nDRY RUN - nothing written. Re-run with --apply.")
         return 0
 
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    for path in (ledger, entries):
-        backup = path.with_name(f"{path.name}.bak-fill-basis-{stamp}")
-        shutil.copy2(path, backup)
-        print(f"backup  : {backup}")
-
-    tmp = ledger.with_name(f"{ledger.name}.tmp-{os.getpid()}")
-    with tmp.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(_FIELDS))
-        writer.writeheader()
-        writer.writerows(r.after.as_row() for r in repairs)
-    findings = audit_closed_trades(tmp)
+    # Both files are written to temps beside the originals and the ledger temp
+    # is audited BEFORE either original is touched: nothing is replaced unless
+    # everything is ready to be. The backups are taken after that and before
+    # the first replace - so a backup still exists before anything changes,
+    # and a run that fails here leaves no backup behind for `prior_repair` to
+    # misread as a completed repair.
+    ledger_tmp = ledger.with_name(f"{ledger.name}.tmp-{os.getpid()}")
+    entries_tmp = entries.with_name(f"{entries.name}.tmp-{os.getpid()}")
+    try:
+        with ledger_tmp.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(_FIELDS))
+            writer.writeheader()
+            writer.writerows(r.after.as_row() for r in repairs)
+        entries_tmp.write_text(json.dumps(repaired_records, indent=2), encoding="utf-8")
+        findings = audit_closed_trades(ledger_tmp)
+    except Exception as exc:  # noqa: BLE001 - any failure here must replace nothing
+        _remove(ledger_tmp, entries_tmp)
+        print(f"WRITE FAILED - nothing replaced: {exc!r}")
+        return 1
     if findings:
-        tmp.unlink()
+        _remove(ledger_tmp, entries_tmp)
         print("AUDIT FAILED on the rewritten ledger - nothing replaced:")
         for line in findings:
             print(f"  {line}")
         return 1
-    os.replace(tmp, ledger)
-    entries.write_text(json.dumps(repaired_records, indent=2), encoding="utf-8")
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    try:
+        for path in (ledger, entries):
+            backup = path.with_name(f"{path.name}.bak-fill-basis-{stamp}")
+            shutil.copy2(path, backup)
+            print(f"backup  : {backup}")
+    except Exception as exc:  # noqa: BLE001 - no backup, no replace
+        _remove(ledger_tmp, entries_tmp)
+        print(f"BACKUP FAILED - nothing replaced: {exc!r}")
+        print(
+            f"Delete any .bak-fill-basis-{stamp} file before re-running: the originals are intact."
+        )
+        return 1
+
+    try:
+        os.replace(ledger_tmp, ledger)
+    except OSError as exc:
+        _remove(ledger_tmp, entries_tmp)
+        print(f"REPLACE FAILED - nothing replaced: {exc!r}")
+        print(
+            f"Delete the .bak-fill-basis-{stamp} files before re-running: the originals are intact."
+        )
+        return 1
+    try:
+        os.replace(entries_tmp, entries)
+    except OSError as exc:
+        print(
+            f"PARTIAL: {ledger.name} was replaced but {entries.name} was NOT ({exc!r}). "
+            f"The repaired records are in {entries_tmp} - move it over {entries} by hand, "
+            f"or restore both files from the .bak-fill-basis-{stamp} backups."
+        )
+        return 1
     print(f"\nWRITTEN. {len(repairs)} row(s) rewritten, {len(changes)} record(s) corrected.")
     print("Deploy M175 BEFORE launching - an older build re-inflates the records.")
     return 0
