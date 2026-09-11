@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import Order
+from qat.data.broker.adapter import BrokerFill, Order, Position
 from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.events import EntryPriceCorrectedEvent, OrderFilledEvent
@@ -127,6 +127,39 @@ async def test_the_stamp_survives_a_restart(tmp_path):
     await bridge._on_fill(_buy(135.736, price_is_fill=True))
 
     assert _bridge(tmp_path)._entries["COH.AX"].price_source == "fill"
+
+
+@pytest.mark.asyncio
+async def test_an_absorbed_broker_buy_is_stamped_fill(tmp_path):
+    """A position opened at the broker (a hand-placed buy) arrives through
+    the absorb path at IBKR's execution avgPrice - an OBSERVED fill, which the
+    M175 build's M65 must then never overwrite with a derived figure."""
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = MockBroker(seed=1)
+    broker._positions["MNST"] = Position(symbol="MNST", quantity=8.0, avg_price=91.18375)
+    broker._broker_fills.append(
+        BrokerFill(
+            order_id="35010615",
+            symbol="MNST",
+            side="buy",
+            quantity=8.0,
+            price=91.18375,
+            filled_at=datetime(2026, 8, 10, 13, 30, tzinfo=UTC),
+        )
+    )
+    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings)
+    bridge = SignalToOrderBridge(bus=bus, oms=oms, settings=settings)
+    bus.subscribe(OrderFilledEvent, bridge._on_fill)
+    await oms.adopt_broker_positions()
+    oms._last_fill_scan = datetime(2026, 8, 8, 9, 0, tzinfo=UTC)  # else the fill is filtered out
+
+    absorbed = await oms.absorb_broker_fills(record_only=True)
+
+    assert [f.symbol for f in absorbed] == ["MNST"], "nothing absorbed - the test is vacuous"
+    entry = bridge._entries["MNST"]
+    assert (entry.price, entry.price_source) == (91.18375, "fill")
 
 
 def test_a_pre_m175_record_loads_with_no_stamp(tmp_path):
