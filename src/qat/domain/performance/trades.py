@@ -430,12 +430,18 @@ class ClosedTrade:
         return self.net_pnl > 0
 
     def as_row(self) -> dict[str, object]:
+        # ⚠️ A ROW IS COMPUTED FROM EXACTLY WHAT IT STORES, or the audit - which
+        # re-parses the stored (rounded) inputs and derives again - disagrees
+        # with the writer. Derived from the unrounded values, the live ledger
+        # failed it with 15 findings on 11 September (BHP.AX `net_pnl stores
+        # -3091.29 but computes to -3091.3`). Every column below comes from `s`.
+        s = self._as_stored()
         return {
-            "opened_at": self.opened_at.isoformat(timespec="seconds"),
-            "closed_at": self.closed_at.isoformat(timespec="seconds"),
-            "symbol": self.symbol,
-            "strategy": self.strategy or "",
-            "quantity": round(self.quantity, 6),
+            "opened_at": s.opened_at.isoformat(timespec="seconds"),
+            "closed_at": s.closed_at.isoformat(timespec="seconds"),
+            "symbol": s.symbol,
+            "strategy": s.strategy or "",
+            "quantity": round(s.quantity, 6),
             # ⚠️ EIGHT DECIMALS ON PRICES, NOT FOUR, AND THE REASON IS SHARE
             # COUNT. `gross_pnl` and `net_pnl` are DERIVED from these on
             # read-back - `from_row`'s docstring says recomputing them is the
@@ -452,55 +458,72 @@ class ClosedTrade:
             #
             # Eight decimals costs a few bytes a row and makes the round trip
             # exact to well under a cent at any size this account will hold.
-            "entry_price": round(self.entry_price, 8),
-            "exit_price": round(self.exit_price, 8),
-            "stop_price": round(self.stop_price, 8) if self.stop_price is not None else "",
-            "gross_pnl": round(self.gross_pnl, 2),
-            "entry_cost": round(self.entry_cost, 2),
-            "exit_cost": round(self.exit_cost, 2),
-            "net_pnl": round(self.net_pnl, 2),
-            "pnl_pct": round(self.pnl_pct, 6),
-            "regime_at_entry": self.regime_at_entry or "",
+            "entry_price": round(s.entry_price, 8),
+            "exit_price": round(s.exit_price, 8),
+            "stop_price": round(s.stop_price, 8) if s.stop_price is not None else "",
+            "gross_pnl": round(s.gross_pnl, 2),
+            "entry_cost": round(s.entry_cost, 2),
+            "exit_cost": round(s.exit_cost, 2),
+            "net_pnl": round(s.net_pnl, 2),
+            "pnl_pct": round(s.pnl_pct, 6),
+            "regime_at_entry": s.regime_at_entry or "",
             "regime_probability": (
-                round(self.regime_probability, 4) if self.regime_probability is not None else ""
+                round(s.regime_probability, 4) if s.regime_probability is not None else ""
             ),
-            "exposure_scalar": (
-                round(self.exposure_scalar, 4) if self.exposure_scalar is not None else ""
-            ),
-            "exit_reason": self.exit_reason or "",
-            "holding_days": round(self.holding_days, 3),
-            "entry_slippage": (
-                round(self.entry_slippage, 4) if self.entry_slippage is not None else ""
-            ),
-            "mae_r": round(self.mae_r, 3) if self.mae_r is not None else "",
-            "mfe_r": round(self.mfe_r, 3) if self.mfe_r is not None else "",
-            "r_multiple": round(self.r_multiple, 4) if self.r_multiple is not None else "",
+            "exposure_scalar": round(s.exposure_scalar, 4) if s.exposure_scalar is not None else "",
+            "exit_reason": s.exit_reason or "",
+            "holding_days": round(s.holding_days, 3),
+            "entry_slippage": round(s.entry_slippage, 4) if s.entry_slippage is not None else "",
+            "mae_r": round(s.mae_r, 3) if s.mae_r is not None else "",
+            "mfe_r": round(s.mfe_r, 3) if s.mfe_r is not None else "",
+            "r_multiple": round(s.r_multiple, 4) if s.r_multiple is not None else "",
             "gross_r_multiple": (
-                round(self.gross_r_multiple, 4) if self.gross_r_multiple is not None else ""
+                round(s.gross_r_multiple, 4) if s.gross_r_multiple is not None else ""
             ),
-            "risk_per_share": (
-                round(self.risk_per_share, 8) if self.risk_per_share is not None else ""
-            ),
+            "risk_per_share": round(s.risk_per_share, 8) if s.risk_per_share is not None else "",
             "reference_price": (
-                round(self.reference_price, 8) if self.reference_price is not None else ""
+                round(s.reference_price, 8) if s.reference_price is not None else ""
             ),
-            "worst_price": round(self.worst_price, 8) if self.worst_price is not None else "",
-            "best_price": round(self.best_price, 8) if self.best_price is not None else "",
+            "worst_price": round(s.worst_price, 8) if s.worst_price is not None else "",
+            "best_price": round(s.best_price, 8) if s.best_price is not None else "",
             "earnings_at_entry": (
-                self.earnings_at_entry.isoformat() if self.earnings_at_entry is not None else ""
+                s.earnings_at_entry.isoformat() if s.earnings_at_entry is not None else ""
             ),
             # Blank rather than False when unknown. "No date was available" and
             # "a date was available and the trade avoided it" are different
             # facts, and writing both as False would merge them permanently.
             "held_through_earnings": (
-                "" if self.held_through_earnings is None else str(self.held_through_earnings)
+                "" if s.held_through_earnings is None else str(s.held_through_earnings)
             ),
-            "order_id": self.order_id or "",
+            "order_id": s.order_id or "",
             # Blank on a pre-M122 row, which means the Alpaca/US period rather
             # than "unknown" - see the migration script, which names them.
-            "market": self.market or "",
-            "currency": self.currency or "",
+            "market": s.market or "",
+            "currency": s.currency or "",
         }
+
+    def _as_stored(self) -> ClosedTrade:
+        """This trade holding exactly the inputs `as_row` stores - the values
+        `from_row` will read back - so what is derived from it is what the
+        file's own reader derives. See the warning in `as_row`."""
+
+        def price(value: float | None) -> float | None:
+            return round(value, 8) if value is not None else None
+
+        return replace(
+            self,
+            opened_at=self.opened_at.replace(microsecond=0),
+            closed_at=self.closed_at.replace(microsecond=0),
+            quantity=round(self.quantity, 6),
+            entry_price=round(self.entry_price, 8),
+            exit_price=round(self.exit_price, 8),
+            stop_price=price(self.stop_price),
+            reference_price=price(self.reference_price),
+            worst_price=price(self.worst_price),
+            best_price=price(self.best_price),
+            entry_cost=round(self.entry_cost, 2),
+            exit_cost=round(self.exit_cost, 2),
+        )
 
     @classmethod
     def from_row(cls, row: dict[str, str]) -> ClosedTrade | None:

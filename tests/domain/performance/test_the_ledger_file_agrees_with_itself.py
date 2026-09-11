@@ -89,6 +89,30 @@ def test_rounding_alone_is_not_a_discrepancy(tmp_path) -> None:
     assert audit_closed_trades(path) == []
 
 
+def test_a_row_is_computed_from_exactly_what_it_stores(tmp_path) -> None:
+    """⚠️ MEASURED 11 September 2026: the live ledger failed this audit with 15
+    findings, e.g. BHP `net_pnl stores -3091.29 but computes to -3091.3`.
+    `as_row` stored the costs at 2 dp (prices at 8, quantity at 6) but derived
+    `net_pnl` and the rest from the UNROUNDED values; the audit re-parses what
+    was stored and derives again. Fractional costs - a split commission share -
+    are the ordinary case, not an edge one."""
+    trade = _trade(
+        quantity=100.0,
+        entry_price=10.123456789,
+        exit_price=10.5000199983,
+        stop_price=9.876543219,
+        entry_cost=0.21296093,
+        exit_cost=0.25036,
+        reference_price=10.100000009,
+        worst_price=9.990000001,
+        best_price=10.600000001,
+    )
+    path = tmp_path / "closed_trades.csv"
+    _write(path, [trade.as_row()])
+
+    assert audit_closed_trades(path) == []
+
+
 def test_an_R_that_cannot_be_computed_is_not_demanded(tmp_path) -> None:
     """A trade with no stop has no R, and blank is the honest record of that."""
     row = _trade(stop_price=None).as_row()
