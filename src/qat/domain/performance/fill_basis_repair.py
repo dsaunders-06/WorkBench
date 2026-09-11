@@ -54,6 +54,11 @@ _SEED_TOLERANCE = 5e-5
 more than 5e-5 - at any price level, so the bound does not scale with it. A
 price further away than that really traded (44.45 against the same entry)."""
 
+_LOG_MARKERS = ("Corrected the recorded entry price", "execDetails", "Build: M")
+_BUILD_RE = re.compile(r"Build: M(?P<number>\d+)")
+_FIRST_FIXED_BUILD = 175
+"""The first build whose M65 de-commissions avgCost: once it has launched on
+the data, this repair must never run."""
 _M65_RE = re.compile(
     r"Corrected the recorded entry price for (?P<body>.+?) to what the broker charged"
 )
@@ -109,6 +114,11 @@ def prior_repair(data_dir: Path) -> str | None:
     Evidence of a repair: a backup the script's `--apply` made, or an open
     record stamped `"price_source": "fill"` (only the repair and an M175 build
     write that stamp - either way the stored prices are no longer M65's).
+
+    Or a `Build: M<n>` log line with n >= 175: that build's M65 has run on this
+    data. Its "Corrected the recorded entry price" lines would be read here as
+    fresh inflation, and its corrections are NOT stamped, so nothing above
+    would see them.
     """
     for pattern in _BACKUP_PATTERNS:
         backups = sorted(p.name for p in data_dir.glob(pattern))
@@ -126,6 +136,14 @@ def prior_repair(data_dir: Path) -> str | None:
             return (
                 f"{entries} already stamps {', '.join(stamped)} with "
                 f'"price_source": "fill" - those prices are already fills'
+            )
+    for message in read_log_messages(data_dir / "logs"):
+        build = _BUILD_RE.search(message)
+        if build is not None and int(build["number"]) >= _FIRST_FIXED_BUILD:
+            return (
+                f"the log records a launch of M{build['number']} on this data "
+                f"({message.strip()!r}) - that build's M65 has already run here, and its "
+                f"unstamped corrections would be read as fresh inflation"
             )
     return None
 
@@ -157,7 +175,7 @@ def read_log_messages(log_dir: Path) -> list[str]:
     for path in sorted(log_dir.glob("qat.log*")):
         with path.open(encoding="utf-8", errors="replace") as handle:
             for line in handle:
-                if "Corrected the recorded entry price" not in line and "execDetails" not in line:
+                if not any(marker in line for marker in _LOG_MARKERS):
                     continue
                 try:
                     messages.append(str(json.loads(line)["message"]))

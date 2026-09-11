@@ -2167,10 +2167,22 @@ git commit -m "M175: milestone - the fill basis and the commission check" -m "Co
 
 Not a subagent task. Each ⛔ needs the operator.
 
+Revised after the final whole-branch review (I1-I4). The order matters: the
+repair runs AFTER the M175 deploy and BEFORE M175's first launch. It refuses
+once the log records any `Build: M175`+ launch on the data, because that
+build's M65 writes unstamped corrections the repair would read as fresh
+inflation.
+
 1. **Build and sign:** `invoke build`, then `invoke sign`. Confirm the dist hash MOVED from M174's `0DB8E1BA…`.
 2. **Close the app normally.** Leave IB Gateway up. (`deploy.ps1` refuses while the app runs.)
-3. **Repair dry run:** `py scripts/repair_fill_basis.py`. Expect 12 rows and 9 open records, every one with evidence; TNE flagged `[FRAGMENT: no floor]`; BHP's slippage `-0.0100`. ⛔ Operator reads the table.
-4. **Apply:** `py scripts/repair_fill_basis.py --apply`. Then the ledger audit must be clean, and note the new ledger sha256.
-5. **Deploy:** `pwsh scripts\deploy.ps1` (dry run) → ⛔ operator's OK → `pwsh scripts\deploy.ps1 -Apply`.
-6. **Operator launches.** Read back off the log: `Build: M175 (...)`; NO `Corrected the recorded entry price` line; `session_check.ps1` clean.
-7. **Watch for:** the first `COMMISSION VERIFIED` on any app-transmitted order (the positive control), and whether a broker-side stop ever produces one.
+3. **Deploy dry run:** `pwsh scripts\deploy.ps1`. ⛔ Operator's OK.
+4. **Deploy:** `pwsh scripts\deploy.ps1 -Apply`. It does NOT launch the app. Do not launch it yet.
+5. **Repair dry run:** `py scripts/repair_fill_basis.py`. Expect:
+   - open records: **4 corrected from logged fills** (BOQ, ASX, SUN, ANZ, stamped `fill`) and **5 left for M65 at launch** (WOW, JHX, TWE, TAH, COH - no logged fill, so unchanged here), plus any record with no M65 line (for example a position bought by hand this afternoon, whose record already holds the execution price);
+   - closed rows: only **TNE** flagged `[FRAGMENT: exit order 509334700 absorbed 3051 …]` - unless the operator's manual partial sells created exit orders larger than their rows (a manual partial sell is normally a whole order and pays its own $6.60 floor); only **SEK** and **BHP**, plus any manual-trade rows, formula-sourced (a manual-trade row may also read `NO M65 LINE - price kept`); BHP's slippage `-0.0100`;
+   - `audit: clean`.
+   ⛔ Operator reads the table. A `SELF-CHECK FAILED` or `REFUSING` means STOP: do not apply, do not launch the old build; M175 is deployed, so read the reason first.
+6. **Apply:** `py scripts/repair_fill_basis.py --apply`. Then the ledger audit must be clean, and note the new ledger sha256.
+7. **Operator launches.** Read back off the log: `Build: M175 (...)`. Then READ every `Corrected the recorded entry price` line rather than treating it as a failure. They are expected for WOW, JHX, TWE, TAH, COH and any manually traded symbol, and each should be roughly 8.8 bp below the prior record. A line naming BOQ, ASX, SUN or ANZ is NOT expected, because those records are stamped `fill`. A `Did not correct the recorded entry price` warning means a position below the floor crossover kept its record, which is intentional (I3). `session_check.ps1` clean.
+8. **If the deploy fails after the repair was applied,** restore BOTH `closed_trades.csv.bak-fill-basis-*` and `open_position_entries.json.bak-fill-basis-*` over their originals before ANY launch. An older build's M65 re-inflates the repaired records.
+9. **Watch for:** the first `COMMISSION VERIFIED` on any app-transmitted order (the positive control), and whether a broker-side stop ever produces one. `commission_checks.csv` holds one row per order, and a restart no longer adds duplicates (M4).

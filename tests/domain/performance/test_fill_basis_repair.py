@@ -560,6 +560,44 @@ def test_an_open_record_stamped_fill_means_a_repair_already_happened(tmp_path):
     assert "BOQ.AX" in reason
 
 
+def _launched(data: Path, *milestones: str) -> Path:
+    (data / "logs").mkdir(exist_ok=True)
+    (data / "logs" / "qat.log").write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "ts": "2026-09-11T19:30:05+10:00",
+                    "level": "INFO",
+                    "logger": "qat.app",
+                    "message": f"Build: {m} (cf01c9d, built 2026-09-11T18:00:00, frozen)",
+                }
+            )
+            for m in milestones
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return data
+
+
+def test_a_launch_of_m175_on_the_data_means_the_repair_must_not_run(tmp_path):
+    """M175's M65 writes "Corrected the recorded entry price" lines the repair
+    would read as fresh inflation, and its corrections are not stamped - so
+    once any M175+ build has launched on this data, the repair refuses."""
+    data = _launched(_unrepaired_data_dir(tmp_path), "M173", "M174", "M175")
+
+    reason = prior_repair(data)
+
+    assert reason is not None
+    assert "M175" in reason
+
+
+def test_only_builds_before_m175_leave_the_repair_allowed(tmp_path):
+    data = _launched(_unrepaired_data_dir(tmp_path), "M99", "M174", "M65b")
+
+    assert prior_repair(data) is None
+
+
 def _script_module():
     """Load `scripts/repair_fill_basis.py` by path - it is a script, not a
     package - so the test runs the code the operator runs. Importing it runs

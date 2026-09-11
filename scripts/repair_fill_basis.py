@@ -6,6 +6,8 @@ r"""Rewrite entry prices and costs onto the true fill basis (M175).
 ⚠️ POWERSHELL ONLY - it builds Settings() and reads/writes the live data dir.
 ⚠️ THE APP MUST BE CLOSED, and M175 must be the build launched next: an older
    build's M65 re-inflates the open records at its first startup.
+⚠️ RUN IT AFTER deploying M175 and BEFORE its first launch. It refuses once the
+   log records any `Build: M175`+ launch on this data.
 
 See `qat.domain.performance.fill_basis_repair` for what is changed and on what
 evidence. Dry run prints every row and record, before and after, runs the
@@ -175,9 +177,9 @@ def main() -> int:
     if already is not None:
         print(f"REFUSING: {already}.")
         print(
-            "This script runs ONCE. A second run would corrupt the fragment rows (their "
-            "evidence no longer matches, so they would be charged whole floors) and "
-            "re-deflate prices that are already fills. Nothing written."
+            "This script runs ONCE, and only before any M175 build has launched on this data. "
+            "A second run would lose the entry evidence (so lots would be charged whole "
+            "floors) and re-deflate prices that are already fills. Nothing written."
         )
         return 1
 
@@ -325,7 +327,10 @@ def main() -> int:
         f"\nWRITTEN. {len(repairs)} row(s) rewritten, {len(changes)} record(s) corrected, "
         f"{len(left_for_m65)} left for M65 at launch."
     )
-    print("Deploy M175 BEFORE launching - an older build re-inflates the records.")
+    print(
+        "The next launch must be M175 - an older build re-inflates the records. If the "
+        "deploy has not succeeded, restore both .bak-fill-basis-* files before any launch."
+    )
     return 0
 
 
