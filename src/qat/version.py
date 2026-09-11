@@ -2034,7 +2034,34 @@ from qat.domain.display_dates import format_display_date
 # after the original found every weekday still 0959-1611 trading against
 # 0959-1600 liquid, tz Australia/NSW, minTick 0.001, identical across all
 # fourteen contracts from A2M to XRO. The exchange has not moved.
-MILESTONE = "M174"
+#
+# M175. THE LEDGER'S COSTS WERE NEVER THE COMMISSION - THEY WERE THE FILL BASIS.
+#
+# Measured 11 September: IBKR's commission equals the model on 17 of 17 logged
+# orders, to the cent. What was wrong was around it. `reconcile_entry_prices`
+# (M65) wrote IBKR's commission-INCLUSIVE `avgCost` over the fill at every
+# restart - undoing M70's correct price for JHX.AX and COH.AX - so entry
+# commission was charged twice; the ledger charged 5 bp of modelled slippage on
+# fills that already contained it (a replay did the same over SimulatedBroker's
+# slipped prices); and the $6.60 floor was charged per absorbed piece. BHP.AX,
+# stopped at the 11 September open, was the first row ever with a reference
+# price, and its slippage read +0.0464 when the truth was -0.01.
+#
+# Now: costs are `CostModel.charge()`, one floor per order; the entry record
+# stamps `price_source`, M65 never overwrites a fill and de-commissions avgCost
+# when it corrects; and every IBKR commission report is checked against the
+# model in `commission_checks.csv`. `scripts/repair_fill_basis.py` rewrites the
+# existing rows and records from logged evidence, self-checked.
+#
+# ⚠️ AND THE LEDGER FILE DID NOT AGREE WITH ITSELF. `ClosedTrade.as_row` wrote
+# costs at 2 dp and prices at 8 but computed net P&L, pnl_pct and every R from
+# the unrounded values, so `audit_closed_trades` - which recomputes from the
+# file - found 15 disagreements on the live ledger (12 of them this rounding, 3
+# from the 26 August LOV repair script). The repaired ledger would have failed
+# the same audit and the rewrite would have refused. `as_row` now derives every
+# column from exactly what it stores. And a commission report redelivered by
+# the five-minute reqExecutions poll is reported once, not once per poll.
+MILESTONE = "M175"
 
 _UNKNOWN = "unknown"
 
