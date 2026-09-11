@@ -133,6 +133,12 @@ class _Entry:
     # `None` on an older record means UNKNOWN, never the entry price - which
     # would report zero slippage on a trade nobody measured.
     reference_price: float | None = None
+    # Where `price` came from (M175). "fill" is an OBSERVED fill - announced at
+    # its fill price, or corrected mid-session by M70 - and M65 must never
+    # overwrite it with a figure DERIVED from the broker's average cost.
+    # "reference" is the sizing price published at transmit. `None` is a
+    # record written before M175, which says neither.
+    price_source: Literal["fill", "reference"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +162,8 @@ class PositionEntry:
     # than a list of names - a field added to one and not the other is exactly
     # how M33 and M49 happened twice over.
     reference_price: float | None = None
+    # M175, same reasoning: where `price` came from.
+    price_source: Literal["fill", "reference"] | None = None
 
 
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
@@ -1100,6 +1108,7 @@ class SignalToOrderBridge:
                     # M44. The event has carried this since M37; the bridge
                     # simply dropped it, so it never survived to the ledger.
                     reference_price=event.reference_price,
+                    price_source="fill" if event.price_is_fill else "reference",
                 ),
             )
             self._entry_times.append(event.ts)
@@ -1139,7 +1148,7 @@ class SignalToOrderBridge:
         entry = self._entries.get(event.symbol)
         if entry is None:
             return
-        self._entries[event.symbol] = replace(entry, price=event.price)
+        self._entries[event.symbol] = replace(entry, price=event.price, price_source="fill")
         self._save_entries()
 
     def _load_entries(self) -> dict[str, _Entry]:
@@ -1182,6 +1191,13 @@ class SignalToOrderBridge:
                         if row.get("reference_price") is not None
                         else None
                     ),
+                    # M175, `.get` for the fourth time: a pre-M175 record says
+                    # nothing about where its price came from, and None is that.
+                    price_source=(
+                        row["price_source"]
+                        if row.get("price_source") in ("fill", "reference")
+                        else None
+                    ),
                 )
             except (KeyError, TypeError, ValueError):
                 logger.warning("Ignoring an unreadable entry record for %s", symbol)
@@ -1215,6 +1231,7 @@ class SignalToOrderBridge:
                 "target_price": entry.target_price,
                 "strategy": entry.strategy,
                 "reference_price": entry.reference_price,
+                "price_source": entry.price_source,
             }
             for symbol, entry in self._entries.items()
         }
