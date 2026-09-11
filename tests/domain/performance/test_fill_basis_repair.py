@@ -7,12 +7,15 @@ from __future__ import annotations
 import csv
 import importlib.util
 import json
+import shutil
 import subprocess  # nosec B404 - the tests replace subprocess.run; nothing is executed
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 
+from qat.config import Settings
 from qat.domain.backtester.costs import CostModel
 from qat.domain.performance.fill_basis_repair import (
     SelfCheckFailed,
@@ -178,6 +181,82 @@ def test_the_repaired_rows_pass_the_ledgers_own_audit(tmp_path):
         writer.writerows(r.after.as_row() for r in repairs)
 
     assert audit_closed_trades(path) == []
+
+
+_M65_LOV = (
+    "Corrected the recorded entry price for LOV.AX -> 24.2214 to what the broker charged. "
+    "The record held the price the order was SIZED against."
+)
+_LOV_QUANTITIES = (10.0, 15.0, 26.0, 323.0, 2843.0)
+
+
+def _lov_rows() -> list[dict[str, str]]:
+    """The live LOV.AX shape: one 3,217-share lot, closed by ONE exit order in
+    five rows, the 2,843-share row with BLANK costs (the 26 August script)."""
+    rows = [
+        _row(
+            symbol="LOV.AX",
+            quantity=str(quantity),
+            entry_price="24.2214",
+            exit_price="28.45",
+            stop_price="21.92",
+            opened_at="2026-08-25T00:30:04+00:00",
+            closed_at="2026-08-26T05:10:00+00:00",
+            order_id="1216552509",
+            reference_price="",
+            worst_price="24.2214",
+            best_price="28.6",
+        )
+        for quantity in _LOV_QUANTITIES
+    ]
+    rows[-1].update(entry_cost="", exit_cost="")
+    return rows
+
+
+def _lov_buy() -> str:
+    return _exec("l1", "LOV", 3217.0, 24.20010569, 1216552400)
+
+
+def test_the_live_lov_shape_repairs_to_a_ledger_that_passes_its_own_audit(tmp_path):
+    """⚠️ The single-BHP-row audit test passed while the real 12 rows failed the
+    same audit with 10 findings: five rows sharing one entry charge and one exit
+    charge get FRACTIONAL cost shares, and `as_row` stored them at 2 dp while
+    deriving net_pnl from the unrounded values."""
+    buys = parse_logged_buys([_lov_buy()], market="ASX")
+    repairs = repair_closed_rows(_lov_rows(), {"LOV.AX": {"24.2214"}}, buys, _COSTS)
+    assert all(r.after.entry_price == 24.20010569 for r in repairs)
+    assert not any(r.fragment for r in repairs)
+
+    path = tmp_path / "closed_trades.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(_FIELDS))
+        writer.writeheader()
+        writer.writerows(r.after.as_row() for r in repairs)
+
+    assert audit_closed_trades(path) == []
+
+
+def test_a_traded_extreme_near_the_seed_is_not_the_seed():
+    """The seed is stored at 4 dp, so it sits within HALF A 4-DP UNIT (5e-5) of
+    the entry - an absolute bound. RHC.AX's 44.4523 is the seed; 44.45 is
+    0.0023 away, a price that really traded, and must survive the repair."""
+    row = _row(
+        symbol="RHC.AX",
+        quantity="1194.0",
+        entry_price="44.45230503",
+        stop_price="42.0",
+        exit_price="44.0",
+        order_id="1216558924",
+        reference_price="",
+        worst_price="44.4523",
+        best_price="44.45",
+    )
+    [repair] = repair_closed_rows([row], {"RHC.AX": {"44.4523"}}, [], _COSTS)
+
+    fill = repair.after.entry_price
+    assert fill == pytest.approx(44.4132, abs=1e-4)
+    assert repair.after.best_price == 44.45  # traded - kept, and above the fill
+    assert repair.after.worst_price == fill  # the seed - replaced
 
 
 def test_open_records_get_the_fill_and_the_stamp():
@@ -422,3 +501,250 @@ def test_a_tasklist_that_succeeds_without_the_app_means_not_running(monkeypatch,
     )
 
     assert script._app_is_running() is False
+
+
+# --- the script end to end, on a tmp_path data dir -------------------------
+
+_OPEN_RECORDS = {
+    "BOQ.AX": {
+        "opened_at": "2026-08-25T00:30:04+00:00",
+        "price": 6.3856144,
+        "stop_price": 6.07,
+        "target_price": 7.05,
+        "strategy": "swing",
+        "reference_price": None,
+    },
+    "XYZ.AX": {
+        "opened_at": "2026-08-25T00:30:04+00:00",
+        "price": 10.0,
+        "stop_price": 9.0,
+        "target_price": None,
+        "strategy": "swing",
+        "reference_price": None,
+    },
+}
+
+
+def _log_line(message: str) -> str:
+    return json.dumps(
+        {"ts": "2026-08-25T10:30:05+10:00", "level": "INFO", "logger": "x", "message": message}
+    )
+
+
+def _script_data_dir(tmp_path: Path, rows: list[dict[str, str]] | None = None) -> Path:
+    data = tmp_path / "data"
+    (data / "logs").mkdir(parents=True)
+    with (data / "closed_trades.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(_FIELDS))
+        writer.writeheader()
+        writer.writerows(_lov_rows() if rows is None else rows)
+    (data / "open_position_entries.json").write_text(
+        json.dumps(_OPEN_RECORDS, indent=2), encoding="utf-8"
+    )
+    (data / "logs" / "qat.log").write_text(
+        "\n".join(
+            _log_line(m)
+            for m in (
+                _M65_LOV,
+                _lov_buy(),
+                "Corrected the recorded entry price for BOQ.AX -> 6.38561 to what the "
+                "broker charged.",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return data
+
+
+def _snapshot(data: Path) -> dict[str, bytes]:
+    return {str(p.relative_to(data)): p.read_bytes() for p in data.rglob("*") if p.is_file()}
+
+
+def _backups(data: Path) -> list[str]:
+    return sorted(p.name for p in data.glob("*.bak-fill-basis-*"))
+
+
+def _pointed_at(monkeypatch, data: Path, *argv: str):
+    """The script, aimed at `data` - never the live dir - with the app closed."""
+    script = _script_module()
+    monkeypatch.setattr(
+        script, "Settings", lambda: Settings(_env_file=None, data_dir=str(data), market="ASX")
+    )
+    monkeypatch.setattr(script, "_app_is_running", lambda: False)
+    monkeypatch.setattr(sys, "argv", ["repair_fill_basis.py", *argv])
+    return script
+
+
+def _run(monkeypatch, data: Path, *argv: str) -> int:
+    return int(_pointed_at(monkeypatch, data, *argv).main())
+
+
+def _locked(src, dst):
+    raise PermissionError(13, "The process cannot access the file", str(dst))
+
+
+def test_the_dry_run_audits_the_repair_and_writes_nothing(monkeypatch, tmp_path, capsys):
+    data = _script_data_dir(tmp_path)
+    before = _snapshot(data)
+
+    assert _run(monkeypatch, data) == 0
+
+    out = capsys.readouterr().out
+    assert "audit: clean" in out
+    assert "DRY RUN" in out
+    assert _snapshot(data) == before  # byte-identical, and no file added
+    assert _backups(data) == []
+
+
+def test_a_dry_run_whose_repair_fails_the_audit_exits_1(monkeypatch, tmp_path, capsys):
+    """⚠️ The dry run used to return BEFORE the audit, so the operator's dry run
+    looked clean and the refusal appeared only at --apply."""
+    data = _script_data_dir(tmp_path)
+    before = _snapshot(data)
+    script = _pointed_at(monkeypatch, data)
+    audited: list[Path] = []
+
+    def failing_audit(path: Path) -> list[str]:
+        audited.append(path)
+        assert path.exists()
+        return ["row 2 (LOV.AX): net_pnl stores 1.0 but computes to 2.0"]
+
+    monkeypatch.setattr(script, "audit_closed_trades", failing_audit)
+
+    assert script.main() == 1
+
+    out = capsys.readouterr().out
+    assert "net_pnl stores 1.0 but computes to 2.0" in out
+    [probe] = audited
+    assert data not in probe.parents  # the probe was OUTSIDE the data dir
+    assert not probe.parent.exists()  # and its temp dir is gone
+    assert _snapshot(data) == before
+
+
+def test_apply_rewrites_both_files_and_a_second_run_is_refused(monkeypatch, tmp_path, capsys):
+    data = _script_data_dir(tmp_path)
+
+    assert _run(monkeypatch, data, "--apply") == 0
+
+    assert len(_backups(data)) == 2
+    assert audit_closed_trades(data / "closed_trades.csv") == []
+    with (data / "closed_trades.csv").open(newline="", encoding="utf-8") as handle:
+        stored = [ClosedTrade.from_row(row) for row in csv.DictReader(handle)]
+    assert [t.entry_price for t in stored if t is not None] == [24.20010569] * 5
+    records = json.loads((data / "open_position_entries.json").read_text(encoding="utf-8"))
+    assert records["BOQ.AX"]["price_source"] == "fill"
+    assert records["BOQ.AX"]["price"] == pytest.approx(6.38, abs=1e-6)
+    assert records["XYZ.AX"] == _OPEN_RECORDS["XYZ.AX"]
+    assert not list(data.glob("*.tmp-*"))
+    capsys.readouterr()
+
+    after_first = _snapshot(data)
+    assert _run(monkeypatch, data, "--apply") == 1
+    assert "REFUSING" in capsys.readouterr().out
+    assert _run(monkeypatch, data) == 1  # the dry run refuses too
+    assert _snapshot(data) == after_first
+
+
+def test_an_unparseable_row_is_a_refusal_not_a_traceback(monkeypatch, tmp_path, capsys):
+    rows = _lov_rows()
+    rows[1]["entry_price"] = "not-a-number"
+    data = _script_data_dir(tmp_path, rows)
+    before = _snapshot(data)
+
+    assert _run(monkeypatch, data, "--apply") == 1
+
+    assert "row 3 cannot be parsed" in capsys.readouterr().out
+    assert _snapshot(data) == before
+
+
+def test_a_lot_with_two_entry_prices_is_a_refusal_not_a_traceback(monkeypatch, tmp_path, capsys):
+    rows = _lov_rows()
+    rows[1]["entry_price"] = "24.3"
+    data = _script_data_dir(tmp_path, rows)
+    before = _snapshot(data)
+
+    assert _run(monkeypatch, data) == 1
+
+    assert "different entry prices" in capsys.readouterr().out
+    assert _snapshot(data) == before
+
+
+def test_a_failed_first_replace_leaves_no_backup_behind(monkeypatch, tmp_path, capsys):
+    """A backup is how `prior_repair` recognises a completed repair - one left
+    by a run that replaced nothing would block every later run, falsely."""
+    data = _script_data_dir(tmp_path)
+    before = _snapshot(data)
+    script = _pointed_at(monkeypatch, data, "--apply")
+    monkeypatch.setattr(script.os, "replace", _locked)
+
+    assert script.main() == 1
+
+    assert "REPLACE FAILED" in capsys.readouterr().out
+    assert _backups(data) == []
+    assert _snapshot(data) == before
+    assert prior_repair(data) is None
+
+
+def _second_copy_raises(monkeypatch, script, error: BaseException) -> None:
+    real_copy2 = shutil.copy2
+    calls: list[Path] = []
+
+    def copy2(src, dst):
+        calls.append(Path(dst))
+        if len(calls) == 2:
+            Path(dst).write_bytes(b"half a backup")  # a partial copy is this run's too
+            raise error
+        return real_copy2(src, dst)
+
+    monkeypatch.setattr(script.shutil, "copy2", copy2)
+
+
+def test_a_failed_backup_leaves_no_backup_behind(monkeypatch, tmp_path, capsys):
+    data = _script_data_dir(tmp_path)
+    before = _snapshot(data)
+    script = _pointed_at(monkeypatch, data, "--apply")
+    _second_copy_raises(monkeypatch, script, OSError(28, "No space left on device"))
+
+    assert script.main() == 1
+
+    assert "BACKUP FAILED" in capsys.readouterr().out
+    assert _backups(data) == []
+    assert _snapshot(data) == before
+
+
+def test_an_interrupt_before_the_first_replace_leaves_no_backup_behind(monkeypatch, tmp_path):
+    data = _script_data_dir(tmp_path)
+    before = _snapshot(data)
+    script = _pointed_at(monkeypatch, data, "--apply")
+    _second_copy_raises(monkeypatch, script, KeyboardInterrupt())
+
+    with pytest.raises(KeyboardInterrupt):
+        script.main()
+
+    assert _backups(data) == []
+    assert _snapshot(data) == before
+
+
+def test_a_backup_that_cannot_be_deleted_is_named_to_the_operator(monkeypatch, tmp_path, capsys):
+    data = _script_data_dir(tmp_path)
+    script = _pointed_at(monkeypatch, data, "--apply")
+    real_unlink = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if ".bak-fill-basis-" in self.name:
+            raise PermissionError(13, "Access is denied", str(self))
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(script.os, "replace", _locked)
+    monkeypatch.setattr(Path, "unlink", unlink)
+
+    assert script.main() == 1
+
+    out = capsys.readouterr().out
+    left = _backups(data)
+    assert len(left) == 2
+    instruction = out.split("delete these by hand", 1)[-1]
+    assert instruction != out, "the operator must be TOLD to delete them"
+    for name in left:
+        assert name in instruction

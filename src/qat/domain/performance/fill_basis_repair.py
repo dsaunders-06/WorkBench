@@ -42,9 +42,11 @@ _BACKUP_PATTERNS = (
     "closed_trades.csv.bak-fill-basis-*",
     "open_position_entries.json.bak-fill-basis-*",
 )
-_SEED_TOLERANCE = 1e-4
-"""Relative. A seed stored at 4 dp (RHC.AX's 44.4523 for 44.45230503) sits
-5e-6 from its entry, and 4-dp rounding never moves a price more than 5e-5."""
+_SEED_TOLERANCE = 5e-5
+"""Absolute: half a 4-dp unit. A seed stored at 4 dp (RHC.AX's 44.4523 for
+44.45230503) sits 5e-6 from its entry, and 4-dp rounding never moves a price
+more than 5e-5 - at any price level, so the bound does not scale with it. A
+price further away than that really traded (44.45 against the same entry)."""
 
 _M65_RE = re.compile(
     r"Corrected the recorded entry price for (?P<body>.+?) to what the broker charged"
@@ -232,10 +234,11 @@ def _reseed(
     """`trades._reseeded`, except a seed stored at LOWER PRECISION is still the
     seed. RHC.AX's best_price is 44.4523 for an entry of 44.45230503; exact
     equality misses it, and pick(max) then keeps the inflated average - a price
-    that never traded - as the trade's best."""
+    that never traded - as the trade's best. Within `_SEED_TOLERANCE` (absolute)
+    of the seed it IS the seed; any further and it is a real tick, kept."""
     if current is None:
         return actual
-    if abs(current - seed) <= _SEED_TOLERANCE * abs(seed):
+    if abs(current - seed) <= _SEED_TOLERANCE:
         return actual
     return pick(current, actual)
 
