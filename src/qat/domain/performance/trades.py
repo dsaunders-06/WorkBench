@@ -565,16 +565,23 @@ class TradeLedger:
         self.bus = bus
         self.path = Path(data_dir) / filename
         self.settings = settings or Settings()
-        # Modelled, not billed. A paper broker charges nothing, so measuring
-        # the paper account's own fees would report zero and promote a strategy
-        # onto a broker where the same trades lose money (M27's reasoning, now
-        # applied to the measurement as well as to the rail). Real per-fill
-        # commissions from a live broker are not read back yet.
+        # The broker's CHARGE, modelled (M175). Measured 11 September: IBKR's
+        # own commission equals this model on 17 of 17 logged orders, to the
+        # cent - and the paper account bills it, so the Alpaca-era reason for
+        # modelling ("a paper broker charges nothing") no longer applies; the
+        # model is simply exact. `commission_checks.csv` keeps checking it.
+        # Slippage is NOT charged here: a fill's price already contains it.
         self._costs = (
             CostModel.from_settings(self.settings)
             if self.settings.apply_costs_in_paper or self.settings.is_live
             else None
         )
+        # Per broker order id: (notional booked so far, charge booked so far).
+        # One order absorbed in several pieces pays ONE floor across all of
+        # them (M175) - LOV.AX's single exit on 26 August paid four. In memory
+        # only: a piece absorbed after a restart can pay a second floor, which
+        # matters only below ~AUD 7,500 of notional.
+        self._charged: dict[str, tuple[float, float]] = {}
         self._open_lots: dict[str, deque[OpenLot]] = defaultdict(deque)
         # The ledger reads the regime itself rather than having it threaded
         # through the order path (M37). It is already on the bus, and the
@@ -1065,7 +1072,7 @@ class TradeLedger:
                     stop_price=event.stop_price,
                     strategy=event.strategy,
                     opened_at=event.ts,
-                    entry_cost=self._fill_cost(event.quantity, event.price),
+                    entry_cost=self._increment_cost(event.order_id, event.quantity, event.price),
                     regime_at_entry=self._regime,
                     regime_probability=self._regime_probability,
                     exposure_scalar=self._exposure_scalar,
@@ -1080,15 +1087,31 @@ class TradeLedger:
         self._close_against_lots(event)
 
     def _fill_cost(self, quantity: float, price: float) -> float:
-        """What one fill costs, for its whole quantity.
+        """What one WHOLE order is billed - commission and pass-through fees,
+        never slippage (M175). For re-costing an order already known in full:
+        a corrected entry, a corrected exit, a lot restored at startup."""
+        if self._costs is None:
+            return 0.0
+        return self._costs.charge(abs(quantity) * price)
 
-        Charged per transaction, which is why it is computed here rather than
-        per closed trade: the commission floor applies once to the order, and
-        a position closed in three pieces pays one floor, not three.
+    def _increment_cost(self, order_id: str | None, quantity: float, price: float) -> float:
+        """What THIS piece of an order adds to the order's bill (M175).
+
+        The floor is charged once per ORDER, so each increment pays the
+        difference between the order's charge with it and without it. With no
+        order id there is nothing to accumulate against, so the piece is
+        costed as a whole order.
         """
         if self._costs is None:
             return 0.0
-        return self._costs.apply(abs(quantity) * price)
+        notional = abs(quantity) * price
+        if not order_id:
+            return self._costs.charge(notional)
+        booked_notional, booked_charge = self._charged.get(order_id, (0.0, 0.0))
+        total_notional = booked_notional + notional
+        total_charge = self._costs.charge(total_notional)
+        self._charged[order_id] = (total_notional, total_charge)
+        return total_charge - booked_charge
 
     def _close_against_lots(self, event: OrderFilledEvent) -> None:
         remaining = event.quantity
@@ -1096,7 +1119,7 @@ class TradeLedger:
         # The exit's cost belongs to the whole sell, so it is apportioned
         # across whatever lots this sell happens to close - by quantity, the
         # same basis the entry cost is split on.
-        exit_cost_total = self._fill_cost(event.quantity, event.price)
+        exit_cost_total = self._increment_cost(event.order_id, event.quantity, event.price)
         exit_quantity = event.quantity
 
         while remaining > 1e-9 and lots:

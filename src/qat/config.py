@@ -393,10 +393,10 @@ class Settings(BaseSettings):
     commission_bps: float = Field(default=5.0, ge=0)
     slippage_bps: float = Field(default=5.0, ge=0)
 
-    # Costs are modelled during paper trading even though Alpaca charges
-    # nothing. The point of a paper test is to learn whether a strategy
-    # survives the costs it will actually pay; measuring it commission-free
-    # would promote strategies on figures that do not exist at the broker.
+    # Costs are recorded during paper trading. The point of a paper test is to
+    # learn whether a strategy survives what it will actually pay. The ledger
+    # records the broker's CHARGE only (M175) - slippage is already inside
+    # every fill price, and the pre-trade estimate is where it is modelled.
     apply_costs_in_paper: bool = True
 
     # The cost rail, expressed against RISK rather than notional. Every order
