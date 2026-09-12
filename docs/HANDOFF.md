@@ -121,10 +121,16 @@ Audit**. The plan, with the operator's decisions, is
 * **New standing rule:** every Claude error goes into
   `docs/CLAUDE_ERROR_LOG.md` in the same session, timestamped, with how to
   avoid it.
-* **Mk II** (`C:\Share Trader Project\`) is the operator's separate tool. It
-  connects to DUQ200898 as client ids 77/85/88/99 and, per the operator, does
-  not trade. Its code contains `placeOrder`. Client 99 is also the id QAT's
-  read-only probes use, so the two cannot be connected at once.
+* `C:\Share Trader Project\` is the operator's separate market-opinion tool.
+  It has **no autonomy and no trading capability** (operator, 12 Sep). Out of
+  scope. *Corrected 12 Sep at the operator's direction; the earlier wording
+  came from a search made without permission (CE-015).*
+* ⛔ **SEARCH BOUNDARY (operator, 12 Sep): read or search only `C:\Claude
+  Programming` and `C:\QuantAdvisoryTerminal`.** Anything else on the
+  operator's computer needs the operator's permission first, location by
+  location, including `%LOCALAPPDATA%\QuantAdvisoryTerminal`. The operator has
+  said a repeat without permission ends their subscription. Permissions granted
+  are listed in the audit plan's Stage 0.
 * ⚠️ **Evidence at risk:** Claude Code transcripts are deleted 30 days after
   their last activity (5 Aug – 2 Sep already gone), and `qat.log` rotation
   deletes the oldest file (the 24–25 Aug execution lines are near the end).
@@ -6411,6 +6417,13 @@ BUILD FIRST AND CHECK THE DIST HASH MOVED.
 
 ⚠️ CLOSE THE APP FIRST, THEN THE BROKER.
 ⚠️ COMMIT BEFORE SABOTAGING A RAIL.
+
+⛔ SEARCH BOUNDARY (operator, 12 September): read or search ONLY
+C:\Claude Programming and C:\QuantAdvisoryTerminal. ANY other location on the
+operator's computer - including %LOCALAPPDATA%\QuantAdvisoryTerminal, other
+drives, user folders, Downloads - needs the operator's permission FIRST. The
+operator has said a repeat without permission ends their subscription.
+Permissions granted are listed in the audit plan's Stage 0.
 
 ⛔ DEVELOPMENT IS FROZEN (12 September) FOR A DESIGN RECOVERY & DESIGN INTENT
 AUDIT. Read "12 SEPTEMBER (AFTERNOON)" and

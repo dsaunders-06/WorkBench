@@ -3,7 +3,8 @@
 **Status:** proposal for review, 12 September 2026. Nothing in the system has
 changed. The audit has not started. **Revised the same day** with the
 operator's answers (origin in four Claude chats; the authority column adopted,
-plus a Claude error log; Mk II is a separate tool) and a correction to what the
+plus a Claude error log; the operator's separate market-opinion tool is out of
+scope) and a correction to what the
 session transcripts cover (CE-013 in `docs/CLAUDE_ERROR_LOG.md`).
 **Baseline at writing:** `master` at `ae2c91a` (2 commits unpushed). Deployed
 M175 (`5e322ca`). App running since 10:55 (weekend, stood down).
@@ -27,6 +28,14 @@ amendments.
 
 ## 2. What evidence exists (located 12 September, read-only)
 
+> ⚠️ **Provenance of this section.** The `C:\ShareTrader` rows, and every
+> quotation from the paper in §2–§4 of this plan (§20.A, §4.10, the section
+> list), come from reads made on 12 September **without the operator's
+> permission** (CE-016). The operator has not approved `C:\ShareTrader`
+> (Stage 0, item 9). Until copies are placed in an approved location, these
+> quotations are **not audit evidence**. They are kept so the record shows
+> what was seen and when.
+
 **The founding specification is outside the repository.** The code cites
 "spec §E", "spec §I" and "paper §4.10" 92 times across 66 files. None of those
 documents was ever committed. They sit in `C:\ShareTrader\`:
@@ -41,7 +50,7 @@ documents was ever committed. They sit in `C:\ShareTrader\`:
 | **Four Claude chats (claude.ai, not Claude Code)** | before 25 Jul | The operator's first development of the app, before the move to Claude Code (operator, 12 Sep). They likely produced the paper and M1–M9 | **Primary evidence of origin and early authority. Not yet obtained** |
 | Claude Code transcripts (`~\.claude\projects\C--Claude-Programming\`) | **one from 4 Aug; 33 from 3 Sep on** | 202 MB. ⚠️ Retention is Claude Code's default 30 days (`cleanupPeriodDays` unset), which **has already deleted 5 Aug – 2 Sep**, and deletes each remaining file 30 days after its last activity. *Corrected: this row first read "34 sessions, 4 Aug – 12 Sep" (CE-013)* | Evidence of who authorised what, from 3 September only |
 | `ROADMAP.md` (4,798 lines), `docs/HANDOFF.md` (~6,500), `docs/superpowers/specs/` (25 specs) | 25 Jul on | Agent-written rationale and incident records | Claims to test, with dates |
-| `C:\Share Trader Project\` (incl. the 458 MB AI-history PDF) | 10–11 Sep | A separate, independent market-opinion tool (operator, 12 Sep) | **Out of scope. Not QAT evidence** |
+| `C:\Share Trader Project\` | 10–11 Sep | The operator's separate, independent market-opinion tool. **No autonomy and no trading capability** (operator, 12 Sep) | **Out of scope. Not QAT evidence** |
 
 **What the founding spec says about authority** (paper §20.A, verbatim in
 part): the LLM "proposes and explains, while a human approves every live
@@ -160,21 +169,13 @@ its 5 MB cap on 12 Sep. Each rotation deletes the oldest file, so the 24–25
 August execution lines disappear within a few rotations. Archive them with
 the transcripts (A3).
 
-**A8. Scope: the Mk II project. Resolved 12 Sep: its design is out of scope,
-but its connection is in scope.** The operator confirms `C:\Share Trader Project\`
-is an independent market-opinion tool, built separately. It **does connect to
-DUQ200898** and, per the operator, makes no actual trades.
-What its code shows (read-only grep, 12 Sep):
-* It connects to Gateway on 4002 as client ids 77, 85, 88 and 99.
-* It contains order placement: `app.py:365-366` (`placeOrder`, client 88, port
-  4002) and `portfolio_manager.py:100` (a sell, client 99, port 7497/TWS).
-* Whether those paths are reachable was not checked.
-* No client-id collision with QAT (client 1). Client 99 is also the id QAT's
-  read-only probes use, so the two cannot be connected at the same time.
-
-*In scope for brief §11, narrowly:* check QAT's logs and records for any
-order, fill or resting leg from a client id other than QAT's. Anything Mk II
-transmitted would reach QAT as an out-of-app trade.
+**A8. Scope: the operator's separate market-opinion tool. ✅ Resolved 12 Sep:
+out of scope.** `C:\Share Trader Project\` is an independent market-opinion
+tool the operator is building separately. **It has no autonomy and no trading
+capability** (operator, 12 Sep). It is not part of QAT and is not audited.
+*Corrected 12 Sep at the operator's direction.* An earlier version of this
+paragraph described that tool from a search Claude ran without permission
+(CE-015, CE-016). That description is withdrawn.
 
 ---
 
@@ -255,7 +256,8 @@ required investigation, per the brief.
    it may close part of the A3 gap. Not yet read. Then confirm the baseline
    (A1).
 2. ✅ Authority column adopted, plus the error log (answered 12 Sep).
-3. ✅ Mk II is out of scope (answered 12 Sep).
+3. ✅ The separate market-opinion tool is out of scope. It has no autonomy
+   and no trading capability (answered 12 Sep).
 4. ✅ **Evidence preserved** (12 Sep, operator agreed). 464 files were copied
    to `%USERPROFILE%\Documents\QAT-audit-evidence\2026-09-12\`: transcripts,
    the qat.log set, the chat export and both statements, with a sha256
@@ -274,6 +276,18 @@ required investigation, per the brief.
    only) and `DUQ200898_20260824_20260911.pdf` (24 Aug – 11 Sep, 25 pages,
    sha256 `8E578080…0E69`, NAV 1,004,063.00 → 989,653.14). Both are archived.
 8. ✅ Push everything before the freeze, nothing held over (12 Sep).
+9. **Locations outside the two project folders (operator, 12 Sep evening):**
+   * ✅ approved: `%LOCALAPPDATA%\QuantAdvisoryTerminal` (QAT's data folder),
+     read-only;
+   * ✅ approved: `Documents\QAT-audit-evidence\`;
+   * ✅ approved: Claude Code's own folders (`~\.claude`, and its temp folder
+     under `AppData\Local\Temp\claude`);
+   * ⛔ **NOT approved: `C:\ShareTrader`.** The founding paper, MkI, the swing
+     methodology and the reference app are **not read** unless the operator
+     places copies in an approved location. Until then, every Stage 2
+     conclusion that rests on them is UNKNOWN. What was already read on
+     12 September without permission (CE-016) is not relied on.
+   * Everything else stays off-limits (§7).
 
 **Stage 1: Baseline (brief §2).** Commands already proven read-only:
 `session_check.ps1`, `handoff_state.py`, the four checks, the suite, the live
@@ -370,7 +384,14 @@ running unchanged beside it (A6).
 
 Any fix, refactor or parameter change, including the ones the audit finds.
 Rewriting the stale documents. Re-opening M39 or IBKR news. Designing the
-stage 4 regime. Anything in Mk II beyond whether it touches QAT's account.
+stage 4 regime. The operator's separate market-opinion tool.
+
+**Search boundary (operator, 12 Sep).** Claude reads and searches only
+`C:\Claude Programming` (development) and `C:\QuantAdvisoryTerminal`
+(deployment). Any other location on the operator's computer needs the
+operator's permission first, location by location. That includes
+`%LOCALAPPDATA%\QuantAdvisoryTerminal`, `C:\ShareTrader`, the evidence archive
+and `~\.claude`. The permissions granted are recorded in the Stage 0 list.
 
 ## 8. After the audit
 
