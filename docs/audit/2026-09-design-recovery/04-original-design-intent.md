@@ -292,10 +292,62 @@ sanity checks against stale prices; and "check per order, not once per cycle"
    and R (lines 152–154) reframe this as fixed rules scaling size with
    performance. Whether the operator accepted that reframing is not recorded.
 
-## 4.14 Still to do in Stage 2
+## 4.14 The paper against the first implementation (L2 → L3)
 
-* The **paper vs first commit** delta: what `fa9ba47` implemented and what it
-  did not (for example VaR/ES, the decision matrix, "Multi-Factor always
-  active").
-* The reference app's logic beyond its settings, where a Stage 4 comparison
-  needs it (swing entry rule, exit paths).
+`fa9ba47`, 25 Jul 07:13: 90 source modules (4,732 lines), 61 test files. Its
+README mission is §20.A of the paper word for word. What it built against
+the master prompt:
+
+| Master prompt requirement | In `fa9ba47`? | Evidence |
+|---|---|---|
+| Three layers, event bus, engines behind interfaces with mocks | **Yes** | file list; `domain/bus.py`, `data/broker/mock_broker.py` |
+| 15 strategies behind one interface | **Yes** | `domain/strategies/` (15 modules) |
+| **Decision matrix** activating strategies by regime (P §10, §20.F) | **No.** Each strategy is gated on whether the single current regime label is in its `suitable_regimes()` | `strategies/engine.py:108` @`fa9ba47`; no "decision matrix" or scoring code anywhere |
+| Multi-Factor always active | **Yes** | `strategies/multi_factor.py:3` @`fa9ba47` |
+| Regime engine: HMM + rules + **optional ML ensemble**, fusion, hysteresis, 7 labels | **HMM (4 states) + rules + fusion + hysteresis; no ML ensemble** | `regime_engine/` @`fa9ba47`; no ensemble code |
+| Regime features: log returns, realised vol, VIX, curve slope, credit spread, breadth | **Yes**, the same six as today | `feature_matrix.py` @`fa9ba47` |
+| Exposure scalars per regime | **Yes**, the same table as today (bull 1.0 … recession 0.3) | `fusion.py` @`fa9ba47` |
+| Sizing: fractional Kelly + volatility target, **W and R from the strategy's rolling stats** | **Kelly + vol target, but W and R fixed at placeholder defaults (0.55, 1.5)**. The code itself says a rolling tracker is "not built anywhere in this codebase yet" | `oms/signal_bridge.py` docstring and `__init__` @`fa9ba47` |
+| ATR stop 2.5 × | **Yes** | `strategies/swing.py` @`fa9ba47` |
+| Portfolio VaR (95/99) and ES (97.5) with limits | **Yes** | `risk_engine/portfolio_risk.py:1-2` @`fa9ba47` |
+| Kill switch (daily loss, drawdown, staleness, reconciliation, manual) | **Yes** | `risk_engine/kill_switch.py`; tests |
+| OMS: pending sign-off; only a human sign-off transmits; guardrails (max size, allow-list, kill switch) | **Yes**. `max_order_notional = 50,000` hard-coded; symbol allow-list | `oms/oms.py:4-8, 33-34, 78-80` @`fa9ba47` |
+| Corporate-action adjustment in validation | **A function exists** (`adjust_for_corporate_actions`). Whether anything called it is a Stage 3 question | `data/validation.py:105` @`fa9ba47` |
+| AI advisory: router, guards, schema, prompts; no broker access | **Yes** | `domain/ai_advisory/` @`fa9ba47` |
+| Safety tests (i)–(v) | **Yes**: `tests/safety/` (no order without sign-off, default paper, AI breach blocked); injection test in `test_prompts.py` | test names @`fa9ba47` |
+| TimescaleDB / Parquet storage | **Stubs** (`data/store/db.py` 17 lines, `parquet.py` 42 lines) | file sizes @`fa9ba47` |
+| Real market data | **No.** The README at `fa9ba47` says the screens run "on synthetic/mock data by default" | `git show fa9ba47:README.md` |
+
+**So the first implementation already departed from the paper** in four
+places before any live use: no decision matrix, no ML ensemble, placeholder
+Kelly inputs, and synthetic data. The first three were disclosed in its own
+code. From the first commit, the "multi-strategy regime-switched programme"
+existed as fifteen independently gated strategies with no allocator between
+them.
+
+## 4.15 The swing strategy across the layers
+
+| Element | L1: operator methodology (S) | L1: reference app as built (R `evaluate_swing_strategy`, lines 1000–1092) | L3: QAT first commit (`fa9ba47`) | QAT today |
+|---|---|---|---|---|
+| Timeframe | daily | daily, evaluated once at the close | daily bars | same as `fa9ba47` |
+| Trend | EMA20/50 ribbon | EMA20 > EMA50; **entry needs a gap ≥ 1%** (Moderate) | EMA20 > EMA50, **no minimum gap** | same entry rule as `fa9ba47` (`swing.py:151-159`) |
+| Pullback | touches the 20-day EMA with a **bullish rejection tail**; buy at the **next open** | **any daily low in the last 3 days** within 2% above EMA20 | **yesterday's close ≤ EMA20** | same |
+| Confirmation | the daily candle closes; volume on breakouts; **weekly chart not falling** | close > previous close **and** close > EMA20 | close > EMA20 | same |
+| Other entries | bull flag, double bottom | none | none | none |
+| Stop | just below support / EMA20, GTC bracket | 1.5 × ATR(14) (Moderate) | 2.5 × ATR(14) (paper default) | 2.5 × ATR(14) |
+| Target | ≥ 2R, **checked against resistance** | 2R | 2R | 2R |
+| Trade management | **50% off at 1R, stop to breakeven, 2–3 × ATR trailing stop after 1R** | none; 3% daily stop-loss sweep; Friday AI review | none | none |
+| Trend-break exit | a close below the 20-day EMA (trail method B) | EMA20 < EMA50 (bare cross) | none | EMA20 < EMA50 (bare cross, added 26 Jul, `swing.py:131-149`) |
+| Regimes | not stated | none (macro warns only) | Sideways only (paper) | Sideways, Bull, Low-Vol, Recovery (widened 30 Jul, recorded in the code as an operator decision, `swing.py:38-65`) |
+
+**QAT's swing entry is the first commit's rule, unchanged.** That rule is
+the agent's own instantiation of the paper's generic §4.10 text. It is
+neither the operator's methodology nor the reference app's rule, which ran
+autonomously until 26 July. Whether that substitution was intended is
+UNKNOWN (the building session no longer exists).
+
+## 4.16 Stage 2 status
+
+Complete for Checkpoint A, with the unknowns in §4.13. Not read, and not
+needed for Checkpoint A: the reference app beyond its settings and swing
+function; the bulk of Claude's replies in C2.
