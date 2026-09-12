@@ -239,6 +239,10 @@ HANDOFF, ROADMAP and commit messages.
 * **Root cause:** multi-step one-liners written without trying the smallest
   piece first.
 * **To avoid:** for a new parsing one-liner, run it on one item before looping.
+* **Later note (12 Sep 2026, about 18:45):** one more slip of the same kind.
+  A `gh api` query for CI annotations called the repository-level
+  `check-runs` endpoint without a ref and got a 404. Re-run against the job
+  id, it returned 0 annotations. No effect beyond the re-run.
 
 ---
 
