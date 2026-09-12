@@ -430,12 +430,18 @@ class ClosedTrade:
         return self.net_pnl > 0
 
     def as_row(self) -> dict[str, object]:
+        # ⚠️ A ROW IS COMPUTED FROM EXACTLY WHAT IT STORES, or the audit - which
+        # re-parses the stored (rounded) inputs and derives again - disagrees
+        # with the writer. Derived from the unrounded values, the live ledger
+        # failed it with 15 findings on 11 September (BHP.AX `net_pnl stores
+        # -3091.29 but computes to -3091.3`). Every column below comes from `s`.
+        s = self._as_stored()
         return {
-            "opened_at": self.opened_at.isoformat(timespec="seconds"),
-            "closed_at": self.closed_at.isoformat(timespec="seconds"),
-            "symbol": self.symbol,
-            "strategy": self.strategy or "",
-            "quantity": round(self.quantity, 6),
+            "opened_at": s.opened_at.isoformat(timespec="seconds"),
+            "closed_at": s.closed_at.isoformat(timespec="seconds"),
+            "symbol": s.symbol,
+            "strategy": s.strategy or "",
+            "quantity": round(s.quantity, 6),
             # ⚠️ EIGHT DECIMALS ON PRICES, NOT FOUR, AND THE REASON IS SHARE
             # COUNT. `gross_pnl` and `net_pnl` are DERIVED from these on
             # read-back - `from_row`'s docstring says recomputing them is the
@@ -452,55 +458,72 @@ class ClosedTrade:
             #
             # Eight decimals costs a few bytes a row and makes the round trip
             # exact to well under a cent at any size this account will hold.
-            "entry_price": round(self.entry_price, 8),
-            "exit_price": round(self.exit_price, 8),
-            "stop_price": round(self.stop_price, 8) if self.stop_price is not None else "",
-            "gross_pnl": round(self.gross_pnl, 2),
-            "entry_cost": round(self.entry_cost, 2),
-            "exit_cost": round(self.exit_cost, 2),
-            "net_pnl": round(self.net_pnl, 2),
-            "pnl_pct": round(self.pnl_pct, 6),
-            "regime_at_entry": self.regime_at_entry or "",
+            "entry_price": round(s.entry_price, 8),
+            "exit_price": round(s.exit_price, 8),
+            "stop_price": round(s.stop_price, 8) if s.stop_price is not None else "",
+            "gross_pnl": round(s.gross_pnl, 2),
+            "entry_cost": round(s.entry_cost, 2),
+            "exit_cost": round(s.exit_cost, 2),
+            "net_pnl": round(s.net_pnl, 2),
+            "pnl_pct": round(s.pnl_pct, 6),
+            "regime_at_entry": s.regime_at_entry or "",
             "regime_probability": (
-                round(self.regime_probability, 4) if self.regime_probability is not None else ""
+                round(s.regime_probability, 4) if s.regime_probability is not None else ""
             ),
-            "exposure_scalar": (
-                round(self.exposure_scalar, 4) if self.exposure_scalar is not None else ""
-            ),
-            "exit_reason": self.exit_reason or "",
-            "holding_days": round(self.holding_days, 3),
-            "entry_slippage": (
-                round(self.entry_slippage, 4) if self.entry_slippage is not None else ""
-            ),
-            "mae_r": round(self.mae_r, 3) if self.mae_r is not None else "",
-            "mfe_r": round(self.mfe_r, 3) if self.mfe_r is not None else "",
-            "r_multiple": round(self.r_multiple, 4) if self.r_multiple is not None else "",
+            "exposure_scalar": round(s.exposure_scalar, 4) if s.exposure_scalar is not None else "",
+            "exit_reason": s.exit_reason or "",
+            "holding_days": round(s.holding_days, 3),
+            "entry_slippage": round(s.entry_slippage, 4) if s.entry_slippage is not None else "",
+            "mae_r": round(s.mae_r, 3) if s.mae_r is not None else "",
+            "mfe_r": round(s.mfe_r, 3) if s.mfe_r is not None else "",
+            "r_multiple": round(s.r_multiple, 4) if s.r_multiple is not None else "",
             "gross_r_multiple": (
-                round(self.gross_r_multiple, 4) if self.gross_r_multiple is not None else ""
+                round(s.gross_r_multiple, 4) if s.gross_r_multiple is not None else ""
             ),
-            "risk_per_share": (
-                round(self.risk_per_share, 8) if self.risk_per_share is not None else ""
-            ),
+            "risk_per_share": round(s.risk_per_share, 8) if s.risk_per_share is not None else "",
             "reference_price": (
-                round(self.reference_price, 8) if self.reference_price is not None else ""
+                round(s.reference_price, 8) if s.reference_price is not None else ""
             ),
-            "worst_price": round(self.worst_price, 8) if self.worst_price is not None else "",
-            "best_price": round(self.best_price, 8) if self.best_price is not None else "",
+            "worst_price": round(s.worst_price, 8) if s.worst_price is not None else "",
+            "best_price": round(s.best_price, 8) if s.best_price is not None else "",
             "earnings_at_entry": (
-                self.earnings_at_entry.isoformat() if self.earnings_at_entry is not None else ""
+                s.earnings_at_entry.isoformat() if s.earnings_at_entry is not None else ""
             ),
             # Blank rather than False when unknown. "No date was available" and
             # "a date was available and the trade avoided it" are different
             # facts, and writing both as False would merge them permanently.
             "held_through_earnings": (
-                "" if self.held_through_earnings is None else str(self.held_through_earnings)
+                "" if s.held_through_earnings is None else str(s.held_through_earnings)
             ),
-            "order_id": self.order_id or "",
+            "order_id": s.order_id or "",
             # Blank on a pre-M122 row, which means the Alpaca/US period rather
             # than "unknown" - see the migration script, which names them.
-            "market": self.market or "",
-            "currency": self.currency or "",
+            "market": s.market or "",
+            "currency": s.currency or "",
         }
+
+    def _as_stored(self) -> ClosedTrade:
+        """This trade holding exactly the inputs `as_row` stores - the values
+        `from_row` will read back - so what is derived from it is what the
+        file's own reader derives. See the warning in `as_row`."""
+
+        def price(value: float | None) -> float | None:
+            return round(value, 8) if value is not None else None
+
+        return replace(
+            self,
+            opened_at=self.opened_at.replace(microsecond=0),
+            closed_at=self.closed_at.replace(microsecond=0),
+            quantity=round(self.quantity, 6),
+            entry_price=round(self.entry_price, 8),
+            exit_price=round(self.exit_price, 8),
+            stop_price=price(self.stop_price),
+            reference_price=price(self.reference_price),
+            worst_price=price(self.worst_price),
+            best_price=price(self.best_price),
+            entry_cost=round(self.entry_cost, 2),
+            exit_cost=round(self.exit_cost, 2),
+        )
 
     @classmethod
     def from_row(cls, row: dict[str, str]) -> ClosedTrade | None:
@@ -565,16 +588,23 @@ class TradeLedger:
         self.bus = bus
         self.path = Path(data_dir) / filename
         self.settings = settings or Settings()
-        # Modelled, not billed. A paper broker charges nothing, so measuring
-        # the paper account's own fees would report zero and promote a strategy
-        # onto a broker where the same trades lose money (M27's reasoning, now
-        # applied to the measurement as well as to the rail). Real per-fill
-        # commissions from a live broker are not read back yet.
+        # The broker's CHARGE, modelled (M175). Measured 11 September: IBKR's
+        # own commission equals this model on 17 of 17 logged orders, to the
+        # cent - and the paper account bills it, so the Alpaca-era reason for
+        # modelling ("a paper broker charges nothing") no longer applies; the
+        # model is simply exact. `commission_checks.csv` keeps checking it.
+        # Slippage is NOT charged here: a fill's price already contains it.
         self._costs = (
             CostModel.from_settings(self.settings)
             if self.settings.apply_costs_in_paper or self.settings.is_live
             else None
         )
+        # Per broker order id: (notional booked so far, charge booked so far).
+        # One order absorbed in several pieces pays ONE floor across all of
+        # them (M175) - LOV.AX's single exit on 26 August paid four. In memory
+        # only: a piece absorbed after a restart can pay a second floor, which
+        # matters only below ~AUD 7,500 of notional.
+        self._charged: dict[str, tuple[float, float]] = {}
         self._open_lots: dict[str, deque[OpenLot]] = defaultdict(deque)
         # The ledger reads the regime itself rather than having it threaded
         # through the order path (M37). It is already on the bus, and the
@@ -1065,7 +1095,7 @@ class TradeLedger:
                     stop_price=event.stop_price,
                     strategy=event.strategy,
                     opened_at=event.ts,
-                    entry_cost=self._fill_cost(event.quantity, event.price),
+                    entry_cost=self._increment_cost(event.order_id, event.quantity, event.price),
                     regime_at_entry=self._regime,
                     regime_probability=self._regime_probability,
                     exposure_scalar=self._exposure_scalar,
@@ -1080,15 +1110,31 @@ class TradeLedger:
         self._close_against_lots(event)
 
     def _fill_cost(self, quantity: float, price: float) -> float:
-        """What one fill costs, for its whole quantity.
+        """What one WHOLE order is billed - commission and pass-through fees,
+        never slippage (M175). For re-costing an order already known in full:
+        a corrected entry, a corrected exit, a lot restored at startup."""
+        if self._costs is None:
+            return 0.0
+        return self._costs.charge(abs(quantity) * price)
 
-        Charged per transaction, which is why it is computed here rather than
-        per closed trade: the commission floor applies once to the order, and
-        a position closed in three pieces pays one floor, not three.
+    def _increment_cost(self, order_id: str | None, quantity: float, price: float) -> float:
+        """What THIS piece of an order adds to the order's bill (M175).
+
+        The floor is charged once per ORDER, so each increment pays the
+        difference between the order's charge with it and without it. With no
+        order id there is nothing to accumulate against, so the piece is
+        costed as a whole order.
         """
         if self._costs is None:
             return 0.0
-        return self._costs.apply(abs(quantity) * price)
+        notional = abs(quantity) * price
+        if not order_id:
+            return self._costs.charge(notional)
+        booked_notional, booked_charge = self._charged.get(order_id, (0.0, 0.0))
+        total_notional = booked_notional + notional
+        total_charge = self._costs.charge(total_notional)
+        self._charged[order_id] = (total_notional, total_charge)
+        return total_charge - booked_charge
 
     def _close_against_lots(self, event: OrderFilledEvent) -> None:
         remaining = event.quantity
@@ -1096,7 +1142,7 @@ class TradeLedger:
         # The exit's cost belongs to the whole sell, so it is apportioned
         # across whatever lots this sell happens to close - by quantity, the
         # same basis the entry cost is split on.
-        exit_cost_total = self._fill_cost(event.quantity, event.price)
+        exit_cost_total = self._increment_cost(event.order_id, event.quantity, event.price)
         exit_quantity = event.quantity
 
         while remaining > 1e-9 and lots:

@@ -57,6 +57,7 @@ class FakeIBClient:
         self._next_order_id = 476  # the real reqId from the 3 September log
         self.placed_orders: list[tuple[Any, Any]] = []
         self.errorEvent = FakeErrorEvent()
+        self.commissionReportEvent = FakeErrorEvent()
 
     def isConnected(self) -> bool:
         return True

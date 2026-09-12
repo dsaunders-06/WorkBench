@@ -125,6 +125,25 @@ class BrokerFill:
 
 
 @dataclass(frozen=True, slots=True)
+class BrokerCommission:
+    """What the broker billed for ONE completed order, as it reported it (M175).
+
+    Totalled across the order's executions - IBKR sends one commission report
+    per execution, and the per-order floor is spread across them. A plain
+    record, so the judging happens in the domain (`CommissionAuditor`) and the
+    data layer never imports the cost model.
+    """
+
+    order_id: str
+    symbol: str
+    side: Literal["buy", "sell"]
+    quantity: float
+    notional: float
+    commission: float
+    currency: str
+
+
+@dataclass(frozen=True, slots=True)
 class RestingStopOrder:
     """A protective stop working at the broker, with enough to CHANGE it (M39).
 

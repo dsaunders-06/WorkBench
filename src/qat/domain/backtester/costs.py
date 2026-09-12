@@ -83,6 +83,50 @@ class CostModel:
         """Exchange + clearing, proportional and never floored."""
         return abs(notional) * (self.third_party_bps / 10_000.0)
 
+    def charge(self, notional: float) -> float:
+        """What the BROKER bills for one transaction: commission plus
+        pass-through fees, and never slippage (M175).
+
+        `apply` adds slippage because a backtest fills at an idealised price and
+        the impact has to be modelled. A real fill already CONTAINS its
+        slippage - the price is the slipped price - so a realised record that
+        charged `apply` counted it twice. Measured on 11 September: every row in
+        `closed_trades.csv` carried 5 bp a side that its fills had already paid.
+        """
+        return self.commission(notional) + self.third_party(notional)
+
+    def fill_price_from_average_cost(self, average_cost: float, quantity: float) -> float:
+        """The fill price inside a commission-INCLUSIVE average cost (M175).
+
+        IBKR's `avgCost` folds the commission in: avgCost x qty = fill x qty +
+        charge(fill x qty). Verified 11 September against 17 logged orders to
+        well under a cent an order - BHP.AX's 64.1263816 over 793 shares is a
+        64.07 fill, an exact tick.
+
+        Solved on the proportional branch first; if that answer would not clear
+        the floor, the floor branch is the self-consistent one.
+        """
+        qty = abs(quantity)
+        if qty <= 0 or average_cost <= 0:
+            return average_cost
+        third = self.third_party_bps / 10_000.0
+        if not self.average_cost_on_floor(average_cost, qty):
+            return average_cost / (1.0 + self.commission_bps / 10_000.0 + third)
+        return (average_cost * qty - self.min_commission) / (qty * (1.0 + third))
+
+    def average_cost_on_floor(self, average_cost: float, quantity: float) -> bool:
+        """True when the commission inside a commission-inclusive average cost
+        over `quantity` is the FLOOR - the branch of
+        `fill_price_from_average_cost` whose answer is only right if `quantity`
+        was the whole order (M175). Above the floor the answer is the same at
+        any quantity."""
+        qty = abs(quantity)
+        if qty <= 0 or average_cost <= 0:
+            return False
+        rate = self.commission_bps / 10_000.0
+        proportional = average_cost / (1.0 + rate + self.third_party_bps / 10_000.0)
+        return proportional * qty * rate < self.min_commission
+
     def apply(self, notional: float) -> float:
         """Dollar cost of ONE transaction of the given notional value."""
         return self.commission(notional) + self.third_party(notional) + self.slippage(notional)

@@ -116,6 +116,12 @@ class OrderFilledEvent(Event):
     """How a position ended: stop, target, time_stop, signal, delever. Set by
     whichever component actually caused the exit, because after the fact the
     price alone cannot always distinguish them."""
+    price_is_fill: bool = False
+    """Whether `price` is what the broker actually charged, rather than the
+    price the order was sized against (M175). `_announce_fill` publishes at
+    "transmitted" as well as "filled", and at transmit only the reference
+    exists. The entry record stamps which one it holds, so a restart never
+    replaces an observed fill with a derived one."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

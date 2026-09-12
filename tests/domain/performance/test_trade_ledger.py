@@ -429,11 +429,12 @@ async def test_a_trade_records_what_it_cost_to_open_and_close(tmp_path):
     trade = ledger.closed_trades()[0]
 
     assert trade.gross_pnl == pytest.approx(1000.0)
-    # 10bps of $10,000 in, 10bps of $11,000 out.
-    assert trade.entry_cost == pytest.approx(10.0)
-    assert trade.exit_cost == pytest.approx(11.0)
-    assert trade.net_pnl == pytest.approx(979.0)
-    assert trade.costs == pytest.approx(21.0)
+    # 5bps commission of $10,000 in and of $11,000 out. The 5bps of slippage
+    # in these settings is NOT charged: a fill's price already contains it (M175).
+    assert trade.entry_cost == pytest.approx(5.0)
+    assert trade.exit_cost == pytest.approx(5.5)
+    assert trade.net_pnl == pytest.approx(989.5)
+    assert trade.costs == pytest.approx(10.5)
 
 
 @pytest.mark.asyncio

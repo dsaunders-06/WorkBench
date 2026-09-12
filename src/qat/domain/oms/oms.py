@@ -1182,6 +1182,7 @@ class OMS:
                 operator=operator,
                 reference_price=order.reference_price,
                 earnings_at_entry=order.earnings_date,
+                price_is_fill=bool(order.filled_price),
                 exit_reason=(
                     self._exit_reasons.pop(order.symbol, "signal") if order.side == "sell" else None
                 ),
@@ -2216,6 +2217,9 @@ class OMS:
                         side=fill.side,
                         quantity=fill.quantity,
                         price=fill.price,
+                        # IBKR's execution avgPrice: an OBSERVED fill, so a buy
+                        # absorbed here is stamped "fill" and M65 leaves it (M175).
+                        price_is_fill=True,
                         strategy=None,
                         operator="broker (protective order)",
                         exit_reason=self._protective_exit_reason(fill, stop_at_fill),

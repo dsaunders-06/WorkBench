@@ -50,6 +50,7 @@ from qat.data.broker.adapter import Position
 from qat.data.earnings import EarningsCalendar, NullEarningsCalendar
 from qat.data.features import compute_atr
 from qat.data.sectors import SECTOR_BY_SYMBOL
+from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import (
     EntryPriceCorrectedEvent,
@@ -133,6 +134,12 @@ class _Entry:
     # `None` on an older record means UNKNOWN, never the entry price - which
     # would report zero slippage on a trade nobody measured.
     reference_price: float | None = None
+    # Where `price` came from (M175). "fill" is an OBSERVED fill - announced at
+    # its fill price, or corrected mid-session by M70 - and M65 must never
+    # overwrite it with a figure DERIVED from the broker's average cost.
+    # "reference" is the sizing price published at transmit. `None` is a
+    # record written before M175, which says neither.
+    price_source: Literal["fill", "reference"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +163,8 @@ class PositionEntry:
     # than a list of names - a field added to one and not the other is exactly
     # how M33 and M49 happened twice over.
     reference_price: float | None = None
+    # M175, same reasoning: where `price` came from.
+    price_source: Literal["fill", "reference"] | None = None
 
 
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
@@ -559,10 +568,20 @@ class SignalToOrderBridge:
             logger.exception("Could not read positions to reconcile recorded entry prices")
             return []
 
+        # M175. IBKR's `avgCost` is commission-INCLUSIVE (Alpaca's average was
+        # not), so read raw it put every entry 8.8 bp high and charged the
+        # commission twice - once in the price, once in `entry_cost`. An adapter
+        # that says so has it converted back to the fill first.
+        includes_commission = bool(getattr(self.oms.broker, "avg_price_includes_commission", False))
+        costs = CostModel.from_settings(self.settings)
         corrected: list[str] = []
         for position in positions:
             entry = self._entries.get(position.symbol)
             if entry is None or not position.avg_price:
+                continue
+            if entry.price_source == "fill":
+                # An OBSERVED fill beats anything derived from an average - the
+                # JHX.AX and COH.AX regression, where this overwrote M70's price.
                 continue
             # A corporate action changes avg_entry_price legitimately - a
             # 2-for-1 split halves it - so correcting to the post-event figure
@@ -571,6 +590,29 @@ class SignalToOrderBridge:
             if self.oms.anomalies.is_quarantined(position.symbol):
                 continue
             paid = float(position.avg_price)
+            if includes_commission:
+                quantity = float(position.quantity)
+                if costs.average_cost_on_floor(paid, quantity):
+                    # On the floor branch the conversion needs the ENTRY
+                    # order's quantity, and IBKR's avgCost does not move on a
+                    # sell - so after a partial sell the position's quantity is
+                    # not it. Bought 5,000 at 2.00 and sold down to 1,000, the
+                    # conversion gives 1.99516: 24 bp under the real fill.
+                    # Nothing here can tell the two apart, so no guess.
+                    logger.warning(
+                        "Did not correct the recorded entry price for %s: at %g shares, "
+                        "IBKR's average cost of %g puts the commission on the %.2f floor, and "
+                        "converting it back to the fill needs the ENTRY order's quantity - "
+                        "which the position's quantity stops being once any of it is sold. The "
+                        "average cost cannot be converted without it, so the record keeps %g.",
+                        position.symbol,
+                        abs(quantity),
+                        paid,
+                        costs.min_commission,
+                        entry.price,
+                    )
+                    continue
+                paid = costs.fill_price_from_average_cost(paid, quantity)
             if abs(paid - entry.price) <= _ENTRY_PRICE_TOLERANCE * abs(entry.price):
                 continue
             self._entries[position.symbol] = replace(entry, price=paid)
@@ -921,6 +963,8 @@ class SignalToOrderBridge:
                 stop_price=entry.stop_price,
                 target_price=entry.target_price,
                 strategy=entry.strategy,
+                reference_price=entry.reference_price,
+                price_source=entry.price_source,
             )
             for symbol, entry in self._entries.items()
         }
@@ -1100,6 +1144,7 @@ class SignalToOrderBridge:
                     # M44. The event has carried this since M37; the bridge
                     # simply dropped it, so it never survived to the ledger.
                     reference_price=event.reference_price,
+                    price_source="fill" if event.price_is_fill else "reference",
                 ),
             )
             self._entry_times.append(event.ts)
@@ -1139,7 +1184,7 @@ class SignalToOrderBridge:
         entry = self._entries.get(event.symbol)
         if entry is None:
             return
-        self._entries[event.symbol] = replace(entry, price=event.price)
+        self._entries[event.symbol] = replace(entry, price=event.price, price_source="fill")
         self._save_entries()
 
     def _load_entries(self) -> dict[str, _Entry]:
@@ -1182,6 +1227,13 @@ class SignalToOrderBridge:
                         if row.get("reference_price") is not None
                         else None
                     ),
+                    # M175, `.get` for the fourth time: a pre-M175 record says
+                    # nothing about where its price came from, and None is that.
+                    price_source=(
+                        row["price_source"]
+                        if row.get("price_source") in ("fill", "reference")
+                        else None
+                    ),
                 )
             except (KeyError, TypeError, ValueError):
                 logger.warning("Ignoring an unreadable entry record for %s", symbol)
@@ -1215,6 +1267,7 @@ class SignalToOrderBridge:
                 "target_price": entry.target_price,
                 "strategy": entry.strategy,
                 "reference_price": entry.reference_price,
+                "price_source": entry.price_source,
             }
             for symbol, entry in self._entries.items()
         }

@@ -27,9 +27,16 @@ below is anchored on that rather than on the three field names.
 
 from __future__ import annotations
 
+from dataclasses import fields
 from datetime import UTC, datetime
 
-from qat.domain.oms.signal_bridge import PositionEntry, _Entry
+from qat.config import Settings
+from qat.data.broker.mock_broker import MockBroker
+from qat.domain.bus import EventBus
+from qat.domain.oms.oms import OMS
+from qat.domain.oms.signal_bridge import PositionEntry, SignalToOrderBridge, _Entry
+from qat.domain.risk_engine.engine import RiskEngine
+from qat.domain.risk_engine.kill_switch import KillSwitch
 
 
 def test_the_entry_record_carries_the_reference_price() -> None:
@@ -51,6 +58,37 @@ def test_the_public_view_exposes_every_stored_field() -> None:
         f"the stored record and its public view disagree: only in _Entry "
         f"{sorted(private - public)}, only in PositionEntry {sorted(public - private)}"
     )
+
+
+def test_position_entries_populates_every_stored_field(tmp_path) -> None:
+    """⚠️ The shape test above passed while `position_entries()` built its
+    view WITHOUT `reference_price` and `price_source` - both always None. A
+    shape matching is not the fields being carried: this sets every field to
+    a non-default value and checks each one arrives."""
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    bus = EventBus()
+    switch = KillSwitch()
+    oms = OMS(
+        MockBroker(seed=1), RiskEngine(bus, switch, settings=settings), switch, settings=settings
+    )
+    bridge = SignalToOrderBridge(bus=bus, oms=oms, settings=settings)
+    entry = _Entry(
+        opened_at=datetime(2026, 8, 24, tzinfo=UTC),
+        price=32.9782546,
+        stop_price=30.69,
+        target_price=36.86,
+        strategy="swing",
+        reference_price=32.90,
+        price_source="fill",
+    )
+    unset = [f.name for f in fields(_Entry) if getattr(entry, f.name) == f.default]
+    assert not unset, f"set every field, or this proves nothing about {unset}"
+    bridge._entries["TNE.AX"] = entry
+
+    view = bridge.position_entries()["TNE.AX"]
+
+    for name in _Entry.__dataclass_fields__:
+        assert getattr(view, name) == getattr(entry, name), name
 
 
 def test_a_reference_price_round_trips_through_the_public_view() -> None:
