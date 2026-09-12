@@ -1,0 +1,363 @@
+# Design Recovery & Design Intent Audit: assessment of the approach, and plan
+
+**Status:** proposal for review, 12 September 2026. Nothing in the system has
+changed. The audit has not started. **Revised the same day** with the
+operator's answers (origin in four Claude chats; the authority column adopted,
+plus a Claude error log; Mk II is a separate tool) and a correction to what the
+session transcripts cover (CE-013 in `docs/CLAUDE_ERROR_LOG.md`).
+**Baseline at writing:** `master` at `ae2c91a` (2 commits unpushed). Deployed
+M175 (`5e322ca`). App running since 10:55 (weekend, stood down).
+
+---
+
+## 1. Verdict on the approach
+
+**Adopt it, with eight amendments.** It asks the right question at the right
+time. Entries are already blocked by the aggregate risk cap, so pausing
+development costs almost no evidence. Its distinction between "code exists"
+and "behaviour demonstrated" matches what this project has learned the hard
+way. The control-trap analysis (its section 13) has a live example to work on
+today.
+
+The amendments come from checking whether the audit can actually be done with
+the evidence that exists. Section 2 shows what I found. Section 3 lists the
+amendments.
+
+---
+
+## 2. What evidence exists (located 12 September, read-only)
+
+**The founding specification is outside the repository.** The code cites
+"spec §E", "spec §I" and "paper §4.10" 92 times across 66 files. None of those
+documents was ever committed. They sit in `C:\ShareTrader\`:
+
+| Artefact | Date | What it is | Role in the audit |
+|---|---|---|---|
+| `ShareTrader MkI.txt` | 15 Jul | First concept. Puts a local LLM "AI Trading Analyst" at the top of the decision chain, issuing Buy/Hold/Sell with confidence | Antecedent |
+| `Archive\claude_market_dashboard*.py`, `claude_market_dashboard.py` | 13–26 Jul | The ShareTrader reference app QAT was ported from. It traded autonomously (`autonomous_trade_journal.csv`) | Antecedent. Source of several "closes the gap with the reference" changes |
+| `Swing Trader methodology.md` | 21 Jul | Swing detail: chart patterns, position sizing, stop placement, R:R targets, **ATR trailing stops, partial take-profit** | Strategy intent |
+| `Investment_Strategy_Advisory_Paper.docx` | 24 Jul | **The founding specification.** 21 sections. §4.10 swing, §6 risk, §9 regimes, §11 HMM, §14 AI permissions, §18 risk engine. **§20 is the "Master Prompt for an AI Coding Agent", modules A–O**: "spec §E" is the regime engine, "spec §I" the broker adapter and OMS | **Primary baseline** |
+| Repo commit `fa9ba47` | 25 Jul 07:13 | First commit: "M1–M9, in progress". It arrived with the engines already built | The first *implementation*. Not the design |
+| **Four Claude chats (claude.ai, not Claude Code)** | before 25 Jul | The operator's first development of the app, before the move to Claude Code (operator, 12 Sep). They likely produced the paper and M1–M9 | **Primary evidence of origin and early authority. Not yet obtained** |
+| Claude Code transcripts (`~\.claude\projects\C--Claude-Programming\`) | **one from 4 Aug; 33 from 3 Sep on** | 202 MB. ⚠️ Retention is Claude Code's default 30 days (`cleanupPeriodDays` unset), which **has already deleted 5 Aug – 2 Sep**, and deletes each remaining file 30 days after its last activity. *Corrected: this row first read "34 sessions, 4 Aug – 12 Sep" (CE-013)* | Evidence of who authorised what, from 3 September only |
+| `ROADMAP.md` (4,798 lines), `docs/HANDOFF.md` (~6,500), `docs/superpowers/specs/` (25 specs) | 25 Jul on | Agent-written rationale and incident records | Claims to test, with dates |
+| `C:\Share Trader Project\` (incl. the 458 MB AI-history PDF) | 10–11 Sep | A separate, independent market-opinion tool (operator, 12 Sep) | **Out of scope. Not QAT evidence** |
+
+**What the founding spec says about authority** (paper §20.A, verbatim in
+part): the LLM "proposes and explains, while a human approves every live
+order". "Only a human sign-off action may release an order to the OMS."
+"**There is no auto-trade toggle.**" "Never implement autonomous live trading."
+
+**What the paper says about swing** (§4.10, summarised): pullbacks to support
+in an uptrend or breakouts from consolidation, each with a clear invalidation
+level. Size so the distance to the stop equals 0.5–1% of equity. Target
+reward-to-risk of at least 2:1. Suited to sideways-to-moderately-trending
+markets. The methodology file adds trailing stops and partial take-profit.
+
+---
+
+## 3. Amendments to the approach
+
+**A1. Name the reference baseline.** "The original design" has four
+generations: the MkI concept (LLM decides), the reference app (autonomous),
+the paper (human approves every order, no auto toggle), and the first commit
+(an agent's implementation of the paper). They disagree on the most important
+question, which is who has authority to trade.
+*Proposal:* treat the **paper, and §20 in particular, as Original Intent**,
+with the **four Claude chats as its provenance**. The chats show how the
+paper and M1–M9 came to be, and any decision in them that departs from the
+paper. Treat MkI, the methodology file and the reference app as antecedents,
+to be cited when a later change "closed a gap with the reference". Treat
+`fa9ba47` as the first implementation and compare it with the paper too,
+because drift may begin at commit one.
+**To confirm after the chats are read** (12 Sep: the operator identified the
+chats as the origin).
+
+**A2. Add an authority dimension.** Categories A–G have nowhere to put a change
+you directed that alters the original intent. Autonomy is the clearest case. B
+("does not change intent") would be false and E ("behaviour change") would
+hide that you chose it. The ASX move and the 30 July widening of swing's
+regimes are the same shape.
+*Proposal:* keep A–G, and add an **Authority** column with four values:
+operator-directed; agent-proposed, operator-approved; agent-only; unknown.
+Each value carries its evidence reference.
+**✅ Adopted 12 Sep.** The operator also asked for a separate **Claude error
+log**: every error Claude has made, timestamped, with details and how to
+avoid it. It is `docs/CLAUDE_ERROR_LOG.md`, seeded with 14 verified entries.
+Back-filling the history is Stage 4a below.
+
+**A3. Treat the evidence gaps explicitly.** *(Corrected 12 Sep, CE-013.)*
+Three periods have different evidence:
+* **Before 25 July:** the four Claude chats. Obtainable if the operator
+  exports them.
+* **25 July – 2 September:** commit messages, ROADMAP and HANDOFF only. The
+  Claude Code transcripts for this period are gone (30-day retention), except
+  one session from 4 August. It covers autonomy (26 Jul), the governor,
+  protection, costs, the ASX move, and the first live orders.
+* **3 September on:** transcripts exist, but each is deleted 30 days after its
+  last activity. The 3 September sessions go first, on about 3 October.
+
+*Proposal:* mark authority UNKNOWN for 25 Jul – 2 Sep wherever commit
+messages, ROADMAP and HANDOFF don't name who decided. **Preserve the
+remaining transcripts before the next Claude Code start-up**, which is when
+cleanup runs. That means copying them to an archive folder, raising
+`cleanupPeriodDays`, or both. Both need your OK.
+
+**A4. Independence.** The same kind of agent that wrote the code, ROADMAP and
+HANDOFF would be auditing them. HANDOFF is agent narrative, and reading it
+first would carry its framing into the audit.
+*Proposal:* reconstruct the current system (§4 of the brief) **from the code
+and the raw logs only**. Use HANDOFF and ROADMAP as dated claims to test, never
+as evidence of behaviour. An option, only if you ask for it: have
+fresh-context investigators, who have never read HANDOFF, do the §4
+reconstruction, then reconcile their results.
+
+**A5. Depth tiers.** 952 commits, 184 modules and 45,000 source lines won't
+all get the same scrutiny.
+*Proposal:* **full depth** on the live decision path (data → regime → swing →
+sizing → risk → gate → OMS → broker → reconciliation → ledger) and on the AI
+boundary. **Survey depth** for the 14 undeployed strategies, the UI, the
+backtester and research harness, and reporting.
+
+**A6. Define the freeze.** The brief freezes development. It does not say
+whether the app keeps operating.
+*Recommended:* **operate unchanged.** M175 keeps running each session, in
+paper, with no code, configuration or deploy changes. The reasons:
+* The nine open positions have time stops and signal exits that only the
+  running app executes.
+* Running is the only way the aggregate cap unwinds.
+* Items 1 and 3 below are observations the audit needs.
+* The audit reads live logs.
+
+The alternative, switching to `recommend` so every order needs your
+signature, is itself a configuration change, and the paper's original rule
+would require it.
+**✅ Decided 12 Sep: keep `auto` running unchanged.** Operator's reason: the
+automation exists so a human does not slow trade decisions, or corrupt them
+through timing, while the system is being tested. *For the drift map:* this is
+operator-directed authority for autonomous paper execution, recorded 12
+September. It departs from paper §20.A ("there is no auto-trade toggle"). The
+authority for the original 26 July introduction stays UNKNOWN (A3).
+*Emergency exception:* if the audit finds a live safety defect, I stop, report
+it, and change nothing without your authorisation.
+
+**A7. Broker-side truth needs you.** Brief §11 compares broker and application
+records. The app's logs and a read-only API probe cover recent executions
+only. The complete record since 24 August is IBKR's account statements, and
+signing in to download them is yours to do.
+*Proposal:* you download the Activity statements for 24 Aug – 11 Sep, or
+approve a read-only probe and accept a shorter window.
+**Clarified 12 Sep.** Claude cannot fetch the statement itself: it needs a
+sign-in to IBKR's Client Portal, and Claude does not enter credentials. What
+Claude *can* source: (a) the broker's own execution and commission reports as
+the app logged them (`execDetails`, `commissionReport`, back to 24 August in
+the rotated logs), and (b) a read-only API probe of recent executions and
+open orders. Both are the broker's data as seen through QAT's connection. The
+statement is the only source independent of QAT, and it is what an auditor
+would reconcile against. One download of about five minutes, as CSV.
+⚠️ **The rotated logs are also evidence at risk.** `qat.log` sat at 89% of
+its 5 MB cap on 12 Sep. Each rotation deletes the oldest file, so the 24–25
+August execution lines disappear within a few rotations. Archive them with
+the transcripts (A3).
+
+**A8. Scope: the Mk II project. Resolved 12 Sep: its design is out of scope,
+but its connection is in scope.** The operator confirms `C:\Share Trader Project\`
+is an independent market-opinion tool, built separately. It **does connect to
+DUQ200898** and, per the operator, makes no actual trades.
+What its code shows (read-only grep, 12 Sep):
+* It connects to Gateway on 4002 as client ids 77, 85, 88 and 99.
+* It contains order placement: `app.py:365-366` (`placeOrder`, client 88, port
+  4002) and `portfolio_manager.py:100` (a sell, client 99, port 7497/TWS).
+* Whether those paths are reachable was not checked.
+* No client-id collision with QAT (client 1). Client 99 is also the id QAT's
+  read-only probes use, so the two cannot be connected at the same time.
+
+*In scope for brief §11, narrowly:* check QAT's logs and records for any
+order, fill or resting leg from a client id other than QAT's. Anything Mk II
+transmitted would reach QAT as an out-of-app trade.
+
+---
+
+## 4. Early indications to test, not findings
+
+Seen while assessing. Each needs the audit's evidence before it counts as a
+finding.
+
+1. **Autonomous sign-off contradicts the founding spec.** `ab1ba97` (26 July,
+   M13) added `execution_mode = auto` behind a confirmation dialog. It is
+   paper-only, and live autonomy stays locked. Its stated reason was to close
+   a gap with the reference app. Authority: UNKNOWN (A3).
+2. **The swing specification is generic.** The paper allows pullbacks or
+   breakouts. The code implements one specific form: a pullback to EMA20
+   inside EMA20 > EMA50, reclaim, a stop at 2.5 × ATR(14) and a fixed 2R
+   target. The methodology's trailing stop and partial take-profit are not in
+   the code. "Reconstruct the original swing precisely" may resolve to UNKNOWN
+   below the paper's level of detail.
+3. **A possible control trap.** Aggregate risk-at-stop is measured at current
+   prices against fixed stops. If that holds, a position that rises consumes
+   more of the 5% budget, and winners block new entries. That is a hypothesis
+   about the ~7.6% reading on 11 September, not a finding.
+4. **Regime metadata is missing on every closed trade** (`regime_at_entry`
+   blank on all 12 rows). That breaks brief §10's "is regime information
+   recorded with trades" before the audit starts.
+5. **The AI boundary has a recorded origin.** `ab1ba97` states that the gate
+   uses no LLM because "an earlier build of the reference app put a model in
+   front of protective exits and it declined 100% of 494 sell signals in a
+   day". That is useful for brief §9 and §14.
+
+---
+
+## 5. Synergies with the outstanding items
+
+| # | Outstanding item | Feeds audit section | Under the freeze | Proposed handling |
+|---|---|---|---|---|
+| 1 | Verify M173's TIF fix on a real market exit | §8 proven vs theoretical | Observation, no change | Continue watching. The audit records its status either way |
+| 2 | Orphan rail cannot cancel (by choice) | §8 orphan handling, §16 | Frozen | Becomes a §16 candidate with evidence. No change |
+| 3 | First `COMMISSION VERIFIED` (M175) | §11 commission integrity | Observation | Continue watching |
+| 4 | Weekly open/close saving | none | **Deferred** (a feature) | Park |
+| 5 | M41 earnings hold-through policy | §6 earnings treatment, §7 | **Deferred** (a policy change) | The audit establishes the original intent for earnings first. Decide afterwards |
+| 6 | Stage 4 regime re-sourcing | **§10 directly** | **Deferred** (a redesign) | The audit documents the inputs and the 86% VIX dominance as evidence. No redesign |
+| 7 | Reach 20 / 30 closed trades | **§13 directly** | Blocked by the cap either way | The audit traces the causal chain behind the cap (indication 3). That is the synergy with the highest value |
+| 8 | Watch the status column | §11 | Observation | Continue |
+| 9 | HMM's sensitivity to a seventh column | §10 | Deferred | Documented as a known sensitivity |
+| 10–11 | Corporate actions / IBKR news | §7, §14 | Closed by decision | The audit records the decisions and their authority. It does not re-open them |
+| — | `regime_at_entry` blank (capability doc §8.1) | **§10, §11** | Frozen | Investigate the cause (code reading only). A fix waits for authorisation |
+| — | TNE remnant row and label; LOV repair row | **§11** | Frozen | Inventory of repaired and synthetic records |
+| — | Ledger audit not scheduled | §11, §16 | Frozen | Candidate |
+| — | `session_check.ps1` footer names the wrong gate | §21 (documentation drift) | Frozen | Recorded. Not fixed during the freeze |
+| — | Stale `README.md` / `PRODUCT_DESCRIPTION.md` | §3 evidence caution | Frozen | Recorded. Not rewritten (the brief's rule) |
+| — | M43 halts, M44 execution quality | §7, §8, §14 | Deferred | Recorded as original-design gaps, if the paper names them |
+| — | Unpushed batch (the two capability docs, the CI Node 24 bump) | none | CI only, no trading effect | **Recommend pushing before the freeze starts**, so CI stays healthy. Your call |
+
+The unifying observation: **items 5, 6, 7 and 9 are all design questions the
+audit answers first.** Deciding them before the audit would be exactly the
+kind of drift the audit is meant to find.
+
+---
+
+## 6. The plan
+
+Every stage is read-only against the system: code, git, logs, ledgers,
+documents. Any analysis script lives in the scratchpad, never in `src/`.
+Anything that needs a code change to produce evidence is reported as a
+required investigation, per the brief.
+
+**Stage 0: your decisions (before anything starts)**
+1. ✅ Origin: four Claude chats (answered 12 Sep). **Needed: the four chats
+   exported** to a folder I can read, e.g. with claude.ai's data export or
+   each chat saved as a file. Then confirm the baseline (A1).
+2. ✅ Authority column adopted, plus the error log (answered 12 Sep).
+3. ✅ Mk II is out of scope (answered 12 Sep).
+4. **Preserve the transcripts and the rotated logs** (A3, A7): copy them to
+   an archive folder, raise `cleanupPeriodDays`, or both. Before the next
+   Claude Code start-up. *Open.*
+5. Fresh-context investigators for the reconstruction, yes or no (A4).
+   *Open: the operator asked what this means (12 Sep).*
+6. ✅ Operation during the freeze: keep `auto` running unchanged (12 Sep).
+7. Broker statements: the operator downloads them (A7, clarified 12 Sep).
+   *Open.*
+8. ✅ Push everything before the freeze, nothing held over (12 Sep).
+
+**Stage 1: Baseline (brief §2).** Commands already proven read-only:
+`session_check.ps1`, `handoff_state.py`, the four checks, the suite, the live
+`.env` masked, `git` state. *Deliverable:* report §3.
+
+**Stage 2: Original Intent (brief §3).** Read the four Claude chats first,
+for the order in which ideas and decisions arrived. Then read the paper in
+full, including its tables. Table 14.1, the AI permission boundary, did not
+come through a text-only read. Read the master prompt A–O, the acceptance
+criteria (§20.O), MkI, the methodology file and the reference app's structure. Then compare
+`fa9ba47` and the 25–27 July commits against the paper.
+*Deliverables:* report §4, the Original-Intent architecture diagram, and a
+"paper vs first commit" delta.
+
+**Stage 3: Current reconstruction (brief §4).** Trace from code and raw logs
+only (A4). One table per stage of the flow: modules, inputs, outputs,
+authority, state, persistence, failure and refusal behaviour, whether
+AI-assisted, and whether it can reach the broker. Import-graph checks for
+boundaries (does `ai_advisory` reach OMS or broker code at all?).
+*Deliverables:* report §5, the As-It-Is architecture diagram.
+
+**⛔ Checkpoint A: you review Stages 2 and 3.** Every later stage compares
+these two baselines, so they must be right first.
+
+**Stage 4: Drift map and strategy integrity (brief §5, §6).** For each
+component, use `git log -S` / `git log --follow` for when it arrived, the
+commit message and ROADMAP for why, and transcripts from 4 August for who
+decided. Then a line-by-line swing comparison: the paper and methodology
+against `strategies/swing.py` and every rail that touches a swing order.
+*Deliverables:* report §6–8, the drift map with the authority column.
+
+**Stage 4a: Back-fill the Claude error log.** Runs alongside Stages 4–8,
+because the same reading surfaces the errors. Sources: the four chats; commit
+messages whose subject says fix, repair, revert or correct; ROADMAP and
+HANDOFF incident sections; `docs/archive/`; the surviving transcripts. Each
+error goes into `docs/CLAUDE_ERROR_LOG.md` with its evidence, or under "To
+establish" if the evidence is thin. The drift map cross-references each
+D-class item (agent-generated complexity) to the errors that produced it.
+*Deliverable:* a complete error log, with counts by severity and type in the
+final report.
+
+**Stage 5: Risk stack and control interactions (brief §7, §13).** Map every
+control's position in the pipeline, what it refuses and trims, and which
+refusals overlap. Measure throughput from `risk_decisions.csv`: which rail
+refused how many entries, by day. Trace the aggregate-cap chain (indication 3)
+from positions, stops and prices, as data analysis only.
+*Deliverables:* report §9 and §16, the control-interaction diagram.
+
+**Stage 6: Execution boundary and incident → control mapping (brief §8, §14).**
+Trace signal to ledger. For each incident (24 Aug duplicates, 3 Sep staged
+order, 9 Sep trips, orphaned legs, fill-price basis, corporate actions),
+record the control it produced, whether that control was necessary, whether
+it is proportionate, and the secondary complexity it added. Then a matrix of
+proven live against code-only, cited to log lines.
+*Deliverables:* report §10 and §14.
+
+**Stage 7: AI boundary and regime (brief §9, §10).** Inputs and outputs, the
+structured schema, tool access, persistent state, what happens when the model
+is unavailable. The regime pipeline end to end, from the existing ablation
+evidence. Why regime metadata is blank on trades (code reading).
+*Deliverables:* report §11 and §12.
+
+**Stage 8: Evidence integrity (brief §11).** An inventory of every repaired or
+synthetic record: `scripts/repair_*`, `.bak-*` files, script-written rows,
+fragments, blank fields. The ledger against broker statements (A7). For each
+issue, record which it affects: operations, risk, performance, validation,
+auditability or promotion.
+*Deliverable:* report §13.
+
+**Stage 9: Complexity and simplification candidates (brief §12, §16).** Every
+candidate gets the brief's questions, a one-sentence purpose test, and a
+recommendation from the brief's list. Nothing is removed.
+*Deliverables:* report §15 and §20.
+
+**Stage 10: Synthesis (brief §15, §17, §18, §19).** The three architecture
+diagrams, explicit answers to brief §17 A–J, the classification, the freeze
+recommendation and the remediation sequence.
+*Deliverable:* the full 24-section report.
+
+**⛔ Checkpoint B: you review the draft report.** Then it is final.
+
+**Where it lives:** `docs/audit/2026-09-design-recovery/`. The report, an
+evidence appendix (every claim with its file:line, commit hash or log line),
+and a list of unknowns. Committed only when you say so.
+
+**Effort, honestly:** Stages 1–3 take about one working session, and the
+report stages about two or three more. Stage 8 depends on when the statements
+arrive. Expect 4–5 sessions of work across the next week or so, with the app
+running unchanged beside it (A6).
+
+---
+
+## 7. Explicitly outside the audit
+
+Any fix, refactor or parameter change, including the ones the audit finds.
+Rewriting the stale documents. Re-opening M39 or IBKR news. Designing the
+stage 4 regime. Anything in Mk II beyond whether it touches QAT's account.
+
+## 8. After the audit
+
+Your Phases 4–7 (safety review, controlled simplification, freeze, evidence
+accumulation) start only from an approved report. The report's remediation
+sequence will propose the order. It will not recommend resuming feature
+development because tests pass.

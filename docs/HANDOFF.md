@@ -1,4 +1,4 @@
-# Handoff — 12 September 2026: M175 merged, DEPLOYED, the ledger repaired
+# Handoff — 12 September 2026: M175 deployed; DEVELOPMENT FROZEN for the design audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -95,6 +95,40 @@ its last resting-order scan at 16:58.
 * **No out-of-app trades happened.** The operator announced a manual-trading
   test and then did not trade; a read-only broker probe at 19:45 showed BHP's
   stop as the day's ONLY execution.
+
+---
+---
+---
+
+## ⛔ 12 SEPTEMBER (AFTERNOON): DEVELOPMENT IS FROZEN FOR A DESIGN AUDIT
+
+The operator froze feature development for a **Design Recovery & Design Intent
+Audit**. The plan, with the operator's decisions, is
+`docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`.
+
+* **Frozen:** features, refactors, trading logic, risk parameters, thresholds,
+  execution behaviour, and fixes for anything the audit finds, unless the
+  operator explicitly authorises them. The outstanding list below is frozen
+  with it.
+* **Not frozen:** the app keeps running M175 unchanged, `execution_mode=auto`,
+  in paper. The operator decided this on 12 September so that human latency
+  does not slow or distort decisions during testing.
+* **The founding spec is outside the repo:**
+  `C:\ShareTrader\Investment_Strategy_Advisory_Paper.docx` (24 July). Its §20
+  master prompt is what the code cites as "spec §E/§I" and "paper §4.10". The
+  origin is four claude.ai chats before the move to Claude Code; the operator
+  is exporting them.
+* **New standing rule:** every Claude error goes into
+  `docs/CLAUDE_ERROR_LOG.md` in the same session, timestamped, with how to
+  avoid it.
+* **Mk II** (`C:\Share Trader Project\`) is the operator's separate tool. It
+  connects to DUQ200898 as client ids 77/85/88/99 and, per the operator, does
+  not trade. Its code contains `placeOrder`. Client 99 is also the id QAT's
+  read-only probes use, so the two cannot be connected at once.
+* ⚠️ **Evidence at risk:** Claude Code transcripts are deleted 30 days after
+  their last activity (5 Aug – 2 Sep already gone), and `qat.log` rotation
+  deletes the oldest file (the 24–25 Aug execution lines are near the end).
+  Preservation is waiting on the operator's OK.
 
 ---
 ---
@@ -6378,6 +6412,14 @@ BUILD FIRST AND CHECK THE DIST HASH MOVED.
 ⚠️ CLOSE THE APP FIRST, THEN THE BROKER.
 ⚠️ COMMIT BEFORE SABOTAGING A RAIL.
 
+⛔ DEVELOPMENT IS FROZEN (12 September) FOR A DESIGN RECOVERY & DESIGN INTENT
+AUDIT. Read "12 SEPTEMBER (AFTERNOON)" and
+docs\superpowers\plans\2026-09-12-design-recovery-audit-plan.md before doing
+ANYTHING. No features, refactors, parameter or threshold changes, and no fixes
+for what the audit finds, without the operator's explicit authorisation. The
+app keeps running M175 unchanged in auto (the operator's decision). Every
+Claude error goes into docs\CLAUDE_ERROR_LOG.md, same session.
+
 THE STATE - measured 12 September (Saturday) ~11:00, after the M175 deploy.
 The app was RUNNING when this was written (launched 10:55 to read the stamp;
 stood down - weekend). ⚠️ If it is still up, close the app FIRST, then the broker.
@@ -6421,7 +6463,10 @@ LOCAL LLM: LM Studio on port 1234 (.env changed 11 Sep 09:56 from 8000;
 backup .env.bak-20260911-095650). Chosen ONCE at launch - if LM Studio is down
 then, the AI panels are demo all session. The trading path has no LLM.
 
-OUTSTANDING. ⚠️ Only item 3 was re-checked 12 September (and 7 on 11 September);
+OUTSTANDING - ⛔ FROZEN with development on 12 September. Items 1, 3 and 8 are
+observations and continue. The rest wait for the audit (the plan's section 5
+maps each item to the audit section that answers it).
+⚠️ Only item 3 was re-checked 12 September (and 7 on 11 September);
 the rest are carried from the 10 September audit - verification has a shelf
 life, check the code before acting on any of them.
 
