@@ -31,10 +31,11 @@ amendments.
 > ⚠️ **Provenance of this section.** The `C:\ShareTrader` rows, and every
 > quotation from the paper in §2–§4 of this plan (§20.A, §4.10, the section
 > list), come from reads made on 12 September **without the operator's
-> permission** (CE-016). The operator has not approved `C:\ShareTrader`
-> (Stage 0, item 9). Until copies are placed in an approved location, these
-> quotations are **not audit evidence**. They are kept so the record shows
-> what was seen and when.
+> permission** (CE-016). The operator approved `C:\ShareTrader` later on
+> 12 September (Stage 0, item 9) and describes it as the original version of
+> this app. Each quotation becomes audit evidence only once Stage 2 has
+> re-read it under that approval. Until then it records what was seen and
+> when.
 
 **The founding specification is outside the repository.** The code cites
 "spec §E", "spec §I" and "paper §4.10" 92 times across 66 files. None of those
@@ -188,6 +189,10 @@ finding.
    M13) added `execution_mode = auto` behind a confirmation dialog. It is
    paper-only, and live autonomy stays locked. Its stated reason was to close
    a gap with the reference app. Authority: UNKNOWN (A3).
+   *Superseded by Stage 2 (report §4.0, 12 Sep):* the paper's "no auto-trade
+   toggle" rule was written by Claude, and the operator's brief did not ask
+   for it (C4). The operator had directed autonomy a week earlier (C2 [125],
+   17 Jul). Which layer governs is a Checkpoint A decision.
 2. **The swing specification is generic.** The paper allows pullbacks or
    breakouts. The code implements one specific form: a pullback to EMA20
    inside EMA20 > EMA50, reclaim, a stop at 2.5 × ATR(14) and a fixed 2R
@@ -282,11 +287,11 @@ required investigation, per the brief.
    * ✅ approved: `Documents\QAT-audit-evidence\`;
    * ✅ approved: Claude Code's own folders (`~\.claude`, and its temp folder
      under `AppData\Local\Temp\claude`);
-   * ⛔ **NOT approved: `C:\ShareTrader`.** The founding paper, MkI, the swing
-     methodology and the reference app are **not read** unless the operator
-     places copies in an approved location. Until then, every Stage 2
-     conclusion that rests on them is UNKNOWN. What was already read on
-     12 September without permission (CE-016) is not relied on.
+   * ✅ **approved later the same evening: `C:\ShareTrader`**, read-only. The
+     operator describes it as **the original version of this app**. It holds
+     the founding paper, the MkI concept, the swing methodology and the
+     predecessor app. What was read there before this approval (CE-016) is
+     re-read under the approval, not carried over.
    * Everything else stays off-limits (§7).
 
 **Stage 1: Baseline (brief §2).** Commands already proven read-only:
