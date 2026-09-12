@@ -20,6 +20,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from qat import preflight
 from qat.config import Settings
 from qat.preflight import Check, Status, Verdict, settings_checks, verdict_for
@@ -560,13 +562,30 @@ async def _checks_for(details: _Details) -> list[Check]:
     return await contract_checks(["BHP.AX"], "ASX", _IB())
 
 
-async def test_contract_checks_asks_the_broker_about_session_hours() -> None:
+# ⚠️ A FIXED TRADING DAY, not the clock. These tests built the broker's
+# answer from `trading_date("ASX")`, so on Saturday 12 September - the first
+# weekend after they were written - the fixture claimed IBKR trades on a
+# Saturday and the check correctly said the calendar calls it closed. Green on
+# every weekday, red on every weekend and holiday. The real broker reports a
+# closed day as CLOSED, so production was never wrong; only the fixture was.
+_A_TRADING_DAY = date(2026, 9, 10)  # a Thursday, no ASX holiday
+
+
+def _pin_today(monkeypatch: pytest.MonkeyPatch) -> date:
+    from qat.domain.market_calendar import is_trading_day
+
+    assert is_trading_day("ASX", _A_TRADING_DAY)
+    monkeypatch.setattr(preflight, "trading_date", lambda market: _A_TRADING_DAY)
+    return _A_TRADING_DAY
+
+
+async def test_contract_checks_asks_the_broker_about_session_hours(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """The comparison is worth nothing unless something calls it. The only
     pre-existing contract_checks test takes the FAIL path, which returns before
     this code, so without this the wiring could be deleted and stay green."""
-    from qat.domain.market_calendar import trading_date
-
-    trading, liquid = _ib_hours_for(trading_date("ASX"))
+    trading, liquid = _ib_hours_for(_pin_today(monkeypatch))
 
     checks = await _checks_for(_Details(trading, liquid))
 
@@ -576,12 +595,12 @@ async def test_contract_checks_asks_the_broker_about_session_hours() -> None:
     assert _named(checks, "contracts").status is Status.OK
 
 
-async def test_contract_checks_surfaces_a_session_hours_disagreement() -> None:
+async def test_contract_checks_surfaces_a_session_hours_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """And it carries the comparison's verdict rather than a fixed line - the
     same fixture, one boundary moved, has to come back WARN quoting it."""
-    from qat.domain.market_calendar import trading_date
-
-    trading, liquid = _ib_hours_for(trading_date("ASX"), close="1530")
+    trading, liquid = _ib_hours_for(_pin_today(monkeypatch), close="1530")
 
     checks = await _checks_for(_Details(trading, liquid))
 
