@@ -8,9 +8,11 @@ jobs:
   lint-type-test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      # Node 24 majors. v4/v5 target Node 20, which GitHub deprecated and now
+      # forces onto Node 24 with a warning on every run (seen 12 Sep 2026).
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
