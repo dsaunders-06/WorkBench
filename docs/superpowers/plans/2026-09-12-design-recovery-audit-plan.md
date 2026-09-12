@@ -256,14 +256,23 @@ required investigation, per the brief.
    (A1).
 2. ✅ Authority column adopted, plus the error log (answered 12 Sep).
 3. ✅ Mk II is out of scope (answered 12 Sep).
-4. **Preserve the transcripts and the rotated logs** (A3, A7): copy them to
-   an archive folder, raise `cleanupPeriodDays`, or both. Before the next
-   Claude Code start-up. *Open.*
-5. Fresh-context investigators for the reconstruction, yes or no (A4).
-   *Open: the operator asked what this means (12 Sep).*
+4. ✅ **Evidence preserved** (12 Sep, operator agreed). 464 files were copied
+   to `%USERPROFILE%\Documents\QAT-audit-evidence\2026-09-12\`: transcripts,
+   the qat.log set, the chat export and both statements, with a sha256
+   manifest (463 matched their sources at copy time; this session's own
+   transcript was still growing). `cleanupPeriodDays` is set to 365 in
+   `~\.claude\settings.json`. The archive stays out of git because it holds
+   personal details.
+5. ✅ **Fresh-context investigators: yes, for Stage 3** (12 Sep), with the
+   operator's condition: they **establish fact, not judge** what is good or
+   bad. Each gets the code and raw logs only, never HANDOFF, ROADMAP or the
+   capability documents, and reports what the code does with file:line
+   evidence. No assessments, no recommendations. Judgement stays in the
+   report stages, where it is cited.
 6. ✅ Operation during the freeze: keep `auto` running unchanged (12 Sep).
-7. Broker statements: the operator downloads them (A7, clarified 12 Sep).
-   *Open.*
+7. ✅ **Broker statements received** (12 Sep). `DUQ200898_20260824.pdf` (24 Aug
+   only) and `DUQ200898_20260824_20260911.pdf` (24 Aug – 11 Sep, 25 pages,
+   sha256 `8E578080…0E69`, NAV 1,004,063.00 → 989,653.14). Both are archived.
 8. ✅ Push everything before the freeze, nothing held over (12 Sep).
 
 **Stage 1: Baseline (brief §2).** Commands already proven read-only:
