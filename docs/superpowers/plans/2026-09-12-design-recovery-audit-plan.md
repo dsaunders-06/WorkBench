@@ -243,9 +243,17 @@ Anything that needs a code change to produce evidence is reported as a
 required investigation, per the brief.
 
 **Stage 0: your decisions (before anything starts)**
-1. ✅ Origin: four Claude chats (answered 12 Sep). **Needed: the four chats
-   exported** to a folder I can read, e.g. with claude.ai's data export or
-   each chat saved as a file. Then confirm the baseline (A1).
+1. ✅ Origin: four Claude chats (answered 12 Sep). ✅ **Export received 12 Sep**:
+   `C:\Users\mailm\Downloads\conversations.json`, 8.5 MB, sha256
+   `84660483C3B5…5D70`. It holds six conversations: the four substantive chats
+   (13 Jul "No-code stock trading bot"; 13–26 Jul "AI-powered stock trading
+   with Claude and Alpaca", 319 messages; 23 Jul "Code review"; 24 Jul
+   "Comprehensive investment strategies advisory paper", which produced the
+   founding paper) and two untitled chats exported with no content. The file
+   lacks its opening `[`, so it reads as an extract of a larger export. The
+   main chat runs to 26 Jul 22:29, past the autonomy commit (26 Jul 18:23), so
+   it may close part of the A3 gap. Not yet read. Then confirm the baseline
+   (A1).
 2. ✅ Authority column adopted, plus the error log (answered 12 Sep).
 3. ✅ Mk II is out of scope (answered 12 Sep).
 4. **Preserve the transcripts and the rotated logs** (A3, A7): copy them to
