@@ -346,6 +346,42 @@ HANDOFF, ROADMAP and commit messages.
   11:21:46 – 12:24:44 (archive `qat-logs`); Stage 3 Investigator 3 report,
   section G and its execution-paths table.
 
+### CE-018: The capability write-ups stated the design objective from agent-authored documents
+* **Made:** 12 Sep 2026, in `docs/QAT_CAPABILITY_TECHNICAL_2026-09-12.md`
+  §1 and `docs/QAT_CAPABILITY_PLAIN_ENGLISH_2026-09-12.md` ("What it is").
+  **Found:** 14 Sep 2026, at audit Checkpoint A.
+* **Severity:** Medium. The technical version went to the operator's
+  auditor.
+* **What happened:** both documents gave QAT's design objective as the README
+  and the paper phrase it: an LLM "analyst that proposes and explains", with
+  "a human approves every order" (technical §1), and "trade shares by a fixed
+  set of rules" (plain English). The operator's statement at Checkpoint A
+  (report §4.00, §4.001) says otherwise:
+  - the purpose is "making recommended trades **using AI**", around
+    **different** strategies;
+  - decisions are "**Human or AI autonomous**".
+
+  The README and the paper were written by Claude, and the paper's
+  human-sign-off rule was Claude's own addition (report §4.0).
+* **Root cause:** used agent-written documents as the authority on the
+  operator's intent, the same pattern as CE-002.
+* **Fix:** a correction banner on both documents points to report §4.00. The
+  text is not rewritten, so the record of what was said stays intact.
+* **To avoid:** the operator's own words (or their direct instructions in
+  the chat history) are the authority on intent. Documents Claude wrote are
+  claims about it.
+* **Evidence:** the two capability documents; audit report §4.0, §4.00,
+  §4.001.
+
+### CE-019: Command slips during the 14 September session
+* **Made / found:** 14 Sep 2026.
+* **Severity:** Low (re-run; no effect).
+* **What happened:** a `Grep` with a brace glob spanning two directories
+  (`{presentation/runtime.py,data/earnings.py}`) matched nothing and returned
+  "No matches found". The two files were then searched separately.
+* **To avoid:** search one path per call when the glob spans directories.
+  Never read "no matches" from a new glob as evidence of absence.
+
 ---
 
 ## To establish (suspected, evidence not yet read)

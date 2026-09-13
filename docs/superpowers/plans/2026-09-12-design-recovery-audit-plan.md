@@ -9,6 +9,55 @@ session transcripts cover (CE-013 in `docs/CLAUDE_ERROR_LOG.md`).
 **Baseline at writing:** `master` at `ae2c91a` (2 commits unpushed). Deployed
 M175 (`5e322ca`). App running since 10:55 (weekend, stood down).
 
+## ▶ PROGRESS (updated 14 September 2026, 09:15). Read this first
+
+| Stage | Status | Output |
+|---|---|---|
+| 0: decisions | ✅ complete (12 Sep) | Stage 0 list below; permissions in item 9 |
+| 1: baseline | ✅ complete (12 Sep) | `docs/audit/2026-09-design-recovery/03-current-baseline.md` |
+| 2: original intent | ✅ complete (12 Sep) | `.../04-original-design-intent.md` |
+| 3: current reconstruction | ✅ complete (12–14 Sep) | `.../05-current-architecture.md` and `.../stage3/` (4 verbatim investigator reports) |
+| **⛔ Checkpoint A** | ✅ **decided 14 Sep** | report §4.00 and §4.001: the operator's baseline (below) |
+| **4: drift map and strategy integrity** | ⏭ **NEXT, not started** | report §6–8 |
+| 4a: error-log back-fill | not started | `docs/CLAUDE_ERROR_LOG.md` |
+| 5: risk stack and control interactions | not started | report §9, §16 |
+| 6: execution boundary and incident → control mapping | not started | report §10, §14 |
+| 7: AI boundary and regime | not started (Stage 3 has the facts) | report §11–12 |
+| 8: evidence integrity | not started (IBKR statements are in the archive) | report §13 |
+| 9: complexity and simplification candidates | not started | report §15, §20 |
+| 10: synthesis | not started | full 24-section report |
+| ⛔ Checkpoint B | – | operator reviews the draft |
+
+**The governing baseline (Checkpoint A, operator, 14 Sep):**
+* **Purpose:** an app making **recommended trades using AI**, around
+  **different trading strategies**.
+* **Decisions:** **human, or AI autonomous**. Autonomous means acting on its
+  recommendation and completing the trade, **subject to the embedded safety
+  rails and the selected strategy**.
+* **Philosophy and strategies:** the paper. The paper's human-sign-off rule is
+  superseded.
+
+**Headline facts for Stage 4 to classify (report §5, §4.001):**
+* Autonomous completion within rails and strategy **exists**.
+* **No AI takes part in forming any trade recommendation.**
+* **One strategy runs**, where the purpose names several.
+* The swing entry is the first commit's agent-written rule, not the
+  operator's methodology (§4.15).
+
+**⚠️ OPEN LIVE SAFETY DEFECT, CE-017.** An exit cancels a position's broker
+stop before the kill switch is checked, and the switch then blocks the
+replacement (IAG.AX was unprotected for about an hour on 9 Sep). Reported 14
+Sep. The operator chose "decide later, continue audit". **Not fixed.**
+
+**How Stage 4 will run:**
+* Categories A–G, plus the **Authority** column (operator-directed /
+  agent-proposed and operator-approved / agent-only / unknown).
+* Authority evidence: the chats (C1–C4) up to 26 Jul; commit messages,
+  ROADMAP and HANDOFF (as claims) from 25 Jul to 2 Sep; transcripts from
+  3 Sep.
+* Stage 4a runs alongside: each D-class item is cross-referenced to the
+  errors that produced it.
+
 ---
 
 ## 1. Verdict on the approach

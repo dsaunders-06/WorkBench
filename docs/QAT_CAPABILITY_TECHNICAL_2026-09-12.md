@@ -7,6 +7,21 @@ and read back off the application log at the 10:55:08 launch.
 **Audience:** a reviewer auditing whether the system does what it claims and how
 far it is from its stated objective.
 
+> ⚠️ **Correction, 14 September 2026 (CE-018).** Section 1 states the design
+> objective as the README and the paper put it. Those documents were written
+> by Claude. The paper's "a human approves every order" was Claude's own
+> addition. The operator's statement of original intent, given at audit
+> Checkpoint A, is authoritative instead (see
+> `docs/audit/2026-09-design-recovery/04-original-design-intent.md` §4.00,
+> §4.001):
+> - an app making recommended trades **using AI**, around **different
+>   trading strategies**;
+> - decisions **human or AI autonomous**, acting on its recommendation within
+>   the safety rails and the selected strategy;
+> - philosophy and strategies from the paper.
+>
+> The rest of this document is left as written.
+
 ---
 
 ## 0. Basis, and how to check it

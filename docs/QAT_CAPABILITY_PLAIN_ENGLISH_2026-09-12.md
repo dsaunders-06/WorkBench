@@ -3,6 +3,14 @@
 *Written 12 September 2026. It describes the version of the program installed
 that morning.*
 
+> **Correction, 14 September 2026.** The next section says the aim is a
+> program that trades "by a fixed set of rules". That isn't what the owner
+> intended. The owner's aim was an app that uses AI to recommend trades
+> across several trading strategies. A person or the app itself would then
+> act on each recommendation, always within the safety limits. Today the AI
+> only explains; the fixed rules make the trade decisions. The design audit
+> is measuring that difference.
+
 ## What it is
 
 The Quant Advisory Terminal is a program that runs on a Windows computer. It

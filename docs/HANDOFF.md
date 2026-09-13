@@ -1,4 +1,4 @@
-# Handoff — 12 September 2026: M175 deployed; DEVELOPMENT FROZEN for the design audit
+# Handoff — 14 September 2026: DESIGN AUDIT stages 0–3 and Checkpoint A done; development FROZEN; open safety defect CE-017
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -16,10 +16,12 @@ misleading. Nothing was deleted; it was archived and this was written fresh.
 
 Everything below was true when written. Assume nothing still is.
 
-⚠️ **THE ROWS BELOW ARE NOT ALL AS FRESH AS EACH OTHER.** Deployed build, Deploy
-gap, Pushed, Suite, Broker, Kill switch and Ledgers were re-measured on **12
-September** (Saturday, ~11:00, after the M175 deploy). Account and Local LLM
-date from **11 September** evening. **Watchlist dates from 2 September** and is marked. Re-read
+⚠️ **THE ROWS BELOW ARE NOT ALL AS FRESH AS EACH OTHER.** Broker, Kill switch,
+Ledgers, Pushed and Local LLM were re-measured on **14 September 09:12**
+(Monday, before the open; app and Gateway CLOSED). Deployed build, Deploy gap
+and Suite date from **12 September** and have not changed since (no `src/`
+change). Account dates from **11–12 September** (the broker was not reachable
+on 14 Sep). **Watchlist dates from 2 September** and is marked. Re-read
 them from `session_check.ps1` before quoting one; a stale row that looks like a
 current one is how this file went wrong before.
 
@@ -48,17 +50,20 @@ source.
 
 | | |
 |---|---|
+| ⛔ Development | **FROZEN since 12 September** for the Design Recovery & Design Intent Audit. No features, refactors, parameter or threshold changes, and no fixes (not even for audit findings) without the operator's explicit authorisation. The app keeps running M175 unchanged in `auto` (operator decision). See "14 SEPTEMBER: THE DESIGN AUDIT" |
+| Audit | **Stages 0–3 and Checkpoint A complete; Stage 4 is next.** Progress table at the top of `docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`; report sections in `docs/audit/2026-09-design-recovery/` |
+| ⚠️ Open safety defect | **CE-017 (not fixed; operator: "decide later, continue audit").** An exit releases a position's broker stop before the kill-switch check, and while tripped the re-arm cannot transmit. IAG.AX was unprotected for about an hour on 9 September. **If the kill switch trips, check every position has a stop at the broker** |
 | Deployed build | ✅ **M175 (`5e322ca`)** - deployed 12 September 10:51 with `deploy.ps1 -Apply` (sha256 `64F132CE…`, signature Valid, installed hash verified). ✅ **Read back off the log at the 12 September 10:55:08 launch**: `Build: M175 (5e322ca, built 12/09/2026 10:46:46 AEST, packaged)`. Rollback: `C:\QuantAdvisoryTerminal.bak-33d0ef6-20260912-1051` (M174) - ⚠️ but an older build re-inflates the repaired entry records, so a rollback must also restore both `.bak-fill-basis-20260912-105253` files (see 12 SEPTEMBER) |
 | Deploy gap | **None.** PR #2 merged 12 September (`a24faa9`, a merge commit); master fast-forwarded. `5e322ca` on top is a test-only fix. `handoff_state.py` derives this - never hardcode it |
-| Pushed | `5e322ca` and this handover pushed to `origin/master` 12 September. ⚠️ The CI run on the merge (`a24faa9`) was **RED** - the two date-dependent pre-flight tests, fixed by `5e322ca`. Check CI with `gh run list --limit 3` |
+| Pushed | Everything through this handover is pushed to `origin/master` (14 September). CI green on every push since `5e322ca`; the last before this handover was `ee50390` (Stage 3), 7m06s. Check CI with `gh run list --limit 3` |
 | Suite | **3,677 passed, 26 skipped** at `5e322ca` - the build's own gate, 12 September. ruff, black, mypy src, bandit all clean, run separately. ⚠️ Run the four checks SEPARATELY - `black --check` can exit 0 while printing "1 file would be reformatted". ⚠️ Never pipe `pytest` or `invoke build` through `tail` |
 | Watchlist | ⚠️ **AS AT 2 SEPTEMBER — NOT RE-CHECKED 8 SEPTEMBER.** **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
 | Account | **NINE POSITIONS**, all protected, **18 resting legs** - **read at the broker 11 September 19:45** (read-only probe): ANZ 640, ASX 1314, BOQ 13586, COH 363, JHX 1097, SUN 3192, TAH 64229, TWE 10412, WOW 1098. **BHP 793 was stopped out at the 11 September open** (60.40 against a 60.45 stop). Cash **495,714.44**, equity **989,519.22** at the close (equity curve). Account `DUQ200898`, paper, AUD. ⚠️ **THE ENTRY GATE IS NOW THE AGGREGATE CAP, not the position count**: 9 of 10 held, but aggregate risk-at-stop ~7.6% against a 5.00% cap, so the governor refused **all 449** entry decisions on 11 September (`governor.py:312` rejects at `headroom <= 0`). Nothing enters until the aggregate falls below 5% |
-| Broker | **IB GATEWAY on 4002. TWS IS CLOSED.** ✅ **MEASURED 12 September 10:55**: `ibgateway` (PID 12276, started 10:41:02) is the sole listener on 4002. ⚠️ At 10:31 that morning Gateway was DOWN - nothing listening on 4001/4002/7496/7497 - though it was up at 21:32 the night before; the operator restarted it. Measure it, never carry it. ⚠️ **This row said "TWS on 7497, as at 1 September" until 10 September and was wrong** - the 1 September change was reverted at some point and the row was never re-measured. Gateway has delayed market data and no GUI; TWS has the GUI and no API market data, so neither endpoint is sufficient alone. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
-| Kill switch | ✅ **CLEAR** - `kill_switch.json` reads `tripped: false` (read 12 September 10:56, after the M175 launch: 0 kill-switch mentions, 0 mismatches), and the 11 September session had **0 kill-switch mentions and 0 reconciliation mismatches**, including through BHP's broker-side stop fill. The 10349 fix (M173) is still **UNPROVEN LIVE** - BHP was a resting stop, not an app-driven market SELL |
-| Ledgers | **12 rows = EIGHT POSITIONS** (BHP added 11 September), so the sizer's gate is at **8 of 20**. sha256 **`688B7091…`** (supersedes `88C25985…`, which is now the `.bak-fill-basis-20260912-105253` copy, byte-identical). ✅ **REPAIRED 12 September 10:52:53** by `repair_fill_basis.py --apply`: net P&L across the 12 rows **−4,065.73 → −3,495.02**, exactly as the 11 September dry run said, and **`audit_closed_trades` returns 0 findings** (was 15) - run independently of the script. ✅ Open records: BOQ ASX SUN ANZ stamped `fill` by the repair; WOW JHX TWE TAH COH corrected by M65 at the first M175 launch, each 8.8 bp down, unstamped by design (M65 stamps nothing; the next restart converts to the same figure and leaves it) |
-| Local LLM | **LM Studio on port 1234**, serving `openai/gpt-oss-20b`. The live `.env` was changed 11 September 09:56 from `http://localhost:8000` to `QAT_LOCAL_LLM_BASE_URL=http://localhost:1234/v1` (backup `.env.bak-20260911-095650` beside it) at the operator's request; the 09:57 relaunch reached it. The engine is chosen ONCE at launch - if LM Studio is down then, the AI panels run on the demo engine all session (the trading path has no LLM in it) |
+| Broker | **IB GATEWAY on 4002 when running. TWS IS CLOSED.** ✅ **MEASURED 14 September 09:12: Gateway NOT running** - nothing listening on 4001/4002/7496/7497, and the app is closed too (last log line 12 Sep 11:16). On 12 September 10:55 `ibgateway` (PID 12276) was the sole listener on 4002. ⚠️ At 10:31 that morning Gateway was DOWN - nothing listening on 4001/4002/7496/7497 - though it was up at 21:32 the night before; the operator restarted it. Measure it, never carry it. ⚠️ **This row said "TWS on 7497, as at 1 September" until 10 September and was wrong** - the 1 September change was reverted at some point and the row was never re-measured. Gateway has delayed market data and no GUI; TWS has the GUI and no API market data, so neither endpoint is sufficient alone. Account `DUQ200898`, paper, AUD. ⚠️ **TWS gives MANUAL buy/sell that the app knows nothing about** — a manual SELL of an app-managed position is safe; a manual BUY creates a position with no entry basis, so no minimum hold, no time stop, no stop to re-arm |
+| Kill switch | ✅ **CLEAR** - `kill_switch.json` reads `tripped: false` (read 14 September 09:12; also 12 September 10:56 after the M175 launch: 0 kill-switch mentions, 0 mismatches). ⚠️ While tripped, see CE-017. And the 11 September session had **0 kill-switch mentions and 0 reconciliation mismatches**, including through BHP's broker-side stop fill. The 10349 fix (M173) is still **UNPROVEN LIVE** - BHP was a resting stop, not an app-driven market SELL |
+| Ledgers | **12 rows = EIGHT POSITIONS** (BHP added 11 September; unchanged at 14 September 09:12), so the sizer's gate is at **8 of 20**. ⚠️ All 12 rows have `regime_at_entry` / `regime_probability` / `exposure_scalar` BLANK: restored lots never carry them (audit report §5.3 item 16). sha256 **`688B7091…`** (supersedes `88C25985…`, which is now the `.bak-fill-basis-20260912-105253` copy, byte-identical). ✅ **REPAIRED 12 September 10:52:53** by `repair_fill_basis.py --apply`: net P&L across the 12 rows **−4,065.73 → −3,495.02**, exactly as the 11 September dry run said, and **`audit_closed_trades` returns 0 findings** (was 15) - run independently of the script. ✅ Open records: BOQ ASX SUN ANZ stamped `fill` by the repair; WOW JHX TWE TAH COH corrected by M65 at the first M175 launch, each 8.8 bp down, unstamped by design (M65 stamps nothing; the next restart converts to the same figure and leaves it) |
+| Local LLM | **LM Studio on port 1234** (listening at 14 September 09:12), serving `openai/gpt-oss-20b`. The live `.env` was changed 11 September 09:56 from `http://localhost:8000` to `QAT_LOCAL_LLM_BASE_URL=http://localhost:1234/v1` (backup `.env.bak-20260911-095650` beside it) at the operator's request; the 09:57 relaunch reached it. The engine is chosen ONCE at launch - if LM Studio is down then, the AI panels run on the demo engine all session (the trading path has no LLM in it) |
 
 
 ### The account is AUD-base. Verified, not assumed.
@@ -100,41 +105,167 @@ its last resting-order scan at 16:58.
 ---
 ---
 
-## ⛔ 12 SEPTEMBER (AFTERNOON): DEVELOPMENT IS FROZEN FOR A DESIGN AUDIT
+## ⛔ 14 SEPTEMBER: THE DESIGN AUDIT - STANDING INSTRUCTIONS, BASELINE, FINDINGS, NEXT STEPS
 
-The operator froze feature development for a **Design Recovery & Design Intent
-Audit**. The plan, with the operator's decisions, is
-`docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`.
+The operator froze development on 12 September for a **Design Recovery &
+Design Intent Audit** (the brief is the operator's own; its rules are
+summarised here). Stages 0–3 and Checkpoint A are done; **Stage 4 is next.**
 
-* **Frozen:** features, refactors, trading logic, risk parameters, thresholds,
-  execution behaviour, and fixes for anything the audit finds, unless the
-  operator explicitly authorises them. The outstanding list below is frozen
-  with it.
-* **Not frozen:** the app keeps running M175 unchanged, `execution_mode=auto`,
-  in paper. The operator decided this on 12 September so that human latency
-  does not slow or distort decisions during testing.
-* **The founding spec is outside the repo:**
-  `C:\ShareTrader\Investment_Strategy_Advisory_Paper.docx` (24 July). Its §20
-  master prompt is what the code cites as "spec §E/§I" and "paper §4.10". The
-  origin is four claude.ai chats before the move to Claude Code; the operator
-  is exporting them.
-* **New standing rule:** every Claude error goes into
-  `docs/CLAUDE_ERROR_LOG.md` in the same session, timestamped, with how to
-  avoid it.
-* `C:\Share Trader Project\` is the operator's separate market-opinion tool.
-  It has **no autonomy and no trading capability** (operator, 12 Sep). Out of
-  scope. *Corrected 12 Sep at the operator's direction; the earlier wording
-  came from a search made without permission (CE-015).*
-* ⛔ **SEARCH BOUNDARY (operator, 12 Sep): read or search only `C:\Claude
-  Programming` and `C:\QuantAdvisoryTerminal`.** Anything else on the
-  operator's computer needs the operator's permission first, location by
-  location, including `%LOCALAPPDATA%\QuantAdvisoryTerminal`. The operator has
-  said a repeat without permission ends their subscription. Permissions granted
-  are listed in the audit plan's Stage 0.
-* ⚠️ **Evidence at risk:** Claude Code transcripts are deleted 30 days after
-  their last activity (5 Aug – 2 Sep already gone), and `qat.log` rotation
-  deletes the oldest file (the 24–25 Aug execution lines are near the end).
-  Preservation is waiting on the operator's OK.
+**Where it lives:**
+* Plan, with a progress table at the top:
+  `docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`
+* Report sections:
+  - `docs/audit/2026-09-design-recovery/03-current-baseline.md`
+  - `.../04-original-design-intent.md`
+  - `.../05-current-architecture.md`
+* Four verbatim investigator reports: `.../stage3/`
+* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-019**
+
+### Standing instructions (all operator-given; they override defaults)
+
+1. **FREEZE.** No features, refactors, trading-logic, risk-parameter,
+   threshold or execution changes. No fixes, including for audit findings,
+   **without explicit authorisation**. Do not "improve" code. Do not
+   consolidate or remove controls because they look redundant. The
+   outstanding list below is frozen with it.
+2. **The app keeps running M175 unchanged in `execution_mode=auto`**, in
+   paper. Operator, 12 Sep: automation exists so human latency does not slow
+   or distort decisions while testing. **Do not propose `recommend`.**
+3. ⛔ **SEARCH BOUNDARY.** Read or search only `C:\Claude Programming` and
+   `C:\QuantAdvisoryTerminal`, plus these locations the operator approved on
+   12 Sep (read-only):
+   - `%LOCALAPPDATA%\QuantAdvisoryTerminal` (QAT's data)
+   - `Documents\QAT-audit-evidence\`
+   - Claude Code's own folders (`~\.claude` and its temp folder)
+   - `C:\ShareTrader` (**the original version of this app**)
+
+   **Anything else needs the operator's permission first, location by
+   location.** That includes the rollback directories beside the install at
+   `C:\`. **Never read `C:\Share Trader Project`.** The operator: a repeat
+   without permission breaches the contract and ends the subscription
+   (CE-015, CE-016).
+4. **ERROR LOG.** Every Claude error goes into `docs/CLAUDE_ERROR_LOG.md` in
+   the same session: timestamped, with severity, root cause, fix, how to avoid
+   it, and evidence. That covers wrong claims caught before delivery and
+   command slips. Never edit an entry to look better; add a later note.
+5. **INVESTIGATORS ESTABLISH FACT, NOT JUDGEMENT.** Fresh-context
+   investigators are approved. They get code and raw logs only (never
+   HANDOFF, ROADMAP or Claude-written docs), treat comments as claims, cite
+   file:line, and say "NOT DETERMINED" rather than guess.
+6. **THE OPERATOR'S OWN WORDS ARE THE AUTHORITY ON INTENT.** README, the
+   paper, ROADMAP, HANDOFF and the capability docs were written by Claude.
+   During the audit they are claims to test (CE-018).
+7. **EMERGENCY EXCEPTION.** A live safety defect found during the audit is
+   reported at once. Nothing is changed without authorisation.
+8. **EVIDENCE.** `Documents\QAT-audit-evidence\` holds:
+   - `2026-09-12\`: 463 files with a sha256 manifest (transcripts, `qat-logs`,
+     the claude.ai export, IBKR statements for 24 Aug and 24 Aug – 11 Sep)
+   - `2026-09-14\`: a transcript snapshot
+
+   Claude Code retention (`cleanupPeriodDays`) is **365**. **Do not clear or
+   rotate away the logs.** Snapshot changed transcripts into a new dated
+   folder at session end. **Never commit the statements or the chat export**
+   (they contain personal details).
+9. `C:\Share Trader Project\` is the operator's separate market-opinion tool
+   with **no autonomy and no trading capability**. Out of scope.
+
+### ✅ Checkpoint A: the governing baseline (operator, 14 Sep; report §4.00, §4.001)
+
+> *"The original intent was to build a Share Trading App capable of making
+> recommended trades using AI designed around different trading strategies.
+> Decision making capability was to be either Human or AI autonomous whilst
+> philosophy and strategies were informed by [the paper]."*
+>
+> AI-autonomous mode: *"Acting on its recommendation and complete the trade
+> decision, subject to the embedded safety rails and in accordance with the
+> selected strategy."*
+
+**What follows from it:**
+* **Autonomy is original intent.** The paper's "human approves every order /
+  no auto-trade toggle" rule is superseded. It was **Claude's own addition**
+  to the paper, not in the operator's brief (report §4.0).
+* The paper governs **philosophy and strategies**.
+* **The AI is meant to take part in forming the recommendation.**
+
+### Findings so far (facts; classification is Stage 4 onward)
+
+**Stage 2, original intent (report §4)**
+
+* Three layers disagree on who may trade:
+  - **L1, the operator's direction.** Autonomy from 17 Jul; "any shift in
+    strategy must always require human consent".
+  - **L2, the paper.** Written by Claude on 24 Jul; human sign-off on every
+    order.
+  - **L3, the first commit** `fa9ba47`.
+* **The first commit already departed from the paper:**
+  - no decision matrix (15 independently gated strategies, no allocator);
+  - no ML ensemble;
+  - Kelly on placeholder inputs;
+  - synthetic data.
+* **QAT's swing entry is the first commit's rule, unchanged**: yesterday's
+  close ≤ EMA20, today's price > EMA20, stop 2.5 × ATR, 2R target.
+  - It is **not** the operator's methodology (`C:\ShareTrader\Swing Trader
+    methodology.md`: rejection candle, weekly filter, volume confirmation,
+    resistance check, 50% profit at 1R with the stop to breakeven, 2–3 × ATR
+    trailing stop).
+  - It is **not** the reference app's rule either (low within 2% of the EMA20
+    in 3 days, trend gap ≥ 1%, 1.5 × ATR).
+* **Where the limits come from:**
+  - The operator's (ShareTrader "Moderate" settings): 1% risk, 5% aggregate
+    risk-at-stop, 30% sector, 10 positions, −2% / −4% day rails.
+  - The paper's: 2.5 × ATR, 3% ES, 3% daily loss, 20% drawdown.
+* **The reference app gave the AI a veto on new entries**, by default. QAT
+  gives it none.
+
+**Stage 3, current system (report §5; facts verified 14 Sep)**
+
+* ⚠️ **CE-017, the live safety defect.** The exit leg release runs before the
+  kill-switch check (`oms.py:731` then `745`).
+* **Swing decides on the forming, intraday, delayed bar**, not the daily
+  close.
+* **Trades are booked at transmission**, at the reference price. Real fills
+  are absorbed only in the 5-minute reconciliation poll. The quantity is
+  booked whatever status the broker returns (`oms.py:1134-1137`).
+* **The kill switch has no staleness trip**, though its docstring and the
+  paper say it does.
+* **The earnings calendar runs on the US calendar** for the ASX book (active
+  in the deployed configuration).
+* **Regime metadata is never on a restored lot**, which explains the 12 of 12
+  blank ledger rows.
+* **Only VIXCLS, T10Y3M and BAA10Y feed the regime**; DGS3MO and DGS10 are
+  ignored.
+* **Not wired into the app:**
+  - `data/validation.py` (including corporate-action adjustment)
+  - `FeatureEvent` consumers
+  - `audit_closed_trades`
+  - `Orchestrator.stop_all`
+  - `preflight.py` (script only)
+* **No path exists from any AI output to a trade.** AI writes to panels, the
+  log and the report narratives.
+
+**The headline against the baseline, for Stage 4 to classify:**
+* Autonomous completion within rails and strategy **exists**.
+* **No AI takes part in forming any trade recommendation.**
+* **One strategy runs**, where the purpose names several.
+
+### Next steps (the plan's progress table has the detail)
+
+1. **Stage 4: drift map and strategy integrity** (report §6–8).
+   - Categories A–G, plus an **Authority** column.
+   - Authority evidence by period:
+     - the chats C1–C4, up to 26 Jul (text extracted from the archived
+       export);
+     - commit messages, ROADMAP and HANDOFF (as claims), 25 Jul – 2 Sep;
+     - transcripts, from 3 Sep.
+   - The line-by-line swing comparison is against the **paper** (strategy)
+     and the operator's **methodology**.
+2. **Stage 4a**, alongside: back-fill the error log from the chats, fix
+   commits, ROADMAP and HANDOFF incidents.
+3. **Stages 5–10**, then **⛔ Checkpoint B** (the operator reviews the draft).
+
+The outstanding list is frozen, but its observation items continue: item 1
+(the TIF fix on a real market exit), item 3 (the first `COMMISSION VERIFIED`)
+and item 8 (the status column).
 
 ---
 ---
@@ -6386,174 +6517,121 @@ correct row above it.
 Continuing QAT (Quant Advisory Terminal) at C:\Claude Programming.
 Paper account throughout - no real money.
 
+⛔⛔ DEVELOPMENT IS FROZEN FOR A DESIGN RECOVERY & DESIGN INTENT AUDIT
+(since 12 September). Before doing ANYTHING, read, in this order:
+  1. docs\HANDOFF.md section "14 SEPTEMBER: THE DESIGN AUDIT" (standing
+     instructions, baseline, findings, next steps)
+  2. the PROGRESS table at the top of
+     docs\superpowers\plans\2026-09-12-design-recovery-audit-plan.md
+  3. docs\audit\2026-09-design-recovery\ (sections 03, 04, 05, stage3\)
+  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-019)
+No features, refactors, trading-logic / risk-parameter / threshold /
+execution changes, and NO FIXES (including for audit findings) without the
+operator's explicit authorisation. The audit is an investigation, not a
+coding task. Report first; change only after review and authorisation.
+NEXT: AUDIT STAGE 4 (drift map with the Authority column; line-by-line swing
+comparison; Stage 4a error-log back-fill alongside).
+
+⛔ SEARCH BOUNDARY (operator; breaching it again ends the subscription):
+read or search ONLY C:\Claude Programming and C:\QuantAdvisoryTerminal, plus
+the locations approved on 12 September (read-only):
+%LOCALAPPDATA%\QuantAdvisoryTerminal (QAT data), Documents\QAT-audit-evidence\,
+Claude Code's own folders (~\.claude, its temp folder), and C:\ShareTrader
+(the original version of this app). ANYTHING ELSE - including the rollback
+dirs at C:\QuantAdvisoryTerminal.bak-* and any other drive or user folder -
+needs the operator's permission FIRST, location by location. NEVER read
+C:\Share Trader Project (the operator's separate market-opinion tool; no
+autonomy, no trading capability; out of scope).
+
+⛔ EVERY CLAUDE ERROR goes into docs\CLAUDE_ERROR_LOG.md in the SAME session
+- timestamped, severity, root cause, fix, how to avoid, evidence - including
+wrong claims caught before delivery and command slips. Never edit an entry to
+look better; add a later note.
+
+⛔ THE OPERATOR'S OWN WORDS ARE THE AUTHORITY ON INTENT. README, the paper,
+ROADMAP, HANDOFF and the capability docs were written by Claude - during the
+audit they are claims to test (CE-018). Fresh-context investigators are
+approved for fact-finding ONLY: code and raw logs, no Claude-written docs,
+file:line for every fact, "NOT DETERMINED" instead of guesses, no judgement.
+
+✅ CHECKPOINT A BASELINE (operator, 14 September, verbatim): "The original
+intent was to build a Share Trading App capable of making recommended trades
+using AI designed around different trading strategies. Decision making
+capability was to be either Human or AI autonomous whilst philosophy and
+strategies were informed by [the paper C:\ShareTrader\Investment_Strategy_
+Advisory_Paper.docx]." AI-autonomous mode = "Acting on its recommendation and
+complete the trade decision, subject to the embedded safety rails and in
+accordance with the selected strategy." So: autonomy IS original intent (the
+paper's human-sign-off rule was Claude's addition and is superseded); the AI
+is meant to take part in forming the recommendation (today it takes NONE);
+the purpose names several strategies (today ONE, swing, runs).
+
+⚠️ OPEN LIVE SAFETY DEFECT CE-017 (NOT FIXED - the operator chose "decide
+later, continue audit", 14 Sep): an exit releases the position's protective
+legs at the broker when the exit is PROPOSED, before the kill switch is
+checked (oms.py:731 then 745); while the switch is tripped the re-arm cannot
+transmit a replacement. IAG.AX (6,699) had no broker stop 11:21:46-12:20:40
+on 9 September. IF THE KILL SWITCH TRIPS, CHECK EVERY POSITION HAS A STOP AT
+THE BROKER. Report again at once if it recurs; change nothing unauthorised.
+
+THE APP KEEPS RUNNING M175 UNCHANGED IN execution_mode=auto (operator
+decision, 12 Sep: human latency must not slow or distort decisions while
+testing). Do not propose switching to recommend.
+
 READ THE STATE FIRST, and trust it over anything in this prompt:
 
     & "C:\Claude Programming\scripts\session_check.ps1"     # NO ARGUMENTS, EVER
     .\.venv\Scripts\python.exe scripts\handoff_state.py
 
-Then read docs\HANDOFF.md from "Where this stands" - including "12 SEPTEMBER"
-(the M175 deploy and what a rollback now needs) - and the 10 SEPTEMBER AUDIT
-section before touching the outstanding list.
-
 ⚠️ POWERSHELL for anything touching %LOCALAPPDATA%\QuantAdvisoryTerminal -
 including Python that only READS it, and anything that builds Settings(). The
 Bash sandbox serves a frozen snapshot and does NOT error. The log is at
-%LOCALAPPDATA%\QuantAdvisoryTerminal\DATA\logs\qat.log - under data\.
-(The REPOSITORY reads fine from Bash; only %LOCALAPPDATA% is frozen.)
-
-⚠️ RUN THE FOUR CHECKS SEPARATELY. black --check can EXIT 0 while printing
-"1 file would be reformatted".
-⚠️ NEVER PIPE pytest OR invoke build THROUGH tail.
-
+%LOCALAPPDATA%\QuantAdvisoryTerminal\data\logs\qat.log.
+⚠️ RUN THE FOUR CHECKS SEPARATELY (black --check can EXIT 0 while printing
+"1 file would be reformatted"). NEVER PIPE pytest OR invoke build THROUGH tail.
 ⚠️ DO NOT REFERENCE ALPACA. Broker IBKR, market ASX, price source yfinance.
+⚠️ PUSHING IS ALLOWED - batch it; a push AND a PR each trigger CI.
+CHECK CI AFTER PUSHING: gh run list --limit 3.
+⚠️ (Frozen, but for the record) DEPLOY ONLY WITH scripts\deploy.ps1, dry run
+then -Apply, ASK before -Apply, never mid-session; the copy is not the check -
+launch and read the stamp off the log. CLOSE THE APP FIRST, THEN THE BROKER.
 
-⚠️ PUSHING IS ALLOWED - batch it. A push AND a pull request each trigger CI.
-⚠️ CHECK CI AFTER PUSHING: gh run list --limit 3.
+EVIDENCE: Documents\QAT-audit-evidence\2026-09-12\ (463 files, sha256
+MANIFEST.csv: transcripts, qat-logs, claude.ai export, IBKR statements
+24 Aug and 24 Aug-11 Sep) and \2026-09-14\ (transcript snapshot).
+cleanupPeriodDays = 365. Do not clear the logs. At session end snapshot any
+changed transcript into a new dated folder with its own manifest. NEVER
+commit the statements or the chat export (personal details).
 
-⚠️ DEPLOY WITH scripts\deploy.ps1 (dry run, then -Apply). ASK before -Apply.
-BUILD FIRST AND CHECK THE DIST HASH MOVED.
-⚠️ THE COPY IS NOT THE CHECK - LAUNCH AND READ THE STAMP OFF THE LOG.
-⚠️ AND NOT MID-SESSION.
+THE STATE - measured 14 September (Monday) 09:12, before the open:
+- App CLOSED; IB Gateway CLOSED (nothing on 4001/4002/7496/7497); LM Studio
+  up on 1234. Last app log line 12 Sep 11:16 (scan: 18 legs / 9 symbols clean).
+- DEPLOYED M175 (5e322ca), unchanged since 12 Sep 10:51; src\ unchanged since.
+  Suite at 12 Sep: 3,677 passed / 26 skipped; four checks clean.
+- KILL SWITCH CLEAR (tripped:false).
+- LEDGER: 12 rows = 8 positions, sha256 688B7091..., net -3,495.02;
+  regime_at_entry blank on all 12 (restored lots never carry it - §5.3 #16).
+- LAST KNOWN BOOK (app, 12 Sep 10:56; broker not readable 14 Sep): nine
+  positions, all with stops - ANZ 640, ASX 1314, BOQ 13586, COH 363, JHX 1097,
+  SUN 3192, TAH 64229, TWE 10412, WOW 1098. Day-start equity 989,604.29.
+- ENTRY GATE: the AGGREGATE CAP (~7.6% vs 5.00% on 11 Sep - all 449 entries
+  refused). Nothing enters until it falls below 5%. session_check.ps1's footer
+  still names the position count - it is wrong (recorded; frozen).
+- Git: master level with origin after this handover; CI green on every push
+  since 5e322ca.
+- Rollback dirs: NOT MEASURED - they sit at C:\ outside the boundary (ask).
 
-⚠️ CLOSE THE APP FIRST, THEN THE BROKER.
-⚠️ COMMIT BEFORE SABOTAGING A RAIL.
+OUTSTANDING LIST - FROZEN with development. Observation items continue:
+1 (M173 TIF fix on a real app-driven market exit - still unproven), 3 (first
+COMMISSION VERIFIED on an app-transmitted order), 8 (a genuinely blank status
+cell). Items 2, 4, 5, 6, 7, 9 wait for the audit; 10 (M39 corporate actions)
+and 11 (IBKR news) are CLOSED - do not re-litigate. Full list: HANDOFF.md.
 
-⛔ SEARCH BOUNDARY (operator, 12 September): read or search ONLY
-C:\Claude Programming and C:\QuantAdvisoryTerminal. ANY other location on the
-operator's computer - including %LOCALAPPDATA%\QuantAdvisoryTerminal, other
-drives, user folders, Downloads - needs the operator's permission FIRST. The
-operator has said a repeat without permission ends their subscription.
-Permissions granted are listed in the audit plan's Stage 0.
-
-⛔ DEVELOPMENT IS FROZEN (12 September) FOR A DESIGN RECOVERY & DESIGN INTENT
-AUDIT. Read "12 SEPTEMBER (AFTERNOON)" and
-docs\superpowers\plans\2026-09-12-design-recovery-audit-plan.md before doing
-ANYTHING. No features, refactors, parameter or threshold changes, and no fixes
-for what the audit finds, without the operator's explicit authorisation. The
-app keeps running M175 unchanged in auto (the operator's decision). Every
-Claude error goes into docs\CLAUDE_ERROR_LOG.md, same session.
-
-⚠️ OPEN LIVE SAFETY DEFECT (found by the audit, 14 September, NOT fixed - the
-operator chose "decide later, continue audit"): an exit cancels the position's
-protective legs at the broker BEFORE the kill switch is checked
-(oms.py:731 then 745), and while the switch is tripped the re-arm cannot
-transmit a replacement. IAG.AX (6,699) had no broker stop from 11:21:46 to
-12:20:40 on 9 September. The legs are released when an exit is PROPOSED, not
-transmitted. IF THE KILL SWITCH TRIPS, CHECK EVERY POSITION HAS A STOP AT THE
-BROKER. See CE-017 in docs\CLAUDE_ERROR_LOG.md.
-
-THE STATE - measured 12 September (Saturday) ~11:00, after the M175 deploy.
-The app was RUNNING when this was written (launched 10:55 to read the stamp;
-stood down - weekend). ⚠️ If it is still up, close the app FIRST, then the broker.
-
-✅ **DEPLOYED: M175 (`5e322ca`)**, read back off the log at the 12 September
-10:55:08 launch. PR #2 merged (`a24faa9`); `5e322ca` is a test-only fix on top.
-No deploy gap. Rollback dir: `C:\QuantAdvisoryTerminal.bak-33d0ef6-20260912-1051`
-(M174) - ⚠️ BUT an older build re-inflates the repaired entry records, so rolling
-back ALSO means restoring both `*.bak-fill-basis-20260912-105253` files in the
-data dir, and even then the M65 corrections made at the M175 launch are lost.
-Read "12 SEPTEMBER" before any rollback.
-
-⚠️ CI: the run on the merge `a24faa9` was RED (two clock-dependent pre-flight
-tests - see 12 SEPTEMBER). `5e322ca` fixes them and was pushed with this
-handover. Check it went green: `gh run list --limit 3`.
-
-✅ THE M175 REPAIR HAS RUN (12 Sep 10:52:53) AND IS ONE-SHOT - it now refuses,
-correctly. Ledger audit_closed_trades: 0 findings (was 15).
-
-BROKER: IB GATEWAY on 4002 (PID 12276, started 12 Sep 10:41:02), sole listener.
-⚠️ It was DOWN at 10:31 that morning though it was up at 21:32 the night before
-- measure it, never carry it. Account DUQ200898, paper, AUD.
-
-NINE POSITIONS, ALL PROTECTED, 18 resting legs - adopted at the 12 Sep 10:56:09
-launch with 9 of 9 stops: ANZ 640, ASX 1314, BOQ 13586, COH 363, JHX 1097,
-SUN 3192, TAH 64229, TWE 10412, WOW 1098. Day-start equity 989,604.29.
-
-⚠️ THE ENTRY GATE IS THE AGGREGATE CAP. 9 of 10 held, but aggregate
-risk-at-stop ~7.6% vs the 5.00% cap (11 Sep) - all 449 entry decisions on 11 Sep
-were refused. Nothing enters until it falls below 5%. (session_check.ps1's
-footer still says the position count is the gate - it is not.)
-
-✅ KILL SWITCH CLEAR - kill_switch.json tripped:false, read 12 Sep 10:56 after
-the launch; 0 kill-switch mentions, 0 mismatches, 0 ERROR.
-
-LEDGER: 12 rows = EIGHT POSITIONS (sizer gate 8 of 20). sha256 688B7091...
-(repaired). Net P&L -3,495.02. The pre-repair file is
-closed_trades.csv.bak-fill-basis-20260912-105253 (sha256 88C25985...).
-
-LOCAL LLM: LM Studio on port 1234 (.env changed 11 Sep 09:56 from 8000;
-backup .env.bak-20260911-095650). Chosen ONCE at launch - if LM Studio is down
-then, the AI panels are demo all session. The trading path has no LLM.
-
-OUTSTANDING - ⛔ FROZEN with development on 12 September. Items 1, 3 and 8 are
-observations and continue. The rest wait for the audit (the plan's section 5
-maps each item to the audit section that answers it).
-⚠️ Only item 3 was re-checked 12 September (and 7 on 11 September);
-the rest are carried from the 10 September audit - verification has a shelf
-life, check the code before acting on any of them.
-
-1. VERIFY M173's TIF FIX AGAINST A REAL MARKET EXIT. Still unproven - BHP's
-   exit on 11 Sep was a RESTING STOP, not an app-driven market SELL. Watch
-   for: no 10349, no kill-switch trip, resting-order scan clean after the fill.
-2. ⚠️ THE ORPHAN RAIL STILL CANNOT CANCEL, by choice.
-   resting_order_cancel_enabled is False (M141, item 23).
-3. A & B - ✅ M175 DEPLOYED AND THE LEDGER REPAIRED (12 Sep). Remaining: watch
-   for the first `COMMISSION VERIFIED` on an app-transmitted order (the
-   positive control; commission_checks.csv does not exist yet) and whether a
-   broker-side stop ever produces one (unmeasured - a second client gets no
-   commission).
-4. WEEKLY OPEN/CLOSE TO BE SAVED, once the machinery is proven. Source: the
-   DAILY BARS, not intraday ticks - the feed goes idle at 16:00.
-5. M41 HOLD-THROUGH EARNINGS - a POLICY decision, not a build. Detection
-   shipped in M174. ⚠️ Nobody has measured how many of our ~40 announcements
-   a year actually gapped.
-6. STAGE 4 REGIME RE-SOURCING. The label is dominated by US data (vix_level
-   moves 86% of labels). The open question is DATA: the AU FRED series are
-   monthly and 99 days stale (M170).
-7. REACH 20 CLOSED TRADES. At EIGHT. The aggregate cap (not the position
-   count) now blocks every entry, so nothing new closes until protection or
-   targets close what is held.
-8. WATCH THE STATUS COLUMN for a genuinely blank cell inside a hold window.
-9. THE HMM's SENSITIVITY TO A SEVENTH COLUMN - measured 1 September, not acted
-   on deliberately.
-10. M39 CORPORATE ACTIONS - CLOSED 10 Sep, decided. Do not re-litigate.
-11. IBKR NEWS - CLOSED 10 Sep. Stay on yfinance. Do not re-run the probes.
-
-HOUSEKEEPING: ELEVEN rollback directories, 4.32 GB (0.39 GB each), against
-352.2 GB free - counted 12 September 10:57. Ask before deleting; each is the
-only rollback path for its build.
-
-WHAT 12 SEPTEMBER ESTABLISHED
-
-⚠️ A TEST THAT READS THE CLOCK IS A TEST OF THE DAY IT WAS WRITTEN ON. Two
-pre-flight tests written on a Thursday passed every weekday and failed on the
-first Saturday - stopping the M175 build and turning master's CI red. The code
-was right; the fixture assumed "today" trades. Pin dates in fixtures.
-
-✅ THE DRY RUN WAS THE CHECK. The repair's dry run matched yesterday's measured
-expectation on every line, and the M65 lines at launch named exactly the five
-expected symbols - agreement with a prediction written BEFORE the run, not a
-green exit code.
-
-WHAT 11 SEPTEMBER ESTABLISHED
-
-⚠️ THE ITEM WAS SCOPED WRONG, AND MEASURING FIRST FOUND IT. "Record the actual
-commission" was the plan. Joining 938 logged commissionReport lines showed the
-commission was exact on 17 of 17 orders - the defects were the price basis
-(M65 writing commission-inclusive avgCost), slippage charged twice, and the
-floor per piece. **Measure the thing before building the fix for it.**
-
-⚠️ A GUARD THAT PASSES ITS OWN DATA CAN STILL BE WRONG ON THE REAL DATA. The
-repair's self-check, as planned, would have REFUSED tonight: it converted TNE's
-avgCost on the ledger's 60-share fragment instead of the 3,051-share order. And
-the repaired file would have failed `audit_closed_trades` on rounding - found
-only because a reviewer ran the pure functions against the live rows. Both
-passed every fixture. **Run the gate on the real shape before trusting it.**
-
-⚠️ THE LEDGER FAILED ITS OWN AUDIT AND NOTHING SAID SO. 15 findings, some from
-every ordinary write (`as_row` rounded what it stored but derived from what it
-did not). The audit exists; nothing runs it on a schedule.
-
-✅ AN ERROR THAT LOOKS ALARMING CAN BE THE MACHINERY WORKING. `Error 202 ...
-Order Canceled` at 10:00:00 was IBKR cancelling BHP's target because its stop
-filled - read the broker before reading the log line as a fault.
+WHAT 14 SEPTEMBER ESTABLISHED
+⚠️ A SAFETY RAIL CAN DISABLE THE RECOVERY IT RELIES ON. The exit path
+destroys protection on the promise that re-arm restores it; the kill switch
+blocks re-arm; the cancel itself tripped the switch (CE-017). Check every
+condition that can disable a recovery mechanism before a destructive step.
+⚠️ THE "ORIGINAL DESIGN" WAS PARTLY CLAUDE'S. The paper's human-sign-off rule
+was not in the operator's brief; measuring against the paper alone would have
+called the operator's own intent "drift" (report §4.0). Ask the operator.
