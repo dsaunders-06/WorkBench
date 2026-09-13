@@ -316,6 +316,16 @@ boundaries (does `ai_advisory` reach OMS or broker code at all?).
 
 **⛔ Checkpoint A: you review Stages 2 and 3.** Every later stage compares
 these two baselines, so they must be right first.
+**✅ Decided 14 Sep** (report §4.00, §4.001):
+* **Purpose:** an app making recommended trades **using AI**, around
+  **different trading strategies**.
+* **Decisions:** **human, or AI autonomous**. Autonomous means acting on its
+  recommendation and completing the trade, subject to the embedded safety
+  rails and the selected strategy.
+* **Philosophy and strategies:** the paper. The paper's human-sign-off rule is
+  superseded.
+
+The operator made no corrections to §4 or §5.
 
 **Stage 4: Drift map and strategy integrity (brief §5, §6).** For each
 component, use `git log -S` / `git log --follow` for when it arrived, the

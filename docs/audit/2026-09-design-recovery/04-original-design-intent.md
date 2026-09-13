@@ -26,6 +26,72 @@ and any conversation that produced the first commit `fa9ba47`.
 
 ---
 
+## 4.00 ✅ Checkpoint A: the operator's statement of original intent (14 September 2026)
+
+Verbatim:
+
+> *"The original intent was to build a Share Trading App capable of making
+> recommended trades using AI designed around different trading strategies.
+> Decision making capability was to be either Human or AI autonomous whilst
+> philosophy and strategies were informed by the attached."* (The attachment
+> is the paper, `C:\ShareTrader\Investment_Strategy_Advisory_Paper.docx`.)
+
+**How the audit applies it from here on** (the governing baseline for
+sections 6–24):
+
+| Element | Governing source | Consequence for §4.0's layers |
+|---|---|---|
+| Purpose: an app that makes **recommended trades using AI**, around **different trading strategies** | the operator's statement | the multi-strategy design is intent. Single-strategy operation is measured against it |
+| Decision authority: **human, or AI autonomous**, selectable | the operator's statement | autonomy is **original intent**. The paper's "human approves every order / no auto-trade toggle" (L2) is **superseded** on this point |
+| Philosophy and strategies | **the paper** (P) | P's philosophy (§2), strategy universe (§4), risk framework (§6, §18), regime adaptation (§9–§11) and decision matrix (§10) are the reference |
+| Anything the statement and the paper do not settle | L1 evidence (chats, methodology, reference app), with attribution | as recorded in §4.1–§4.15 |
+
+Sections 4.0–4.16 below stay as written: the evidence and the record of how
+the layers differed. Where they call a question "a Checkpoint A decision",
+this statement answers it, subject to the clarification in §4.001.
+
+## 4.001 ✅ The AI's role in autonomous mode (operator, 14 September 2026)
+
+Asked what "AI autonomous" means for the AI's role, the operator answered,
+verbatim:
+
+> *"Acting on its recommendation and complete the trade decision, subject to
+> the embedded safety rails and in accordance with the selected strategy."*
+
+**How the audit applies it:**
+
+* In autonomous mode the system **acts on its own recommendation and
+  completes the trade** without a human.
+* It is bounded by two things: **the embedded safety rails** (the risk,
+  portfolio, protection and kill-switch controls) and **the selected
+  strategy**.
+* Read with the purpose in §4.00, *"making recommended trades **using
+  AI**"*: **the AI takes part in forming the recommendation** that the system
+  then acts on.
+
+**Effect on the baseline for sections 6–24:**
+
+| Question | Baseline answer |
+|---|---|
+| Who may complete a trade? | a human (human mode) or the system itself (autonomous mode) |
+| What bounds an autonomous trade? | the safety rails and the selected strategy. Neither the AI nor anything else may bypass them |
+| Is the AI part of the recommendation? | **yes**, per "using AI". The measure is whether the current system uses AI in forming its trade recommendations |
+| May the AI override a rail or the strategy? | **no**: "subject to the embedded safety rails and in accordance with the selected strategy" |
+
+**Residual interpretation, recorded rather than assumed.** How large the
+AI's part in the recommendation should be (originating it, confirming it,
+or adjusting it within the strategy) is not specified. The reference app
+gave it a confirm/veto role on entries (§4.4). Stage 4 compares the current
+system against *"AI takes part in forming the recommendation"* and does not
+pick a particular degree.
+
+**The current system against this baseline, from §5 (facts; assessed in
+Stage 4):** autonomous completion within rails and strategy **exists**
+(§5.1, the gate and sign-off). **No AI output takes any part in forming a
+trade recommendation.** Recommendations come from deterministic strategy
+rules alone, and AI output reaches only panels, the log and reports (§5.3
+item 21).
+
 ## 4.0 The finding that governs the rest of this section
 
 **"The original design" is not one thing. The evidence shows three layers,
