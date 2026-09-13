@@ -312,6 +312,40 @@ HANDOFF, ROADMAP and commit messages.
 * **Evidence:** this session's tool calls; audit plan §2 (the evidence table
   lists what was found).
 
+### CE-017: An exit cancels the protective stop, then the kill switch refuses the exit, and blocks the replacement stop too
+* **Made:** 7 Sep 2026 17:23 (`e0c780d`, "An autonomous exit cancels its
+  protective legs, or refuses to sell"). **Occurred live:** 9 Sep 2026
+  11:21:46 – 12:20:40, on IAG.AX. **Found by the audit:** 14 Sep 2026, when a
+  Stage 3 investigator traced the code and the logs were checked.
+* **Severity:** High. A live position had no broker-side stop for about an
+  hour.
+* **What happened:** `OMS.submit_exit_order` cancels the symbol's protective
+  legs at the broker (`oms.py:731`) *before* asking the risk engine whether the
+  exit may proceed (`oms.py:745`, which refuses while the kill switch is
+  tripped).
+  - On 9 Sep, the leg cancel drew IBKR error 10148, which the adapter
+    classifies as HALT, so the kill switch tripped in the same second.
+  - The exit was refused. The legs were already gone: "POSITION UNPROTECTED:
+    IAG.AX held with no stop resting at the broker" (11:22:47).
+  - The re-arm then proposed a replacement stop every 5 minutes, and the
+    autonomy gate blocked each proposal because the kill switch was active.
+  - IAG.AX (6,699 shares) was re-protected only when the operator reset the
+    switch (12:20:40). The cycle then repeated at 12:20:56.
+* **Root cause:** the method's own reasoning (`oms.py:559-562`) counts on a
+  failed exit "self-healing" through the re-arm. It did not consider that the
+  kill switch blocks that re-arm. So there are two defects together: the
+  order of the operations, and an assumption about recovery that holds only
+  while the kill switch is clear.
+* **Fix:** **none. Development is frozen.** Reported to the operator on 14 Sep
+  for a decision.
+* **To avoid:** when a step destroys protection on the promise that another
+  mechanism will restore it, check every condition that can disable that
+  mechanism (here, the kill switch) and run the refusal checks *before* the
+  destructive step.
+* **Evidence:** `src/qat/domain/oms/oms.py:553-658, 731-747`; `qat.log` 9 Sep
+  11:21:46 – 12:24:44 (archive `qat-logs`); Stage 3 Investigator 3 report,
+  section G and its execution-paths table.
+
 ---
 
 ## To establish (suspected, evidence not yet read)

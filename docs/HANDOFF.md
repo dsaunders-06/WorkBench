@@ -6433,6 +6433,15 @@ for what the audit finds, without the operator's explicit authorisation. The
 app keeps running M175 unchanged in auto (the operator's decision). Every
 Claude error goes into docs\CLAUDE_ERROR_LOG.md, same session.
 
+⚠️ OPEN LIVE SAFETY DEFECT (found by the audit, 14 September, NOT fixed - the
+operator chose "decide later, continue audit"): an exit cancels the position's
+protective legs at the broker BEFORE the kill switch is checked
+(oms.py:731 then 745), and while the switch is tripped the re-arm cannot
+transmit a replacement. IAG.AX (6,699) had no broker stop from 11:21:46 to
+12:20:40 on 9 September. The legs are released when an exit is PROPOSED, not
+transmitted. IF THE KILL SWITCH TRIPS, CHECK EVERY POSITION HAS A STOP AT THE
+BROKER. See CE-017 in docs\CLAUDE_ERROR_LOG.md.
+
 THE STATE - measured 12 September (Saturday) ~11:00, after the M175 deploy.
 The app was RUNNING when this was written (launched 10:55 to read the stamp;
 stood down - weekend). ⚠️ If it is still up, close the app FIRST, then the broker.
