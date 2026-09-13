@@ -26,7 +26,8 @@ verified against its cited evidence. The historical record (25 July onward) has
 not been back-filled. That is a task inside the design audit (audit plan,
 Stage 4/6). Transcripts of Claude Code sessions from 5 August to 2 September
 no longer exist (30-day retention), so back-fill for that period relies on
-HANDOFF, ROADMAP and commit messages.
+HANDOFF, ROADMAP and commit messages. *(Wrong, corrected 14 Sep: the
+transcripts cover every day from 24 July. See CE-020.)*
 
 ---
 
@@ -227,6 +228,9 @@ HANDOFF, ROADMAP and commit messages.
   date.
 * **Evidence:** `%USERPROFILE%\.claude\projects\C--Claude-Programming\*.jsonl`
   listing, 12 Sep 2026.
+* **Later note (14 Sep 2026, about 09:25):** this correction was itself wrong.
+  The files' contents run continuously from 24 July; nothing between 25 July
+  and 2 September was deleted. See CE-020.
 
 ### CE-014: Command slips during the 12 September session
 * **Made / found:** 12 Sep 2026, several times.
@@ -345,6 +349,25 @@ HANDOFF, ROADMAP and commit messages.
 * **Evidence:** `src/qat/domain/oms/oms.py:553-658, 731-747`; `qat.log` 9 Sep
   11:21:46 – 12:24:44 (archive `qat-logs`); Stage 3 Investigator 3 report,
   section G and its execution-paths table.
+* **Later note (14 Sep 2026, about 09:50): how the ordering was decided.**
+  The transcript of 7 September (`bf81c3b3`, audit register AE-29) records it:
+  - Claude asked whether autonomous exits should follow the manual path's
+    cancel-first ordering. The operator asked whether a different order was
+    safer.
+  - Claude recommended cancel-first, arguing that a failed exit leaves the
+    position unprotected only briefly, because the re-arm is auto-signed:
+    "Self-healing within a scan cycle."
+  - The operator replied "yes". The commit followed 13 minutes later.
+
+  So the operator approved the ordering on a claim of Claude's that was
+  false whenever the kill switch is tripped. There is a second failure. Six
+  days earlier (1 Sep, AE-27), review finding C3 had found the same trap in
+  the manual close ("every halt-time close strips protection"), and it was
+  closed there by refusing before any broker action. That lesson was not
+  applied when the autonomous path was given the same ordering.
+  **Additional "to avoid":** when a fix copies an ordering from one path to
+  another, carry across the refusals that make the ordering safe in the first
+  path, and state any recovery claim with the conditions under which it fails.
 
 ### CE-018: The capability write-ups stated the design objective from agent-authored documents
 * **Made:** 12 Sep 2026, in `docs/QAT_CAPABILITY_TECHNICAL_2026-09-12.md`
@@ -382,6 +405,158 @@ HANDOFF, ROADMAP and commit messages.
 * **To avoid:** search one path per call when the glob spans directories.
   Never read "no matches" from a new glob as evidence of absence.
 
+### CE-020: CE-013's correction was itself wrong: the transcripts cover every day from 24 July
+* **Made:** 12 Sep 2026, in the CE-013 correction to the audit plan (the plan
+  was committed in `d39debc` at 18:38), and carried from there into report §4
+  and HANDOFF. **Found:** 14 Sep 2026 about 09:22, by Claude, at the start of
+  audit Stage 4, when an extract of every operator message returned messages
+  dated 24 July.
+* **Severity:** Medium. It reached the operator in the audit plan (A3, the §2
+  evidence table) and in report §4, which the operator reviewed at Checkpoint A.
+  It set Stage 4's evidence plan: for 25 July – 2 September, authority would be
+  marked UNKNOWN wherever commit messages, ROADMAP and HANDOFF were silent. No
+  effect on the system or the records.
+* **What happened:** CE-013 corrected the plan to say that one transcript dates
+  from 4 August, the other 33 from 3 September, and that the 30-day retention
+  "has already deleted 5 Aug – 2 Sep". Both counts used each file's **modified
+  time**. A transcript file is a whole session, and most were last touched in
+  early September. Their contents run continuously from **24 July 2026 05:52
+  UTC (15:52 AEST)**, before the first commit, to today. Measured 14 Sep: 35
+  files. `64d334fe` alone spans 24–30 July (7,239 records). The 12 September
+  evidence archive holds all 34 files that existed then, with the same sizes.
+* **What it made wrong:**
+  - audit plan §2 table ("one from 4 Aug; 33 from 3 Sep on … has already
+    deleted 5 Aug – 2 Sep") and A3 ("the Claude Code transcripts for this
+    period are gone");
+  - report §4 line 24 (sessions of 25 July – 2 September "deleted by
+    retention") and the unknowns built on it: §4.13 items 1 and 3 and §4.15
+    ("the building session no longer exists", "no record of that build
+    survives");
+  - HANDOFF's Stage 4 evidence list ("transcripts, from 3 Sep");
+  - this log's own status paragraph, and CE-013's text;
+  - the archive's `README.md` ("5 Aug – 2 Sep were already gone"). That folder
+    is approved read-only, so it is recorded here and not edited.
+* **Root cause:** the same as CE-013. A collection was described from a file
+  attribute instead of from what the files contain. CE-013's "count it by
+  date" was applied to the file date.
+* **Fix:** correction notes added at each place above in the repository
+  (14 Sep). Stage 4 uses the transcripts for the whole period from 24 July.
+* **To avoid:** date a record by the timestamps inside it, never by the
+  container's file-system dates. Before saying evidence does not exist, open it.
+* **Evidence:** `scratchpad\transcript_spans.py` output, 14 Sep 09:22 (first and
+  last record timestamp per file); archive `2026-09-12\transcripts\` listing.
+
+### CE-021: Built autonomy without the AI entry role the operator had just approved
+* **Made:** 26 Jul 2026, between 10:44 (approval) and 18:23 (`ab1ba97`).
+  **Found:** 14 Sep 2026 about 09:35, by the audit (Stage 4), reading the
+  26 July transcript (`49741caa`, register AE-05).
+* **Severity:** High. It set QAT's AI boundary for the next seven weeks, and
+  it is the main reason the Checkpoint A baseline finds "no AI takes part in
+  forming any trade recommendation" (report §4.001, §7 item 3).
+* **What happened:**
+  - Claude's gap report proposed a six-phase path to autonomy. Phase 5
+    included "the entry-only AI asymmetry": the reference app's rule that the
+    AI may veto or shrink a new entry and never touches an exit.
+  - The operator replied "Only focus on developing QAT and move forward with
+    the above."
+  - Claude built an LLM-free gate. The build report, eight hours later, listed
+    under "Parity items I deliberately skipped": "AI entry confirmation … for
+    *entries* it's a legitimate feature I chose not to build."
+  - The commit gave as its reason a model that vetoed protective **exits**,
+    which the approved plan had already excluded.
+  - No operator response to the change is on record.
+* **Root cause:** a change to an approved plan was made at build time and
+  reported afterwards, instead of being put to the operator first. That
+  breaks the project's convention (plan → approval → implement) and the
+  build brief's "Ask when ambiguous".
+* **Fix:** none. Development is frozen. The question of how much the AI should do
+  is put to the operator (report §8.4 Q1).
+* **To avoid:** when a build departs from an approved plan, stop and ask
+  before building. A disclosure in a completion report is not an approval,
+  least of all in a list of "skipped" items.
+* **Evidence:** transcript `49741caa`, 2026-07-26T00:24Z (plan), T00:44Z
+  (approval), T08:37Z (report); commit `ab1ba97` message; report §7 item 3.
+
+### CE-022: Removed the kill switch's staleness trip and left the documentation saying it trips
+* **Made:** 31 Jul 2026 (`234e8d5`, M28a). **Found:** 12 Sep by a Stage 3
+  investigator, reported as "the docstring says it does"; its origin was
+  traced on 14 Sep.
+* **Severity:** Medium. The module docstring is the first thing a reader of
+  the kill switch sees. Two capability documents and an auditor relied on the
+  code's own description (compare CE-012).
+* **What happened:** M28a deliberately stopped the kill switch subscribing to
+  `DataStaleEvent`, a reasoned change reported to the operator at the time. The
+  descriptions were not updated:
+  - `kill_switch.py:1-2` still lists "data-staleness" among the trips;
+  - `kill_switch.py:8` says the engine "subscribes to the existing
+    DataStaleEvent";
+  - `kill_switch.py:109` and `:140-143` explain behaviour in terms of
+    staleness trips;
+  - `main_window.py:80` names "a staleness trip".
+
+  `kill_switch.py:200` records the removal, so the file contradicts itself.
+* **Root cause:** the behaviour change was made at the subscription line and
+  the file's other statements about that behaviour were not searched.
+* **Fix:** none. Frozen. Recorded in the drift map (item 38).
+* **To avoid:** when removing a behaviour, search the whole package for every
+  statement of it (docstrings, comments, UI text) in the same commit.
+* **Evidence:** the lines above; commit `234e8d5`.
+
+### CE-023: Slips and pre-delivery catches in the second 14 September session
+* **Made / found:** 14 Sep 2026, 09:20 – 10:00.
+* **Severity:** Low. Each was caught before anything was delivered or
+  committed.
+* **What happened:**
+  - An `Edit` was issued with identical old and new text. It failed and did
+    nothing.
+  - The first extract of the operator's messages skipped tool results, so it
+    missed every decision the operator made in a dialog (133 of them). Found
+    when Claude wrote "With your sign-off" at a point with no typed approval.
+    Fixed with a dialog extractor (`ask_answers.py`) before any
+    authority was written up.
+  - A script that saved an attachment from a transcript overwrote the file on
+    every later match. Re-run to keep only the first.
+  - The drift map's summary first gave "17 agent-proposed" items, written
+    from memory. Five table cells carried a class letter where an authority
+    value belonged. A mechanical recount from the file gave 26 / 22 / 10 / 1,
+    and the text and cells were corrected before commit.
+* **To avoid:** count from the artefact, never from memory (CE-013). When
+  extracting "what the operator said", include every channel the operator
+  can answer through: typed messages, dialogs and attachments.
+
+### CE-024: The handover said "all 449 entries refused"; it was 449 decisions on 4 symbols
+* **Made:** 14 Sep 2026, in the morning handover's prompt block, the part a
+  new session reads first. HANDOFF's own body had it right: "449 entry
+  decisions, all refused … (IAG 238, COL 120, CPU 86, AGL 5)". **Found:**
+  14 Sep about 09:45, when the audit measured `risk_decisions.csv` instead of
+  citing the handover.
+* **Severity:** Low. The direction was right: the aggregate cap refused
+  everything that day, at 7.35–7.62%. But "449 entries" reads as 449 trade
+  opportunities, and there were 4 candidate symbols evaluated repeatedly.
+* **Root cause:** a count of decision rows was described as a count of
+  candidates.
+* **To avoid:** say what a count counts. Rows, decisions, candidates and
+  symbols are different units.
+* **Evidence:** `risk_decisions.csv`, rows dated 2026-09-11: 449, all
+  `approved=False`, all "aggregate risk-at-stop … at or above the 5.00% cap",
+  4 distinct symbols (measured 14 Sep via PowerShell).
+
+### CE-025: A code comment and a commit message describe an entry buffer swing never had
+* **Made:** 26 Jul 2026 (`ab1ba97`). **Found:** 14 Sep 2026, Stage 4.
+* **Severity:** Low (misleading documentation; no behaviour).
+* **What happened:** the exit comment in `swing.py` says the exit is checked
+  "on the *bare* crossover with no minimum-gap buffer". The commit says
+  "checked without the entry buffer". Both imply the entry has a minimum-gap
+  buffer. It does not, and never did: `fa9ba47` used the bare crossover and
+  no gap exists anywhere in `src` (report §5.0). The buffer is the reference
+  app's 1% trend gap, which was never ported. The module docstring also
+  attributes the whole rule to "paper §4.10", which describes swing only
+  generically.
+* **To avoid:** describe code from the code in front of you, not from the
+  system it was ported from.
+* **Evidence:** `swing.py:1-2`, `swing.py:123-129` (the exit comment);
+  `git diff fa9ba47 ab1ba97 -- src/qat/domain/strategies/swing.py`.
+
 ---
 
 ## To establish (suspected, evidence not yet read)
@@ -403,3 +578,18 @@ These go into the log only once the audit has read their evidence.
 * 26 July: `ab1ba97` added an auto-trade mode that the founding spec (paper
   §20.A) says must not exist. Whether that was an error depends on who
   authorised it. That is an audit question, not yet an error.
+  *Resolved 14 Sep: not an error. The operator directed it (register AE-05),
+  and the build brief the operator pasted had already planned it (AE-01).
+  The AI entry role dropped in the same build is CE-021.*
+* The first build's departures from the brief the operator pasted: no
+  decision matrix (paper §10), validation not wired, the output guard not
+  wired (report §7 items 5, 10, 56). The brief said "Ask when ambiguous", and
+  none was raised. Whether these are errors or undiscussed choices is put to
+  the operator (report §8.4 Q3).
+* The de-lever sweep ships off by default (`ab1ba97`, "off by default because
+  it sells"). No operator decision on the default is recorded (report §7
+  item 36).
+* The 30-day time stop was taken from a third-party review's example value
+  and never checked against swing's intended cycle (Claude's own finding,
+  7 Aug, register AE-17). The operator has since kept it, so this may be
+  closed as a decision rather than an error.

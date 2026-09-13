@@ -24,6 +24,13 @@ bulk of Claude's replies in C2; the reference app's logic beyond its settings
 block; Claude Code sessions of 25 July – 2 September (deleted by retention);
 and any conversation that produced the first commit `fa9ba47`.
 
+> ⚠️ **Corrected 14 Sep (CE-020).** The Claude Code sessions of 25 July –
+> 2 September were **not** deleted. The transcripts cover every day from
+> 24 July 15:52 AEST, including the session that built `fa9ba47`
+> (`64d334fe`, 24–30 July). The unknowns below that rest on "the session no
+> longer exists" (§4.13 items 1 and 3, §4.15) are re-examined in report §7
+> against that session.
+
 ---
 
 ## 4.00 ✅ Checkpoint A: the operator's statement of original intent (14 September 2026)

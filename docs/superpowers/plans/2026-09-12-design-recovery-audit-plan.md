@@ -9,7 +9,7 @@ session transcripts cover (CE-013 in `docs/CLAUDE_ERROR_LOG.md`).
 **Baseline at writing:** `master` at `ae2c91a` (2 commits unpushed). Deployed
 M175 (`5e322ca`). App running since 10:55 (weekend, stood down).
 
-## ▶ PROGRESS (updated 14 September 2026, 09:15). Read this first
+## ▶ PROGRESS (updated 14 September 2026, 10:00). Read this first
 
 | Stage | Status | Output |
 |---|---|---|
@@ -18,8 +18,8 @@ M175 (`5e322ca`). App running since 10:55 (weekend, stood down).
 | 2: original intent | ✅ complete (12 Sep) | `.../04-original-design-intent.md` |
 | 3: current reconstruction | ✅ complete (12–14 Sep) | `.../05-current-architecture.md` and `.../stage3/` (4 verbatim investigator reports) |
 | **⛔ Checkpoint A** | ✅ **decided 14 Sep** | report §4.00 and §4.001: the operator's baseline (below) |
-| **4: drift map and strategy integrity** | ⏭ **NEXT, not started** | report §6–8 |
-| 4a: error-log back-fill | not started | `docs/CLAUDE_ERROR_LOG.md` |
+| **4: drift map and strategy integrity** | ✅ **draft complete 14 Sep**; **three questions for the operator** (§8.4 Q1–Q3) | `.../06-original-vs-current.md`, `.../07-design-drift-map.md` (59 items), `.../08-strategy-integrity.md`, `.../stage4/authority-evidence.md` (AE-01 to AE-33) |
+| 4a: error-log back-fill | **first tranche 14 Sep**: CE-020 to CE-025, a CE-017 later note, four items under "To establish". The systematic pass (fix commits, ROADMAP and HANDOFF incidents) is still to do | `docs/CLAUDE_ERROR_LOG.md` |
 | 5: risk stack and control interactions | not started | report §9, §16 |
 | 6: execution boundary and incident → control mapping | not started | report §10, §14 |
 | 7: AI boundary and regime | not started (Stage 3 has the facts) | report §11–12 |
@@ -49,14 +49,51 @@ stop before the kill switch is checked, and the switch then blocks the
 replacement (IAG.AX was unprotected for about an hour on 9 Sep). Reported 14
 Sep. The operator chose "decide later, continue audit". **Not fixed.**
 
-**How Stage 4 will run:**
+**What Stage 4 found (14 Sep; report §6–8):**
+* **The transcripts cover every day from 24 July** (CE-020), so authority is
+  now evidenced for the whole history. Of 59 drift items:
+  * 26 operator-directed;
+  * 22 agent-proposed and operator-approved (most inside whole plans or lists);
+  * 10 agent-only;
+  * 1 unknown.
+* **Autonomy was the operator's from the start.** The build brief the
+  operator pasted on 24 July added "a future function to allow automated
+  orders tied to tested rules and selectable methodology" to the paper's text
+  (AE-01), and on 26 July the operator directed the mode (AE-05).
+* **No AI in the decision was Claude's choice, not the operator's** (CE-021).
+  The 26 July plan the operator approved gave the AI an entry veto. Claude
+  built without it and said so afterwards.
+* **QAT's swing is the paper's swing in outline and not the operator's
+  method**, and has not been since the first commit (§8.3).
+* **CE-017's ordering was approved on a wrong claim of Claude's**
+  ("self-healing within a scan cycle"), six days after the same trap was
+  closed in the manual path.
+* **Questions for the operator (§8.4):**
+  * Q1: how large should the AI's part in the recommendation be?
+  * Q2: is the methodology file the swing specification?
+  * Q3: are the first build's departures from the brief errors or choices?
+
+**How Stage 4 was run:**
 * Categories A–G, plus the **Authority** column (operator-directed /
   agent-proposed and operator-approved / agent-only / unknown).
-* Authority evidence: the chats (C1–C4) up to 26 Jul; commit messages,
+* Authority evidence: the chats (C1–C4) up to 26 Jul; ~~commit messages,
   ROADMAP and HANDOFF (as claims) from 25 Jul to 2 Sep; transcripts from
-  3 Sep.
+  3 Sep~~ **the operator's own messages in the Claude Code transcripts from
+  24 Jul** (corrected 14 Sep, CE-020); commit messages, ROADMAP and HANDOFF
+  as claims throughout.
 * Stage 4a runs alongside: each D-class item is cross-referenced to the
   errors that produced it.
+
+**Next: Stage 5** (the risk stack and control interactions, report §9 and
+§16). Stage 5 does these:
+* Measure which rail refused what, by day, from `risk_decisions.csv`.
+* Trace the aggregate-cap chain. §8.2 lists the facts: the 11 September
+  refusals were 449 decisions on 4 symbols at 7.35–7.62%, and the sizer and
+  promotion thresholds are unreachable at current throughput.
+* Measure how far the trims take the risk actually taken per trade below
+  1% (§8.1, position sizing).
+
+Stage 4a's systematic pass can run alongside it.
 
 ---
 
@@ -98,7 +135,7 @@ documents was ever committed. They sit in `C:\ShareTrader\`:
 | `Investment_Strategy_Advisory_Paper.docx` | 24 Jul | **The founding specification.** 21 sections. §4.10 swing, §6 risk, §9 regimes, §11 HMM, §14 AI permissions, §18 risk engine. **§20 is the "Master Prompt for an AI Coding Agent", modules A–O**: "spec §E" is the regime engine, "spec §I" the broker adapter and OMS | **Primary baseline** |
 | Repo commit `fa9ba47` | 25 Jul 07:13 | First commit: "M1–M9, in progress". It arrived with the engines already built | The first *implementation*. Not the design |
 | **Four Claude chats (claude.ai, not Claude Code)** | before 25 Jul | The operator's first development of the app, before the move to Claude Code (operator, 12 Sep). They likely produced the paper and M1–M9 | **Primary evidence of origin and early authority. Not yet obtained** |
-| Claude Code transcripts (`~\.claude\projects\C--Claude-Programming\`) | **one from 4 Aug; 33 from 3 Sep on** | 202 MB. ⚠️ Retention is Claude Code's default 30 days (`cleanupPeriodDays` unset), which **has already deleted 5 Aug – 2 Sep**, and deletes each remaining file 30 days after its last activity. *Corrected: this row first read "34 sessions, 4 Aug – 12 Sep" (CE-013)* | Evidence of who authorised what, from 3 September only |
+| Claude Code transcripts (`~\.claude\projects\C--Claude-Programming\`) | **one from 4 Aug; 33 from 3 Sep on** | 202 MB. ⚠️ Retention is Claude Code's default 30 days (`cleanupPeriodDays` unset), which **has already deleted 5 Aug – 2 Sep**, and deletes each remaining file 30 days after its last activity. *Corrected: this row first read "34 sessions, 4 Aug – 12 Sep" (CE-013)*. **⚠️ Corrected again 14 Sep (CE-020): both versions dated the files by their modified time. Their contents run continuously from 24 Jul 15:52 AEST, before the first commit. Nothing was deleted** | Evidence of who authorised what, **from 24 July** (corrected 14 Sep; was "from 3 September only") |
 | `ROADMAP.md` (4,798 lines), `docs/HANDOFF.md` (~6,500), `docs/superpowers/specs/` (25 specs) | 25 Jul on | Agent-written rationale and incident records | Claims to test, with dates |
 | `C:\Share Trader Project\` | 10–11 Sep | The operator's separate, independent market-opinion tool. **No autonomy and no trading capability** (operator, 12 Sep) | **Out of scope. Not QAT evidence** |
 
@@ -155,6 +192,11 @@ Three periods have different evidence:
   protection, costs, the ASX move, and the first live orders.
 * **3 September on:** transcripts exist, but each is deleted 30 days after its
   last activity. The 3 September sessions go first, on about 3 October.
+
+> ⚠️ **Corrected 14 Sep (CE-020).** The middle period is not a gap. The
+> transcripts cover every day from 24 July 15:52 AEST, including the session
+> that built the first commit (`64d334fe`, 24–30 July). Stage 4 takes authority
+> from the transcripts for the whole period, and from the chats before 24 July.
 
 *Proposal:* mark authority UNKNOWN for 25 Jul – 2 Sep wherever commit
 messages, ROADMAP and HANDOFF don't name who decided. **Preserve the
