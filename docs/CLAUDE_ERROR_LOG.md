@@ -523,6 +523,11 @@ transcripts cover every day from 24 July. See CE-020.)*
 * **To avoid:** count from the artefact, never from memory (CE-013). When
   extracting "what the operator said", include every channel the operator
   can answer through: typed messages, dialogs and attachments.
+* **Later note (14 Sep 2026, about 10:05):** one more slip of the same kind.
+  `git commit -F - @'…'@` in PowerShell passed the here-string as an
+  argument, which git read as a pathspec, so the commit failed and nothing was
+  committed. Re-run as `@'…'@ | git commit -F -` (`d3c86de`). In PowerShell a
+  here-string reaches a native command's stdin only through a pipe.
 
 ### CE-024: The handover said "all 449 entries refused"; it was 449 decisions on 4 symbols
 * **Made:** 14 Sep 2026, in the morning handover's prompt block, the part a
