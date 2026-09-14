@@ -34,7 +34,7 @@ crosswalk at the end is only for reading older documents.
 
 ---
 
-## 1. At a glance (14 September 2026, 14:45 AEST)
+## 1. At a glance (14 September 2026, 16:45 AEST)
 
 | § | The brief asks for | Report | Status | Next action |
 |---|---|---|---|---|
@@ -45,24 +45,25 @@ crosswalk at the end is only for reading older documents.
 | §4 | the current system | R5 | ✅ 14 Sep | 6 items still NOT DETERMINED (R5 §5.4) |
 | §5 | the design-drift map | R6, R7 | 🟡 14 Sep | Checkpoint B |
 | §6 | "is QAT still trading my strategy?" | R8 | 🟡 14 Sep. **Answer: no** | Checkpoint B |
-| **§7** | **the risk-control stack** | **R9** | **🔶 measuring** | finish the measurements below, then write R9 |
-| §8 | the execution / OMS / broker boundary | R10 | ⬜ | start after §7 and §13 |
+| §7 | the risk-control stack | R9 | 🟡 14 Sep | Checkpoint B |
+| **§8** | **the execution / OMS / broker boundary** | **R10** | **⬜ next** | start with the proven-live vs code-only matrix |
 | §9 | the AI/LLM boundary | R11 | ⬜ (facts gathered in R5) | — |
 | §10 | the regime logic | R12 | ⬜ (facts gathered in R5) | — |
 | §11 | data and evidence integrity | R13 | ⬜ (IBKR statements archived) | — |
 | §12 | accidental complexity | R15 | ⬜ | — |
-| **§13** | **control interactions and traps** | **R16** | **🔶 one trap traced** | trace the brief's own example chain; draw the diagram; write R16 |
-| §14 | past failures and the controls they produced | R14 | ⬜ | — |
+| §13 | control interactions and traps | R16 | 🟡 14 Sep | Checkpoint B |
+| **§14** | **past failures and the controls they produced** | **R14** | **⬜ next, with §8** | — |
 | §15 | three architecture diagrams | R17, R18, R19 | ⬜ | — |
 | §16 | simplification candidates | R20 | ⬜ | — |
 | §17 | coherence questions A–J | R22 and R1 | ⬜ | — |
 | §18 | Green / Amber / Red | R24 | ⬜ | — |
-| §19 | the 24-section report | R1–R24 | 🔶 R3–R8 drafted | see section 4 of this tracker |
+| §19 | the 24-section report | R1–R24 | 🔶 R3–R9 and R16 drafted | see section 4 of this tracker |
 | §20 | remediation sequence, recommended only | R23 | ⬜ | — |
 | §21, §22 | don't aim for a good result; keep asking the key question | — | in force | — |
 
-**Order of work from here:** §7 and §13 → §8 and §14 → §9 and §10 → §11 → §12
-and §16 → §15, §17, §18, §20 and R1, R2, R21–R24 → **Checkpoint B**.
+**Order of work from here:** ~~§7 and §13~~ (drafted 14 Sep) → **§8 and §14** →
+§9 and §10 → §11 → §12 and §16 → §15, §17, §18, §20 and R1, R2, R21–R24 →
+**Checkpoint B**.
 
 ---
 
@@ -153,56 +154,45 @@ statement of intent, R4 §4.00–§4.001.
 | Code each difference 1–6 | 🟡 | R8 §8.1 |
 | The answer | 🟡 | R8 §8.3, §8.5: **no.** The methodology was requested for the first build and never implemented (CE-026) |
 
-### §7 Audit the risk-control stack → R9 🔶
+### §7 Audit the risk-control stack → R9 🟡 (drafted 14 Sep)
 
-**Evidence tools (read-only):** `s07-s13-risk-and-interactions/tools/`
-* `rails_by_day.py`: refusals and trims by rail, by day, from `risk_decisions.csv`
-* `risk_per_trade.py`: the risk each entry took, and which trim set it
-* `aggregate_series.py`: aggregate risk-at-stop over time, from the app's log
+**Report:** `09-risk-control-assessment.md`. **Evidence tools (read-only):**
+`s07-s13-risk-and-interactions/tools/`: `rails_by_day.py`,
+`risk_per_trade.py`, `aggregate_series.py`, `gate_and_halts.py`.
 
-**Each control the brief names.** Every one is mapped in code (Stage 3 reports,
-investigator 2 stages B–G and investigator 3 section A). What remains is its
-measured effect.
+**Each control the brief names.** Every one is mapped in code (Stage 3 reports)
+and its effect measured, or marked NOT DETERMINED, in R9 §9.2.
 
-| # | Control | Measured effect (records to 12 Sep) | Status | To do |
-|---|---|---|---|---|
-| 1 | Per-trade risk (1%) | 20 entries took **0.13%–0.70%** of equity, median 0.45%. None took the full 1% | ✅ | — |
-| 2 | Stop distance | recorded per entry; swing's stop is 2.5 × ATR | ✅ | — |
-| 3 | Position sizing | `min(Kelly, 1% ÷ stop)` rebuilt for every entry | ✅ | — |
-| 4 | Half-Kelly (placeholders 0.55 / 1.5) | **bound 13 of 20 entries**. On placeholders it binds whenever the stop is under 8% of the price | ✅ | when would measured inputs arrive? (§13) |
-| 5 | Volatility targeting | none separate: the sizer takes a minimum, not a blend (R5 §5.3 #12) | ✅ (fact) | state in R9 |
-| 6 | Aggregate risk-at-stop (5%) | refused 453 decision rows, 6 symbols, 2 days (4 and 11 Sep). Time series 25 Aug–12 Sep from the log | ✅ | cause is in §13 |
-| 7 | Position count (10) | refused **4,265 rows, 27 symbols, 41 symbol-days, 10 days**. The binding gate from 25 Aug to 9 Sep | ✅ | — |
-| 8 | Single-name (15%) | 0 refusals. 4 entries were trimmed by the governor; the record does not say which limit | 🔶 | attribute the 4 trims from the recorded inputs |
-| 9 | Sector (30%) | 0 refusals; same 4 trims | 🔶 | same |
-| 10 | Correlated cluster (30% at ρ ≥ 0.70) | 0 refusals. Claude said on 7 Aug it cannot bind at 10 positions (AE-17), not re-measured | 🔶 | test that claim |
-| 11 | Gap budget | 0 refusals; same 4 trims | 🔶 | same as 8 |
-| 12 | Cash cap (10% of spendable cash) | trimmed later entries to **24–38% of their budget** (e.g. COH 816 → 363) | ✅ | — |
-| 13 | Cash reserve / no leverage | never trimmed or refused | ✅ | — |
-| 14 | Cost-to-risk (10%) | 1 refusal (3 Sep) | ✅ | — |
-| 15 | Earnings sizing (half within 5 days) | **never applied on an approved entry**; the calendar is built for the US (R5 §5.3 #15), and "EARNINGS UNREADABLE" warnings appear on 10–11 Sep | 🔶 | explain why it never applied |
-| 16 | Daily loss limit (kill switch 3%; gate −2% halve, −4% pause) | — | ⬜ | count trips and gate actions from the log and journal |
-| 17 | Drawdown limit (kill switch 20%) | — | ⬜ | same |
-| 18 | Kill switch | refused **158 exit decisions**, 2 symbols, 2 days (4 and 9 Sep) | 🔶 | tabulate every trip by cause and duration |
-| 19 | Session gates | — | ⬜ | count the journal's 48 "blocked" rows by gate rail |
-| 20 | Staleness | — | ⬜ | same, plus the feed exclusions in the log |
-| 21 | Promotion evidence | off on paper; 8 closed trades against 30 (daily report, 11 Sep) | ⬜ | state the status in R9 |
-| 22 | Pending-order exposure | — | ⬜ | where pending buys count, and where they do not (the de-lever sweep does not) |
-| — | Silent drops before the risk engine (duplicate guards, weekly budget of 10, minimum hold) | not recorded in any audit file (investigator 2, stage A) | ⬜ | count what the log does record (the weekly budget logs at INFO) |
+| # | Control | Measured effect (records to 12 Sep) | Status |
+|---|---|---|---|
+| 1 | Per-trade risk (1%) | 20 entries took **0.13%–0.70%** of equity, median 0.45%. None took the full 1% | 🟡 |
+| 2 | Stop distance | recorded per entry; swing's stop is 2.5 × ATR | 🟡 |
+| 3 | Position sizing | `min(Kelly, 1% ÷ stop)` rebuilt for every entry | 🟡 |
+| 4 | Half-Kelly (placeholders 0.55 / 1.5) | **bound 13 of 20**; on the record so far, measured Kelly would be zero (R16 §16.2) | 🟡 |
+| 5 | Volatility targeting | none separate: a minimum, not a blend | 🟡 |
+| 6 | Aggregate risk-at-stop (5%) | 453 rows, 6 symbols, 2 days; also all 4 governor trims | 🟡 |
+| 7 | Position count (10) | **4,265 rows, 27 symbols, 41 symbol-days, 10 days** | 🟡 |
+| 8 | Single-name (15%) | never acted; cannot bind while placeholder Kelly (12.5%) or the cash cap (10%) holds | 🟡 |
+| 9 | Sector (30%) | never acted; peak 6.6% before an approved buy | 🟡 |
+| 10 | Correlated cluster | never acted; **empty on all 68 approved buys** (Claude's 7 Aug claim now measured) | 🟡 |
+| 11 | Gap budget | never acted | 🟡 |
+| 12 | Cash cap (10% of spendable cash) | **cut 18 of 20** after approval, median to 77% | 🟡 |
+| 13 | Cash reserve / no leverage | never acted | 🟡 |
+| 14 | Cost-to-risk (10%) | 1 refusal (3 Sep) | 🟡 |
+| 15 | Earnings sizing | applied on 745 evaluations, **none approved**; 12 of 19 approved entries had no earnings date (the rail abstains) | 🟡 |
+| 16 | Daily loss limit (3%; gate −2% / −4%) | **never acted**: 0 trips, 0 gate blocks | 🟡 |
+| 17 | Drawdown limit (20%) | never acted | 🟡 |
+| 18 | Kill switch | **19 trips** (7 unrecognised IBKR errors, 6 reconciliation, 4 reconnect, 2 manual); refused 158 exit decisions | 🟡 |
+| 19 | Session gates | **delayed 9 entries, refused none** | 🟡 |
+| 20 | Staleness | **NOT DETERMINED** from the records (exclusions are not logged as events) | 🟡 |
+| 21 | Promotion evidence | off on paper; 8 of 30 | 🟡 |
+| 22 | Pending-order exposure | transmitted orders counted since `72191a9` (27 Aug), after the 26 Aug eleven-position failure; the de-lever sweep and the checker exclude pending | 🟡 |
+| — | Silent drops before the risk engine | not recorded; the weekly budget never refused; the minimum hold held IAG's exit back on 7 days | 🟡 |
 
-**The brief's seven questions** (each ⬜ until written in R9):
+**The brief's seven questions:** all answered in R9 §9.3 🟡.
 
-| Question | Evidence in hand |
-|---|---|
-| Which controls are independent? | investigator 2, sections C–G |
-| Which overlap? | investigator 2 part (3), "two controls checking the same quantity"; R7 items marked F |
-| Which can independently refuse the same trade? | to derive from the code order and the refusal records |
-| Which interact to restrict unexpectedly? | §13's full-value trap (below) |
-| Which change throughput materially? | position count, then the aggregate cap (refusals); Kelly and the cash cap (size) |
-| Which came after real failures? | R7 "Why" column; R7 §7.7 point 4 |
-| Which came without one? | same sources |
-
-**Found in passing, for §8:** the JHX stop that did not fill (section 2 above).
+**Found in passing:** the JHX stop that did not fill (section 2 above; held
+until after the audit).
 
 ### §8 Audit the execution / OMS / broker boundary → R10 ⬜
 | The brief's question | Facts already in hand |
@@ -246,16 +236,19 @@ The fourteen checks and six impact types. Evidence to inventory:
 ### §12 Identify accidental complexity → R15 ⬜
 The nine questions per item. The candidates start from R7's D and F items.
 
-### §13 Identify control interactions → R16 🔶
+### §13 Identify control interactions → R16 🟡 (drafted 14 Sep)
+**Report:** `16-control-interactions.md` (with the diagram, §16.4).
+**Tool added:** `evidence_chain.py`.
+
 | Item | Status | Evidence |
 |---|---|---|
 | **The aggregate-cap trap.** Every large over-cap reading since 25 Aug (4, 9 and 10–12 Sep) came from **one position counted at its whole value**: the governor does that when it knows no stop, or when the price is at or below the stop (`governor.py:266-267`). Three routes: **A2M** 4 Sep (a sell the broker cancelled was booked, and the app dropped the stop from its own records; derived from code and log order); **IAG** 9 Sep (CE-017); **JHX** 10–12 Sep (price at or below its resting stop) | ✅ traced | `aggregate_series.py`; the 12 Sep reading of **7.48% reproduced exactly** from the IBKR 11 Sep closes: eight positions 31,246 + JHX 42,794 = 74,040 ÷ 989,604 |
 | **All 449 refusals on 11 Sep trace to JHX.** Without it the book was at 3.16% against 5% | ✅ | same |
 | The plan's hypothesis that winners consume the budget | ✅ **refuted** for 10–12 Sep | the book was below cost at the 11 Sep close (value 493,473.05 against cost 498,215.56, IBKR statement) |
-| The brief's own example chain (few entries → few closed trades → Kelly stays on placeholders → no promotion evidence) | 🔶 | facts in R8 §8.2 (8 closed of 20 and 30 needed); trace with rates and dates |
-| Kill switch ↔ protective re-arm (CE-017) | ⬜ write up | R7 item 45 |
-| Other candidate chains to check | ⬜ | minimum hold vs trend-break exit; the time stop as the main way slots free; a pending protective order suppressing signals (investigator 2, A1); the per-order cash cap shrinking with cash, so each trade takes less risk and the position count binds first |
-| The diagram | ⬜ | — |
+| The brief's own example chain | 🟡 traced (R16 §16.2) | 8 closed in 14 trading days (0.57 a day). **On the record so far, measured half-Kelly would be zero at the 20-trade switch**, which would stop the entries that produce evidence (a lock; derived, conditional). Promotion is enforced on live only |
+| Kill switch ↔ protective re-arm (CE-017) | 🟡 | R16 §16.3 a |
+| Other chains | 🟡 | R16 §16.3 b–h: booking a cancelled sale drops the stop record; the 26 Aug race (fixed); cash cap → the position count binds first; IAG's exit signal on its entry day, held back by the minimum hold; the session gate and the skipped drift check; pending orders suppressing signals (code only); the records cannot show two rails binding |
+| The diagram | 🟡 | R16 §16.4 (mermaid) |
 
 ### §14 Distinguish safety from complexity → R14 ⬜
 For each incident the brief lists (duplicate transmission, staged TWS orders,
@@ -305,14 +298,14 @@ In force throughout. R1 is to answer §22's question directly.
 | R6 | Original vs Current Comparison | `06-original-vs-current.md` | §3–§5 | 🟡 14 Sep |
 | R7 | Design Drift Map | `07-design-drift-map.md`, `stage4/` | §5 | 🟡 14 Sep |
 | R8 | Strategy Integrity Assessment | `08-strategy-integrity.md` | §6 | 🟡 14 Sep |
-| R9 | Risk-Control Assessment | `09-…` (to write) | §7 | 🔶 measuring |
+| R9 | Risk-Control Assessment | `09-risk-control-assessment.md` | §7 | 🟡 14 Sep |
 | R10 | OMS / Execution / Broker | — | §8 | ⬜ |
 | R11 | AI / LLM Boundary | — | §9 | ⬜ |
 | R12 | Regime | — | §10 | ⬜ |
 | R13 | Data & Evidence Integrity | — | §11 | ⬜ |
 | R14 | Historical Failure → Control Mapping | — | §14 | ⬜ |
 | R15 | Accidental Complexity | — | §12 | ⬜ |
-| R16 | Control Interaction | `16-…` (to write) | §13 | 🔶 one trap traced |
+| R16 | Control Interaction | `16-control-interactions.md` | §13 | 🟡 14 Sep |
 | R17 | Current-State Architecture | — | §15 | ⬜ |
 | R18 | Original-Intent Architecture | — | §15 | ⬜ |
 | R19 | Design-Drift Architecture | — | §15 | ⬜ |
@@ -361,7 +354,7 @@ In force throughout. R1 is to answer §22's question directly.
 | Addition | Status |
 |---|---|
 | Authority column on the drift map | ✅ in R7 |
-| Claude error log | 🔶 CE-001 to CE-030 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
+| Claude error log | 🔶 CE-001 to CE-031 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
 | Checkpoint A (operator reviews R4 and R5) | ✅ 14 Sep |
 | Checkpoint B (operator reviews the full draft) | ⬜ |
 | Evidence snapshots at each session end | ✅ 12 Sep and 14 Sep so far |
@@ -393,3 +386,4 @@ for new work.
 |---|---|
 | 14 Sep 2026 14:45 | Created at the operator's direction. Statuses taken from the report files, the error log and this session's §7/§13 measurements. |
 | 14 Sep 2026 ~15:00 | JHX item marked HELD until after the audit (operator). |
+| 14 Sep 2026 ~16:45 | §7 → 🟡 (R9 drafted: every control measured or marked NOT DETERMINED; the seven questions answered). §13 → 🟡 (R16 drafted: the full-value trap, the example chain traced to a possible Kelly lock, eight other interactions, the diagram). Next: §8 and §14. Error log to CE-031. |

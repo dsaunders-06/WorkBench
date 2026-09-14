@@ -120,6 +120,41 @@ def main(data_dir: Path) -> None:
     keys = Counter(k for r in rows for k in json.loads(r["inputs"]))
     print(f"\ninput keys seen (rows carrying each): {dict(keys)}")
 
+    # ---- 5. which governor limit bound each governor trim
+    # The governor names its binding limit only in a reason string the engine
+    # does not record on an approval (engine.py:281-286), so each limit is
+    # recomputed from the recorded inputs with governor.py:324-472's arithmetic
+    # at the default caps (R3 §3.5), and the one equal to the approved share
+    # count is the one that bound.
+    print("\n== governor trims: each limit in shares; the smallest bound ==")
+    for r in approved:
+        inp = json.loads(r["inputs"])
+        if not inp.get("resized_by_governor"):
+            continue
+        g, e, p = inp["governor"], float(inp["equity"]), float(inp["price"])
+        limits = {
+            "aggregate 5%": g["headroom_dollars"] / g["per_share_risk"],
+            "single-name 15%": max(0.0, 0.15 * e - g["held_in_name_dollars"]) / p,
+            "sector 30%": max(0.0, 0.30 * e - g["held_in_sector_dollars"]) / p,
+            "gap 5% at 6%": max(0.0, 0.05 * e / 0.06 - g["gross_exposure_pct"] * e) / p,
+        }
+        if g.get("cluster_size"):
+            limits["cluster 30%"] = max(0.0, 0.30 * e - g["held_in_cluster_dollars"]) / p
+        binding = min(limits, key=lambda k: limits[k])
+        cells = "  ".join(f"{k} {v:,.0f}" for k, v in limits.items())
+        print(
+            f"{day_of(r['timestamp'])} {r['symbol']:8s} approved {float(r['final_shares']):,.0f} "
+            f"| {cells} | bound: {binding}"
+        )
+
+    # ---- 6. did the correlation, sector or name caps ever come close?
+    buys = [json.loads(r["inputs"]) for r in approved if json.loads(r["inputs"])["side"] == "buy"]
+    cluster = Counter(int(i["governor"].get("cluster_size", 0)) for i in buys)
+    print(f"\ncorrelated-cluster size on approved buys (size: rows): {dict(cluster)}")
+    for key, cap in (("held_in_name_dollars", 0.15), ("held_in_sector_dollars", 0.30)):
+        worst = max(i["governor"].get(key, 0.0) / float(i["equity"]) for i in buys)
+        print(f"largest {key} before an approved buy: {worst:.1%} of equity (cap {cap:.0%})")
+
 
 if __name__ == "__main__":
     main(Path(sys.argv[1]))

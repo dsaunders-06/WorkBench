@@ -695,6 +695,45 @@ transcripts cover every day from 24 July. See CE-020.)*
 * **To avoid:** when the operator's document already numbers the work, report against those numbers. If a grouping is needed, name each group by the operator's numbers ("brief §7 + §13") rather than inventing new ones.
 * **Evidence:** the brief, transcript `ede4fc1d` line 739 (2026-09-12T07:49:32Z); plan §6; HANDOFF "Next steps".
 
+### CE-031: Pre-delivery catches while drafting R9 (brief §7)
+* **Made / found:** 14 Sep 2026, about 15:30–16:10, in the draft of
+  `09-risk-control-assessment.md` and its tools, before commit.
+* **Severity:** Low. Every one was caught by checking the draft against the
+  tool output or the code before it was committed or reported.
+* **What happened:**
+  - The draft said the kill switch blocked 3 symbols at the gate. The tool
+    output lists 4 (BHP, A2M, IAG, SEK).
+  - It quoted the gap budget's range from the four governor-trimmed entries
+    as if it covered all entries, and gave the wrong minimum (14,723; the
+    true minimum is 5,647).
+  - It said the position count was the only refusing rail from 25 Aug to
+    9 Sep, missing the cost refusal on 3 Sep and four aggregate refusals on
+    4 Sep.
+  - It attributed the drift check's price fallback to M168 on 7 Sep, from a
+    HANDOFF row. `git log -S` puts it at `15ffd38` on 4 Sep.
+  - It gave the oldest position's age in calendar days (18) against a time
+    stop counted in trading days.
+  - Separately, before drafting: Claude nearly wrote that the 10%-of-cash cap
+    was a response to the 24 Aug duplicate transmission. The register (AE-26)
+    shows it was requested at 12:52, before the first order that day.
+  - Command slips: the kill-switch reset pattern `(\S+)` missed "operator
+    (risk console)"; two rounds of over-long lines in a new tool.
+* **Root cause:** summary figures were written from memory of tool output,
+  and one attribution came from an agent-written document (CE-018's pattern),
+  instead of each figure being read off its source as it was written.
+* **To avoid:** write each figure into a report with its tool output or code
+  line open beside it, and date an attribution with `git log -S` rather than
+  HANDOFF.
+* **Evidence:** this session's tool output (`gate_and_halts.py`,
+  `rails_by_day.py` section 5, `git log -S`); the R9 diff before commit.
+* **Later note (14 Sep 2026, about 16:40): the same kind of catch in the R16
+  draft, before commit.** It said IAG was "entered at 12:39"; that is when
+  the order was proposed, and it filled at 14:04 after the Midday Lull gate.
+  It counted the minimum hold's held-back days as 6; the log shows 7. It
+  timed A2M's cancelled sell at 10:20:33 from one of two error lines
+  (10:20:32 and 10:20:33). All three were corrected against the log and the
+  ledger before commit.
+
 ---
 
 ## To establish (suspected, evidence not yet read)

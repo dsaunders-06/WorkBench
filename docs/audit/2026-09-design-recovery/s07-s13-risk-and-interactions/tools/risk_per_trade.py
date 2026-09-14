@@ -133,7 +133,21 @@ def main(data_dir: Path) -> None:
             f"{'' if agg is None else f'{agg:6.2%}':>9s} "
             f"{'' if cnt is None else int(cnt):>3}  {','.join(later) or '-'}"
         )
-        summary.append((j["symbol"], t, oms_pct, eng_pct, bind, "signed_off" in later))
+        summary.append(
+            (j["symbol"], t, oms_pct, eng_pct, bind, "signed_off" in later, oms_qty, eng_sh, regime)
+        )
+
+    # The OMS cuts after the engine approves (floor, then the cash cap), and
+    # only the log records it. A cut beyond flooring is the cash cap.
+    cut = [s for s in summary if s[6] < int(s[7])]
+    ratios = sorted(s[6] / s[7] for s in summary)
+    print(
+        f"\ncash cap cut the engine's approved size on {len(cut)} of {len(summary)} proposals; "
+        f"OMS/engine share ratio min {ratios[0]:.0%}, median {ratios[len(ratios) // 2]:.0%}"
+    )
+    regimes = sorted({str(s[8]) for s in summary})
+    for g in regimes:
+        print(f"regime scalar {g}: {sum(1 for s in summary if str(s[8]) == g)} proposals")
 
     sent = [s for s in summary if s[5]]
     symbol_days = {(s[0], s[1].astimezone(AEST).date()) for s in summary}
