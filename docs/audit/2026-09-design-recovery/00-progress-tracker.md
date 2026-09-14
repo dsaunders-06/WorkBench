@@ -34,7 +34,7 @@ crosswalk at the end is only for reading older documents.
 
 ---
 
-## 1. At a glance (14 September 2026, 16:45 AEST)
+## 1. At a glance (14 September 2026, 18:00 AEST)
 
 | § | The brief asks for | Report | Status | Next action |
 |---|---|---|---|---|
@@ -46,23 +46,23 @@ crosswalk at the end is only for reading older documents.
 | §5 | the design-drift map | R6, R7 | 🟡 14 Sep | Checkpoint B |
 | §6 | "is QAT still trading my strategy?" | R8 | 🟡 14 Sep. **Answer: no** | Checkpoint B |
 | §7 | the risk-control stack | R9 | 🟡 14 Sep | Checkpoint B |
-| **§8** | **the execution / OMS / broker boundary** | **R10** | **⬜ next** | start with the proven-live vs code-only matrix |
-| §9 | the AI/LLM boundary | R11 | ⬜ (facts gathered in R5) | — |
-| §10 | the regime logic | R12 | ⬜ (facts gathered in R5) | — |
+| §8 | the execution / OMS / broker boundary | R10 | 🟡 14 Sep | Checkpoint B |
+| **§9** | **the AI/LLM boundary** | **R11** | **⬜ next** (facts gathered in R5) | — |
+| **§10** | **the regime logic** | **R12** | **⬜ next** (facts gathered in R5) | — |
 | §11 | data and evidence integrity | R13 | ⬜ (IBKR statements archived) | — |
 | §12 | accidental complexity | R15 | ⬜ | — |
 | §13 | control interactions and traps | R16 | 🟡 14 Sep | Checkpoint B |
-| **§14** | **past failures and the controls they produced** | **R14** | **⬜ next, with §8** | — |
+| §14 | past failures and the controls they produced | R14 | 🟡 14 Sep | Checkpoint B |
 | §15 | three architecture diagrams | R17, R18, R19 | ⬜ | — |
 | §16 | simplification candidates | R20 | ⬜ | — |
 | §17 | coherence questions A–J | R22 and R1 | ⬜ | — |
 | §18 | Green / Amber / Red | R24 | ⬜ | — |
-| §19 | the 24-section report | R1–R24 | 🔶 R3–R9 and R16 drafted | see section 4 of this tracker |
+| §19 | the 24-section report | R1–R24 | 🔶 R3–R10, R14 and R16 drafted | see section 4 of this tracker |
 | §20 | remediation sequence, recommended only | R23 | ⬜ | — |
 | §21, §22 | don't aim for a good result; keep asking the key question | — | in force | — |
 
-**Order of work from here:** ~~§7 and §13~~ (drafted 14 Sep) → **§8 and §14** →
-§9 and §10 → §11 → §12 and §16 → §15, §17, §18, §20 and R1, R2, R21–R24 →
+**Order of work from here:** ~~§7 and §13~~, ~~§8 and §14~~ (drafted 14 Sep) →
+**§9 and §10** → §11 → §12 and §16 → §15, §17, §18, §20 and R1, R2, R21–R24 →
 **Checkpoint B**.
 
 ---
@@ -194,7 +194,24 @@ and its effect measured, or marked NOT DETERMINED, in R9 §9.2.
 **Found in passing:** the JHX stop that did not fill (section 2 above; held
 until after the audit).
 
-### §8 Audit the execution / OMS / broker boundary → R10 ⬜
+### §8 Audit the execution / OMS / broker boundary → R10 🟡 (drafted 14 Sep)
+**Report:** `10-execution-boundary.md`. **Tools:**
+`s08-s14-execution-and-incidents/tools/execution_evidence.py`,
+`incident_episodes.py`.
+
+**All 14 of the brief's questions are answered in R10 §10.2, and the
+proven-live vs code-only matrix is R10 §10.3** 🟡. Headlines:
+* **The deployed M175, and M174, have never transmitted an order.**
+* **Every order in the ASX era was signed by the autonomy gate.** The human
+  paths (Blotter, manual close) have never run live.
+* **The market-exit path has run for 3 symbols, and each run tripped the
+  kill switch.** SEK's exit filled while the app held it as rejected.
+* **Booking at transmission** caused 3 of the 6 reconciliation trips.
+* The 3 Sep fixes were not in the build that traded on 4 Sep.
+
+The table below is the question list as it stood before R10; kept for the
+record.
+
 | The brief's question | Facts already in hand |
 |---|---|
 | Where can duplicate transmission occur? | CE-003; the guard is R7 item 41 |
@@ -250,13 +267,18 @@ The nine questions per item. The candidates start from R7's D and F items.
 | Other chains | 🟡 | R16 §16.3 b–h: booking a cancelled sale drops the stop record; the 26 Aug race (fixed); cash cap → the position count binds first; IAG's exit signal on its entry day, held back by the minimum hold; the session gate and the skipped drift check; pending orders suppressing signals (code only); the records cannot show two rails binding |
 | The diagram | 🟡 | R16 §16.4 (mermaid) |
 
-### §14 Distinguish safety from complexity → R14 ⬜
-For each incident the brief lists (duplicate transmission, staged TWS orders,
-reconciliation mismatch, broker fill prices, corporate actions, orphaned
-protective orders, kill-switch behaviour, ledger and commission
-discrepancies), answer three things: was the control necessary, is it
-proportionate, and did it add secondary complexity. R7 names the control for
-each.
+### §14 Distinguish safety from complexity → R14 🟡 (drafted 14 Sep)
+**Report:** `14-failure-to-control-mapping.md`. **All eight incident types the
+brief lists are assessed** (necessary / proportionate / secondary complexity),
+plus two more the records show (the 26 Aug race, and own fills absorbed as
+foreign). Headlines:
+* Most controls followed real failures and were necessary.
+* **Booking at transmission** is the common root of many incidents.
+* **Fixes produced the next incidents:**
+  - "unknown code → halt" caused 7 of the 19 trips (4 from the app's own
+    missing TIF, 3 from benign cancels);
+  - the cancel-first exit became CE-017;
+  - the orphan scan is right 1 time in 10.
 
 ### §15 Architecture diagrams → R17, R18, R19 ⬜
 * R17, QAT as it is: start from R5 §5.1.
@@ -299,11 +321,11 @@ In force throughout. R1 is to answer §22's question directly.
 | R7 | Design Drift Map | `07-design-drift-map.md`, `stage4/` | §5 | 🟡 14 Sep |
 | R8 | Strategy Integrity Assessment | `08-strategy-integrity.md` | §6 | 🟡 14 Sep |
 | R9 | Risk-Control Assessment | `09-risk-control-assessment.md` | §7 | 🟡 14 Sep |
-| R10 | OMS / Execution / Broker | — | §8 | ⬜ |
+| R10 | OMS / Execution / Broker | `10-execution-boundary.md` | §8 | 🟡 14 Sep |
 | R11 | AI / LLM Boundary | — | §9 | ⬜ |
 | R12 | Regime | — | §10 | ⬜ |
 | R13 | Data & Evidence Integrity | — | §11 | ⬜ |
-| R14 | Historical Failure → Control Mapping | — | §14 | ⬜ |
+| R14 | Historical Failure → Control Mapping | `14-failure-to-control-mapping.md` | §14 | 🟡 14 Sep |
 | R15 | Accidental Complexity | — | §12 | ⬜ |
 | R16 | Control Interaction | `16-control-interactions.md` | §13 | 🟡 14 Sep |
 | R17 | Current-State Architecture | — | §15 | ⬜ |
@@ -374,7 +396,7 @@ for new work.
 | Stage 4 | §5, §6 | R6, R7, R8 (folder `stage4/`) |
 | Stage 4a | error-log back-fill | — |
 | Stage 5 | §7, §13 | R9, R16 (folder `s07-s13-risk-and-interactions/`) |
-| Stage 6 | §8, §14 | R10, R14 |
+| Stage 6 | §8, §14 | R10, R14 (folder `s08-s14-execution-and-incidents/`) |
 | Stage 7 | §9, §10 | R11, R12 |
 | Stage 8 | §11 | R13 |
 | Stage 9 | §12, §16 | R15, R20 |
@@ -387,3 +409,4 @@ for new work.
 | 14 Sep 2026 14:45 | Created at the operator's direction. Statuses taken from the report files, the error log and this session's §7/§13 measurements. |
 | 14 Sep 2026 ~15:00 | JHX item marked HELD until after the audit (operator). |
 | 14 Sep 2026 ~16:45 | §7 → 🟡 (R9 drafted: every control measured or marked NOT DETERMINED; the seven questions answered). §13 → 🟡 (R16 drafted: the full-value trap, the example chain traced to a possible Kelly lock, eight other interactions, the diagram). Next: §8 and §14. Error log to CE-031. |
+| 14 Sep 2026 ~18:00 | §8 → 🟡 (R10: the 14 questions, the proven-live matrix). §14 → 🟡 (R14: ten incidents mapped to their controls). Next: §9 and §10. CE-031 has two later notes (R10, R14 catches). |

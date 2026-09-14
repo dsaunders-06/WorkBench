@@ -733,6 +733,27 @@ transcripts cover every day from 24 July. See CE-020.)*
   timed A2M's cancelled sell at 10:20:33 from one of two error lines
   (10:20:32 and 10:20:33). All three were corrected against the log and the
   ledger before commit.
+* **Later note (14 Sep 2026, about 17:30): again in the R10 draft, before
+  commit.**
+  - It counted 20 kill-switch restores at launch; the listing has 17.
+  - It said two of the three exits tripped the kill switch; SEK's did too.
+  - It gave a build for the target fills without checking one.
+  - It said every entry "carried a bracket" from a log it had not checked
+    for that; replaced with the code line that guarantees it.
+
+  A PowerShell filter also compared a timestamp PowerShell 7 had already
+  turned into a date against a string, and returned nothing without an
+  error. Re-run on the raw line.
+* **Later note (14 Sep 2026, about 17:50): and in the R14 draft, before
+  commit.**
+  - It dated the manual close to 1 Sep (the dialog); the commit is 2 Sep.
+  - It attributed the startup price correction to "M65" from a HANDOFF line,
+    the CE-018 pattern this entry already names; replaced with the code
+    lines.
+  - It gave "about 15 minutes" for every false-positive quarantine when only
+    COH's was measured.
+  - It said "no double absorption since" without a check that could show
+    it; narrowed to "no reconciliation trip of this kind".
 
 ---
 
