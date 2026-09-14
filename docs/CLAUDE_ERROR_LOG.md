@@ -195,6 +195,9 @@ transcripts cover every day from 24 July. See CE-020.)*
 * **To avoid:** locate the source line of every figure before citing it.
 * **Evidence:** `docs/QAT_CAPABILITY_TECHNICAL_2026-09-12.md` §6 (corrected);
   `docs/HANDOFF.md` item 66.
+* **Later note (15 Sep 2026):** the 86% figure is itself confounded. The
+  ablated arm also gave the VIX rule a value of 0.0, which adds a low-vol bonus
+  on every bar. See CE-032 and R12 §12.3.
 
 ### CE-012: Misdescribed what the kill switch blocks
 * **Made / found:** 12 Sep 2026, same draft, before 11:14.
@@ -754,6 +757,81 @@ transcripts cover every day from 24 July. See CE-020.)*
     COH's was measured.
   - It said "no double absorption since" without a check that could show
     it; narrowed to "no reconciliation trip of this kind".
+
+### CE-032: Read a confounded ablation as the VIX's information share, behind a comment that hid the confound
+* **Made:** 28 Aug 2026 17:48 AEST, commit `6ace6fc`. It added
+  `RegimeEngine._column`, which reads an absent column as 0.0, with a comment
+  saying "a zero contributes no bonus". The `vix_level` and
+  `yield_curve_slope` ablation arms ran on that commit (transcript `58424b93`,
+  07:53Z). The same day HANDOFF item 66 read the result as "It still
+  dominates by INFORMATION, at 86% of labels". **Found:** 15 Sep 2026 08:41,
+  by Claude, drafting R12 (brief §10): `fusion.py` read beside `_column`, and
+  confirmed with `git show 6ace6fc`.
+* **Severity:** Medium. The reading reached documents the operator relied on:
+  - HANDOFF item 66 ("the US columns DOMINATE, so re-sourcing is more
+    justified");
+  - the 12 Sep capability document ("driven largely by US conditions",
+    lines 446-449);
+  - the audit plan's deferral table ("the 86% VIX dominance as evidence");
+  - the progress tracker's §10 entry.
+
+  No effect on trading: the zero-fill applies only when a column is removed,
+  never with the deployed six.
+* **What happened:** with `vix_level` removed from the HMM, `_column` gave
+  the fusion rules a VIX of 0.0. The rule reads 0.0 as below 15 and adds 1.0
+  to low_vol (`fusion.py:57-62, 163-167`). So the ablated arm differed in two
+  ways: VIX gone from the HMM, and a low-vol bonus on every bar. Removing
+  `yield_curve_slope` likewise set the recession term to Φ(−0.53) and removed
+  the recovery term. The comparator's counts are correct. Reading them as
+  what the VIX's information decides is not.
+* **Root cause:** the comment asserted a property of `RegimeFusion.compute`
+  without tracing its readers, and the ablation's arms differed in more than
+  the column under test.
+* **Fix:** none to code (frozen). R12 §12.3 records the confound and reports
+  the clean arms (`credit_spread`, `breadth`) as the only HMM measurement.
+* **To avoid:** before calling a substituted value inert, trace every reader
+  of it. An ablation must remove a feature from every path that reads it, or
+  say which paths still do.
+* **Evidence:** `engine.py:406-422` (at `6ace6fc` and now); `fusion.py:57-62,
+  163-180`; transcript `58424b93` line 3039 (2026-08-28T07:53:29Z); HANDOFF
+  item 66; `docs/QAT_CAPABILITY_TECHNICAL_2026-09-12.md:446-449`.
+
+### CE-033: Catches while drafting R11 and R12, and one count that reached the operator
+* **Made / found:** 15 Sep 2026, 08:42–09:02 AEST, in this session.
+* **Severity:** Low. One reached the operator in a chat progress message and
+  was corrected in the next. The rest were caught before any figure was
+  quoted or committed.
+* **What happened:**
+  - **In the chat:** "On 6 launches the local model was unreachable". The
+    tool had counted log lines, and each launch writes two, one per AI slot:
+    it was **3 launches**. The message's own time is not searchable in the
+    transcript; the tool's corrected run is 08:50:25.
+  - `regime_evidence.py`'s first run (08:42:59) reported 0 refits, because a
+    prefix filter dropped lines starting "Refitting", and it crashed on an
+    empty median. Both were visible in the output and fixed first.
+  - The same tool printed a caveat that pre-M57c label lines carry no VIX
+    (written 08:42:48). All 70 carry one. Caught against its own output at
+    08:54.
+  - It was assumed that the 171 risk decisions with no regime label predated
+    M94. They are exit evaluations, 4–9 Sep. Caught at 08:53 by looking the
+    rows up before drafting (CE-029's lesson).
+  - The R12 draft said the `vix_shock_level` comment was contradicted by the
+    regime engine, and altered its quote ("switch[es] off"). The comment is
+    about the advisory macro read's shock regime. Written 09:00:34 and
+    corrected at 09:01:43, after listing the setting's readers.
+  - Also corrected before commit:
+    - a sentence comparing `credit_spread` with `breadth` that said "above" of
+      a window where it was below;
+    - an R11 sentence that named the wrong router slot;
+    - five lines over 100 characters in the new tools.
+* **Root cause:** a count of log lines was reported as a count of events,
+  and a record's absence and a comment's meaning were assumed rather than
+  looked up.
+* **To avoid:** before quoting a count from a log tool, check how many lines
+  one event writes (CE-024). Before saying what a setting controls, list its
+  readers.
+* **Evidence:** this session's tool output (`ai_evidence.py`,
+  `regime_evidence.py`) and the transcript `9b9d429c` times quoted above.
 
 ---
 

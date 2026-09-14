@@ -34,7 +34,7 @@ crosswalk at the end is only for reading older documents.
 
 ---
 
-## 1. At a glance (14 September 2026, 18:00 AEST)
+## 1. At a glance (15 September 2026, 09:10 AEST)
 
 | § | The brief asks for | Report | Status | Next action |
 |---|---|---|---|---|
@@ -47,9 +47,9 @@ crosswalk at the end is only for reading older documents.
 | §6 | "is QAT still trading my strategy?" | R8 | 🟡 14 Sep. **Answer: no** | Checkpoint B |
 | §7 | the risk-control stack | R9 | 🟡 14 Sep | Checkpoint B |
 | §8 | the execution / OMS / broker boundary | R10 | 🟡 14 Sep | Checkpoint B |
-| **§9** | **the AI/LLM boundary** | **R11** | **⬜ next** (facts gathered in R5) | — |
-| **§10** | **the regime logic** | **R12** | **⬜ next** (facts gathered in R5) | — |
-| §11 | data and evidence integrity | R13 | ⬜ (IBKR statements archived) | — |
+| §9 | the AI/LLM boundary | R11 | 🟡 15 Sep | Checkpoint B (Q-R11) |
+| §10 | the regime logic | R12 | 🟡 15 Sep | Checkpoint B |
+| **§11** | **data and evidence integrity** | **R13** | **⬜ next** (IBKR statements archived; a 66-min log hole found 15 Sep) | — |
 | §12 | accidental complexity | R15 | ⬜ | — |
 | §13 | control interactions and traps | R16 | 🟡 14 Sep | Checkpoint B |
 | §14 | past failures and the controls they produced | R14 | 🟡 14 Sep | Checkpoint B |
@@ -57,13 +57,13 @@ crosswalk at the end is only for reading older documents.
 | §16 | simplification candidates | R20 | ⬜ | — |
 | §17 | coherence questions A–J | R22 and R1 | ⬜ | — |
 | §18 | Green / Amber / Red | R24 | ⬜ | — |
-| §19 | the 24-section report | R1–R24 | 🔶 R3–R10, R14 and R16 drafted | see section 4 of this tracker |
+| §19 | the 24-section report | R1–R24 | 🔶 R3–R12, R14 and R16 drafted | see section 4 of this tracker |
 | §20 | remediation sequence, recommended only | R23 | ⬜ | — |
 | §21, §22 | don't aim for a good result; keep asking the key question | — | in force | — |
 
 **Order of work from here:** ~~§7 and §13~~, ~~§8 and §14~~ (drafted 14 Sep) →
-**§9 and §10** → §11 → §12 and §16 → §15, §17, §18, §20 and R1, R2, R21–R24 →
-**Checkpoint B**.
+~~§9 and §10~~ (drafted 15 Sep) → **§11** → §12 and §16 → §15, §17, §18, §20
+and R1, R2, R21–R24 → **Checkpoint B**.
 
 ---
 
@@ -74,6 +74,7 @@ crosswalk at the end is only for reading older documents.
 | 14 Sep ~13:25 | ⚠️ **JHX.AX closed on 11 Sep at 39.01, below its resting stop (recorded 39.39), and the stop did not fill.** 1,097 shares are still held (IBKR statement, 24 Aug–11 Sep). The app counted JHX at its whole value from 12:04 on 10 Sep, and for the whole session on 11 Sep. **Why the stop did not trigger is NOT DETERMINED.** A broker read would settle it: JHX's stop in the TWS Orders panel (status, trigger price, trigger method). Found during §7; belongs to §8 | **HELD until after the audit** (operator, 14 Sep ~15:00: "hold the JHX item till after the audit is complete"). No broker read, nothing changed. Taken up again when the audit completes |
 | 14 Sep | ⚠️ **CE-017**: an exit releases a position's broker stop before the kill-switch check. The operator chose "decide later, continue audit" | open; not fixed |
 | 14 Sep ~10:19 | **Trading suspended for the audit.** The app is not launched. The config still says `auto`, so a launch would trade | holding |
+| 15 Sep | **Q-R11**: does the 8 Sep architecture's "the LLM operates exclusively as an editor and copywriter" (AE-30) apply to the macro matrix only, or to the AI generally? Checkpoint A and Q1 give the AI the recommendation (R11 §11.5, §11.7) | for Checkpoint B |
 | — | **Checkpoint B**: the operator reviews the full draft report | when R1–R24 are drafted |
 
 ---
@@ -226,23 +227,52 @@ record.
 | What is proven live, and what only in code? | ⬜ a matrix cited to log lines |
 | **New, 14 Sep:** a resting stop that did not fill below its trigger (JHX) | section 2 above |
 
-### §9 Audit the AI/LLM boundary → R11 ⬜
-The twelve questions (inputs, outputs, structure, influence on strategy,
-sizing, approval and execution, tools, broker access, persistent state, when
-the LLM is unavailable, the trading path without it) have facts in R5 §5.3
-#21–22 and investigator 4 §3. The principle to test is the brief's; the
-operator's Q1 answer (R8 §8.5) states the intent it is measured against.
+### §9 Audit the AI/LLM boundary → R11 🟡 (drafted 15 Sep)
+**Report:** `11-ai-llm-boundary.md`. **Tool:**
+`s09-s10-ai-and-regime/tools/ai_evidence.py`.
 
-### §10 Audit the regime logic → R12 ⬜
-The pipeline items (inputs to strategy eligibility) have facts in investigator
-1 section D and R3 §3.5. The six determinations have partial evidence:
-* which inputs drive the label: the late-August ablation (86% VIX dominance,
-  HANDOFF item 66);
-* whether AU inputs are current: M170 (AU FRED series 99 days stale);
-* whether regime is recorded with trades: no, 12 of 12 blank (R5 §5.3 #16).
+**All twelve items are answered in R11 §11.2**, with the reachability result
+re-checked against the current code. Headlines:
+* **No AI output reaches strategy selection, sizing, approval, the OMS, the
+  broker or settings.** The brief's principle holds, more strictly than it
+  asks: the AI's "challenge" reaches only a screen.
+* **Against the operator's intent (Checkpoint A, Q1) the AI has less part
+  than intended: none.** Both modes act on the swing rule's signal. The
+  model gets the rails' verdict but not the strategy's rules or its signal
+  for the symbol.
+* **The system prompt tells the model "Final trading decisions are made by a
+  human"**, which is false in `auto` (`prompts.py:17`).
+* Live use: 34 AI Advisor questions, 28 Aug – 11 Sep; model notes in 14 of
+  20 reports. 3 launches fell back to the demo engine (port 8000); no session
+  ran on it.
+* Q-R11 for Checkpoint B (section 2).
+
+### §10 Audit the regime logic → R12 🟡 (drafted 15 Sep)
+**Report:** `12-regime.md`. **Tool:**
+`s09-s10-ai-and-regime/tools/regime_evidence.py`.
+
+**The pipeline (all thirteen items) is in R12 §12.1; the six determinations
+are in §12.3.** Headlines:
+* **A launch artefact:** the "previous" curve and 200-day average start at
+  0.0, so 20 of 33 ASX-era runs opened on "recovery" (scalar 0.9) and 18
+  changed about 3 minutes later. It sized 6 of 20 entries at 0.9; the cash
+  cap cut all six further, so no transmitted quantity changed (derived).
+* **The US VIX sets the label below 15:** 12 of 12 such classifications were
+  low_vol, by a fixed rule bonus.
+* **The 28 Aug ablation's 86% for `vix_level` is confounded:** the ablated
+  arm also fed the VIX rule 0.0, a low-vol bonus on every bar (CE-032). Only
+  the `credit_spread` and `breadth` arms are clean.
+* **The 20-bar refit has never run:** the model refits once per launch.
+  `fusion.py` is unchanged since the first commit.
+* **Regime is recorded on every entry evaluation** in `risk_decisions.csv`,
+  and on no ledger row (12 of 12 blank).
 
 ### §11 Audit data and evidence integrity → R13 ⬜
 The fourteen checks and six impact types. Evidence to inventory:
+* **the retained log's 66-minute hole, 24 Aug 10:06:27 → 11:12:37 AEST**,
+  between `qat.log.6` and `qat.log.5` (found 15 Sep, R12 §12.5;
+  `regime_evidence.py` §0). It is the morning of the first ASX orders. **R9
+  and R10's log counts for that morning may be short**: to be checked here;
 * the `.bak` files in the data folder (27, counted 14 Sep);
 * `scripts/repair_*`;
 * the IBKR statements (archived 12 Sep) against the ledger;
@@ -322,8 +352,8 @@ In force throughout. R1 is to answer §22's question directly.
 | R8 | Strategy Integrity Assessment | `08-strategy-integrity.md` | §6 | 🟡 14 Sep |
 | R9 | Risk-Control Assessment | `09-risk-control-assessment.md` | §7 | 🟡 14 Sep |
 | R10 | OMS / Execution / Broker | `10-execution-boundary.md` | §8 | 🟡 14 Sep |
-| R11 | AI / LLM Boundary | — | §9 | ⬜ |
-| R12 | Regime | — | §10 | ⬜ |
+| R11 | AI / LLM Boundary | `11-ai-llm-boundary.md` | §9 | 🟡 15 Sep |
+| R12 | Regime | `12-regime.md` | §10 | 🟡 15 Sep |
 | R13 | Data & Evidence Integrity | — | §11 | ⬜ |
 | R14 | Historical Failure → Control Mapping | `14-failure-to-control-mapping.md` | §14 | 🟡 14 Sep |
 | R15 | Accidental Complexity | — | §12 | ⬜ |
@@ -344,7 +374,7 @@ In force throughout. R1 is to answer §22's question directly.
 | Phase | Name | Where it stands |
 |---|---|---|
 | 1 | Design Recovery | this audit: §2–§6 (done or drafted) |
-| 2 | Evidence Validation | this audit: §4 done; §7–§11 and §13–§14 in progress or to do |
+| 2 | Evidence Validation | this audit: §4 done; §7–§10 and §13–§14 drafted; §11 to do |
 | 3 | Drift Classification | this audit: §5 drafted; §12 and §16 to do |
 | 4 | Safety Review | **after** the operator approves the report |
 | 5 | Controlled Simplification | only after explicit approval |
@@ -376,7 +406,7 @@ In force throughout. R1 is to answer §22's question directly.
 | Addition | Status |
 |---|---|
 | Authority column on the drift map | ✅ in R7 |
-| Claude error log | 🔶 CE-001 to CE-031 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
+| Claude error log | 🔶 CE-001 to CE-033 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
 | Checkpoint A (operator reviews R4 and R5) | ✅ 14 Sep |
 | Checkpoint B (operator reviews the full draft) | ⬜ |
 | Evidence snapshots at each session end | ✅ 12 Sep and 14 Sep so far |
@@ -397,7 +427,7 @@ for new work.
 | Stage 4a | error-log back-fill | — |
 | Stage 5 | §7, §13 | R9, R16 (folder `s07-s13-risk-and-interactions/`) |
 | Stage 6 | §8, §14 | R10, R14 (folder `s08-s14-execution-and-incidents/`) |
-| Stage 7 | §9, §10 | R11, R12 |
+| Stage 7 | §9, §10 | R11, R12 (folder `s09-s10-ai-and-regime/`) |
 | Stage 8 | §11 | R13 |
 | Stage 9 | §12, §16 | R15, R20 |
 | Stage 10 | §15, §17–§20 | R1, R2, R17–R19, R21–R24 |
@@ -411,3 +441,4 @@ for new work.
 | 14 Sep 2026 ~16:45 | §7 → 🟡 (R9 drafted: every control measured or marked NOT DETERMINED; the seven questions answered). §13 → 🟡 (R16 drafted: the full-value trap, the example chain traced to a possible Kelly lock, eight other interactions, the diagram). Next: §8 and §14. Error log to CE-031. |
 | 14 Sep 2026 ~18:00 | §8 → 🟡 (R10: the 14 questions, the proven-live matrix). §14 → 🟡 (R14: ten incidents mapped to their controls). Next: §9 and §10. CE-031 has two later notes (R10, R14 catches). |
 | 14 Sep 2026 ~22:50 | Session end. State re-measured 22:43, unchanged (app and Gateway closed, config `auto`, kill switch clear, ledger `688B7091…`). HANDOFF's prompt regenerated to point here. Transcripts snapshot `Documents\QAT-audit-evidence\2026-09-14-s07-s14\`. **Next session: §9 and §10.** |
+| 15 Sep 2026 ~09:10 | §9 → 🟡 (R11: the twelve items, the principle, the intent). §10 → 🟡 (R12: the pipeline, the six determinations, the launch artefact, the confounded ablation). Q-R11 added to section 2. The 24 Aug log hole added to §11's evidence list. Error log to CE-033 (CE-032: the 28 Aug ablation reading). State at 08:35 unchanged from 14 Sep 22:43. **Next: §11.** |
