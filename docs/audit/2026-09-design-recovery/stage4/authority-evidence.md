@@ -439,3 +439,11 @@ AI advises". The operator then typed their own answer.
 
 How the audit applies them, with its reading of each, is report §8.5.
 **Operator-directed.**
+
+## AE-35 · 14 Sep, about 10:19 · `df2c900c` · trading suspended for the audit (typed)
+
+"Prepare for handover, noting Trading will be suspended during the course of
+this audit." This supersedes AE-32 (keep `auto` running, 12 Sep). At 10:20
+the app was not running, and the configuration still read
+`QAT_EXECUTION_MODE=auto`, `QAT_AUTONOMOUS_STRATEGIES=swing`. Nothing was
+changed to enforce the suspension. **Operator-directed.**

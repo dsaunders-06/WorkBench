@@ -248,6 +248,11 @@ September. It departs from paper §20.A ("there is no auto-trade toggle"). The
 authority for the original 26 July introduction stays UNKNOWN (A3).
 *Emergency exception:* if the audit finds a live safety defect, I stop, report
 it, and change nothing without your authorisation.
+⛔ **Superseded 14 Sep, about 10:19 (operator):** "Trading will be suspended
+during the course of this audit." The app is not launched. The configuration
+is unchanged (`auto`), so a launch would trade. What stops, and what still
+rests at the broker, is recorded in HANDOFF standing instruction 2. Register
+AE-35.
 
 **A7. Broker-side truth needs you.** Brief §11 compares broker and application
 records. The app's logs and a read-only API probe cover recent executions
@@ -375,6 +380,9 @@ required investigation, per the brief.
    evidence. No assessments, no recommendations. Judgement stays in the
    report stages, where it is cited.
 6. ✅ Operation during the freeze: keep `auto` running unchanged (12 Sep).
+   ⛔ **Superseded 14 Sep: trading is suspended for the course of the audit**
+   (operator). Stage 5 onward therefore works from the records up to
+   12 September. No new live evidence arrives until trading resumes.
 7. ✅ **Broker statements received** (12 Sep). `DUQ200898_20260824.pdf` (24 Aug
    only) and `DUQ200898_20260824_20260911.pdf` (24 Aug – 11 Sep, 25 pages,
    sha256 `8E578080…0E69`, NAV 1,004,063.00 → 989,653.14). Both are archived.
