@@ -1,4 +1,4 @@
-# Handoff — 15 September 2026 (morning): DESIGN AUDIT brief §2–§10, §13, §14 drafted; §11 next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
+# Handoff — 15 September 2026 (morning): DESIGN AUDIT brief §2–§11, §13, §14 drafted; §12 and §16 next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -129,7 +129,7 @@ draft are done. **Stage 5 is next.**
 * Four verbatim investigator reports: `.../stage3/`
 * The authority register (who decided what, from the transcripts):
   `.../stage4/authority-evidence.md`
-* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-033** (was CE-031 here until 15 Sep morning)
+* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-034** (was CE-031 here until 15 Sep morning)
 * ▶ **Progress tracker (the ONLY status record since 14 Sep 14:45):**
   `docs/audit/2026-09-design-recovery/00-progress-tracker.md`
 
@@ -386,7 +386,25 @@ the tracker)**
   times. The 28 Aug ablation's "86%" for `vix_level` is confounded (CE-032).
   The 20-bar refit has never run.
 * **R13 lead:** the retained log has a 66-minute hole on 24 Aug, 10:06–11:12
-  AEST. R9 and R10's counts for that morning may be short.
+  AEST. *Checked in R13: no sign-off or transmission fell in it, so R9 and
+  R10's counts are not short.*
+
+**Brief §11 (15 Sep morning; report R13)**
+
+* **Against IBKR's statement (24 Aug – 11 Sep):** 7 of 8 ledger positions
+  and all 9 open positions match exactly (prices, quantities, costs equal to
+  the commission).
+* **TNE does not.** The ledger books 60 of 3,051 shares, understating the
+  loss by 6,937.44, and calls the 3 Sep stop-out a "target".
+  - The cause is code: the missed-exit replay sizes a lot from ONE partial
+    execution (`signal_bridge.py:497-504` against `oms.py:2116-2121`).
+  - It is reported, not fixed (frozen). It affects the evidence (P&L, Kelly,
+    promotion), not positions at the broker.
+* **Ledger −3,495.02 against broker realised −13,208.84.** The difference is
+  TNE, plus the 24 Aug unwind round trips (−2,776.36), which were sent outside
+  the app on the operator's "yes, flatten them".
+* **"The TNE remnant" was a wrong label (CE-034).** R14 and R16 are corrected
+  by note; R16's Kelly lock holds, by a wider margin.
 
 ### Next steps (the plan's progress table has the detail)
 
@@ -6674,10 +6692,10 @@ Paper account throughout - no real money.
   3. the drafted report sections in docs\audit\2026-09-design-recovery\:
      03-08 (baseline, intent, current system, drift map, strategy),
      09 (risk controls, §7), 10 (execution boundary, §8), 11 (AI/LLM
-     boundary, §9), 12 (regime, §10), 14 (failure -> control, §14),
-     16 (control interactions, §13); plus stage3\ and
-     stage4\authority-evidence.md
-  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-033)
+     boundary, §9), 12 (regime, §10), 13 (data and evidence integrity,
+     §11), 14 (failure -> control, §14), 16 (control interactions, §13);
+     plus stage3\ and stage4\authority-evidence.md
+  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-034)
 The operator's brief itself is in transcript ede4fc1d line 739
 (2026-09-12T07:49:32Z); stage4\tools\find_brief.py extracts it.
 No features, refactors, trading-logic / risk-parameter / threshold /
@@ -6685,22 +6703,22 @@ execution changes, and NO FIXES (including for audit findings) without the
 operator's explicit authorisation. The audit is an investigation, not a
 coding task. Report first; change only after review and authorisation.
 
-NEXT: brief §11 (data and evidence integrity -> R13). Its evidence list is
-in tracker §3 under §11. START WITH THE LOG HOLE found 15 Sep: the retained
-log has NO lines from 24 Aug 10:06:27 to 11:12:37 AEST (between qat.log.6
-and qat.log.5; regime_evidence.py §0) - the morning of the first real ASX
-orders. R9 and R10 counted from the log from 19 Aug, so their counts for
-that morning may be short: re-check them against risk_decisions.csv and
-decision_journal.csv, which do cover it. Then §12 and §16 (complexity and
-simplification, R15, R20), then §15, §17, §18, §20 and R1, R2, R21-R24,
-then Checkpoint B (the operator reviews the full draft). The error-log
+NEXT: brief §12 and §16 (accidental complexity -> R15; simplification
+candidates -> R20). The brief's nine questions per complexity item and its
+six recommendations per candidate; candidates start from R7's D and F items
+and R14's "secondary complexity" column. Nothing is changed - the audit
+recommends only. Then §15, §17, §18, §20 and R1, R2, R21-R24, then
+Checkpoint B (the operator reviews the full draft). The error-log
 back-fill of the history (fix commits, ROADMAP and HANDOFF incidents,
 transcripts from 24 Jul) is still to do alongside. With trading suspended,
 everything works from the records up to 12 September.
 Method that has worked (14 and 15 Sep): a small read-only tool per
 question, kept in the section's folder (s07-s13-risk-and-interactions\tools\,
-s08-s14-execution-and-incidents\tools\, s09-s10-ai-and-regime\tools\),
-lint-clean; every figure written with its tool output open beside it.
+s08-s14-execution-and-incidents\tools\, s09-s10-ai-and-regime\tools\,
+s11-evidence-integrity\tools\), lint-clean; every figure written with its
+tool output open beside it. The IBKR statement's text is extracted with
+`pdftotext -raw` into the SCRATCHPAD only (ledger_vs_broker.py reads it
+there); never commit the statement or its text.
 The operator ANSWERED the Stage 4 questions on 14 Sep (R8 §8.5, AE-34) -
 apply them, do not re-ask:
   Q1 one recommendation, formed by the AI "informed around strategy and
@@ -6809,6 +6827,15 @@ WHAT THE AUDIT HAS FOUND SO FAR (drafts, for Checkpoint B):
   The 20-bar refit has never run (one refit per launch); fusion.py unchanged
   since the first commit. Regime is on every entry evaluation in
   risk_decisions.csv and on no ledger row.
+- §11 (R13): against IBKR's statement, 7 of 8 ledger positions and all 9
+  open positions match exactly. TNE does not: the ledger books 60 of 3,051
+  shares (loss understated by 6,937.44; the stop-out labelled "target")
+  because the missed-exit replay sizes a lot from ONE partial execution
+  (reported, NOT fixed; tracker section 2). Ledger -3,495.02 against broker
+  realised -13,208.84 (TNE plus the 24 Aug unwind, -2,776.36, sent outside
+  the app). Seven repairs rewrote the ledger, each with a backup. The 24 Aug
+  log hole does not shorten R9 or R10. "The TNE remnant" was a wrong label
+  (CE-034; R14, R16 corrected by note).
 
 ⚠️ OPEN SAFETY DEFECT CE-017 (NOT FIXED - the operator chose "decide later,
 continue audit", 14 Sep): an exit releases the position's protective legs at
@@ -6866,7 +6893,7 @@ changed transcript into a new dated folder with its own manifest. NEVER
 commit the statements or the chat export (personal details); extract
 statement text only into the scratchpad.
 
-THE STATE - measured 15 September (Tuesday) 09:07:
+THE STATE - measured 15 September (Tuesday) 09:07, re-checked 09:38:
 - App NOT RUNNING (last log line 12 Sep 11:19); IB Gateway CLOSED (nothing
   on 4001/4002/7496/7497); LM Studio up on 1234. Trading SUSPENDED by
   operator decision - the app is not to be launched.
@@ -6916,4 +6943,7 @@ every reader; before saying what a setting controls, list its readers.
 can cause the next incident (R14: "unknown code -> halt" -> 7 trips).
 ⚠️ SAY WHAT A COUNT COUNTS (CE-024): rows, symbols, symbol-days, orders,
 launches - and how many lines one of them writes.
+⚠️ CHECK A RECORD AGAINST THE BROKER BEFORE CHARACTERISING IT (CE-034):
+"the TNE remnant" survived three documents; the statement disproved it in one
+comparison.
 ⚠️ THE "ORIGINAL DESIGN" WAS PARTLY CLAUDE'S. Ask the operator.
