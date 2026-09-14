@@ -6887,7 +6887,8 @@ MANIFEST.csv: transcripts, qat-logs, claude.ai export, IBKR statements
 24 Aug and 24 Aug-11 Sep), \2026-09-14\ (morning transcript snapshot),
 \2026-09-14-stage4\ and \2026-09-14-s07-s14\ (the later 14 Sep sessions'
 transcripts), \2026-09-15\ (the 15 Sep session's transcript and the
-14 Sep evening one, which grew after its copy), each with its own manifest.
+14 Sep evening one, which grew after its copy) and \2026-09-15-s11\ (the
+15 Sep session again, after §11), each with its own manifest.
 cleanupPeriodDays = 365. Do not clear the logs. At session end snapshot any
 changed transcript into a new dated folder with its own manifest. NEVER
 commit the statements or the chat export (personal details); extract
