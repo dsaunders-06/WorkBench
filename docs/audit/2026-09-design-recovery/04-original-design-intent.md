@@ -85,6 +85,14 @@ verbatim:
 | Is the AI part of the recommendation? | **yes**, per "using AI". The measure is whether the current system uses AI in forming its trade recommendations |
 | May the AI override a rail or the strategy? | **no**: "subject to the embedded safety rails and in accordance with the selected strategy" |
 
+> ✅ **Answered 14 Sep (report §8.5 Q1):** "The recommendations made by the
+> AI should be no different whether in Autonomous mode or Manual mode. The
+> difference is the fulfilment process. It's decision making however, should
+> be informed around strategy and rules." The audit reads this as: one
+> recommendation, formed by the AI within the strategy and the rules, fulfilled
+> by a human or by the gate. The paragraph below records the question as it
+> stood before the answer.
+
 **Residual interpretation, recorded rather than assumed.** How large the
 AI's part in the recommendation should be (originating it, confirming it,
 or adjusting it within the strategy) is not specified. The reference app

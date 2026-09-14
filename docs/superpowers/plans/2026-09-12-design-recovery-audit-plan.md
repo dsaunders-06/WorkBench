@@ -18,8 +18,8 @@ M175 (`5e322ca`). App running since 10:55 (weekend, stood down).
 | 2: original intent | ✅ complete (12 Sep) | `.../04-original-design-intent.md` |
 | 3: current reconstruction | ✅ complete (12–14 Sep) | `.../05-current-architecture.md` and `.../stage3/` (4 verbatim investigator reports) |
 | **⛔ Checkpoint A** | ✅ **decided 14 Sep** | report §4.00 and §4.001: the operator's baseline (below) |
-| **4: drift map and strategy integrity** | ✅ **draft complete 14 Sep**; **three questions for the operator** (§8.4 Q1–Q3) | `.../06-original-vs-current.md`, `.../07-design-drift-map.md` (59 items), `.../08-strategy-integrity.md`, `.../stage4/authority-evidence.md` (AE-01 to AE-33) |
-| 4a: error-log back-fill | **first tranche 14 Sep**: CE-020 to CE-025, a CE-017 later note, four items under "To establish". The systematic pass (fix commits, ROADMAP and HANDOFF incidents) is still to do | `docs/CLAUDE_ERROR_LOG.md` |
+| **4: drift map and strategy integrity** | ✅ **draft complete 14 Sep**; the operator **answered Q1–Q3 the same morning** (report §8.5; register AE-34) and §7–§8 are re-classified by the answers | `.../06-original-vs-current.md`, `.../07-design-drift-map.md` (59 items), `.../08-strategy-integrity.md`, `.../stage4/authority-evidence.md` (AE-01 to AE-33) |
+| 4a: error-log back-fill | **first tranche 14 Sep**: CE-020 to CE-028, a CE-017 later note, items under "To establish". The systematic pass (fix commits, ROADMAP and HANDOFF incidents) is still to do | `docs/CLAUDE_ERROR_LOG.md` |
 | 5: risk stack and control interactions | not started | report §9, §16 |
 | 6: execution boundary and incident → control mapping | not started | report §10, §14 |
 | 7: AI boundary and regime | not started (Stage 3 has the facts) | report §11–12 |
@@ -68,10 +68,17 @@ Sep. The operator chose "decide later, continue audit". **Not fixed.**
 * **CE-017's ordering was approved on a wrong claim of Claude's**
   ("self-healing within a scan cycle"), six days after the same trap was
   closed in the manual path.
-* **Questions for the operator (§8.4):**
-  * Q1: how large should the AI's part in the recommendation be?
-  * Q2: is the methodology file the swing specification?
-  * Q3: are the first build's departures from the brief errors or choices?
+* **The operator's answers (14 Sep, §8.5):**
+  * Q1: one recommendation, formed by the AI and "informed around strategy
+    and rules", with the modes differing only in fulfilment;
+  * Q2: the methodology is "the spec for Swing Trading", with a test
+    condition of 10 working days and 60 once the machinery is proven;
+  * Q3: the vision was "lost amongst multiple development branches …
+    sometimes from misinformation, or not anchoring back to the
+    fundamentals".
+
+  So QAT is not trading the operator's swing strategy. It was requested for
+  the first build and not implemented (CE-026).
 
 **How Stage 4 was run:**
 * Categories A–G, plus the **Authority** column (operator-directed /

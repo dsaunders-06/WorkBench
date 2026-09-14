@@ -70,6 +70,15 @@ as "yes" / "Let's keep going" (24 Jul 16:18 – 21:37). No message in this
 session discusses swing's entry rule, stop or target. Its parameters reached
 the operator only inside milestone plans approved as a whole.
 
+The first option's own description was "read ShareTrader's existing
+strategy/dashboard code first to port over useful logic (**e.g. the swing
+trader methodology**, existing indicators)". Claude's survey agent was
+instructed to read `Swing Trader methodology.md` (2026-07-24T05:56Z). Its
+report (T05:59Z) describes the reference app's swing function and never the
+methodology file's content (CE-026). The same report called the reference
+app's autonomous path and AI-involvement sliders "precisely the pattern your
+spec and the paper's master prompt explicitly forbid".
+
 ## AE-03 · 25 Jul 20:11 and 20:13 · `64d334fe` · the no-leverage rule
 
 Typed: "as a hard requirement, Trades must never fully deplete Cash
@@ -247,6 +256,9 @@ review the outcomes". **Operator-directed.**
 **Reading.** The operator named the time stop as drift from their intended
 swing cycle. Claude traced it and measured it. The operator then left the
 time stop at 30.
+*Corrected 14 Sep (AE-34):* "left" is accurate; "kept", used elsewhere, is
+not. The operator declined a longer stop and never chose 30 over 10. The
+specification's test condition is 10 working days.
 
 ## AE-18 · 8 Aug 15:53 · `cd2ae64a` · test posture
 
@@ -409,3 +421,21 @@ The operator's statement of intent (report §4.00) and the AI's role (§4.001).
 A multiple-choice dialog on the AI's role, just before, was dismissed. Its
 options were "AI decides trades", "AI can veto or adjust" and "App autonomous,
 AI advises". The operator then typed their own answer.
+
+## AE-34 · 14 Sep, about 10:08 · `df2c900c` · the Stage 4 questions answered (typed)
+
+* **Q1 (the AI's part):** "The recommendations made by the AI should be no
+  different whether in Autonomous mode or Manual mode. The difference is the
+  fulfilment process. It's decision making however, should be informed around
+  strategy and rules."
+* **Q2 (the swing specification):** "the spec for Swing Trading. The test
+  conditions were initially set to 10 working days, the longer term view
+  would be to extend this to 60 days, once the machinery was proven."
+* **Q3 (the first build's departures):** "The original vision has been lost
+  amongst multiple development branches arising during the build. These
+  branches have been formed, sometimes from misinformation, or not anchoring
+  back to the fundamentals. As seen in this audit, conflicting decisions being
+  made has been the consequence of this."
+
+How the audit applies them, with its reading of each, is report §8.5.
+**Operator-directed.**

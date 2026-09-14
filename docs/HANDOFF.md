@@ -297,20 +297,29 @@ the register's header.
 * **On 11 September the aggregate cap refused 449 risk decisions on 4
   symbols**, at 7.35–7.62% against 5.00%, measured from `risk_decisions.csv`.
   Not 449 separate entries (CE-024).
-* ⛔ **Three questions for the operator (§8.4):**
-  - **Q1:** how large should the AI's part in the recommendation be?
-    (a) a veto or shrink on entries, as approved 26 Jul; (b) an AI-formed
-    recommendation that autonomy acts on, within the strategy and the rails;
-    (c) advisory only, as now.
-  - **Q2:** is `Swing Trader methodology.md` the swing specification, or
-    research that the paper's generic §4.10 governs?
-  - **Q3:** should the first build's departures from the brief (no decision
-    matrix, validation not wired, output guard not wired) be logged as Claude
-    errors or as undiscussed choices?
+* ✅ **The operator answered the three Stage 4 questions (14 Sep, report §8.5,
+  register AE-34):**
+  - **Q1:** "The recommendations made by the AI should be no different
+    whether in Autonomous mode or Manual mode. The difference is the
+    fulfilment process. It's decision making however, should be informed
+    around strategy and rules." Read as: one recommendation, formed by the AI
+    within the strategy and the rules, fulfilled by a human or the gate.
+    **Neither mode acts on an AI recommendation today.**
+  - **Q2:** `Swing Trader methodology.md` is "the spec for Swing Trading".
+    The test condition is **10 working days**, extended to 60 "once the
+    machinery was proven". So QAT is **not** trading the operator's swing.
+    The first build was asked to port the methodology (24 Jul dialog) and did
+    not (CE-026). The 30-day time stop is drift from the 10-day condition;
+    the operator never chose 30 over 10.
+  - **Q3:** "The original vision has been lost amongst multiple development
+    branches arising during the build … sometimes from misinformation, or
+    not anchoring back to the fundamentals." The first build's departures are
+    logged as errors (CE-027). This is the operator's own root-cause
+    statement, for the Stage 10 synthesis.
 
 ### Next steps (the plan's progress table has the detail)
 
-1. **Put Q1–Q3 to the operator.** Each changes a classification in §7–§8.
+1. ~~Put Q1–Q3 to the operator~~ **answered 14 Sep** (§8.5).
 2. **Stage 5: the risk stack and control interactions** (report §9, §16).
    Measure each rail's refusals by day from `risk_decisions.csv`. Trace the
    aggregate-cap chain. Measure how far the trims take the risk actually
@@ -6581,26 +6590,23 @@ Paper account throughout - no real money.
      docs\superpowers\plans\2026-09-12-design-recovery-audit-plan.md
   3. docs\audit\2026-09-design-recovery\ - sections 03 to 08, stage3\ and
      stage4\authority-evidence.md (who decided what, from the transcripts)
-  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-025)
+  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-028)
 No features, refactors, trading-logic / risk-parameter / threshold /
 execution changes, and NO FIXES (including for audit findings) without the
 operator's explicit authorisation. The audit is an investigation, not a
 coding task. Report first; change only after review and authorisation.
 
-NEXT:
-  (a) If the operator has not yet answered them, put the three Stage 4
-      questions (report §8.4): Q1 how large the AI's part in the
-      recommendation should be - (a) veto/shrink entries as approved 26 Jul,
-      (b) an AI-formed recommendation autonomy acts on, within strategy and
-      rails, (c) advisory only as now; Q2 is Swing Trader methodology.md the
-      swing specification or research the paper governs; Q3 are the first
-      build's departures from the pasted brief (no decision matrix,
-      validation and output guard unwired) Claude errors or undiscussed
-      choices. Record the answers verbatim and re-classify §7/§8 by them.
-  (b) AUDIT STAGE 5: risk stack and control interactions (report §9, §16) -
-      refusals by rail by day from risk_decisions.csv; the aggregate-cap
-      chain; how far the trims take the risk actually taken per trade below
-      1%. Stage 4a's systematic error back-fill runs alongside.
+NEXT: AUDIT STAGE 5 - the risk stack and control interactions (report §9,
+§16): refusals by rail by day from risk_decisions.csv; the aggregate-cap
+chain; how far the trims take the risk actually taken per trade below 1%.
+Stage 4a's systematic error back-fill runs alongside. The operator ANSWERED
+the three Stage 4 questions on 14 Sep (report §8.5, register AE-34) - apply
+them, do not re-ask: Q1 one recommendation, formed by the AI "informed around
+strategy and rules", the same in both modes, which differ only in fulfilment;
+Q2 Swing Trader methodology.md IS the swing specification, test condition 10
+working days (60 later, once the machinery is proven); Q3 the vision was
+"lost amongst multiple development branches ... from misinformation, or not
+anchoring back to the fundamentals".
 
 ⛔ SEARCH BOUNDARY (operator; breaching it again ends the subscription):
 read or search ONLY C:\Claude Programming and C:\QuantAdvisoryTerminal, plus
@@ -6642,9 +6648,10 @@ STAGE 4 (report §6-8, 14 Sep) established: autonomy was the operator's from
 the first build brief (24 Jul, AE-01) and was directed 26 Jul (AE-05); the
 AI takes NO part in any trade decision because Claude built autonomy without
 the AI entry veto the operator had just approved (CE-021); one strategy
-(swing) runs, by the operator's sequencing, with no allocator for more; swing
-is the paper's in outline but NOT the operator's methodology, and has not
-been since the first commit (§8.3). 59 drift items: 26 operator-directed, 22
+(swing) runs, by the operator's sequencing, with no allocator for more; and
+QAT does NOT trade the operator's swing specification (the methodology file,
+confirmed as the spec 14 Sep) - it was requested for the first build and
+never implemented (CE-026, §8.5). 59 drift items: 26 operator-directed, 22
 agent-proposed and operator-approved, 10 agent-only, 1 unknown.
 
 ⚠️ OPEN LIVE SAFETY DEFECT CE-017 (NOT FIXED - the operator chose "decide
@@ -6729,6 +6736,11 @@ transcripts "deleted" for 25 Jul - 2 Sep were all there.
 build departs from what the operator approved, ask BEFORE building; a line
 in a completion report is not consent.
 ⚠️ SAY WHAT A COUNT COUNTS (CE-024): 449 decisions were 4 symbols.
+⚠️ VERIFY A SUBAGENT COVERED WHAT IT WAS SENT TO READ (CE-026): the first
+build's survey was told to read the swing methodology and reported on
+something else; nobody checked.
+⚠️ NEVER WRITE A FILE IN PLACE WITH open(p, 'w') (CE-028): it truncates before
+it validates. Write a temp file and os.replace it; check size and diff after.
 ⚠️ THE "ORIGINAL DESIGN" WAS PARTLY CLAUDE'S. The paper's human-sign-off rule
 was not in the operator's brief, and the operator amended it before the first
 build (AE-01). Ask the operator.

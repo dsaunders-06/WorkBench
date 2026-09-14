@@ -25,6 +25,9 @@ therefore not automatically drift from the governing baseline. Whether S is
 *the* specification is the operator's question (Q2, §8.4). The table assesses
 both.
 
+> ✅ **Answered 14 Sep (§8.5): S is the specification for swing.** Every
+> "vs S" difference below is drift from the operator's design.
+
 **Assessment codes** (brief §6):
 1. preserves the original strategy;
 2. restricts it;
@@ -62,7 +65,7 @@ the first commit.**
 | **Trade management** | — | 50% off at 1R, stop to breakeven, 2–3 × ATR trail after 1R (or trail on the EMA20 close) | none. Static bracket (AE-05 item 4 lists it as skipped) | vs S **3** | AO (19) |
 | **Exit logic** | clear invalidation level | a close below the EMA20 ends the swing; sell at resistance | (a) the resting stop; (b) the 2R target; (c) EMA20 < EMA50 on the running bar (`swing.py:131-146`); (d) the 30-day time stop; (e) manual close | vs S **3** (a slower, different invalidation) | AP/OA (17) |
 | **Holding period / minimum hold** | days–weeks | "a few days to several weeks"; operator: "say 2 weeks" | signal exits blocked for 10 trading days unless 0.5R down (`signal_bridge.py:1352-1398`); protective exits never blocked | **1** against the operator's 2-week hold. It delays S's trend-break exit inside the window | OD (28 Jul dialog, AE-08) |
-| **Time stop** | days–weeks | operator: a 10-trading-day cycle (AE-17) | 30 trading days (`signal_bridge.py:1284-1310`), from a third-party review | **3** against the stated cycle. The operator was told how it arose and kept it (AE-17, AE-31) | AP/OA (20) |
+| **Time stop** | days–weeks | operator: a 10-trading-day cycle (AE-17) | 30 trading days (`signal_bridge.py:1284-1310`), from a third-party review | **3** against the stated cycle. The operator was told how it arose (AE-17). *Corrected 14 Sep (§8.5):* the operator declined a longer stop but never chose 30 over 10; the specification's test condition is 10 working days | AP/OA (20) |
 | **Earnings treatment** | — | earnings are a swing "primary driver" | half size within 5 trading days; **calendar built for the US** on an ASX book (`runtime.py:402`, `earnings.py:107`) | **2**, and **6** (the calendar) | AP/OA (31) |
 | **Gap treatment** | swing is weakest in "violent gap-driven markets" | prefers stop-market ("guarantees you get out") and warns against stop-limit through gaps | stop-market legs; a gap budget of 5% of equity at a 6% shock (governor D10) | **5**; restricts (**2**) only near the budget | OD (29) |
 | **Portfolio constraints** | ES ≤ 3%; concentration caps | "keep your total open risk under 5% to 6%" | 10 positions; aggregate risk-at-stop ≤ 5% at the mark; ES 3% | **1** (S's rule, R's numbers). But the cap is binding on every entry. On 11 Sep it refused all 449 decisions, on 4 symbols, at 7.35–7.62% (`risk_decisions.csv`), so **4** | OD, AP/OA (24, 25, 30) |
@@ -174,3 +177,102 @@ classified.
   wired (item 10) and the output guard not wired (item 56). The brief said
   "Ask when ambiguous", and none was raised. Should they be Claude errors in
   the log, or undiscussed agent choices?
+
+## 8.5 ✅ The operator's answers (14 September 2026), and what they change
+
+Verbatim:
+
+> **Q1.** "The recommendations made by the AI should be no different whether
+> in Autonomous mode or Manual mode. The difference is the fulfilment
+> process. It's decision making however, should be informed around strategy
+> and rules."
+>
+> **Q2.** "the spec for Swing Trading. The test conditions were initially set
+> to 10 working days, the longer term view would be to extend this to 60
+> days, once the machinery was proven."
+>
+> **Q3.** "The original vision has been lost amongst multiple development
+> branches arising during the build. These branches have been formed,
+> sometimes from misinformation, or not anchoring back to the fundamentals.
+> As seen in this audit, conflicting decisions being made has been the
+> consequence of this."
+
+**How the audit applies them.** Each answer is given with the audit's
+reading, so the operator can correct the reading at Checkpoint B.
+
+**Q1: one recommendation, formed by the AI, fulfilled two ways.**
+* *The reading:* the AI makes the recommendation, and its decision-making is
+  informed by the selected strategy and the rules (the rails). The same
+  recommendation is produced in both modes; the modes differ only in who
+  fulfils it (a human or the autonomy gate). This is closest to option (b),
+  and it agrees with the operator's 12 August strategy document: "the same
+  underlying decision engine" for both modes (AE-20).
+* *Against the current system:* neither mode acts on an AI recommendation.
+  Both act on the swing rule's signal. The AI's buy/sell/hold (M136) is a
+  separate panel on the AI Advisor screen, produced on request, and it is
+  not attached to the order a human signs in the Blotter or to the order the
+  gate signs. The paper's own workflow step, where the AI's rationale
+  accompanies each order to sign-off (P §14.1), is not built (map item 56).
+* *Effect:* map item 3 stays **E**, risk **H**, and it is now measured against
+  a stated intent, not an inferred one. §4.001's residual question (how large
+  the AI's part is) is answered: the AI forms the recommendation, within the
+  strategy and the rails.
+
+**Q2: the methodology is the swing specification; hold 10 working days, 60
+days later.**
+* *The reading:* `Swing Trader methodology.md` is the specification for
+  QAT's swing strategy. The paper's §4.10 is the outline it sits within. The
+  holding condition for testing is 10 working days, to be extended to 60 once
+  the machinery is proven. That agrees with 10 September, when the operator
+  said the 60-day horizon was not to be relied on yet (AE-31).
+* *Effect on §8.1:* every "vs S" difference is **drift from the operator's
+  design**, class **E**, and the rule itself is agent-only (map item 15). The
+  "vs P" column records what the outline allows; it no longer excuses a
+  difference. The following are E against the specification:
+  - the entry (one of three setups, no rejection tail, no wait for the close,
+    no next-open buy);
+  - the trend filter (no weekly chart);
+  - volume confirmation;
+  - the stop (volatility-based, not chart-based);
+  - the target (no resistance check);
+  - the entry order type (market, not limit);
+  - trade management (no half at 1R, no breakeven, no trail);
+  - the exit (EMA20 < EMA50, where the specification ends the swing on a
+    close below the EMA20);
+  - the forming-bar evaluation.
+* *The time stop (map item 20).* The 30-trading-day time stop is **E against
+  the specification's 10-working-day test condition**. §8.1 and the register
+  (AE-17) said the operator "kept" 30. That is corrected: on 8 August the
+  operator declined a proposal to lengthen it to 45, and no record shows the
+  operator choosing 30 over 10. The 10-day minimum hold (map row
+  "Holding period") matches the test condition. The time stop does not.
+* *Where the strategy came from.* On 24 July the operator chose "Fresh build,
+  but mine ShareTrader for reusable logic". The option's own description
+  said "port over useful logic (e.g. the swing trader methodology …)"
+  (AE-02). The build's survey agent was instructed to read `Swing Trader
+  methodology.md`. Its report describes the reference app's rule and never the
+  methodology file's content. The methodology was requested and not
+  implemented (CE-026).
+
+**Q3: the first build's departures are part of how the vision was lost.**
+* *The reading:* the operator does not treat these as legitimate choices. They
+  are branches formed "from misinformation, or not anchoring back to the
+  fundamentals". The audit therefore records the first build's departures
+  from the pasted brief as Claude errors (CE-027): no decision matrix, the
+  validation pipeline and the output guard not wired.
+* *The operator's diagnosis is also a finding for the synthesis (Stage 10):*
+  the vision was lost across "multiple development branches", some formed
+  from misinformation, with "conflicting decisions" as the consequence. The
+  evidence in this audit supports it, from the first day:
+  - the survey of 24 July presented the operator's autonomous design and
+    AI-involvement sliders as "precisely the pattern your spec … explicitly
+    forbid", relying on the human-sign-off rule Claude itself had added to
+    the paper (§4.0);
+  - the 26 July build dropped an approved AI role (CE-021);
+  - a third-party review's example value became swing's time stop (item 20);
+  - an ordering was approved on a wrong recovery claim (CE-017).
+
+**The answer to §8.3, restated.** QAT is **not** trading the swing strategy
+the operator designed. The operator's specification was requested on 24 July
+and not implemented. What runs is a generic pullback rule from the first
+build, inside rails that later work added around it.

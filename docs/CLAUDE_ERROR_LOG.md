@@ -562,6 +562,98 @@ transcripts cover every day from 24 July. See CE-020.)*
 * **Evidence:** `swing.py:1-2`, `swing.py:123-129` (the exit comment);
   `git diff fa9ba47 ab1ba97 -- src/qat/domain/strategies/swing.py`.
 
+### CE-026: The first build was asked to port the operator's swing methodology and did not
+* **Made:** 24–25 Jul 2026, in the first build (`64d334fe`, commit `fa9ba47`).
+  **Found:** 14 Sep 2026 about 10:10, by the audit, after the operator
+  confirmed that `Swing Trader methodology.md` is the swing specification
+  (report §8.5 Q2).
+* **Severity:** High. QAT has never traded the operator's swing strategy
+  (report §8.3, §8.5). Every closed trade in the ledger was taken under a
+  rule the operator did not design.
+* **What happened:**
+  - Claude's first dialog offered "Fresh build, but mine ShareTrader for
+    reusable logic", described as "read ShareTrader's existing
+    strategy/dashboard code first to port over useful logic (e.g. the swing
+    trader methodology, existing indicators)". The operator chose it
+    (register AE-02).
+  - Claude sent a survey agent with an instruction that named `Swing Trader
+    methodology.md`. The agent's report (2026-07-24T05:59Z) describes only the
+    reference app's swing function and the paper's generic §4.10. It never
+    mentions the methodology file's content: the rejection tail, the wait for
+    the daily close, the weekly filter, volume, the resistance check, the
+    other two setups, half off at 1R, breakeven, and the trailing stop.
+  - The build implemented a generic pullback rule. The operator was not told
+    that the methodology had been left out. The rule's parameters reached the
+    operator only inside whole-milestone plans.
+  - The same survey called the reference app's autonomous path and
+    AI-involvement sliders "precisely the pattern your spec and the paper's
+    master prompt explicitly forbid". That rule was Claude's own addition to
+    the paper (report §4.0), and the operator had amended it in the brief
+    that very session (AE-01). This is the first recorded case of the
+    "misinformation" the operator describes in Q3.
+* **Root cause:** a subagent's summary was taken as the survey of the
+  operator's material. Nothing checked that it covered the file it had been
+  told to read.
+* **Fix:** none. Development is frozen. Report §8.5 records the specification
+  and every difference from it.
+* **To avoid:** when an operator names a document as a source, read it
+  yourself or verify that a subagent's report covers it point by point. Tell
+  the operator what was taken from it and what was not.
+* **Evidence:** transcript `64d334fe` (the dialog at 2026-07-24T05:53Z, the
+  survey instruction at T05:56Z, the survey report at T05:59Z); `fa9ba47`
+  `swing.py`; report §8.1, §8.5.
+
+### CE-027: The first build left out parts of the brief without asking
+* **Made:** 24–25 Jul 2026 (`fa9ba47`). **Found:** Stage 2–3 (12–14 Sep).
+  Classified as an error on 14 Sep by the operator's answer to Q3 (report
+  §8.5).
+* **Severity:** Medium. Each part shapes the system today; none has yet
+  caused an incident.
+* **What happened:** the brief the operator pasted (paper §20) required three
+  things the first build did not deliver, and none was raised with the
+  operator:
+  - a decision matrix activating strategies by regime (P §10, §20.F): not
+    built, so fifteen strategies are gated one by one with no allocator
+    (report §7 item 5);
+  - a validation stage on the live path, including corporate-action
+    adjustment (§20.D): written but never called (item 10);
+  - an output guard validating AI recommendations against risk limits
+    before display (§20.J): written, reached only through an unwired method
+    (item 56).
+
+  The brief's principles said "Ask when ambiguous. If a requirement is unclear
+  or a safety trade-off arises, stop and ask rather than guessing." The
+  operator's verdict: "branches … formed, sometimes from misinformation, or
+  not anchoring back to the fundamentals".
+* **Root cause:** milestones were reported as complete against their tests,
+  not checked against the brief's requirements.
+* **Fix:** none. Frozen.
+* **To avoid:** before calling a milestone done, list the brief's
+  requirements for it and mark each as built, deferred with the operator's
+  agreement, or not built. Report the last group explicitly.
+* **Evidence:** report §4.14 (paper against first commit); §5.3 #23; §7 items
+  5, 10, 56.
+
+### CE-028: A one-off edit script emptied a report file
+* **Made / found:** 14 Sep 2026 about 10:12, in the same minute.
+* **Severity:** Low. It was caught before commit and restored from git with
+  nothing lost. It would have been Medium if committed, because the drift map
+  would have vanished.
+* **What happened:** a Python edit script opened
+  `07-design-drift-map.md` with `open(p, "w", newline="\\n")`. The
+  PowerShell here-string passed the escape through unchanged, so the newline
+  argument was invalid. Python creates and truncates the file before it
+  validates that argument. The script raised an error and left a 0-byte file.
+  A second script then read the empty file, and its replacements matched
+  nothing. Only a size check showed the damage. Restored with `git restore`
+  (identical to `d3c86de`), then re-applied by writing a temporary file and
+  swapping it in.
+* **To avoid:** never write in place with a single `open(…, "w")`. Write to a
+  temporary file and `os.replace` it, and assert the input is non-empty
+  before editing. After any scripted edit, check the size and the diff stat.
+* **Evidence:** `git diff --stat` at 10:12 (192 deletions); the restore;
+  this session's tool calls.
+
 ---
 
 ## To establish (suspected, evidence not yet read)
@@ -591,6 +683,7 @@ These go into the log only once the audit has read their evidence.
   wired (report §7 items 5, 10, 56). The brief said "Ask when ambiguous", and
   none was raised. Whether these are errors or undiscussed choices is put to
   the operator (report §8.4 Q3).
+  *Resolved 14 Sep: logged as CE-027, on the operator's answer to Q3.*
 * The de-lever sweep ships off by default (`ab1ba97`, "off by default because
   it sells"). No operator decision on the default is recorded (report §7
   item 36).
@@ -598,3 +691,9 @@ These go into the log only once the audit has read their evidence.
   and never checked against swing's intended cycle (Claude's own finding,
   7 Aug, register AE-17). The operator has since kept it, so this may be
   closed as a decision rather than an error.
+  *Later note, 14 Sep: "kept" overstated it. The operator declined a longer
+  stop (45) on 8 Aug and never chose 30 over 10. The operator's swing
+  specification sets the test condition at 10 working days (report §8.5 Q2).
+  Still to establish whether this counts as an error (third-party value
+  adopted without checking it against the specification) or a decision; the
+  evidence leans to error.*
