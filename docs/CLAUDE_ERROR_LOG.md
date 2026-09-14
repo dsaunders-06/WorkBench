@@ -654,6 +654,47 @@ transcripts cover every day from 24 July. See CE-020.)*
 * **Evidence:** `git diff --stat` at 10:12 (192 deletions); the restore;
   this session's tool calls.
 
+### CE-029: Told the operator the decision journal was missing sign-offs that were there
+* **Made:** 14 Sep 2026 about 11:20, in the chat during audit Stage 5.
+  **Found:** 14 Sep 2026 about 13:20, by Claude, re-reading the journal
+  before writing the finding into the report.
+* **Severity:** Low. It reached the operator in a chat progress message
+  ("the journal holds no `signed_off` row for it. That's a record gap, and
+  I'll check it across all five proposals") and in nothing else. No document
+  or record carried it.
+* **What happened:** `s07-s13-risk-and-interactions/tools/risk_per_trade.py`
+  (first created as `stage5/tools/`, renamed the same day) joined each proposed
+  buy to its later journal rows by `order_id`. Once IBKR assigns its own id,
+  the OMS re-keys the order (`oms.py:1102-1103`), so the sign-off rows carry
+  the broker's id and not the proposal's. The join found nothing for five
+  entries (JHX, TWE, TAH, BHP 9 Sep, COH). Claude read the empty column as a
+  gap in the record and said so. The rows are there: COH's is
+  `2026-09-10T00:29:05Z 34732497 signed_off`.
+* **Also in the same work, caught before delivery:** the first pass of
+  `rails_by_day.py` matched "kill switch" but not the engine's "Kill-switch",
+  and counted refused exits as refused entries. Both were seen in the output
+  and fixed before any figure was quoted.
+* **Root cause:** an empty join was read as absent data. The id's life
+  cycle (proposal id, then broker id) was not checked before joining on it.
+* **Fix:** the tool now matches on symbol, side and quantity between one
+  proposal and the next (commented at the join). All 20 proposals show a
+  sign-off.
+* **To avoid:** before reporting that a record is missing, look the record
+  up directly (here, by symbol and time). An empty join is evidence about the
+  join first.
+* **Evidence:** `decision_journal.csv` rows for COH.AX, JHX.AX, TWE.AX,
+  TAH.AX (read 14 Sep 13:20, PowerShell); `oms.py:1102-1103`; the tool's
+  diff.
+
+### CE-030: The audit plan's stage numbers collide with the brief's and the report's section numbers
+* **Made:** 12 Sep 2026, in the audit plan (`docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md` §6), and carried into HANDOFF, the handover prompts and the chat. **Found:** 14 Sep 2026 about 13:40, by the operator ("There seems to be a misalignment in numbering these stages with the original prompt").
+* **Severity:** Medium. It reached the operator in every progress report and made the work hard to follow against the brief the operator wrote. No effect on the system or the records.
+* **What happened:** the operator's brief numbers its instructions §1–§22 and its required report sections 1–24 (brief §19). The plan added a third scheme, Stages 0–10, using the same small numbers with different meanings. "Stage 5" is brief §7 and §13, written up as report §9 and §16. It is not brief §5 (the drift map) or report §5 (current architecture). Progress was reported by stage number, often with only one of the other two numbers beside it.
+* **Root cause:** the plan grouped the brief's sections into work packages and numbered the packages afresh, instead of keeping the numbering the operator already had.
+* **Fix:** a crosswalk of brief section → stage → report section, with status, was given to the operator (14 Sep). Which numbering to use from here is the operator's choice.
+* **To avoid:** when the operator's document already numbers the work, report against those numbers. If a grouping is needed, name each group by the operator's numbers ("brief §7 + §13") rather than inventing new ones.
+* **Evidence:** the brief, transcript `ede4fc1d` line 739 (2026-09-12T07:49:32Z); plan §6; HANDOFF "Next steps".
+
 ---
 
 ## To establish (suspected, evidence not yet read)

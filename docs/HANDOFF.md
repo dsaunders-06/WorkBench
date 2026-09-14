@@ -51,7 +51,7 @@ source.
 | | |
 |---|---|
 | ⛔ Development | **FROZEN since 12 September** for the Design Recovery & Design Intent Audit. No features, refactors, parameter or threshold changes, and no fixes (not even for audit findings) without the operator's explicit authorisation. ⛔ **TRADING SUSPENDED for the course of the audit** (operator, 14 Sep, superseding the 12 Sep "keep running in auto"). The app is not launched; the config still says `auto`, so a launch would trade. See "14 SEPTEMBER: THE DESIGN AUDIT", standing instruction 2 |
-| Audit | **Stages 0–3, Checkpoint A and the Stage 4 draft are complete** (report §6–8 and the authority register `stage4/authority-evidence.md`, 14 Sep). **Three questions await the operator** (§8.4 Q1–Q3). **Stage 5 is next.** Progress table at the top of `docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`; report sections in `docs/audit/2026-09-design-recovery/` |
+| Audit | ▶ **PROGRESS IS TRACKED ONLY IN `docs/audit/2026-09-design-recovery/00-progress-tracker.md`**, by the brief's numbering (§1–§22, report R1–R24), since 14 Sep 14:45 at the operator's direction. The "Stage" numbers are retired (CE-030). As of then: §2–§6 done or drafted; **§7 and §13 in progress**. *Superseded text follows:* **Stages 0–3, Checkpoint A and the Stage 4 draft are complete** (report §6–8 and the authority register `stage4/authority-evidence.md`, 14 Sep). **Three questions await the operator** (§8.4 Q1–Q3). **Stage 5 is next.** Progress table at the top of `docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`; report sections in `docs/audit/2026-09-design-recovery/` |
 | ⚠️ Open safety defect | **CE-017 (not fixed; operator: "decide later, continue audit").** An exit releases a position's broker stop before the kill-switch check, and while tripped the re-arm cannot transmit. IAG.AX was unprotected for about an hour on 9 September. **If the kill switch trips, check every position has a stop at the broker** |
 | Deployed build | ✅ **M175 (`5e322ca`)** - deployed 12 September 10:51 with `deploy.ps1 -Apply` (sha256 `64F132CE…`, signature Valid, installed hash verified). ✅ **Read back off the log at the 12 September 10:55:08 launch**: `Build: M175 (5e322ca, built 12/09/2026 10:46:46 AEST, packaged)`. Rollback: `C:\QuantAdvisoryTerminal.bak-33d0ef6-20260912-1051` (M174) - ⚠️ but an older build re-inflates the repaired entry records, so a rollback must also restore both `.bak-fill-basis-20260912-105253` files (see 12 SEPTEMBER) |
 | Deploy gap | **None.** PR #2 merged 12 September (`a24faa9`, a merge commit); master fast-forwarded. `5e322ca` on top is a test-only fix. `handoff_state.py` derives this - never hardcode it |
@@ -333,6 +333,11 @@ the register's header.
     statement, for the Stage 10 synthesis.
 
 ### Next steps (the plan's progress table has the detail)
+
+> ⛔ **Superseded 14 Sep 14:45.** Next steps and status live in
+> `docs/audit/2026-09-design-recovery/00-progress-tracker.md`, numbered by the
+> brief. The list below is kept as written at 10:00 and uses the retired
+> "Stage" numbers (Stage 5 = brief §7 and §13).
 
 1. ~~Put Q1–Q3 to the operator~~ **answered 14 Sep** (§8.5).
 2. **Stage 5: the risk stack and control interactions** (report §9, §16).

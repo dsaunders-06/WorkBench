@@ -11,6 +11,13 @@ M175 (`5e322ca`). App running since 10:55 (weekend, stood down).
 
 ## ▶ PROGRESS (updated 14 September 2026, 10:00). Read this first
 
+> ⛔ **SUPERSEDED 14 September 2026, 14:45 (operator's direction).** Progress
+> is tracked **only** in `docs/audit/2026-09-design-recovery/00-progress-tracker.md`,
+> by the brief's own section numbers (§1–§22) and report sections (R1–R24).
+> The "Stage 0–10" numbering below is **retired**, because it reused the
+> brief's numbers with different meanings (CE-030); the tracker has the
+> crosswalk. This table is kept as it stood at 10:00 and is no longer updated.
+
 | Stage | Status | Output |
 |---|---|---|
 | 0: decisions | ✅ complete (12 Sep) | Stage 0 list below; permissions in item 9 |
