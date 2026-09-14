@@ -832,6 +832,54 @@ transcripts cover every day from 24 July. See CE-020.)*
   readers.
 * **Evidence:** this session's tool output (`ai_evidence.py`,
   `regime_evidence.py`) and the transcript `9b9d429c` times quoted above.
+* **Later note (15 Sep 2026, 09:22–09:29): the same kind of catch while
+  building R13's tools, before any figure was quoted.**
+  - `ledger_vs_broker.py`'s first reconcile check demanded the parsed rows sum
+    to the statement's totals within a cent. Rounding of 36 printed rows
+    misses by 1–2 cents, so the check printed "NO" on a complete parse
+    (09:22:25). It now checks each symbol's total within half a cent per row.
+  - `ledger_versions.py` crashed on a backup row with surplus columns
+    (09:27:01). That row is evidence, and is now shown.
+  - It then ordered the backups by the stamp in their names. Those stamps are
+    in two clocks (a repair script's in UTC, the app's in local time), so 9 Sep
+    came out of sequence. Seen in the output and reordered by modified time
+    (09:28:13).
+  - It labelled the stored `net_pnl` column "net", though the app recomputes
+    P&L on read and one row was blank. Relabelled with the blank count
+    (09:28:34).
+  - The R13 draft counted `reference_price` blank on 4 open records from a
+    listing read by eye; the tool's blank-field section, added for
+    reproducibility, counts 5 (WOW too). Corrected before commit.
+
+### CE-034: Called TNE's 60-share ledger row "the remnant of the 24 Aug duplicate unwind"
+* **Made:** 12 Sep 2026, in `docs/QAT_CAPABILITY_TECHNICAL_2026-09-12.md`
+  ("a 60-share remnant of a 3,051-share entry. The rest left through the
+  operator's manual clean-up after the 24 August duplicate orders"; the same
+  paragraph called the label unverified). Carried on 14 Sep into R14
+  (incident 8), R16 §16.2 and `s07-s13-risk-and-interactions/tools/evidence_chain.py`
+  ("without the TNE remnant"), and into the tracker's §11 list. **Found:**
+  15 Sep 2026 09:22, by Claude, comparing the ledger with the IBKR statement
+  (`ledger_vs_broker.py`).
+* **Severity:** Medium. It reached audit drafts the operator is to review,
+  and an analysis arm (R16's Kelly "without the remnant") that removed a real
+  trade. It also hid a defect: the ledger understates TNE's loss by 6,937.44
+  because the missed-exit replay sized the lot from one partial execution
+  (R13 §13.2). No effect on trading.
+* **What happened:** the broker shows the 24 Aug unwind ended at 14:50, before
+  TNE's 3,051-share swing entry at 15:19:36, and TNE's stop sold all 3,051 on
+  3 Sep. The 60-share row is that stop-out, truncated. Its "target" label is
+  also wrong.
+* **Root cause:** a label from an earlier Claude document was repeated without
+  checking it against the broker's executions, although that document had
+  called it unverified (CE-018's pattern).
+* **Fix:** R13 §13.2 and §13.6 record the facts; correction notes are added to
+  R14 and R16. `evidence_chain.py` is left as it was run.
+* **To avoid:** before characterising a ledger row, find its executions on the
+  broker's statement. A label an earlier document calls unverified is a
+  question, not a fact.
+* **Evidence:** the IBKR statement 24 Aug – 11 Sep (TNE executions); the log,
+  3 Sep 14:51:18 ("Sell of 3051 TNE.AX exceeded tracked entries by 2991");
+  transcript `f2d132cc`, 24 Aug 15:26 ("SELL STP 3,051 @ 30.69").
 
 ---
 
