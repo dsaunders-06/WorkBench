@@ -1,4 +1,4 @@
-# Handoff — 14 September 2026 (evening): DESIGN AUDIT brief §2–§8, §13, §14 drafted; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
+# Handoff — 15 September 2026 (morning): DESIGN AUDIT brief §2–§10, §13, §14 drafted; §11 next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -129,7 +129,7 @@ draft are done. **Stage 5 is next.**
 * Four verbatim investigator reports: `.../stage3/`
 * The authority register (who decided what, from the transcripts):
   `.../stage4/authority-evidence.md`
-* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-031** (was CE-025 here until 14 Sep evening)
+* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-033** (was CE-031 here until 15 Sep morning)
 * ▶ **Progress tracker (the ONLY status record since 14 Sep 14:45):**
   `docs/audit/2026-09-design-recovery/00-progress-tracker.md`
 
@@ -367,6 +367,26 @@ detail and evidence in those files and the tracker)**
   the stop did not fill.** Cause NOT DETERMINED. **The operator held this
   until after the audit** (14 Sep ~15:00). Do not act on it before then
   unless the operator raises it.
+
+**Brief §9, §10 (15 Sep morning; report R11, R12; detail in those files and
+the tracker)**
+
+* **AI boundary (R11):** no AI output reaches strategy selection, sizing,
+  approval, the OMS, the broker or settings. The brief's principle holds, more
+  strictly than it asks. Against Checkpoint A and Q1 the AI has LESS part
+  than intended: none. Both modes act on the swing rule's signal. The model
+  gets the rails' verdict but not the strategy's rules or signal. The system
+  prompt tells it "Final trading decisions are made by a human", which is
+  false in `auto`. Q-R11 (AE-30's "editor and copywriter" scope) waits for
+  Checkpoint B.
+* **Regime (R12):** a launch artefact (the "previous" curve and 200-day
+  average start at 0.0) opened 20 of 33 ASX-era runs on "recovery" (0.9),
+  and 18 of them changed about 3 minutes later. It sized 6 entries at 0.9;
+  the cash cap cut all six anyway. The US VIX below 15 set low_vol 12 of 12
+  times. The 28 Aug ablation's "86%" for `vix_level` is confounded (CE-032).
+  The 20-bar refit has never run.
+* **R13 lead:** the retained log has a 66-minute hole on 24 Aug, 10:06–11:12
+  AEST. R9 and R10's counts for that morning may be short.
 
 ### Next steps (the plan's progress table has the detail)
 
@@ -6650,13 +6670,14 @@ Paper account throughout - no real money.
      (CE-030). Report and update against the brief's numbers only; the
      tracker's crosswalk is only for reading older documents.
   2. docs\HANDOFF.md section "14 SEPTEMBER: THE DESIGN AUDIT" (standing
-     instructions, baseline, findings)
+     instructions, baseline, findings - including the 15 Sep §9/§10 block)
   3. the drafted report sections in docs\audit\2026-09-design-recovery\:
      03-08 (baseline, intent, current system, drift map, strategy),
-     09 (risk controls, §7), 10 (execution boundary, §8), 14 (failure ->
-     control, §14), 16 (control interactions, §13); plus stage3\ and
+     09 (risk controls, §7), 10 (execution boundary, §8), 11 (AI/LLM
+     boundary, §9), 12 (regime, §10), 14 (failure -> control, §14),
+     16 (control interactions, §13); plus stage3\ and
      stage4\authority-evidence.md
-  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-031)
+  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-033)
 The operator's brief itself is in transcript ede4fc1d line 739
 (2026-09-12T07:49:32Z); stage4\tools\find_brief.py extracts it.
 No features, refactors, trading-logic / risk-parameter / threshold /
@@ -6664,18 +6685,22 @@ execution changes, and NO FIXES (including for audit findings) without the
 operator's explicit authorisation. The audit is an investigation, not a
 coding task. Report first; change only after review and authorisation.
 
-NEXT: brief §9 (the AI/LLM boundary -> R11) and §10 (the regime logic ->
-R12). Facts are already gathered in R5 §5.3 #9-11, #21-22, investigator 1
-section D and investigator 4 §3. Then §11 (evidence integrity, R13), §12 and
-§16 (complexity and simplification, R15, R20), then §15, §17, §18, §20 and
-R1, R2, R21-R24, then Checkpoint B (the operator reviews the full draft). The
-error-log back-fill of the history (fix commits, ROADMAP and HANDOFF
-incidents, transcripts from 24 Jul) is still to do alongside. With trading
-suspended, everything works from the records up to 12 September.
-Method that worked on 14 Sep: a small read-only tool per question, kept in
-the section's folder (s07-s13-risk-and-interactions\tools\,
-s08-s14-execution-and-incidents\tools\), lint-clean; every figure written
-with its tool output open beside it (CE-031 records 17 slips caught that way).
+NEXT: brief §11 (data and evidence integrity -> R13). Its evidence list is
+in tracker §3 under §11. START WITH THE LOG HOLE found 15 Sep: the retained
+log has NO lines from 24 Aug 10:06:27 to 11:12:37 AEST (between qat.log.6
+and qat.log.5; regime_evidence.py §0) - the morning of the first real ASX
+orders. R9 and R10 counted from the log from 19 Aug, so their counts for
+that morning may be short: re-check them against risk_decisions.csv and
+decision_journal.csv, which do cover it. Then §12 and §16 (complexity and
+simplification, R15, R20), then §15, §17, §18, §20 and R1, R2, R21-R24,
+then Checkpoint B (the operator reviews the full draft). The error-log
+back-fill of the history (fix commits, ROADMAP and HANDOFF incidents,
+transcripts from 24 Jul) is still to do alongside. With trading suspended,
+everything works from the records up to 12 September.
+Method that has worked (14 and 15 Sep): a small read-only tool per
+question, kept in the section's folder (s07-s13-risk-and-interactions\tools\,
+s08-s14-execution-and-incidents\tools\, s09-s10-ai-and-regime\tools\),
+lint-clean; every figure written with its tool output open beside it.
 The operator ANSWERED the Stage 4 questions on 14 Sep (R8 §8.5, AE-34) -
 apply them, do not re-ask:
   Q1 one recommendation, formed by the AI "informed around strategy and
@@ -6684,6 +6709,9 @@ apply them, do not re-ask:
      10 working days (60 later, once the machinery is proven);
   Q3 the vision was "lost amongst multiple development branches ... from
      misinformation, or not anchoring back to the fundamentals".
+QUEUED FOR CHECKPOINT B (tracker section 2): Q-R11 - does the 8 Sep
+architecture's "the LLM operates exclusively as an editor and copywriter"
+(AE-30) apply to the macro matrix only, or to the AI generally?
 
 ⚠️ JHX HELD (operator, 14 Sep ~15:00: "hold the JHX item till after the
 audit is complete"). JHX.AX (1,097) closed 11 Sep at 39.01 BELOW its resting
@@ -6695,7 +6723,7 @@ section 2.
 ⛔ TRADING SUSPENDED (operator, 14 Sep ~10:19: "Trading will be suspended
 during the course of this audit"). It holds because the app is NOT
 LAUNCHED. The configuration is UNCHANGED and still says execution_mode=auto,
-autonomous_strategies=swing (read 14 Sep 22:43), so A LAUNCH WOULD TRADE. Do
+autonomous_strategies=swing (read 15 Sep 09:07), so A LAUNCH WOULD TRADE. Do
 not launch the app, and do not change the configuration or the kill switch
 to enforce the suspension, unless the operator asks. While suspended nothing
 the app does runs: no exits, no time stops, no reconciliation, no re-arm, no
@@ -6723,7 +6751,9 @@ look better; add a later note.
 ⛔ THE OPERATOR'S OWN WORDS ARE THE AUTHORITY ON INTENT. README, the paper,
 ROADMAP, HANDOFF, commit messages, code comments and the capability docs were
 written by Claude - during the audit they are claims to test (CE-018). Date
-an attribution with git log -S, never from HANDOFF (CE-031). The operator's
+an attribution with git log -S, never from HANDOFF (CE-031). A figure HANDOFF
+quotes from a tool is checked against the tool's OWN output in the transcript
+(CE-032: HANDOFF's "86%" was real output, read wrongly). The operator's
 words are in the Claude Code transcripts, which cover EVERY DAY FROM 24 JULY
 (CE-020), in TWO channels: typed messages AND AskUserQuestion dialog answers
 (stored as tool results). Read both - stage4\tools\ has the read-only
@@ -6757,11 +6787,28 @@ WHAT THE AUDIT HAS FOUND SO FAR (drafts, for Checkpoint B):
   the record so far, measured Kelly at the 20-trade switch would be ZERO (a
   possible lock; derived, conditional).
 - §8 (R10): M175 and M174 have never transmitted an order; every ASX-era
-  order was signed by the autonomy gate (human paths never run live); the
-  exit path has run for 3 symbols, each run tripping the kill switch.
+  order in the log was signed by the autonomy gate (human paths never run
+  live); the exit path has run for 3 symbols, each run tripping the kill
+  switch. (Its log counts for 24 Aug morning may be short - the log hole.)
 - §14 (R14): all 6 reconciliation trips were the app's own record; booking
   at transmission is the common root; "unknown code -> halt" caused 7 of 19
   trips; the orphan scan was right 1 time in 10.
+- §9 (R11): no AI output reaches strategy selection, sizing, approval, the
+  OMS, the broker or settings - the brief's principle holds, more strictly
+  than it asks. Against Checkpoint A and Q1 the AI has LESS part than
+  intended: none. Both modes act on the swing rule's signal; the model gets
+  the rails' verdict but not the strategy's rules or signal. The system
+  prompt tells the model "Final trading decisions are made by a human" -
+  false in auto (prompts.py:17).
+- §10 (R12): a launch artefact ("previous" curve and 200-day average start
+  at 0.0) opened 20 of 33 ASX-era runs on recovery (0.9); 18 changed ~3 min
+  later; it sized 6 of 20 entries at 0.9, and the cash cap cut all six
+  anyway. The US VIX below 15 set low_vol 12 of 12 times (a fixed rule
+  bonus). The 28 Aug ablation's "86%" for vix_level is CONFOUNDED - the
+  ablated arm fed the VIX rule 0.0, a low-vol bonus on every bar (CE-032).
+  The 20-bar refit has never run (one refit per launch); fusion.py unchanged
+  since the first commit. Regime is on every entry evaluation in
+  risk_decisions.csv and on no ledger row.
 
 ⚠️ OPEN SAFETY DEFECT CE-017 (NOT FIXED - the operator chose "decide later,
 continue audit", 14 Sep): an exit releases the position's protective legs at
@@ -6788,7 +6835,11 @@ the raw line, or cast with [datetime].
 (decision_journal.py:88-109); risk_decisions.csv has every evaluation. They
 count different things. After IBKR assigns its id, an order's journal rows
 carry the BROKER's id, not the proposal's - never join them on order_id
-(CE-029).
+(CE-029). risk_decisions.csv's EXIT rows carry no regime and no sizing
+inputs (evaluate_exit, risk_engine/engine.py:371-406) - split by side first.
+⚠️ A LOG TOOL COUNTS LINES, NOT EVENTS (CE-033): the demo-fallback warning
+is written once per AI slot, so "6" was 3 launches. Check how many lines one
+event writes before quoting a count.
 ⚠️ RUN THE FOUR CHECKS SEPARATELY (black --check can EXIT 0 while printing
 "1 file would be reformatted"). CI runs ruff and black over the WHOLE TREE
 (`ruff check .`, `black --check .`) - scripts under docs\ are linted too
@@ -6808,24 +6859,28 @@ EVIDENCE: Documents\QAT-audit-evidence\2026-09-12\ (463 files, sha256
 MANIFEST.csv: transcripts, qat-logs, claude.ai export, IBKR statements
 24 Aug and 24 Aug-11 Sep), \2026-09-14\ (morning transcript snapshot),
 \2026-09-14-stage4\ and \2026-09-14-s07-s14\ (the later 14 Sep sessions'
-transcripts, each with its own manifest). cleanupPeriodDays = 365. Do not
-clear the logs. At session end snapshot any changed transcript into a new
-dated folder with its own manifest. NEVER commit the statements or the chat
-export (personal details); extract statement text only into the scratchpad.
+transcripts), \2026-09-15\ (the 15 Sep session's transcript and the
+14 Sep evening one, which grew after its copy), each with its own manifest.
+cleanupPeriodDays = 365. Do not clear the logs. At session end snapshot any
+changed transcript into a new dated folder with its own manifest. NEVER
+commit the statements or the chat export (personal details); extract
+statement text only into the scratchpad.
 
-THE STATE - measured 14 September (Monday) 22:43:
+THE STATE - measured 15 September (Tuesday) 09:07:
 - App NOT RUNNING (last log line 12 Sep 11:19); IB Gateway CLOSED (nothing
   on 4001/4002/7496/7497); LM Studio up on 1234. Trading SUSPENDED by
   operator decision - the app is not to be launched.
 - CONFIG unchanged: QAT_EXECUTION_MODE=auto, QAT_AUTONOMOUS_STRATEGIES=swing,
-  QAT_DEPLOYED_STRATEGIES=swing.
+  QAT_DEPLOYED_STRATEGIES=swing. No regime setting overridden (six features,
+  VIXCLS, no Yahoo macro series); both AI slots local (openai/gpt-oss-20b at
+  localhost:1234).
 - DEPLOYED M175 (5e322ca), unchanged since 12 Sep 10:51; src\ level with it
-  (handoff_state.py). Suite at 12 Sep: 3,677 passed / 26 skipped (3,703
-  collected); four checks clean. 14 Sep work was docs and read-only audit
-  tools only.
+  (handoff_state.py). Suite re-run 15 Sep: 3,677 passed / 26 skipped (3,703
+  collected), the same as 12 Sep; ruff and black clean over the whole tree.
+  14 and 15 Sep work was docs and read-only audit tools only.
 - KILL SWITCH CLEAR (tripped:false).
-- LEDGER: 12 rows = 8 positions, sha256 688B7091..., net -3,495.02 (sums
-  exactly); regime_at_entry blank on all 12.
+- LEDGER: 12 rows = 8 positions, sha256 688B7091..., net -3,495.02;
+  regime_at_entry blank on all 12.
 - LAST KNOWN BOOK (app, 12 Sep 10:56; broker not readable): nine positions,
   all with a resting stop - ANZ 640, ASX 1314, BOQ 13586, COH 363, JHX 1097,
   SUN 3192, TAH 64229, TWE 10412, WOW 1098. JHX is below its stop (above).
@@ -6833,9 +6888,10 @@ THE STATE - measured 14 September (Monday) 22:43:
   JHX counts at its whole value; without it 3.16% (R16 §16.1). The position
   count (9 of 10) would bind next. session_check.ps1's footer names the
   position count as the gate (recorded; frozen).
-- Git: master level with origin after this handover; CI green on every push
-  of 14 Sep (last 29925a8 before the handover commit). Check with gh run
-  list --limit 3.
+- LOG: qat.log.6 (27 Jul) to qat.log (12 Sep), with the 66-minute hole on
+  24 Aug 10:06-11:12 AEST (above).
+- Git: master level with origin after this handover. CI was green on every
+  push of 14 Sep; check the 15 Sep push with gh run list --limit 3.
 - Rollback dirs: NOT MEASURED - they sit at C:\ outside the boundary (ask).
 
 OUTSTANDING LIST - FROZEN with development. Its observation items - 1 (M173
@@ -6845,15 +6901,19 @@ cell) - CANNOT PROGRESS while trading is suspended. Items 2, 4, 5, 6, 7, 9
 wait for the audit; 10 (M39 corporate actions) and 11 (IBKR news) are CLOSED
 - do not re-litigate. Full list: HANDOFF.md.
 
-WHAT 14 SEPTEMBER ESTABLISHED
+WHAT 14 AND 15 SEPTEMBER ESTABLISHED
 ⚠️ TRACK THE WORK IN THE OPERATOR'S NUMBERING (CE-030). A plan that renumbers
 the operator's brief loses the operator. One tracker, the brief's numbers,
 status nowhere else.
 ⚠️ AN EMPTY JOIN IS EVIDENCE ABOUT THE JOIN (CE-029). Look the record up
 directly before telling the operator it is missing.
-⚠️ WRITE EACH FIGURE WITH ITS SOURCE OPEN (CE-031): 17 slips in four drafts
-were caught only by checking every number against its tool output.
+⚠️ WRITE EACH FIGURE WITH ITS SOURCE OPEN (CE-031, CE-033): slips in every
+draft were caught only by checking each number against its tool output.
+⚠️ A SUBSTITUTED VALUE HAS READERS (CE-032). A 0.0 called "no bonus" was
+read by a rule as a VIX below 15. Before calling a stand-in inert, trace
+every reader; before saying what a setting controls, list its readers.
 ⚠️ A SAFETY RAIL CAN DISABLE THE RECOVERY IT RELIES ON (CE-017), and a fix
 can cause the next incident (R14: "unknown code -> halt" -> 7 trips).
-⚠️ SAY WHAT A COUNT COUNTS (CE-024): rows, symbols, symbol-days, orders.
+⚠️ SAY WHAT A COUNT COUNTS (CE-024): rows, symbols, symbol-days, orders,
+launches - and how many lines one of them writes.
 ⚠️ THE "ORIGINAL DESIGN" WAS PARTLY CLAUDE'S. Ask the operator.
