@@ -34,7 +34,7 @@ crosswalk at the end is only for reading older documents.
 
 ---
 
-## 1. At a glance (15 September 2026, 11:45 AEST)
+## 1. At a glance (15 September 2026, 11:56 AEST)
 
 | § | The brief asks for | Report | Status | Next action |
 |---|---|---|---|---|
@@ -53,17 +53,17 @@ crosswalk at the end is only for reading older documents.
 | §12 | accidental complexity | R15 | 🟡 15 Sep | Checkpoint B |
 | §13 | control interactions and traps | R16 | 🟡 14 Sep | Checkpoint B |
 | §14 | past failures and the controls they produced | R14 | 🟡 14 Sep | Checkpoint B |
-| **§15** | **three architecture diagrams** | **R17, R18, R19** | **⬜ next** | — |
+| §15 | three architecture diagrams | R17, R18, R19 | 🟡 15 Sep | Checkpoint B |
 | §16 | simplification candidates | R20 | 🟡 15 Sep | Checkpoint B |
 | §17 | coherence questions A–J | R22 and R1 | ⬜ | — |
 | §18 | Green / Amber / Red | R24 | ⬜ | — |
-| §19 | the 24-section report | R1–R24 | 🔶 R3–R16 and R20 drafted | see section 4 of this tracker |
+| §19 | the 24-section report | R1–R24 | 🔶 R3–R20 drafted | see section 4 of this tracker |
 | §20 | remediation sequence, recommended only | R23 | ⬜ | — |
 | §21, §22 | don't aim for a good result; keep asking the key question | — | in force | — |
 
 **Order of work from here:** ~~§7 and §13~~, ~~§8 and §14~~ (drafted 14 Sep) →
-~~§9 and §10~~, ~~§11~~, ~~§12 and §16~~ (drafted 15 Sep) → **§15** → §17,
-§18, §20 and R1, R2, R21–R24 → **Checkpoint B**.
+~~§9 and §10~~, ~~§11~~, ~~§12 and §16~~, ~~§15~~ (drafted 15 Sep) → **§17**
+→ §18, §20 and R1, R2, R21–R24 → **Checkpoint B**.
 
 ---
 
@@ -336,10 +336,21 @@ foreign). Headlines:
   - the cancel-first exit became CE-017;
   - the orphan scan is right 1 time in 10.
 
-### §15 Architecture diagrams → R17, R18, R19 ⬜
-* R17, QAT as it is: start from R5 §5.1.
-* R18, QAT as originally intended: only components the evidence supports.
-* R19, the drift between them.
+### §15 Architecture diagrams → R17, R18, R19 🟡 (drafted 15 Sep)
+**Reports:** `17-current-state-architecture.md`,
+`18-original-intent-architecture.md`, `19-design-drift-architecture.md`.
+Each is a mermaid diagram with a table citing every box. All three (and
+R16's) were parsed and rendered with mermaid 11.4.1 before commit.
+* **R17, as it is:** solid lines for paths proven live, dashed for code only
+  (the Blotter, the manual close), red for the two known defects (CE-017, the
+  TNE ledger shortfall).
+* **R18, as intended:** only components with a source (the operator, the
+  paper, the methodology, the reference app), each labelled. Five things the
+  evidence does not settle are listed as UNKNOWN, not drawn.
+* **R19, the drift:** twelve differences drawn intended → current, labelled
+  with R7's class and authority. Red (agent-only) drift sits mostly at the
+  front of the path; amber (operator-approved) changes mostly at the back;
+  the single strategy is the operator's own sequencing.
 
 ### §16 Simplification candidates → R20 🟡 (drafted 15 Sep)
 **Report:** `20-simplification-candidates.md`. Nothing is changed.
@@ -391,9 +402,9 @@ In force throughout. R1 is to answer §22's question directly.
 | R14 | Historical Failure → Control Mapping | `14-failure-to-control-mapping.md` | §14 | 🟡 14 Sep |
 | R15 | Accidental Complexity | `15-accidental-complexity.md` | §12 | 🟡 15 Sep |
 | R16 | Control Interaction | `16-control-interactions.md` | §13 | 🟡 14 Sep |
-| R17 | Current-State Architecture | — | §15 | ⬜ |
-| R18 | Original-Intent Architecture | — | §15 | ⬜ |
-| R19 | Design-Drift Architecture | — | §15 | ⬜ |
+| R17 | Current-State Architecture | `17-current-state-architecture.md` | §15 | 🟡 15 Sep |
+| R18 | Original-Intent Architecture | `18-original-intent-architecture.md` | §15 | 🟡 15 Sep |
+| R19 | Design-Drift Architecture | `19-design-drift-architecture.md` | §15 | 🟡 15 Sep |
 | R20 | Simplification Candidates | `20-simplification-candidates.md` | §16 | 🟡 15 Sep |
 | R21 | Outstanding Unknowns | — | §3, §21 | ⬜ (collect from R4 §4.13, R5 §5.4) |
 | R22 | Recommended Freeze State | — | §17 J | ⬜ |
@@ -477,3 +488,4 @@ for new work.
 | 15 Sep 2026 ~09:10 | §9 → 🟡 (R11: the twelve items, the principle, the intent). §10 → 🟡 (R12: the pipeline, the six determinations, the launch artefact, the confounded ablation). Q-R11 added to section 2. The 24 Aug log hole added to §11's evidence list. Error log to CE-033 (CE-032: the 28 Aug ablation reading). State at 08:35 unchanged from 14 Sep 22:43. **Next: §11.** |
 | 15 Sep 2026 ~09:45 | §11 → 🟡 (R13: the chain, the fourteen checks, the six impacts, the ledger's history, the app against IBKR's statement). A records defect added to section 2 (the missed-exit replay). R14 and R16 corrected by note ("the TNE remnant", CE-034). Error log to CE-034. **Next: §12 and §16.** |
 | 15 Sep 2026 ~11:45 | CE-035 logged (a resumed session answered "Continue" with no action, 09:21). §12 → 🟡 (R15: 35 items, the nine questions, ten flags). §16 → 🟡 (R20: 37 rows; INVESTIGATE 14, REMOVE-after-authorisation 3, none a control). **Next: §15.** |
+| 15 Sep 2026 ~11:56 | §15 → 🟡 (R17 as it is, R18 as intended, R19 the drift; mermaid, rendered before commit). **Next: §17** (coherence questions A–J → R22, R1). |
