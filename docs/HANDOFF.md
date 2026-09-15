@@ -1,4 +1,4 @@
-# Handoff — 15 September 2026 (midday): DESIGN AUDIT brief §2–§16 drafted; §17 next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
+# Handoff — 15 September 2026 (midday): DESIGN AUDIT fully drafted (R1–R24; classification RED); CHECKPOINT B next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -129,7 +129,7 @@ draft are done. **Stage 5 is next.**
 * Four verbatim investigator reports: `.../stage3/`
 * The authority register (who decided what, from the transcripts):
   `.../stage4/authority-evidence.md`
-* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-035** (was CE-031 here until 15 Sep morning)
+* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-036** (was CE-031 here until 15 Sep morning)
 * ▶ **Progress tracker (the ONLY status record since 14 Sep 14:45):**
   `docs/audit/2026-09-design-recovery/00-progress-tracker.md`
 
@@ -426,6 +426,10 @@ the tracker)**
 * **§15 (R17–R19, midday):** the three architecture diagrams, each box cited.
   Agent-only drift sits mostly at the front of the path; operator-approved
   changes mostly at the back.
+* **§17, §18, §20 and R1, R2, R21 (midday): the report is fully drafted.**
+  Classification **RED** (R24). R23 asks the operator for five decisions at
+  Checkpoint B (D1–D5). CE-036: R18 first listed two unknowns R6 had already
+  answered; corrected three minutes after the push.
 
 ### Next steps (the plan's progress table has the detail)
 
@@ -6711,7 +6715,11 @@ Paper account throughout - no real money.
   2. docs\HANDOFF.md section "14 SEPTEMBER: THE DESIGN AUDIT" (standing
      instructions, baseline, findings - including the 15 Sep blocks for
      §9/§10, §11 and §12/§16)
-  3. the drafted report sections in docs\audit\2026-09-design-recovery\:
+  3. the drafted report sections in docs\audit\2026-09-design-recovery\ -
+     ALL 24 ARE DRAFTED: 01 (executive summary - READ FIRST), 02 (scope),
+     21 (unknowns), 22 (coherence A-J and the freeze state), 23
+     (remediation sequence and the five Checkpoint B decisions), 24 (the
+     classification: RED), and
      03-08 (baseline, intent, current system, drift map, strategy),
      09 (risk controls, §7), 10 (execution boundary, §8), 11 (AI/LLM
      boundary, §9), 12 (regime, §10), 13 (data and evidence integrity,
@@ -6719,7 +6727,7 @@ Paper account throughout - no real money.
      16 (control interactions, §13), 17-19 (architecture as it is, as
      intended, the drift, §15), 20 (simplification candidates, §16);
      plus stage3\ and stage4\authority-evidence.md
-  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-035)
+  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-036)
 The operator's brief itself is in transcript ede4fc1d line 739
 (2026-09-12T07:49:32Z); stage4\tools\find_brief.py extracts it.
 No features, refactors, trading-logic / risk-parameter / threshold /
@@ -6727,11 +6735,15 @@ execution changes, and NO FIXES (including for audit findings) without the
 operator's explicit authorisation. The audit is an investigation, not a
 coding task. Report first; change only after review and authorisation.
 
-NEXT: brief §17 (is QAT conceptually coherent? questions A-J -> R22, and
-R1). Partial answers are listed in the tracker's §17 block (A from R8 §8.3,
-H from R6 §6.2). Then §18 (Green/Amber/Red -> R24), §20 (remediation
-sequence, recommended only -> R23) and R1, R2, R21, then Checkpoint B (the
-operator reviews the full draft). R17-R19's mermaid was checked by rendering
+NEXT: CHECKPOINT B - the operator reviews the full draft, R1 first. Do not
+start remediation. R23 lists the five decisions the operator is asked for:
+D1 CE-017; D2 which swing to test (the methodology, or the current rule
+recorded as the one under test); D3 the AI's part, with Q-R11; D4 the
+missed-exit replay defect and how TNE's ledger shortfall is recorded (never
+a silent repair); D5 the JHX broker read. Apply the operator's review
+comments to the drafts, logging each correction. While waiting, the only
+audit work left is the error-log back-fill of the history (fix commits,
+ROADMAP and HANDOFF incidents, transcripts from 24 Jul) - read-only. R17-R19's mermaid was checked by rendering
 it with mermaid 11.4.1 in the in-app browser; the in-app browser runs a page's
 script only for files inside the project folder (use a git-ignored folder
 such as dist\_audit_check\, then delete it). The error-log
@@ -6870,10 +6882,19 @@ WHAT THE AUDIT HAS FOUND SO FAR (drafts, for Checkpoint B):
 - §16 (R20): 37 rows - KEEP 8, KEEP/MONITOR 7, INVESTIGATE 14, CONSOLIDATE 5,
   REMOVE only after authorisation 3 (none a control). Retired US-era broker
   code left out (operator, 28/31 Aug); closed items not re-opened.
-- §15 (R17-R19): QAT as it is, as intended (only evidenced components; five
+- §15 (R17-R19): QAT as it is, as intended (only evidenced components; three
   UNKNOWNs listed, not drawn), and twelve drift arrows labelled with class and
   authority. Agent-only drift sits mostly at the front of the path (data,
   strategy, recommendation); operator-approved changes mostly at the back.
+- §17 (R22): explicit answers A-J. Strategy recognisable only in outline;
+  scaffolding consistent, decision core not; safety altered trading (yes);
+  agent drift (yes, at the start); unanticipated interactions (yes); not
+  reliably understandable by one person; freeze (yes), with what would end it.
+- §18 (R24): RED - DESIGN COMPROMISED (three of four core elements the
+  operator named are not implemented). AMBER if the operator decides to test
+  the current rule and to defer the AI's part.
+- §20 (R23): Checkpoint B decisions D1-D5, then Phases 4-7 with entry and
+  exit conditions. R21: 21 unknowns (U1-U21). R1: the executive summary.
 
 ⚠️ OPEN SAFETY DEFECT CE-017 (NOT FIXED - the operator chose "decide later,
 continue audit", 14 Sep): an exit releases the position's protective legs at
@@ -6926,8 +6947,9 @@ MANIFEST.csv: transcripts, qat-logs, claude.ai export, IBKR statements
 \2026-09-14-stage4\ and \2026-09-14-s07-s14\ (the later 14 Sep sessions'
 transcripts), \2026-09-15\ (the 15 Sep session's transcript and the
 14 Sep evening one, which grew after its copy), \2026-09-15-s11\ (the
-15 Sep session again, after §11) and \2026-09-15-s12-s16\ (both 15 Sep
-sessions after §12/§16), each with its own manifest.
+15 Sep session again, after §11), \2026-09-15-s12-s16\ (both 15 Sep
+sessions after §12/§16) and \2026-09-15-report-drafted\ (this session after
+the full draft), each with its own manifest.
 cleanupPeriodDays = 365. Do not clear the logs. At session end snapshot any
 changed transcript into a new dated folder with its own manifest. NEVER
 commit the statements or the chat export (personal details); extract
@@ -6959,7 +6981,7 @@ THE STATE - measured 15 September (Tuesday) 09:07, re-checked 09:38 and
 - LOG: qat.log.6 (27 Jul) to qat.log (12 Sep), with the 66-minute hole on
   24 Aug 10:06-11:12 AEST (above).
 - Git: master level with origin after this handover. CI green on every push
-  of 14 and 15 Sep through 81bfeaf; check the latest with gh run list
+  of 14 and 15 Sep through e11548b; check the latest with gh run list
   --limit 3.
 - Rollback dirs: NOT MEASURED - they sit at C:\ outside the boundary (ask).
 
@@ -6988,6 +7010,8 @@ launches - and how many lines one of them writes.
 ⚠️ CHECK A RECORD AGAINST THE BROKER BEFORE CHARACTERISING IT (CE-034):
 "the TNE remnant" survived three documents; the statement disproved it in one
 comparison.
+⚠️ BEFORE CITING AN AUDIT SECTION'S "UNKNOWN", SEARCH THE LATER SECTIONS
+(CE-036): R6 §6.0 had answered two of R4 §4.13's unknowns that R18 repeated.
 ⚠️ ON A RESUME, READ `git log` AND THE TRACKER BEFORE SAYING WHERE THE WORK
 STANDS (CE-035). A resumed copy's context can end before the original's
 last work. Never answer a request to continue with no action. One session per
