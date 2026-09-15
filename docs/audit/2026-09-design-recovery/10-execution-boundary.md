@@ -88,6 +88,18 @@ execution event was absorbing BHP's stop fill.
 | Daily-loss and drawdown trips; gate day-P&L rails; opening-auction and never-ticked refusals; price-drift refusal | 0 each | — | code only |
 | De-lever trim; orphan cancel | off | — | code only (disabled) |
 
+> ⚠️ **Correction, 15 Sep (back-fill; CE-046).** The row "Rejection
+> classified; booking reversed … proven (the reversal once)" was wrong. The
+> one live reversal proved a **defect**:
+> * At 12:40:50 on 4 Sep, under M165 (`cfb87ea`, built before the sign fix
+>   `d4d0ea8` at 14:51), it logged "Reversed 9636.00 of the booking for
+>   A2M.AX".
+> * Reconciliation then read `A2M.AX tracked=-9636 broker=9636` from
+>   12:43:49 until the relaunch at 13:17. The reversal subtracted where it
+>   should have given back, and made a phantom short.
+> * **A correct reversal has never run live.** The row should read: *1
+>   reversal, wrong-signed; the fixed version is code only.*
+
 ## 10.4 Facts this section adds
 
 1. **The autonomous path is the only one that has run.** Every order in the

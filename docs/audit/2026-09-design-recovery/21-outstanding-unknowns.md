@@ -44,14 +44,14 @@ They are not repeated below (CE-036).
 
 | # | Unknown | Where raised | What settles it |
 |---|---|---|---|
-| U10 | **Why the retained log has no lines from 10:06:27 to 11:12:37 on 24 Aug** | R12 §12.5; R13 §13.6 | UNKNOWN — INSUFFICIENT EVIDENCE: the lines are gone. The rotation code, and whether two processes wrote the log, could explain it |
+| U10 | ~~Why the retained log has no lines from 10:06:27 to 11:12:37 on 24 Aug~~ | R12 §12.5; R13 §13.6 | **Settled 15 Sep.** Commit `ab5175d` records it: Claude's session watcher held the log open and rotation failed silently. `qat.log.6`'s size matches the commit's figure (CE-037, CE-038) |
 | U11 | Which of TNE's executions on 3 Sep was the 60 shares the ledger booked | R13 §13.7 | IBKR's execution-level report for 3 Sep |
 | U12 | Why DXS's 24 Aug unwind sales never reached the app's absorption | R13 §13.7 | UNKNOWN — the log after 14:07:51 carries nothing for it |
-| U13 | Who or what realigned the LOV repair row on 27 Aug | R13 §13.7 | the 27 Aug transcript, read for it |
-| U14 | Which message authorised the LOV repair (26 Aug) and the SEK repair (9 Sep) | R13 §13.7 | the transcripts, read for it |
+| U13 | ~~Who or what realigned the LOV repair row on 27 Aug~~ | R13 §13.7 | **Settled 15 Sep**: Claude's `repair_collapsed_row.py`, after the operator's "do it now" (R13 §13.7) |
+| U14 | ~~Which message authorised the LOV repair (26 Aug) and the SEK repair (9 Sep)~~ | R13 §13.7 | **Settled 15 Sep**: both operator-approved (LOV: option "1", 15:09; SEK: "App is closed", 17:15, in answer to "Close the app and I'll start on the ledger repair"). R13 §13.7 |
 | U15 | Whether a symbol excluded as stale cost any entry (exclusions are not logged as events) | R9 §9.2 | UNKNOWN — INSUFFICIENT EVIDENCE for the past; a log line would settle it in future |
 | U16 | Whether the price-drift check ever evaluated a price and passed (it logs refusals and skips only) | R10 §10.5 | as U15 |
-| U17 | Why the 24 Aug 11:21 run's recovery label held until the run ended; and whether TNE's recovery-labelled decisions at 10:21–10:35 were the launch artefact | R12 §12.6 | UNKNOWN — the second falls in the log hole (U10) |
+| U17 | Why the 24 Aug 11:21 run's recovery label held until the run ended; and whether TNE's recovery-labelled decisions at 10:21–10:35 were the launch artefact | R12 §12.6 | UNKNOWN — the second falls in the log hole (U10): its cause is now known, but the lines were never written |
 | U18 | Why three launches were configured for the local model on port 8000; how many AI Advisor questions were asked before 28 Aug | R11 §11.8 | UNKNOWN — the log records only failures, and the per-question line began on 28 Aug |
 | U19 | Whether Yahoo's daily history includes today's partial bar; startup races between feeds and subscribers | R5 §5.4 | runtime observation |
 
@@ -83,11 +83,13 @@ the past.
 
 ## 21.7 The count
 
-21 unknowns (U1–U21), plus the six complexity flags of §21.6:
+21 unknowns were listed (U1–U21), plus the six complexity flags of §21.6.
+**Three were settled in the back-fill** (U10, U13, U14), which leaves **18
+open**:
 * 4 are the operator's to decide (U1–U4);
 * 5 need a broker read or runtime observation (U5–U9);
-* 10 concern the records (U10–U19):
-  - 6 cannot now be settled (U10, U12, U15–U18);
-  - 3 need the transcripts or IBKR's execution report (U11, U13, U14);
+* 7 concern the records:
+  - 5 cannot now be settled (U12, U15–U18);
+  - 1 needs IBKR's execution-level report (U11);
   - 1 needs runtime observation (U19);
 * 2 need measurement (U20–U21).

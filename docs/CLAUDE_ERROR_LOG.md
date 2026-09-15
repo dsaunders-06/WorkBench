@@ -24,7 +24,8 @@ request, alongside the Design Recovery & Design Intent Audit.
 **Status of this log:** seeded 12 September 2026 with the errors below, each
 verified against its cited evidence. The historical record (25 July onward) has
 not been back-filled. That is a task inside the design audit (audit plan,
-Stage 4/6). Transcripts of Claude Code sessions from 5 August to 2 September
+Stage 4/6). *(Later note, 15 Sep: back-filled. See "Back-fill of the
+history", CE-037 to CE-066.)* Transcripts of Claude Code sessions from 5 August to 2 September
 no longer exist (30-day retention), so back-fill for that period relies on
 HANDOFF, ROADMAP and commit messages. *(Wrong, corrected 14 Sep: the
 transcripts cover every day from 24 July. See CE-020.)*
@@ -933,6 +934,378 @@ transcripts cover every day from 24 July. See CE-020.)*
 
 ---
 
+## Back-fill of the history (15 September 2026)
+
+**Method.** Two read-only tools in
+`docs/audit/2026-09-design-recovery/backfill/tools/`:
+* `fix_commits.py` lists the commits whose message records a fix,
+  retraction or correction. It found **632 of 984**. The CSV is the
+  inventory; the cue words are broad, so it over-counts.
+* `doc_incidents.py` indexes every place HANDOFF, the archived HANDOFF and
+  ROADMAP admit an error: 73 warning headings and 156 admission lines.
+* `operator_corrections.py` reads the operator's typed messages from 24 Jul
+  for correction cues (below, before CE-062).
+
+The entries below are the errors that **reached the broker, the records, a
+decision or a document the operator relied on**. Each was checked against
+its fix commit and, where it acted live, a log line. Commit messages are
+Claude's words, so the evidence column names what was checked beyond them.
+Smaller defects found and fixed before they acted are in the inventory, not
+here (register: `backfill/00-backfill-register.md`).
+
+### CE-037: A monitoring script blinded the log for 66 minutes on the morning of the first live orders
+* **Made:** 4 Aug 2026 (`8278dd6`, `watch_session.py`). **Found:** 24 Aug,
+  shortly after 10:06; fixed 11:03 (M137, `ab5175d`).
+* **Severity:** High. It lost the only log of 10:06–11:12 on 24 Aug and caused
+  a wrong diagnosis: a feed that had recovered was read as hung, and the app
+  was restarted for nothing.
+* **What happened:** the watcher held `qat.log` open. On Windows a plain
+  `open()` grants no delete-sharing, so the handler's rotation rename failed
+  (WinError 32). The handler left its stream closed and swallowed every
+  record silently.
+* **Evidence:** the commit message. **Independently:** `qat.log.6` is 5,242,781
+  bytes and its last line is 24 Aug 10:06:27, the figure and time the commit
+  records (`regime_evidence.py` §0).
+* **To avoid:** a tool that watches a file must never hold it open. A log
+  handler that cannot write must say so where the operator looks.
+
+### CE-038: The audit called the log hole's cause NOT DETERMINED; a commit records it
+* **Made:** 15 Sep 2026, in R12 §12.5, R13 §13.6–§13.7 and R21 U10.
+  **Found:** 15 Sep 13:00, by Claude, in the back-fill, on reading `ab5175d`
+  (CE-037).
+* **Severity:** Low. It was in drafts the operator has not reviewed.
+* **Root cause:** looked for the cause in the logs and not in the history for
+  that date. The fix commit is 57 minutes after the hole began.
+* **Fix:** R12, R13 and R21 corrected by note.
+* **To avoid:** before calling a past event's cause NOT DETERMINED, run
+  `git log` for its date.
+
+### CE-039: Seven impossible closed trades from the absorb path replaying across a restart
+* **Made:** the absorb path's restart behaviour (M50). **Found:** 24 Aug 2026
+  about 15:20; fixed 15:48 (M140, `3a2c150`).
+* **Severity:** High (records). Seven rows reached `closed_trades.csv` with
+  `closed_at` an hour before `opened_at`: −167.90 nobody lost, attributed to
+  swing, in the file the promotion gate reads. Repaired by script (backup
+  `…PRE-IMPOSSIBLE-TRADE-REPAIR`, R13 §13.5).
+* **What happened:** a stale watermark made the first absorb pass after a
+  restart replay the afternoon: the duplicate buys, the operator's manual
+  clean-up sells and the app's own fills. All read as foreign, because order
+  identity did not survive a restart. To the absorb path, a manual sell is
+  indistinguishable from a resting stop firing.
+* **Evidence:** the commit; the backup file; R13 §13.5.
+
+### CE-040: The first exit: 179 of 183 executions never reached the ledger
+* **Made:** the absorb path's reading of IBKR fills (one fill per execution,
+  quantity not cumulative). **Found:** 26 Aug 2026, 10:09:42, when
+  reconciliation read `LOV.AX tracked=2843 broker=0` and tripped the kill
+  switch. Fixed 13:57–14:57 (`d00dbcc`, `64bf9ed`, `827fa36`, `8fce7d3`, "the
+  sibling I missed").
+* **Severity:** High (records; a kill-switch trip). About 12,000 of realised
+  gain was absent from the ledger until the LOV repair (backup
+  `…PRE-LOV-REPAIR`).
+* **Evidence:** the commits; the log line (R14 incident 3); R13 §13.5.
+
+### CE-041: Two entries signed in the same second took the book to eleven against a cap of ten
+* **Made:** `OMS.pending_orders` counted only `pending_signoff`, so a
+  transmitted but unfilled order was in neither the held nor the pending set.
+  **Found:** 26 Aug 2026 (WOW signed 15:15:24.870, SEK sized 173 ms later,
+  both against a book of nine). Fixed 27 Aug (item 58, `72191a9`).
+* **Severity:** High (the broker). The book reached eleven. Because the count
+  refuses at `>=`, returning to ten cost the 27 Aug session 1,036 refusals
+  (R9; R16 §16.3 c). The first fix also widened a safety guard, and
+  `tests/safety` caught it.
+* **Evidence:** the commit; R14 §14.2 incident 9.
+
+### CE-042: The kill switch lived in memory; restarts cleared halts silently, and wrong advice followed
+* **Made:** the first build (`fa9ba47`). **Found:** 25 Aug 2026. HANDOFF said
+  the switch was tripped and safe to reset, advice was given on that basis,
+  and the operator pointed out the app reporting INACTIVE: two restarts that
+  morning had cleared it. Fixed 16:54 (item 32, `5e5c726`).
+* **Severity:** High. A halt meant to hold until a human decided held only
+  until the next launch, and the operator was advised on a false state.
+* **Evidence:** the commit; R14 incident 7 (kill-switch persistence).
+
+### CE-043: The sector cap was never wired; nine entries went in on 25 Aug with it inert
+* **Made:** 1 Aug 2026 (`53f45ec`). `signal_bridge` never passed the sector
+  map and nothing set a candidate's sector, so the rail had nothing to bind
+  on. **Found:** 25 Aug 2026 after the close, fixed 16:21 (item 44,
+  `7ba68ab`).
+* **Severity:** High. Nine entries went in on 25 Aug between 10:27 and 13:34
+  (R9's list), six of them Financials, and by the commit's own measure the
+  book closed at 60% Financials against a 30% cap.
+* **Also an audit slip (Low):** R9 says the sector cap "never acted". It
+  could not act before 16:21 on 25 Aug. R9 is corrected by note.
+* **Measured 15 Sep:**
+  - By IBKR's cost basis, the six Financials entries of 25 Aug (BOQ, ASX,
+    SUN, IAG, PNI, ANZ, all Financials in `sectors.py`) totalled 350,842.09,
+    34.95% of equity, over the cap.
+  - **Derived:** a wired rail would have trimmed PNI by about half and
+    refused ANZ. PNI closed on 31 Aug for −7,074.12 realised.
+* **Evidence:** the commit; `risk_per_trade.py` (the 25 Aug entry times);
+  R7 #27; the IBKR statement's cost basis; `sectors.py`.
+
+### CE-044: The order id the OMS handed out was not the id it answered to; the retry sweep stalled
+* **Made:** item 56 (26 Aug, the permId alias). **Found:** 31 Aug 2026, on the
+  first app-transmitted entry after item 56: `KeyError` every 60 s in the
+  retry sweep. One raising order ended the whole sweep while the log said
+  only "will try again". Fixed 11:17 (M159, `966b455`).
+* **Severity:** Medium. Every pending order after the failing one went
+  unconsidered until the fix.
+* **Evidence:** the commit (it quotes the traceback).
+
+### CE-045: The app never asked IBKR for the delayed data tier; an exit was refused, and three diagnoses were wrong
+* **Made:** the IBKR order path from 19 Aug. `reqMarketDataType` defaults to
+  real-time on every connection, and the account has no real-time ASX
+  subscription. **Found:** 4 Sep 2026. Fixed at 11:45 (`82e2606`), 14:47
+  (`a4ede4a`) and 19:28 (`6ea3081`, "fourth diagnosis").
+* **Severity:** High, and Medium for the claims.
+  - With no market data, IBKR's precaution refused A2M's exit (Error 354),
+    four times in four minutes, while the position sat 0.61R down past its
+    minimum hold.
+  - Three explanations were written down as findings before the fourth was
+    measured. M167's claim that "IBKR serves no delayed quote to a
+    snapshot" went into `version.py`, a commit message, a test docstring and
+    HANDOFF, and was retracted (`2ad1924`).
+* **Evidence:** the commits; the 4 Sep log (R10 §10.2, A2M's refusals).
+* **To avoid:** a vendor-behaviour claim is a hypothesis until it is measured
+  against the vendor.
+
+### CE-046: A rejected sell's reversal had the wrong sign, and it acted live
+* **Made:** 3 Sep 2026 22:44 (`ca7cae8`). The reversal always subtracted,
+  while a sell is booked as a negative. **Found:** 4 Sep 14:51, in a review
+  (`d4d0ea8`).
+* **Severity:** High (records).
+  - At **12:40:50 on 4 Sep**, under M165 (`cfb87ea`, built 12:23), the
+    reversal ran on A2M: "Reversed 9636.00 of the booking … after
+    rejection".
+  - Reconciliation then read **`A2M.AX tracked=-9636 broker=9636`** from
+    12:43:49 until the relaunch at 13:17. It was a phantom short, the thing
+    the handler existed to remove.
+* **Also an audit slip (Low):** R10 §10.3 lists this reversal as "proven".
+  It proved the defect. R10 is corrected by note.
+* **Evidence:** the 4 Sep log, 02:40:50Z to 03:08:50Z (read 15 Sep); the two
+  commits.
+
+### CE-047: Every entry bracket's protective legs reduced instead of cancelling
+* **Made:** 19 Aug 2026 (`40274fa`). `to_ib_protective_legs` set neither
+  `ocaGroup` nor `ocaType`, so the legs inherited IBKR's default, type 3
+  ("reduce, no block"). The standalone re-arm already used type 1 and said
+  why: reducing "would leave a partial resting against shares already
+  sold". **Found:** 7 Sep 2026, measured on all ten held positions; fixed
+  18:14 (`a0f8144`).
+* **Severity:** High (latent on every live bracket for 19 days).
+* **Evidence:** the commit's measurement of the live account. Whether any leg
+  was left resting because of it is NOT DETERMINED (anomaly register).
+
+### CE-048: The app's own orders carried no time-in-force, and a fix treated the wrong half of 10148
+* **Made:** the IBKR order path (the parent order already stated its TIF;
+  the others did not). **Found:** 9 Sep 2026. Fixed at 13:07 (M172,
+  `77d5485`) and 18:47 (M173, `e5b16ca`: "10349 was a code defect after
+  all").
+* **Severity:** High.
+  - IBKR's preset rejected both of 9 Sep's app-driven exits (IAG, SEK) with
+    Error 10349, and each rejection tripped the kill switch. The trip after
+    IAG's leg release is CE-017.
+  - M171 fixed the survivor re-check, but those 10148s came from the group
+    cancel itself. The evidence to tell them apart was already in the log.
+    Two more trips followed (12:20:56, 12:54:51).
+  - Three deploys went into one live session.
+* **Evidence:** the commits; R10 §10.4; R14 incident 2.
+
+### CE-049: Strategy gating ran on a hard-coded "sideways" default for the first 20 minutes of every session
+* **Made:** M27b's eligibility gate and the delayed feed together. **Found:**
+  10 Sep 2026; fixed 14:07 (item 8, `f975b12`).
+* **Severity:** Medium. It was harmless by coincidence, because the same delay
+  starved the window of prices.
+* **Evidence:** the commit; R12 (the first classification is at 10:20–10:21
+  on every ASX day).
+
+### CE-050: A log filter sat on the wrong handler and reported work it did not do
+* **Made:** M151. **Found:** 28 Aug 2026. The recovery line claimed 678
+  suppressions while 774 of those errors sat in `qat.log`. Fixed 16:08
+  (item 67, `2d76c33`).
+* **Severity:** Low (a false operational statement in the log).
+* **Evidence:** the commit.
+
+### CE-051: Four ablation measurements were believed, then retracted: the harness was not ablating
+* **Made:** 28 Aug 2026. `replay_session.py` built its regime engine without
+  `features`, so both arms used all six columns and were identical.
+  "`credit_spread` moves the label on ZERO of 249 bars" was recorded as a
+  finding. **Found:** the same day, when an ASX control column gave the same
+  null result. Retracted 17:48 (`6ace6fc`).
+* **Severity:** Medium: it reached HANDOFF as a finding. The corrected run
+  carried a second confound (CE-032).
+* **Evidence:** the commit; HANDOFF item 66.
+
+### CE-052: The ledger's costs were modelled, never the commission IBKR charged
+* **Made:** the ledger's cost model, from the first live trade (24 Aug).
+  **Found:** 10 Sep 2026, in the outstanding-list audit. Repaired 12 Sep
+  (M175, `repair_fill_basis.py`; backup `…fill-basis-20260912-105253`).
+* **Severity:** High (records). Every closed trade's costs and net P&L were
+  estimates until 12 Sep. The 12 Sep repair moved net P&L from −4,065.73 to
+  −3,495.02 (R10 §10.2).
+* **Evidence:** the M175 commits; R13 §13.5 (the ledger now matches IBKR's
+  commissions for 7 of 8 positions).
+
+### CE-053: A finding said IBKR serves no news; IBKR was never asked
+* **Made:** 21 Aug 2026 (the news finding). **Found:** retracted 4 Sep
+  (`0daf2db`, "it was never asked"). On 10 Sep the outstanding-list audit
+  found item 11 "wrong, and it defamed a correct model".
+* **Severity:** Medium (a wrong finding in the operator's outstanding list
+  for two weeks).
+* **Evidence:** the commit; HANDOFF, 10 Sep audit.
+
+### CE-054: Five symbols added to the universe with no sector, so the sector cap could not apply to them
+* **Made:** 1 Sep 2026 (M161, `d30b919`: 94 → 99 symbols). **Found:** 2 Sep,
+  by the operator, from the screener.
+* **Severity:** Medium. The book was 10 of 10, so no entry could happen, but
+  the first exit would have allowed one sized with no sector cap. HANDOFF
+  records the defect as Claude's ("The defect is mine").
+* **Evidence:** HANDOFF, 2 Sep; M162 (`0961752`).
+
+### CE-055: The 30-day time stop: a third-party example value adopted without checking it against the strategy
+* **Made:** 31 Jul 2026 (`8ca3488`), from a pasted review's "e.g., 30".
+  **Found:** 7 Aug, by Claude ("never derived from swing", AE-17). Confirmed
+  as drift on 14 Sep: the operator's specification sets the test condition
+  at 10 working days (R8 §8.5 Q2).
+* **Severity:** Medium. It governs the main way slots free up (R7 #20).
+  Resolves the "To establish" item below.
+
+### CE-056: Regime metadata is never carried on a restored lot, so the ledger has none
+* **Made:** 1 Aug 2026 (`f22e870`). **Found:** by investigator 4 on 12 Sep
+  and confirmed on the ledger on 14 Sep: 12 of 12 rows blank (R5 §5.3 #16).
+* **Severity:** Medium (evidence). Regime analysis of results is impossible.
+  Resolves the "To establish" item below. Not fixed (frozen).
+
+### CE-057: `session_check`'s footer names the position count as the entry gate; on 11–12 Sep it was the aggregate cap
+* **Made:** the footer's rewrite (recorded in the script itself). **Found:**
+  14 Sep (R16 §16.1: the aggregate cap read 7.48% only because JHX counted at
+  its whole value).
+* **Severity:** Low. A message the operator reads at every session start. Not
+  fixed (frozen). Resolves the "To establish" item below.
+
+### CE-058: Tests that could not fail were counted as evidence
+* **Made / found:** 4 Sep 2026 (four tests "proved nothing until sabotaged");
+  8 Sep (two sabotages escaped of 24); 9 Sep (seven vacuous or non-landing
+  tests in one day).
+* **Severity:** Medium. A passing suite was offered as proof of behaviour it
+  could not detect. The audit's recurring finding is defects beside passing
+  tests (R23).
+* **Evidence:** Claude's own records of each (HANDOFF, those days); the
+  memory rule "Guards can narrow silently".
+
+### CE-059: A pipe hid a build failure, again
+* **Made / found:** 4 Sep 2026 (HANDOFF, "A PIPE HID A BUILD FAILURE, AGAIN").
+* **Severity:** Low (caught before deploy). It is why the standing rule says
+  never pipe the build or pytest through `tail`.
+
+### CE-060: Two different builds carried one milestone label on 4 Sep
+* **Made:** 4 Sep 2026. The log shows `Build: M165 (cfb87ea, built 12:23:11)`
+  and `Build: M165 (15ffd38, built 13:13:31)`.
+* **Severity:** Low (recorded in the log with the commit, so traceable). It is
+  CE-004's pattern: a label maintained by hand.
+* **Evidence:** the 4 Sep log, 02:27:42Z and 03:17:36Z.
+
+### CE-061: README and the product description left stale since 20 August
+* **Made:** from 20 Aug 2026 (`77fee5a`, last change to both). README still
+  describes synthetic data by default and a US broker set-up, 568 commits
+  and the ASX move later (count to 15 Sep, audit documents included).
+* **Severity:** Low. Both were written by Claude and are claims (CE-018).
+  Resolves the "To establish" item below. Not rewritten (outside the audit).
+
+**From the operator's own corrections in the transcripts.**
+`operator_corrections.py` read 1,411 typed messages (de-duplicated) and
+flagged 69 carrying a correction cue. Most are handover prompts or task
+notices that quote the cue words. The genuine corrections are already logged
+(CE-006/007/008 stale handovers; CE-015/016 the search boundary; CE-030 the
+numbering; CE-052 the costs) or are below.
+
+### CE-062: Told the operator they had clicked "Start session now"; they had not
+* **Made:** 20 Aug 2026 10:25 AEST (transcript `e835407f`): "You clicked a
+  button labelled 'Start session now' before the bell". **Found:** 10:27, by
+  the operator: "That is not correct, I did not click the button". Retracted
+  at 10:29.
+* **Severity:** Medium: a wrong claim to the operator about their own action.
+* **What happened:** a log line recorded the force-start as
+  `operator (dashboard)`, the only string that path passes. A `QPushButton`
+  also fires on Space or Enter when it has focus, and it was the only
+  focusable widget in its panel. So a stray keypress could arm a trading
+  override against a closed market. The claim took the log's word over the
+  operator's.
+* **To avoid:** a log line records which code ran, not who intended it. Never
+  attribute an action to the operator from an attribution string.
+
+### CE-063: The first build flooded the Blotter, with sells for symbols the account did not hold
+* **Made:** the first build (`fa9ba47`, 25 Jul). **Found:** 25 Jul 19:37, by
+  the operator ("an endless list making sell recommendations of shares I
+  don't yet hold"). Fixed 19:54 (`9ec8a37`).
+* **Severity:** Medium. Deploying a strategy produced 75,811 Blotter rows,
+  one order per symbol per tick. The sells had no holding behind them: naked
+  shorts had they been signed. Paper, before autonomy.
+* **Evidence:** the commit (it measured 900 ticks producing 1,051 order
+  records).
+
+### CE-064: The first build invented sectors and showed them as data, and allowed unlimited leverage
+* **Made:** the first build (`fa9ba47`). **Found:** 25 Jul 20:11, by the
+  operator ("many incorrect sectors"). Fixed 20:51 (`52b0e4a`).
+* **Severity:** Medium.
+  - The mock fundamentals source picked a sector at random per symbol
+    (AAPL rendered as "Materials"), and the screener showed it without
+    saying it was synthetic.
+  - The same commit records that "the account could be leveraged without
+    limit". The operator had required no borrowing after the reference app's
+    margin loan (R4 §4.2), and the first build did not carry it (CE-027's
+    family).
+* **Evidence:** the commit.
+
+### CE-065: `.gitignore` kept the whole market-data layer out of git
+* **Made:** the first build's `data/` ignore rule, unanchored, so it also
+  matched `src/qat/data/`. **Found:** 26 Jul 2026; fixed 21:42 (`754e40d`).
+* **Severity:** Medium. Four modules the app imports at start-up (`bars.py`,
+  `history.py`, `instruments.py`, `yfinance_source.py`) and their tests had
+  never been committed. A fresh clone could not start, and CI could not have
+  caught it. "The working tree looked clean the whole time."
+* **Evidence:** the commit.
+
+### CE-066: The ledger's exit matching dropped real shares twice, and its warning explained the shortfall away
+* **Made:** the lot-matching and missed-exit replay paths (R13 §13.2:
+  `signal_bridge.py:497-504` against `oms.py:2116-2121`). **Found:** TNE's on
+  15 Sep, by the audit (R13; CE-034). SEK's on 9 Sep, and repaired that
+  evening.
+* **Severity:** High (records). Two exits:
+  - **TNE, 3 Sep:** the stop sold 3,051 shares while the app was closed. The
+    ledger booked 60, understating the loss by 6,937.44, and labelled it a
+    "target". Not repaired (frozen; R23 D4).
+  - **SEK, 9 Sep:** one 2,978-share exit became two ledger rows (2,978 and
+    2,027: 5,005 shares). The day's reported net was overstated by about
+    4,200 until the repair at 17:18 (backup `…-repair-20260909-071800`).
+* **The warning that saw it:** both times the app logged the shortfall and
+  gave a benign reason:
+  - `Sell of 3051 TNE.AX exceeded tracked entries by 2991 - unmatched
+    portion ignored (likely an adopted position this session never opened)`
+    (3 Sep 14:51:18);
+  - `Sell of 2978 SEK.AX exceeded tracked entries by 951 - …` (9 Sep
+    14:59:40).
+
+  A rail that measured the right number and drew the wrong conclusion.
+* **Evidence:** the two log lines (read 15 Sep); R13 §13.2, §13.5;
+  transcript `f20567d2`, 9 Sep 16:05–17:18 (the SEK rows and the repair).
+* **To avoid:** a warning that explains a discrepancy away must name the
+  evidence for its explanation, or say it is a guess.
+
+**Not logged as errors, with reasons:**
+* **The MNST split loss** (US era, 11 Aug) was a deliberate observation the
+  operator set up. Its cost was accepted then, and M39 is closed. The one
+  Claude error in it, a prediction of "an artefact, not a loss", was
+  corrected in its own file.
+* **The 1 Sep kill-switch trips on shutdown** were correct trips. The Gateway
+  was closed before the app, and the operating rule "close the app first"
+  came from them.
+* **The de-lever sweep off by default** is a default with no recorded
+  decision (R7 #36, class G), not an error.
+
+---
+
 ## To establish (suspected, evidence not yet read)
 
 These go into the log only once the audit has read their evidence.
@@ -940,15 +1313,21 @@ These go into the log only once the audit has read their evidence.
 * `regime_at_entry`, `regime_probability` and `exposure_scalar` are blank on
   all 12 closed trades. Cause unknown; possibly a defect in how restored lots
   carry regime data.
+  *Resolved 15 Sep (back-fill): logged as CE-056.*
 * `scripts/session_check.ps1`'s footer names the position count as the entry
   gate. On 11–12 September the aggregate cap was binding.
+  *Resolved 15 Sep (back-fill): logged as CE-057.*
 * `README.md` (M111) and `docs/PRODUCT_DESCRIPTION.md` (M37) left to go stale.
+  *Resolved 15 Sep (back-fill): logged as CE-061.*
 * 26 August: "the 88% that never reached the ledger" (HANDOFF heading). The
   absorb path.
+  *Resolved 15 Sep (back-fill): logged as CE-040.*
 * 24 August: manual remediation sells absorbed as seven impossible closed
   trades (HANDOFF, same day).
+  *Resolved 15 Sep (back-fill): logged as CE-039.*
 * 9 September: four kill-switch trips from two causes and three deploys in one
   live session (HANDOFF).
+  *Resolved 15 Sep (back-fill): logged as CE-048 (with CE-017).*
 * 26 July: `ab1ba97` added an auto-trade mode that the founding spec (paper
   §20.A) says must not exist. Whether that was an error depends on who
   authorised it. That is an audit question, not yet an error.
@@ -964,6 +1343,8 @@ These go into the log only once the audit has read their evidence.
 * The de-lever sweep ships off by default (`ab1ba97`, "off by default because
   it sells"). No operator decision on the default is recorded (report §7
   item 36).
+  *Resolved 15 Sep (back-fill): not an error. It is a default with no recorded
+  decision (R7 #36, class G), carried to the anomalies register.*
 * The 30-day time stop was taken from a third-party review's example value
   and never checked against swing's intended cycle (Claude's own finding,
   7 Aug, register AE-17). The operator has since kept it, so this may be
@@ -974,3 +1355,7 @@ These go into the log only once the audit has read their evidence.
   Still to establish whether this counts as an error (third-party value
   adopted without checking it against the specification) or a decision; the
   evidence leans to error.*
+  *Resolved 15 Sep (back-fill): logged as CE-055.*
+
+**Status after the back-fill (15 Sep):** every item above is resolved. The
+error log runs CE-001 to CE-066.

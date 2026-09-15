@@ -270,6 +270,10 @@ did not set the quantity sent (derived).
   snapshot's copies of the seven files have the same sizes. `risk_decisions.csv`
   has rows inside the hole (TNE, above). R9 and R10 counted from the log from 19 Aug; **their counts for
   24 Aug morning may be short**, to be checked in R13.
+  *Later notes, 15 Sep:*
+  - R13 §13.6 checked the counts: none is short.
+  - The hole's cause is recorded in commit `ab5175d`: Claude's session
+    watcher held the log open and rotation failed silently (CE-037).
 * **Error log:** the confounded ablation reading and the false comment are
   recorded as CE-032.
 

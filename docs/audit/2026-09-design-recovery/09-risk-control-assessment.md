@@ -121,6 +121,21 @@ was signed but staged by TWS and never sent (CE-005).
 | Weekly entry budget | 0 refusals logged | — |
 | Time stop (30 trading days) | 0 fired | The oldest open positions (opened 25 Aug) had about 14 weekdays at the last trading session, 11 Sep |
 
+> ⚠️ **Correction, 15 Sep (back-fill; CE-043).** "Sector 30%: never acted" is
+> true of the records, and the records cannot show what they missed. **The
+> sector rail was not wired until 16:21 on 25 Aug** (`7ba68ab`, item 44).
+> Nine entries went in that day before it was: LOV 10:27 to ANZ 13:34. Six of
+> them are Financials in QAT's own map (`sectors.py`): BOQ, ASX, SUN, IAG,
+> PNI, ANZ.
+> * By IBKR's cost basis their total was **350,842.09, 34.95% of equity**
+>   (the 1,003,838 recorded on ANZ's decision), **over the 30% cap**.
+> * **Derived:** had the rail been wired, PNI (which took Financials from
+>   27.3% to 32.6%) would have been trimmed to the headroom, about half its
+>   2,973 shares, and ANZ would have been refused. PNI closed on 31 Aug for
+>   −7,074.12 realised (IBKR statement).
+> * The "6.6%" above was measured from the governor's recorded inputs, which
+>   on 25 Aug had no sector to measure.
+
 ### The autonomy gate
 
 | Gate outcome | Log lines | Orders | Symbols | Days |

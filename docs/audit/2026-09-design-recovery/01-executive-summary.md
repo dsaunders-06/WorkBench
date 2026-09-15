@@ -88,7 +88,7 @@ Q1–Q2, R8 §8.5):
 
 ## What is not known
 
-21 unknowns remain (R21):
+18 unknowns remain open (R21; 3 more were settled in the history back-fill):
 * 4 are the operator's to decide;
 * 5 need a broker read or runtime observation. The most pressing is why
   JHX's resting stop did not fill below its trigger on 11 Sep.

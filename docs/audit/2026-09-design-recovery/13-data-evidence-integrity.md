@@ -169,6 +169,15 @@ stamps mix UTC and local time, so the files' modified times give the order).
 | 10 Sep 14:52 | Entry prices restored to full precision (stored at 4 decimals) | `repair_entry_price_precision.py` | **operator-directed**: "apply the rebuild, build the detection, and use the P&L precision that is most accurate" | `…-precision` |
 | 12 Sep 10:52 | Entry prices moved to the true fill and costs to IBKR's commission, on all 12 rows (M175); net −16,087.64 stored before, −3,495.02 after (the older sum had one blank row) | `repair_fill_basis.py` | **operator-approved** step by step ("do in the order suggested", "yes", "yes") | `…-fill-basis-*` |
 
+> **Later note, 15 Sep (back-fill).** The three gaps in the Authority and
+> By columns are now traced (§13.7):
+> * 27 Aug: the row was realigned by Claude's `repair_collapsed_row.py`,
+>   after "do it now";
+> * LOV and SEK were each approved by a specific operator message.
+>
+> Every one of the seven repairs now has a traced authority. SEK's double
+> record came from the same defect as TNE's shortfall (CE-066).
+
 The open records (`open_position_entries.json`) have their own six backups.
 Their prices were IBKR's commission-inclusive average cost until 12 Sep. The
 fill-basis repair stamped `price_source: fill` only where the log held the fill
@@ -204,13 +213,39 @@ All nine now equal the broker's fill.
   launch, its regime label (R12 §12.6) and any kill-switch or reconciliation
   line. Why the log has the hole is NOT DETERMINED.
 
+  > ⚠️ **Correction, 15 Sep (back-fill; CE-037, CE-038): the cause IS
+  > recorded.** Commit `ab5175d` (M137, 24 Aug 11:03) states that the log
+  > "froze at 5,242,781 bytes … at 10:06:27 and stayed frozen across a full
+  > application restart":
+  > * `watch_session.py`, Claude's session watcher, held the file open;
+  > * the handler's rotation rename failed (WinError 32), and every record
+  >   after it was silently dropped.
+  >
+  > `qat.log.6` is exactly 5,242,781 bytes and ends at 10:06:27, which
+  > corroborates the commit independently. The fixed build's first line is
+  > 11:12:37. The audit should have searched the history for that date before
+  > writing NOT DETERMINED.
+
 ## 13.7 NOT DETERMINED
 
 * Which of TNE's executions on 3 Sep was 60 shares (the app was not running;
   the statement aggregates the order).
 * Why DXS's unwind sales never reached the app's absorption (no app line after
   14:07:51 on 24 Aug).
-* Who or what realigned the LOV repair row on 27 Aug.
-* Which chat message authorised the LOV repair (26 Aug) and the SEK repair
-  (9 Sep) specifically.
-* Why the retained log has no lines from 10:06:27 to 11:12:37 on 24 Aug.
+* ~~Who or what realigned the LOV repair row on 27 Aug.~~ **Settled 15 Sep:**
+  Claude's scratch script `repair_collapsed_row.py` ("un-collapse the one
+  ledger row whose last two columns were written as a list"), run after the
+  operator's "do it now" (27 Aug 17:07; transcript `58424b93`).
+* ~~Which chat message authorised the LOV repair (26 Aug) and the SEK repair
+  (9 Sep) specifically.~~ **Settled 15 Sep:**
+  - **LOV:** the operator chose option "1" (15:09:09), "Install M147 and run
+    the repair in the same stop/start window". The repair ran at 15:09:36
+    (transcript `5cbbd672`).
+  - **SEK:** Claude wrote "Close the app and I'll start on the ledger repair"
+    (16:05:51). The operator replied "App is closed" (17:15:59), and the
+    repair ran at 17:17:58 (transcript `f20567d2`).
+
+  Both are **operator-approved**. §13.5's "not matched message to repair" is
+  superseded.
+* ~~Why the retained log has no lines from 10:06:27 to 11:12:37 on 24 Aug.~~
+  **Settled 15 Sep:** a monitoring script blocked rotation (CE-037; §13.6).
