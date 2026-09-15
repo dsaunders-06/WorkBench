@@ -416,7 +416,7 @@ In force throughout. R1 is to answer §22's question directly.
 | Addition | Status |
 |---|---|
 | Authority column on the drift map | ✅ in R7 |
-| Claude error log | 🔶 CE-001 to CE-034 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
+| Claude error log | 🔶 CE-001 to CE-035 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
 | Checkpoint A (operator reviews R4 and R5) | ✅ 14 Sep |
 | Checkpoint B (operator reviews the full draft) | ⬜ |
 | Evidence snapshots at each session end | ✅ 12 Sep and 14 Sep so far |

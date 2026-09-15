@@ -129,7 +129,7 @@ draft are done. **Stage 5 is next.**
 * Four verbatim investigator reports: `.../stage3/`
 * The authority register (who decided what, from the transcripts):
   `.../stage4/authority-evidence.md`
-* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-034** (was CE-031 here until 15 Sep morning)
+* Error log: `docs/CLAUDE_ERROR_LOG.md`, **CE-001 to CE-035** (was CE-031 here until 15 Sep morning)
 * ▶ **Progress tracker (the ONLY status record since 14 Sep 14:45):**
   `docs/audit/2026-09-design-recovery/00-progress-tracker.md`
 
@@ -6695,7 +6695,7 @@ Paper account throughout - no real money.
      boundary, §9), 12 (regime, §10), 13 (data and evidence integrity,
      §11), 14 (failure -> control, §14), 16 (control interactions, §13);
      plus stage3\ and stage4\authority-evidence.md
-  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-034)
+  4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-035)
 The operator's brief itself is in transcript ede4fc1d line 739
 (2026-09-12T07:49:32Z); stage4\tools\find_brief.py extracts it.
 No features, refactors, trading-logic / risk-parameter / threshold /

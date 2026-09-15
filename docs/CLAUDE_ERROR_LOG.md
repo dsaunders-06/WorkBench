@@ -881,6 +881,32 @@ transcripts cover every day from 24 July. See CE-020.)*
   3 Sep 14:51:18 ("Sell of 3051 TNE.AX exceeded tracked entries by 2991");
   transcript `f2d132cc`, 24 Aug 15:26 ("SELL STP 3,051 @ 30.69").
 
+### CE-035: Answered "Continue" with "No response requested", then misstated where the work stood
+* **Made:** 15 Sep 2026 09:21:12, in session `a7821bbf`, a resumed copy of
+  `9b9d429c` opened while the original was still working. **Found:** 11:28,
+  when the operator asked "Are you still progressing this?".
+* **Severity:** Low. No work was lost or duplicated: the original session
+  finished §11 and committed it at 09:38–09:40 (`54572b7`, `5bccb6e`,
+  `75f376b`; CI green). But the operator saw the work apparently stop for two
+  hours.
+* **What happened:**
+  - To the operator's "Continue from where you left off" the resumed session
+    replied "No response requested" and did nothing.
+  - At 11:28 it first told the operator it had stalled mid-§11 and would carry
+    on with §11. §11 was already drafted and pushed. It found the three commits
+    by checking `git log` before acting, and corrected itself in the same
+    reply.
+  - Two sessions were live on the repository at once, from 09:21 until the
+    original's last write at 09:48.
+* **Root cause:** the resumed session's context ended before the original's
+  later work, and it answered from that context without checking the
+  repository.
+* **To avoid:** on any resume, read `git log` and the tracker before saying
+  where the work stands. Never answer a request to continue with no action.
+  Keep one session per repository at a time.
+* **Evidence:** transcript `a7821bbf` (09:21:12, 11:28); `git log` of
+  15 Sep 09:38–09:40; transcript `9b9d429c` last written 09:48.
+
 ---
 
 ## To establish (suspected, evidence not yet read)
