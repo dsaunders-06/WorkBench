@@ -1,4 +1,4 @@
-# QAT Design Recovery & Design Intent Audit, report section 7: Design Drift Map
+# QAT Design Recovery & Design Intent Audit, R7: Design Drift Map
 
 > **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
 

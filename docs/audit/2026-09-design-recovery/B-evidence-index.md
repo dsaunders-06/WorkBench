@@ -12,13 +12,19 @@ command, and the file its output was archived to.
 repository.
 
 **How it was made:** `tools/reproduce_evidence.ps1` re-ran every repeatable
-audit tool against the records as they stand on 15 Sep, at git HEAD
-`7851d64`. Every tool exited 0. The time of the run is in `RUN.txt`.
+audit tool against the records as they stand on 15 Sep, at 14:04 AEST, at
+git HEAD `7feb11e` (the commit holding the final tools). Every tool exited 0.
 
-A first run at 13:50 gave all four log tools one start date, 19 Aug. Two
-of them had been run from other dates when their sections were drafted, so
-that run is kept, renamed `2026-09-15-final-run1-superseded`, and the pack
-was run again with each tool's original dates (B.3). The pack holds:
+**Three earlier runs were superseded**, and are kept in
+`2026-09-15-final-superseded\` (CE-067):
+* `run1-1350`: all four log tools given one start date, 19 Aug. Two had been
+  run from other dates when their sections were drafted;
+* `run2-1356`: the transcript tools still counted Claude's own compaction
+  summaries as the operator's messages, and `ledger_versions.py` printed
+  its rows in an order that changes from run to run (same content);
+* `run3-1401`: the tools fixed, but not yet committed.
+
+The pack holds:
 * `tool-outputs\`: one file per tool run (B.3);
 * `MANIFEST.csv`: the sha256 of every tool output;
 * `SOURCES.csv`: the sha256, size and modified time of every source file
@@ -47,8 +53,9 @@ modified after 12 Sep 11:19). Checked against the re-run outputs:
 * the drift items by period, 39 / 8 / 4 / 8 (Part I).
 
 **Two outputs that change with time, by design:**
-* `bf_fix_commits` scans every commit, so it counts the audit's own later
-  commits: 985 at `7851d64`, against 951 up to the deployed build (R2 §2.1).
+* `bf_fix_commits` and `chronology` count every commit, so they include the
+  audit's own later commits: 986 at `7feb11e`, against 951 up to the
+  deployed build (R2 §2.1).
 * `stage4_operator_messages` and `stage4_ask_answers` read every transcript,
   including this audit's own sessions. Their counts grow as the audit
   continues. The authority register (`stage4/authority-evidence.md`) cites
@@ -85,7 +92,7 @@ each section was made survives Claude Code's clean-up.
 | `2026-09-15-s12-s16` | 3 | `9b9d429c`, `a7821bbf` (R15, R20) |
 | `2026-09-15-report-drafted` | 2 | `a7821bbf` (R1–R24 first drafted) |
 | `2026-09-15-final` | 25 | this pack (B.1) |
-| `2026-09-15-final-run1-superseded` | 25 | the first run of the pack (B.1), kept |
+| `2026-09-15-final-superseded` | 75 | the three superseded runs of the pack (B.1), kept |
 
 Each count includes the folder's manifest. The QAT records themselves are
 not copied: they are unchanged since 12 Sep, and their hashes are in B.4.
@@ -129,17 +136,17 @@ The sha256 of each output, from `MANIFEST.csv`:
 |---|---|---|
 | `tool-outputs/bf_doc_incidents.txt` | 29,399 | `07BB386318F6A56CE6C918F621EFA50910A9C180EE954DF870C600716A7C08FC` |
 | `tool-outputs/bf_error_log_table.txt` | 9,020 | `28ACF75AC148C11D40D095FB4D8A14A93C41ACE22290E48EA68526B9F385BFF9` |
-| `tool-outputs/bf_fix_commits.csv` | 94,865 | `28DDFFD30734FC0C87C7308891846A9E4A5E3732F10F7E345263B48C5DDA54A6` |
-| `tool-outputs/bf_fix_commits.txt` | 556 | `A0DD73D29859AAD3F82948FF566A541F776FAB1FD5AA4F6129C4D40E72326F11` |
+| `tool-outputs/bf_fix_commits.csv` | 95,027 | `2678B8E3E3420D9E08B58D2CD4FC0C7F0C19C9AFAA8B94B8EDE54B93ABC6FFDD` |
+| `tool-outputs/bf_fix_commits.txt` | 556 | `CBA95783C91504289A44BFCAD107C73A0D3972129B5F5D4118C6E1D0D9166D5F` |
 | `tool-outputs/bf_operator_corrections.txt` | 23,506 | `F90D5AE8382D502764FD61B51B0494C77A2653464E165AE5ED1F6DDBE53CB646` |
-| `tool-outputs/chronology.txt` | 14,133 | `7465D49D37578092167894FDF35D0CE1C3DE43F2E921BBD656E5BAAFA5B45749` |
+| `tool-outputs/chronology.txt` | 14,133 | `0C310A5D3679072DEC7CCB5DF15B3D04764A5A5C4EA8FAB73B6AD8E6CD6183B4` |
 | `tool-outputs/s07_gate_and_halts.txt` | 9,682 | `356572B67630DAE248484215FD6CE92F766C7C2A46FAE55753110CE10086AF1E` |
 | `tool-outputs/s07_rails_by_day.txt` | 4,419 | `2552266EDECD99AD1AB37AE379F677C7DB19A8F4D9C63BB967C5C32B81C05574` |
 | `tool-outputs/s07_risk_per_trade.txt` | 4,366 | `EBE8B2E2D9BE6D96A3FC0E4EDBEBE6AED99F230C401A9E177FE6EC0970FC2A08` |
 | `tool-outputs/s08_execution_evidence.txt` | 5,224 | `8DE68A98C49D7E6A2CA6A66B2FF94BEF51478DE8A88694B29164FB0E45B0B897` |
 | `tool-outputs/s09_ai_evidence.txt` | 1,732 | `12D8B62D36FE9A1EB5E0BECAF424E1944C21E9D90C96D9201E27F5A14275AD99` |
 | `tool-outputs/s10_regime_evidence.txt` | 17,238 | `0B26D442B9C7C5582B125664B149569048FBB09122C6F0F925AAD5EE30CCF38B` |
-| `tool-outputs/s11_ledger_versions.txt` | 16,357 | `CD1EA20534C00986135E3A759EA75898A036E9837E30BAB81D3FDBA126F1A6F7` |
+| `tool-outputs/s11_ledger_versions.txt` | 16,357 | `F64426C7DD7E20C786547F303C4D08D53DF42080EC6A81485CEB7420C0C9646E` |
 | `tool-outputs/s11_ledger_vs_broker.txt` | 9,396 | `F38BC5160AC60E5B906D28ADD4CA2352860BBBC41E8C2514B07BE09B8DEE99E7` |
 | `tool-outputs/s12_complexity_inventory.txt` | 5,336 | `C6C44B9F1DF210E180FE260F78C79CE91C8411BDFB82D2A079F503887BA0ECF3` |
 | `tool-outputs/s13_aggregate_series.txt` | 3,519 | `EFE66691A4F4C51C6ABA71C212F874691393556D288AFE5D73800BF95736593C` |
@@ -268,7 +275,7 @@ snapshot.
 | `9034806e-5174-49a3-9c91-8829eb82560c.jsonl` | 7,025,010 | 2026-09-08 18:05:04 | `A51AB191098FD5CF5C209897ACB4C5C6A948EF6B370BA6A80BAC5C2B3051CFB1` |
 | `9083b85e-037d-4e69-838e-1ad2c27b333e.jsonl` | 6,186,479 | 2026-09-09 15:49:41 | `A29D2E8B83C4D8CA983A330741C4F843EC904FC4DE7129ACABADD901830E6196` |
 | `9b9d429c-cc46-4151-ad4e-fc280531b9be.jsonl` | 5,029,477 | 2026-09-15 09:48:09 | `1DA7CAF3A720C06A4AAA3767103076FB4C5B033C0049A81130C3697E7787A986` |
-| `a7821bbf-48fe-46b6-94cd-86f417154c98.jsonl` | 8,749,755 | 2026-09-15 14:01:45 | `184F09567FF236D8B24B914C48CAB9946F5FC113B183857E79338C37BF2069A3` |
+| `a7821bbf-48fe-46b6-94cd-86f417154c98.jsonl` | 9,055,483 | 2026-09-15 14:04:46 | `11B9468FFF610EED33FB199F1FB151761151DDA5ED01EDB220B8A4BDB8E04531` |
 | `bf81c3b3-0324-48f8-bebb-0e519796582f.jsonl` | 14,363,103 | 2026-09-09 09:28:18 | `F44F27EA5492A299B89B7C2880967AC34269927294396800DDB49234169FC475` |
 | `cd2ae64a-a788-4041-8aeb-9baffefabcfb.jsonl` | 7,195,600 | 2026-09-08 09:07:38 | `B2EC524B41903D024A949607A6F0F12B783136BE1BF96FEA693F641FDDA79DC1` |
 | `d085983f-7654-4699-bc71-e3b6f2f237f6.jsonl` | 5,726,407 | 2026-09-11 10:02:05 | `A503C33B1D410EA34C4360871E453279F09AA45BAF9AFC87390909EF2D92D0FA` |

@@ -34,7 +34,7 @@ crosswalk at the end is only for reading older documents.
 
 ---
 
-## 1. At a glance (15 September 2026, 12:05 AEST)
+## 1. At a glance (15 September 2026, 14:15 AEST): the audit is finalised
 
 | § | The brief asks for | Report | Status | Next action |
 |---|---|---|---|---|
@@ -57,15 +57,17 @@ crosswalk at the end is only for reading older documents.
 | §16 | simplification candidates | R20 | 🟡 15 Sep | Checkpoint B |
 | §17 | coherence questions A–J | R22 and R1 | 🟡 15 Sep | Checkpoint B |
 | §18 | Green / Amber / Red | R24 | 🟡 15 Sep: **RED** (auditor's classification) | Checkpoint B |
-| §19 | the 24-section report | R1–R24 | 🟡 **all 24 drafted**, 15 Sep | **Checkpoint B** |
+| §19 | the 24-section report | R1–R24 | 🟡 **finalised 15 Sep**: all 24, with Part I (the chronology), Annexes A–C and the compiled `QAT-Design-Recovery-Audit-Final-Report.md` | **Checkpoint B** |
 | §20 | remediation sequence, recommended only | R23 | 🟡 15 Sep | Checkpoint B (decisions D1–D5) |
 | §21, §22 | don't aim for a good result; keep asking the key question | — | in force | — |
 
 **Order of work from here:** ~~§7 and §13~~, ~~§8 and §14~~ (drafted 14 Sep) →
 ~~§9 and §10~~, ~~§11~~, ~~§12 and §16~~, ~~§15~~, ~~§17, §18, §20 and R1,
-R2, R21–R24~~ (drafted 15 Sep) → **Checkpoint B: the operator reviews the
-full draft (R1 first).** Alongside, still to do: the error-log back-fill of
-the history (section 7).
+R2, R21–R24~~ (drafted 15 Sep) → ~~the error-log back-fill~~ (15 Sep,
+CE-037 to CE-066) → ~~finalisation: Part I, Annexes A–C, the evidence pack,
+the compiled report~~ (15 Sep) → **Checkpoint B: the operator reviews the
+final report (R1 first), and the 45 anomalies in Annex A.** No audit work is
+outstanding.
 
 ---
 
@@ -78,7 +80,8 @@ the history (section 7).
 | 14 Sep ~10:19 | **Trading suspended for the audit.** The app is not launched. The config still says `auto`, so a launch would trade | holding |
 | 15 Sep | **A records defect, reported, not fixed (frozen)**: the missed-exit replay sizes a closed position's lot from one partial execution, so an exit that fills in pieces while the app is closed loses shares from the ledger. It cost TNE 2,991 shares on 3 Sep (R13 §13.2). It affects the evidence (P&L, Kelly, promotion), not positions or stops at the broker. It cannot occur while the app is not running | for Checkpoint B |
 | 15 Sep | **Q-R11**: does the 8 Sep architecture's "the LLM operates exclusively as an editor and copywriter" (AE-30) apply to the macro matrix only, or to the AI generally? Checkpoint A and Q1 give the AI the recommendation (R11 §11.5, §11.7) | for Checkpoint B |
-| 15 Sep | **Checkpoint B**: the operator reviews the full draft report. R1 is the summary; R23 lists five decisions (D1 CE-017, D2 which swing to test, D3 the AI's part with Q-R11, D4 the ledger replay defect, D5 the JHX broker read) | **ready**: all 24 sections drafted 15 Sep |
+| 15 Sep | **Checkpoint B**: the operator reviews the full draft report. R1 is the summary; R23 lists five decisions (D1 CE-017, D2 which swing to test, D3 the AI's part with Q-R11, D4 the ledger replay defect, D5 the JHX broker read) | **ready**: the report finalised 15 Sep, compiled as `QAT-Design-Recovery-Audit-Final-Report.md` |
+| 15 Sep | **45 anomalies for review** (Annex A, `A-anomalies-register.md`): 20 open, 12 frozen, 12 closed, 1 held. The three most needing the operator: A01 (JHX), A02 (CE-017), A09 (the `auto` configuration) | for Checkpoint B |
 
 ---
 
@@ -390,7 +393,11 @@ AMBER if the operator decided to test the current rule and to defer the
 AI's part (R24 §24.5).
 
 ### §19 The report → see section 4 below
-**All 24 sections drafted** (15 Sep). R1 answers §22's question directly.
+**All 24 sections finalised** (15 Sep). R1 answers §22's question directly.
+At the operator's request (15 Sep 12:55), the final report adds Part I, the
+analysis in the order of development, and three annexes: A the anomalies,
+B the evidence index, C the error-log back-fill. `tools/compile_report.py`
+compiles them into one file.
 
 ### §20 Remediation sequence → R23 🟡 (drafted 15 Sep)
 **Report:** `23-remediation-sequence.md`. Recommend only. Checkpoint B gates
@@ -426,10 +433,15 @@ In force throughout. R1 is to answer §22's question directly.
 | R18 | Original-Intent Architecture | `18-original-intent-architecture.md` | §15 | 🟡 15 Sep |
 | R19 | Design-Drift Architecture | `19-design-drift-architecture.md` | §15 | 🟡 15 Sep |
 | R20 | Simplification Candidates | `20-simplification-candidates.md` | §16 | 🟡 15 Sep |
-| R21 | Outstanding Unknowns | `21-outstanding-unknowns.md` | §3, §21 | 🟡 15 Sep (U1–U21) |
+| R21 | Outstanding Unknowns | `21-outstanding-unknowns.md` | §3, §21 | 🟡 15 Sep (U1–U21; 18 open after the back-fill settled U10, U13, U14) |
 | R22 | Recommended Freeze State | `22-coherence-and-freeze-state.md` | §17 (A–J; J is the freeze) | 🟡 15 Sep |
 | R23 | Recommended Remediation Sequence | `23-remediation-sequence.md` | §20 | 🟡 15 Sep |
 | R24 | Final Design-Integrity Classification | `24-design-integrity-classification.md` | §18 | 🟡 15 Sep: RED |
+| Part I | How QAT developed, and where it drifted | `P-development-chronology.md` | §22; operator, 15 Sep | 🟡 15 Sep |
+| Annex A | Anomalies register (45) | `A-anomalies-register.md` | operator, 15 Sep | 🟡 15 Sep |
+| Annex B | Evidence index | `B-evidence-index.md`; `tools/reproduce_evidence.ps1` | operator, 15 Sep | ✅ 15 Sep: every tool re-run, every source hashed (`Documents\QAT-audit-evidence\2026-09-15-final\`) |
+| Annex C | Error-log back-fill register | `backfill/00-backfill-register.md` | tracker section 7 | ✅ 15 Sep |
+| — | **The compiled final report** | `QAT-Design-Recovery-Audit-Final-Report.md` (`tools/compile_report.py`) | §19 | 🟡 15 Sep, for Checkpoint B |
 
 ---
 
@@ -470,10 +482,10 @@ In force throughout. R1 is to answer §22's question directly.
 | Addition | Status |
 |---|---|
 | Authority column on the drift map | ✅ in R7 |
-| Claude error log | 🔶 CE-001 to CE-036 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
+| Claude error log | ✅ CE-001 to CE-067. The back-fill of the whole history (fix commits, ROADMAP and HANDOFF incidents, the operator's corrections in the transcripts) was done 15 Sep: CE-037 to CE-066, register `backfill/00-backfill-register.md` (Annex C). CE-067 is the finalisation's own slips |
 | Checkpoint A (operator reviews R4 and R5) | ✅ 14 Sep |
-| Checkpoint B (operator reviews the full draft) | ⬜ |
-| Evidence snapshots at each session end | ✅ 12 Sep and 14 Sep so far |
+| Checkpoint B (operator reviews the full draft) | ⬜ ready |
+| Evidence snapshots at each session end | ✅ 12, 14 and 15 Sep; the final pack `2026-09-15-final` (Annex B) |
 
 ## 8. Retired numbering: the crosswalk
 
@@ -510,3 +522,5 @@ for new work.
 | 15 Sep 2026 ~11:45 | CE-035 logged (a resumed session answered "Continue" with no action, 09:21). §12 → 🟡 (R15: 35 items, the nine questions, ten flags). §16 → 🟡 (R20: 37 rows; INVESTIGATE 14, REMOVE-after-authorisation 3, none a control). **Next: §15.** |
 | 15 Sep 2026 ~11:56 | §15 → 🟡 (R17 as it is, R18 as intended, R19 the drift; mermaid, rendered before commit). **Next: §17** (coherence questions A–J → R22, R1). |
 | 15 Sep 2026 ~12:05 | R18 §18.1 corrected (two unknowns R6 had answered; CE-036). §17 → 🟡 (R22, A–J and the freeze state). §18 → 🟡 (R24: RED). §20 → 🟡 (R23: D1–D5 and Phases 4–7). R21 (21 unknowns), R2 and R1 drafted. **All 24 report sections drafted. Next: Checkpoint B.** |
+| 15 Sep 2026 13:43 | Error-log back-fill committed (`7851d64`): CE-037 to CE-066, register in `backfill/`. R21 U10, U13, U14 settled (18 open). R9 and R10 corrected by note (the unwired sector cap, 34.95% Financials, CE-043; the wrong-signed live reversal, CE-046). R12, R13 corrected by note (the log hole's cause, CE-038). |
+| 15 Sep 2026 ~14:15 | **Finalised**, at the operator's instruction (12:55): Part I (the chronology); Annex A (45 anomalies); Annex B (the evidence pack, re-run at `7feb11e`, three superseded runs kept); Annex C; final banners on R1–R24; R3–R8 retitled to their R numbers; R2 corrected by note (464 files). Two audit tools fixed (compaction summaries counted as the operator's messages; unstable output order). CE-067 logged. Compiled report generated. **Next: Checkpoint B.** |
