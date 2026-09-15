@@ -3,7 +3,7 @@
 **Issued 15 September 2026, for the operator's review at Checkpoint B.**
 
 Compiled from the section files in `docs/audit/2026-09-design-recovery/`
-at commit `36b8ad0` by `tools/compile_report.py`. The section files are
+at commit `b36f51e` by `tools/compile_report.py`. The section files are
 the source; this file is regenerated, never edited.
 
 **Classification (R24): 🔴 RED: DESIGN COMPROMISED.**
@@ -4746,6 +4746,7 @@ each section was made survives Claude Code's clean-up.
 | `2026-09-15-report-drafted` | 2 | `a7821bbf` (R1–R24 first drafted) |
 | `2026-09-15-final` | 25 | this pack (B.1) |
 | `2026-09-15-final-superseded` | 75 | the three superseded runs of the pack (B.1), kept |
+| `2026-09-15-finalised` | 3 | `a7821bbf`, `9b9d429c` at 14:13, after the compiled report was committed (`4a11381`): the record of the finalisation itself |
 
 Each count includes the folder's manifest. The QAT records themselves are
 not copied: they are unchanged since 12 Sep, and their hashes are in B.4.
