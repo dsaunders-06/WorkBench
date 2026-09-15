@@ -1,4 +1,4 @@
-# Handoff — 15 September 2026 (afternoon): DESIGN AUDIT FINALISED (R1–R24, Part I, Annexes A–C, one compiled report; classification RED); CHECKPOINT B next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
+# Handoff — 16 September 2026 (morning; the audit finalised 15 Sep): DESIGN AUDIT FINALISED (R1–R24, Part I, Annexes A–C, one compiled report; classification RED); CHECKPOINT B next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -18,9 +18,11 @@ Everything below was true when written. Assume nothing still is.
 
 ⚠️ **THE ROWS BELOW ARE NOT ALL AS FRESH AS EACH OTHER.** Broker, Kill switch,
 Ledgers, Pushed and Local LLM were re-measured on **14 September 10:20**
-(Monday, before the open; app and Gateway CLOSED), and **again at 22:43 the
-same day with nothing changed**: nothing on 4001/4002/7496/7497, LM Studio on
-1234, `tripped: false`, config `auto`/`swing`, ledger sha256 `688B7091…`,
+(Monday, before the open; app and Gateway CLOSED), **again at 22:43 the
+same day, on 15 September 14:08 and on 16 September 09:18, with nothing
+changed each time**: app not running (last log line 12 Sep 11:19), nothing on
+4001/4002/7496/7497, LM Studio on 1234, `tripped: false`, config
+`auto`/`swing` (`.env` last written 11 Sep 09:56), ledger sha256 `688B7091…`,
 `src/` level with M175. Deployed build, Deploy gap
 and Suite date from **12 September** and have not changed since (no `src/`
 change). Account dates from **11–12 September** (the broker was not reachable
@@ -54,11 +56,11 @@ source.
 | | |
 |---|---|
 | ⛔ Development | **FROZEN since 12 September** for the Design Recovery & Design Intent Audit. No features, refactors, parameter or threshold changes, and no fixes (not even for audit findings) without the operator's explicit authorisation. ⛔ **TRADING SUSPENDED for the course of the audit** (operator, 14 Sep, superseding the 12 Sep "keep running in auto"). The app is not launched; the config still says `auto`, so a launch would trade. See "14 SEPTEMBER: THE DESIGN AUDIT", standing instruction 2 |
-| Audit | ▶ **PROGRESS IS TRACKED ONLY IN `docs/audit/2026-09-design-recovery/00-progress-tracker.md`**, by the brief's numbering (§1–§22, report R1–R24), since 14 Sep 14:45 at the operator's direction. The "Stage" numbers are retired (CE-030). **As of 15 Sep 14:15: the audit is FINALISED** - all 24 sections, Part I (the analysis in the order of development), Annex A (45 anomalies), Annex B (evidence index; the pack in `Documents\QAT-audit-evidence\2026-09-15-final\`), Annex C (the error-log back-fill), compiled as `docs/audit/2026-09-design-recovery/QAT-Design-Recovery-Audit-Final-Report.md`. **Next: Checkpoint B.** *Superseded text follows:* **As of 14 Sep 22:45: §2–§8, §13 and §14 drafted (report R3–R10, R14, R16); next §9 (AI boundary, R11) and §10 (regime, R12).** *Superseded text follows:* **Stages 0–3, Checkpoint A and the Stage 4 draft are complete** (report §6–8 and the authority register `stage4/authority-evidence.md`, 14 Sep). **Three questions await the operator** (§8.4 Q1–Q3). **Stage 5 is next.** Progress table at the top of `docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`; report sections in `docs/audit/2026-09-design-recovery/` |
+| Audit | ▶ **PROGRESS IS TRACKED ONLY IN `docs/audit/2026-09-design-recovery/00-progress-tracker.md`**, by the brief's numbering (§1–§22, report R1–R24), since 14 Sep 14:45 at the operator's direction. The "Stage" numbers are retired (CE-030). **As of 15 Sep 14:15: the audit is FINALISED** - all 24 sections, Part I (the analysis in the order of development), Annex A (45 anomalies), Annex B (evidence index; the pack in `Documents\QAT-audit-evidence\2026-09-15-final\`), Annex C (the error-log back-fill), compiled as `docs/audit/2026-09-design-recovery/QAT-Design-Recovery-Audit-Final-Report.md`. **Next: Checkpoint B.** No audit work is outstanding. The earlier statuses this row carried are in the tracker's change log (section 9) and in git |
 | ⚠️ Open safety defect | **CE-017 (not fixed; operator: "decide later, continue audit").** An exit releases a position's broker stop before the kill-switch check, and while tripped the re-arm cannot transmit. IAG.AX was unprotected for about an hour on 9 September. **If the kill switch trips, check every position has a stop at the broker** |
 | Deployed build | ✅ **M175 (`5e322ca`)** - deployed 12 September 10:51 with `deploy.ps1 -Apply` (sha256 `64F132CE…`, signature Valid, installed hash verified). ✅ **Read back off the log at the 12 September 10:55:08 launch**: `Build: M175 (5e322ca, built 12/09/2026 10:46:46 AEST, packaged)`. Rollback: `C:\QuantAdvisoryTerminal.bak-33d0ef6-20260912-1051` (M174) - ⚠️ but an older build re-inflates the repaired entry records, so a rollback must also restore both `.bak-fill-basis-20260912-105253` files (see 12 SEPTEMBER) |
 | Deploy gap | **None.** PR #2 merged 12 September (`a24faa9`, a merge commit); master fast-forwarded. `5e322ca` on top is a test-only fix. `handoff_state.py` derives this - never hardcode it |
-| Pushed | Everything through this handover is pushed to `origin/master` (15 September, afternoon: the finalised audit; see `gh run list --limit 3`). *Earlier:* pushed 14 September, evening. CI green on every push since `5e322ca`; the three this session were `2d7abd9` (7m19s), `81de44f` (7m42s) and `29925a8` (7m12s). Check CI with `gh run list --limit 3` |
+| Pushed | Everything through this handover is pushed to `origin/master` (16 September, morning). CI green on every push since `5e322ca`; the finalisation's were `4a11381` (7m32s) and `267afa4` (9m24s), 15 Sep. The local branches `absorb-cumulative-quantity` and `m175-fill-basis` are fully merged into master and hold nothing unpushed. Check CI with `gh run list --limit 3` |
 | Suite | **3,677 passed, 26 skipped** at `5e322ca` - the build's own gate, 12 September. ruff, black, mypy src, bandit all clean, run separately. ⚠️ Run the four checks SEPARATELY - `black --check` can exit 0 while printing "1 file would be reformatted". ⚠️ Never pipe `pytest` or `invoke build` through `tail` |
 | Watchlist | ⚠️ **AS AT 2 SEPTEMBER — NOT RE-CHECKED 8 SEPTEMBER.** **99 ASX megacaps + STW.AX = 100 polled** (M161, live). First open on 100 symbols, 2 September: blind window **20m22s** against 95 symbols' 20m40s — the widening cost nothing measurable. ✅ **Sector coverage is complete and now GUARDED** — M162 mapped the five M161 added, and `test_watchlist_symbols_all_have_sectors` fails if a future widening forgets |
 | Entry allow list | **CLEARED** — all 99 enterable |
@@ -113,19 +115,23 @@ its last resting-order scan at 16:58.
 The operator froze development on 12 September for a **Design Recovery &
 Design Intent Audit**. The brief is the operator's own; its rules are
 summarised here. It is quoted in full in the 12 September transcript
-(`ede4fc1d`, 2026-09-12T07:49Z). Stages 0–3, Checkpoint A and the Stage 4
-draft are done. **Stage 5 is next.**
+(`ede4fc1d`, 2026-09-12T07:49Z). **The audit was finalised on 15 September;
+Checkpoint B (the operator's review) is next.**
 
 **Where it lives:**
-* Plan, with a progress table at the top:
+* ▶ **The final report, compiled:**
+  `docs/audit/2026-09-design-recovery/QAT-Design-Recovery-Audit-Final-Report.md`
+  (generated by `.../tools/compile_report.py`; never edit it, re-run it)
+* The section files it is compiled from, in `docs/audit/2026-09-design-recovery/`:
+  - `01-executive-summary.md` (R1) and `P-development-chronology.md` (Part I);
+  - `02-…md` to `24-…md` (R2–R24; `07-design-drift-map.md` has the 59
+    drift items, each with its authority);
+  - `A-anomalies-register.md`, `B-evidence-index.md`,
+    `backfill/00-backfill-register.md` (Annexes A–C)
+* The evidence pack: `Documents\QAT-audit-evidence\2026-09-15-final\`
+  (`.../tools/reproduce_evidence.ps1` re-creates it in a new folder)
+* The plan (its "Stage" numbers are retired):
   `docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`
-* Report sections:
-  - `docs/audit/2026-09-design-recovery/03-current-baseline.md`
-  - `.../04-original-design-intent.md`
-  - `.../05-current-architecture.md`
-  - `.../06-original-vs-current.md`
-  - `.../07-design-drift-map.md` (59 items, each with its authority)
-  - `.../08-strategy-integrity.md`
 * Four verbatim investigator reports: `.../stage3/`
 * The authority register (who decided what, from the transcripts):
   `.../stage4/authority-evidence.md`
@@ -6807,7 +6813,7 @@ audit is now complete in draft: raise it with the operator at Checkpoint B
 ⛔ TRADING SUSPENDED (operator, 14 Sep ~10:19: "Trading will be suspended
 during the course of this audit"). It holds because the app is NOT
 LAUNCHED. The configuration is UNCHANGED and still says execution_mode=auto,
-autonomous_strategies=swing (read 15 Sep 14:10), so A LAUNCH WOULD TRADE. Do
+autonomous_strategies=swing (read 16 Sep 09:18), so A LAUNCH WOULD TRADE. Do
 not launch the app, and do not change the configuration or the kill switch
 to enforce the suspension, unless the operator asks. While suspended nothing
 the app does runs: no exits, no time stops, no reconciliation, no re-arm, no
@@ -6950,26 +6956,27 @@ transcripts, qat-logs, claude.ai export, IBKR statements 24 Aug and
 \2026-09-15-report-drafted\, THE FINAL EVIDENCE PACK \2026-09-15-final\
 (every audit tool re-run at 7feb11e, MANIFEST.csv of the outputs,
 SOURCES.csv hashing every source, RUN.txt), \2026-09-15-final-superseded\
-(three earlier runs, kept; CE-067) and \2026-09-15-finalised\ (this
-session's transcript at the end), each with its own manifest.
+(three earlier runs, kept; CE-067), \2026-09-15-finalised\ (the
+finalising session's transcripts) and \2026-09-16-handover\ (the same
+session after this handover), each with its own manifest.
 cleanupPeriodDays = 365. Do not clear the logs. At session end snapshot any
 changed transcript into a new dated folder with its own manifest. NEVER
 commit the statements or the chat export (personal details); extract
 statement text only into the scratchpad or a temp folder.
 
-THE STATE - measured 15 September (Tuesday) 14:08-14:10:
+THE STATE - measured 16 September (Wednesday) 09:18, unchanged from
+15 September 14:08:
 - App NOT RUNNING (last run 12 Sep 10:55, stood down 10:56; last log line
   12 Sep 11:19). Nothing listening on 4001/4002/7496/7497, so IB Gateway is
-  not serving (a java process, PID 7968, started 08:25, listens on 8080 and
-  427 only - not IBKR). LM Studio up on 1234. Trading SUSPENDED by operator
+  not serving. LM Studio up on 1234. Trading SUSPENDED by operator
   decision - the app is not to be launched.
 - CONFIG unchanged (.env last written 11 Sep 09:56): QAT_EXECUTION_MODE=auto,
   QAT_AUTONOMOUS_STRATEGIES=swing, QAT_DEPLOYED_STRATEGIES=swing.
 - DEPLOYED M175 (5e322ca), unchanged since 12 Sep 10:51; src\ level with it
   (handoff_state.py). Suite last run 15 Sep morning: 3,677 passed / 26
   skipped (3,703 collected), the same as 12 Sep. ruff and black clean over
-  the whole tree at each finalisation commit. 14 and 15 Sep work was docs
-  and read-only audit tools only.
+  the whole tree at each finalisation commit. 14-16 Sep work was docs and
+  read-only audit tools only.
 - KILL SWITCH CLEAR (tripped:false).
 - LEDGER: 12 rows = 8 positions, sha256 688B7091..., net -3,495.02;
   regime_at_entry blank on all 12. No QAT record or log file has changed
@@ -6983,8 +6990,9 @@ THE STATE - measured 15 September (Tuesday) 14:08-14:10:
   position count as the gate (recorded, CE-057; frozen).
 - LOG: qat.log.6 (27 Jul) to qat.log (12 Sep), with the 66-minute hole on
   24 Aug 10:06-11:12 AEST (R13 §13.6; cause CE-037).
-- Git: master level with origin after this handover; check CI with
-  gh run list --limit 3.
+- Git: master level with origin after this handover; nothing unpushed on
+  any branch (absorb-cumulative-quantity and m175-fill-basis are merged).
+  Check CI with gh run list --limit 3.
 - Rollback dirs: NOT MEASURED - they sit at C:\ outside the boundary (ask).
 
 OUTSTANDING LIST - FROZEN with development. Its observation items - 1 (M173

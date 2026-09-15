@@ -25,7 +25,8 @@ request, alongside the Design Recovery & Design Intent Audit.
 verified against its cited evidence. The historical record (25 July onward) has
 not been back-filled. That is a task inside the design audit (audit plan,
 Stage 4/6). *(Later note, 15 Sep: back-filled. See "Back-fill of the
-history", CE-037 to CE-066.)* Transcripts of Claude Code sessions from 5 August to 2 September
+history", CE-037 to CE-066.)* *(Later note, 16 Sep: the log runs CE-001 to
+CE-067; CE-067, under "Finalisation", is the audit's own last session.)* Transcripts of Claude Code sessions from 5 August to 2 September
 no longer exist (30-day retention), so back-fill for that period relies on
 HANDOFF, ROADMAP and commit messages. *(Wrong, corrected 14 Sep: the
 transcripts cover every day from 24 July. See CE-020.)*
@@ -1359,6 +1360,27 @@ carry a cue (CE-067). No entry drew on a summary.*
     recovered from the transcript, not a uniform default.
 * **Evidence:** the pack's `MANIFEST.csv` and both runs
   (`Documents\QAT-audit-evidence\2026-09-15-final*`); this transcript.
+
+*Later note, 16 Sep 09:20 (handover): three more slips from 15 Sep
+14:05–14:14, after this entry was written, and one in the entry itself.*
+* *"Both runs" above is wrong: the pack ran four times. The three superseded
+  runs are in `2026-09-15-final-superseded\` (`run1-1350`, `run2-1356`,
+  `run3-1401`) and the final one is `2026-09-15-final` (Annex B, B.1).*
+* *Reached a pushed document: the compiled report at `4a11381` went out
+  with Annex B not listing the end-of-session transcript snapshot
+  (`2026-09-15-finalised`). Added at `b36f51e` and recompiled at `267afa4`,
+  about a minute later.*
+* *Caught before commit: the compiler's first run stamped the report
+  "compiled at `7feb11e`" while section files had uncommitted edits (Annex B,
+  then R3–R8's titles as well).
+  `compile_report.py` now appends "plus uncommitted changes to the sections"
+  when that is so. The sections were committed first (`36b8ad0`), and the
+  report was compiled from that commit.*
+* *No content change: the one-off script that replaced HANDOFF's resume
+  prompt wrote it with Python's text mode, so the file on disk became CRLF.
+  Git normalises line endings (`core.autocrlf=true`), so the committed text
+  is unchanged. `compile_report.py` now writes LF explicitly. To avoid: pass
+  `newline="\n"` in any Windows edit script.*
 
 ---
 

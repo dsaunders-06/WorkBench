@@ -34,7 +34,7 @@ crosswalk at the end is only for reading older documents.
 
 ---
 
-## 1. At a glance (15 September 2026, 14:15 AEST): the audit is finalised
+## 1. At a glance (15 September 2026, 14:15 AEST; state re-checked 16 Sep 09:18): the audit is finalised
 
 | § | The brief asks for | Report | Status | Next action |
 |---|---|---|---|---|
@@ -524,3 +524,5 @@ for new work.
 | 15 Sep 2026 ~12:05 | R18 §18.1 corrected (two unknowns R6 had answered; CE-036). §17 → 🟡 (R22, A–J and the freeze state). §18 → 🟡 (R24: RED). §20 → 🟡 (R23: D1–D5 and Phases 4–7). R21 (21 unknowns), R2 and R1 drafted. **All 24 report sections drafted. Next: Checkpoint B.** |
 | 15 Sep 2026 13:43 | Error-log back-fill committed (`7851d64`): CE-037 to CE-066, register in `backfill/`. R21 U10, U13, U14 settled (18 open). R9 and R10 corrected by note (the unwired sector cap, 34.95% Financials, CE-043; the wrong-signed live reversal, CE-046). R12, R13 corrected by note (the log hole's cause, CE-038). |
 | 15 Sep 2026 ~14:15 | **Finalised**, at the operator's instruction (12:55): Part I (the chronology); Annex A (45 anomalies); Annex B (the evidence pack, re-run at `7feb11e`, three superseded runs kept); Annex C; final banners on R1–R24; R3–R8 retitled to their R numbers; R2 corrected by note (464 files). Two audit tools fixed (compaction summaries counted as the operator's messages; unstable output order). CE-067 logged. Compiled report generated. **Next: Checkpoint B.** |
+| 15 Sep 2026 ~14:25 | Committed and pushed: `36b8ad0` (the pack at `7feb11e`, tracker, handover, compiler), `4a11381` (the compiled report), `b36f51e` (Annex B lists the end-of-session snapshot), `267afa4` (recompiled), with `7feb11e`, in two pushes. CI green on both (`4a11381` 7m32s, `267afa4` 9m24s). Transcripts snapshot `Documents\QAT-audit-evidence\2026-09-15-finalised\`. |
+| 16 Sep 2026 09:20 | Handover refreshed. State re-measured 09:18, unchanged since 12 Sep: app not running, nothing on the IBKR ports, kill switch clear, config `auto`/`swing`, ledger `688B7091…`, `src/` level with M175. Nothing unpushed; the two local branches are merged. CE-067 given a later note (four runs, not two; three late slips). **Next: Checkpoint B.** |
