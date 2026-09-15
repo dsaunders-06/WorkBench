@@ -1,4 +1,4 @@
-# Handoff — 15 September 2026 (morning): DESIGN AUDIT brief §2–§11, §13, §14 drafted; §12 and §16 next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
+# Handoff — 15 September 2026 (late morning): DESIGN AUDIT brief §2–§14, §16 drafted; §15 next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -405,6 +405,24 @@ the tracker)**
   the app on the operator's "yes, flatten them".
 * **"The TNE remnant" was a wrong label (CE-034).** R14 and R16 are corrected
   by note; R16's Kelly lock holds, by a wider margin.
+
+**Brief §12, §16 (15 Sep late morning; report R15, R20)**
+
+* **Size and reach:** 184 modules, 51,473 physical lines; the app never
+  imports 18 of them (3,827 lines), mostly the research harness and
+  pre-flight. All 110 settings have a reader.
+* **Prose is 37% of the code**; `version.py` is 96% comments. Five comments
+  or prompt strings found false so far.
+* **The costly complexity is live and came from fixes**: halt on an unknown
+  IBKR code, booking at transmission and its repairs, the two leg-cancel paths
+  (CE-017). The cash cap set 18 of 20 entry sizes.
+* **R20: 37 rows.** INVESTIGATE 14; REMOVE only after authorisation 3, none
+  of them a control (the unused storage layer, the unused feature
+  computation, `version.py`'s comment history). No safety control is
+  recommended for removal.
+* **CE-035:** at 09:21 a resumed copy of the session answered "Continue" with
+  no action while the original finished §11. On a resume, read `git log` and
+  the tracker first; one session per repository.
 
 ### Next steps (the plan's progress table has the detail)
 
@@ -6688,12 +6706,14 @@ Paper account throughout - no real money.
      (CE-030). Report and update against the brief's numbers only; the
      tracker's crosswalk is only for reading older documents.
   2. docs\HANDOFF.md section "14 SEPTEMBER: THE DESIGN AUDIT" (standing
-     instructions, baseline, findings - including the 15 Sep §9/§10 block)
+     instructions, baseline, findings - including the 15 Sep blocks for
+     §9/§10, §11 and §12/§16)
   3. the drafted report sections in docs\audit\2026-09-design-recovery\:
      03-08 (baseline, intent, current system, drift map, strategy),
      09 (risk controls, §7), 10 (execution boundary, §8), 11 (AI/LLM
      boundary, §9), 12 (regime, §10), 13 (data and evidence integrity,
-     §11), 14 (failure -> control, §14), 16 (control interactions, §13);
+     §11), 14 (failure -> control, §14), 15 (accidental complexity, §12),
+     16 (control interactions, §13), 20 (simplification candidates, §16);
      plus stage3\ and stage4\authority-evidence.md
   4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-035)
 The operator's brief itself is in transcript ede4fc1d line 739
@@ -6703,11 +6723,12 @@ execution changes, and NO FIXES (including for audit findings) without the
 operator's explicit authorisation. The audit is an investigation, not a
 coding task. Report first; change only after review and authorisation.
 
-NEXT: brief §12 and §16 (accidental complexity -> R15; simplification
-candidates -> R20). The brief's nine questions per complexity item and its
-six recommendations per candidate; candidates start from R7's D and F items
-and R14's "secondary complexity" column. Nothing is changed - the audit
-recommends only. Then §15, §17, §18, §20 and R1, R2, R21-R24, then
+NEXT: brief §15 (three architecture diagrams -> R17 QAT as it is, R18 QAT
+as originally intended, R19 the drift between them). R17 starts from R5
+§5.1; R18 may show only components the evidence supports (R4, Checkpoint A);
+R19 from R7. Artifacts render mermaid natively; R16 §16.4 already uses it.
+Then §17 (coherence questions A-J -> R22, R1), §18 (Green/Amber/Red -> R24),
+§20 (remediation sequence, recommended only -> R23) and R1, R2, R21, then
 Checkpoint B (the operator reviews the full draft). The error-log
 back-fill of the history (fix commits, ROADMAP and HANDOFF incidents,
 transcripts from 24 Jul) is still to do alongside. With trading suspended,
@@ -6715,7 +6736,7 @@ everything works from the records up to 12 September.
 Method that has worked (14 and 15 Sep): a small read-only tool per
 question, kept in the section's folder (s07-s13-risk-and-interactions\tools\,
 s08-s14-execution-and-incidents\tools\, s09-s10-ai-and-regime\tools\,
-s11-evidence-integrity\tools\), lint-clean; every figure written with its
+s11-evidence-integrity\tools\, s12-s16-complexity\tools\), lint-clean; every figure written with its
 tool output open beside it. The IBKR statement's text is extracted with
 `pdftotext -raw` into the SCRATCHPAD only (ledger_vs_broker.py reads it
 there); never commit the statement or its text.
@@ -6836,6 +6857,14 @@ WHAT THE AUDIT HAS FOUND SO FAR (drafts, for Checkpoint B):
   the app). Seven repairs rewrote the ledger, each with a backup. The 24 Aug
   log hole does not shorten R9 or R10. "The TNE remnant" was a wrong label
   (CE-034; R14, R16 corrected by note).
+- §12 (R15): 35 complexity items with the brief's nine questions, ten
+  flagged unclear. The app never imports 18 of 184 modules (3,827 of 51,473
+  lines); prose is 37% of the code; the costly complexity is live and came
+  from fixes (halt on unknown code, booking at transmission, two leg-cancel
+  paths); the cash cap set 18 of 20 entry sizes.
+- §16 (R20): 37 rows - KEEP 8, KEEP/MONITOR 7, INVESTIGATE 14, CONSOLIDATE 5,
+  REMOVE only after authorisation 3 (none a control). Retired US-era broker
+  code left out (operator, 28/31 Aug); closed items not re-opened.
 
 ⚠️ OPEN SAFETY DEFECT CE-017 (NOT FIXED - the operator chose "decide later,
 continue audit", 14 Sep): an exit releases the position's protective legs at
@@ -6887,14 +6916,16 @@ MANIFEST.csv: transcripts, qat-logs, claude.ai export, IBKR statements
 24 Aug and 24 Aug-11 Sep), \2026-09-14\ (morning transcript snapshot),
 \2026-09-14-stage4\ and \2026-09-14-s07-s14\ (the later 14 Sep sessions'
 transcripts), \2026-09-15\ (the 15 Sep session's transcript and the
-14 Sep evening one, which grew after its copy) and \2026-09-15-s11\ (the
-15 Sep session again, after §11), each with its own manifest.
+14 Sep evening one, which grew after its copy), \2026-09-15-s11\ (the
+15 Sep session again, after §11) and \2026-09-15-s12-s16\ (both 15 Sep
+sessions after §12/§16), each with its own manifest.
 cleanupPeriodDays = 365. Do not clear the logs. At session end snapshot any
 changed transcript into a new dated folder with its own manifest. NEVER
 commit the statements or the chat export (personal details); extract
 statement text only into the scratchpad.
 
-THE STATE - measured 15 September (Tuesday) 09:07, re-checked 09:38:
+THE STATE - measured 15 September (Tuesday) 09:07, re-checked 09:38 and
+11:41 (unchanged each time):
 - App NOT RUNNING (last log line 12 Sep 11:19); IB Gateway CLOSED (nothing
   on 4001/4002/7496/7497); LM Studio up on 1234. Trading SUSPENDED by
   operator decision - the app is not to be launched.
@@ -6918,8 +6949,9 @@ THE STATE - measured 15 September (Tuesday) 09:07, re-checked 09:38:
   position count as the gate (recorded; frozen).
 - LOG: qat.log.6 (27 Jul) to qat.log (12 Sep), with the 66-minute hole on
   24 Aug 10:06-11:12 AEST (above).
-- Git: master level with origin after this handover. CI was green on every
-  push of 14 Sep; check the 15 Sep push with gh run list --limit 3.
+- Git: master level with origin after this handover. CI green on every push
+  of 14 and 15 Sep through ce5dec9; check the latest with gh run list
+  --limit 3.
 - Rollback dirs: NOT MEASURED - they sit at C:\ outside the boundary (ask).
 
 OUTSTANDING LIST - FROZEN with development. Its observation items - 1 (M173
@@ -6947,4 +6979,8 @@ launches - and how many lines one of them writes.
 ⚠️ CHECK A RECORD AGAINST THE BROKER BEFORE CHARACTERISING IT (CE-034):
 "the TNE remnant" survived three documents; the statement disproved it in one
 comparison.
+⚠️ ON A RESUME, READ `git log` AND THE TRACKER BEFORE SAYING WHERE THE WORK
+STANDS (CE-035). A resumed copy's context can end before the original's
+last work. Never answer a request to continue with no action. One session per
+repository at a time.
 ⚠️ THE "ORIGINAL DESIGN" WAS PARTLY CLAUDE'S. Ask the operator.
