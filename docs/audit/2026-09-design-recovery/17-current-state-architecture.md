@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R17: Current-State Architecture
 
-**Brief §15, first diagram ("QAT as it is"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §15, first diagram ("QAT as it is"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026, from the drafted sections R5 and R9–R16. It
 represents the deployed build (M175) as it runs, not as it could be: "Do not
 design an ideal future architecture. Represent reality."

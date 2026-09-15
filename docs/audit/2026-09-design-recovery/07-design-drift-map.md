@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, report section 7: Design Drift Map
 
-**Stage 4 of the audit plan. DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §5–§6 (the plan's retired "Stage 4"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 14 September 2026. Read-only: nothing in the system was changed.
 
 ## 7.0 How to read the map

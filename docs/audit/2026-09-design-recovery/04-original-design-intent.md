@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, report section 4: Original Design Intent
 
-**Stage 2 of the audit plan. DRAFT for Checkpoint A** (the operator reviews
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §3 (the plan's retired "Stage 2"). Reviewed at Checkpoint A (14 Sep)** (the operator reviews
 Stages 2 and 3 before any drift is classified).
 **Prepared:** 12 September 2026, evening. Read-only.
 **Sources read, all under the operator's permission (plan Stage 0, item 9):**

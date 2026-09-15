@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R2: Audit Scope
 
-**Brief §19, section 2. DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §19, section 2. Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026. The scope was set by the operator's brief
 (12 Sep, transcript `ede4fc1d`, 07:49Z) and the plan the operator adopted
 with eight amendments (`docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`).
@@ -75,8 +77,9 @@ with eight amendments (`docs/superpowers/plans/2026-09-12-design-recovery-audit-
 
 * **The auditor is the same kind of agent that built QAT and wrote most of
   its documents.** The investigators' independence (2.2) and the
-  claims-to-test rule are the mitigations. The error log records **36 of
-  Claude's errors**, several of them made during the audit itself.
+  claims-to-test rule are the mitigations. The error log records **67 of
+  Claude's errors** after the back-fill of the whole history, 21 of them made
+  during the audit itself.
 * **No broker access.** The broker's positions and resting orders were not
   read (Gateway closed). The JHX stop (R21 U5) is the open consequence.
 * **No runtime observation.** Behaviour that leaves no log line (staleness
@@ -95,3 +98,15 @@ with eight amendments (`docs/superpowers/plans/2026-09-12-design-recovery-audit-
 
 Claude Code's retention was raised to 365 days. The statements and the chat
 export are never committed (personal details).
+
+> **Correction, 15 Sep (finalisation).** The `2026-09-12` snapshot holds
+> **464** files in its manifest, of which 463 matched their sources at copy
+> time; the 464th was the session's own transcript, still growing (the audit
+> plan, amendment 4). "463 files" above miscounts it.
+>
+> **Added at finalisation:** `2026-09-15-report-drafted` (the transcripts
+> when R1–R24 were first drafted) and `2026-09-15-final`, the evidence pack:
+> every audit tool re-run, and every source hashed (Annex B). The commit
+> count in 2.1 is at the deployed build; by the back-fill commit `7851d64`
+> the repository held 985, the 34 after the build being audit documents and
+> handovers.

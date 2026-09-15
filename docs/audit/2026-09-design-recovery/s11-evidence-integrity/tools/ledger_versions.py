@@ -98,11 +98,13 @@ def main(data: Path, symbol: str | None) -> None:
         else:
             before = {key(r): r for r in previous}
             after = {key(r): r for r in rows}
-            for k in before.keys() - after.keys():
+            # Sorted: set order varies from run to run, and the evidence pack
+            # hashes this output (finalisation, 15 Sep).
+            for k in sorted(before.keys() - after.keys()):
                 print(f"   - REMOVED {brief(before[k])}")
-            for k in after.keys() - before.keys():
+            for k in sorted(after.keys() - before.keys()):
                 print(f"   + ADDED   {brief(after[k])}")
-            for k in before.keys() & after.keys():
+            for k in sorted(before.keys() & after.keys()):
                 changed = [
                     f"{f}: {before[k].get(f, '')} -> {after[k].get(f, '')}"
                     for f in sorted(set(before[k]) | set(after[k]))

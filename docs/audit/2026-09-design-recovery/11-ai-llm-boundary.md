@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R11: AI / LLM Boundary Assessment
 
-**Brief §9 ("Audit the AI/LLM boundary"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §9 ("Audit the AI/LLM boundary"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026. Read-only: nothing in the system was changed.
 Trading has been suspended since 14 Sep; this works from the code at the
 deployed build (M175, `src/` level with it) and the records to 12 Sep.

@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R24: Final Design-Integrity Classification
 
-**Brief §18 ("Final classification"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §18 ("Final classification"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026, from R3–R22. The classification is the
 auditor's, for the operator to accept or reject at Checkpoint B.
 

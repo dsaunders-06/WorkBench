@@ -1219,6 +1219,9 @@ flagged 69 carrying a correction cue. Most are handover prompts or task
 notices that quote the cue words. The genuine corrections are already logged
 (CE-006/007/008 stale handovers; CE-015/016 the search boundary; CE-030 the
 numbering; CE-052 the costs) or are below.
+*Later note, 15 Sep (finalisation): the counts included seven of Claude's
+own context-compaction summaries. The operator's messages are 1,404, and 62
+carry a cue (CE-067). No entry drew on a summary.*
 
 ### CE-062: Told the operator they had clicked "Start session now"; they had not
 * **Made:** 20 Aug 2026 10:25 AEST (transcript `e835407f`): "You clicked a
@@ -1304,6 +1307,59 @@ numbering; CE-052 the costs) or are below.
 * **The de-lever sweep off by default** is a default with no recorded
   decision (R7 #36, class G), not an error.
 
+## Finalisation (15 September 2026, afternoon)
+
+### CE-067: Slips while finalising the audit, two of them in committed documents
+* **Made:** 15 Sep 2026 AEST, between the handover commit `364494d` (12:06)
+  and 14:10 (transcript `a7821bbf`; the operator's finalise instruction at
+  12:55:39), while back-filling the log, writing the anomalies register, the
+  chronology (Part I) and the evidence pack (Annex B).
+* **Severity:** Low. Two reached committed documents; none changed a finding.
+* **Reached a committed document:**
+  - **The operator-corrections tool counted Claude's words as the
+    operator's.** `operator_corrections.py` (committed `7851d64`) read
+    context-compaction summaries, which the transcripts store as user
+    records, as typed messages: 1,411 and 69 with a cue, where the operator's
+    own are **1,404 and 62**. Found when the evidence pack's re-run rose by
+    one, this session's own summary. The stage 4 dump tool
+    (`operator_messages.py`) had the same gap; none of AE-01 to AE-35 cites
+    one of the nine summaries (checked by time against every entry that
+    cites those transcripts). Both tools fixed; the register and the note
+    above corrected by note.
+  - **R2 §2.5 said the baseline snapshot held 463 files.** Its manifest
+    lists 464; 463 matched their sources at copy time (audit plan,
+    amendment 4). Corrected by note.
+* **Caught before delivery:**
+  - CE-061's commit count written "400+"; counted, 568.
+  - CE-038's time written "about 12:45"; the transcript says 13:00.
+  - Two tracker change-log times from memory; corrected to 11:45 and 12:05.
+  - The anomaly counts 21 open / 11 frozen; recounted, 20 / 12.
+  - R21 §21.7's totals and the register's counts after CE-066 (66 entries,
+    18 High, the US era 5), each recounted from the tool.
+  - Part I overstated three things: period 4's authority (six operator
+    decisions, with #45 AP/OA and #39 U as the exceptions), period 3's
+    incidents (three of the four broker errors caused one; CE-047's effect
+    is not determined), and the reasons for A2M's 11 refusals (market data,
+    size and time-in-force).
+  - Anomaly A17 said "UTC" of an AEST time.
+  - The chronology tool counted every milestone number named in a period,
+    so older ones inflated it; changed to the highest first named.
+  - The evidence pack's first run gave all four log tools one start date.
+    Two had been run from other dates when their sections were drafted
+    (recovered from transcript `0660d19e`). Re-run with the originals; the
+    first run is kept, marked superseded.
+* **Root cause:** CE-031's pattern again: counts and times written before
+  the tool output or the source was open. The tool gap is new: a transcript
+  record typed `user` is not always the user.
+* **To avoid:**
+  - A tool that reads "the operator's words" must exclude every record the
+    operator did not write, and its hits should be sampled for Claude's own
+    text before a count is quoted.
+  - An evidence re-run must use the arguments the section was drafted with,
+    recovered from the transcript, not a uniform default.
+* **Evidence:** the pack's `MANIFEST.csv` and both runs
+  (`Documents\QAT-audit-evidence\2026-09-15-final*`); this transcript.
+
 ---
 
 ## To establish (suspected, evidence not yet read)
@@ -1359,3 +1415,5 @@ These go into the log only once the audit has read their evidence.
 
 **Status after the back-fill (15 Sep):** every item above is resolved. The
 error log runs CE-001 to CE-066.
+*Later note, 15 Sep (finalisation): CE-067 added. The log runs CE-001 to
+CE-067.*

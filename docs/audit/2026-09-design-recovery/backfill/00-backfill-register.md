@@ -16,6 +16,15 @@ Three read-only tools, in `backfill/tools/`:
 | `doc_incidents.py` | HANDOFF, the archived HANDOFF, ROADMAP (Claude's own records) | 73 warning headings and 156 admission lines: every place the writer recorded that something it did was wrong |
 | `operator_corrections.py` | the operator's 1,411 typed messages from 24 Jul (de-duplicated across resumed sessions) | 69 carry a correction cue. About a dozen are genuine corrections; the rest are prompts and notices that quote the words |
 
+> **Correction, 15 Sep (finalisation; CE-067).** The first version of
+> `operator_corrections.py` counted Claude's own context-compaction
+> summaries, which the transcripts store as user records, as operator
+> messages. Seven of them were in the count, and all seven carried a cue.
+> With them excluded, the operator's typed messages are **1,404**, of which
+> **62** carry a correction cue. No entry drew on a summary: the genuine
+> corrections are the operator's own messages (CE-062 to CE-065). The tool
+> is fixed; the evidence pack's output is the corrected one (Annex B).
+
 **What became an entry:** an error that reached the broker, the records, a
 decision, or a document the operator relied on. Each was checked against
 its fix commit and, where it acted live, a log line.
@@ -114,6 +123,11 @@ the mechanism (listed in the tool).
 | 4 Live ASX, 24 Aug–11 Sep | 18 | 3 | 10 | 5 |
 | 5 M175 and the audit, 12–15 Sep | 20 | 1 | 5 | 14 |
 | **Total** | **66** | **18** | **27** | **21** |
+
+> **Later note, 15 Sep (finalisation).** CE-067 was added after this
+> register was generated: the finalisation's own slips, period 5, Low. The
+> log now holds 67 entries, 21 of them in period 5
+> (`bf_error_log_table.txt` in the evidence pack, Annex B).
 
 ## What the register shows
 

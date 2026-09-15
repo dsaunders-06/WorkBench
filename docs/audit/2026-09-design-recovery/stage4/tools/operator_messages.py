@@ -2,6 +2,10 @@
 
 Skips tool results, meta records and system-reminder blocks. Writes one block per
 message: timestamp (UTC), session id, length, text.
+
+Also skips context-compaction summaries (isCompactSummary): Claude's own text,
+stored as a user record. Added at finalisation, 15 Sep; no authority entry
+(AE-01 to AE-35) cites one of the nine.
 """
 
 import glob
@@ -27,7 +31,7 @@ for path in glob.glob(os.path.join(SRC, "*.jsonl")):
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if rec.get("type") != "user" or rec.get("isMeta"):
+            if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isCompactSummary"):
                 continue
             content = rec.get("message", {}).get("content")
             if isinstance(content, list):

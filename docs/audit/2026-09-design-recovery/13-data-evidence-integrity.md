@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R13: Data & Evidence Integrity Assessment
 
-**Brief §11 ("Audit data and evidence integrity"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §11 ("Audit data and evidence integrity"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026. Read-only: **no record was repaired**. The
 brief: "Do not silently repair historical records." Every defect below is
 reported and left as it stands.

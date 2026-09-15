@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, report section 3: Current Baseline
 
-**Stage 1 of the audit plan** (`docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`).
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §2 (the plan's retired "Stage 1")** (`docs/superpowers/plans/2026-09-12-design-recovery-audit-plan.md`).
 **Measured:** Saturday 12 September 2026, 20:10–20:30 AEST. Read-only: nothing
 in the system was changed to take these readings.
 **Boundary:** only the locations the operator approved (plan, Stage 0 item

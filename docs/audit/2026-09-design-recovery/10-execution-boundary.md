@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R10: OMS / Execution / Broker Assessment
 
-**Brief §8 ("Audit the execution / OMS / broker boundary"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §8 ("Audit the execution / OMS / broker boundary"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 14 September 2026. Read-only: nothing in the system was changed.
 **Records:** the log from 19 Aug to 12 Sep (the ASX era), the ledgers, and the
 IBKR statement for 24 Aug–11 Sep. Trading has been suspended since 14 Sep.

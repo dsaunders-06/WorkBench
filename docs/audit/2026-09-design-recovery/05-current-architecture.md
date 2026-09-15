@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, report section 5: Current Architecture
 
-**Stage 3 of the audit plan. DRAFT for Checkpoint A.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §4 (the plan's retired "Stage 3"). Reviewed at Checkpoint A (14 Sep).**
 **Prepared:** 14 September 2026, from four fresh-context investigator reports
 (12 September) and cross-checks against the code and logs.
 **What this section is:** what the code *does*, established from executable

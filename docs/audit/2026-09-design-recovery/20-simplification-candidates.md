@@ -1,7 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R20: Simplification Candidates
 
-**Brief §16 ("Produce a simplification candidate list"). DRAFT for
-Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §16 ("Produce a simplification candidate list"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026. **Nothing is changed.** The brief: "Do not
 actually make the change." Every recommendation is one of the brief's six:
 KEEP; KEEP / MONITOR; INVESTIGATE; CONSOLIDATE — FUTURE WORK; REMOVE — ONLY

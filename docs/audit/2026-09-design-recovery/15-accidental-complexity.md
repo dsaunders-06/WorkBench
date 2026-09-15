@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R15: Accidental Complexity
 
-**Brief §12 ("Identify accidental complexity"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §12 ("Identify accidental complexity"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026. Read-only: nothing in the system was changed
 and nothing is proposed for removal here. The brief: "Flag anything where the
 answer is unclear. Do NOT remove it." Recommendations are in R20.

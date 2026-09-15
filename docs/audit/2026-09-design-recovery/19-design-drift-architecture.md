@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R19: Design-Drift Architecture
 
-**Brief §15, third diagram ("QAT design drift"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §15, third diagram ("QAT design drift"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026. The brief: "Show the significant
 differences between the two" (R18 against R17).
 

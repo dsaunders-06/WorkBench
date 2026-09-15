@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R14: Historical Failure → Control Mapping
 
-**Brief §14 ("Distinguish safety from complexity"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §14 ("Distinguish safety from complexity"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 14 September 2026. Read-only: nothing in the system was changed.
 
 The brief: "Do not equate complexity with bad design. Some complexity is

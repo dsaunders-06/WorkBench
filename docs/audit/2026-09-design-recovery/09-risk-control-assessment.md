@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R9: Risk-Control Assessment
 
-**Brief §7 ("Audit the risk-control stack"). DRAFT for Checkpoint B.**
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Brief §7 ("Audit the risk-control stack"). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 14 September 2026. Read-only: nothing in the system was changed.
 **Records:** everything up to 12 September. Trading has been suspended since
 14 September, so no newer evidence exists.

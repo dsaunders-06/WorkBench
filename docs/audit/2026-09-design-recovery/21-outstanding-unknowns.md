@@ -1,7 +1,9 @@
 # QAT Design Recovery & Design Intent Audit, R21: Outstanding Unknowns
 
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
 **Brief §19, section 21; brief §21: "If the evidence is insufficient, say:
-UNKNOWN — INSUFFICIENT EVIDENCE." DRAFT for Checkpoint B.**
+UNKNOWN — INSUFFICIENT EVIDENCE." Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026, by collecting every NOT DETERMINED and
 UNKNOWN from R3–R24. Each entry gives what would settle it. Nothing here was
 guessed to fill a gap.

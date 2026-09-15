@@ -1,6 +1,8 @@
 # QAT Design Recovery & Design Intent Audit, R1: Executive Summary
 
-**DRAFT for Checkpoint B. Prepared 15 September 2026.** Written last, from
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
+**Final, for the operator's review at Checkpoint B. Prepared 15 September 2026.** Written last, from
 R2–R24. Nothing in the system was changed during the audit.
 
 ## The brief's most important question
@@ -70,6 +72,19 @@ Q1–Q2, R8 §8.5):
 7. **QAT is not reliably understandable by one person.** The builder and the
    operator both misread it on the record, and 37% of the code is prose,
    some of it false (R22 F; R15).
+8. **The history, in order (Part I), shows where it went wrong.**
+   - 39 of the 59 drift items, and 8 of the 10 that no one but Claude
+     decided, entered in the first week.
+   - 14 of the 18 High-severity Claude errors entered before the first live
+     order, and surfaced only when the live account exercised them
+     (back-fill register; CE-037 to CE-066).
+9. **Two findings from the final pass change earlier sections** (both
+   corrected by note):
+   - **the sector cap was not wired on 25 Aug**, and Financials reached
+     34.95% of equity against its 30% (R9; CE-043);
+   - **the one live booking reversal was wrong-signed** (R10; CE-046).
+10. **45 anomalies are registered for review** (Annex A): 20 open, 12 frozen
+    as known defects, 12 closed, 1 held (JHX).
 
 ## Recommendations (R22, R23)
 
@@ -97,5 +112,15 @@ Q1–Q2, R8 §8.5):
 
 This audit was carried out by the same kind of agent that built QAT and
 wrote most of its documents. The mitigations are in R2 §2.2. The error log
-records 36 of Claude's errors, several made during the audit itself (R2
-§2.4).
+records **67 of Claude's errors** across the whole history, 21 of them made
+during the audit itself (R2 §2.4; the back-fill register; CE-067).
+
+## How the report is arranged
+
+* **R1:** this summary.
+* **Part I:** the detailed analysis in the order QAT was developed.
+* **R2–R24:** the brief's 24 sections.
+* **Annex A:** the anomalies register.
+* **Annex B:** the evidence index: every source relied on, with its
+  location and hash.
+* **Annex C:** the error-log back-fill register.

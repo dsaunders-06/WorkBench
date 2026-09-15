@@ -1,8 +1,9 @@
 # QAT Design Recovery & Design Intent Audit, R22: Coherence, and the Recommended Freeze State
 
+> **Final report section, issued 15 September 2026** for the operator's review (Checkpoint B). Findings made after a section was drafted are recorded as dated correction notes in place; nothing has been silently rewritten.
+
 **Brief §17 ("Determine whether QAT remains conceptually coherent"), questions
-A–J. J is the recommended freeze state (report section 22). DRAFT for
-Checkpoint B.**
+A–J. J is the recommended freeze state (report section 22). Final, for the operator's review at Checkpoint B.**
 **Prepared:** 15 September 2026, from the drafted sections R3–R20. Nothing
 was changed.
 

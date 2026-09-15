@@ -6,7 +6,10 @@ Read-only. Reads the Claude Code transcripts; prints to stdout.
 
 Only the operator's TYPED messages are read (dialog answers are choices, not
 corrections). A resumed session copies its parent's history into its own
-file, so messages are de-duplicated on (timestamp, text).
+file, so messages are de-duplicated on (timestamp, text). A context
+compaction stores Claude's own summary as a user record (isCompactSummary);
+it is not the operator's, and is skipped (finalisation, 15 Sep: the first
+version counted them).
 
 A message is listed when it carries a correction cue: the operator saying
 something is wrong, asking why Claude did something, or pointing at a
@@ -45,7 +48,7 @@ def main(folder: Path) -> None:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if rec.get("type") != "user" or rec.get("isMeta"):
+                if rec.get("type") != "user" or rec.get("isMeta") or rec.get("isCompactSummary"):
                     continue
                 content = rec.get("message", {}).get("content")
                 if isinstance(content, list):
