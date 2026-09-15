@@ -907,6 +907,30 @@ transcripts cover every day from 24 July. See CE-020.)*
 * **Evidence:** transcript `a7821bbf` (09:21:12, 11:28); `git log` of
   15 Sep 09:38–09:40; transcript `9b9d429c` last written 09:48.
 
+### CE-036: R18 listed two questions as UNKNOWN that R6 had already answered
+* **Made:** 15 Sep 2026, in `18-original-intent-architecture.md`, committed
+  and pushed at 11:57 (`3e68a02`). **Found:** about 12:00, by Claude,
+  collecting the unknowns for R21, on reading R6 §6.0.
+* **Severity:** Low. It was in a draft the operator has not yet reviewed, and
+  it was corrected about three minutes after the push. Uncorrected, it would
+  have told the operator that two intent questions were open when the
+  transcripts answer them.
+* **What happened:** §18.1 gave "whether swing was meant to trade alone" and
+  "the learning intent" as UNKNOWN, citing R4 §4.13. On 14 Sep R6 §6.0
+  re-examined all six of R4 §4.13's unknowns against the transcripts (the
+  premise that they were lost was wrong, CE-020). It answered swing ("first,
+  not alone", AE-05, AE-08) and learning ("evidence and backtesting", AE-13).
+* **Root cause:** cited the earlier section without checking the later one
+  that superseded it. This is the pattern of CE-018 and CE-031: a document's
+  statement was taken as current without reading what came after it.
+* **Fix:** §18.1 corrected, with a visible note; the tracker and HANDOFF
+  counts moved from five unknowns to three.
+* **To avoid:** before citing an audit section's UNKNOWN, search the later
+  sections for the same question. The audit has re-examined its own unknowns
+  more than once.
+* **Evidence:** R6 §6.0; the diff of `18-original-intent-architecture.md`
+  after `3e68a02`.
+
 ---
 
 ## To establish (suspected, evidence not yet read)

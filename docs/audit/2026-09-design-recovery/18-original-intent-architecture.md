@@ -66,17 +66,21 @@ These stay off the diagram, or are drawn without detail:
   strategy and rules" (Q1) settles that the AI forms the recommendation, not
   how: originating it, confirming it, or adjusting it (R4 §4.001). The
   reference app gave the AI a veto on entries by default (R4 §4.4).
-* **Whether swing was meant to trade alone** until other strategies were
-  ready (R4 §4.13 #4). The operator named swing first and principal. The
-  paper's matrix implies several running together.
-* **The "learning" intent**: "learn from its decision making and adjust its
-  strategy on the go" (C2 [125]). It was reframed as fixed rules, and no
-  acceptance of that is recorded (R4 §4.13 #6).
 * **The regime inputs for an ASX book.** The paper names inputs by concept
   (P §11.2). The operator asked on 26 Aug whether the US drivers were still
   relevant and deferred re-sourcing (R7 #11). No intended series list exists.
 * **The live-trading path.** Intended as a later step, after testing (OP
   AE-13; P governance gates). No design detail was agreed.
+
+> **Corrected 15 Sep, before review (CE-036).** The first version of this
+> list also gave "whether swing was meant to trade alone" and "the learning
+> intent" as UNKNOWN, citing R4 §4.13. R6 §6.0 had already answered both
+> from the transcripts:
+> * **swing first, not alone**: "the end game is to develop this across all
+>   15 Strategies, with Swing being the first" (AE-05; AE-08);
+> * **learning means evidence and backtesting** (AE-13).
+>
+> Both are drawn: the strategies box, and "tied to tested rules".
 
 ## 18.2 Each box, with its evidence
 

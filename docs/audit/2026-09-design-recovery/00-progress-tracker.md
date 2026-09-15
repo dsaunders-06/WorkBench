@@ -34,7 +34,7 @@ crosswalk at the end is only for reading older documents.
 
 ---
 
-## 1. At a glance (15 September 2026, 11:56 AEST)
+## 1. At a glance (15 September 2026, 12:05 AEST)
 
 | § | The brief asks for | Report | Status | Next action |
 |---|---|---|---|---|
@@ -55,15 +55,17 @@ crosswalk at the end is only for reading older documents.
 | §14 | past failures and the controls they produced | R14 | 🟡 14 Sep | Checkpoint B |
 | §15 | three architecture diagrams | R17, R18, R19 | 🟡 15 Sep | Checkpoint B |
 | §16 | simplification candidates | R20 | 🟡 15 Sep | Checkpoint B |
-| §17 | coherence questions A–J | R22 and R1 | ⬜ | — |
-| §18 | Green / Amber / Red | R24 | ⬜ | — |
-| §19 | the 24-section report | R1–R24 | 🔶 R3–R20 drafted | see section 4 of this tracker |
-| §20 | remediation sequence, recommended only | R23 | ⬜ | — |
+| §17 | coherence questions A–J | R22 and R1 | 🟡 15 Sep | Checkpoint B |
+| §18 | Green / Amber / Red | R24 | 🟡 15 Sep: **RED** (auditor's classification) | Checkpoint B |
+| §19 | the 24-section report | R1–R24 | 🟡 **all 24 drafted**, 15 Sep | **Checkpoint B** |
+| §20 | remediation sequence, recommended only | R23 | 🟡 15 Sep | Checkpoint B (decisions D1–D5) |
 | §21, §22 | don't aim for a good result; keep asking the key question | — | in force | — |
 
 **Order of work from here:** ~~§7 and §13~~, ~~§8 and §14~~ (drafted 14 Sep) →
-~~§9 and §10~~, ~~§11~~, ~~§12 and §16~~, ~~§15~~ (drafted 15 Sep) → **§17**
-→ §18, §20 and R1, R2, R21–R24 → **Checkpoint B**.
+~~§9 and §10~~, ~~§11~~, ~~§12 and §16~~, ~~§15~~, ~~§17, §18, §20 and R1,
+R2, R21–R24~~ (drafted 15 Sep) → **Checkpoint B: the operator reviews the
+full draft (R1 first).** Alongside, still to do: the error-log back-fill of
+the history (section 7).
 
 ---
 
@@ -76,7 +78,7 @@ crosswalk at the end is only for reading older documents.
 | 14 Sep ~10:19 | **Trading suspended for the audit.** The app is not launched. The config still says `auto`, so a launch would trade | holding |
 | 15 Sep | **A records defect, reported, not fixed (frozen)**: the missed-exit replay sizes a closed position's lot from one partial execution, so an exit that fills in pieces while the app is closed loses shares from the ledger. It cost TNE 2,991 shares on 3 Sep (R13 §13.2). It affects the evidence (P&L, Kelly, promotion), not positions or stops at the broker. It cannot occur while the app is not running | for Checkpoint B |
 | 15 Sep | **Q-R11**: does the 8 Sep architecture's "the LLM operates exclusively as an editor and copywriter" (AE-30) apply to the macro matrix only, or to the AI generally? Checkpoint A and Q1 give the AI the recommendation (R11 §11.5, §11.7) | for Checkpoint B |
-| — | **Checkpoint B**: the operator reviews the full draft report | when R1–R24 are drafted |
+| 15 Sep | **Checkpoint B**: the operator reviews the full draft report. R1 is the summary; R23 lists five decisions (D1 CE-017, D2 which swing to test, D3 the AI's part with Q-R11, D4 the ledger replay defect, D5 the JHX broker read) | **ready**: all 24 sections drafted 15 Sep |
 
 ---
 
@@ -345,8 +347,9 @@ R16's) were parsed and rendered with mermaid 11.4.1 before commit.
   (the Blotter, the manual close), red for the two known defects (CE-017, the
   TNE ledger shortfall).
 * **R18, as intended:** only components with a source (the operator, the
-  paper, the methodology, the reference app), each labelled. Five things the
-  evidence does not settle are listed as UNKNOWN, not drawn.
+  paper, the methodology, the reference app), each labelled. Three things the
+  evidence does not settle are listed as UNKNOWN, not drawn (five at first;
+  two were already answered in R6 §6.0, CE-036).
 * **R19, the drift:** twelve differences drawn intended → current, labelled
   with R7's class and authority. Red (agent-only) drift sits mostly at the
   front of the path; amber (operator-approved) changes mostly at the back;
@@ -363,19 +366,36 @@ FUTURE WORK 5, REMOVE — ONLY AFTER AUTHORISATION 3, UNKNOWN 0.
 * No safety control is recommended for removal; those that never acted are
   KEEP / MONITOR. Decisions already taken are not re-opened.
 
-### §17 Is QAT conceptually coherent? → R22 (and R1) ⬜
-Partial answers exist but are not yet written as answers:
-* A (original strategy recognisable): R8 §8.3, recognisable in outline, not
-  the operator's method;
-* H (what is missing): the AI's part in the recommendation, the allocator,
-  the methodology (R6 §6.2).
+### §17 Is QAT conceptually coherent? → R22 (and R1) 🟡 (drafted 15 Sep)
+**Report:** `22-coherence-and-freeze-state.md`. An explicit answer to each of
+A–J:
+* A strategy recognisable: **only in outline; against the specification,
+  no**;
+* B architecture consistent: **the scaffolding yes, the decision core no**;
+* C safety altered trading: **yes**;
+* D agent drift: **yes, at the start**;
+* E unanticipated interactions: **yes**;
+* F understandable by one person: **no, not reliably**;
+* G should not be there: **five items** (CE-017 first);
+* H missing: **eight items** (the AI's part first);
+* I suitable for evidence: **no, not as it stands**;
+* J freeze: **yes**, with the recommended freeze state and what would end it.
 
-### §18 Final classification → R24 ⬜
+### §18 Final classification → R24 🟡 (drafted 15 Sep)
+**Report:** `24-design-integrity-classification.md`. **🔴 RED: design
+compromised** (the auditor's classification, for the operator to accept or
+reject). Three of the four core elements the operator named are not
+implemented; the fourth (autonomy) acts on the rule's signal. It would be
+AMBER if the operator decided to test the current rule and to defer the
+AI's part (R24 §24.5).
 
 ### §19 The report → see section 4 below
+**All 24 sections drafted** (15 Sep). R1 answers §22's question directly.
 
-### §20 Remediation sequence → R23 ⬜
-Recommend only (Phases 1–7 in section 5 below).
+### §20 Remediation sequence → R23 🟡 (drafted 15 Sep)
+**Report:** `23-remediation-sequence.md`. Recommend only. Checkpoint B gates
+five decisions (D1–D5); Phases 4–7 each have an entry condition, content and
+exit. No return to feature development because tests pass.
 
 ### §21 Don't aim for a "good" result; §22 the most important question
 In force throughout. R1 is to answer §22's question directly.
@@ -386,8 +406,8 @@ In force throughout. R1 is to answer §22's question directly.
 
 | R | Section | File | From brief § | Status |
 |---|---|---|---|---|
-| R1 | Executive Summary | — | all | ⬜ last |
-| R2 | Audit Scope | — | opening, §1 | ⬜ (scope is in the plan §2–§3, §7) |
+| R1 | Executive Summary | `01-executive-summary.md` | all | 🟡 15 Sep |
+| R2 | Audit Scope | `02-audit-scope.md` | opening, §1 | 🟡 15 Sep |
 | R3 | Current Baseline | `03-current-baseline.md` | §2 | ✅ 12 Sep |
 | R4 | Original Design Intent | `04-original-design-intent.md` | §3 | ✅ 12 Sep; Checkpoint A 14 Sep |
 | R5 | Current Architecture | `05-current-architecture.md`, `stage3/` | §4 | ✅ 14 Sep |
@@ -406,10 +426,10 @@ In force throughout. R1 is to answer §22's question directly.
 | R18 | Original-Intent Architecture | `18-original-intent-architecture.md` | §15 | 🟡 15 Sep |
 | R19 | Design-Drift Architecture | `19-design-drift-architecture.md` | §15 | 🟡 15 Sep |
 | R20 | Simplification Candidates | `20-simplification-candidates.md` | §16 | 🟡 15 Sep |
-| R21 | Outstanding Unknowns | — | §3, §21 | ⬜ (collect from R4 §4.13, R5 §5.4) |
-| R22 | Recommended Freeze State | — | §17 J | ⬜ |
-| R23 | Recommended Remediation Sequence | — | §20 | ⬜ |
-| R24 | Final Design-Integrity Classification | — | §18 | ⬜ |
+| R21 | Outstanding Unknowns | `21-outstanding-unknowns.md` | §3, §21 | 🟡 15 Sep (U1–U21) |
+| R22 | Recommended Freeze State | `22-coherence-and-freeze-state.md` | §17 (A–J; J is the freeze) | 🟡 15 Sep |
+| R23 | Recommended Remediation Sequence | `23-remediation-sequence.md` | §20 | 🟡 15 Sep |
+| R24 | Final Design-Integrity Classification | `24-design-integrity-classification.md` | §18 | 🟡 15 Sep: RED |
 
 ---
 
@@ -417,9 +437,9 @@ In force throughout. R1 is to answer §22's question directly.
 
 | Phase | Name | Where it stands |
 |---|---|---|
-| 1 | Design Recovery | this audit: §2–§6 (done or drafted) |
+| 1 | Design Recovery | this audit: §2–§6 (done or drafted); R18 |
 | 2 | Evidence Validation | this audit: §4 done; §7–§11 and §13–§14 drafted |
-| 3 | Drift Classification | this audit: §5, §12 and §16 drafted |
+| 3 | Drift Classification | this audit: §5, §12, §15 and §16 drafted |
 | 4 | Safety Review | **after** the operator approves the report |
 | 5 | Controlled Simplification | only after explicit approval |
 | 6 | Freeze | after 5 |
@@ -450,7 +470,7 @@ In force throughout. R1 is to answer §22's question directly.
 | Addition | Status |
 |---|---|
 | Authority column on the drift map | ✅ in R7 |
-| Claude error log | 🔶 CE-001 to CE-035 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
+| Claude error log | 🔶 CE-001 to CE-036 recorded. The systematic back-fill (fix commits, ROADMAP and HANDOFF incidents, transcripts from 24 Jul) is still to do |
 | Checkpoint A (operator reviews R4 and R5) | ✅ 14 Sep |
 | Checkpoint B (operator reviews the full draft) | ⬜ |
 | Evidence snapshots at each session end | ✅ 12 Sep and 14 Sep so far |
@@ -489,3 +509,4 @@ for new work.
 | 15 Sep 2026 ~09:45 | §11 → 🟡 (R13: the chain, the fourteen checks, the six impacts, the ledger's history, the app against IBKR's statement). A records defect added to section 2 (the missed-exit replay). R14 and R16 corrected by note ("the TNE remnant", CE-034). Error log to CE-034. **Next: §12 and §16.** |
 | 15 Sep 2026 ~11:45 | CE-035 logged (a resumed session answered "Continue" with no action, 09:21). §12 → 🟡 (R15: 35 items, the nine questions, ten flags). §16 → 🟡 (R20: 37 rows; INVESTIGATE 14, REMOVE-after-authorisation 3, none a control). **Next: §15.** |
 | 15 Sep 2026 ~11:56 | §15 → 🟡 (R17 as it is, R18 as intended, R19 the drift; mermaid, rendered before commit). **Next: §17** (coherence questions A–J → R22, R1). |
+| 15 Sep 2026 ~12:05 | R18 §18.1 corrected (two unknowns R6 had answered; CE-036). §17 → 🟡 (R22, A–J and the freeze state). §18 → 🟡 (R24: RED). §20 → 🟡 (R23: D1–D5 and Phases 4–7). R21 (21 unknowns), R2 and R1 drafted. **All 24 report sections drafted. Next: Checkpoint B.** |
