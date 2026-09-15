@@ -34,7 +34,7 @@ crosswalk at the end is only for reading older documents.
 
 ---
 
-## 1. At a glance (15 September 2026, 09:45 AEST)
+## 1. At a glance (15 September 2026, 11:45 AEST)
 
 | § | The brief asks for | Report | Status | Next action |
 |---|---|---|---|---|
@@ -50,20 +50,20 @@ crosswalk at the end is only for reading older documents.
 | §9 | the AI/LLM boundary | R11 | 🟡 15 Sep | Checkpoint B (Q-R11) |
 | §10 | the regime logic | R12 | 🟡 15 Sep | Checkpoint B |
 | §11 | data and evidence integrity | R13 | 🟡 15 Sep | Checkpoint B |
-| **§12** | **accidental complexity** | **R15** | **⬜ next** | — |
+| §12 | accidental complexity | R15 | 🟡 15 Sep | Checkpoint B |
 | §13 | control interactions and traps | R16 | 🟡 14 Sep | Checkpoint B |
 | §14 | past failures and the controls they produced | R14 | 🟡 14 Sep | Checkpoint B |
-| §15 | three architecture diagrams | R17, R18, R19 | ⬜ | — |
-| **§16** | **simplification candidates** | **R20** | **⬜ next, with §12** | — |
+| **§15** | **three architecture diagrams** | **R17, R18, R19** | **⬜ next** | — |
+| §16 | simplification candidates | R20 | 🟡 15 Sep | Checkpoint B |
 | §17 | coherence questions A–J | R22 and R1 | ⬜ | — |
 | §18 | Green / Amber / Red | R24 | ⬜ | — |
-| §19 | the 24-section report | R1–R24 | 🔶 R3–R14 and R16 drafted | see section 4 of this tracker |
+| §19 | the 24-section report | R1–R24 | 🔶 R3–R16 and R20 drafted | see section 4 of this tracker |
 | §20 | remediation sequence, recommended only | R23 | ⬜ | — |
 | §21, §22 | don't aim for a good result; keep asking the key question | — | in force | — |
 
 **Order of work from here:** ~~§7 and §13~~, ~~§8 and §14~~ (drafted 14 Sep) →
-~~§9 and §10~~, ~~§11~~ (drafted 15 Sep) → **§12 and §16** → §15, §17, §18,
-§20 and R1, R2, R21–R24 → **Checkpoint B**.
+~~§9 and §10~~, ~~§11~~, ~~§12 and §16~~ (drafted 15 Sep) → **§15** → §17,
+§18, §20 and R1, R2, R21–R24 → **Checkpoint B**.
 
 ---
 
@@ -290,8 +290,24 @@ are in §12.3.** Headlines:
 * **"The TNE remnant" was a wrong label** (CE-034); R14 and R16 corrected by
   note. R16's Kelly lock holds, by a wider margin.
 
-### §12 Identify accidental complexity → R15 ⬜
-The nine questions per item. The candidates start from R7's D and F items.
+### §12 Identify accidental complexity → R15 🟡 (drafted 15 Sep)
+**Report:** `15-accidental-complexity.md`. **Tool:**
+`s12-s16-complexity/tools/complexity_inventory.py`.
+
+**35 items (C1–C35), each with the brief's nine questions; ten answers
+flagged unclear (R15 §15.3).** Headlines:
+* **184 modules, 51,473 physical lines; the app never imports 18 of them
+  (3,827 lines)**, mostly the research harness and pre-flight, which scripts
+  use. Every one of the 110 settings has a reader.
+* **Prose is 37% of the code**; `version.py` is 96% comments (a milestone
+  history). Five comments or prompt strings found false so far (C33).
+* **The costly complexity is live and came from fixes**: halt on an unknown
+  IBKR code, booking at transmission and its repairs, the two leg-cancel
+  paths (one is CE-017).
+* **Careful mechanisms rarely decide**: the cash cap set 18 of 20 entry sizes;
+  four rails never acted; the regime's first label is a launch artefact.
+* Left out on purpose: the retired US-era broker code (operator, 28 and
+  31 Aug). Closed items (M39, IBKR news) listed as facts only.
 
 ### §13 Identify control interactions → R16 🟡 (drafted 14 Sep)
 **Report:** `16-control-interactions.md` (with the diagram, §16.4).
@@ -325,9 +341,16 @@ foreign). Headlines:
 * R18, QAT as originally intended: only components the evidence supports.
 * R19, the drift between them.
 
-### §16 Simplification candidates → R20 ⬜
-The brief's table, with one of six recommendations per candidate. Nothing is
-changed.
+### §16 Simplification candidates → R20 🟡 (drafted 15 Sep)
+**Report:** `20-simplification-candidates.md`. Nothing is changed.
+
+**37 rows (C1–C35, C9 split in three), each with one of the brief's six
+recommendations:** KEEP 8, KEEP / MONITOR 7, INVESTIGATE 14, CONSOLIDATE —
+FUTURE WORK 5, REMOVE — ONLY AFTER AUTHORISATION 3, UNKNOWN 0.
+* The three removals are none of them controls: the unused storage layer,
+  the unused feature computation, `version.py`'s comment history.
+* No safety control is recommended for removal; those that never acted are
+  KEEP / MONITOR. Decisions already taken are not re-opened.
 
 ### §17 Is QAT conceptually coherent? → R22 (and R1) ⬜
 Partial answers exist but are not yet written as answers:
@@ -366,12 +389,12 @@ In force throughout. R1 is to answer §22's question directly.
 | R12 | Regime | `12-regime.md` | §10 | 🟡 15 Sep |
 | R13 | Data & Evidence Integrity | `13-data-evidence-integrity.md` | §11 | 🟡 15 Sep |
 | R14 | Historical Failure → Control Mapping | `14-failure-to-control-mapping.md` | §14 | 🟡 14 Sep |
-| R15 | Accidental Complexity | — | §12 | ⬜ |
+| R15 | Accidental Complexity | `15-accidental-complexity.md` | §12 | 🟡 15 Sep |
 | R16 | Control Interaction | `16-control-interactions.md` | §13 | 🟡 14 Sep |
 | R17 | Current-State Architecture | — | §15 | ⬜ |
 | R18 | Original-Intent Architecture | — | §15 | ⬜ |
 | R19 | Design-Drift Architecture | — | §15 | ⬜ |
-| R20 | Simplification Candidates | — | §16 | ⬜ |
+| R20 | Simplification Candidates | `20-simplification-candidates.md` | §16 | 🟡 15 Sep |
 | R21 | Outstanding Unknowns | — | §3, §21 | ⬜ (collect from R4 §4.13, R5 §5.4) |
 | R22 | Recommended Freeze State | — | §17 J | ⬜ |
 | R23 | Recommended Remediation Sequence | — | §20 | ⬜ |
@@ -385,7 +408,7 @@ In force throughout. R1 is to answer §22's question directly.
 |---|---|---|
 | 1 | Design Recovery | this audit: §2–§6 (done or drafted) |
 | 2 | Evidence Validation | this audit: §4 done; §7–§11 and §13–§14 drafted |
-| 3 | Drift Classification | this audit: §5 drafted; §12 and §16 to do |
+| 3 | Drift Classification | this audit: §5, §12 and §16 drafted |
 | 4 | Safety Review | **after** the operator approves the report |
 | 5 | Controlled Simplification | only after explicit approval |
 | 6 | Freeze | after 5 |
@@ -439,7 +462,7 @@ for new work.
 | Stage 6 | §8, §14 | R10, R14 (folder `s08-s14-execution-and-incidents/`) |
 | Stage 7 | §9, §10 | R11, R12 (folder `s09-s10-ai-and-regime/`) |
 | Stage 8 | §11 | R13 (folder `s11-evidence-integrity/`) |
-| Stage 9 | §12, §16 | R15, R20 |
+| Stage 9 | §12, §16 | R15, R20 (folder `s12-s16-complexity/`) |
 | Stage 10 | §15, §17–§20 | R1, R2, R17–R19, R21–R24 |
 
 ## 9. Change log (this tracker)
@@ -453,3 +476,4 @@ for new work.
 | 14 Sep 2026 ~22:50 | Session end. State re-measured 22:43, unchanged (app and Gateway closed, config `auto`, kill switch clear, ledger `688B7091…`). HANDOFF's prompt regenerated to point here. Transcripts snapshot `Documents\QAT-audit-evidence\2026-09-14-s07-s14\`. **Next session: §9 and §10.** |
 | 15 Sep 2026 ~09:10 | §9 → 🟡 (R11: the twelve items, the principle, the intent). §10 → 🟡 (R12: the pipeline, the six determinations, the launch artefact, the confounded ablation). Q-R11 added to section 2. The 24 Aug log hole added to §11's evidence list. Error log to CE-033 (CE-032: the 28 Aug ablation reading). State at 08:35 unchanged from 14 Sep 22:43. **Next: §11.** |
 | 15 Sep 2026 ~09:45 | §11 → 🟡 (R13: the chain, the fourteen checks, the six impacts, the ledger's history, the app against IBKR's statement). A records defect added to section 2 (the missed-exit replay). R14 and R16 corrected by note ("the TNE remnant", CE-034). Error log to CE-034. **Next: §12 and §16.** |
+| 15 Sep 2026 ~11:45 | CE-035 logged (a resumed session answered "Continue" with no action, 09:21). §12 → 🟡 (R15: 35 items, the nine questions, ten flags). §16 → 🟡 (R20: 37 rows; INVESTIGATE 14, REMOVE-after-authorisation 3, none a control). **Next: §15.** |
