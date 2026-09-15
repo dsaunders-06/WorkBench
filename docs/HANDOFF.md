@@ -1,4 +1,4 @@
-# Handoff — 15 September 2026 (late morning): DESIGN AUDIT brief §2–§14, §16 drafted; §15 next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
+# Handoff — 15 September 2026 (midday): DESIGN AUDIT brief §2–§16 drafted; §17 next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 1,455 lines, most of it dated debriefs whose history had become actively
@@ -423,6 +423,9 @@ the tracker)**
 * **CE-035:** at 09:21 a resumed copy of the session answered "Continue" with
   no action while the original finished §11. On a resume, read `git log` and
   the tracker first; one session per repository.
+* **§15 (R17–R19, midday):** the three architecture diagrams, each box cited.
+  Agent-only drift sits mostly at the front of the path; operator-approved
+  changes mostly at the back.
 
 ### Next steps (the plan's progress table has the detail)
 
@@ -6713,7 +6716,8 @@ Paper account throughout - no real money.
      09 (risk controls, §7), 10 (execution boundary, §8), 11 (AI/LLM
      boundary, §9), 12 (regime, §10), 13 (data and evidence integrity,
      §11), 14 (failure -> control, §14), 15 (accidental complexity, §12),
-     16 (control interactions, §13), 20 (simplification candidates, §16);
+     16 (control interactions, §13), 17-19 (architecture as it is, as
+     intended, the drift, §15), 20 (simplification candidates, §16);
      plus stage3\ and stage4\authority-evidence.md
   4. docs\CLAUDE_ERROR_LOG.md (CE-001..CE-035)
 The operator's brief itself is in transcript ede4fc1d line 739
@@ -6723,13 +6727,14 @@ execution changes, and NO FIXES (including for audit findings) without the
 operator's explicit authorisation. The audit is an investigation, not a
 coding task. Report first; change only after review and authorisation.
 
-NEXT: brief §15 (three architecture diagrams -> R17 QAT as it is, R18 QAT
-as originally intended, R19 the drift between them). R17 starts from R5
-§5.1; R18 may show only components the evidence supports (R4, Checkpoint A);
-R19 from R7. Artifacts render mermaid natively; R16 §16.4 already uses it.
-Then §17 (coherence questions A-J -> R22, R1), §18 (Green/Amber/Red -> R24),
-§20 (remediation sequence, recommended only -> R23) and R1, R2, R21, then
-Checkpoint B (the operator reviews the full draft). The error-log
+NEXT: brief §17 (is QAT conceptually coherent? questions A-J -> R22, and
+R1). Partial answers are listed in the tracker's §17 block (A from R8 §8.3,
+H from R6 §6.2). Then §18 (Green/Amber/Red -> R24), §20 (remediation
+sequence, recommended only -> R23) and R1, R2, R21, then Checkpoint B (the
+operator reviews the full draft). R17-R19's mermaid was checked by rendering
+it with mermaid 11.4.1 in the in-app browser; the in-app browser runs a page's
+script only for files inside the project folder (use a git-ignored folder
+such as dist\_audit_check\, then delete it). The error-log
 back-fill of the history (fix commits, ROADMAP and HANDOFF incidents,
 transcripts from 24 Jul) is still to do alongside. With trading suspended,
 everything works from the records up to 12 September.
@@ -6865,6 +6870,10 @@ WHAT THE AUDIT HAS FOUND SO FAR (drafts, for Checkpoint B):
 - §16 (R20): 37 rows - KEEP 8, KEEP/MONITOR 7, INVESTIGATE 14, CONSOLIDATE 5,
   REMOVE only after authorisation 3 (none a control). Retired US-era broker
   code left out (operator, 28/31 Aug); closed items not re-opened.
+- §15 (R17-R19): QAT as it is, as intended (only evidenced components; five
+  UNKNOWNs listed, not drawn), and twelve drift arrows labelled with class and
+  authority. Agent-only drift sits mostly at the front of the path (data,
+  strategy, recommendation); operator-approved changes mostly at the back.
 
 ⚠️ OPEN SAFETY DEFECT CE-017 (NOT FIXED - the operator chose "decide later,
 continue audit", 14 Sep): an exit releases the position's protective legs at
@@ -6950,7 +6959,7 @@ THE STATE - measured 15 September (Tuesday) 09:07, re-checked 09:38 and
 - LOG: qat.log.6 (27 Jul) to qat.log (12 Sep), with the 66-minute hole on
   24 Aug 10:06-11:12 AEST (above).
 - Git: master level with origin after this handover. CI green on every push
-  of 14 and 15 Sep through ce5dec9; check the latest with gh run list
+  of 14 and 15 Sep through 81bfeaf; check the latest with gh run list
   --limit 3.
 - Rollback dirs: NOT MEASURED - they sit at C:\ outside the boundary (ask).
 
