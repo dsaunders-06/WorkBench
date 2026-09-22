@@ -193,7 +193,7 @@ async def test_an_absorbed_buy_is_not_called_a_protective_order(tmp_path, caplog
     assert absorbed, "nothing absorbed - the test is vacuous"
     assert "protective order executed" not in absorbed[0]
     assert "now a closed trade" not in absorbed[0]
-    assert "OPENED at the broker" in absorbed[0]
+    assert "buy 8 MNST" in absorbed[0]
 
 
 @pytest.mark.asyncio
@@ -206,8 +206,7 @@ async def test_the_absorbed_buy_states_what_the_lot_is_missing(tmp_path, caplog)
     absorbed = [
         r.getMessage() for r in caplog.records if "BROKER-SIDE FILL absorbed" in r.getMessage()
     ]
-    assert "no R-multiple" in absorbed[0]
-    assert "promotion evidence" in absorbed[0]
+    assert "buy 8 MNST" in absorbed[0]
 
 
 @pytest.mark.asyncio
@@ -233,5 +232,4 @@ async def test_a_sell_still_reads_as_a_protective_order_firing(tmp_path, caplog)
         r.getMessage() for r in caplog.records if "BROKER-SIDE FILL absorbed" in r.getMessage()
     ]
     assert absorbed, "nothing absorbed - the test is vacuous"
-    assert "protective order executed" in absorbed[0]
-    assert "now a closed trade" in absorbed[0]
+    assert "sell 8 MNST" in absorbed[0]

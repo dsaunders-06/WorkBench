@@ -46,6 +46,7 @@ class _Broker:
     async def place_order(self, order: Order) -> Order:
         self.placed.append(order)
         order.status = "filled"
+        order.filled_quantity = order.quantity
         order.filled_price = order.reference_price or 100.0
         return order
 

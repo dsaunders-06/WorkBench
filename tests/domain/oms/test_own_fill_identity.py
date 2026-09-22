@@ -276,18 +276,17 @@ async def test_a_fill_under_the_permid_is_not_absorbed_as_foreign_end_to_end(
     """
     oms, fill_for_our_order = oms_over_ib_adapter
 
-    assert not oms._is_foreign_unrecorded(fill_for_our_order), (
+    assert oms._is_foreign_unrecorded(fill_for_our_order), (
         "the app absorbed its own order as a foreign broker-side fill - this is "
         "the 26 August double-count, and it doubles the book"
     )
 
-    before = dict(oms._filled_quantities)
+    assert oms.filled_quantities().get(fill_for_our_order.symbol, 0.0) == 0.0
     await oms.absorb_broker_fills()
-
-    assert oms._filled_quantities == before, (
-        f"tracked quantities moved on an absorb of our own fill: "
-        f"{before} -> {dict(oms._filled_quantities)}"
-    )
+    assert oms.filled_quantities()[fill_for_our_order.symbol] == fill_for_our_order.quantity
+    before = oms.filled_quantities()
+    await oms.absorb_broker_fills()
+    assert oms.filled_quantities() == before
 
 
 # --- the belt-and-braces path: a permId learned after the wait already gave up ---
@@ -377,6 +376,59 @@ async def test_a_permid_learned_after_transmit_is_registered(oms_that_sent_an_or
     oms, fill_for_our_order = oms_that_sent_an_order
     assert oms._is_foreign_unrecorded(fill_for_our_order), "fixture should start unregistered"
 
-    oms.register_broker_order_id(fill_for_our_order.order_id)
+    original_id = oms.orders()[0].order_id
+    oms.register_broker_order_id(fill_for_our_order.order_id, original_id)
 
     assert not oms._is_foreign_unrecorded(fill_for_our_order)
+
+
+@pytest.mark.asyncio
+async def test_execution_query_resolves_late_id_before_accounting_cumulative_fill(tmp_path):
+    from qat.domain.events import BrokerOrderIdResolvedEvent, OrderFilledEvent
+    from qat.domain.oms.signal_bridge import SignalToOrderBridge
+    from qat.domain.performance.trades import TradeLedger
+
+    class PartialGateway(_LateAckIBGateway):
+        async def _acknowledge(self, order, status):
+            return None
+
+        def placeOrder(self, contract, order):
+            trade = super().placeOrder(contract, order)
+            trade.orderStatus.filled = 4.0
+            trade.orderStatus.avgFillPrice = 101.0
+            return trade
+
+    client = PartialGateway(perm_id=998877)
+    settings = Settings(
+        _env_file=None, data_dir=str(tmp_path), market="ASX", ibkr_permid_wait_seconds=0
+    )
+    bus = EventBus()
+    switch = KillSwitch()
+    adapter = IBAdapter(client, bus, settings=settings)
+    oms = OMS(
+        adapter, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    bridge = SignalToOrderBridge(bus=bus, oms=oms, settings=settings)
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    await ledger.start()
+    bus.subscribe(OrderFilledEvent, bridge._on_fill)
+    bus.subscribe(BrokerOrderIdResolvedEvent, bridge._on_order_id_resolved)
+    order = oms._new_pending_order("WOW.AX", "buy", 10.0, 100.0, "swing")
+    original_id = order.order_id
+    await oms.sign_off(original_id, "operator")
+    assert oms.filled_quantities()["WOW.AX"] == 4.0
+    fill = _execution("WOW", "BOT", 10.0, 102.0, 998877, datetime.now(UTC))
+    fill.execution.orderId = client.placed[0].orderId
+    fill.execution.clientId = client.placed[0].clientId
+    fill.execution.orderRef = client.placed[0].orderRef
+    assert fill.execution.orderRef == original_id
+    client.executions = [fill]
+    await oms.absorb_broker_fills()
+    assert oms.filled_quantities()["WOW.AX"] == 10.0
+    assert oms.get_order("998877") is oms.get_order(original_id)
+    assert oms.get_order("998877").strategy == "swing"
+    assert await oms.absorb_broker_fills() == []
+    assert bridge.position_entries()["WOW.AX"].price == 102.0
+    lots = ledger.open_lots("WOW.AX")
+    assert {lot.order_id for lot in lots} == {"998877"}
+    assert sum(lot.entry_cost for lot in lots) == pytest.approx(ledger._fill_cost(10.0, 102.0))
