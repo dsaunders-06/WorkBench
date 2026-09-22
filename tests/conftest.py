@@ -7,14 +7,13 @@ appended to the operator's own files - a single suite run put 170KB of
 synthetic decisions into a directory whose whole purpose is to be a truthful
 record of real sessions.
 
-Session-scoped and autouse: no test has to remember to opt in, and a test that
+Function-scoped and autouse: no test has to remember to opt in, and a test that
 genuinely wants a specific directory still passes data_dir explicitly.
 """
 
 from __future__ import annotations
 
 import os
-import pathlib
 from collections.abc import Iterator
 
 import pytest
@@ -43,26 +42,9 @@ def advisory_runtime(tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def clear_persisted_halt() -> None:
-    """Remove any persisted kill-switch state before each test (item 32).
-
-    The switch now survives a restart, which is the point of item 32 - a halt
-    that evaporates on the next launch is not a halt. But `isolate_data_dir`
-    above is SESSION scoped, so every test shares one data directory, and
-    without this a test that trips the switch halts every test that runs after
-    it. Observed exactly that: three regime-banner tests and a Risk Console
-    test began failing with "EXECUTION HALTED - KILL-SWITCH: Manual trigger by
-    operator", a trip none of them made.
-
-    Function scoped and autouse, so no test has to remember. Deleting the file
-    rather than resetting a switch object, because each test builds its own.
-    """
-    state = pathlib.Path(os.environ["QAT_DATA_DIR"]) / "kill_switch.json"
-    state.unlink(missing_ok=True)
-
-
-@pytest.fixture(scope="session", autouse=True)
 def isolate_data_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    # All durable state, including exit recovery, belongs to this test alone.
+    # Restart tests reuse the directory within one test, never across tests.
     # An environment variable rather than a monkeypatched default, because
     # pydantic-settings reads the environment even when _env_file is None -
     # which is how most tests here build their Settings.

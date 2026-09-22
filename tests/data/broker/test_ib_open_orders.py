@@ -168,8 +168,14 @@ async def test_a_take_profit_leg_is_not_a_resting_stop(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_no_capability_means_no_orders(monkeypatch):
+async def test_unavailable_order_query_is_not_an_empty_book(monkeypatch):
     adapter = IBAdapter.__new__(IBAdapter)
     adapter.ib_client = SimpleNamespace()
     adapter.settings = _settings()
-    assert await adapter.open_orders() == []
+    with pytest.raises(RuntimeError, match="could not verify"):
+        await adapter.open_orders()
+
+
+@pytest.mark.asyncio
+async def test_a_successful_empty_order_query_remains_empty(monkeypatch):
+    assert await _adapter([], monkeypatch).open_orders() == []

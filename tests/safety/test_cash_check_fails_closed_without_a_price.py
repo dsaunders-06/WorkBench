@@ -27,6 +27,7 @@ class _QuotelessBroker:
         self._cash = cash
         self._equity = equity
         self.placed: list[Order] = []
+        self.held: list[Position] = []
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
         raise NotImplementedError("execution and account state only")
@@ -47,7 +48,7 @@ class _QuotelessBroker:
         raise NotImplementedError
 
     async def positions(self) -> list[Position]:
-        return []
+        return self.held
 
     async def account(self) -> AccountSummary:
         return AccountSummary(
@@ -156,6 +157,7 @@ async def test_a_sell_is_never_blocked_by_the_pricing_check():
     """Exits raise cash. Refusing to let the account de-risk because a quote is
     missing would be exactly backwards."""
     broker = _QuotelessBroker(cash=0.0)
+    broker.held = [Position("AAA", 10.0, 50.0)]
     oms = _oms(broker)
     order = await oms.submit_exit_order("AAA", quantity=10.0, price=50.0)
 

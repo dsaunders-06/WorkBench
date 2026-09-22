@@ -756,22 +756,13 @@ class IBAdapter:
         running" inside the app (the M102 trap, hit three times in one
         afternoon), so this uses the async form and nothing else.
 
-        Returns `[]` when the underlying client cannot answer (not yet
-        connected, or too old to carry `reqAllOpenOrdersAsync`) - the SAME
-        `[]` a genuinely clean broker returns (I3, final review, correcting an
-        earlier version of this docstring that told callers to read the two
-        apart). `BrokerAdapter.open_orders`'s own contract is that an empty
-        list means "nothing to report", full stop, and `OMS.check_resting_
-        orders` follows it: it cannot and does not distinguish "asked and
-        found nothing" from "could not ask" at this layer. What DOES surface
-        the difference is `OMS.check_resting_orders`'s own `source is None`
-        branch, one level up - that fires when THIS adapter has no
-        `open_orders` attribute at all, which is a different failure than the
-        one handled here.
+        An empty list means a successful query found no orders. An unavailable
+        query raises: treating a connection failure as an empty book can cause
+        recovery to place a duplicate sell over an order it could not observe.
         """
         trades = await self._all_open_orders()
         if trades is None:
-            return []
+            raise RuntimeError("IBKR could not verify the open-order book")
         return [from_ib_open_order(trade, self.settings.market) for trade in trades]
 
     async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:

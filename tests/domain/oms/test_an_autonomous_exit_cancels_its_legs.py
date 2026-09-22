@@ -133,7 +133,9 @@ async def test_a_full_exit_cancels_the_protective_legs_first() -> None:
     broker = _BrokerWithLegs()
     oms = _oms(broker)
 
-    await oms.submit_exit_order("AAA", quantity=100.0, price=100.0, reason="signal")
+    order = await oms.submit_exit_order("AAA", quantity=100.0, price=100.0, reason="signal")
+    assert broker.cancelled == []
+    await oms.sign_off(order.order_id, "test")
 
     assert sorted(broker.cancelled) == ["leg-stop", "leg-target"]
     assert await broker.open_orders() == []
@@ -148,6 +150,8 @@ async def test_the_exit_is_REFUSED_when_a_leg_will_not_cancel() -> None:
     oms = _oms(broker)
 
     order = await oms.submit_exit_order("AAA", quantity=100.0, price=100.0, reason="signal")
+    assert broker.cancelled == []
+    order = await oms.sign_off(order.order_id, "test")
 
     assert order.status == "rejected"
     assert len(await broker.open_orders()) == 2, "the position must stay protected"
@@ -173,7 +177,9 @@ async def test_a_PARTIAL_exit_releases_its_legs_too() -> None:
     broker = _BrokerWithLegs()
     oms = _oms(broker)
 
-    await oms.submit_exit_order("AAA", quantity=40.0, price=100.0, reason="delever")
+    order = await oms.submit_exit_order("AAA", quantity=40.0, price=100.0, reason="delever")
+    assert broker.cancelled == []
+    await oms.sign_off(order.order_id, "test")
 
     assert sorted(broker.cancelled) == ["leg-stop", "leg-target"]
     assert await broker.open_orders() == []
@@ -199,7 +205,8 @@ async def test_the_remainder_of_a_PARTIAL_exit_is_VISIBLE_as_unprotected() -> No
     broker = _BrokerWithLegs()
     oms = _oms(broker)
 
-    await oms.submit_exit_order("AAA", quantity=40.0, price=100.0, reason="delever")
+    order = await oms.submit_exit_order("AAA", quantity=40.0, price=100.0, reason="delever")
+    await oms.sign_off(order.order_id, "test")
 
     naked = await oms.naked_positions()
 
@@ -217,3 +224,118 @@ async def test_a_symbol_with_no_legs_exits_normally() -> None:
     order = await oms.submit_exit_order("AAA", quantity=100.0, price=100.0, reason="signal")
 
     assert order.status != "rejected"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quantity", [100.0, 40.0])
+async def test_halted_exit_preserves_the_existing_bracket(quantity: float) -> None:
+    broker = _BrokerWithLegs()
+    oms = _oms(broker)
+    before = await broker.open_orders()
+    assert await broker.resting_stops() == {"AAA": 90.0}
+    oms.kill_switch.trip("CE-017 reproduction")
+
+    order = await oms.submit_exit_order("AAA", quantity, 100.0)
+
+    assert order.status == "rejected"
+    assert broker.cancelled == []
+    assert await broker.open_orders() == before
+    assert await broker.resting_stops() == {"AAA": 90.0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quantity", [0.0, -1.0])
+async def test_invalid_exit_quantity_does_not_cancel_protection(quantity: float) -> None:
+    broker = _BrokerWithLegs()
+    oms = _oms(broker)
+
+    order = await oms.submit_exit_order("AAA", quantity, 100.0)
+
+    assert order.status == "rejected"
+    assert broker.cancelled == []
+    assert await broker.resting_stops() == {"AAA": 90.0}
+
+
+@pytest.mark.asyncio
+async def test_failed_exit_risk_evaluation_preserves_protection(monkeypatch) -> None:
+    broker = _BrokerWithLegs()
+    oms = _oms(broker)
+
+    def unavailable(*args):
+        raise RuntimeError("risk audit unavailable")
+
+    monkeypatch.setattr(oms.risk_engine, "evaluate_exit", unavailable)
+    order = await oms.submit_exit_order("AAA", 100.0, 100.0)
+
+    assert order.status == "rejected"
+    assert broker.cancelled == []
+    assert await broker.resting_stops() == {"AAA": 90.0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["reject", "cancel", "halt"])
+async def test_an_unsigned_exit_keeps_protection_until_authorised(decision: str) -> None:
+    broker = _BrokerWithLegs()
+    oms = _oms(broker)
+    order = await oms.submit_exit_order("AAA", 100.0, 100.0)
+    assert order.status == "pending_signoff"
+    assert broker.cancelled == []
+    assert await broker.resting_stops() == {"AAA": 90.0}
+
+    if decision == "reject":
+        await oms.reject_order(order.order_id, "operator", "keep holding")
+    elif decision == "cancel":
+        await oms.cancel_order(order.order_id)
+    else:
+        oms.kill_switch.trip("halt while awaiting approval")
+        assert (await oms.sign_off(order.order_id, "operator")).status == "rejected"
+
+    assert broker.cancelled == []
+    assert await broker.resting_stops() == {"AAA": 90.0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("halt_during", ["orders", "positions"])
+async def test_halt_during_broker_read_prevents_first_cancel(halt_during, monkeypatch) -> None:
+    broker = _BrokerWithLegs()
+    oms = _oms(broker)
+    original = broker.open_orders if halt_during == "orders" else broker.positions
+
+    async def read_and_halt():
+        result = await original()
+        oms.kill_switch.trip("halt during exit preparation")
+        return result
+
+    monkeypatch.setattr(
+        broker, "open_orders" if halt_during == "orders" else "positions", read_and_halt
+    )
+    order = await oms.submit_exit_order("AAA", 100.0, 100.0)
+    order = await oms.sign_off(order.order_id, "test")
+
+    assert order.status == "rejected"
+    assert broker.cancelled == []
+    assert await broker.resting_stops() == {"AAA": 90.0}
+
+
+@pytest.mark.asyncio
+async def test_halt_during_an_empty_order_read_still_blocks_transmission(monkeypatch) -> None:
+    broker = _BrokerWithLegs()
+    broker._legs = []
+    oms = _oms(broker)
+    transmitted = []
+
+    async def empty_read_and_halt():
+        oms.kill_switch.trip("halt during empty broker read")
+        return []
+
+    async def record_transmission(order):
+        transmitted.append(order)
+        return order
+
+    monkeypatch.setattr(broker, "open_orders", empty_read_and_halt)
+    monkeypatch.setattr(broker, "place_order", record_transmission)
+    order = await oms.submit_exit_order("AAA", 100.0, 100.0)
+    signed = await oms.sign_off(order.order_id, "test")
+
+    assert signed.status == "rejected"
+    assert transmitted == []
