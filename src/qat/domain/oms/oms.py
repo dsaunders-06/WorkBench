@@ -1261,6 +1261,11 @@ class OMS:
         if filled.order_id:
             self._broker_order_ids.add(str(filled.order_id))
 
+        if not filled.is_protective_stop:
+            # Even a rejected/cancelled remainder may carry a real partial
+            # execution. Account that evidence before recovery can return.
+            await self._announce_fill(filled, operator)
+
         if (
             not recovering
             and self._exit_recovery is not None
@@ -1309,17 +1314,6 @@ class OMS:
             )
             return filled
 
-        signed_qty = filled.quantity if filled.side == "buy" else -filled.quantity
-        self._filled_quantities[filled.symbol] = (
-            self._filled_quantities.get(filled.symbol, 0.0) + signed_qty
-        )
-
-        if filled.side == "buy" and filled.stop_price:
-            self._position_stops[filled.symbol] = float(filled.stop_price)
-        elif filled.side == "sell" and abs(self._filled_quantities[filled.symbol]) < 1e-6:
-            # Position closed - its stop went with it at the broker, so keeping
-            # it here would overstate protection on a symbol no longer held.
-            self._position_stops.pop(filled.symbol, None)
         self._record(filled, "signed_off", "transmitted to the broker", operator)
         logger.info(
             # ⚠️ BOTH IDS (item 56, 31 August). This line carried only the app's
@@ -1336,54 +1330,102 @@ class OMS:
             filled.symbol,
             filled.quantity,
         )
-        await self._announce_fill(filled, operator)
         return filled
 
     async def _announce_fill(self, order: Order, operator: str) -> None:
-        """Publishes OrderFilledEvent so performance measurement has a source
-        of realised outcomes. Optional bus, same as _announce_pending."""
-        if self.bus is None or order.status not in ("filled", "transmitted"):
+        """Account only execution evidence returned with the acknowledgement."""
+        quantity = order.filled_quantity
+        price = order.filled_price
+        if quantity is None or quantity <= 0 or price is None:
+            if order.status == "filled" or (quantity is not None and quantity > 0):
+                self.kill_switch.trip(
+                    "broker reports execution without complete quantity/price evidence"
+                )
             return
-        price = order.filled_price or order.reference_price
-        if not price:
-            return
-        await self.bus.publish(
-            OrderFilledEvent(
-                order_id=order.order_id,
-                symbol=order.symbol,
-                side=order.side,
-                quantity=order.quantity,
-                price=float(price),
-                strategy=order.strategy,
-                stop_price=order.stop_price,
-                take_profit_price=order.take_profit_price,
-                operator=operator,
-                reference_price=order.reference_price,
-                earnings_at_entry=order.earnings_date,
-                price_is_fill=bool(order.filled_price),
-                exit_reason=(
-                    self._exit_reasons.pop(order.symbol, "signal") if order.side == "sell" else None
-                ),
-                # THE SEVENTH WALL-CLOCK DEPENDENCY, and it disabled three rails
-                # in every replay ever run (W2). Omitted, `ts` takes `Event`'s
-                # default of `datetime.now(UTC)` - correct in live, where the
-                # fill genuinely just happened, and wrong in a replay by however
-                # far the simulated clock is from today.
-                #
-                # `SignalToOrderBridge._on_fill` stamps `entry.opened_at` from
-                # this event, and `_trading_days_between(opened_at, now)`
-                # returns zero when `now` precedes it. So THE TIME STOP, THE
-                # MINIMUM HOLDING PERIOD AND THE WEEKLY CHURN CAP could never
-                # fire: the first ASX run opened seven positions in September
-                # 2025, held them across two hundred and fifty sessions, and
-                # closed nothing at all.
-                #
-                # `_now` is the wall clock unless a clock was injected, so live
-                # behaviour is unchanged. The absorb path below has always
-                # passed its own `ts` for the same reason (M50).
-                ts=self._now(),
-            )
+        await self._account_execution(
+            BrokerFill(order.order_id, order.symbol, order.side, quantity, price, self._now()),
+            operator=operator,
         )
+        self._save_fill_state()
+
+    async def _account_execution(
+        self, raw: BrokerFill, *, record_only: bool = False, operator: str = "broker"
+    ) -> BrokerFill | None:
+        """Apply a cumulative execution's unaccounted delta, preserving order context."""
+        if not all(math.isfinite(value) and value > 0 for value in (raw.quantity, raw.price)):
+            self.kill_switch.trip("invalid broker execution quantity or price")
+            return None
+        order = self._order_the_broker_calls(raw.order_id)
+        if order is not None and (
+            order.symbol != raw.symbol
+            or order.side != raw.side
+            or raw.quantity > order.quantity + _POSITION_EPSILON
+        ):
+            self.kill_switch.trip("broker execution conflicts with its order")
+            return None
+        fill = self._unabsorbed_part(raw)
+        if fill is None:
+            return None
+        if not math.isfinite(fill.price) or fill.price <= 0:
+            self.kill_switch.trip("broker cumulative execution implies invalid incremental price")
+            return None
+        stop = order.stop_price if order is not None else self._position_stops.get(raw.symbol)
+        if not record_only:
+            signed = fill.quantity if fill.side == "buy" else -fill.quantity
+            self._filled_quantities[fill.symbol] = (
+                self._filled_quantities.get(fill.symbol, 0.0) + signed
+            )
+            if fill.side == "buy" and stop is not None:
+                self._position_stops[fill.symbol] = stop
+            elif abs(self._filled_quantities[fill.symbol]) < _POSITION_EPSILON:
+                self._position_stops.pop(fill.symbol, None)
+        self._absorbed_fills[raw.order_id] = _AbsorbedFill(
+            filled_at=raw.filled_at, quantity=raw.quantity, price=raw.price
+        )
+        if order is not None:
+            order.filled_quantity = raw.quantity
+            order.filled_price = raw.price
+            self._close_out_own_order(raw)
+            for alias, known in self._orders.items():
+                if known is order:
+                    self._absorbed_fills[alias] = self._absorbed_fills[raw.order_id]
+        logger.warning(
+            "BROKER-SIDE FILL absorbed: %s %g %s at %.4f (order %s)",
+            fill.side,
+            fill.quantity,
+            fill.symbol,
+            fill.price,
+            fill.order_id,
+        )
+        if self.bus is not None:
+            await self.bus.publish(
+                OrderFilledEvent(
+                    order_id=fill.order_id,
+                    symbol=fill.symbol,
+                    side=fill.side,
+                    quantity=fill.quantity,
+                    price=fill.price,
+                    price_is_fill=True,
+                    order_average_price=raw.price,
+                    strategy=order.strategy if order is not None else None,
+                    stop_price=stop,
+                    take_profit_price=order.take_profit_price if order is not None else None,
+                    reference_price=order.reference_price if order is not None else None,
+                    earnings_at_entry=order.earnings_date if order is not None else None,
+                    operator=operator,
+                    exit_reason=(
+                        (
+                            self._exit_reasons.get(fill.symbol, "signal")
+                            if order is not None and not order.is_protective_stop
+                            else self._protective_exit_reason(fill, stop)
+                        )
+                        if fill.side == "sell"
+                        else None
+                    ),
+                    ts=fill.filled_at,
+                )
+            )
+        return fill
 
     async def _costing_price(self, order: Order) -> float | None:
         """Best available price for costing an order, or None if there is none.
@@ -1471,7 +1513,7 @@ class OMS:
             unique.append(order)
         return unique
 
-    def register_broker_order_id(self, order_id: str) -> None:
+    def register_broker_order_id(self, order_id: str, app_order_id: str | None = None) -> None:
         """Record a broker identifier learned AFTER transmit (item 56).
 
         `place_order` waits briefly for the permId, and a slow acknowledgement
@@ -1481,65 +1523,25 @@ class OMS:
         """
         if order_id:
             self._broker_order_ids.add(str(order_id))
+            if app_order_id is not None and app_order_id in self._orders:
+                order = self._orders[app_order_id]
+                self._orders[order_id] = order
+                order.order_id = order_id
+                if app_order_id in self._absorbed_fills:
+                    self._absorbed_fills[order_id] = self._absorbed_fills[app_order_id]
 
     async def _on_broker_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
-        self.register_broker_order_id(event.order_id)
+        self.register_broker_order_id(event.order_id, event.app_order_id)
 
     async def _on_order_rejected(self, event: OrderRejectedEvent) -> None:
-        """Gives back an optimistic sign-off booking once a rejection proves
-        the order is dead (3 September 2026) - see `OrderRejectedEvent`.
-
-        ⚠️ Reverses BOOKED minus EXECUTED, never the full booked size. A
-        partial fill that is then rejected or cancelled leaves a real
-        position behind; reversing all of it would invent a phantom SHORT -
-        the same defect this exists to fix, in the other direction, and the
-        one the reverted Task 3 produced.
-
-        Two guards fail closed rather than guess:
-        - `executed_quantity is None` means the adapter did not report it -
-          a different claim from zero. Reversing on a guess could
-          manufacture a short; leaving the booking in place is what let
-          reconciliation catch 3 September in four minutes, and it still can
-          here.
-        - A symbol this OMS never booked is left alone. There is nothing to
-          give back, and writing one in would book a phantom position rather
-          than correct one.
-        """
-        if event.executed_quantity is None:
-            logger.warning(
-                "OrderRejectedEvent for %s (order=%s) carries no executed quantity - "
-                "leaving the booking of %.2f in place for reconciliation to settle: %s",
-                event.symbol,
-                event.order_id,
-                event.booked_quantity,
-                event.reason,
-            )
-            return
-        if event.symbol not in self._filled_quantities:
-            logger.warning(
-                "OrderRejectedEvent for %s (order=%s) but this OMS has nothing booked "
-                "for that symbol - nothing to reverse: %s",
-                event.symbol,
-                event.order_id,
-                event.reason,
-            )
-            return
-        remaining = event.booked_quantity - event.executed_quantity
-        # ⚠️ Signed exactly as `signed_qty` signs the booking above: a sell
-        # books NEGATIVE, so an unsigned `-= remaining` would drive a rejected
-        # sell further short and double the phantom rather than remove it.
-        # A2M's exit on 4 September was refused five times; under an unsigned
-        # reversal each refusal would have deepened the error it was correcting.
-        signed_remaining = remaining if event.side == "buy" else -remaining
-        self._filled_quantities[event.symbol] -= signed_remaining
+        """Rejection ends the unfilled remainder; it does not undo executions."""
+        order = self._order_the_broker_calls(event.order_id)
+        if order is not None and order.status != "filled":
+            order.status = "rejected"
         logger.info(
-            "Reversed %.2f of the booking for %s (order=%s) after rejection: %s. "
-            "%.2f executed and stays booked.",
-            remaining,
-            event.symbol,
+            "Broker rejected order %s; confirmed executions remain accounted: %s",
             event.order_id,
             event.reason,
-            event.executed_quantity,
         )
 
     async def adopt_broker_positions(self) -> dict[str, float]:
@@ -2100,13 +2102,7 @@ class OMS:
         return missed
 
     def _is_foreign_unrecorded(self, fill: BrokerFill) -> bool:
-        """Whether this fill is one this app neither sent nor has fully
-        recorded."""
-        if fill.order_id in self._broker_order_ids or fill.order_id in self._orders:
-            # This app sent it and sign_off already counted it. Both sets are
-            # checked because an order carries the app's id until it is
-            # transmitted and the broker's afterwards.
-            return False
+        """Legacy name for the unaccounted-execution filter, including own orders."""
         prior = self._absorbed_fills.get(fill.order_id)
         if prior is not None:
             if not prior.quantity_known:
@@ -2133,7 +2129,19 @@ class OMS:
         # and only the missed fill has actually been observed - on the only exit
         # path this system has. An id seen before never reaches this line at
         # all: the `prior is not None` branch above answers it.
-        return fill.filled_at >= self._last_fill_scan
+        if (
+            fill.order_id in self._broker_order_ids
+            and self._order_the_broker_calls(fill.order_id) is None
+        ):
+            self.kill_switch.trip(
+                "broker execution identity unresolved; accounting review required"
+            )
+            return False
+        return (
+            fill.order_id in self._broker_order_ids
+            or fill.order_id in self._orders
+            or fill.filled_at >= self._last_fill_scan
+        )
 
     def _fill_query_floor(self) -> datetime:
         """How far back to ask, which is NOT simply the watermark (M53).
@@ -2254,20 +2262,12 @@ class OMS:
         return sorted(symbols)
 
     async def absorb_broker_fills(self, record_only: bool = False) -> list[BrokerFill]:
-        """Records executions the broker performed that this app did not send.
+        """Account confirmed execution deltas for both own and broker-side orders.
 
-        Only fills for orders this process did not originate are applied - an
-        order the app transmitted has already been counted through sign_off,
-        and counting it twice would create the very discrepancy this exists to
-        prevent.
-
-        Publishing OrderFilledEvent is the point as much as the arithmetic is:
-        it is what the trade ledger listens to, so a stop-out or a target
-        finally becomes a CLOSED TRADE on the Performance tab instead of a
-        position that silently vanished.
-
-        A broker that cannot answer changes nothing, and neither does a failed
-        query - the previous behaviour is exactly preserved.
+        Transmission alone changes no position or ledger lot. The persistent
+        cumulative-fill state deduplicates acknowledgements and later scans.
+        The existing event/persistence crash boundary still requires recovery
+        hardening; this method does not promise transactional delivery.
         """
         source = getattr(self.broker, "recent_fills", None)
         if source is None:
@@ -2309,113 +2309,11 @@ class OMS:
         absorbed: list[BrokerFill] = []
         for raw in fills:
             if not self._is_foreign_unrecorded(raw):
-                # Ours, and already counted - but not therefore worthless. This
-                # is the only place the price we actually PAID arrives for an
-                # order this app sent, and it used to be dropped here (M70).
-                #
-                # It is also the only place the app learns its own order is
-                # DONE. Called before the price correction rather than inside
-                # it, because that method returns early on a missing or
-                # unchanged price - and whether an order completed has nothing
-                # to do with whether its price needed correcting.
                 self._close_out_own_order(raw)
-                await self._correct_announced_price(raw)
                 continue
-            fill = self._unabsorbed_part(raw)
-            if fill is None:
-                continue
-            # Read BEFORE the block below, which pops `_position_stops` the
-            # moment the fill flattens the position. `_protective_exit_reason`
-            # separates a stop from a target by comparing the fill price against
-            # the stop level, and it read that dict AFTER the pop - so the level
-            # was gone and the comparison could never match.
-            #
-            # SCOPE, measured against the live record rather than assumed: this
-            # fires only for an exit absorbed during a RUNNING session. The pop
-            # sits inside `if not record_only`, so the startup replay path -
-            # which is how a stop that fired while the app was down arrives -
-            # skips it and records correctly. Both closed trades in the live
-            # record read `stop`, which is what narrowed the claim: an earlier
-            # version of this comment said EVERY stop-out was affected, and
-            # closed_trades.csv falsified it.
-            #
-            # A partial fill never reaches the pop either, so the only case that
-            # corrupts is a full exit during a live session - which is precisely
-            # the case that produces a closed trade from a stop doing its job.
-            stop_at_fill = self._position_stops.get(fill.symbol)
-            # The M50 trap, and the reason this is not simply "persist the
-            # watermark". A fill from before the baseline was taken is ALREADY
-            # in `_filled_quantities`, because adoption read it from the
-            # broker's own position list. Applying it again subtracts the same
-            # shares twice and trips the kill-switch on arithmetic - M46 by a
-            # different route. It still has to be RECORDED: adoption re-baselines
-            # what is held and says nothing about what closed.
-            if not record_only:
-                signed = fill.quantity if fill.side == "buy" else -fill.quantity
-                self._filled_quantities[fill.symbol] = (
-                    self._filled_quantities.get(fill.symbol, 0.0) + signed
-                )
-                if abs(self._filled_quantities.get(fill.symbol, 0.0)) < 1e-6:
-                    # Flat: whatever was protecting it went with it at the broker.
-                    self._position_stops.pop(fill.symbol, None)
-            prior = self._absorbed_fills.get(raw.order_id)
-            self._absorbed_fills[raw.order_id] = _AbsorbedFill(
-                filled_at=raw.filled_at,
-                quantity=(prior.quantity if prior else 0.0) + fill.quantity,
-                price=raw.price,
-            )
-            absorbed.append(fill)
-            logger.warning(
-                "BROKER-SIDE FILL absorbed: %s %g %s at %.2f (order %s) - %s%s",
-                fill.side,
-                fill.quantity,
-                fill.symbol,
-                fill.price,
-                fill.order_id,
-                # Branched on side (M81). This was hard-coded for the sell case
-                # M34 was written for, so a position opened AT THE BROKER while
-                # the app was down - which arrives through the same path -
-                # was announced as "a resting protective order executed, and
-                # this is now a closed trade". Both clauses were false, and the
-                # second was falsifiable against closed_trades.csv.
-                (
-                    "a resting protective order executed, and this is now a closed trade"
-                    if fill.side == "sell"
-                    else (
-                        "a position was OPENED at the broker that this application did not "
-                        "send. It opens a lot carrying the price paid, but no stop and no "
-                        "strategy are known for it, so a trade closed from it will have no "
-                        "R-multiple and will count towards no strategy's promotion evidence"
-                    )
-                ),
-                (
-                    ". It executed while this application was not running, so it is recorded "
-                    "but not re-counted"
-                    if record_only
-                    else ""
-                ),
-            )
-            if self.bus is not None:
-                await self.bus.publish(
-                    OrderFilledEvent(
-                        order_id=fill.order_id,
-                        symbol=fill.symbol,
-                        side=fill.side,
-                        quantity=fill.quantity,
-                        price=fill.price,
-                        # IBKR's execution avgPrice: an OBSERVED fill, so a buy
-                        # absorbed here is stamped "fill" and M65 leaves it (M175).
-                        price_is_fill=True,
-                        strategy=None,
-                        operator="broker (protective order)",
-                        exit_reason=self._protective_exit_reason(fill, stop_at_fill),
-                        # When it FILLED, not when we noticed (M50). The ledger
-                        # stamps closed_at from this, and a replayed exit can be
-                        # days older than the pass that finds it - which would
-                        # put a holding period nobody held into the evidence.
-                        ts=fill.filled_at,
-                    )
-                )
+            fill = await self._account_execution(raw, record_only=record_only)
+            if fill is not None:
+                absorbed.append(fill)
 
         if record_only and absorbed:
             # The M50 trap, and why this is not simply "persist the watermark".
@@ -2706,13 +2604,8 @@ class OMS:
         # different ways and only one of them was ever being watched.
         await self.verify_position_stops()
         broker_positions = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
-        # Defect B, 31 August. An order still filling is not a divergence: this
-        # app books the whole order at sign-off while the broker reports only
-        # what has executed, so the two legitimately differ by the unfilled
-        # remainder until the order completes. Subtracting it EXPLAINS that gap
-        # without blinding the rail - anything beyond the remainder still halts,
-        # and with no working buy the tolerance is zero.
-        in_flight = await self._in_flight_buy_remainders()
+        # Both sides now describe executed shares. Outstanding BUY quantities
+        # must not be subtracted from a difference in confirmed positions.
         symbols = set(self._filled_quantities) | set(broker_positions)
         divergent = {
             # ⚠️ The pair stays RAW - what each side actually holds. The
@@ -2721,11 +2614,7 @@ class OMS:
             # has.
             symbol: (self._filled_quantities.get(symbol, 0.0), broker_positions.get(symbol, 0.0))
             for symbol in symbols
-            if abs(
-                self._filled_quantities.get(symbol, 0.0)
-                - broker_positions.get(symbol, 0.0)
-                - in_flight.get(symbol, 0.0)
-            )
+            if abs(self._filled_quantities.get(symbol, 0.0) - broker_positions.get(symbol, 0.0))
             > 1e-6
         }
         explained = {

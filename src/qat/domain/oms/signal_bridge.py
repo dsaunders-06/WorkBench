@@ -53,6 +53,7 @@ from qat.data.sectors import SECTOR_BY_SYMBOL
 from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import (
+    BrokerOrderIdResolvedEvent,
     EntryPriceCorrectedEvent,
     MarketDataEvent,
     OrderFilledEvent,
@@ -105,6 +106,7 @@ class _LotStore(Protocol):
         reference_price: float | None = None,
         worst_price: float | None = None,
         best_price: float | None = None,
+        order_id: str | None = None,
     ) -> bool: ...
 
 
@@ -140,6 +142,9 @@ class _Entry:
     # "reference" is the sizing price published at transmit. `None` is a
     # record written before M175, which says neither.
     price_source: Literal["fill", "reference"] | None = None
+    order_id: str | None = None
+    # Execution-accounted shares; None identifies legacy records without a baseline.
+    quantity: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +170,9 @@ class PositionEntry:
     reference_price: float | None = None
     # M175, same reasoning: where `price` came from.
     price_source: Literal["fill", "reference"] | None = None
+    order_id: str | None = None
+    # Execution-accounted shares; None identifies legacy records without a baseline.
+    quantity: float | None = None
 
 
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
@@ -413,6 +421,7 @@ class SignalToOrderBridge:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         # Before restore_open_lots, or the ledger is rebuilt from the price the
         # order was SIZED against rather than the one it filled at (M65).
@@ -495,6 +504,7 @@ class SignalToOrderBridge:
                 if fill.side != "sell" or entry is None or ledger.open_lots(fill.symbol):
                     continue
                 ledger.restore_open_lot(
+                    order_id=entry.order_id,
                     symbol=fill.symbol,
                     quantity=fill.quantity,
                     price=entry.price,
@@ -770,6 +780,14 @@ class SignalToOrderBridge:
             logger.exception("Could not read positions to restore the trade ledger's open lots")
             return []
 
+        # Include accounted positions which closed while offline: their entry
+        # lots must exist before replay can apply the missing sell executions.
+        by_symbol = {position.symbol: position for position in positions}
+        for symbol, saved_entry in self._entries.items():
+            if saved_entry.quantity is not None:
+                by_symbol[symbol] = Position(symbol, saved_entry.quantity, saved_entry.price)
+        positions = list(by_symbol.values())
+
         restored: list[str] = []
         unknown: list[str] = []
         quarantined: list[str] = []
@@ -788,6 +806,7 @@ class SignalToOrderBridge:
                 continue
             worst, best, bar_count = self._excursion_since(position.symbol, entry.opened_at)
             if ledger.restore_open_lot(
+                order_id=entry.order_id,
                 symbol=position.symbol,
                 quantity=quantity,
                 price=entry.price,
@@ -958,6 +977,8 @@ class SignalToOrderBridge:
         """
         return {
             symbol: PositionEntry(
+                order_id=entry.order_id,
+                quantity=entry.quantity,
                 opened_at=entry.opened_at,
                 price=entry.price,
                 stop_price=entry.stop_price,
@@ -1091,6 +1112,7 @@ class SignalToOrderBridge:
         self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
         self.bus.unsubscribe(SignalEvent, self._on_signal)
         self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+        self.bus.unsubscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
         self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         if self._sweep_task is not None:
             self._sweep_task.cancel()
@@ -1133,6 +1155,7 @@ class SignalToOrderBridge:
         cannot be answered without one.
         """
         if event.side == "buy":
+            new_entry = event.symbol not in self._entries
             self._entries.setdefault(
                 event.symbol,
                 _Entry(
@@ -1145,9 +1168,34 @@ class SignalToOrderBridge:
                     # simply dropped it, so it never survived to the ledger.
                     reference_price=event.reference_price,
                     price_source="fill" if event.price_is_fill else "reference",
+                    order_id=event.order_id,
                 ),
             )
-            self._entry_times.append(event.ts)
+            entry = self._entries[event.symbol]
+            if new_entry:
+                self._entries[event.symbol] = replace(entry, quantity=event.quantity)
+                self._entry_times.append(event.ts)
+            elif entry.quantity is not None:
+                quantity = entry.quantity + event.quantity
+                self._entries[event.symbol] = replace(
+                    entry,
+                    quantity=quantity,
+                    price=(entry.quantity * entry.price + event.quantity * event.price) / quantity,
+                )
+            elif entry.order_id == event.order_id and event.order_average_price is not None:
+                self._entries[event.symbol] = replace(entry, price=event.order_average_price)
+        elif (
+            sell_entry := self._entries.get(event.symbol)
+        ) is not None and sell_entry.quantity is not None:
+            remaining = sell_entry.quantity - event.quantity
+            if remaining < -1e-9:
+                self.oms.kill_switch.trip("sell execution exceeds the recorded entry quantity")
+                return
+            if remaining <= 1e-9:
+                self._entries.pop(event.symbol, None)
+                self._time_stopped.discard(event.symbol)
+            else:
+                self._entries[event.symbol] = replace(sell_entry, quantity=remaining)
         elif await self._is_flat(event.symbol):
             self._entries.pop(event.symbol, None)
             self._time_stopped.discard(event.symbol)
@@ -1167,6 +1215,14 @@ class SignalToOrderBridge:
                 event.symbol,
                 "shares",
             )
+        self._save_entries()
+
+    async def _on_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
+        if event.app_order_id is None:
+            return
+        for symbol, entry in list(self._entries.items()):
+            if entry.order_id == event.app_order_id:
+                self._entries[symbol] = replace(entry, order_id=event.order_id)
         self._save_entries()
 
     async def _on_entry_price_corrected(self, event: EntryPriceCorrectedEvent) -> None:
@@ -1202,6 +1258,8 @@ class SignalToOrderBridge:
         for symbol, row in raw.items():
             try:
                 entries[symbol] = _Entry(
+                    order_id=row.get("order_id"),
+                    quantity=float(row["quantity"]) if row.get("quantity") is not None else None,
                     opened_at=datetime.fromisoformat(row["opened_at"]),
                     price=float(row["price"]),
                     stop_price=(
@@ -1261,6 +1319,8 @@ class SignalToOrderBridge:
         precisely for the restart that was not planned."""
         payload = {
             symbol: {
+                "order_id": entry.order_id,
+                "quantity": entry.quantity,
                 "opened_at": entry.opened_at.isoformat(),
                 "price": entry.price,
                 "stop_price": entry.stop_price,

@@ -65,7 +65,9 @@ class _ReIdingBroker(MockBroker):
         # excludes `filled`, so a broker that fills instantly leaves the list
         # EMPTY and the invariant test below iterates nothing and passes. An
         # empty loop proves nothing; this reproduces the state that broke.
-        return replace(placed, order_id=_PERM_ID, status="transmitted")
+        return replace(
+            placed, order_id=_PERM_ID, status="transmitted", filled_quantity=0.0, filled_price=None
+        )
 
 
 def _oms() -> OMS:

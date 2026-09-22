@@ -50,6 +50,7 @@ from qat.domain import market_calendar as mc
 from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import (
+    BrokerOrderIdResolvedEvent,
     EntryPriceCorrectedEvent,
     ExitPriceCorrectedEvent,
     MarketDataEvent,
@@ -672,6 +673,7 @@ class TradeLedger:
         reference_price: float | None = None,
         worst_price: float | None = None,
         best_price: float | None = None,
+        order_id: str | None = None,
     ) -> bool:
         """Re-create the entry lot for a position opened before this run (M49).
 
@@ -722,12 +724,14 @@ class TradeLedger:
                 reference_price=reference_price,
                 worst_price=worst_price if worst_price is not None else price,
                 best_price=best_price if best_price is not None else price,
+                order_id=order_id,
             )
         )
         return True
 
     async def start(self) -> None:
         self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         self.bus.subscribe(ExitPriceCorrectedEvent, self._on_exit_price_corrected)
         self.bus.subscribe(RegimeEvent, self._on_regime)
@@ -735,6 +739,7 @@ class TradeLedger:
 
     async def stop(self) -> None:
         self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+        self.bus.unsubscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
         self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         self.bus.unsubscribe(ExitPriceCorrectedEvent, self._on_exit_price_corrected)
         self.bus.unsubscribe(RegimeEvent, self._on_regime)
@@ -1082,6 +1087,17 @@ class TradeLedger:
             best = max(lot.best_price, event.price) if lot.best_price else event.price
             if worst != lot.worst_price or best != lot.best_price:
                 lots[index] = replace(lot, worst_price=worst, best_price=best)
+
+    async def _on_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
+        original = event.app_order_id
+        if original is None or original == event.order_id:
+            return
+        for lots in self._open_lots.values():
+            for index, lot in enumerate(lots):
+                if lot.order_id == original:
+                    lots[index] = replace(lot, order_id=event.order_id)
+        if original in self._charged:
+            self._charged[event.order_id] = self._charged.pop(original)
 
     async def _on_fill(self, event: OrderFilledEvent) -> None:
         if event.quantity <= 0 or event.price <= 0:

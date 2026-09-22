@@ -1,18 +1,7 @@
-"""An app-transmitted SELL must learn what it actually filled at (M71).
+"""Confirmed exit executions create realised trades at actual prices.
 
-M70 fixed the buy side: `OMS._correct_announced_price` compares the broker's
-real fill against what `_announce_fill` published at transmit (the price the
-order was SIZED against, because there is no fill price yet) and corrects it.
-That method opened with `raw.side != "buy"` and `order.side != "buy"` guards -
-deliberately skipping sells, because a sell closes the position rather than
-leaving an open lot to rebase, and by the time the true fill arrives the
-`ClosedTrade` is already written to `closed_trades.csv`.
-
-This is the other half. `_correct_announced_price` now handles both sides:
-a sell mismatch publishes `ExitPriceCorrectedEvent`, and `TradeLedger` amends
-the row already on disk - write-then-heal, matched exactly on the order id
-`ClosedTrade` now carries.
-"""
+No closed trade is written at transmission, so a later broker price is the
+initial ledger fact rather than a repair of a fictitious earlier trade."""
 
 from __future__ import annotations
 
@@ -182,14 +171,11 @@ async def test_the_recorded_exit_price_is_corrected_on_disk(tmp_path):
     oms, ledger = await _opened_position(tmp_path, broker)
     await _sold(oms)
 
-    written_wrong = ledger.closed_trades()
-    assert len(written_wrong) == 1
-    assert written_wrong[0].exit_price == pytest.approx(_SIZED_AT), "the defect, before the fix"
-    wrong_r_multiple = written_wrong[0].r_multiple
+    assert ledger.closed_trades() == []
 
     broker.complete("AAA", price=_PAID)
     corrected = await oms.absorb_broker_fills()
-    assert corrected == [], "an own fill is corrected in place, never re-absorbed as foreign"
+    assert len(corrected) == 1
 
     memory = ledger.closed_trades()[0]
     assert memory.exit_price == pytest.approx(_PAID)
@@ -202,9 +188,6 @@ async def test_the_recorded_exit_price_is_corrected_on_disk(tmp_path):
     # that rounding.
     assert float(rows[0]["exit_cost"]) == pytest.approx(memory.exit_cost, abs=0.01)
     assert float(rows[0]["r_multiple"]) == pytest.approx(memory.r_multiple, abs=1e-4)
-    assert float(rows[0]["r_multiple"]) != pytest.approx(
-        wrong_r_multiple
-    ), "must actually be recomputed, not merely copied forward"
     assert rows[0]["order_id"] == "broker-1"
 
 
@@ -223,7 +206,8 @@ async def test_a_price_within_tolerance_amends_nothing(tmp_path):
     broker.complete("AAA", price=_SIZED_AT * (1 + 1e-6))
     corrected = await oms.absorb_broker_fills()
 
-    assert corrected == []
+    assert len(corrected) == 1
+    assert await oms.absorb_broker_fills() == []
     assert ledger.closed_trades()[0].exit_price == pytest.approx(_SIZED_AT)
     assert list(tmp_path.glob("closed_trades.csv.bak-*")) == [], "no backup without an amendment"
 
@@ -247,7 +231,7 @@ async def test_a_quarantined_symbol_amends_nothing(tmp_path):
     broker.complete("AAA", price=_PAID)
     await oms.absorb_broker_fills()
 
-    assert ledger.closed_trades()[0].exit_price == pytest.approx(_SIZED_AT)
+    assert ledger.closed_trades()[0].exit_price == pytest.approx(_PAID)
     assert list(tmp_path.glob("closed_trades.csv.bak-*")) == []
 
 

@@ -649,6 +649,7 @@ class IBAdapter:
         releases the group.
         """
         parent = to_ib_parent(order)
+        parent.orderRef = order.order_id
         parent_trade = self.ib_client.placeOrder(contract, parent)  # type: ignore[arg-type]
         group: list[object] = [parent]
         for leg in to_ib_protective_legs(order, parent.orderId):
@@ -670,6 +671,8 @@ class IBAdapter:
         """A standalone protective stop and target, mutually exclusive at the
         broker rather than merely both present (M33)."""
         pair = to_ib_oca_pair(order, oca_group=f"qat-{order.order_id}")
+        for leg in pair:
+            leg.orderRef = order.order_id if leg.orderType == "STP" else f"{order.order_id}:target"
         trades = [
             self.ib_client.placeOrder(contract, leg) for leg in pair  # type: ignore[arg-type]
         ]
@@ -743,6 +746,13 @@ class IBAdapter:
                 continue
             if wanted is not None and fill.symbol not in wanted:
                 continue
+            # The app reference survives a late permId without relying on a
+            # client/session-scoped order number that may be reused.
+            app_order_id = str(getattr(execution.execution, "orderRef", "") or "")
+            if app_order_id in self._orders and fill.order_id != app_order_id:
+                await self.bus.publish(
+                    BrokerOrderIdResolvedEvent(order_id=fill.order_id, app_order_id=app_order_id)
+                )
             fills.append(fill)
         return fills
 
@@ -880,6 +890,7 @@ class IBAdapter:
         if order.order_type == "stop" and order.take_profit_price is not None:
             return await self._place_oca(order, contract)
         ib_order = to_ib_order(order)
+        ib_order.orderRef = order.order_id
         trade = self.ib_client.placeOrder(contract, ib_order)
         app_order_id = order.order_id
         self._orders[app_order_id] = order
@@ -958,6 +969,15 @@ class IBAdapter:
                 stop_price=float(ib_order.auxPrice) or None,
                 order_type="stop" if order_type.startswith("STP") else "market",
             )
+            app_order_id = next(
+                (
+                    key
+                    for key, known in self._ib_orders.items()
+                    if getattr(known, "orderId", None) == ib_order.orderId
+                    and getattr(known, "clientId", None) == getattr(ib_order, "clientId", None)
+                ),
+                None,
+            )
             self._register(adopted, ib_order, [ib_order])
             # Item 56 / Task 3: this IS the moment the permId-shaped id
             # resolves to an order the app already knows about - the whole
@@ -966,7 +986,10 @@ class IBAdapter:
             # KillSwitchEvent precedent) so `_is_foreign_unrecorded` learns
             # it too, and a slow TWS acknowledgement does not still get
             # absorbed as a foreign fill and double the book.
-            await self.bus.publish(BrokerOrderIdResolvedEvent(order_id=order_id))
+            if app_order_id is not None:
+                await self.bus.publish(
+                    BrokerOrderIdResolvedEvent(order_id=order_id, app_order_id=app_order_id)
+                )
             return adopted
         return None
 
