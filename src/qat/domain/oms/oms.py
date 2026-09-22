@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
@@ -43,8 +44,10 @@ from qat.domain.events import (
     OrderRejectedEvent,
 )
 from qat.domain.oms.anomaly import PositionAnomalyStore
+from qat.domain.oms.exit_recovery import ExitRecovery, ExitRecoveryStore
 from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
 from qat.domain.oms.resting_orders import (
+    TERMINAL_STATUSES,
     WORKING_STATUSES,
     SymbolOrderDivergence,
     explain_entries_in_flight,
@@ -58,6 +61,16 @@ logger = logging.getLogger(__name__)
 # Share counts are floats on the wire, so an exact == 0 comparison is not safe.
 # The same 1e-6 the reconciliation and cancel paths already use.
 _POSITION_EPSILON = 1e-6
+
+
+def _latest_cumulative_fills(fills: Iterable[BrokerFill]) -> list[BrokerFill]:
+    """One complete cumulative snapshot per order, independent of response order."""
+    highest: dict[str, BrokerFill] = {}
+    for fill in fills:
+        seen = highest.get(fill.order_id)
+        if seen is None or (fill.quantity, fill.filled_at) > (seen.quantity, seen.filled_at):
+            highest[fill.order_id] = fill
+    return sorted(highest.values(), key=lambda fill: (fill.filled_at, fill.order_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +205,7 @@ class OMS:
         self.entry_allow_list = entry_allow_list
         self.bus = bus
         self._orders: dict[str, Order] = {}
+        self._exits_requiring_release: set[str] = set()
         self._filled_quantities: dict[str, float] = {}
         self._adopted_baseline: dict[str, float] = {}
         # Stops this session attached to its own entries, kept so the portfolio
@@ -216,6 +230,17 @@ class OMS:
         # cannot say whether a fill on the boundary was already recorded, and
         # guessing either way loses a trade or records it twice.
         self.settings = settings
+        self._recovery_order_ids: set[str] = set()
+        self._exit_recovery: ExitRecoveryStore | None = None
+        try:
+            self._exit_recovery = ExitRecoveryStore(
+                Path((settings or risk_engine.settings).data_dir) / "exit_recovery.json"
+            )
+            if self._exit_recovery.plans:
+                self.kill_switch.trip("pending exit protection recovery restored after restart")
+        except (OSError, ValueError, TypeError, AttributeError):
+            logger.exception("Exit recovery journal is unreadable; refusing further cancellations")
+            self.kill_switch.trip("exit recovery journal unreadable")
         self._fill_state_path = (
             Path(settings.data_dir) / _FILL_STATE_FILENAME if settings is not None else None
         )
@@ -551,111 +576,166 @@ class OMS:
         return order
 
     async def _release_protective_legs(self, symbol: str, quantity: float, reason: str) -> bool:
-        """Cancel this symbol's resting protective legs. False means do not sell.
-
-        ⚠️ CANCEL FIRST, NOT SELL FIRST, and the two failure modes are why -
-        they are not symmetric:
-
-        * cancel first and the sell then fails -> the position is UNPROTECTED,
-          which `verify_position_stops` detects and `signal_bridge` RE-ARMS on
-          its own ("Proposed protective stops for N unprotected position(s)").
-          Self-healing, on a position you meant to hold.
-        * sell first and the cancel then fails -> the legs are ORPHANED,
-          detected by a rail that explicitly does not cancel anything, and if
-          one fills you own an unintended SHORT with no bound.
-
-        ⚠️ A PARTIAL exit RELEASES ITS LEGS TOO, reversed 9 September 2026.
-        This used to leave them alone, reasoning that the de-lever sweep trims a
-        position which still needs protecting. That is true of the intent and
-        false of the result: the legs keep the PRE-TRIM size, so a 100-share
-        bracket ends up guarding a 60-share holding, and a stop firing then
-        sells 100 against 60 held and puts the account SHORT 40 - in a falling
-        market, which is when stops fire. The sweep trims EVERY position at
-        once, so one breach left the whole book over-covered.
-
-        ⚠️ WHY CANCEL RATHER THAN RESIZE, and it is the same asymmetry again:
-        `naked_positions` reports a position with NO stop resting and is BLIND
-        to one that is merely the wrong SIZE. Resizing in place fails into a
-        state nothing detects; cancelling fails into one that
-        `verify_position_stops` shouts about and `rearm_protective_stops` heals
-        by itself, at `abs(quantity)` - the current holding - off the recorded
-        entry stop. Cancelling fails into the state the system can see.
-
-        ⚠️ The remainder is therefore briefly unprotected, bounded by
-        `protection_sweep_seconds`. That is a real cost, accepted deliberately,
-        and it is the same window this method already accepts when a full exit
-        is cancelled and then fails.
-
-        ⚠️ Only protective legs, per `is_protective_leg`. A working BUY on the
-        symbol is an intruder and is left strictly alone: cancelling one
-        silently is how an account came to hold 4x the intended position on
-        24 August (M139).
-        """
+        """Persist recovery intent, cancel targets first, then verify each cancel."""
+        if self._exit_recovery is None:
+            return False
         source = getattr(self.broker, "open_orders", None)
         cancel = getattr(self.broker, "cancel_order", None)
         if source is None or cancel is None:
-            # An adapter that models neither cannot be orphaning anything.
             return True
         try:
-            working = await source()
-        except Exception:
-            logger.exception(
-                "Could not read open orders before exiting %s - refusing the exit rather "
-                "than selling into legs that may be resting",
-                symbol,
-            )
-            return False
-
-        legs = [o for o in working if o.symbol == symbol and is_protective_leg(o)]
-        if not legs:
-            return True
-
-        held = await self._broker_quantity(symbol)
-        if held is not None and abs(quantity) + 1e-9 < abs(held):
-            logger.warning(
-                "Exit on %s is PARTIAL (%g of %g held), so its %d protective leg(s) are "
-                "RELEASED like any other exit - they carry the pre-trim size and would "
-                "guard %g shares against a %g holding. The remainder is left unprotected "
-                "on purpose: that state is what `naked_positions` can see, and "
-                "`rearm_protective_stops` re-arms it at the reduced size.",
-                symbol,
-                quantity,
-                held,
-                len(legs),
-                held,
-                abs(held) - abs(quantity),
-            )
-
-        for leg in legs:
-            try:
+            working = [o for o in await source() if o.status not in TERMINAL_STATUSES]
+            mine = [o for o in working if o.symbol == symbol]
+            if any(not is_protective_leg(o) for o in mine):
+                logger.error("Exit on %s refused: another order is working", symbol)
+                return False
+            if self._exit_recovery is None or symbol in self._exit_recovery.plans:
+                logger.error("Exit on %s refused: unresolved protection recovery", symbol)
+                return False
+            held = await self._broker_quantity(symbol)
+            if not mine:
+                if (
+                    held is None
+                    or not math.isfinite(held)
+                    or held <= 0
+                    or quantity > held + _POSITION_EPSILON
+                    or self.kill_switch.tripped
+                ):
+                    return False
+                # The acknowledgement of an initially unprotected exit can
+                # also be lost. Persist its intent without inventing a stop.
+                self._exit_recovery.put(ExitRecovery(symbol, held, None))
+                return True
+            stops = [o for o in mine if o.stop_price is not None and o.stop_price > 0]
+            if held is None or held <= 0 or quantity > held + _POSITION_EPSILON or len(stops) != 1:
+                logger.error("Exit on %s refused: holding or original stop is unverified", symbol)
+                return False
+            stop = float(stops[0].stop_price or 0)
+            if not math.isfinite(stop) or not math.isfinite(held):
+                return False
+            if self.kill_switch.tripped:
+                return False
+            # A failed durable write refuses BEFORE touching the broker.
+            self._exit_recovery.put(ExitRecovery(symbol, held, stop))
+            # Keep the stop until every target cancellation has settled.
+            for leg in sorted(mine, key=lambda o: o.stop_price is not None):
+                if self.kill_switch.tripped:
+                    return False
                 await cancel(leg.order_id)
-            except Exception:
-                logger.exception("Could not cancel protective leg %s on %s", leg.order_id, symbol)
-
-        # ⚠️ RE-READ. The cancel's own response is not evidence: on 19 August
-        # one reported PendingCancel while being rejected outright (10147).
-        try:
-            still = [o for o in await source() if o.symbol == symbol and is_protective_leg(o)]
-        except Exception:
-            logger.exception("Could not verify the leg cancellation on %s", symbol)
-            return False
-        if still:
-            logger.error(
-                "%d protective leg(s) on %s are STILL RESTING after a cancel was sent "
-                "(%s). The exit is refused: the position keeps its protection, and "
-                "selling into a resting leg is what orphaned A2M.AX.",
-                len(still),
-                symbol,
-                ", ".join(o.order_id for o in still),
+                remaining = [o for o in await source() if o.status not in TERMINAL_STATUSES]
+                if any(o.order_id == leg.order_id for o in remaining):
+                    logger.error("Protective cancel %s has not settled", leg.order_id)
+                    return False
+                if any(o.symbol == symbol and not is_protective_leg(o) for o in remaining):
+                    return False
+            if any(o.symbol == symbol for o in remaining):
+                return False
+            logger.info(
+                "Protective legs released for %s (%s); recovery intent saved", symbol, reason
             )
+            return True
+        except Exception:
+            logger.exception("Protective release failed for %s; recovery required", symbol)
             return False
-        logger.info(
-            "Cancelled %d protective leg(s) on %s before exiting (%s)",
-            len(legs),
-            symbol,
-            reason,
-        )
-        return True
+
+    async def recover_exit_protection(self) -> None:
+        """Retry recorded protection handoffs, including after a restart or halt."""
+        async with self._signoff_lock:
+            if self._exit_recovery is not None:
+                for symbol in list(self._exit_recovery.plans):
+                    await self._recover_exit_protection_locked(symbol)
+
+    def exit_protection_pending(self, symbol: str) -> bool:
+        return self._exit_recovery is not None and symbol in self._exit_recovery.plans
+
+    async def _recover_exit_protection_locked(self, symbol: str) -> None:
+        store = self._exit_recovery
+        if store is None or symbol not in store.plans:
+            return
+        plan = store.plans[symbol]
+        # A proposal sized before this handoff must never revive after the
+        # journal is cleared. Recovery owns the replacement protection.
+        for pending in list(self._orders.values()):
+            if (
+                pending.symbol == symbol
+                and pending.is_protective_stop
+                and pending.status == "pending_signoff"
+                and pending.order_id not in self._recovery_order_ids
+            ):
+                pending.status = "rejected"
+                self._record(pending, "rejected", "superseded by exit protection recovery")
+        if plan.stage == "uncertain":
+            self.kill_switch.trip(
+                f"uncertain exit/protection transmission for {symbol}; broker review required"
+            )
+            return
+        try:
+            working = [
+                o
+                for o in await self.broker.open_orders()
+                if o.symbol == symbol and o.status not in TERMINAL_STATUSES
+            ]
+            held = await self._broker_quantity(symbol)
+            if (
+                held is None
+                or not math.isfinite(held)
+                or held < 0
+                or held > plan.quantity + _POSITION_EPSILON
+            ):
+                raise RuntimeError(
+                    "remaining holding cannot be verified against captured protection"
+                )
+            if working:
+                # PendingCancel is not stable protection; retain the journal.
+                stops = [
+                    o
+                    for o in working
+                    if o.stop_price is not None
+                    and o.side.lower() == "sell"
+                    and o.status in WORKING_STATUSES
+                    and abs(o.quantity - held) <= _POSITION_EPSILON
+                    and plan.stop_price is not None
+                    and abs(o.stop_price - plan.stop_price) <= max(0.01, plan.stop_price * 1e-4)
+                ]
+                if (
+                    len(stops) == 1
+                    and all(is_protective_leg(o) and o.status in WORKING_STATUSES for o in working)
+                    and all(0 < o.quantity <= held + _POSITION_EPSILON for o in working)
+                ):
+                    store.remove(symbol)
+                return
+            if held == 0:
+                store.remove(symbol)
+                return
+            if plan.stop_price is None:
+                raise RuntimeError("no original stop was captured; manual protection required")
+            # No target is recreated: restore only the captured stop, at the
+            # broker-confirmed remaining size, through the same OMS boundary.
+            protective = self._new_pending_order(symbol, "sell", held, stop_price=plan.stop_price)
+            protective.order_type = "stop"
+            recovery_id = protective.order_id
+            self._recovery_order_ids.add(recovery_id)
+            try:
+                store.stage(symbol, "uncertain")
+                placed = await self._sign_off_locked(
+                    protective.order_id, "exit-protection-recovery"
+                )
+            finally:
+                self._recovery_order_ids.discard(recovery_id)
+            if placed.status not in {"transmitted", "filled"}:
+                raise RuntimeError("restoration was not accepted; broker review required")
+            # Acceptance is not verification. Keep the record until the next
+            # broker read confirms coverage; it also survives a process crash.
+            store.stage(symbol, "working")
+            logger.warning(
+                "Restoration submitted for %s: %g shares at stop %.4f",
+                symbol,
+                held,
+                plan.stop_price,
+            )
+        except Exception:
+            logger.exception("Could not restore exit protection for %s", symbol)
+            self.kill_switch.trip(f"exit protection for {symbol} requires broker verification")
 
     async def submit_exit_order(
         self,
@@ -709,42 +789,21 @@ class OMS:
             )
             quantity = held
 
-        # ⚠️ CANCEL THE PROTECTIVE LEGS BEFORE SELLING, and refuse the exit if
-        # they will not go. On 4 September the escaped-hold rule exited A2M.AX
-        # through this method, the sell filled, and BOTH OCA legs stayed at full
-        # size on a flat position - 9,636 shares of resting SELL with a stop
-        # about 4% under the last. A naked short waiting to happen. The
-        # resting-order rail found it and named the ids; the operator cancelled
-        # them by hand, because that rail says "The ORDERS ARE NOT CANCELLED by
-        # this."
-        #
-        # `PositionCloser` (M163) already did this properly for the OPERATOR's
-        # close. The autonomous paths - the time stop and the signal exit - came
-        # straight here and walked away, and those are the exits that run when
-        # nobody is watching the scan.
-        # ⚠️ `PositionCloser` passes True: it has ALREADY cancelled the legs,
-        # re-read to prove they are gone, and holds recovery logic to re-place
-        # the bracket if this sell then fails (M163). Repeating the work here
-        # let two layers disagree about the same broker state and refused six
-        # manual closes outright. The operator path owns its own release; every
-        # other caller gets the default.
-        if not legs_already_released and not await self._release_protective_legs(
-            symbol, quantity, reason
-        ):
+        # CE-017: risk evaluation must precede EVERY protective cancellation.
+        # A refusal or failed audit write must leave the existing bracket alone.
+        try:
+            decision = self.risk_engine.evaluate_exit(symbol, quantity, price)
+        except Exception as exc:  # noqa: BLE001 - fail closed before touching protection
+            logger.exception("Exit risk evaluation failed for %s; protection unchanged", symbol)
             return self._new_rejected_order_for(
-                symbol,
-                "sell",
-                0.0,
-                "protective legs are still resting at the broker and could not be "
-                "cancelled - selling into them is the double-fill that turns a "
-                "protected long into a short, so the exit is refused and the "
-                "position stays protected",
+                symbol, "sell", 0.0, f"exit risk evaluation failed: {type(exc).__name__}: {exc}"
+            )
+        if not decision.approved or decision.final_shares <= 0:
+            return self._new_rejected_order_for(
+                symbol, "sell", 0.0, decision.reason or "exit risk engine rejected"
             )
 
         self._exit_reasons[symbol] = reason
-        decision = self.risk_engine.evaluate_exit(symbol, quantity, price)
-        if not decision.approved or decision.final_shares <= 0:
-            return self._new_rejected_order_for(symbol, "sell", 0.0)
 
         # NO per-order cap on an exit, deliberately (24 August 2026).
         #
@@ -761,6 +820,11 @@ class OMS:
         # limit. An exit is not an expression of appetite.
 
         order = self._new_pending_order(symbol, "sell", decision.final_shares, price)
+        # Creating a proposal must not cancel broker protection. Release is
+        # deferred until sign-off, after the operator/autonomy and halt gates.
+        # PositionCloser owns its existing cancellation/recovery transaction.
+        if not legs_already_released:
+            self._exits_requiring_release.add(order.order_id)
         await self._announce_pending(order)
         return order
 
@@ -903,7 +967,8 @@ class OMS:
                 "refusing to transmit it a second time"
             )
 
-        if self.kill_switch.tripped:
+        recovering = order_id in self._recovery_order_ids and order.is_protective_stop
+        if self.kill_switch.tripped and not recovering:
             order.status = "rejected"
             logger.info("Sign-off blocked by kill-switch: order=%s operator=%s", order_id, operator)
             # Journalled, like every other refusal in this method (item 43).
@@ -969,6 +1034,36 @@ class OMS:
                     operator,
                 )
                 return order
+
+            if self.exit_protection_pending(order.symbol):
+                # Only the captured-stop recovery may transmit during this
+                # handoff; an ordinary protection sweep must not race it.
+                try:
+                    busy = any(
+                        o
+                        for o in await self.broker.open_orders()
+                        if o.symbol == order.symbol and o.status not in TERMINAL_STATUSES
+                    )
+                except Exception:
+                    busy = True  # unreadable is not an empty book
+                if not recovering or busy:
+                    order.status = "rejected"
+                    self._record(
+                        order, "rejected", "exit recovery owns protection or broker busy", operator
+                    )
+                    return order
+                held = await self._broker_quantity(order.symbol)
+                store = self._exit_recovery
+                plan = store.plans.get(order.symbol) if store is not None else None
+                if (
+                    plan is None
+                    or held is None
+                    or not math.isfinite(held)
+                    or held > plan.quantity + _POSITION_EPSILON
+                ):
+                    order.status = "rejected"
+                    self._record(order, "rejected", "recovery holding is unverified", operator)
+                    return order
             if held <= _POSITION_EPSILON:
                 order.status = "rejected"
                 logger.warning(
@@ -1055,6 +1150,65 @@ class OMS:
                 )
                 return order
 
+        if order_id in self._exits_requiring_release:
+            released = await self._release_protective_legs(
+                order.symbol, order.quantity, self._exit_reasons.get(order.symbol, "signal")
+            )
+            if not released:
+                order.status = "rejected"
+                self._record(
+                    order,
+                    "rejected",
+                    "protective release was refused or could not be verified; "
+                    "inspect broker protection before retrying",
+                    operator,
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return order
+            self._exits_requiring_release.discard(order_id)
+            # Cancellation and its verification both await the broker. A halt
+            # can arrive in that interval, including on an empty-order read.
+            if self.kill_switch.tripped:
+                order.status = "rejected"
+                self._record(
+                    order,
+                    "rejected",
+                    f"kill-switch tripped during exit preparation: {self.kill_switch.reason}; "
+                    "verify remaining broker protection",
+                    operator,
+                )
+                logger.critical(
+                    "Exit on %s halted during preparation; protective cancellations may "
+                    "already have been issued. Verify broker protection before any retry.",
+                    order.symbol,
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return order
+
+            held = await self._broker_quantity(order.symbol)
+            if (
+                held is None
+                or not math.isfinite(held)
+                or held + _POSITION_EPSILON < order.quantity
+                or self.kill_switch.tripped
+            ):
+                order.status = "rejected"
+                self._record(
+                    order, "rejected", "holding changed during protective release", operator
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return order
+
+            if self._exit_recovery is not None:
+                try:
+                    if order.symbol not in self._exit_recovery.plans:
+                        self._exit_recovery.put(ExitRecovery(order.symbol, held, None))
+                    self._exit_recovery.stage(order.symbol, "uncertain")
+                except OSError:
+                    order.status = "rejected"
+                    await self._recover_exit_protection_locked(order.symbol)
+                    return order
+
         # The broker decides whether this is transmitted, not us (M31a).
         #
         # `order.status = "transmitted"` used to run BEFORE the call, so when
@@ -1076,6 +1230,7 @@ class OMS:
                 order.quantity,
             )
             self._record(order, "rejected", f"broker refused: {exc}", operator)
+            await self._recover_exit_protection_locked(order.symbol)
             return order
 
         # No status assignment here at all: the returned order carries the
@@ -1105,6 +1260,29 @@ class OMS:
         # never see this fill as foreign.
         if filled.order_id:
             self._broker_order_ids.add(str(filled.order_id))
+
+        if (
+            not recovering
+            and self._exit_recovery is not None
+            and order.symbol in self._exit_recovery.plans
+        ):
+            try:
+                self._exit_recovery.stage(
+                    order.symbol,
+                    "prepared" if filled.status in {"rejected", "cancelled"} else "working",
+                )
+            except OSError:
+                logger.exception("Broker answered but recovery journal could not be updated")
+                self.kill_switch.trip(
+                    "exit acknowledgement could not be persisted; broker review required"
+                )
+                return filled
+            if filled.status in {"rejected", "cancelled"}:
+                self._record(
+                    filled, "rejected", "broker refused exit; restoring protection", operator
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return filled
 
         # A protective stop is RESTING, not filled (M31d). Counting it as a
         # sell would halve the tracked quantity against a broker that still
@@ -1698,7 +1876,7 @@ class OMS:
             logger.exception("Could not read the broker to size an exit on %s", symbol)
             return None
         return next(
-            (abs(pos.quantity) for pos in positions if pos.symbol == symbol),
+            (pos.quantity for pos in positions if pos.symbol == symbol),
             0.0,
         )
 
@@ -1722,6 +1900,10 @@ class OMS:
         the price reaches it, and the one rule with no exceptions is that
         nothing reaches the broker without sign-off.
         """
+        if self.exit_protection_pending(symbol):
+            return self._new_rejected_order_for(
+                symbol, "sell", 0.0, "durable exit recovery owns protection for this symbol"
+            )
         if quantity <= 0:
             return self._new_rejected_order_for(symbol, "sell", 0.0)
         if stop_price <= 0:
@@ -1902,11 +2084,20 @@ class OMS:
         if source is None:
             return []
         try:
-            fills = await source(self._last_fill_scan, self._symbols_to_watch_for_fills())
+            fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
         except Exception:
             logger.exception("Could not read broker fills missed while the app was not running")
             return []
-        return [fill for fill in fills if self._is_foreign_unrecorded(fill)]
+        # Replay preparation must see exactly the same cumulative quantities
+        # as absorption. Restoring a lot from the first partial execution then
+        # absorbing the final cumulative fill silently truncates the closed trade.
+        missed = []
+        for raw in _latest_cumulative_fills(fills):
+            if self._is_foreign_unrecorded(raw):
+                delta = self._unabsorbed_part(raw)
+                if delta is not None:
+                    missed.append(delta)
+        return missed
 
     def _is_foreign_unrecorded(self, fill: BrokerFill) -> bool:
         """Whether this fill is one this app neither sent nor has fully
@@ -2113,12 +2304,7 @@ class OMS:
         #
         # Alpaca is unaffected: one entry per order id means the max is that
         # entry.
-        highest: dict[str, BrokerFill] = {}
-        for raw in fills:
-            seen = highest.get(raw.order_id)
-            if seen is None or raw.quantity > seen.quantity:
-                highest[raw.order_id] = raw
-        fills = sorted(highest.values(), key=lambda f: f.filled_at)
+        fills = _latest_cumulative_fills(fills)
 
         absorbed: list[BrokerFill] = []
         for raw in fills:
@@ -2513,6 +2699,7 @@ class OMS:
         # trips the kill-switch on a stop doing exactly its job - and the trade
         # ledger never records the closed trade, so the promotion gate
         # accumulates nothing from the only exits this system actually has.
+        await self.recover_exit_protection()
         await self.absorb_broker_fills()
 
         # Protection is checked alongside quantity, because they fail in
