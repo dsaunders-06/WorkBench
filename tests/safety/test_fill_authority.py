@@ -233,3 +233,20 @@ async def test_restart_restores_accounted_quantity_before_offline_sell(tmp_path,
     await restored.replay_missed_exits()
     assert sum(lot.quantity for lot in ledger.open_lots("AAA")) == 100.0 - sold
     assert not switch.tripped
+
+
+@pytest.mark.asyncio
+async def test_restart_partial_order_pays_one_commission_floor(tmp_path):
+    from qat.domain.backtester.costs import CostModel
+
+    bus = EventBus()
+    ledger = TradeLedger(bus, str(tmp_path))
+    ledger._costs = CostModel(commission_bps=0, min_commission=6)
+    await ledger.start()
+    ledger.restore_open_lot("AAA", 40, 10, 9, "swing", datetime.now(UTC), order_id="broker-1")
+    await bus.publish(
+        OrderFilledEvent(
+            order_id="broker-1", symbol="AAA", side="buy", quantity=60, price=10, strategy="swing"
+        )
+    )
+    assert sum(lot.entry_cost for lot in ledger.open_lots("AAA")) == 6
