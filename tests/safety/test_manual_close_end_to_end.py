@@ -213,7 +213,14 @@ def _wire(tmp_path, broker: _IbkrLikeBroker, *, execution_mode: str = "auto") ->
     bus = EventBus()
     kill_switch = KillSwitch()
     risk_engine = RiskEngine(bus, kill_switch, settings=settings)
-    oms = OMS(broker, risk_engine, kill_switch, max_order_pct_of_cash=1.0, bus=bus)
+    oms = OMS(
+        broker,
+        risk_engine,
+        kill_switch,
+        max_order_pct_of_cash=1.0,
+        bus=bus,
+        settings=settings,
+    )
     gate = AutonomyGate(settings, kill_switch, clock=lambda: OPEN_US)
     journal = DecisionJournal(tmp_path)
     executor = AutonomousExecutor(bus, oms, gate, journal, settings=settings)
@@ -404,9 +411,12 @@ async def test_a_settled_cancel_still_lets_the_close_through_end_to_end(auto_mod
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reject_protective", [False, True])
-async def test_lost_market_acknowledgement_never_places_another_sell(auto_mode, reject_protective):
+@pytest.mark.parametrize("execution_mode", ["auto", "recommend"])
+async def test_lost_market_acknowledgement_never_places_another_sell(
+    auto_mode, reject_protective, execution_mode
+):
     broker = _IbkrLikeBroker(reject_market_sell=True, reject_protective=reject_protective)
-    wiring = await auto_mode(broker)
+    wiring = await auto_mode(broker, execution_mode=execution_mode)
     result = await wiring.closer.close_position(SYMBOL, operator="operator (dashboard)")
     assert result.outcome is CloseOutcome.REFUSED
     assert broker.placed == []
@@ -414,6 +424,7 @@ async def test_lost_market_acknowledgement_never_places_another_sell(auto_mode, 
     assert wiring.oms.exit_protection_pending(SYMBOL)
     assert result.issued_legs == ("leg-lmt", "leg-stp")
     assert "uncertain" in result.detail
+    assert "working at the broker" not in result.detail.lower()
 
 
 @pytest.mark.asyncio

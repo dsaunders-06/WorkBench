@@ -45,6 +45,7 @@ from qat.domain.events import (
 )
 from qat.domain.oms.anomaly import PositionAnomalyStore
 from qat.domain.oms.exit_recovery import ExitAttempt, ExitRecovery, ExitRecoveryStore
+from qat.domain.oms.order_identity import OrderIdentityStore
 from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
 from qat.domain.oms.resting_orders import (
     TERMINAL_STATUSES,
@@ -304,6 +305,31 @@ class OMS:
         # Order ids this OMS has handed to a broker. Guards against a second
         # transmission independently of the status field - see `_sign_off_locked`.
         self._transmitted: set[str] = set()
+        self._order_identity: OrderIdentityStore | None = None
+        if settings is not None:
+            try:
+                self._order_identity = OrderIdentityStore(
+                    Path(settings.data_dir) / "inflight_orders.json"
+                )
+                for app_order_id, record in self._order_identity.records.items():
+                    order = record.order
+                    if record.stage == "transmitting":
+                        # The previous process ended inside broker submission.
+                        # Treat the exposure as committed and refuse all new
+                        # order flow until broker evidence resolves it.
+                        order = replace(order, status="transmitted")
+                        self.kill_switch.trip(
+                            "broker-order transmission outcome was uncertain at restart"
+                        )
+                    self._orders[app_order_id] = order
+                    self._orders[str(order.order_id)] = order
+                    self._transmitted.add(app_order_id)
+                    self._broker_order_ids.add(str(order.order_id))
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                logger.exception(
+                    "Durable broker-order identity is unreadable; order flow is halted"
+                )
+                self.kill_switch.trip("durable broker-order identity unreadable")
         # Item 56 / Task 3: `place_order`'s bounded permId wait (Task 2) can
         # still lose to a slow TWS acknowledgement. `IBAdapter._adopt_from_broker`
         # learns the resolved id moments later regardless - modify and cancel
@@ -584,6 +610,22 @@ class OMS:
             if order.order_id == order_id and original_id in self._exit_attempts:
                 return self._exit_attempts[original_id]
         return ExitAttempt()
+
+    def transmission_uncertain(self, order_id: str) -> bool:
+        """Whether broker submission began but acceptance was never acknowledged."""
+        store = self._order_identity
+        if store is None:
+            return False
+        known = self._orders.get(order_id)
+        return any(
+            record.stage == "transmitting"
+            and (
+                app_order_id == order_id
+                or str(record.order.order_id) == order_id
+                or (known is not None and self._orders.get(app_order_id) is known)
+            )
+            for app_order_id, record in store.records.items()
+        )
 
     async def _release_protective_legs(
         self, symbol: str, quantity: float, reason: str, *, order_id: str = ""
@@ -896,7 +938,7 @@ class OMS:
         briefly the same call: *"The guard is about DUPLICATES, not a one-shot
         latch."*
         """
-        return [order for order in self._orders.values() if order.status == "pending_signoff"]
+        return [order for order in self.orders() if order.status == "pending_signoff"]
 
     def pending_orders(self) -> list[Order]:
         """Orders awaiting a decision - committed exposure that has not filled.
@@ -923,17 +965,13 @@ class OMS:
         the event is over-counted until reconciliation catches up, which refuses
         MORE rather than less and is the safe direction to be wrong in.
         """
-        return [
-            order for order in self._orders.values() if order.status in self._COMMITTED_STATUSES
-        ]
+        return [order for order in self.orders() if order.status in self._COMMITTED_STATUSES]
 
     def pending_signoff_symbols(self) -> set[str]:
         """Symbols that already have an order awaiting the operator's decision -
         used by SignalToOrderBridge to avoid queueing duplicates while a
         strategy keeps re-emitting the same signal every tick."""
-        return {
-            order.symbol for order in self._orders.values() if order.status == "pending_signoff"
-        }
+        return {order.symbol for order in self.orders() if order.status == "pending_signoff"}
 
     def _new_pending_order(
         self,
@@ -1252,21 +1290,67 @@ class OMS:
         # while Alpaca held nothing at all, and reconciliation could not catch
         # it: that compares FILLED quantities, and an order that never reached
         # the broker has filled nothing on either side, so both agree.
+        if self._order_identity is not None:
+            try:
+                # Durable BEFORE the irreversible boundary. If the process
+                # ends inside place_order, restart restores committed exposure
+                # and halts rather than presenting it for sign-off again.
+                self._order_identity.put(order_id, order, stage="transmitting")
+            except OSError:
+                order.status = "rejected"
+                self._orders[order_id] = order
+                logger.exception(
+                    "Could not persist transmission intent for order %s; broker was not called",
+                    order_id,
+                )
+                self.kill_switch.trip("broker-order transmission intent could not be persisted")
+                self._record(
+                    order,
+                    "rejected",
+                    "transmission intent could not be persisted",
+                    operator,
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return order
+
         try:
             filled = await self.broker.place_order(order)
-        except Exception as exc:  # noqa: BLE001 - the broker's refusal is the answer
-            order.status = "rejected"
+        except Exception as exc:  # noqa: BLE001 - acknowledgement loss is safety-critical
+            outcome_uncertain = self._order_identity is not None
+            order.status = "transmitted" if outcome_uncertain else "rejected"
             self._orders[order_id] = order
+            if outcome_uncertain:
+                self._transmitted.add(order_id)
+                self._broker_order_ids.add(order_id)
+                self.kill_switch.trip(
+                    "broker transmission raised before acceptance could be confirmed"
+                )
             logger.exception(
-                "Broker refused order %s (%s %s x%s)",
+                "Broker transmission failed or lost acknowledgement for %s (%s %s x%s)",
                 order_id,
                 order.side,
                 order.symbol,
                 order.quantity,
             )
-            self._record(order, "rejected", f"broker refused: {exc}", operator)
+            self._record(
+                order,
+                "transmission_uncertain" if outcome_uncertain else "rejected",
+                f"broker transmission uncertain: {exc}",
+                operator,
+            )
             await self._recover_exit_protection_locked(order.symbol)
             return order
+
+        if self._order_identity is not None:
+            try:
+                self._order_identity.put(order_id, filled, stage="accepted")
+            except OSError:
+                logger.exception(
+                    "Broker accepted order %s but its identity could not be persisted", order_id
+                )
+                self.kill_switch.trip(
+                    "broker accepted an order whose identity could not be persisted"
+                )
 
         # No status assignment here at all: the returned order carries the
         # broker's own, mapped by the adapter (Alpaca's accepted/new/pending
@@ -1381,7 +1465,8 @@ class OMS:
             BrokerFill(order.order_id, order.symbol, order.side, quantity, price, self._now()),
             operator=operator,
         )
-        self._save_fill_state()
+        if self._save_fill_state():
+            self._prune_completed_order_identities()
 
     async def _account_execution(
         self, raw: BrokerFill, *, record_only: bool = False, operator: str = "broker"
@@ -1504,6 +1589,7 @@ class OMS:
         if order.status == "transmitted":
             cancelled = await self.broker.cancel_order(order_id)
             self._orders[order_id] = cancelled
+            self._persist_order_identity_update(order_id, cancelled)
             return cancelled
         if order.status in ("filled", "cancelled", "rejected"):
             return order
@@ -1564,6 +1650,21 @@ class OMS:
                 order.order_id = order_id
                 if app_order_id in self._absorbed_fills:
                     self._absorbed_fills[order_id] = self._absorbed_fills[app_order_id]
+                if self._order_identity is not None:
+                    try:
+                        stage = self._order_identity.records.get(app_order_id)
+                        self._order_identity.put(
+                            app_order_id,
+                            order,
+                            stage=stage.stage if stage is not None else "accepted",
+                        )
+                    except OSError:
+                        logger.exception(
+                            "Resolved broker order id %s could not be persisted", order_id
+                        )
+                        self.kill_switch.trip(
+                            "resolved broker-order identity could not be persisted"
+                        )
 
     async def _on_broker_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
         self.register_broker_order_id(event.order_id, event.app_order_id)
@@ -1573,11 +1674,35 @@ class OMS:
         order = self._order_the_broker_calls(event.order_id)
         if order is not None and order.status != "filled":
             order.status = "rejected"
+            self._persist_order_identity_update(event.order_id, order)
         logger.info(
             "Broker rejected order %s; confirmed executions remain accounted: %s",
             event.order_id,
             event.reason,
         )
+
+    def _persist_order_identity_update(self, order_id: str, order: Order) -> None:
+        """Keep terminal broker evidence from reverting to working at restart."""
+        store = self._order_identity
+        if store is None:
+            return
+        app_order_id = next(
+            (
+                app_id
+                for app_id, record in store.records.items()
+                if app_id == order_id
+                or str(record.order.order_id) == order_id
+                or self._orders.get(app_id) is order
+            ),
+            None,
+        )
+        if app_order_id is None:
+            return
+        try:
+            store.put(app_order_id, order, stage="accepted")
+        except OSError:
+            logger.exception("Broker order update for %s could not be persisted", order_id)
+            self.kill_switch.trip("terminal broker-order evidence could not be persisted")
 
     async def adopt_broker_positions(self) -> dict[str, float]:
         """Seeds the position baseline from whatever the account already holds.
@@ -2068,11 +2193,11 @@ class OMS:
             )
         return watermark
 
-    def _save_fill_state(self) -> None:
+    def _save_fill_state(self) -> bool:
         """Written after each absorb pass, not at shutdown: the restart this
         exists for is the one nobody planned."""
         if self._fill_state_path is None:
-            return
+            return False
         # `_now` for the third time (W2 step 6). Against the wall clock a replay
         # prunes every simulated fill older than 30 REAL days - which is all of
         # them - and a forgotten id is one `_is_foreign_unrecorded` will absorb
@@ -2105,8 +2230,10 @@ class OMS:
         try:
             self._fill_state_path.parent.mkdir(parents=True, exist_ok=True)
             self._fill_state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return True
         except OSError:
             logger.exception("Could not persist the broker-fill watermark")
+            return False
 
     async def missed_fills(self) -> list[BrokerFill]:
         """Executions since the watermark that this app has not recorded (M50).
@@ -2372,8 +2499,32 @@ class OMS:
         # strictly more, which is the same property the crash argument relies
         # on, so this strengthens that reasoning rather than weakening it.
         self._last_fill_scan = scan_started
-        self._save_fill_state()
+        if self._save_fill_state():
+            self._prune_completed_order_identities()
         return absorbed
+
+    def _prune_completed_order_identities(self) -> None:
+        """Drop an identity only after its complete fill is durably deduplicated."""
+        store = self._order_identity
+        if store is None:
+            return
+        for app_order_id, record in list(store.records.items()):
+            order = self._orders.get(app_order_id, record.order)
+            absorbed = self._absorbed_fills.get(str(order.order_id)) or self._absorbed_fills.get(
+                app_order_id
+            )
+            if (
+                order.status == "filled"
+                and absorbed is not None
+                and absorbed.quantity_known
+                and absorbed.quantity + _POSITION_EPSILON >= order.quantity
+            ):
+                try:
+                    store.remove(app_order_id)
+                except OSError:
+                    logger.exception(
+                        "Completed order identity %s could not be retired", app_order_id
+                    )
 
     def _order_the_broker_calls(self, broker_order_id: str) -> Order | None:
         """The app's record of an order, found by the id the BROKER uses.

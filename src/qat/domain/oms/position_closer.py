@@ -189,13 +189,21 @@ class PositionCloser:
         if order.status == "pending_signoff":
             signed = await self._sign_off_or_reread(order, operator)
         attempt = self.oms.exit_attempt(order.order_id)
-        if signed is not None and (
-            signed.status == "transmitted"
-            or (
-                signed.status == "filled"
-                and signed.filled_quantity is not None
-                and signed.filled_quantity > 0
-                and signed.filled_price is not None
+        transmission_uncertain = signed is not None and (
+            self.oms.transmission_uncertain(order.order_id)
+            or self.oms.transmission_uncertain(signed.order_id)
+        )
+        if (
+            signed is not None
+            and not transmission_uncertain
+            and (
+                signed.status == "transmitted"
+                or (
+                    signed.status == "filled"
+                    and signed.filled_quantity is not None
+                    and signed.filled_quantity > 0
+                    and signed.filled_price is not None
+                )
             )
         ):
             if signed.status == "filled":
