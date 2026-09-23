@@ -44,7 +44,7 @@ from qat.domain.events import (
     OrderRejectedEvent,
 )
 from qat.domain.oms.anomaly import PositionAnomalyStore
-from qat.domain.oms.exit_recovery import ExitRecovery, ExitRecoveryStore
+from qat.domain.oms.exit_recovery import ExitAttempt, ExitRecovery, ExitRecoveryStore
 from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
 from qat.domain.oms.resting_orders import (
     TERMINAL_STATUSES,
@@ -231,6 +231,7 @@ class OMS:
         # guessing either way loses a trade or records it twice.
         self.settings = settings
         self._recovery_order_ids: set[str] = set()
+        self._exit_attempts: dict[str, ExitAttempt] = {}
         self._exit_recovery: ExitRecoveryStore | None = None
         try:
             self._exit_recovery = ExitRecoveryStore(
@@ -575,8 +576,20 @@ class OMS:
         await self._announce_pending(order)
         return order
 
-    async def _release_protective_legs(self, symbol: str, quantity: float, reason: str) -> bool:
+    def exit_attempt(self, order_id: str) -> ExitAttempt:
+        attempt = self._exit_attempts.get(order_id)
+        if attempt is not None:
+            return attempt
+        for original_id, order in self._orders.items():
+            if order.order_id == order_id and original_id in self._exit_attempts:
+                return self._exit_attempts[original_id]
+        return ExitAttempt()
+
+    async def _release_protective_legs(
+        self, symbol: str, quantity: float, reason: str, *, order_id: str = ""
+    ) -> bool:
         """Persist recovery intent, cancel targets first, then verify each cancel."""
+        self._exit_attempts[order_id] = ExitAttempt()
         if self._exit_recovery is None:
             return False
         source = getattr(self.broker, "open_orders", None)
@@ -616,16 +629,35 @@ class OMS:
             if self.kill_switch.tripped:
                 return False
             # A failed durable write refuses BEFORE touching the broker.
-            self._exit_recovery.put(ExitRecovery(symbol, held, stop))
+            self._exit_recovery.put(
+                ExitRecovery(
+                    symbol,
+                    held,
+                    stop,
+                    other_orders_present=any(o.symbol != symbol for o in working),
+                )
+            )
             # Keep the stop until every target cancellation has settled.
             for leg in sorted(mine, key=lambda o: o.stop_price is not None):
                 if self.kill_switch.tripped:
                     return False
+                attempt = self._exit_attempts[order_id]
+                self._exit_attempts[order_id] = replace(
+                    attempt, issued=(*attempt.issued, leg.order_id)
+                )
                 await cancel(leg.order_id)
                 remaining = [o for o in await source() if o.status not in TERMINAL_STATUSES]
+                if not remaining and any(o.symbol != symbol for o in working):
+                    self._exit_recovery.stage(symbol, "uncertain")
+                    self.kill_switch.trip("account-wide order book unexpectedly empty during exit")
+                    return False
                 if any(o.order_id == leg.order_id for o in remaining):
                     logger.error("Protective cancel %s has not settled", leg.order_id)
                     return False
+                attempt = self._exit_attempts[order_id]
+                self._exit_attempts[order_id] = replace(
+                    attempt, cancelled=(*attempt.cancelled, leg.order_id)
+                )
                 if any(o.symbol == symbol and not is_protective_leg(o) for o in remaining):
                     return False
             if any(o.symbol == symbol for o in remaining):
@@ -670,9 +702,12 @@ class OMS:
             )
             return
         try:
+            account_orders = await self.broker.open_orders()
+            if plan.other_orders_present and not account_orders:
+                raise RuntimeError("account-wide order book unexpectedly empty during recovery")
             working = [
                 o
-                for o in await self.broker.open_orders()
+                for o in account_orders
                 if o.symbol == symbol and o.status not in TERMINAL_STATUSES
             ]
             held = await self._broker_quantity(symbol)
@@ -743,8 +778,6 @@ class OMS:
         quantity: float,
         price: float,
         reason: str = "signal",
-        *,
-        legs_already_released: bool = False,
     ) -> Order:
         """Closes an existing position at exactly `quantity` shares (spec §I).
 
@@ -822,9 +855,8 @@ class OMS:
         order = self._new_pending_order(symbol, "sell", decision.final_shares, price)
         # Creating a proposal must not cancel broker protection. Release is
         # deferred until sign-off, after the operator/autonomy and halt gates.
-        # PositionCloser owns its existing cancellation/recovery transaction.
-        if not legs_already_released:
-            self._exits_requiring_release.add(order.order_id)
+        # OMS owns the one cancellation/recovery transaction for every exit.
+        self._exits_requiring_release.add(order.order_id)
         await self._announce_pending(order)
         return order
 
@@ -1152,7 +1184,10 @@ class OMS:
 
         if order_id in self._exits_requiring_release:
             released = await self._release_protective_legs(
-                order.symbol, order.quantity, self._exit_reasons.get(order.symbol, "signal")
+                order.symbol,
+                order.quantity,
+                self._exit_reasons.get(order.symbol, "signal"),
+                order_id=order_id,
             )
             if not released:
                 order.status = "rejected"

@@ -753,12 +753,11 @@ class DashboardScreen(QWidget):
         try:
             result = await closer.close_position(symbol, operator=_OPERATOR)
             # ⚠️ A REFUSAL IS NOT ALWAYS HARMLESS, and assuming it was put a
-            # bare downside behind a reassuring information dialog. Three of
-            # `_cancel_legs`' failure branches fire AFTER `cancel_order` has
-            # already gone out, so the position can be left with part or all
-            # of its bracket deleted while the text truthfully says "NOTHING
-            # was sold". `cancelled_legs` on a REFUSED result is exactly that
-            # case, and it is as serious as UNPROTECTED.
+            # bare downside behind a reassuring information dialog. OMS may
+            # refuse only after one or more cancellation requests have gone
+            # out, leaving protection removed or uncertain. `cancelled_legs`
+            # on a REFUSED result records confirmed removal and is as serious
+            # as UNPROTECTED.
             #
             # ⚠️ AND `issued_legs` IS THE OTHER HALF, which keying on
             # `cancelled_legs` alone missed. That tuple holds legs CONFIRMED

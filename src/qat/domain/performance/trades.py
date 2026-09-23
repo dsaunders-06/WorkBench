@@ -720,7 +720,7 @@ class TradeLedger:
                 stop_price=stop_price,
                 strategy=strategy,
                 opened_at=opened_at,
-                entry_cost=self._fill_cost(quantity, price),
+                entry_cost=self._increment_cost(order_id, quantity, price),
                 reference_price=reference_price,
                 worst_price=worst_price if worst_price is not None else price,
                 best_price=best_price if best_price is not None else price,

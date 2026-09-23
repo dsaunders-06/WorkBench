@@ -22,6 +22,7 @@ class ExitRecovery:
     quantity: float
     stop_price: float | None
     stage: RecoveryStage = "prepared"
+    other_orders_present: bool = False
 
 
 class ExitRecoveryStore:
@@ -64,3 +65,11 @@ class ExitRecoveryStore:
 
     def remove(self, symbol: str) -> None:
         self._save({key: value for key, value in self.plans.items() if key != symbol})
+
+
+@dataclass(frozen=True)
+class ExitAttempt:
+    """Operator-facing facts for one sign-off attempt; not a recovery journal."""
+
+    issued: tuple[str, ...] = ()
+    cancelled: tuple[str, ...] = ()
