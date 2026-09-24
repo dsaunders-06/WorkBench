@@ -89,7 +89,7 @@ class _Broker:
     async def resting_stops(self) -> dict[str, float]:
         return {}
 
-    async def recent_fills(self, since):  # noqa: ANN001, ANN201
+    async def recent_fills(self, since, symbols=None):  # noqa: ANN001, ANN201
         return []
 
 
@@ -273,9 +273,9 @@ async def test_the_heal_runs_before_lots_are_restored(tmp_path):
         order.append("heal")
         return await original_heal()
 
-    async def _restore():
+    async def _restore(snapshot=None):
         order.append("restore")
-        return await original_restore()
+        return await original_restore(snapshot)
 
     bridge.reconcile_entry_strategies = _heal  # type: ignore[method-assign]
     bridge.restore_open_lots = _restore  # type: ignore[method-assign]
