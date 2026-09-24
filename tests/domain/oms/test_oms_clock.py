@@ -63,12 +63,15 @@ def test_an_injected_clock_sets_the_watermark(tmp_path):
 
 
 def test_an_unreadable_state_file_falls_back_to_the_clock(tmp_path):
-    """The other `return datetime.now(UTC)` in `_load_fill_state`. A corrupt
-    file degrades to "start from the clock" - pre-M50 behaviour, which was
-    incomplete rather than wrong - and in a replay that must still be the
-    SIMULATED clock, or the same silent zero returns by a slower route."""
+    """A corrupt delivery journal cannot silently discard a pending fill.
+
+    The timestamp still falls back to the injected clock so replay remains
+    deterministic, but order flow stays halted until the record is inspected.
+    """
     (tmp_path / "absorbed_fills.json").write_text("{ not json", encoding="utf-8")
 
     oms = _oms(tmp_path, clock=lambda: _SIMULATED)
 
     assert oms._last_fill_scan == _SIMULATED
+    assert oms.kill_switch.tripped is True
+    assert oms.kill_switch.reason == "broker-fill delivery journal unreadable"

@@ -82,6 +82,7 @@ def test_position_entries_populates_every_stored_field(tmp_path) -> None:
         price_source="fill",
         order_id="entry-1",
         quantity=3051.0,
+        fill_ids=("entry-1|TNE.AX|buy|3051",),
     )
     unset = [f.name for f in fields(_Entry) if getattr(entry, f.name) == f.default]
     assert not unset, f"set every field, or this proves nothing about {unset}"

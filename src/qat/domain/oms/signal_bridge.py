@@ -36,6 +36,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
@@ -107,6 +108,7 @@ class _LotStore(Protocol):
         worst_price: float | None = None,
         best_price: float | None = None,
         order_id: str | None = None,
+        fill_ids: tuple[str, ...] = (),
     ) -> bool: ...
 
 
@@ -145,6 +147,10 @@ class _Entry:
     order_id: str | None = None
     # Execution-accounted shares; None identifies legacy records without a baseline.
     quantity: float | None = None
+    # Stable cumulative-fill identities already folded into this entry. Kept
+    # in the same atomic JSON record as the quantity so replay cannot observe
+    # one without the other.
+    fill_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +179,7 @@ class PositionEntry:
     order_id: str | None = None
     # Execution-accounted shares; None identifies legacy records without a baseline.
     quantity: float | None = None
+    fill_ids: tuple[str, ...] = ()
 
 
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
@@ -420,7 +427,7 @@ class SignalToOrderBridge:
     async def start(self) -> None:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
-        self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        self.bus.subscribe(OrderFilledEvent, self._on_fill, critical=True)
         self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         # Before restore_open_lots, or the ledger is rebuilt from the price the
@@ -511,6 +518,7 @@ class SignalToOrderBridge:
                     stop_price=entry.stop_price,
                     strategy=entry.strategy or self._sole_deployed_strategy(),
                     opened_at=entry.opened_at,
+                    fill_ids=entry.fill_ids,
                 )
 
         absorbed = await self.oms.absorb_broker_fills(record_only=True)
@@ -816,6 +824,7 @@ class SignalToOrderBridge:
                 reference_price=entry.reference_price,
                 worst_price=worst,
                 best_price=best,
+                fill_ids=entry.fill_ids,
             ):
                 restored.append(position.symbol)
                 (backfilled if bar_count else no_bars).append(position.symbol)
@@ -986,6 +995,7 @@ class SignalToOrderBridge:
                 strategy=entry.strategy,
                 reference_price=entry.reference_price,
                 price_source=entry.price_source,
+                fill_ids=entry.fill_ids,
             )
             for symbol, entry in self._entries.items()
         }
@@ -1154,6 +1164,17 @@ class SignalToOrderBridge:
         been held, and how far it has moved against the stop it was sized on -
         cannot be answered without one.
         """
+        prior_entries = dict(self._entries)
+        prior_entry_times = list(self._entry_times)
+        prior_time_stopped = set(self._time_stopped)
+        existing = self._entries.get(event.symbol)
+        if (
+            event.fill_id is not None
+            and existing is not None
+            and event.fill_id in existing.fill_ids
+        ):
+            return
+        receipt = (event.fill_id,) if event.fill_id is not None else ()
         if event.side == "buy":
             new_entry = event.symbol not in self._entries
             self._entries.setdefault(
@@ -1169,6 +1190,7 @@ class SignalToOrderBridge:
                     reference_price=event.reference_price,
                     price_source="fill" if event.price_is_fill else "reference",
                     order_id=event.order_id,
+                    fill_ids=receipt,
                 ),
             )
             entry = self._entries[event.symbol]
@@ -1181,9 +1203,12 @@ class SignalToOrderBridge:
                     entry,
                     quantity=quantity,
                     price=(entry.quantity * entry.price + event.quantity * event.price) / quantity,
+                    fill_ids=entry.fill_ids + receipt,
                 )
             elif entry.order_id == event.order_id and event.order_average_price is not None:
-                self._entries[event.symbol] = replace(entry, price=event.order_average_price)
+                self._entries[event.symbol] = replace(
+                    entry, price=event.order_average_price, fill_ids=entry.fill_ids + receipt
+                )
         elif (
             sell_entry := self._entries.get(event.symbol)
         ) is not None and sell_entry.quantity is not None:
@@ -1195,7 +1220,9 @@ class SignalToOrderBridge:
                 self._entries.pop(event.symbol, None)
                 self._time_stopped.discard(event.symbol)
             else:
-                self._entries[event.symbol] = replace(sell_entry, quantity=remaining)
+                self._entries[event.symbol] = replace(
+                    sell_entry, quantity=remaining, fill_ids=sell_entry.fill_ids + receipt
+                )
         elif await self._is_flat(event.symbol):
             self._entries.pop(event.symbol, None)
             self._time_stopped.discard(event.symbol)
@@ -1215,7 +1242,13 @@ class SignalToOrderBridge:
                 event.symbol,
                 "shares",
             )
-        self._save_entries()
+        try:
+            self._save_entries(required=True)
+        except OSError:
+            self._entries = prior_entries
+            self._entry_times = prior_entry_times
+            self._time_stopped = prior_time_stopped
+            raise
 
     async def _on_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
         if event.app_order_id is None:
@@ -1260,6 +1293,7 @@ class SignalToOrderBridge:
                 entries[symbol] = _Entry(
                     order_id=row.get("order_id"),
                     quantity=float(row["quantity"]) if row.get("quantity") is not None else None,
+                    fill_ids=tuple(str(value) for value in (row.get("fill_ids") or ())),
                     opened_at=datetime.fromisoformat(row["opened_at"]),
                     price=float(row["price"]),
                     stop_price=(
@@ -1313,7 +1347,7 @@ class SignalToOrderBridge:
             )
         return entries
 
-    def _save_entries(self) -> None:
+    def _save_entries(self, *, required: bool = False) -> None:
         """Written on every change rather than at shutdown: a process that is
         killed never gets to run a shutdown hook, and this file exists
         precisely for the restart that was not planned."""
@@ -1328,14 +1362,22 @@ class SignalToOrderBridge:
                 "strategy": entry.strategy,
                 "reference_price": entry.reference_price,
                 "price_source": entry.price_source,
+                "fill_ids": list(entry.fill_ids),
             }
             for symbol, entry in self._entries.items()
         }
         try:
             self._entries_path.parent.mkdir(parents=True, exist_ok=True)
-            self._entries_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary = self._entries_path.with_name(f"{self._entries_path.name}.tmp-{os.getpid()}")
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self._entries_path)
         except OSError:
             logger.exception("Could not persist position entry dates")
+            if required:
+                raise
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
         self.bars.add_tick(event.symbol, event.ts, event.price, event.volume)

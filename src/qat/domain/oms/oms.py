@@ -16,11 +16,12 @@ import asyncio
 import json
 import logging
 import math
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import pandas as pd
 
@@ -233,6 +234,7 @@ class OMS:
         self.settings = settings
         self._recovery_order_ids: set[str] = set()
         self._exit_attempts: dict[str, ExitAttempt] = {}
+        self._fill_delivery_failed = False
         self._exit_recovery: ExitRecoveryStore | None = None
         try:
             self._exit_recovery = ExitRecoveryStore(
@@ -247,6 +249,7 @@ class OMS:
             Path(settings.data_dir) / _FILL_STATE_FILENAME if settings is not None else None
         )
         self._absorbed_fills: dict[str, _AbsorbedFill] = {}
+        self._pending_fill_deliveries: dict[str, tuple[BrokerFill, str, bool]] = {}
         # When an order THIS app sent was first seen partially filled (M70).
         # In memory only, and deliberately: it exists to widen one query window
         # while a fill is outstanding, and an order still filling across a
@@ -1461,11 +1464,11 @@ class OMS:
                     "broker reports execution without complete quantity/price evidence"
                 )
             return
-        await self._account_execution(
+        accounted = await self._account_execution(
             BrokerFill(order.order_id, order.symbol, order.side, quantity, price, self._now()),
             operator=operator,
         )
-        if self._save_fill_state():
+        if accounted is not None and not self._fill_delivery_failed:
             self._prune_completed_order_identities()
 
     async def _account_execution(
@@ -1489,7 +1492,25 @@ class OMS:
         if not math.isfinite(fill.price) or fill.price <= 0:
             self.kill_switch.trip("broker cumulative execution implies invalid incremental price")
             return None
+        fill_id = f"{raw.order_id}|{raw.symbol}|{raw.side}|{raw.quantity:.12g}"
+        if fill_id not in self._pending_fill_deliveries:
+            self._pending_fill_deliveries[fill_id] = (raw, operator, record_only)
+            if self._fill_state_path is not None and not self._save_fill_state():
+                self._pending_fill_deliveries.pop(fill_id, None)
+                self.kill_switch.trip("confirmed broker fill could not be journalled")
+                self._fill_delivery_failed = True
+                return None
         stop = order.stop_price if order is not None else self._position_stops.get(raw.symbol)
+        # A subscriber may reject the delivery after another subscriber has
+        # already accepted it.  Keep the OMS state reversible until every
+        # subscriber reports success; durable consumers make the replay itself
+        # idempotent using this cumulative identity.
+        prior_quantities = dict(self._filled_quantities)
+        prior_stops = dict(self._position_stops)
+        prior_absorbed = dict(self._absorbed_fills)
+        prior_order = (
+            (order.status, order.filled_quantity, order.filled_price) if order is not None else None
+        )
         if not record_only:
             signed = fill.quantity if fill.side == "buy" else -fill.quantity
             self._filled_quantities[fill.symbol] = (
@@ -1518,7 +1539,7 @@ class OMS:
             fill.order_id,
         )
         if self.bus is not None:
-            await self.bus.publish(
+            failures = await self.bus.publish(
                 OrderFilledEvent(
                     order_id=fill.order_id,
                     symbol=fill.symbol,
@@ -1527,6 +1548,8 @@ class OMS:
                     price=fill.price,
                     price_is_fill=True,
                     order_average_price=raw.price,
+                    fill_id=fill_id,
+                    cumulative_quantity=raw.quantity,
                     strategy=order.strategy if order is not None else None,
                     stop_price=stop,
                     take_profit_price=order.take_profit_price if order is not None else None,
@@ -1545,6 +1568,30 @@ class OMS:
                     ts=fill.filled_at,
                 )
             )
+            if failures:
+                self._filled_quantities = prior_quantities
+                self._position_stops = prior_stops
+                self._absorbed_fills = prior_absorbed
+                if order is not None and prior_order is not None:
+                    order.status, order.filled_quantity, order.filled_price = prior_order
+                self.kill_switch.trip(
+                    "confirmed broker fill could not be persisted by every subscriber"
+                )
+                self._fill_delivery_failed = True
+                return None
+        if self._fill_state_path is not None:
+            pending = self._pending_fill_deliveries.pop(fill_id, None)
+            if not self._save_fill_state():
+                if pending is not None:
+                    self._pending_fill_deliveries[fill_id] = pending
+                self._filled_quantities = prior_quantities
+                self._position_stops = prior_stops
+                self._absorbed_fills = prior_absorbed
+                if order is not None and prior_order is not None:
+                    order.status, order.filled_quantity, order.filled_price = prior_order
+                self.kill_switch.trip("confirmed broker fill receipt could not be persisted")
+                self._fill_delivery_failed = True
+                return None
         return fill
 
     async def _costing_price(self, order: Order) -> float | None:
@@ -2157,9 +2204,42 @@ class OMS:
                 str(order_id): _absorbed_from_json(entry)
                 for order_id, entry in (raw.get("absorbed") or {}).items()
             }
+            pending: dict[str, tuple[BrokerFill, str, bool]] = {}
+            for fill_id, entry in (raw.get("pending_deliveries") or {}).items():
+                side = str(entry["side"])
+                quantity = float(entry["quantity"])
+                price = float(entry["price"])
+                if (
+                    not fill_id
+                    or not entry["order_id"]
+                    or not entry["symbol"]
+                    or side not in {"buy", "sell"}
+                    or not math.isfinite(quantity)
+                    or quantity <= 0
+                    or not math.isfinite(price)
+                    or price <= 0
+                ):
+                    raise ValueError("invalid pending broker-fill delivery")
+                pending[str(fill_id)] = (
+                    BrokerFill(
+                        order_id=str(entry["order_id"]),
+                        symbol=str(entry["symbol"]),
+                        side=cast(Literal["buy", "sell"], side),
+                        quantity=quantity,
+                        price=price,
+                        filled_at=datetime.fromisoformat(entry["filled_at"]),
+                    ),
+                    str(entry.get("operator") or "broker"),
+                    bool(entry.get("record_only", False)),
+                )
+        except FileNotFoundError:
+            return self._now()
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            logger.exception("Broker-fill delivery journal is unreadable; order flow is halted")
+            self.kill_switch.trip("broker-fill delivery journal unreadable")
             return self._now()
         self._absorbed_fills = absorbed
+        self._pending_fill_deliveries = pending
         logger.info(
             "Broker-fill watermark restored to %s - executions since then are replayed for "
             "the record, with %d already-recorded fill(s) remembered",
@@ -2226,10 +2306,30 @@ class OMS:
                 }
                 for order_id, seen in self._absorbed_fills.items()
             },
+            "pending_deliveries": {
+                fill_id: {
+                    "order_id": fill.order_id,
+                    "symbol": fill.symbol,
+                    "side": fill.side,
+                    "quantity": fill.quantity,
+                    "price": fill.price,
+                    "filled_at": fill.filled_at.isoformat(),
+                    "operator": operator,
+                    "record_only": record_only,
+                }
+                for fill_id, (fill, operator, record_only) in self._pending_fill_deliveries.items()
+            },
         }
         try:
             self._fill_state_path.parent.mkdir(parents=True, exist_ok=True)
-            self._fill_state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary = self._fill_state_path.with_name(
+                f"{self._fill_state_path.name}.tmp-{os.getpid()}"
+            )
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self._fill_state_path)
             return True
         except OSError:
             logger.exception("Could not persist the broker-fill watermark")
@@ -2428,12 +2528,25 @@ class OMS:
 
         Transmission alone changes no position or ledger lot. The persistent
         cumulative-fill state deduplicates acknowledgements and later scans.
-        The existing event/persistence crash boundary still requires recovery
-        hardening; this method does not promise transactional delivery.
+        A pending-delivery journal is written before subscribers run; critical
+        consumers persist the same fill identity so an interrupted delivery is
+        safe to replay without duplicating a sibling write that already landed.
         """
+        self._fill_delivery_failed = False
+        replayed: list[BrokerFill] = []
+        for _fill_id, (pending, operator, pending_record_only) in list(
+            self._pending_fill_deliveries.items()
+        ):
+            delivered = await self._account_execution(
+                pending, record_only=pending_record_only, operator=operator
+            )
+            if delivered is not None:
+                replayed.append(delivered)
+            if self._fill_delivery_failed:
+                return replayed
         source = getattr(self.broker, "recent_fills", None)
         if source is None:
-            return []
+            return replayed
         # Taken BEFORE the query, and it is the value the watermark becomes
         # (M88). A stamp taken after the pass excludes everything that executed
         # during it: the query has already been answered, and the next floor
@@ -2451,7 +2564,7 @@ class OMS:
             fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
         except Exception:
             logger.exception("Could not read recent broker fills")
-            return []
+            return replayed
 
         # IBKR returns one Fill per EXECUTION; Alpaca returns one order object
         # per order. Both now carry the order's CUMULATIVE quantity, so the
@@ -2468,7 +2581,7 @@ class OMS:
         # entry.
         fills = _latest_cumulative_fills(fills)
 
-        absorbed: list[BrokerFill] = []
+        absorbed: list[BrokerFill] = list(replayed)
         for raw in fills:
             if not self._is_foreign_unrecorded(raw):
                 self._close_out_own_order(raw)
@@ -2476,6 +2589,12 @@ class OMS:
             fill = await self._account_execution(raw, record_only=record_only)
             if fill is not None:
                 absorbed.append(fill)
+
+        if self._fill_delivery_failed:
+            # Leave both the watermark and cumulative receipt file untouched.
+            # The broker observation must be replayed after the failed durable
+            # subscriber is repaired.
+            return absorbed
 
         if record_only and absorbed:
             # The M50 trap, and why this is not simply "persist the watermark".
