@@ -36,6 +36,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
@@ -47,7 +48,7 @@ import pandas as pd
 
 from qat.config import Settings
 from qat.data.bars import MultiSymbolAggregator, floor_to_interval
-from qat.data.broker.adapter import Position
+from qat.data.broker.adapter import BrokerFill, Position
 from qat.data.earnings import EarningsCalendar, NullEarningsCalendar
 from qat.data.features import compute_atr
 from qat.data.sectors import SECTOR_BY_SYMBOL
@@ -61,13 +62,15 @@ from qat.domain.events import (
     SignalEvent,
 )
 from qat.domain.oms import earnings_watch
-from qat.domain.oms.oms import OMS
+from qat.domain.oms.oms import OMS, _FillReplaySnapshot
 from qat.domain.performance.edge import ClosedTradeSource, EdgeEstimator
 from qat.domain.risk_engine.engine import OrderCandidate
 
 logger = logging.getLogger(__name__)
 
 _ENTRIES_FILENAME = "open_position_entries.json"
+_LEGACY_QUANTITY_BACKUP_SUFFIX = ".bak-pre-quantity-migration"
+_ENTRY_QUANTITY_EPSILON = 1e-6
 # A recorded entry price within this of what the broker charged is the same
 # price. Relative rather than absolute, for the reason M59 gives: a book holding
 # WFC at 87 and GS at 1,040 cannot share an absolute epsilon.
@@ -430,6 +433,13 @@ class SignalToOrderBridge:
         self.bus.subscribe(OrderFilledEvent, self._on_fill, critical=True)
         self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+        self.oms.watch_symbols_for_fills(self._entries)
+        snapshot = await self.oms.prepare_missed_fill_replay()
+        if snapshot is None:
+            self.oms.kill_switch.trip("broker startup replay snapshot unavailable")
+            return
+        if not self._migrate_legacy_entry_quantities(snapshot):
+            return
         # Before restore_open_lots, or the ledger is rebuilt from the price the
         # order was SIZED against rather than the one it filled at (M65).
         await self.reconcile_entry_prices()
@@ -437,8 +447,8 @@ class SignalToOrderBridge:
         # one deployed strategy to resolve: after a second is deployed the
         # attribution on a pre-M49 record is gone for good (M86).
         await self.reconcile_entry_strategies()
-        await self.restore_open_lots()
-        await self.replay_missed_exits()
+        await self.restore_open_lots(snapshot)
+        await self.replay_missed_exits(snapshot)
         await self.rearm_protective_stops()
         self._sweep_task = asyncio.create_task(self._sweep_protection())
         self._warm_task = asyncio.create_task(self._warm_earnings())
@@ -472,7 +482,7 @@ class SignalToOrderBridge:
                 self.settings.earnings_event_size_scalar * 100,
             )
 
-    async def replay_missed_exits(self) -> list[str]:
+    async def replay_missed_exits(self, snapshot: _FillReplaySnapshot | None = None) -> list[str]:
         """Records exits that executed while this application was not running.
 
         `restore_open_lots` rebuilds lots for what is HELD, which is exactly the
@@ -497,11 +507,12 @@ class SignalToOrderBridge:
         # so both of the sets the OMS can build on its own are empty for exactly
         # the symbol whose exit needs recording.
         self.oms.watch_symbols_for_fills(self._entries)
-        try:
-            snapshot = await self.oms.prepare_missed_fill_replay()
-        except Exception:
-            logger.exception("Could not check for exits missed while the app was not running")
-            return []
+        if snapshot is None:
+            try:
+                snapshot = await self.oms.prepare_missed_fill_replay()
+            except Exception:
+                logger.exception("Could not check for exits missed while the app was not running")
+                return []
         if snapshot is None:
             return []
         missed = list(snapshot.missed)
@@ -763,7 +774,94 @@ class SignalToOrderBridge:
             return None, None, 0
         return float(after["low"].min()), float(after["high"].max()), len(after)
 
-    async def restore_open_lots(self) -> list[str]:
+    def _migrate_legacy_entry_quantities(self, snapshot: _FillReplaySnapshot) -> bool:
+        """Settle pre-quantity entries from one stable broker observation.
+
+        The current broker position is the post-replay quantity. Reversing the
+        unabsorbed execution deltas reconstructs what the entry held at the
+        saved watermark. Flat records with no earlier quantity are retired from
+        the active book; the byte-for-byte backup retains their evidence.
+        """
+        legacy = {
+            symbol: entry for symbol, entry in self._entries.items() if entry.quantity is None
+        }
+        if not legacy:
+            return True
+
+        positions = dict(snapshot.positions)
+        fills_by_symbol: dict[str, list[BrokerFill]] = {}
+        for fill in snapshot.missed:
+            fills_by_symbol.setdefault(fill.symbol, []).append(fill)
+
+        migrated: dict[str, _Entry] = dict(self._entries)
+        migrated_symbols: list[str] = []
+        retired_symbols: list[str] = []
+        for symbol, entry in legacy.items():
+            current = positions.get(symbol, 0.0)
+            fills = fills_by_symbol.get(symbol, [])
+            signed_delta = sum(
+                fill.quantity if fill.side == "buy" else -fill.quantity for fill in fills
+            )
+            baseline = current - signed_delta
+            if (
+                not math.isfinite(current)
+                or not math.isfinite(baseline)
+                or current < -_ENTRY_QUANTITY_EPSILON
+                or baseline < -_ENTRY_QUANTITY_EPSILON
+                or any(fill.filled_at < entry.opened_at for fill in fills)
+            ):
+                self.oms.kill_switch.trip(
+                    "legacy entry quantities contradict stable broker evidence"
+                )
+                return False
+            if baseline <= _ENTRY_QUANTITY_EPSILON:
+                migrated.pop(symbol, None)
+                retired_symbols.append(symbol)
+            else:
+                migrated[symbol] = replace(entry, quantity=baseline)
+                migrated_symbols.append(symbol)
+
+        try:
+            source = self._entries_path.read_bytes()
+            backup = self._entries_path.with_name(
+                f"{self._entries_path.name}{_LEGACY_QUANTITY_BACKUP_SUFFIX}"
+            )
+            try:
+                with backup.open("xb") as handle:
+                    handle.write(source)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except FileExistsError:
+                if not backup.is_file() or backup.read_bytes() != source:
+                    raise OSError(
+                        "legacy quantity backup does not match the source entry file"
+                    ) from None
+        except OSError:
+            logger.exception("Could not secure the legacy entry quantity backup")
+            self.oms.kill_switch.trip("legacy entry quantity backup could not be secured")
+            return False
+
+        original = self._entries
+        self._entries = migrated
+        try:
+            self._save_entries(required=True)
+        except OSError:
+            self._entries = original
+            self.oms.kill_switch.trip("legacy entry quantity migration could not be persisted")
+            return False
+
+        logger.warning(
+            "Migrated %d legacy entry quantity record(s): %s. Retired %d flat legacy "
+            "record(s) from the active book: %s. The original file is preserved at %s.",
+            len(migrated_symbols),
+            ", ".join(sorted(migrated_symbols)) or "none",
+            len(retired_symbols),
+            ", ".join(sorted(retired_symbols)) or "none",
+            backup,
+        )
+        return True
+
+    async def restore_open_lots(self, snapshot: _FillReplaySnapshot | None = None) -> list[str]:
         """Gives the trade ledger back the entry lots it forgot (M49).
 
         Here for the same reason `rearm_protective_stops` is: this is the only
@@ -785,11 +883,14 @@ class SignalToOrderBridge:
         ledger = self._lot_store()
         if ledger is None:
             return []
-        try:
-            positions = await self.oms.broker.positions()
-        except Exception:
-            logger.exception("Could not read positions to restore the trade ledger's open lots")
-            return []
+        if snapshot is not None:
+            positions = [Position(symbol, quantity, 0.0) for symbol, quantity in snapshot.positions]
+        else:
+            try:
+                positions = await self.oms.broker.positions()
+            except Exception:
+                logger.exception("Could not read positions to restore the trade ledger's open lots")
+                return []
 
         # Include accounted positions which closed while offline: their entry
         # lots must exist before replay can apply the missing sell executions.
