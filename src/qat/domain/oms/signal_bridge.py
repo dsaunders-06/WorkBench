@@ -498,10 +498,13 @@ class SignalToOrderBridge:
         # the symbol whose exit needs recording.
         self.oms.watch_symbols_for_fills(self._entries)
         try:
-            missed = await self.oms.missed_fills()
+            snapshot = await self.oms.prepare_missed_fill_replay()
         except Exception:
             logger.exception("Could not check for exits missed while the app was not running")
             return []
+        if snapshot is None:
+            return []
+        missed = list(snapshot.missed)
         if not missed:
             return []
 
@@ -521,7 +524,7 @@ class SignalToOrderBridge:
                     fill_ids=entry.fill_ids,
                 )
 
-        absorbed = await self.oms.absorb_broker_fills(record_only=True)
+        absorbed = await self.oms.absorb_broker_fills(record_only=True, replay_snapshot=snapshot)
         replayed = sorted({fill.symbol for fill in absorbed})
         if replayed:
             # Counted by side (M81). "These are recorded as closed trades now"
