@@ -63,6 +63,7 @@ logger = logging.getLogger(__name__)
 # Share counts are floats on the wire, so an exact == 0 comparison is not safe.
 # The same 1e-6 the reconciliation and cancel paths already use.
 _POSITION_EPSILON = 1e-6
+_STARTUP_REPLAY_SNAPSHOT_ATTEMPTS = 3
 
 
 def _latest_cumulative_fills(fills: Iterable[BrokerFill]) -> list[BrokerFill]:
@@ -90,6 +91,16 @@ class _AbsorbedFill:
     # False only for a record written before M53, which stored a timestamp and
     # no quantity. See _absorbed_from_json for why that must read as "finished".
     quantity_known: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _FillReplaySnapshot:
+    """One stable startup view used for both replay preparation and delivery."""
+
+    scan_started: datetime
+    fills: tuple[BrokerFill, ...]
+    missed: tuple[BrokerFill, ...]
+    positions: tuple[tuple[str, float], ...]
 
 
 def _absorbed_from_json(entry: object) -> _AbsorbedFill:
@@ -2363,6 +2374,77 @@ class OMS:
                     missed.append(delta)
         return missed
 
+    async def prepare_missed_fill_replay(self) -> _FillReplaySnapshot | None:
+        """Capture a stable startup view before any ledger state is changed.
+
+        Replay preparation used to query fills once to size restored lots and
+        absorption queried them again to deliver events.  A partial/cumulative
+        visibility change between those calls made the lot and event describe
+        different moments.  Position resynchronisation was a third independent
+        observation, so a fill landing during startup could also be adopted and
+        then applied again on the next sweep.
+
+        Two identical canonical fill reads bracketed by three identical
+        position-quantity reads form one stable observation.  Nothing is
+        mutated while this is assembled.  A fill after the final read remains
+        above ``scan_started`` and is handled by the next normal sweep.
+        """
+        source = getattr(self.broker, "recent_fills", None)
+        if source is None:
+            return _FillReplaySnapshot(
+                scan_started=self._now(),
+                fills=(),
+                missed=(),
+                positions=tuple(sorted(self._filled_quantities.items())),
+            )
+
+        floor = self._fill_query_floor()
+        symbols = self._symbols_to_watch_for_fills()
+        for attempt in range(1, _STARTUP_REPLAY_SNAPSHOT_ATTEMPTS + 1):
+            scan_started = self._now()
+            try:
+                positions_before = {
+                    position.symbol: position.quantity for position in await self.broker.positions()
+                }
+                fills_first = _latest_cumulative_fills(await source(floor, symbols))
+                positions_middle = {
+                    position.symbol: position.quantity for position in await self.broker.positions()
+                }
+                fills_second = _latest_cumulative_fills(await source(floor, symbols))
+                positions_after = {
+                    position.symbol: position.quantity for position in await self.broker.positions()
+                }
+            except Exception:
+                logger.exception("Could not capture broker state for startup fill replay")
+                return None
+
+            if (
+                positions_before == positions_middle == positions_after
+                and fills_first == fills_second
+            ):
+                missed: list[BrokerFill] = []
+                for raw in fills_second:
+                    if self._is_foreign_unrecorded(raw):
+                        delta = self._unabsorbed_part(raw)
+                        if delta is not None:
+                            missed.append(delta)
+                return _FillReplaySnapshot(
+                    scan_started=scan_started,
+                    fills=tuple(fills_second),
+                    missed=tuple(missed),
+                    positions=tuple(sorted(positions_after.items())),
+                )
+
+            logger.warning(
+                "Broker startup replay snapshot changed during capture (attempt %d/%d); "
+                "retrying before any ledger state is changed",
+                attempt,
+                _STARTUP_REPLAY_SNAPSHOT_ATTEMPTS,
+            )
+
+        self.kill_switch.trip("broker startup replay snapshot did not stabilise")
+        return None
+
     def _is_foreign_unrecorded(self, fill: BrokerFill) -> bool:
         """Legacy name for the unaccounted-execution filter, including own orders."""
         prior = self._absorbed_fills.get(fill.order_id)
@@ -2523,7 +2605,12 @@ class OMS:
         symbols.update(self._fill_watch_hint)
         return sorted(symbols)
 
-    async def absorb_broker_fills(self, record_only: bool = False) -> list[BrokerFill]:
+    async def absorb_broker_fills(
+        self,
+        record_only: bool = False,
+        *,
+        replay_snapshot: _FillReplaySnapshot | None = None,
+    ) -> list[BrokerFill]:
         """Account confirmed execution deltas for both own and broker-side orders.
 
         Transmission alone changes no position or ledger lot. The persistent
@@ -2545,7 +2632,7 @@ class OMS:
             if self._fill_delivery_failed:
                 return replayed
         source = getattr(self.broker, "recent_fills", None)
-        if source is None:
+        if replay_snapshot is None and source is None:
             return replayed
         # Taken BEFORE the query, and it is the value the watermark becomes
         # (M88). A stamp taken after the pass excludes everything that executed
@@ -2559,12 +2646,18 @@ class OMS:
         # its simulated start to the real present, and every simulated fill was
         # then behind it forever. Measured - 99 sweeps, every one returning
         # nothing, against a stop that had demonstrably fired.
-        scan_started = self._now()
-        try:
-            fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
-        except Exception:
-            logger.exception("Could not read recent broker fills")
-            return replayed
+        if replay_snapshot is not None:
+            scan_started = replay_snapshot.scan_started
+            fills = list(replay_snapshot.fills)
+        else:
+            scan_started = self._now()
+            if source is None:
+                return replayed
+            try:
+                fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
+            except Exception:
+                logger.exception("Could not read recent broker fills")
+                return replayed
 
         # IBKR returns one Fill per EXECUTION; Alpaca returns one order object
         # per order. Both now carry the order's CUMULATIVE quantity, so the
@@ -2608,7 +2701,9 @@ class OMS:
             # guessing either way trips the kill-switch from one side or the
             # other - the quantities are simply re-read from the broker, which
             # is the only thing that actually knows.
-            await self._resync_tracked_quantities()
+            await self._resync_tracked_quantities(
+                dict(replay_snapshot.positions) if replay_snapshot is not None else None
+            )
 
         # Advanced and persisted only after the pass, so a crash mid-loop
         # replays rather than skips - and `_absorbed_fills` is what makes a
@@ -2801,19 +2896,21 @@ class OMS:
                 )
             )
 
-    async def _resync_tracked_quantities(self) -> None:
+    async def _resync_tracked_quantities(self, observed: dict[str, float] | None = None) -> None:
         """Re-reads the position baseline from the broker after a replay.
 
         Deliberately quiet, unlike `adopt_broker_positions`: adoption is the
         event worth announcing, and this is the same read repeated moments later
         for a known reason.
         """
-        try:
-            positions = await self.broker.positions()
-        except Exception:
-            logger.exception("Could not re-read positions after replaying missed executions")
-            return
-        self._filled_quantities = {pos.symbol: pos.quantity for pos in positions}
+        if observed is None:
+            try:
+                positions = await self.broker.positions()
+            except Exception:
+                logger.exception("Could not re-read positions after replaying missed executions")
+                return
+            observed = {pos.symbol: pos.quantity for pos in positions}
+        self._filled_quantities = dict(observed)
         held = set(self._filled_quantities)
         for symbol in [s for s in self._position_stops if s not in held]:
             # Flat: whatever was protecting it went with it at the broker.
