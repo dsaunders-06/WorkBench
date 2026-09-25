@@ -122,6 +122,7 @@ class BrokerFill:
     quantity: float
     price: float
     filled_at: datetime
+    app_order_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

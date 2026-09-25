@@ -41,6 +41,7 @@ from qat.config import Settings
 from qat.data.broker.ib_adapter import IBAdapter
 from qat.data.symbols import from_ibkr
 from qat.domain.bus import EventBus
+from qat.domain.events import BrokerOrderIdResolvedEvent
 
 NOW = datetime(2026, 8, 19, 6, 0, tzinfo=UTC)
 SINCE = NOW - timedelta(hours=1)
@@ -237,3 +238,27 @@ async def test_a_us_fill_keeps_its_plain_symbol() -> None:
     fill = (await _adapter(client, market="US").recent_fills(SINCE))[0]
 
     assert fill.symbol == "AAPL"
+
+
+async def test_recent_fill_resolves_order_reference_after_adapter_restart() -> None:
+    raw = _fill("WOW", "BOT", perm_id=998877)
+    raw.execution.orderRef = "app-order-123"
+    client = FillsIB([raw])
+    bus = EventBus()
+    seen: list[BrokerOrderIdResolvedEvent] = []
+
+    async def capture(event: BrokerOrderIdResolvedEvent) -> None:
+        seen.append(event)
+
+    bus.subscribe(BrokerOrderIdResolvedEvent, capture)
+    adapter = IBAdapter(
+        client,
+        bus,
+        settings=Settings(_env_file=None, trading_mode="paper", market="ASX"),
+    )
+    assert adapter._orders == {}
+
+    fills = await adapter.recent_fills(SINCE)
+
+    assert fills[0].app_order_id == "app-order-123"
+    assert [(e.order_id, e.app_order_id) for e in seen] == [("998877", "app-order-123")]

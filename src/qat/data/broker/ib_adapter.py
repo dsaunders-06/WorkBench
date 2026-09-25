@@ -748,10 +748,12 @@ class IBAdapter:
                 continue
             # The app reference survives a late permId without relying on a
             # client/session-scoped order number that may be reused.
-            app_order_id = str(getattr(execution.execution, "orderRef", "") or "")
-            if app_order_id in self._orders and fill.order_id != app_order_id:
+            if fill.app_order_id is not None and fill.order_id != fill.app_order_id:
                 await self.bus.publish(
-                    BrokerOrderIdResolvedEvent(order_id=fill.order_id, app_order_id=app_order_id)
+                    BrokerOrderIdResolvedEvent(
+                        order_id=fill.order_id,
+                        app_order_id=fill.app_order_id,
+                    )
                 )
             fills.append(fill)
         return fills

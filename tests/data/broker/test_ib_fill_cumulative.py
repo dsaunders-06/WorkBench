@@ -86,3 +86,13 @@ def test_the_symbol_is_still_translated_back():
     assert out.symbol == "LOV.AX"
     assert out.order_id == "1216552509"
     assert out.side == "sell"
+
+
+def test_ib_fill_carries_the_application_order_reference() -> None:
+    raw = _fill(shares=4.0, cum_qty=4.0)
+    raw.execution.orderRef = "app-order-123"
+
+    out = from_ib_fill(raw, "ASX")
+
+    assert out is not None
+    assert out.app_order_id == "app-order-123"

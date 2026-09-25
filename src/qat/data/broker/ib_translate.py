@@ -432,6 +432,7 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
             execution.side,
         )
         return None
+    app_order_id = str(getattr(execution, "orderRef", "") or "") or None
     return BrokerFill(
         order_id=str(execution.permId),
         symbol=from_ibkr(fill.contract.symbol, market),
@@ -439,6 +440,7 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
         quantity=float(execution.cumQty),
         price=float(execution.avgPrice),
         filled_at=execution.time,
+        app_order_id=app_order_id,
     )
 
 
