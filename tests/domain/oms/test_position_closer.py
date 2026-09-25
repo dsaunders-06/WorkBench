@@ -21,8 +21,13 @@ from dataclasses import dataclass, replace
 
 import pytest
 
-from qat.data.broker.adapter import Order, Position, RestingOrder
+from qat.config import Settings
+from qat.data.broker.adapter import AccountSummary, Order, Position, RestingOrder
+from qat.domain.bus import EventBus
+from qat.domain.oms.oms import OMS
 from qat.domain.oms.position_closer import CloseOutcome, PositionCloser
+from qat.domain.risk_engine.engine import RiskEngine
+from qat.domain.risk_engine.kill_switch import KillSwitch
 
 # ⚠️ WHAT A CANCEL ACTUALLY DOES AT IBKR - AND A FAKE MUST BE ABLE TO DO EACH.
 #
@@ -57,7 +62,7 @@ def _leg(symbol, order_id, order_type, *, stop=None, limit=None, status="Submitt
         quantity=100.0,
         status=status,
         oca_group="oca-1",
-        stop_price=stop,
+        stop_price=(90.0 if order_type == "STP" and stop is None else stop),
         limit_price=limit,
     )
 
@@ -110,6 +115,7 @@ class _FakeBroker:
         # stripped and is the whole point of the "refusal after cancels" tests.
         self._cancel_raises_for = set(cancel_raises_for)
         self.open_orders_calls = 0
+        self._recovery_phase = False
         self.cancelled_ids = []
         self._cancelled = False
 
@@ -129,7 +135,7 @@ class _FakeBroker:
         # that filtered would hide exactly the leg this branch kept selling
         # over. Deciding what counts as gone is the caller's job.
         self.open_orders_calls += 1
-        if self.open_orders_calls > 2 and self._legs_at_recovery is not None:
+        if self._recovery_phase and self._legs_at_recovery is not None:
             return list(self._legs_at_recovery)
         if not self._cancelled:
             return list(self._legs)
@@ -155,6 +161,7 @@ class _FakeBroker:
             raise self._cancel_raises
         if order_id in self._cancel_raises_for:
             self._cancelled = True  # the earlier legs DID go through
+            self._recovery_phase = True
             raise RuntimeError(f"broker refused the cancel of {order_id}")
         self.cancelled_ids.append(order_id)
         self._cancelled = True
@@ -165,88 +172,72 @@ class _FakeBroker:
         return Order(symbol="X", side="sell", quantity=0.0, order_id=order_id, status="cancelled")
 
 
-class _FakeOms:
+class _FakeOms(OMS):
+    """Real OMS mechanics with recording hooks; only the broker is simulated."""
+
     def __init__(
-        self,
-        exit_rejected,
-        reprotect_raises,
-        believed_orders=None,
-        kill_switch=None,
-        sign_off_status="transmitted",
+        self, broker, exit_rejected, reprotect_raises, believed_orders, kill_switch, sign_off_status
     ):
+        settings = Settings(_env_file=None)
+        bus = EventBus()
+        risk = RiskEngine(bus, kill_switch, settings=settings)
+        super().__init__(broker, risk, kill_switch, settings=settings, bus=bus)
         self.exit_orders = []
         self.signed_off = []
         self.protective_orders = []
-        self._exit_rejected = exit_rejected
-        self._reprotect_raises = reprotect_raises
         self._believed_orders = believed_orders or []
-        self._kill_switch = kill_switch
-        self._sign_off_status = sign_off_status
+        if exit_rejected:
+
+            def reject(*args):
+                raise RuntimeError("exit risk refusal")
+
+            risk.evaluate_exit = reject
+
+        async def place_order(order):
+            if order.is_protective_stop:
+                if reprotect_raises is not None:
+                    raise reprotect_raises
+                self.protective_orders.append(
+                    (order.symbol, order.quantity, order.stop_price, order.take_profit_price)
+                )
+                order.status = "transmitted"
+            else:
+                self.exit_orders.append((order.symbol, order.quantity, "manual_close"))
+                order.status = sign_off_status
+                broker._recovery_phase = order.status not in {"transmitted", "filled"}
+                if order.status == "filled":
+                    order.filled_quantity = order.quantity
+                    order.filled_price = order.reference_price or 100.0
+                    broker._positions_after = {order.symbol: 0.0}
+            if order.status == "transmitted":
+                broker._book.append(
+                    RestingOrder(
+                        symbol=order.symbol,
+                        order_id=order.order_id,
+                        side=order.side,
+                        quantity=order.quantity,
+                        status="Submitted",
+                        order_type="STP" if order.is_protective_stop else "MKT",
+                        stop_price=order.stop_price,
+                    )
+                )
+            return order
+
+        async def account():
+            return AccountSummary(net_liquidation=100000, cash=100000, buying_power=100000)
+
+        broker.place_order = place_order
+        broker.account = account
 
     def orders(self):
-        return list(self._believed_orders)
+        return [*self._believed_orders, *super().orders()]
 
-    async def submit_exit_order(
-        self, symbol, quantity, price, reason="signal", *, legs_already_released=False
-    ):
-        # ⚠️ `legs_already_released` is accepted and ignored here on purpose.
-        # This fake stands in for the OMS, and PositionCloser passes True
-        # because it cancelled the legs itself - the real OMS then SKIPS its
-        # own release rather than judging the same broker state twice.
-        self.exit_orders.append((symbol, quantity, reason))
-        status = "rejected" if self._exit_rejected else "pending_signoff"
-        return Order(
-            symbol=symbol,
-            side="sell",
-            quantity=quantity,
-            order_id=f"order-{len(self.exit_orders)}",
-            status=status,
-        )
-
-    async def submit_protective_stop(self, symbol, quantity, stop_price, take_profit_price=None):
-        if self._reprotect_raises is not None:
-            raise self._reprotect_raises
-        # ⚠️ The real `OMS.submit_protective_stop` REJECTS a non-positive
-        # quantity outright (`oms.py:1319`), and this fake used to accept one
-        # and hand back a pending order. That difference hid a branch: a
-        # `_recover` reached with the position already FLAT called this with
-        # quantity=0, the real OMS rejected it, and the closer reported
-        # UNPROTECTED - "held with NO STOP. Re-place it by hand now" - over a
-        # position holding nothing. An operator obeying that hand-places a
-        # NAKED SHORT.
-        if quantity <= 0 or stop_price <= 0:
-            return Order(
-                symbol=symbol, side="sell", quantity=0.0, order_id="protect-x", status="rejected"
-            )
-        self.protective_orders.append((symbol, quantity, stop_price, take_profit_price))
-        return Order(
-            symbol=symbol,
-            side="sell",
-            quantity=quantity,
-            order_id="protect-1",
-            status="pending_signoff",
-        )
+    async def submit_exit_order(self, symbol, quantity, price, reason="signal", **kwargs):
+        return await super().submit_exit_order(symbol, quantity, price, reason, **kwargs)
 
     async def sign_off(self, order_id, operator):
         self.signed_off.append((order_id, operator))
-        # ⚠️ The real `OMS._sign_off_locked` rejects UNCONDITIONALLY while the
-        # kill switch is tripped (oms.py:723). A fake that ignores the switch
-        # is how a green test came to describe a disaster.
-        if self._kill_switch is not None and self._kill_switch.tripped:
-            return Order(
-                symbol="X", side="sell", quantity=0.0, order_id=order_id, status="rejected"
-            )
-        # ⚠️ "transmitted", not "filled". IBKR answers a market sell with
-        # Submitted/PreSubmitted, which `_IB_STATUS_MAP` maps to
-        # "transmitted"; only MockBroker fills synchronously.
-        status = "transmitted" if order_id.startswith("protect") else self._sign_off_status
-        return Order(symbol="X", side="sell", quantity=0.0, order_id=order_id, status=status)
-
-
-class _FakeKillSwitch:
-    def __init__(self, reason):
-        self.reason = reason
-        self.tripped = reason is not None
+        return await super().sign_off(order_id, operator)
 
 
 class _VanishingEntries(Mapping):
@@ -306,9 +297,11 @@ def closer_factory():
             cancel_raises_for,
             cancel_effect,
         )
-        kill_switch = _FakeKillSwitch(halt)
+        kill_switch = KillSwitch()
+        if halt is not None:
+            kill_switch.trip(halt)
         oms = _FakeOms(
-            exit_rejected, reprotect_raises, believed_orders, kill_switch, sign_off_status
+            broker, exit_rejected, reprotect_raises, believed_orders, kill_switch, sign_off_status
         )
         closer = PositionCloser(oms, broker, kill_switch, entries)
         closer.oms, closer.broker = oms, broker
@@ -415,7 +408,7 @@ async def test_stops_dead_when_a_leg_survives_the_cancel(closer_factory):
     )
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
-    assert "still resting" in result.detail
+    assert "uncertain" in result.detail
     assert closer.oms.exit_orders == [], "NOTHING may be sold while a leg rests"
 
 
@@ -462,7 +455,7 @@ async def test_a_leg_left_in_pending_cancel_blocks_the_sell(closer_factory):
         "a leg in PendingCancel is VISIBLE AT THE BROKER and can still fill - "
         "selling over it puts the account SHORT"
     )
-    assert "1" in result.detail and "2" in result.detail
+    assert result.issued_legs == ("1",)
 
 
 @pytest.mark.asyncio
@@ -478,7 +471,7 @@ async def test_a_cancel_rejected_outright_blocks_the_sell(closer_factory):
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED, result.detail
     assert closer.oms.exit_orders == []
-    assert "still resting" in result.detail
+    assert "original stop" in result.detail
 
 
 @pytest.mark.asyncio
@@ -529,16 +522,18 @@ async def test_recovery_will_not_re_arm_over_a_leg_in_pending_cancel(closer_fact
         sign_off_status="rejected",
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.UNPROTECTED, result.detail
+    assert result.outcome is CloseOutcome.REFUSED, result.detail
     assert closer.oms.protective_orders == [], "no bracket over a leg that can still fill"
-    assert any(r.levelname == "CRITICAL" for r in caplog.records)
+    assert closer.oms.exit_protection_pending("CBA.AX")
 
 
 @pytest.mark.asyncio
 async def test_reads_legs_with_open_orders_not_open_trades(closer_factory):
     """open_orders() uses reqAllOpenOrders. openTrades() is clientId-scoped and
     reported zero legs against sixteen resting on 24 August."""
-    closer = closer_factory(positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "LMT")])
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "STP", stop=90.0)]
+    )
     await closer.close_position("CBA.AX", operator="tester")
     assert closer.broker.open_orders_calls >= 2, "read once to capture, again to verify"
 
@@ -567,7 +562,7 @@ async def test_refuses_when_the_verification_read_cannot_be_trusted(closer_facto
     )
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
-    assert "VERIFIED" in result.detail
+    assert closer.oms.kill_switch.tripped
     assert (
         "leg(s) still resting after the cancel" not in result.detail
     ), "this is a read failure, not a survivor"
@@ -654,7 +649,7 @@ async def test_a_cancel_that_cannot_be_resolved_refuses(closer_factory):
 
     closer = closer_factory(
         positions={"CBA.AX": 100.0},
-        legs=[_leg("CBA.AX", "1", "LMT")],
+        legs=[_leg("CBA.AX", "1", "STP", stop=90.0)],
         cancel_raises=CancelNotResolvedError("no live order"),
     )
     result = await closer.close_position("CBA.AX", operator="tester")
@@ -663,16 +658,17 @@ async def test_a_cancel_that_cannot_be_resolved_refuses(closer_factory):
 
 
 @pytest.mark.asyncio
-async def test_sells_the_reread_broker_quantity_not_the_stale_one(closer_factory):
+async def test_changed_holding_refuses_the_stale_full_close(closer_factory):
     """A leg may fill during the cancel. The broker is the authority."""
     closer = closer_factory(
         positions={"CBA.AX": 100.0},
-        legs=[_leg("CBA.AX", "1", "LMT")],
+        legs=[_leg("CBA.AX", "1", "STP", stop=90.0)],
         positions_after_cancel={"CBA.AX": 60.0},
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.CLOSED
-    assert result.quantity == 60.0
+    assert result.outcome is CloseOutcome.REFUSED
+    assert closer.oms.exit_orders == []
+    assert closer.oms.protective_orders == [("CBA.AX", 60.0, 90.0, None)]
 
 
 @pytest.mark.asyncio
@@ -681,16 +677,21 @@ async def test_the_sell_goes_through_the_oms_and_is_signed_off_as_the_operator(
 ):
     """Placing on the adapter directly would fill at the broker while the
     ledger never saw it - the position would vanish with no closed trade."""
-    closer = closer_factory(positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "LMT")])
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "STP", stop=90.0)]
+    )
     await closer.close_position("CBA.AX", operator="darren")
     assert closer.oms.exit_orders == [("CBA.AX", 100.0, "manual_close")]
-    assert closer.oms.signed_off == [("order-1", "darren")]
+    assert len(closer.oms.signed_off) == 1
+    assert closer.oms.signed_off[0][1] == "darren"
 
 
 @pytest.mark.asyncio
 async def test_sends_exactly_one_order_and_never_retries(closer_factory):
     """M139 re-transmitted a working order every 60s into 4x the position."""
-    closer = closer_factory(positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "LMT")])
+    closer = closer_factory(
+        positions={"CBA.AX": 100.0}, legs=[_leg("CBA.AX", "1", "STP", stop=90.0)]
+    )
     await closer.close_position("CBA.AX", operator="tester")
     assert len(closer.oms.exit_orders) == 1
 
@@ -706,7 +707,7 @@ async def test_abort_blocks_the_sell_when_a_leg_survives_the_cancel(closer_facto
         legs_after_cancel=[_leg("CBA.AX", "2", "STP")],  # one survives
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.REFUSED
+    assert result.outcome is CloseOutcome.RECOVERED
     assert closer.oms.exit_orders == [], "a surviving leg must never let the sell through"
 
 
@@ -730,20 +731,21 @@ async def test_abort_blocks_the_sell_when_the_verification_read_is_unverifiable(
 
 
 @pytest.mark.asyncio
-async def test_a_rejected_sell_re_places_the_bracket(closer_factory):
+async def test_risk_refusal_never_removes_or_replaces_protection(closer_factory):
     closer = closer_factory(
         positions={"CBA.AX": 100.0},
         legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
         exit_rejected=True,
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.RECOVERED
-    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
-    assert closer.oms.signed_off == [("protect-1", "auto-reprotect")]
+    assert result.outcome is CloseOutcome.REFUSED
+    assert closer.oms.protective_orders == []
+    assert closer.broker.cancelled_ids == []
+    assert closer.oms.signed_off == []
 
 
 @pytest.mark.asyncio
-async def test_a_failed_re_place_reports_unprotected(closer_factory, caplog):
+async def test_risk_refusal_does_not_depend_on_replacement_acceptance(closer_factory, caplog):
     closer = closer_factory(
         positions={"CBA.AX": 100.0},
         legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
@@ -751,8 +753,9 @@ async def test_a_failed_re_place_reports_unprotected(closer_factory, caplog):
         reprotect_raises=RuntimeError("broker said no"),
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.UNPROTECTED
-    assert any(r.levelname == "CRITICAL" for r in caplog.records)
+    assert result.outcome is CloseOutcome.REFUSED
+    assert closer.broker.cancelled_ids == []
+    assert closer.oms.protective_orders == []
 
 
 # --- IBKR's semantics, not MockBroker's ---------------------------------
@@ -813,7 +816,7 @@ async def test_a_filled_sell_is_also_a_success(closer_factory):
 
 
 @pytest.mark.asyncio
-async def test_a_rejected_sign_off_still_re_places_the_bracket(closer_factory):
+async def test_confirmed_rejected_exit_restores_only_the_stop_pending_verification(closer_factory):
     """The genuine failure: sign-off rejected, nothing working, protection
     must go back."""
     closer = closer_factory(
@@ -822,8 +825,8 @@ async def test_a_rejected_sign_off_still_re_places_the_bracket(closer_factory):
         sign_off_status="rejected",
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.RECOVERED
-    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
+    assert result.outcome is CloseOutcome.REFUSED
+    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, None)]
 
 
 @pytest.mark.asyncio
@@ -845,10 +848,10 @@ async def test_never_re_arms_a_bracket_while_a_sell_is_working(closer_factory, c
         sign_off_status="rejected",
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.UNPROTECTED
+    assert result.outcome is CloseOutcome.REFUSED
     assert closer.oms.protective_orders == [], "no bracket over an in-flight sell"
-    assert "working sell" in result.detail
-    assert any(r.levelname == "CRITICAL" for r in caplog.records)
+    assert "uncertain" in result.detail
+    assert closer.oms.exit_protection_pending("CBA.AX")
 
 
 # --- the blind read -----------------------------------------------------
@@ -1011,12 +1014,12 @@ async def test_a_survivor_refusal_names_the_leg_it_already_cancelled(closer_fact
         legs_after_cancel=[_leg("CBA.AX", "2", "STP", stop=90.0)],  # the STP survives
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.REFUSED
+    assert result.outcome is CloseOutcome.RECOVERED
     assert result.cancelled_legs == ("1",), "the leg that IS gone must be reported"
     assert sorted(result.issued_legs) == ["1", "2"], "and both cancels went out"
     assert "1" in result.detail and "2" in result.detail
-    assert "still resting" in result.detail
-    assert "cancelled" in result.detail.lower()
+    assert "original stop" in result.detail
+    assert "Confirmed gone: 1" in result.detail
     assert closer.oms.exit_orders == [], "still no sell"
 
 
@@ -1036,10 +1039,11 @@ async def test_an_unverifiable_refusal_reports_the_cancels_it_issued(closer_fact
     )
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
-    assert sorted(result.cancelled_legs) == ["1", "2"]
-    assert "VERIFIED" in result.detail
+    assert result.cancelled_legs == ()
+    assert result.issued_legs == ("1",)
+    assert "uncertain" in result.detail
     assert "leg(s) still resting after the cancel" not in result.detail
-    assert "1" in result.detail and "2" in result.detail
+    assert "1" in result.detail
     # No bracket may be re-placed on a read that cannot be trusted: the legs
     # may still be resting, and a fresh full-size bracket over them is the
     # short trap from the other side.
@@ -1060,9 +1064,9 @@ async def test_a_second_leg_cancel_that_raises_re_protects_the_bare_position(clo
         cancel_raises_for=("2",),
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.RECOVERED, result.detail
+    assert result.outcome is CloseOutcome.REFUSED, result.detail
     assert result.cancelled_legs == ("1",)
-    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
+    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, None)]
     assert "1" in result.detail
     assert closer.oms.exit_orders == [], "a refusal is still a refusal - nothing is sold"
 
@@ -1097,7 +1101,7 @@ async def test_cancels_that_went_out_are_reported_even_when_none_is_confirmed_go
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED
     assert result.cancelled_legs == (), "nothing is CONFIRMED gone, and it must not claim so"
-    assert sorted(result.issued_legs) == ["1", "2"], "but the cancels DID go out"
+    assert result.issued_legs == ("1",), "the stop is not cancelled until the target settles"
     assert closer.oms.exit_orders == []
     assert closer.oms.protective_orders == []
 
@@ -1114,8 +1118,9 @@ async def test_the_text_separates_confirmed_gone_from_outcome_unknown(closer_fac
     )
     result = await closer.close_position("CBA.AX", operator="tester")
     lowered = result.detail.lower()
-    assert "no leg is confirmed gone" in lowered, "it must say nothing is CONFIRMED gone"
-    assert "1" in result.detail and "2" in result.detail, "and still name the cancels sent"
+    assert "confirmed gone: none" in lowered, "it must say nothing is CONFIRMED gone"
+    assert result.issued_legs == ("1",)
+    assert "1" in result.detail, "name the target cancellation actually issued"
     assert "nothing was cancelled" not in lowered, "which is exactly what it used to say"
 
 
@@ -1182,9 +1187,9 @@ async def test_recovery_refuses_to_re_arm_on_a_blind_book_read(closer_factory, c
         sign_off_status="rejected",
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.UNPROTECTED
+    assert result.outcome is CloseOutcome.REFUSED
     assert closer.oms.protective_orders == [], "no bracket on a read that answered nothing"
-    assert any(r.levelname == "CRITICAL" for r in caplog.records)
+    assert closer.oms.kill_switch.tripped
 
 
 @pytest.mark.asyncio
@@ -1200,8 +1205,8 @@ async def test_recovery_still_re_arms_when_the_empty_read_is_credible(closer_fac
         sign_off_status="rejected",
     )
     result = await closer.close_position("CBA.AX", operator="tester")
-    assert result.outcome is CloseOutcome.RECOVERED, result.detail
-    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, 110.0)]
+    assert result.outcome is CloseOutcome.REFUSED, result.detail
+    assert closer.oms.protective_orders == [("CBA.AX", 100.0, 90.0, None)]
 
 
 # --- N5: the zero-leg refusal names the escape hatch --------------------
@@ -1274,7 +1279,7 @@ async def test_recovery_over_a_position_gone_SHORT_refuses_to_place_a_sell_stop(
     )
     result = await closer.close_position("CBA.AX", operator="tester")
 
-    assert result.outcome is CloseOutcome.UNPROTECTED, result.detail
+    assert result.outcome is CloseOutcome.REFUSED, result.detail
     assert closer.oms.protective_orders == []
     assert "short" in result.detail.lower()
     assert "re-place it by hand now" not in result.detail.lower(), "that would deepen the short"

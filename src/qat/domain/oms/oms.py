@@ -15,11 +15,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import pandas as pd
 
@@ -43,8 +45,11 @@ from qat.domain.events import (
     OrderRejectedEvent,
 )
 from qat.domain.oms.anomaly import PositionAnomalyStore
+from qat.domain.oms.exit_recovery import ExitAttempt, ExitRecovery, ExitRecoveryStore
+from qat.domain.oms.order_identity import OrderIdentityStore
 from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
 from qat.domain.oms.resting_orders import (
+    TERMINAL_STATUSES,
     WORKING_STATUSES,
     SymbolOrderDivergence,
     explain_entries_in_flight,
@@ -58,6 +63,17 @@ logger = logging.getLogger(__name__)
 # Share counts are floats on the wire, so an exact == 0 comparison is not safe.
 # The same 1e-6 the reconciliation and cancel paths already use.
 _POSITION_EPSILON = 1e-6
+_STARTUP_REPLAY_SNAPSHOT_ATTEMPTS = 3
+
+
+def _latest_cumulative_fills(fills: Iterable[BrokerFill]) -> list[BrokerFill]:
+    """One complete cumulative snapshot per order, independent of response order."""
+    highest: dict[str, BrokerFill] = {}
+    for fill in fills:
+        seen = highest.get(fill.order_id)
+        if seen is None or (fill.quantity, fill.filled_at) > (seen.quantity, seen.filled_at):
+            highest[fill.order_id] = fill
+    return sorted(highest.values(), key=lambda fill: (fill.filled_at, fill.order_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,6 +91,16 @@ class _AbsorbedFill:
     # False only for a record written before M53, which stored a timestamp and
     # no quantity. See _absorbed_from_json for why that must read as "finished".
     quantity_known: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class _FillReplaySnapshot:
+    """One stable startup view used for both replay preparation and delivery."""
+
+    scan_started: datetime
+    fills: tuple[BrokerFill, ...]
+    missed: tuple[BrokerFill, ...]
+    positions: tuple[tuple[str, float], ...]
 
 
 def _absorbed_from_json(entry: object) -> _AbsorbedFill:
@@ -192,6 +218,7 @@ class OMS:
         self.entry_allow_list = entry_allow_list
         self.bus = bus
         self._orders: dict[str, Order] = {}
+        self._exits_requiring_release: set[str] = set()
         self._filled_quantities: dict[str, float] = {}
         self._adopted_baseline: dict[str, float] = {}
         # Stops this session attached to its own entries, kept so the portfolio
@@ -216,10 +243,24 @@ class OMS:
         # cannot say whether a fill on the boundary was already recorded, and
         # guessing either way loses a trade or records it twice.
         self.settings = settings
+        self._recovery_order_ids: set[str] = set()
+        self._exit_attempts: dict[str, ExitAttempt] = {}
+        self._fill_delivery_failed = False
+        self._exit_recovery: ExitRecoveryStore | None = None
+        try:
+            self._exit_recovery = ExitRecoveryStore(
+                Path((settings or risk_engine.settings).data_dir) / "exit_recovery.json"
+            )
+            if self._exit_recovery.plans:
+                self.kill_switch.trip("pending exit protection recovery restored after restart")
+        except (OSError, ValueError, TypeError, AttributeError):
+            logger.exception("Exit recovery journal is unreadable; refusing further cancellations")
+            self.kill_switch.trip("exit recovery journal unreadable")
         self._fill_state_path = (
             Path(settings.data_dir) / _FILL_STATE_FILENAME if settings is not None else None
         )
         self._absorbed_fills: dict[str, _AbsorbedFill] = {}
+        self._pending_fill_deliveries: dict[str, tuple[BrokerFill, str, bool]] = {}
         # When an order THIS app sent was first seen partially filled (M70).
         # In memory only, and deliberately: it exists to widen one query window
         # while a fill is outstanding, and an order still filling across a
@@ -278,6 +319,31 @@ class OMS:
         # Order ids this OMS has handed to a broker. Guards against a second
         # transmission independently of the status field - see `_sign_off_locked`.
         self._transmitted: set[str] = set()
+        self._order_identity: OrderIdentityStore | None = None
+        if settings is not None:
+            try:
+                self._order_identity = OrderIdentityStore(
+                    Path(settings.data_dir) / "inflight_orders.json"
+                )
+                for app_order_id, record in self._order_identity.records.items():
+                    order = record.order
+                    if record.stage == "transmitting":
+                        # The previous process ended inside broker submission.
+                        # Treat the exposure as committed and refuse all new
+                        # order flow until broker evidence resolves it.
+                        order = replace(order, status="transmitted")
+                        self.kill_switch.trip(
+                            "broker-order transmission outcome was uncertain at restart"
+                        )
+                    self._orders[app_order_id] = order
+                    self._orders[str(order.order_id)] = order
+                    self._transmitted.add(app_order_id)
+                    self._broker_order_ids.add(str(order.order_id))
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                logger.exception(
+                    "Durable broker-order identity is unreadable; order flow is halted"
+                )
+                self.kill_switch.trip("durable broker-order identity unreadable")
         # Item 56 / Task 3: `place_order`'s bounded permId wait (Task 2) can
         # still lose to a slow TWS acknowledgement. `IBAdapter._adopt_from_broker`
         # learns the resolved id moments later regardless - modify and cancel
@@ -550,112 +616,217 @@ class OMS:
         await self._announce_pending(order)
         return order
 
-    async def _release_protective_legs(self, symbol: str, quantity: float, reason: str) -> bool:
-        """Cancel this symbol's resting protective legs. False means do not sell.
+    def exit_attempt(self, order_id: str) -> ExitAttempt:
+        attempt = self._exit_attempts.get(order_id)
+        if attempt is not None:
+            return attempt
+        for original_id, order in self._orders.items():
+            if order.order_id == order_id and original_id in self._exit_attempts:
+                return self._exit_attempts[original_id]
+        return ExitAttempt()
 
-        ⚠️ CANCEL FIRST, NOT SELL FIRST, and the two failure modes are why -
-        they are not symmetric:
+    def transmission_uncertain(self, order_id: str) -> bool:
+        """Whether broker submission began but acceptance was never acknowledged."""
+        store = self._order_identity
+        if store is None:
+            return False
+        known = self._orders.get(order_id)
+        return any(
+            record.stage == "transmitting"
+            and (
+                app_order_id == order_id
+                or str(record.order.order_id) == order_id
+                or (known is not None and self._orders.get(app_order_id) is known)
+            )
+            for app_order_id, record in store.records.items()
+        )
 
-        * cancel first and the sell then fails -> the position is UNPROTECTED,
-          which `verify_position_stops` detects and `signal_bridge` RE-ARMS on
-          its own ("Proposed protective stops for N unprotected position(s)").
-          Self-healing, on a position you meant to hold.
-        * sell first and the cancel then fails -> the legs are ORPHANED,
-          detected by a rail that explicitly does not cancel anything, and if
-          one fills you own an unintended SHORT with no bound.
-
-        ⚠️ A PARTIAL exit RELEASES ITS LEGS TOO, reversed 9 September 2026.
-        This used to leave them alone, reasoning that the de-lever sweep trims a
-        position which still needs protecting. That is true of the intent and
-        false of the result: the legs keep the PRE-TRIM size, so a 100-share
-        bracket ends up guarding a 60-share holding, and a stop firing then
-        sells 100 against 60 held and puts the account SHORT 40 - in a falling
-        market, which is when stops fire. The sweep trims EVERY position at
-        once, so one breach left the whole book over-covered.
-
-        ⚠️ WHY CANCEL RATHER THAN RESIZE, and it is the same asymmetry again:
-        `naked_positions` reports a position with NO stop resting and is BLIND
-        to one that is merely the wrong SIZE. Resizing in place fails into a
-        state nothing detects; cancelling fails into one that
-        `verify_position_stops` shouts about and `rearm_protective_stops` heals
-        by itself, at `abs(quantity)` - the current holding - off the recorded
-        entry stop. Cancelling fails into the state the system can see.
-
-        ⚠️ The remainder is therefore briefly unprotected, bounded by
-        `protection_sweep_seconds`. That is a real cost, accepted deliberately,
-        and it is the same window this method already accepts when a full exit
-        is cancelled and then fails.
-
-        ⚠️ Only protective legs, per `is_protective_leg`. A working BUY on the
-        symbol is an intruder and is left strictly alone: cancelling one
-        silently is how an account came to hold 4x the intended position on
-        24 August (M139).
-        """
+    async def _release_protective_legs(
+        self, symbol: str, quantity: float, reason: str, *, order_id: str = ""
+    ) -> bool:
+        """Persist recovery intent, cancel targets first, then verify each cancel."""
+        self._exit_attempts[order_id] = ExitAttempt()
+        if self._exit_recovery is None:
+            return False
         source = getattr(self.broker, "open_orders", None)
         cancel = getattr(self.broker, "cancel_order", None)
         if source is None or cancel is None:
-            # An adapter that models neither cannot be orphaning anything.
             return True
         try:
-            working = await source()
-        except Exception:
-            logger.exception(
-                "Could not read open orders before exiting %s - refusing the exit rather "
-                "than selling into legs that may be resting",
-                symbol,
+            working = [o for o in await source() if o.status not in TERMINAL_STATUSES]
+            mine = [o for o in working if o.symbol == symbol]
+            if any(not is_protective_leg(o) for o in mine):
+                logger.error("Exit on %s refused: another order is working", symbol)
+                return False
+            if self._exit_recovery is None or symbol in self._exit_recovery.plans:
+                logger.error("Exit on %s refused: unresolved protection recovery", symbol)
+                return False
+            held = await self._broker_quantity(symbol)
+            if not mine:
+                if (
+                    held is None
+                    or not math.isfinite(held)
+                    or held <= 0
+                    or quantity > held + _POSITION_EPSILON
+                    or self.kill_switch.tripped
+                ):
+                    return False
+                # The acknowledgement of an initially unprotected exit can
+                # also be lost. Persist its intent without inventing a stop.
+                self._exit_recovery.put(ExitRecovery(symbol, held, None))
+                return True
+            stops = [o for o in mine if o.stop_price is not None and o.stop_price > 0]
+            if held is None or held <= 0 or quantity > held + _POSITION_EPSILON or len(stops) != 1:
+                logger.error("Exit on %s refused: holding or original stop is unverified", symbol)
+                return False
+            stop = float(stops[0].stop_price or 0)
+            if not math.isfinite(stop) or not math.isfinite(held):
+                return False
+            if self.kill_switch.tripped:
+                return False
+            # A failed durable write refuses BEFORE touching the broker.
+            self._exit_recovery.put(
+                ExitRecovery(
+                    symbol,
+                    held,
+                    stop,
+                    other_orders_present=any(o.symbol != symbol for o in working),
+                )
             )
-            return False
-
-        legs = [o for o in working if o.symbol == symbol and is_protective_leg(o)]
-        if not legs:
-            return True
-
-        held = await self._broker_quantity(symbol)
-        if held is not None and abs(quantity) + 1e-9 < abs(held):
-            logger.warning(
-                "Exit on %s is PARTIAL (%g of %g held), so its %d protective leg(s) are "
-                "RELEASED like any other exit - they carry the pre-trim size and would "
-                "guard %g shares against a %g holding. The remainder is left unprotected "
-                "on purpose: that state is what `naked_positions` can see, and "
-                "`rearm_protective_stops` re-arms it at the reduced size.",
-                symbol,
-                quantity,
-                held,
-                len(legs),
-                held,
-                abs(held) - abs(quantity),
-            )
-
-        for leg in legs:
-            try:
+            # Keep the stop until every target cancellation has settled.
+            for leg in sorted(mine, key=lambda o: o.stop_price is not None):
+                if self.kill_switch.tripped:
+                    return False
+                attempt = self._exit_attempts[order_id]
+                self._exit_attempts[order_id] = replace(
+                    attempt, issued=(*attempt.issued, leg.order_id)
+                )
                 await cancel(leg.order_id)
-            except Exception:
-                logger.exception("Could not cancel protective leg %s on %s", leg.order_id, symbol)
-
-        # ⚠️ RE-READ. The cancel's own response is not evidence: on 19 August
-        # one reported PendingCancel while being rejected outright (10147).
-        try:
-            still = [o for o in await source() if o.symbol == symbol and is_protective_leg(o)]
-        except Exception:
-            logger.exception("Could not verify the leg cancellation on %s", symbol)
-            return False
-        if still:
-            logger.error(
-                "%d protective leg(s) on %s are STILL RESTING after a cancel was sent "
-                "(%s). The exit is refused: the position keeps its protection, and "
-                "selling into a resting leg is what orphaned A2M.AX.",
-                len(still),
-                symbol,
-                ", ".join(o.order_id for o in still),
+                remaining = [o for o in await source() if o.status not in TERMINAL_STATUSES]
+                if not remaining and any(o.symbol != symbol for o in working):
+                    self._exit_recovery.stage(symbol, "uncertain")
+                    self.kill_switch.trip("account-wide order book unexpectedly empty during exit")
+                    return False
+                if any(o.order_id == leg.order_id for o in remaining):
+                    logger.error("Protective cancel %s has not settled", leg.order_id)
+                    return False
+                attempt = self._exit_attempts[order_id]
+                self._exit_attempts[order_id] = replace(
+                    attempt, cancelled=(*attempt.cancelled, leg.order_id)
+                )
+                if any(o.symbol == symbol and not is_protective_leg(o) for o in remaining):
+                    return False
+            if any(o.symbol == symbol for o in remaining):
+                return False
+            logger.info(
+                "Protective legs released for %s (%s); recovery intent saved", symbol, reason
             )
+            return True
+        except Exception:
+            logger.exception("Protective release failed for %s; recovery required", symbol)
             return False
-        logger.info(
-            "Cancelled %d protective leg(s) on %s before exiting (%s)",
-            len(legs),
-            symbol,
-            reason,
-        )
-        return True
+
+    async def recover_exit_protection(self) -> None:
+        """Retry recorded protection handoffs, including after a restart or halt."""
+        async with self._signoff_lock:
+            if self._exit_recovery is not None:
+                for symbol in list(self._exit_recovery.plans):
+                    await self._recover_exit_protection_locked(symbol)
+
+    def exit_protection_pending(self, symbol: str) -> bool:
+        return self._exit_recovery is not None and symbol in self._exit_recovery.plans
+
+    async def _recover_exit_protection_locked(self, symbol: str) -> None:
+        store = self._exit_recovery
+        if store is None or symbol not in store.plans:
+            return
+        plan = store.plans[symbol]
+        # A proposal sized before this handoff must never revive after the
+        # journal is cleared. Recovery owns the replacement protection.
+        for pending in list(self._orders.values()):
+            if (
+                pending.symbol == symbol
+                and pending.is_protective_stop
+                and pending.status == "pending_signoff"
+                and pending.order_id not in self._recovery_order_ids
+            ):
+                pending.status = "rejected"
+                self._record(pending, "rejected", "superseded by exit protection recovery")
+        if plan.stage == "uncertain":
+            self.kill_switch.trip(
+                f"uncertain exit/protection transmission for {symbol}; broker review required"
+            )
+            return
+        try:
+            account_orders = await self.broker.open_orders()
+            if plan.other_orders_present and not account_orders:
+                raise RuntimeError("account-wide order book unexpectedly empty during recovery")
+            working = [
+                o
+                for o in account_orders
+                if o.symbol == symbol and o.status not in TERMINAL_STATUSES
+            ]
+            held = await self._broker_quantity(symbol)
+            if (
+                held is None
+                or not math.isfinite(held)
+                or held < 0
+                or held > plan.quantity + _POSITION_EPSILON
+            ):
+                raise RuntimeError(
+                    "remaining holding cannot be verified against captured protection"
+                )
+            if working:
+                # PendingCancel is not stable protection; retain the journal.
+                stops = [
+                    o
+                    for o in working
+                    if o.stop_price is not None
+                    and o.side.lower() == "sell"
+                    and o.status in WORKING_STATUSES
+                    and abs(o.quantity - held) <= _POSITION_EPSILON
+                    and plan.stop_price is not None
+                    and abs(o.stop_price - plan.stop_price) <= max(0.01, plan.stop_price * 1e-4)
+                ]
+                if (
+                    len(stops) == 1
+                    and all(is_protective_leg(o) and o.status in WORKING_STATUSES for o in working)
+                    and all(0 < o.quantity <= held + _POSITION_EPSILON for o in working)
+                ):
+                    store.remove(symbol)
+                return
+            if held == 0:
+                store.remove(symbol)
+                return
+            if plan.stop_price is None:
+                raise RuntimeError("no original stop was captured; manual protection required")
+            # No target is recreated: restore only the captured stop, at the
+            # broker-confirmed remaining size, through the same OMS boundary.
+            protective = self._new_pending_order(symbol, "sell", held, stop_price=plan.stop_price)
+            protective.order_type = "stop"
+            recovery_id = protective.order_id
+            self._recovery_order_ids.add(recovery_id)
+            try:
+                store.stage(symbol, "uncertain")
+                placed = await self._sign_off_locked(
+                    protective.order_id, "exit-protection-recovery"
+                )
+            finally:
+                self._recovery_order_ids.discard(recovery_id)
+            if placed.status not in {"transmitted", "filled"}:
+                raise RuntimeError("restoration was not accepted; broker review required")
+            # Acceptance is not verification. Keep the record until the next
+            # broker read confirms coverage; it also survives a process crash.
+            store.stage(symbol, "working")
+            logger.warning(
+                "Restoration submitted for %s: %g shares at stop %.4f",
+                symbol,
+                held,
+                plan.stop_price,
+            )
+        except Exception:
+            logger.exception("Could not restore exit protection for %s", symbol)
+            self.kill_switch.trip(f"exit protection for {symbol} requires broker verification")
 
     async def submit_exit_order(
         self,
@@ -663,8 +834,6 @@ class OMS:
         quantity: float,
         price: float,
         reason: str = "signal",
-        *,
-        legs_already_released: bool = False,
     ) -> Order:
         """Closes an existing position at exactly `quantity` shares (spec §I).
 
@@ -709,42 +878,21 @@ class OMS:
             )
             quantity = held
 
-        # ⚠️ CANCEL THE PROTECTIVE LEGS BEFORE SELLING, and refuse the exit if
-        # they will not go. On 4 September the escaped-hold rule exited A2M.AX
-        # through this method, the sell filled, and BOTH OCA legs stayed at full
-        # size on a flat position - 9,636 shares of resting SELL with a stop
-        # about 4% under the last. A naked short waiting to happen. The
-        # resting-order rail found it and named the ids; the operator cancelled
-        # them by hand, because that rail says "The ORDERS ARE NOT CANCELLED by
-        # this."
-        #
-        # `PositionCloser` (M163) already did this properly for the OPERATOR's
-        # close. The autonomous paths - the time stop and the signal exit - came
-        # straight here and walked away, and those are the exits that run when
-        # nobody is watching the scan.
-        # ⚠️ `PositionCloser` passes True: it has ALREADY cancelled the legs,
-        # re-read to prove they are gone, and holds recovery logic to re-place
-        # the bracket if this sell then fails (M163). Repeating the work here
-        # let two layers disagree about the same broker state and refused six
-        # manual closes outright. The operator path owns its own release; every
-        # other caller gets the default.
-        if not legs_already_released and not await self._release_protective_legs(
-            symbol, quantity, reason
-        ):
+        # CE-017: risk evaluation must precede EVERY protective cancellation.
+        # A refusal or failed audit write must leave the existing bracket alone.
+        try:
+            decision = self.risk_engine.evaluate_exit(symbol, quantity, price)
+        except Exception as exc:  # noqa: BLE001 - fail closed before touching protection
+            logger.exception("Exit risk evaluation failed for %s; protection unchanged", symbol)
             return self._new_rejected_order_for(
-                symbol,
-                "sell",
-                0.0,
-                "protective legs are still resting at the broker and could not be "
-                "cancelled - selling into them is the double-fill that turns a "
-                "protected long into a short, so the exit is refused and the "
-                "position stays protected",
+                symbol, "sell", 0.0, f"exit risk evaluation failed: {type(exc).__name__}: {exc}"
+            )
+        if not decision.approved or decision.final_shares <= 0:
+            return self._new_rejected_order_for(
+                symbol, "sell", 0.0, decision.reason or "exit risk engine rejected"
             )
 
         self._exit_reasons[symbol] = reason
-        decision = self.risk_engine.evaluate_exit(symbol, quantity, price)
-        if not decision.approved or decision.final_shares <= 0:
-            return self._new_rejected_order_for(symbol, "sell", 0.0)
 
         # NO per-order cap on an exit, deliberately (24 August 2026).
         #
@@ -761,6 +909,10 @@ class OMS:
         # limit. An exit is not an expression of appetite.
 
         order = self._new_pending_order(symbol, "sell", decision.final_shares, price)
+        # Creating a proposal must not cancel broker protection. Release is
+        # deferred until sign-off, after the operator/autonomy and halt gates.
+        # OMS owns the one cancellation/recovery transaction for every exit.
+        self._exits_requiring_release.add(order.order_id)
         await self._announce_pending(order)
         return order
 
@@ -800,7 +952,7 @@ class OMS:
         briefly the same call: *"The guard is about DUPLICATES, not a one-shot
         latch."*
         """
-        return [order for order in self._orders.values() if order.status == "pending_signoff"]
+        return [order for order in self.orders() if order.status == "pending_signoff"]
 
     def pending_orders(self) -> list[Order]:
         """Orders awaiting a decision - committed exposure that has not filled.
@@ -827,17 +979,13 @@ class OMS:
         the event is over-counted until reconciliation catches up, which refuses
         MORE rather than less and is the safe direction to be wrong in.
         """
-        return [
-            order for order in self._orders.values() if order.status in self._COMMITTED_STATUSES
-        ]
+        return [order for order in self.orders() if order.status in self._COMMITTED_STATUSES]
 
     def pending_signoff_symbols(self) -> set[str]:
         """Symbols that already have an order awaiting the operator's decision -
         used by SignalToOrderBridge to avoid queueing duplicates while a
         strategy keeps re-emitting the same signal every tick."""
-        return {
-            order.symbol for order in self._orders.values() if order.status == "pending_signoff"
-        }
+        return {order.symbol for order in self.orders() if order.status == "pending_signoff"}
 
     def _new_pending_order(
         self,
@@ -903,7 +1051,8 @@ class OMS:
                 "refusing to transmit it a second time"
             )
 
-        if self.kill_switch.tripped:
+        recovering = order_id in self._recovery_order_ids and order.is_protective_stop
+        if self.kill_switch.tripped and not recovering:
             order.status = "rejected"
             logger.info("Sign-off blocked by kill-switch: order=%s operator=%s", order_id, operator)
             # Journalled, like every other refusal in this method (item 43).
@@ -969,6 +1118,36 @@ class OMS:
                     operator,
                 )
                 return order
+
+            if self.exit_protection_pending(order.symbol):
+                # Only the captured-stop recovery may transmit during this
+                # handoff; an ordinary protection sweep must not race it.
+                try:
+                    busy = any(
+                        o
+                        for o in await self.broker.open_orders()
+                        if o.symbol == order.symbol and o.status not in TERMINAL_STATUSES
+                    )
+                except Exception:
+                    busy = True  # unreadable is not an empty book
+                if not recovering or busy:
+                    order.status = "rejected"
+                    self._record(
+                        order, "rejected", "exit recovery owns protection or broker busy", operator
+                    )
+                    return order
+                held = await self._broker_quantity(order.symbol)
+                store = self._exit_recovery
+                plan = store.plans.get(order.symbol) if store is not None else None
+                if (
+                    plan is None
+                    or held is None
+                    or not math.isfinite(held)
+                    or held > plan.quantity + _POSITION_EPSILON
+                ):
+                    order.status = "rejected"
+                    self._record(order, "rejected", "recovery holding is unverified", operator)
+                    return order
             if held <= _POSITION_EPSILON:
                 order.status = "rejected"
                 logger.warning(
@@ -1055,6 +1234,68 @@ class OMS:
                 )
                 return order
 
+        if order_id in self._exits_requiring_release:
+            released = await self._release_protective_legs(
+                order.symbol,
+                order.quantity,
+                self._exit_reasons.get(order.symbol, "signal"),
+                order_id=order_id,
+            )
+            if not released:
+                order.status = "rejected"
+                self._record(
+                    order,
+                    "rejected",
+                    "protective release was refused or could not be verified; "
+                    "inspect broker protection before retrying",
+                    operator,
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return order
+            self._exits_requiring_release.discard(order_id)
+            # Cancellation and its verification both await the broker. A halt
+            # can arrive in that interval, including on an empty-order read.
+            if self.kill_switch.tripped:
+                order.status = "rejected"
+                self._record(
+                    order,
+                    "rejected",
+                    f"kill-switch tripped during exit preparation: {self.kill_switch.reason}; "
+                    "verify remaining broker protection",
+                    operator,
+                )
+                logger.critical(
+                    "Exit on %s halted during preparation; protective cancellations may "
+                    "already have been issued. Verify broker protection before any retry.",
+                    order.symbol,
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return order
+
+            held = await self._broker_quantity(order.symbol)
+            if (
+                held is None
+                or not math.isfinite(held)
+                or held + _POSITION_EPSILON < order.quantity
+                or self.kill_switch.tripped
+            ):
+                order.status = "rejected"
+                self._record(
+                    order, "rejected", "holding changed during protective release", operator
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return order
+
+            if self._exit_recovery is not None:
+                try:
+                    if order.symbol not in self._exit_recovery.plans:
+                        self._exit_recovery.put(ExitRecovery(order.symbol, held, None))
+                    self._exit_recovery.stage(order.symbol, "uncertain")
+                except OSError:
+                    order.status = "rejected"
+                    await self._recover_exit_protection_locked(order.symbol)
+                    return order
+
         # The broker decides whether this is transmitted, not us (M31a).
         #
         # `order.status = "transmitted"` used to run BEFORE the call, so when
@@ -1063,20 +1304,67 @@ class OMS:
         # while Alpaca held nothing at all, and reconciliation could not catch
         # it: that compares FILLED quantities, and an order that never reached
         # the broker has filled nothing on either side, so both agree.
+        if self._order_identity is not None:
+            try:
+                # Durable BEFORE the irreversible boundary. If the process
+                # ends inside place_order, restart restores committed exposure
+                # and halts rather than presenting it for sign-off again.
+                self._order_identity.put(order_id, order, stage="transmitting")
+            except OSError:
+                order.status = "rejected"
+                self._orders[order_id] = order
+                logger.exception(
+                    "Could not persist transmission intent for order %s; broker was not called",
+                    order_id,
+                )
+                self.kill_switch.trip("broker-order transmission intent could not be persisted")
+                self._record(
+                    order,
+                    "rejected",
+                    "transmission intent could not be persisted",
+                    operator,
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return order
+
         try:
             filled = await self.broker.place_order(order)
-        except Exception as exc:  # noqa: BLE001 - the broker's refusal is the answer
-            order.status = "rejected"
+        except Exception as exc:  # noqa: BLE001 - acknowledgement loss is safety-critical
+            outcome_uncertain = self._order_identity is not None
+            order.status = "transmitted" if outcome_uncertain else "rejected"
             self._orders[order_id] = order
+            if outcome_uncertain:
+                self._transmitted.add(order_id)
+                self._broker_order_ids.add(order_id)
+                self.kill_switch.trip(
+                    "broker transmission raised before acceptance could be confirmed"
+                )
             logger.exception(
-                "Broker refused order %s (%s %s x%s)",
+                "Broker transmission failed or lost acknowledgement for %s (%s %s x%s)",
                 order_id,
                 order.side,
                 order.symbol,
                 order.quantity,
             )
-            self._record(order, "rejected", f"broker refused: {exc}", operator)
+            self._record(
+                order,
+                "transmission_uncertain" if outcome_uncertain else "rejected",
+                f"broker transmission uncertain: {exc}",
+                operator,
+            )
+            await self._recover_exit_protection_locked(order.symbol)
             return order
+
+        if self._order_identity is not None:
+            try:
+                self._order_identity.put(order_id, filled, stage="accepted")
+            except OSError:
+                logger.exception(
+                    "Broker accepted order %s but its identity could not be persisted", order_id
+                )
+                self.kill_switch.trip(
+                    "broker accepted an order whose identity could not be persisted"
+                )
 
         # No status assignment here at all: the returned order carries the
         # broker's own, mapped by the adapter (Alpaca's accepted/new/pending
@@ -1106,6 +1394,34 @@ class OMS:
         if filled.order_id:
             self._broker_order_ids.add(str(filled.order_id))
 
+        if not filled.is_protective_stop:
+            # Even a rejected/cancelled remainder may carry a real partial
+            # execution. Account that evidence before recovery can return.
+            await self._announce_fill(filled, operator)
+
+        if (
+            not recovering
+            and self._exit_recovery is not None
+            and order.symbol in self._exit_recovery.plans
+        ):
+            try:
+                self._exit_recovery.stage(
+                    order.symbol,
+                    "prepared" if filled.status in {"rejected", "cancelled"} else "working",
+                )
+            except OSError:
+                logger.exception("Broker answered but recovery journal could not be updated")
+                self.kill_switch.trip(
+                    "exit acknowledgement could not be persisted; broker review required"
+                )
+                return filled
+            if filled.status in {"rejected", "cancelled"}:
+                self._record(
+                    filled, "rejected", "broker refused exit; restoring protection", operator
+                )
+                await self._recover_exit_protection_locked(order.symbol)
+                return filled
+
         # A protective stop is RESTING, not filled (M31d). Counting it as a
         # sell would halve the tracked quantity against a broker that still
         # holds the whole position, and reconciliation would read that as a
@@ -1131,17 +1447,6 @@ class OMS:
             )
             return filled
 
-        signed_qty = filled.quantity if filled.side == "buy" else -filled.quantity
-        self._filled_quantities[filled.symbol] = (
-            self._filled_quantities.get(filled.symbol, 0.0) + signed_qty
-        )
-
-        if filled.side == "buy" and filled.stop_price:
-            self._position_stops[filled.symbol] = float(filled.stop_price)
-        elif filled.side == "sell" and abs(self._filled_quantities[filled.symbol]) < 1e-6:
-            # Position closed - its stop went with it at the broker, so keeping
-            # it here would overstate protection on a symbol no longer held.
-            self._position_stops.pop(filled.symbol, None)
         self._record(filled, "signed_off", "transmitted to the broker", operator)
         logger.info(
             # ⚠️ BOTH IDS (item 56, 31 August). This line carried only the app's
@@ -1158,54 +1463,147 @@ class OMS:
             filled.symbol,
             filled.quantity,
         )
-        await self._announce_fill(filled, operator)
         return filled
 
     async def _announce_fill(self, order: Order, operator: str) -> None:
-        """Publishes OrderFilledEvent so performance measurement has a source
-        of realised outcomes. Optional bus, same as _announce_pending."""
-        if self.bus is None or order.status not in ("filled", "transmitted"):
+        """Account only execution evidence returned with the acknowledgement."""
+        quantity = order.filled_quantity
+        price = order.filled_price
+        if quantity is None or quantity <= 0 or price is None:
+            if order.status == "filled" or (quantity is not None and quantity > 0):
+                self.kill_switch.trip(
+                    "broker reports execution without complete quantity/price evidence"
+                )
             return
-        price = order.filled_price or order.reference_price
-        if not price:
-            return
-        await self.bus.publish(
-            OrderFilledEvent(
-                order_id=order.order_id,
-                symbol=order.symbol,
-                side=order.side,
-                quantity=order.quantity,
-                price=float(price),
-                strategy=order.strategy,
-                stop_price=order.stop_price,
-                take_profit_price=order.take_profit_price,
-                operator=operator,
-                reference_price=order.reference_price,
-                earnings_at_entry=order.earnings_date,
-                price_is_fill=bool(order.filled_price),
-                exit_reason=(
-                    self._exit_reasons.pop(order.symbol, "signal") if order.side == "sell" else None
-                ),
-                # THE SEVENTH WALL-CLOCK DEPENDENCY, and it disabled three rails
-                # in every replay ever run (W2). Omitted, `ts` takes `Event`'s
-                # default of `datetime.now(UTC)` - correct in live, where the
-                # fill genuinely just happened, and wrong in a replay by however
-                # far the simulated clock is from today.
-                #
-                # `SignalToOrderBridge._on_fill` stamps `entry.opened_at` from
-                # this event, and `_trading_days_between(opened_at, now)`
-                # returns zero when `now` precedes it. So THE TIME STOP, THE
-                # MINIMUM HOLDING PERIOD AND THE WEEKLY CHURN CAP could never
-                # fire: the first ASX run opened seven positions in September
-                # 2025, held them across two hundred and fifty sessions, and
-                # closed nothing at all.
-                #
-                # `_now` is the wall clock unless a clock was injected, so live
-                # behaviour is unchanged. The absorb path below has always
-                # passed its own `ts` for the same reason (M50).
-                ts=self._now(),
-            )
+        accounted = await self._account_execution(
+            BrokerFill(order.order_id, order.symbol, order.side, quantity, price, self._now()),
+            operator=operator,
         )
+        if accounted is not None and not self._fill_delivery_failed:
+            self._prune_completed_order_identities()
+
+    async def _account_execution(
+        self, raw: BrokerFill, *, record_only: bool = False, operator: str = "broker"
+    ) -> BrokerFill | None:
+        """Apply a cumulative execution's unaccounted delta, preserving order context."""
+        if not all(math.isfinite(value) and value > 0 for value in (raw.quantity, raw.price)):
+            self.kill_switch.trip("invalid broker execution quantity or price")
+            return None
+        order = self._order_the_broker_calls(raw.order_id)
+        if order is not None and (
+            order.symbol != raw.symbol
+            or order.side != raw.side
+            or raw.quantity > order.quantity + _POSITION_EPSILON
+        ):
+            self.kill_switch.trip("broker execution conflicts with its order")
+            return None
+        fill = self._unabsorbed_part(raw)
+        if fill is None:
+            return None
+        if not math.isfinite(fill.price) or fill.price <= 0:
+            self.kill_switch.trip("broker cumulative execution implies invalid incremental price")
+            return None
+        fill_id = f"{raw.order_id}|{raw.symbol}|{raw.side}|{raw.quantity:.12g}"
+        if fill_id not in self._pending_fill_deliveries:
+            self._pending_fill_deliveries[fill_id] = (raw, operator, record_only)
+            if self._fill_state_path is not None and not self._save_fill_state():
+                self._pending_fill_deliveries.pop(fill_id, None)
+                self.kill_switch.trip("confirmed broker fill could not be journalled")
+                self._fill_delivery_failed = True
+                return None
+        stop = order.stop_price if order is not None else self._position_stops.get(raw.symbol)
+        # A subscriber may reject the delivery after another subscriber has
+        # already accepted it.  Keep the OMS state reversible until every
+        # subscriber reports success; durable consumers make the replay itself
+        # idempotent using this cumulative identity.
+        prior_quantities = dict(self._filled_quantities)
+        prior_stops = dict(self._position_stops)
+        prior_absorbed = dict(self._absorbed_fills)
+        prior_order = (
+            (order.status, order.filled_quantity, order.filled_price) if order is not None else None
+        )
+        if not record_only:
+            signed = fill.quantity if fill.side == "buy" else -fill.quantity
+            self._filled_quantities[fill.symbol] = (
+                self._filled_quantities.get(fill.symbol, 0.0) + signed
+            )
+            if fill.side == "buy" and stop is not None:
+                self._position_stops[fill.symbol] = stop
+            elif abs(self._filled_quantities[fill.symbol]) < _POSITION_EPSILON:
+                self._position_stops.pop(fill.symbol, None)
+        self._absorbed_fills[raw.order_id] = _AbsorbedFill(
+            filled_at=raw.filled_at, quantity=raw.quantity, price=raw.price
+        )
+        if order is not None:
+            order.filled_quantity = raw.quantity
+            order.filled_price = raw.price
+            self._close_out_own_order(raw)
+            for alias, known in self._orders.items():
+                if known is order:
+                    self._absorbed_fills[alias] = self._absorbed_fills[raw.order_id]
+        logger.warning(
+            "BROKER-SIDE FILL absorbed: %s %g %s at %.4f (order %s)",
+            fill.side,
+            fill.quantity,
+            fill.symbol,
+            fill.price,
+            fill.order_id,
+        )
+        if self.bus is not None:
+            failures = await self.bus.publish(
+                OrderFilledEvent(
+                    order_id=fill.order_id,
+                    symbol=fill.symbol,
+                    side=fill.side,
+                    quantity=fill.quantity,
+                    price=fill.price,
+                    price_is_fill=True,
+                    order_average_price=raw.price,
+                    fill_id=fill_id,
+                    cumulative_quantity=raw.quantity,
+                    strategy=order.strategy if order is not None else None,
+                    stop_price=stop,
+                    take_profit_price=order.take_profit_price if order is not None else None,
+                    reference_price=order.reference_price if order is not None else None,
+                    earnings_at_entry=order.earnings_date if order is not None else None,
+                    operator=operator,
+                    exit_reason=(
+                        (
+                            self._exit_reasons.get(fill.symbol, "signal")
+                            if order is not None and not order.is_protective_stop
+                            else self._protective_exit_reason(fill, stop)
+                        )
+                        if fill.side == "sell"
+                        else None
+                    ),
+                    ts=fill.filled_at,
+                )
+            )
+            if failures:
+                self._filled_quantities = prior_quantities
+                self._position_stops = prior_stops
+                self._absorbed_fills = prior_absorbed
+                if order is not None and prior_order is not None:
+                    order.status, order.filled_quantity, order.filled_price = prior_order
+                self.kill_switch.trip(
+                    "confirmed broker fill could not be persisted by every subscriber"
+                )
+                self._fill_delivery_failed = True
+                return None
+        if self._fill_state_path is not None:
+            pending = self._pending_fill_deliveries.pop(fill_id, None)
+            if not self._save_fill_state():
+                if pending is not None:
+                    self._pending_fill_deliveries[fill_id] = pending
+                self._filled_quantities = prior_quantities
+                self._position_stops = prior_stops
+                self._absorbed_fills = prior_absorbed
+                if order is not None and prior_order is not None:
+                    order.status, order.filled_quantity, order.filled_price = prior_order
+                self.kill_switch.trip("confirmed broker fill receipt could not be persisted")
+                self._fill_delivery_failed = True
+                return None
+        return fill
 
     async def _costing_price(self, order: Order) -> float | None:
         """Best available price for costing an order, or None if there is none.
@@ -1249,6 +1647,7 @@ class OMS:
         if order.status == "transmitted":
             cancelled = await self.broker.cancel_order(order_id)
             self._orders[order_id] = cancelled
+            self._persist_order_identity_update(order_id, cancelled)
             return cancelled
         if order.status in ("filled", "cancelled", "rejected"):
             return order
@@ -1293,7 +1692,7 @@ class OMS:
             unique.append(order)
         return unique
 
-    def register_broker_order_id(self, order_id: str) -> None:
+    def register_broker_order_id(self, order_id: str, app_order_id: str | None = None) -> None:
         """Record a broker identifier learned AFTER transmit (item 56).
 
         `place_order` waits briefly for the permId, and a slow acknowledgement
@@ -1303,66 +1702,65 @@ class OMS:
         """
         if order_id:
             self._broker_order_ids.add(str(order_id))
+            if app_order_id is not None and app_order_id in self._orders:
+                order = self._orders[app_order_id]
+                self._orders[order_id] = order
+                order.order_id = order_id
+                if app_order_id in self._absorbed_fills:
+                    self._absorbed_fills[order_id] = self._absorbed_fills[app_order_id]
+                if self._order_identity is not None:
+                    try:
+                        stage = self._order_identity.records.get(app_order_id)
+                        self._order_identity.put(
+                            app_order_id,
+                            order,
+                            stage=stage.stage if stage is not None else "accepted",
+                        )
+                    except OSError:
+                        logger.exception(
+                            "Resolved broker order id %s could not be persisted", order_id
+                        )
+                        self.kill_switch.trip(
+                            "resolved broker-order identity could not be persisted"
+                        )
 
     async def _on_broker_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
-        self.register_broker_order_id(event.order_id)
+        self.register_broker_order_id(event.order_id, event.app_order_id)
 
     async def _on_order_rejected(self, event: OrderRejectedEvent) -> None:
-        """Gives back an optimistic sign-off booking once a rejection proves
-        the order is dead (3 September 2026) - see `OrderRejectedEvent`.
-
-        ⚠️ Reverses BOOKED minus EXECUTED, never the full booked size. A
-        partial fill that is then rejected or cancelled leaves a real
-        position behind; reversing all of it would invent a phantom SHORT -
-        the same defect this exists to fix, in the other direction, and the
-        one the reverted Task 3 produced.
-
-        Two guards fail closed rather than guess:
-        - `executed_quantity is None` means the adapter did not report it -
-          a different claim from zero. Reversing on a guess could
-          manufacture a short; leaving the booking in place is what let
-          reconciliation catch 3 September in four minutes, and it still can
-          here.
-        - A symbol this OMS never booked is left alone. There is nothing to
-          give back, and writing one in would book a phantom position rather
-          than correct one.
-        """
-        if event.executed_quantity is None:
-            logger.warning(
-                "OrderRejectedEvent for %s (order=%s) carries no executed quantity - "
-                "leaving the booking of %.2f in place for reconciliation to settle: %s",
-                event.symbol,
-                event.order_id,
-                event.booked_quantity,
-                event.reason,
-            )
-            return
-        if event.symbol not in self._filled_quantities:
-            logger.warning(
-                "OrderRejectedEvent for %s (order=%s) but this OMS has nothing booked "
-                "for that symbol - nothing to reverse: %s",
-                event.symbol,
-                event.order_id,
-                event.reason,
-            )
-            return
-        remaining = event.booked_quantity - event.executed_quantity
-        # ⚠️ Signed exactly as `signed_qty` signs the booking above: a sell
-        # books NEGATIVE, so an unsigned `-= remaining` would drive a rejected
-        # sell further short and double the phantom rather than remove it.
-        # A2M's exit on 4 September was refused five times; under an unsigned
-        # reversal each refusal would have deepened the error it was correcting.
-        signed_remaining = remaining if event.side == "buy" else -remaining
-        self._filled_quantities[event.symbol] -= signed_remaining
+        """Rejection ends the unfilled remainder; it does not undo executions."""
+        order = self._order_the_broker_calls(event.order_id)
+        if order is not None and order.status != "filled":
+            order.status = "rejected"
+            self._persist_order_identity_update(event.order_id, order)
         logger.info(
-            "Reversed %.2f of the booking for %s (order=%s) after rejection: %s. "
-            "%.2f executed and stays booked.",
-            remaining,
-            event.symbol,
+            "Broker rejected order %s; confirmed executions remain accounted: %s",
             event.order_id,
             event.reason,
-            event.executed_quantity,
         )
+
+    def _persist_order_identity_update(self, order_id: str, order: Order) -> None:
+        """Keep terminal broker evidence from reverting to working at restart."""
+        store = self._order_identity
+        if store is None:
+            return
+        app_order_id = next(
+            (
+                app_id
+                for app_id, record in store.records.items()
+                if app_id == order_id
+                or str(record.order.order_id) == order_id
+                or self._orders.get(app_id) is order
+            ),
+            None,
+        )
+        if app_order_id is None:
+            return
+        try:
+            store.put(app_order_id, order, stage="accepted")
+        except OSError:
+            logger.exception("Broker order update for %s could not be persisted", order_id)
+            self.kill_switch.trip("terminal broker-order evidence could not be persisted")
 
     async def adopt_broker_positions(self) -> dict[str, float]:
         """Seeds the position baseline from whatever the account already holds.
@@ -1698,7 +2096,7 @@ class OMS:
             logger.exception("Could not read the broker to size an exit on %s", symbol)
             return None
         return next(
-            (abs(pos.quantity) for pos in positions if pos.symbol == symbol),
+            (pos.quantity for pos in positions if pos.symbol == symbol),
             0.0,
         )
 
@@ -1722,6 +2120,10 @@ class OMS:
         the price reaches it, and the one rule with no exceptions is that
         nothing reaches the broker without sign-off.
         """
+        if self.exit_protection_pending(symbol):
+            return self._new_rejected_order_for(
+                symbol, "sell", 0.0, "durable exit recovery owns protection for this symbol"
+            )
         if quantity <= 0:
             return self._new_rejected_order_for(symbol, "sell", 0.0)
         if stop_price <= 0:
@@ -1813,9 +2215,42 @@ class OMS:
                 str(order_id): _absorbed_from_json(entry)
                 for order_id, entry in (raw.get("absorbed") or {}).items()
             }
+            pending: dict[str, tuple[BrokerFill, str, bool]] = {}
+            for fill_id, entry in (raw.get("pending_deliveries") or {}).items():
+                side = str(entry["side"])
+                quantity = float(entry["quantity"])
+                price = float(entry["price"])
+                if (
+                    not fill_id
+                    or not entry["order_id"]
+                    or not entry["symbol"]
+                    or side not in {"buy", "sell"}
+                    or not math.isfinite(quantity)
+                    or quantity <= 0
+                    or not math.isfinite(price)
+                    or price <= 0
+                ):
+                    raise ValueError("invalid pending broker-fill delivery")
+                pending[str(fill_id)] = (
+                    BrokerFill(
+                        order_id=str(entry["order_id"]),
+                        symbol=str(entry["symbol"]),
+                        side=cast(Literal["buy", "sell"], side),
+                        quantity=quantity,
+                        price=price,
+                        filled_at=datetime.fromisoformat(entry["filled_at"]),
+                    ),
+                    str(entry.get("operator") or "broker"),
+                    bool(entry.get("record_only", False)),
+                )
+        except FileNotFoundError:
+            return self._now()
         except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            logger.exception("Broker-fill delivery journal is unreadable; order flow is halted")
+            self.kill_switch.trip("broker-fill delivery journal unreadable")
             return self._now()
         self._absorbed_fills = absorbed
+        self._pending_fill_deliveries = pending
         logger.info(
             "Broker-fill watermark restored to %s - executions since then are replayed for "
             "the record, with %d already-recorded fill(s) remembered",
@@ -1849,11 +2284,11 @@ class OMS:
             )
         return watermark
 
-    def _save_fill_state(self) -> None:
+    def _save_fill_state(self) -> bool:
         """Written after each absorb pass, not at shutdown: the restart this
         exists for is the one nobody planned."""
         if self._fill_state_path is None:
-            return
+            return False
         # `_now` for the third time (W2 step 6). Against the wall clock a replay
         # prunes every simulated fill older than 30 REAL days - which is all of
         # them - and a forgotten id is one `_is_foreign_unrecorded` will absorb
@@ -1882,12 +2317,34 @@ class OMS:
                 }
                 for order_id, seen in self._absorbed_fills.items()
             },
+            "pending_deliveries": {
+                fill_id: {
+                    "order_id": fill.order_id,
+                    "symbol": fill.symbol,
+                    "side": fill.side,
+                    "quantity": fill.quantity,
+                    "price": fill.price,
+                    "filled_at": fill.filled_at.isoformat(),
+                    "operator": operator,
+                    "record_only": record_only,
+                }
+                for fill_id, (fill, operator, record_only) in self._pending_fill_deliveries.items()
+            },
         }
         try:
             self._fill_state_path.parent.mkdir(parents=True, exist_ok=True)
-            self._fill_state_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary = self._fill_state_path.with_name(
+                f"{self._fill_state_path.name}.tmp-{os.getpid()}"
+            )
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self._fill_state_path)
+            return True
         except OSError:
             logger.exception("Could not persist the broker-fill watermark")
+            return False
 
     async def missed_fills(self) -> list[BrokerFill]:
         """Executions since the watermark that this app has not recorded (M50).
@@ -1902,20 +2359,94 @@ class OMS:
         if source is None:
             return []
         try:
-            fills = await source(self._last_fill_scan, self._symbols_to_watch_for_fills())
+            fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
         except Exception:
             logger.exception("Could not read broker fills missed while the app was not running")
             return []
-        return [fill for fill in fills if self._is_foreign_unrecorded(fill)]
+        # Replay preparation must see exactly the same cumulative quantities
+        # as absorption. Restoring a lot from the first partial execution then
+        # absorbing the final cumulative fill silently truncates the closed trade.
+        missed = []
+        for raw in _latest_cumulative_fills(fills):
+            if self._is_foreign_unrecorded(raw):
+                delta = self._unabsorbed_part(raw)
+                if delta is not None:
+                    missed.append(delta)
+        return missed
+
+    async def prepare_missed_fill_replay(self) -> _FillReplaySnapshot | None:
+        """Capture a stable startup view before any ledger state is changed.
+
+        Replay preparation used to query fills once to size restored lots and
+        absorption queried them again to deliver events.  A partial/cumulative
+        visibility change between those calls made the lot and event describe
+        different moments.  Position resynchronisation was a third independent
+        observation, so a fill landing during startup could also be adopted and
+        then applied again on the next sweep.
+
+        Two identical canonical fill reads bracketed by three identical
+        position-quantity reads form one stable observation.  Nothing is
+        mutated while this is assembled.  A fill after the final read remains
+        above ``scan_started`` and is handled by the next normal sweep.
+        """
+        source = getattr(self.broker, "recent_fills", None)
+        if source is None:
+            return _FillReplaySnapshot(
+                scan_started=self._now(),
+                fills=(),
+                missed=(),
+                positions=tuple(sorted(self._filled_quantities.items())),
+            )
+
+        floor = self._fill_query_floor()
+        symbols = self._symbols_to_watch_for_fills()
+        for attempt in range(1, _STARTUP_REPLAY_SNAPSHOT_ATTEMPTS + 1):
+            scan_started = self._now()
+            try:
+                positions_before = {
+                    position.symbol: position.quantity for position in await self.broker.positions()
+                }
+                fills_first = _latest_cumulative_fills(await source(floor, symbols))
+                positions_middle = {
+                    position.symbol: position.quantity for position in await self.broker.positions()
+                }
+                fills_second = _latest_cumulative_fills(await source(floor, symbols))
+                positions_after = {
+                    position.symbol: position.quantity for position in await self.broker.positions()
+                }
+            except Exception:
+                logger.exception("Could not capture broker state for startup fill replay")
+                return None
+
+            if (
+                positions_before == positions_middle == positions_after
+                and fills_first == fills_second
+            ):
+                missed: list[BrokerFill] = []
+                for raw in fills_second:
+                    if self._is_foreign_unrecorded(raw):
+                        delta = self._unabsorbed_part(raw)
+                        if delta is not None:
+                            missed.append(delta)
+                return _FillReplaySnapshot(
+                    scan_started=scan_started,
+                    fills=tuple(fills_second),
+                    missed=tuple(missed),
+                    positions=tuple(sorted(positions_after.items())),
+                )
+
+            logger.warning(
+                "Broker startup replay snapshot changed during capture (attempt %d/%d); "
+                "retrying before any ledger state is changed",
+                attempt,
+                _STARTUP_REPLAY_SNAPSHOT_ATTEMPTS,
+            )
+
+        self.kill_switch.trip("broker startup replay snapshot did not stabilise")
+        return None
 
     def _is_foreign_unrecorded(self, fill: BrokerFill) -> bool:
-        """Whether this fill is one this app neither sent nor has fully
-        recorded."""
-        if fill.order_id in self._broker_order_ids or fill.order_id in self._orders:
-            # This app sent it and sign_off already counted it. Both sets are
-            # checked because an order carries the app's id until it is
-            # transmitted and the broker's afterwards.
-            return False
+        """Legacy name for the unaccounted-execution filter, including own orders."""
         prior = self._absorbed_fills.get(fill.order_id)
         if prior is not None:
             if not prior.quantity_known:
@@ -1942,7 +2473,19 @@ class OMS:
         # and only the missed fill has actually been observed - on the only exit
         # path this system has. An id seen before never reaches this line at
         # all: the `prior is not None` branch above answers it.
-        return fill.filled_at >= self._last_fill_scan
+        if (
+            fill.order_id in self._broker_order_ids
+            and self._order_the_broker_calls(fill.order_id) is None
+        ):
+            self.kill_switch.trip(
+                "broker execution identity unresolved; accounting review required"
+            )
+            return False
+        return (
+            fill.order_id in self._broker_order_ids
+            or fill.order_id in self._orders
+            or fill.filled_at >= self._last_fill_scan
+        )
 
     def _fill_query_floor(self) -> datetime:
         """How far back to ask, which is NOT simply the watermark (M53).
@@ -2062,25 +2605,35 @@ class OMS:
         symbols.update(self._fill_watch_hint)
         return sorted(symbols)
 
-    async def absorb_broker_fills(self, record_only: bool = False) -> list[BrokerFill]:
-        """Records executions the broker performed that this app did not send.
+    async def absorb_broker_fills(
+        self,
+        record_only: bool = False,
+        *,
+        replay_snapshot: _FillReplaySnapshot | None = None,
+    ) -> list[BrokerFill]:
+        """Account confirmed execution deltas for both own and broker-side orders.
 
-        Only fills for orders this process did not originate are applied - an
-        order the app transmitted has already been counted through sign_off,
-        and counting it twice would create the very discrepancy this exists to
-        prevent.
-
-        Publishing OrderFilledEvent is the point as much as the arithmetic is:
-        it is what the trade ledger listens to, so a stop-out or a target
-        finally becomes a CLOSED TRADE on the Performance tab instead of a
-        position that silently vanished.
-
-        A broker that cannot answer changes nothing, and neither does a failed
-        query - the previous behaviour is exactly preserved.
+        Transmission alone changes no position or ledger lot. The persistent
+        cumulative-fill state deduplicates acknowledgements and later scans.
+        A pending-delivery journal is written before subscribers run; critical
+        consumers persist the same fill identity so an interrupted delivery is
+        safe to replay without duplicating a sibling write that already landed.
         """
+        self._fill_delivery_failed = False
+        replayed: list[BrokerFill] = []
+        for _fill_id, (pending, operator, pending_record_only) in list(
+            self._pending_fill_deliveries.items()
+        ):
+            delivered = await self._account_execution(
+                pending, record_only=pending_record_only, operator=operator
+            )
+            if delivered is not None:
+                replayed.append(delivered)
+            if self._fill_delivery_failed:
+                return replayed
         source = getattr(self.broker, "recent_fills", None)
-        if source is None:
-            return []
+        if replay_snapshot is None and source is None:
+            return replayed
         # Taken BEFORE the query, and it is the value the watermark becomes
         # (M88). A stamp taken after the pass excludes everything that executed
         # during it: the query has already been answered, and the next floor
@@ -2093,12 +2646,18 @@ class OMS:
         # its simulated start to the real present, and every simulated fill was
         # then behind it forever. Measured - 99 sweeps, every one returning
         # nothing, against a stop that had demonstrably fired.
-        scan_started = self._now()
-        try:
-            fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
-        except Exception:
-            logger.exception("Could not read recent broker fills")
-            return []
+        if replay_snapshot is not None:
+            scan_started = replay_snapshot.scan_started
+            fills = list(replay_snapshot.fills)
+        else:
+            scan_started = self._now()
+            if source is None:
+                return replayed
+            try:
+                fills = await source(self._fill_query_floor(), self._symbols_to_watch_for_fills())
+            except Exception:
+                logger.exception("Could not read recent broker fills")
+                return replayed
 
         # IBKR returns one Fill per EXECUTION; Alpaca returns one order object
         # per order. Both now carry the order's CUMULATIVE quantity, so the
@@ -2113,123 +2672,22 @@ class OMS:
         #
         # Alpaca is unaffected: one entry per order id means the max is that
         # entry.
-        highest: dict[str, BrokerFill] = {}
-        for raw in fills:
-            seen = highest.get(raw.order_id)
-            if seen is None or raw.quantity > seen.quantity:
-                highest[raw.order_id] = raw
-        fills = sorted(highest.values(), key=lambda f: f.filled_at)
+        fills = _latest_cumulative_fills(fills)
 
-        absorbed: list[BrokerFill] = []
+        absorbed: list[BrokerFill] = list(replayed)
         for raw in fills:
             if not self._is_foreign_unrecorded(raw):
-                # Ours, and already counted - but not therefore worthless. This
-                # is the only place the price we actually PAID arrives for an
-                # order this app sent, and it used to be dropped here (M70).
-                #
-                # It is also the only place the app learns its own order is
-                # DONE. Called before the price correction rather than inside
-                # it, because that method returns early on a missing or
-                # unchanged price - and whether an order completed has nothing
-                # to do with whether its price needed correcting.
                 self._close_out_own_order(raw)
-                await self._correct_announced_price(raw)
                 continue
-            fill = self._unabsorbed_part(raw)
-            if fill is None:
-                continue
-            # Read BEFORE the block below, which pops `_position_stops` the
-            # moment the fill flattens the position. `_protective_exit_reason`
-            # separates a stop from a target by comparing the fill price against
-            # the stop level, and it read that dict AFTER the pop - so the level
-            # was gone and the comparison could never match.
-            #
-            # SCOPE, measured against the live record rather than assumed: this
-            # fires only for an exit absorbed during a RUNNING session. The pop
-            # sits inside `if not record_only`, so the startup replay path -
-            # which is how a stop that fired while the app was down arrives -
-            # skips it and records correctly. Both closed trades in the live
-            # record read `stop`, which is what narrowed the claim: an earlier
-            # version of this comment said EVERY stop-out was affected, and
-            # closed_trades.csv falsified it.
-            #
-            # A partial fill never reaches the pop either, so the only case that
-            # corrupts is a full exit during a live session - which is precisely
-            # the case that produces a closed trade from a stop doing its job.
-            stop_at_fill = self._position_stops.get(fill.symbol)
-            # The M50 trap, and the reason this is not simply "persist the
-            # watermark". A fill from before the baseline was taken is ALREADY
-            # in `_filled_quantities`, because adoption read it from the
-            # broker's own position list. Applying it again subtracts the same
-            # shares twice and trips the kill-switch on arithmetic - M46 by a
-            # different route. It still has to be RECORDED: adoption re-baselines
-            # what is held and says nothing about what closed.
-            if not record_only:
-                signed = fill.quantity if fill.side == "buy" else -fill.quantity
-                self._filled_quantities[fill.symbol] = (
-                    self._filled_quantities.get(fill.symbol, 0.0) + signed
-                )
-                if abs(self._filled_quantities.get(fill.symbol, 0.0)) < 1e-6:
-                    # Flat: whatever was protecting it went with it at the broker.
-                    self._position_stops.pop(fill.symbol, None)
-            prior = self._absorbed_fills.get(raw.order_id)
-            self._absorbed_fills[raw.order_id] = _AbsorbedFill(
-                filled_at=raw.filled_at,
-                quantity=(prior.quantity if prior else 0.0) + fill.quantity,
-                price=raw.price,
-            )
-            absorbed.append(fill)
-            logger.warning(
-                "BROKER-SIDE FILL absorbed: %s %g %s at %.2f (order %s) - %s%s",
-                fill.side,
-                fill.quantity,
-                fill.symbol,
-                fill.price,
-                fill.order_id,
-                # Branched on side (M81). This was hard-coded for the sell case
-                # M34 was written for, so a position opened AT THE BROKER while
-                # the app was down - which arrives through the same path -
-                # was announced as "a resting protective order executed, and
-                # this is now a closed trade". Both clauses were false, and the
-                # second was falsifiable against closed_trades.csv.
-                (
-                    "a resting protective order executed, and this is now a closed trade"
-                    if fill.side == "sell"
-                    else (
-                        "a position was OPENED at the broker that this application did not "
-                        "send. It opens a lot carrying the price paid, but no stop and no "
-                        "strategy are known for it, so a trade closed from it will have no "
-                        "R-multiple and will count towards no strategy's promotion evidence"
-                    )
-                ),
-                (
-                    ". It executed while this application was not running, so it is recorded "
-                    "but not re-counted"
-                    if record_only
-                    else ""
-                ),
-            )
-            if self.bus is not None:
-                await self.bus.publish(
-                    OrderFilledEvent(
-                        order_id=fill.order_id,
-                        symbol=fill.symbol,
-                        side=fill.side,
-                        quantity=fill.quantity,
-                        price=fill.price,
-                        # IBKR's execution avgPrice: an OBSERVED fill, so a buy
-                        # absorbed here is stamped "fill" and M65 leaves it (M175).
-                        price_is_fill=True,
-                        strategy=None,
-                        operator="broker (protective order)",
-                        exit_reason=self._protective_exit_reason(fill, stop_at_fill),
-                        # When it FILLED, not when we noticed (M50). The ledger
-                        # stamps closed_at from this, and a replayed exit can be
-                        # days older than the pass that finds it - which would
-                        # put a holding period nobody held into the evidence.
-                        ts=fill.filled_at,
-                    )
-                )
+            fill = await self._account_execution(raw, record_only=record_only)
+            if fill is not None:
+                absorbed.append(fill)
+
+        if self._fill_delivery_failed:
+            # Leave both the watermark and cumulative receipt file untouched.
+            # The broker observation must be replayed after the failed durable
+            # subscriber is repaired.
+            return absorbed
 
         if record_only and absorbed:
             # The M50 trap, and why this is not simply "persist the watermark".
@@ -2243,7 +2701,9 @@ class OMS:
             # guessing either way trips the kill-switch from one side or the
             # other - the quantities are simply re-read from the broker, which
             # is the only thing that actually knows.
-            await self._resync_tracked_quantities()
+            await self._resync_tracked_quantities(
+                dict(replay_snapshot.positions) if replay_snapshot is not None else None
+            )
 
         # Advanced and persisted only after the pass, so a crash mid-loop
         # replays rather than skips - and `_absorbed_fills` is what makes a
@@ -2253,8 +2713,32 @@ class OMS:
         # strictly more, which is the same property the crash argument relies
         # on, so this strengthens that reasoning rather than weakening it.
         self._last_fill_scan = scan_started
-        self._save_fill_state()
+        if self._save_fill_state():
+            self._prune_completed_order_identities()
         return absorbed
+
+    def _prune_completed_order_identities(self) -> None:
+        """Drop an identity only after its complete fill is durably deduplicated."""
+        store = self._order_identity
+        if store is None:
+            return
+        for app_order_id, record in list(store.records.items()):
+            order = self._orders.get(app_order_id, record.order)
+            absorbed = self._absorbed_fills.get(str(order.order_id)) or self._absorbed_fills.get(
+                app_order_id
+            )
+            if (
+                order.status == "filled"
+                and absorbed is not None
+                and absorbed.quantity_known
+                and absorbed.quantity + _POSITION_EPSILON >= order.quantity
+            ):
+                try:
+                    store.remove(app_order_id)
+                except OSError:
+                    logger.exception(
+                        "Completed order identity %s could not be retired", app_order_id
+                    )
 
     def _order_the_broker_calls(self, broker_order_id: str) -> Order | None:
         """The app's record of an order, found by the id the BROKER uses.
@@ -2412,19 +2896,21 @@ class OMS:
                 )
             )
 
-    async def _resync_tracked_quantities(self) -> None:
+    async def _resync_tracked_quantities(self, observed: dict[str, float] | None = None) -> None:
         """Re-reads the position baseline from the broker after a replay.
 
         Deliberately quiet, unlike `adopt_broker_positions`: adoption is the
         event worth announcing, and this is the same read repeated moments later
         for a known reason.
         """
-        try:
-            positions = await self.broker.positions()
-        except Exception:
-            logger.exception("Could not re-read positions after replaying missed executions")
-            return
-        self._filled_quantities = {pos.symbol: pos.quantity for pos in positions}
+        if observed is None:
+            try:
+                positions = await self.broker.positions()
+            except Exception:
+                logger.exception("Could not re-read positions after replaying missed executions")
+                return
+            observed = {pos.symbol: pos.quantity for pos in positions}
+        self._filled_quantities = dict(observed)
         held = set(self._filled_quantities)
         for symbol in [s for s in self._position_stops if s not in held]:
             # Flat: whatever was protecting it went with it at the broker.
@@ -2513,19 +2999,15 @@ class OMS:
         # trips the kill-switch on a stop doing exactly its job - and the trade
         # ledger never records the closed trade, so the promotion gate
         # accumulates nothing from the only exits this system actually has.
+        await self.recover_exit_protection()
         await self.absorb_broker_fills()
 
         # Protection is checked alongside quantity, because they fail in
         # different ways and only one of them was ever being watched.
         await self.verify_position_stops()
         broker_positions = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
-        # Defect B, 31 August. An order still filling is not a divergence: this
-        # app books the whole order at sign-off while the broker reports only
-        # what has executed, so the two legitimately differ by the unfilled
-        # remainder until the order completes. Subtracting it EXPLAINS that gap
-        # without blinding the rail - anything beyond the remainder still halts,
-        # and with no working buy the tolerance is zero.
-        in_flight = await self._in_flight_buy_remainders()
+        # Both sides now describe executed shares. Outstanding BUY quantities
+        # must not be subtracted from a difference in confirmed positions.
         symbols = set(self._filled_quantities) | set(broker_positions)
         divergent = {
             # ⚠️ The pair stays RAW - what each side actually holds. The
@@ -2534,11 +3016,7 @@ class OMS:
             # has.
             symbol: (self._filled_quantities.get(symbol, 0.0), broker_positions.get(symbol, 0.0))
             for symbol in symbols
-            if abs(
-                self._filled_quantities.get(symbol, 0.0)
-                - broker_positions.get(symbol, 0.0)
-                - in_flight.get(symbol, 0.0)
-            )
+            if abs(self._filled_quantities.get(symbol, 0.0) - broker_positions.get(symbol, 0.0))
             > 1e-6
         }
         explained = {

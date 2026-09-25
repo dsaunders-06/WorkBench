@@ -29,6 +29,7 @@ answers with IBKR's semantics: `place_order` returns a WORKING order
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -212,7 +213,14 @@ def _wire(tmp_path, broker: _IbkrLikeBroker, *, execution_mode: str = "auto") ->
     bus = EventBus()
     kill_switch = KillSwitch()
     risk_engine = RiskEngine(bus, kill_switch, settings=settings)
-    oms = OMS(broker, risk_engine, kill_switch, max_order_pct_of_cash=1.0, bus=bus)
+    oms = OMS(
+        broker,
+        risk_engine,
+        kill_switch,
+        max_order_pct_of_cash=1.0,
+        bus=bus,
+        settings=settings,
+    )
     gate = AutonomyGate(settings, kill_switch, clock=lambda: OPEN_US)
     journal = DecisionJournal(tmp_path)
     executor = AutonomousExecutor(bus, oms, gate, journal, settings=settings)
@@ -271,16 +279,14 @@ async def test_autonomy_signs_the_exit_off_inside_submit_exit_order(auto_mode):
     broker = _IbkrLikeBroker()
     wiring = await auto_mode(broker)
 
-    # `legs_already_released=True` because this stands in for the CLOSER's own
-    # call, and the closer cancels the legs itself before getting here. Without
-    # it this would exercise a call the application never makes - the OMS would
-    # try to release legs the closer has already dealt with.
-    order = await wiring.oms.submit_exit_order(
-        SYMBOL, 100.0, 100.0, reason="manual_close", legs_already_released=True
-    )
+    order = await wiring.oms.submit_exit_order(SYMBOL, 100.0, 100.0, reason="manual_close")
 
     assert order.status == "transmitted", "the executor signed it off before this returned"
     assert order.order_id in wiring.oms._transmitted
+
+
+def test_exit_submission_has_no_protection_release_bypass():
+    assert "legs_already_released" not in inspect.signature(OMS.submit_exit_order).parameters
 
 
 @pytest.mark.asyncio
@@ -369,7 +375,7 @@ async def test_a_pending_cancel_leg_stops_the_sell_end_to_end(auto_mode):
         "the legs are VISIBLE at the broker in PendingCancel and can still "
         "fill - a market sell over them puts the account SHORT"
     )
-    assert sorted(broker.cancelled) == ["leg-lmt", "leg-stp"], "the cancels DID go out"
+    assert broker.cancelled == ["leg-lmt"], "the stop must remain until the target settles"
 
 
 @pytest.mark.asyncio
@@ -383,7 +389,7 @@ async def test_a_cancel_rejected_outright_stops_the_sell_end_to_end(auto_mode):
 
     assert result.outcome is CloseOutcome.REFUSED, result.detail
     assert broker.placed == []
-    assert "still resting" in result.detail
+    assert "original stop" in result.detail
 
 
 @pytest.mark.asyncio
@@ -404,37 +410,101 @@ async def test_a_settled_cancel_still_lets_the_close_through_end_to_end(auto_mod
 
 
 @pytest.mark.asyncio
-async def test_recovery_re_places_the_bracket_in_auto_mode(auto_mode):
-    """Same defect, second site. `submit_protective_stop` also announces on
-    the bus, and the gate allows EVERY protective stop (`is_protective_stop`
-    outranks even the closed-session check), so the executor places the
-    bracket before `_recover` gets to sign it off. `_recover`'s own
-    `sign_off` then raised into the broad `except Exception` and reported
-    UNPROTECTED - "re-place it by hand now" - over a bracket that IS live.
-    """
-    broker = _IbkrLikeBroker(reject_market_sell=True)
-    wiring = await auto_mode(broker)
-
+@pytest.mark.parametrize("reject_protective", [False, True])
+@pytest.mark.parametrize("execution_mode", ["auto", "recommend"])
+async def test_lost_market_acknowledgement_never_places_another_sell(
+    auto_mode, reject_protective, execution_mode
+):
+    broker = _IbkrLikeBroker(reject_market_sell=True, reject_protective=reject_protective)
+    wiring = await auto_mode(broker, execution_mode=execution_mode)
     result = await wiring.closer.close_position(SYMBOL, operator="operator (dashboard)")
-
-    assert result.outcome is CloseOutcome.RECOVERED, result.detail
-    protective = [o for o in broker.placed if o.order_type == "stop"]
-    assert len(protective) == 1, "the bracket goes back exactly once"
-    assert protective[0].stop_price == 90.0
-    assert protective[0].take_profit_price == 110.0
-    assert "by hand" not in result.detail.lower()
+    assert result.outcome is CloseOutcome.REFUSED
+    assert broker.placed == []
+    assert wiring.kill_switch.tripped
+    assert wiring.oms.exit_protection_pending(SYMBOL)
+    assert result.issued_legs == ("leg-lmt", "leg-stp")
+    assert "uncertain" in result.detail
+    assert "working at the broker" not in result.detail.lower()
 
 
 @pytest.mark.asyncio
-async def test_a_genuinely_failed_re_place_is_still_UNPROTECTED(auto_mode, caplog):
-    """The fix must not turn every sign-off ValueError into a success. When
-    the broker refuses the bracket as well, the position really is bare and
-    the loudest branch in the file must still fire."""
-    broker = _IbkrLikeBroker(reject_market_sell=True, reject_protective=True)
-    wiring = await auto_mode(broker)
+async def test_manual_close_risk_failure_leaves_all_protection_untouched(tmp_path, monkeypatch):
+    broker = _IbkrLikeBroker()
+    wiring = _wire(tmp_path, broker, execution_mode="recommend")
 
-    result = await wiring.closer.close_position(SYMBOL, operator="operator (dashboard)")
+    def failed_audit(*args):
+        raise OSError("risk audit unavailable")
 
-    assert result.outcome is CloseOutcome.UNPROTECTED, result.detail
-    assert "NO STOP" in result.detail
-    assert any(r.levelname == "CRITICAL" for r in caplog.records)
+    monkeypatch.setattr(wiring.oms.risk_engine, "evaluate_exit", failed_audit)
+    result = await wiring.closer.close_position(SYMBOL, operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert broker.cancelled == []
+    assert broker.placed == []
+
+
+@pytest.mark.asyncio
+async def test_manual_close_keeps_stop_until_target_cancel_settles(tmp_path):
+    broker = _IbkrLikeBroker(cancel_effect="pending")
+    wiring = _wire(tmp_path, broker, execution_mode="recommend")
+    result = await wiring.closer.close_position(SYMBOL, operator="tester")
+    assert result.outcome is CloseOutcome.REFUSED
+    assert broker.cancelled == ["leg-lmt"]
+    assert broker.resting["leg-stp"].status == "Submitted"
+    assert broker.placed == []
+    assert result.issued_legs == ("leg-lmt",)
+
+
+@pytest.mark.asyncio
+async def test_manual_close_records_shared_recovery_before_first_cancel(tmp_path):
+    broker = _IbkrLikeBroker()
+    wiring = _wire(tmp_path, broker, execution_mode="recommend")
+    original = broker.cancel_order
+
+    async def checked_cancel(order_id):
+        assert wiring.oms.exit_protection_pending(SYMBOL)
+        return await original(order_id)
+
+    broker.cancel_order = checked_cancel
+    result = await wiring.closer.close_position(SYMBOL, operator="tester")
+    assert result.outcome is CloseOutcome.CLOSED
+    assert broker.cancelled == ["leg-lmt", "leg-stp"]
+    assert len(broker.placed) == 1
+
+
+@pytest.mark.asyncio
+async def test_manual_close_keeps_cancel_evidence_after_broker_rekeys_order(tmp_path):
+    broker = _IbkrLikeBroker()
+    wiring = _wire(tmp_path, broker, execution_mode="recommend")
+    original = broker.place_order
+
+    async def rekey(order):
+        order.order_id = "998877"
+        return await original(order)
+
+    broker.place_order = rekey
+    result = await wiring.closer.close_position(SYMBOL, operator="tester")
+    assert result.outcome is CloseOutcome.CLOSED
+    assert result.cancelled_legs == ("leg-lmt", "leg-stp")
+    assert result.issued_legs == ("leg-lmt", "leg-stp")
+
+
+@pytest.mark.asyncio
+async def test_manual_close_reports_confirmed_partial_fill_and_working_remainder(tmp_path):
+    broker = _IbkrLikeBroker()
+    wiring = _wire(tmp_path, broker, execution_mode="recommend")
+    await wiring.oms.adopt_broker_positions()
+    original = broker.place_order
+
+    async def partial(order):
+        placed = await original(order)
+        placed.filled_quantity = 40.0
+        placed.filled_price = 99.0
+        broker.quantity = 60.0
+        return placed
+
+    broker.place_order = partial
+    result = await wiring.closer.close_position(SYMBOL, operator="tester")
+    assert result.outcome is CloseOutcome.CLOSED
+    assert "40" in result.detail and "60" in result.detail
+    assert "not reported a fill" not in result.detail
+    assert wiring.oms.filled_quantities()[SYMBOL] == 60.0

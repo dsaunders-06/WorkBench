@@ -1,36 +1,7 @@
-"""A lot opened LIVE must learn what it actually paid (M70).
+"""Confirmed entry executions create lots at actual prices.
 
-M65 fixed the half that could be healed at startup. This is the half that
-cannot be.
-
-`OMS._announce_fill` publishes when an order reaches "filled" OR "transmitted",
-taking `order.filled_price or order.reference_price`. Alpaca returns "filled"
-only on a same-second fill; anything queued, slow or partial acknowledges as
-"transmitted", where there is no fill price - so the REFERENCE is published, and
-two subscribers build on it:
-
-* `SignalToOrderBridge._on_fill` stores it with `setdefault`, so the genuine
-  price can never replace it.
-* `TradeLedger._on_fill` opens the lot at it, and derives `entry_cost` and the
-  excursion seeds from it.
-
-`reconcile_entry_prices` heals both at the NEXT startup. A position opened and
-closed inside one session never reaches that startup: its ClosedTrade is already
-written, with a cost basis the account never paid. That is the case the M65 fix
-structurally cannot reach, and it is the case that writes the record.
-
-The true price is already in the building. `recent_fills` returns every filled
-order for a tracked symbol carrying `filled_avg_price`, and
-`_symbols_to_watch_for_fills` includes anything with an order in flight - so the
-app's own entry comes back on the next poll and is discarded at
-`_is_foreign_unrecorded`, because it is ours. The fix stops discarding it.
-
-A second consequence, which nothing looks broken about: `entry_slippage` is
-`entry_price - reference_price`, and for a live-opened lot both were set from
-the same transmit-time announcement. It read zero by construction, on every
-entry this app has ever opened - and it is the instrument M44 is scheduled to
-measure the cost model with in September.
-"""
+Historical correction regressions now assert that no reference-priced lot is
+created at transmission; partial executions preserve quantity and total cost."""
 
 from __future__ import annotations
 
@@ -160,7 +131,7 @@ async def test_the_recorded_entry_price_is_corrected_when_the_fill_arrives(tmp_p
     broker then says what it charged."""
     broker = _AcknowledgingBroker()
     _, bridge, _ = await _opened(tmp_path, broker)
-    assert bridge._entries["AMD"].price == pytest.approx(_SIZED_AT), "announced at the reference"
+    assert "AMD" not in bridge._entries
 
     broker.complete("AMD", price=_PAID)
     await bridge.oms.absorb_broker_fills()
@@ -193,14 +164,14 @@ async def test_the_stop_and_the_open_date_are_left_alone(tmp_path):
     spent on, and the open date drives the churn rails."""
     broker = _AcknowledgingBroker()
     _, bridge, _ = await _opened(tmp_path, broker)
-    before = bridge._entries["AMD"]
+    before = next(iter(broker._orders.values()))
 
     broker.complete("AMD", price=_PAID)
     await bridge.oms.absorb_broker_fills()
 
     after = bridge._entries["AMD"]
     assert after.stop_price == before.stop_price
-    assert after.opened_at == before.opened_at
+    assert after.opened_at == broker._broker_fills[0].filled_at
     assert after.strategy == before.strategy
 
 
@@ -213,12 +184,14 @@ async def test_the_open_lot_learns_the_price_it_was_opened_at(tmp_path):
     leaving the lot alone would fix the file and still write the wrong trade."""
     broker = _AcknowledgingBroker()
     _, bridge, ledger = await _opened(tmp_path, broker)
-    assert ledger.open_lots("AMD")[0].price == pytest.approx(_SIZED_AT)
+    assert ledger.open_lots("AMD") == []
 
     broker.complete("AMD", price=_PAID)
     await bridge.oms.absorb_broker_fills()
 
-    assert ledger.open_lots("AMD")[0].price == pytest.approx(_PAID)
+    assert sum(lot.quantity * lot.price for lot in ledger.open_lots("AMD")) / sum(
+        lot.quantity for lot in ledger.open_lots("AMD")
+    ) == pytest.approx(_PAID)
 
 
 @pytest.mark.asyncio
@@ -227,13 +200,13 @@ async def test_the_entry_cost_is_recomputed_from_the_price_actually_paid(tmp_pat
     stale cost is a trade whose commission belongs to a different fill."""
     broker = _AcknowledgingBroker()
     _, bridge, ledger = await _opened(tmp_path, broker)
-    lot = ledger.open_lots("AMD")[0]
+    assert ledger.open_lots("AMD") == []
 
     broker.complete("AMD", price=_PAID)
     await bridge.oms.absorb_broker_fills()
 
     corrected = ledger.open_lots("AMD")[0]
-    assert corrected.entry_cost == pytest.approx(ledger._fill_cost(lot.quantity, _PAID))
+    assert corrected.entry_cost == pytest.approx(ledger._fill_cost(corrected.quantity, _PAID))
 
 
 @pytest.mark.asyncio
@@ -277,7 +250,8 @@ async def test_the_quantity_is_not_counted_twice(tmp_path):
     wrong shape for this: sign_off already counted the fill."""
     broker = _AcknowledgingBroker()
     oms, bridge, _ = await _opened(tmp_path, broker)
-    tracked = oms._filled_quantities.get("AMD", 0.0)
+    assert oms._filled_quantities.get("AMD", 0.0) == 0.0
+    tracked = next(iter(broker._orders.values())).quantity
 
     broker.complete("AMD", price=_PAID)
     await oms.absorb_broker_fills()
@@ -322,7 +296,8 @@ async def test_a_price_that_matches_corrects_nothing(tmp_path):
     broker.complete("AMD", price=_SIZED_AT)
     corrected = await bridge.oms.absorb_broker_fills()
 
-    assert corrected == []
+    assert len(corrected) == 1
+    assert await bridge.oms.absorb_broker_fills() == []
     assert bridge._entries["AMD"].price == pytest.approx(_SIZED_AT)
     assert ledger.open_lots("AMD")[0].price == pytest.approx(_SIZED_AT)
 
@@ -345,7 +320,7 @@ async def test_a_quarantined_position_is_never_corrected(tmp_path):
     broker.complete("AMD", price=_PAID)
     await oms.absorb_broker_fills()
 
-    assert bridge._entries["AMD"].price == pytest.approx(_SIZED_AT)
+    assert bridge._entries["AMD"].price == pytest.approx(_PAID)
 
 
 @pytest.mark.asyncio
@@ -380,7 +355,7 @@ async def test_a_repeated_poll_corrects_once(tmp_path):
     first = await bridge.oms.absorb_broker_fills()
     second = await bridge.oms.absorb_broker_fills()
 
-    assert first == [] and second == []
+    assert len(first) == 1 and second == []
     assert bridge._entries["AMD"].price == pytest.approx(_PAID)
 
 
@@ -420,7 +395,7 @@ async def test_a_partial_that_completes_ends_on_the_final_average(tmp_path):
     that fall out."""
     broker = _AcknowledgingBroker()
     _, bridge, ledger = await _opened(tmp_path, broker)
-    quantity = ledger.open_lots("AMD")[0].quantity
+    quantity = next(iter(broker._orders.values())).quantity
 
     broker.complete("AMD", price=508.00, quantity=quantity / 2)
     await bridge.oms.absorb_broker_fills()
@@ -430,4 +405,6 @@ async def test_a_partial_that_completes_ends_on_the_final_average(tmp_path):
     await bridge.oms.absorb_broker_fills()
 
     assert bridge._entries["AMD"].price == pytest.approx(_PAID)
-    assert ledger.open_lots("AMD")[0].price == pytest.approx(_PAID)
+    assert sum(lot.quantity * lot.price for lot in ledger.open_lots("AMD")) / sum(
+        lot.quantity for lot in ledger.open_lots("AMD")
+    ) == pytest.approx(_PAID)

@@ -90,3 +90,38 @@ async def test_handler_exception_does_not_break_other_handlers():
     await bus.publish(MarketDataEvent(symbol="AAPL", price=100.0, volume=10))
 
     assert len(received) == 1
+
+
+@pytest.mark.asyncio
+async def test_only_critical_handler_failures_are_returned():
+    bus = EventBus()
+
+    async def optional(_event: MarketDataEvent) -> None:
+        raise RuntimeError("optional")
+
+    async def critical(_event: MarketDataEvent) -> None:
+        raise OSError("durable write")
+
+    bus.subscribe(MarketDataEvent, optional)
+    bus.subscribe(MarketDataEvent, critical, critical=True)
+
+    failures = await bus.publish(MarketDataEvent(symbol="AAPL", price=100.0, volume=10))
+
+    assert len(failures) == 1
+    assert str(failures[0]) == "durable write"
+
+
+@pytest.mark.asyncio
+async def test_critical_status_is_stable_during_delivery():
+    bus = EventBus()
+
+    async def removes_itself_then_fails(_event: MarketDataEvent) -> None:
+        bus.unsubscribe(MarketDataEvent, removes_itself_then_fails)
+        raise OSError("write failed after unsubscribe")
+
+    bus.subscribe(MarketDataEvent, removes_itself_then_fails, critical=True)
+
+    failures = await bus.publish(MarketDataEvent(symbol="AAPL", price=100.0, volume=10))
+
+    assert len(failures) == 1
+    assert str(failures[0]) == "write failed after unsubscribe"

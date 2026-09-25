@@ -357,6 +357,185 @@ async def test_a_replayed_exit_is_not_recorded_twice_by_the_next_restart(tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_restart_replays_the_whole_cumulative_exit_not_its_first_piece(tmp_path, reverse):
+    """The TNE failure: the first execution must not size the restored lot."""
+    _entries_file(tmp_path)
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+    broker = MockBroker(seed=1)
+    stamp = datetime.now(UTC) - timedelta(minutes=1)
+    snapshots = [
+        BrokerFill("exit-1", "OLD", "sell", 60.0, 44.8, stamp),
+        BrokerFill("exit-1", "OLD", "sell", 3051.0, 44.5, stamp),
+    ]
+    broker._broker_fills = list(reversed(snapshots)) if reverse else snapshots
+    (tmp_path / "absorbed_fills.json").write_text(
+        json.dumps({"watermark": (stamp - timedelta(seconds=1)).isoformat(), "absorbed": {}}),
+        encoding="utf-8",
+    )
+
+    async def replay_session():
+        bus = EventBus()
+        switch = KillSwitch()
+        ledger = TradeLedger(bus, tmp_path, settings=settings)
+        await ledger.start()
+        oms = OMS(
+            broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+        )
+        bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+        await oms.adopt_broker_positions()
+        await bridge.replay_missed_exits()
+        assert await oms.check_reconciliation() is False
+        return ledger.closed_trades()
+
+    trades = await replay_session()
+    assert len(trades) == 1
+    assert trades[0].quantity == 3051.0
+    assert trades[0].exit_price == pytest.approx(44.5)
+    assert trades[0].entry_price == 50.0
+    recorded = (tmp_path / "closed_trades.csv").read_bytes()
+    restarted = await replay_session()
+    assert len(restarted) == 1
+    assert restarted[0].quantity == 3051.0
+    assert (tmp_path / "closed_trades.csv").read_bytes() == recorded
+
+
+@pytest.mark.asyncio
+async def test_startup_replay_retries_a_fill_snapshot_that_changes_between_queries(tmp_path):
+    """Preparation and delivery must describe one broker observation.
+
+    Before the repair, replay preparation restored a 100-share lot from the
+    first query and absorption delivered a later regressed 40-share snapshot.
+    The result was a false 40-share close with 60 synthetic shares left open.
+    """
+    _entries_file(tmp_path)
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+    broker = MockBroker(seed=1)
+    stamp = datetime.now(UTC) - timedelta(minutes=1)
+    full = BrokerFill("exit-1", "OLD", "sell", 100.0, 44.5, stamp)
+    partial = BrokerFill("exit-1", "OLD", "sell", 40.0, 44.8, stamp)
+    responses = [[full], [partial], [full], [full]]
+
+    async def changing_fills(_since, _symbols=None):
+        return responses.pop(0) if responses else [full]
+
+    broker.recent_fills = changing_fills  # type: ignore[assignment]
+    (tmp_path / "absorbed_fills.json").write_text(
+        json.dumps({"watermark": (stamp - timedelta(seconds=1)).isoformat(), "absorbed": {}}),
+        encoding="utf-8",
+    )
+    bus = EventBus()
+    switch = KillSwitch()
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    await ledger.start()
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+    await oms.adopt_broker_positions()
+
+    replayed = await bridge.replay_missed_exits()
+
+    assert replayed == ["OLD"]
+    assert [trade.quantity for trade in ledger.closed_trades()] == [100.0]
+    assert ledger.open_lots("OLD") == []
+    assert switch.tripped is False
+
+
+@pytest.mark.asyncio
+async def test_startup_replay_fails_closed_when_fill_snapshots_never_stabilise(tmp_path):
+    """An unstable broker view must not create a ledger fact or move the watermark."""
+    _entries_file(tmp_path)
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+    broker = MockBroker(seed=1)
+    stamp = datetime.now(UTC) - timedelta(minutes=1)
+    full = BrokerFill("exit-1", "OLD", "sell", 100.0, 44.5, stamp)
+    partial = BrokerFill("exit-1", "OLD", "sell", 40.0, 44.8, stamp)
+    calls = 0
+
+    async def never_stable(_since, _symbols=None):
+        nonlocal calls
+        calls += 1
+        return [full] if calls % 2 else [partial]
+
+    broker.recent_fills = never_stable  # type: ignore[assignment]
+    state_path = tmp_path / "absorbed_fills.json"
+    state_path.write_text(
+        json.dumps({"watermark": (stamp - timedelta(seconds=1)).isoformat(), "absorbed": {}}),
+        encoding="utf-8",
+    )
+    original_state = state_path.read_bytes()
+    bus = EventBus()
+    switch = KillSwitch()
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    await ledger.start()
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+    await oms.adopt_broker_positions()
+
+    replayed = await bridge.replay_missed_exits()
+
+    assert replayed == []
+    assert switch.tripped is True
+    assert switch.reason == "broker startup replay snapshot did not stabilise"
+    assert ledger.closed_trades() == []
+    assert ledger.open_lots("OLD") == []
+    assert state_path.read_bytes() == original_state
+
+
+@pytest.mark.asyncio
+async def test_startup_replay_fails_closed_when_positions_move_around_the_fill_snapshot(tmp_path):
+    """Matching fill reads are not coherent when held quantities change around them."""
+    _entries_file(tmp_path)
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+    broker = MockBroker(seed=1)
+    stamp = datetime.now(UTC) - timedelta(minutes=1)
+    full = BrokerFill("exit-1", "OLD", "sell", 100.0, 44.5, stamp)
+
+    async def stable_fills(_since, _symbols=None):
+        return [full]
+
+    broker.recent_fills = stable_fills  # type: ignore[assignment]
+    state_path = tmp_path / "absorbed_fills.json"
+    state_path.write_text(
+        json.dumps({"watermark": (stamp - timedelta(seconds=1)).isoformat(), "absorbed": {}}),
+        encoding="utf-8",
+    )
+    original_state = state_path.read_bytes()
+    bus = EventBus()
+    switch = KillSwitch()
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    await ledger.start()
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+    await oms.adopt_broker_positions()
+
+    position_calls = 0
+
+    async def moving_positions():
+        nonlocal position_calls
+        position_calls += 1
+        if position_calls % 3 == 2:
+            return [Position(symbol="OLD", quantity=100.0, avg_price=50.0)]
+        return []
+
+    broker.positions = moving_positions  # type: ignore[assignment]
+
+    replayed = await bridge.replay_missed_exits()
+
+    assert replayed == []
+    assert switch.tripped is True
+    assert switch.reason == "broker startup replay snapshot did not stabilise"
+    assert ledger.closed_trades() == []
+    assert ledger.open_lots("OLD") == []
+    assert state_path.read_bytes() == original_state
+
+
+@pytest.mark.asyncio
 async def test_without_a_data_directory_the_previous_behaviour_is_unchanged(tmp_path):
     """No settings means no watermark file, which means no replay - exactly the
     pre-M50 behaviour. Degrading to merely incomplete is the right failure."""

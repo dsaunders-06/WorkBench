@@ -48,7 +48,7 @@ class _PartiallyFillingBroker:
         # Exactly what AlpacaAdapter does: the SAME order object comes back
         # with the broker's answer written onto it.
         self.filled = order.quantity * self.fraction
-        order.quantity = self.filled
+        order.filled_quantity = self.filled
         order.filled_price = 100.0
         order.status = "filled"
         return order

@@ -173,7 +173,7 @@ async def test_a_partial_fill_is_not_a_mismatch() -> None:
         open_orders=[_resting("JHX.AX", "buy", 719.0)],
     )
     oms, switch = _oms(broker)
-    oms._filled_quantities["JHX.AX"] = 1097.0
+    oms._filled_quantities["JHX.AX"] = 378.0
 
     assert await oms.check_reconciliation() is False
     assert switch.tripped is False

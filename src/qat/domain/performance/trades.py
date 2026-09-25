@@ -50,6 +50,7 @@ from qat.domain import market_calendar as mc
 from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import (
+    BrokerOrderIdResolvedEvent,
     EntryPriceCorrectedEvent,
     ExitPriceCorrectedEvent,
     MarketDataEvent,
@@ -113,6 +114,7 @@ _FIELDS = (
     # row for the symbol. Added while the file already has rows without it -
     # `from_row` reads it with `.get()` for exactly that reason.
     "order_id",
+    "fill_id",
 )
 
 
@@ -268,6 +270,7 @@ class OpenLot:
     earnings_at_entry: date | None = None
     """The next scheduled announcement as known when the lot was opened (M41)."""
     order_id: str | None = None
+    fill_ids: tuple[str, ...] = ()
     """The broker's id for the order that opened this lot, so a late price
     correction lands on the right lot rather than on whichever one the symbol
     happened to hold (M70). None on a lot restored at startup, which needs no
@@ -311,6 +314,8 @@ class ClosedTrade:
     price correction can target this exact row. `OpenLot` already carries one
     for the same reason on the entry side. None for a trade closed before this
     field existed, or one whose sell was never recorded with an id."""
+    fill_id: str | None = None
+    """Stable cumulative broker-fill identity used to make crash replay idempotent."""
 
     @property
     def held_through_earnings(self) -> bool | None:
@@ -496,6 +501,7 @@ class ClosedTrade:
                 "" if s.held_through_earnings is None else str(s.held_through_earnings)
             ),
             "order_id": s.order_id or "",
+            "fill_id": s.fill_id or "",
             # Blank on a pre-M122 row, which means the Alpaca/US period rather
             # than "unknown" - see the migration script, which names them.
             "market": s.market or "",
@@ -562,6 +568,7 @@ class ClosedTrade:
                 # .get, for the same reason (M71): the two rows in the live
                 # record predate this column entirely.
                 order_id=row.get("order_id") or None,
+                fill_id=row.get("fill_id") or None,
                 # .get and blank-to-None, same reason again (M122): the two
                 # rows in the live record predate both columns, and a restart
                 # that dropped them would destroy the only evidence of what the
@@ -620,6 +627,9 @@ class TradeLedger:
         # and the app restarts every session. A gate needing 30 closed trades
         # could never have reached them.
         self._closed: list[ClosedTrade] = self._load_closed()
+        self._processed_fill_ids: set[str] = {
+            trade.fill_id for trade in self._closed if trade.fill_id is not None
+        }
         # Whether closed_trades.csv has been backed up yet in THIS process
         # (M71). Once, before the first amendment - not once per amended row,
         # and not again for a later, unrelated correction.
@@ -672,6 +682,8 @@ class TradeLedger:
         reference_price: float | None = None,
         worst_price: float | None = None,
         best_price: float | None = None,
+        order_id: str | None = None,
+        fill_ids: tuple[str, ...] = (),
     ) -> bool:
         """Re-create the entry lot for a position opened before this run (M49).
 
@@ -718,16 +730,20 @@ class TradeLedger:
                 stop_price=stop_price,
                 strategy=strategy,
                 opened_at=opened_at,
-                entry_cost=self._fill_cost(quantity, price),
+                entry_cost=self._increment_cost(order_id, quantity, price),
                 reference_price=reference_price,
                 worst_price=worst_price if worst_price is not None else price,
                 best_price=best_price if best_price is not None else price,
+                order_id=order_id,
+                fill_ids=fill_ids,
             )
         )
+        self._processed_fill_ids.update(fill_ids)
         return True
 
     async def start(self) -> None:
-        self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        self.bus.subscribe(OrderFilledEvent, self._on_fill, critical=True)
+        self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         self.bus.subscribe(ExitPriceCorrectedEvent, self._on_exit_price_corrected)
         self.bus.subscribe(RegimeEvent, self._on_regime)
@@ -735,6 +751,7 @@ class TradeLedger:
 
     async def stop(self) -> None:
         self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+        self.bus.unsubscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
         self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         self.bus.unsubscribe(ExitPriceCorrectedEvent, self._on_exit_price_corrected)
         self.bus.unsubscribe(RegimeEvent, self._on_regime)
@@ -957,6 +974,8 @@ class TradeLedger:
                 writer.writeheader()
                 for row in rows:
                     writer.writerow(row)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp_path, self.path)
         except OSError:
             logger.exception("Could not write the amended %s", self.path)
@@ -1083,8 +1102,21 @@ class TradeLedger:
             if worst != lot.worst_price or best != lot.best_price:
                 lots[index] = replace(lot, worst_price=worst, best_price=best)
 
+    async def _on_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
+        original = event.app_order_id
+        if original is None or original == event.order_id:
+            return
+        for lots in self._open_lots.values():
+            for index, lot in enumerate(lots):
+                if lot.order_id == original:
+                    lots[index] = replace(lot, order_id=event.order_id)
+        if original in self._charged:
+            self._charged[event.order_id] = self._charged.pop(original)
+
     async def _on_fill(self, event: OrderFilledEvent) -> None:
         if event.quantity <= 0 or event.price <= 0:
+            return
+        if event.fill_id is not None and event.fill_id in self._processed_fill_ids:
             return
         if event.side == "buy":
             self._open_lots[event.symbol].append(
@@ -1104,10 +1136,15 @@ class TradeLedger:
                     best_price=event.price,
                     earnings_at_entry=event.earnings_at_entry,
                     order_id=event.order_id,
+                    fill_ids=(event.fill_id,) if event.fill_id is not None else (),
                 )
             )
+            if event.fill_id is not None:
+                self._processed_fill_ids.add(event.fill_id)
             return
         self._close_against_lots(event)
+        if event.fill_id is not None:
+            self._processed_fill_ids.add(event.fill_id)
 
     def _fill_cost(self, quantity: float, price: float) -> float:
         """What one WHOLE order is billed - commission and pass-through fees,
@@ -1139,6 +1176,9 @@ class TradeLedger:
     def _close_against_lots(self, event: OrderFilledEvent) -> None:
         remaining = event.quantity
         lots = self._open_lots[event.symbol]
+        original_lots = deque(lots)
+        original_charged = dict(self._charged)
+        staged: list[ClosedTrade] = []
         # The exit's cost belongs to the whole sell, so it is apportioned
         # across whatever lots this sell happens to close - by quantity, the
         # same basis the entry cost is split on.
@@ -1197,6 +1237,7 @@ class TradeLedger:
                     lot.opened_at.isoformat(timespec="seconds"),
                     remaining,
                 )
+                self._charged = original_charged
                 return
             matched = min(remaining, lot.quantity)
             # ⚠️ THE EXIT IS PART OF THE EXCURSION (31 August). worst/best were
@@ -1246,12 +1287,13 @@ class TradeLedger:
                 # different question (which buy opened it) and is not carried
                 # here.
                 order_id=event.order_id,
+                fill_id=event.fill_id,
                 # Stamped at close from the running configuration (M122), which
                 # is the only moment either fact is known for certain.
                 market=self.settings.market,
                 currency=mc.currency_for(self.settings.market),
             )
-            self._record(trade)
+            staged.append(trade)
 
             remaining -= matched
             if matched >= lot.quantity - 1e-9:
@@ -1277,6 +1319,7 @@ class TradeLedger:
                     # closes the remainder later.
                     worst_price=exit_worst,
                     best_price=exit_best,
+                    fill_ids=lot.fill_ids,
                 )
 
         if remaining > 1e-9:
@@ -1291,29 +1334,28 @@ class TradeLedger:
                 remaining,
             )
 
+        if staged:
+            try:
+                self._record_many(staged)
+            except OSError:
+                self._open_lots[event.symbol] = original_lots
+                self._charged = original_charged
+                raise
+
     @staticmethod
     def repair_header(path: Path) -> bool:
         """`repair_csv_header` for the closed-trade schema. See item 63."""
         return repair_csv_header(path, _FIELDS)
 
-    def _record(self, trade: ClosedTrade) -> None:
-        try:
-            with self._lock:
-                # Appended under the same lock the amendment path takes to
-                # read and rewrite `self._closed` (M71 review, minor 7) - this
-                # append used to happen before the lock was acquired, which
-                # made it possible for an in-flight amendment to observe a
-                # list it does not yet know about, or vice versa.
-                self._closed.append(trade)
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                is_new = not self.path.exists() or self.path.stat().st_size == 0
-                with self.path.open("a", newline="", encoding="utf-8") as handle:
-                    writer = csv.DictWriter(handle, fieldnames=_FIELDS, extrasaction="ignore")
-                    if is_new:
-                        writer.writeheader()
-                    writer.writerow(trade.as_row())
-        except OSError:
-            logger.exception("Could not append the closed trade for %s", trade.symbol)
+    def _record_many(self, trades: list[ClosedTrade]) -> None:
+        """Commit every row produced by one fill as one atomic ledger image."""
+        with self._lock:
+            updated = [*self._closed, *trades]
+            if not self._write_closed_rows(list(_FIELDS), [trade.as_row() for trade in updated]):
+                symbol = trades[0].symbol if trades else "unknown"
+                logger.error("Could not atomically record the closed trade for %s", symbol)
+                raise OSError("closed-trade transaction failed")
+            self._closed = updated
 
     # --- reads ---------------------------------------------------------------
 
