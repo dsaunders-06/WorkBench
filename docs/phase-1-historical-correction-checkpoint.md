@@ -2,7 +2,7 @@
 
 Date: 25 September 2026
 
-Status: tool implemented and dry run verified; no operational record changed.
+Status: tool implemented, dry run verified, and authorized operational correction applied.
 
 ## Safety boundary
 
@@ -35,7 +35,18 @@ The dry run validated these immutable inputs:
 - ledger SHA-256: `688b709185cb1f8fef552b6af57fb00fe195c2488003ea95a0c05d70c70c7669`
 - correction id: `tne-20260903-58aaae8c02c8`
 
-The candidate ledger audit was clean. A second hash check confirmed the preserved source ledger remained unchanged. The operational AppData ledger was not read or written.
+The candidate ledger audit was clean. A second hash check confirmed the preserved source ledger remained unchanged. At this dry-run checkpoint, the operational AppData ledger had not yet been read or written.
+
+## Authorized operational application
+
+The operational ledger was subsequently read with elevated local access while the QAT application was stopped. Its SHA-256 exactly matched the approved source hash before application. The same dry run passed directly against that file, after which correction `tne-20260903-58aaae8c02c8` was applied with the reviewed confirmation id.
+
+- before and backup SHA-256: `688b709185cb1f8fef552b6af57fb00fe195c2488003ea95a0c05d70c70c7669`
+- corrected ledger SHA-256: `cd801a345153545d7076a1bc4e4eef538fc78720fe0eb69a19f3c9a84b97863f`
+- post-write ledger audit findings: zero
+- leftover staging or rollback files: zero
+
+The journal independently records the same before/after hashes, unique target and corrected values. Windows still reported no running QAT application after verification. The recovery build was not launched and no broker order was placed, modified or cancelled.
 
 ## Verification
 
@@ -48,4 +59,4 @@ The candidate ledger audit was clean. A second hash check confirmed the preserve
 
 ## Remaining boundary
 
-This checkpoint makes the historical correction concrete and reviewable. It does not apply it to operational data, deploy the recovery build, resume trading, merge the draft pull request or approve `master`. Applying to the operational ledger remains a separate controlled action after its current bytes can be verified against the approved source hash.
+The bounded historical correction has now been applied to the hash-matched operational ledger and independently verified. This checkpoint does not deploy or launch the recovery build, resume trading, merge the draft pull request or approve `master`.
