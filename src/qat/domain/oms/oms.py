@@ -260,6 +260,7 @@ class OMS:
             Path(settings.data_dir) / _FILL_STATE_FILENAME if settings is not None else None
         )
         self._absorbed_fills: dict[str, _AbsorbedFill] = {}
+        self._fill_aliases: dict[str, str] = {}
         self._pending_fill_deliveries: dict[str, tuple[BrokerFill, str, bool]] = {}
         # When an order THIS app sent was first seen partially filled (M70).
         # In memory only, and deliberately: it exists to widen one query window
@@ -1394,6 +1395,10 @@ class OMS:
         if filled.order_id:
             self._broker_order_ids.add(str(filled.order_id))
 
+        if self._order_identity is not None:
+            if not self.register_broker_order_id(str(filled.order_id), order_id):
+                return filled
+
         if not filled.is_protective_stop:
             # Even a rejected/cancelled remainder may carry a real partial
             # execution. Account that evidence before recovery can return.
@@ -1486,10 +1491,21 @@ class OMS:
         self, raw: BrokerFill, *, record_only: bool = False, operator: str = "broker"
     ) -> BrokerFill | None:
         """Apply a cumulative execution's unaccounted delta, preserving order context."""
+        if self.settings is not None and self._fill_state_path is None:
+            self.kill_switch.trip("confirmed broker fill has no durable receipt destination")
+            self._fill_delivery_failed = True
+            return None
         if not all(math.isfinite(value) and value > 0 for value in (raw.quantity, raw.price)):
             self.kill_switch.trip("invalid broker execution quantity or price")
             return None
-        order = self._order_the_broker_calls(raw.order_id)
+        canonical = self._canonical_execution_id(raw)
+        if (raw.app_order_id or canonical != raw.order_id) and not self.register_broker_order_id(
+            raw.order_id, canonical
+        ):
+            self._fill_delivery_failed = True
+            return None
+        raw = replace(raw, order_id=canonical)
+        order = self._order_the_broker_calls(canonical)
         if order is not None and (
             order.symbol != raw.symbol
             or order.side != raw.side
@@ -1534,6 +1550,9 @@ class OMS:
         self._absorbed_fills[raw.order_id] = _AbsorbedFill(
             filled_at=raw.filled_at, quantity=raw.quantity, price=raw.price
         )
+        for alias, target in self._fill_aliases.items():
+            if target == canonical:
+                self._absorbed_fills[alias] = self._absorbed_fills[canonical]
         if order is not None:
             order.filled_quantity = raw.quantity
             order.filled_price = raw.price
@@ -1692,37 +1711,71 @@ class OMS:
             unique.append(order)
         return unique
 
-    def register_broker_order_id(self, order_id: str, app_order_id: str | None = None) -> None:
-        """Record a broker identifier learned AFTER transmit (item 56).
+    def _canonical_execution_id(self, fill: BrokerFill) -> str:
+        """Resolve execution identity before consulting cumulative receipts."""
+        if fill.app_order_id:
+            return self._fill_aliases.get(fill.app_order_id, fill.app_order_id)
+        if fill.order_id in self._fill_aliases:
+            return self._fill_aliases[fill.order_id]
+        # A crash can leave the identity write committed before the alias write.
+        if self._order_identity is not None:
+            app_id = self._order_identity.application_id_for(fill.order_id)
+            if app_id is not None:
+                return app_id
+        return fill.order_id
 
-        `place_order` waits briefly for the permId, and a slow acknowledgement
-        can outlast that wait. The adapter learns it either way - it needs it
-        for modify and cancel to resolve - so this is how that knowledge
-        reaches the one check that decides whether a fill is our own.
-        """
-        if order_id:
-            self._broker_order_ids.add(str(order_id))
-            if app_order_id is not None and app_order_id in self._orders:
-                order = self._orders[app_order_id]
-                self._orders[order_id] = order
-                order.order_id = order_id
-                if app_order_id in self._absorbed_fills:
-                    self._absorbed_fills[order_id] = self._absorbed_fills[app_order_id]
-                if self._order_identity is not None:
-                    try:
-                        stage = self._order_identity.records.get(app_order_id)
-                        self._order_identity.put(
-                            app_order_id,
-                            order,
-                            stage=stage.stage if stage is not None else "accepted",
-                        )
-                    except OSError:
-                        logger.exception(
-                            "Resolved broker order id %s could not be persisted", order_id
-                        )
-                        self.kill_switch.trip(
-                            "resolved broker-order identity could not be persisted"
-                        )
+    def register_broker_order_id(self, order_id: str, app_order_id: str | None = None) -> bool:
+        """Persist identity, then aliases and the strongest cumulative receipt."""
+        if not order_id:
+            return False
+        if app_order_id is None:
+            self._broker_order_ids.add(order_id)
+            return True
+        canonical = self._fill_aliases.get(app_order_id, app_order_id)
+        if self._fill_aliases.get(order_id, canonical) != canonical:
+            self.kill_switch.trip("broker-order fill alias conflicts with its identity")
+            return False
+        if self._fill_aliases.get(order_id) == canonical:
+            return True
+        order = self._orders.get(canonical)
+        if order is not None:
+            if self._order_identity is None:
+                self.kill_switch.trip("resolved broker-order identity could not be persisted")
+                return False
+            try:
+                record = self._order_identity.records.get(canonical)
+                self._order_identity.put(
+                    canonical,
+                    replace(order, order_id=order_id),
+                    stage=record.stage if record is not None else "accepted",
+                )
+            except OSError:
+                logger.exception("Resolved broker order id %s could not be persisted", order_id)
+                self.kill_switch.trip("resolved broker-order identity could not be persisted")
+                return False
+        prior_aliases = dict(self._fill_aliases)
+        prior_absorbed = dict(self._absorbed_fills)
+        self._fill_aliases[canonical] = canonical
+        self._fill_aliases[order_id] = canonical
+        receipts = [
+            self._absorbed_fills[key]
+            for key in (canonical, order_id)
+            if key in self._absorbed_fills
+        ]
+        if receipts:
+            known = max(receipts, key=lambda seen: (seen.quantity_known, seen.quantity))
+            self._absorbed_fills[canonical] = known
+            self._absorbed_fills[order_id] = known
+        if not self._save_fill_state():
+            self._fill_aliases = prior_aliases
+            self._absorbed_fills = prior_absorbed
+            self.kill_switch.trip("broker-order fill aliases could not be persisted")
+            return False
+        self._broker_order_ids.add(order_id)
+        if order is not None:
+            self._orders[order_id] = order
+            order.order_id = order_id
+        return True
 
     async def _on_broker_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
         self.register_broker_order_id(event.order_id, event.app_order_id)
@@ -2215,6 +2268,25 @@ class OMS:
                 str(order_id): _absorbed_from_json(entry)
                 for order_id, entry in (raw.get("absorbed") or {}).items()
             }
+            aliases = raw.get("aliases", {})
+            if not isinstance(aliases, dict) or any(
+                not isinstance(key, str)
+                or not key.strip()
+                or not isinstance(value, str)
+                or not value.strip()
+                for key, value in aliases.items()
+            ):
+                raise ValueError("invalid broker-fill aliases")
+            aliases = dict(aliases)
+            for alias in aliases:
+                target = alias
+                visited: set[str] = set()
+                while target in aliases and aliases[target] != target:
+                    if target in visited:
+                        raise ValueError("cyclic broker-fill aliases")
+                    visited.add(target)
+                    target = aliases[target]
+                aliases[alias] = target
             pending: dict[str, tuple[BrokerFill, str, bool]] = {}
             for fill_id, entry in (raw.get("pending_deliveries") or {}).items():
                 side = str(entry["side"])
@@ -2250,6 +2322,7 @@ class OMS:
             self.kill_switch.trip("broker-fill delivery journal unreadable")
             return self._now()
         self._absorbed_fills = absorbed
+        self._fill_aliases = aliases
         self._pending_fill_deliveries = pending
         logger.info(
             "Broker-fill watermark restored to %s - executions since then are replayed for "
@@ -2303,6 +2376,7 @@ class OMS:
         }
         payload = {
             "watermark": self._last_fill_scan.isoformat(),
+            "aliases": self._fill_aliases,
             "absorbed": {
                 order_id: {
                     "filled_at": seen.filled_at.isoformat(),
@@ -2447,7 +2521,7 @@ class OMS:
 
     def _is_foreign_unrecorded(self, fill: BrokerFill) -> bool:
         """Legacy name for the unaccounted-execution filter, including own orders."""
-        prior = self._absorbed_fills.get(fill.order_id)
+        prior = self._absorbed_fills.get(self._canonical_execution_id(fill))
         if prior is not None:
             if not prior.quantity_known:
                 # Written before M53, so how much was counted is unrecoverable.
@@ -2552,6 +2626,7 @@ class OMS:
         be recorded at the blended average, and the realised P&L would be wrong
         by the difference.
         """
+        fill = replace(fill, order_id=self._canonical_execution_id(fill))
         prior = self._absorbed_fills.get(fill.order_id)
         if prior is None:
             return fill
@@ -2676,6 +2751,12 @@ class OMS:
 
         absorbed: list[BrokerFill] = list(replayed)
         for raw in fills:
+            canonical = self._canonical_execution_id(raw)
+            if (
+                raw.app_order_id or canonical != raw.order_id
+            ) and not self.register_broker_order_id(raw.order_id, canonical):
+                self._fill_delivery_failed = True
+                break
             if not self._is_foreign_unrecorded(raw):
                 self._close_out_own_order(raw)
                 continue
@@ -2724,11 +2805,11 @@ class OMS:
             return
         for app_order_id, record in list(store.records.items()):
             order = self._orders.get(app_order_id, record.order)
-            absorbed = self._absorbed_fills.get(str(order.order_id)) or self._absorbed_fills.get(
-                app_order_id
-            )
+            absorbed = self._absorbed_fills.get(app_order_id)
+            alias_is_durable = self._fill_aliases.get(str(order.order_id)) == app_order_id
             if (
                 order.status == "filled"
+                and alias_is_durable
                 and absorbed is not None
                 and absorbed.quantity_known
                 and absorbed.quantity + _POSITION_EPSILON >= order.quantity

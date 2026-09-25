@@ -85,5 +85,16 @@ class OrderIdentityStore:
         record = DurableOrderIdentity(app_order_id, Order(**asdict(order)), stage)
         self._save({**self.records, app_order_id: record})
 
+    def application_id_for(self, broker_order_id: str) -> str | None:
+        """Recover the UUID even if the later fill-alias write was interrupted."""
+        return next(
+            (
+                app_id
+                for app_id, record in self.records.items()
+                if str(record.order.order_id) == broker_order_id
+            ),
+            None,
+        )
+
     def remove(self, app_order_id: str) -> None:
         self._save({key: record for key, record in self.records.items() if key != app_order_id})

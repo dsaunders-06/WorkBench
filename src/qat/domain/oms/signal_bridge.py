@@ -1355,11 +1355,12 @@ class SignalToOrderBridge:
             raise
 
     async def _on_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
+        """Keep entry identity stable when a broker alias becomes available."""
         if event.app_order_id is None:
             return
         for symbol, entry in list(self._entries.items()):
-            if entry.order_id == event.app_order_id:
-                self._entries[symbol] = replace(entry, order_id=event.order_id)
+            if entry.order_id == event.order_id:
+                self._entries[symbol] = replace(entry, order_id=event.app_order_id)
         self._save_entries()
 
     async def _on_entry_price_corrected(self, event: EntryPriceCorrectedEvent) -> None:

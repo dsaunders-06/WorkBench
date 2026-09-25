@@ -1103,15 +1103,18 @@ class TradeLedger:
                 lots[index] = replace(lot, worst_price=worst, best_price=best)
 
     async def _on_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
+        """Keep lots and the order-level commission on the application UUID."""
         original = event.app_order_id
         if original is None or original == event.order_id:
             return
         for lots in self._open_lots.values():
             for index, lot in enumerate(lots):
-                if lot.order_id == original:
-                    lots[index] = replace(lot, order_id=event.order_id)
-        if original in self._charged:
-            self._charged[event.order_id] = self._charged.pop(original)
+                if lot.order_id == event.order_id:
+                    lots[index] = replace(lot, order_id=original)
+        if event.order_id in self._charged:
+            notional, charge = self._charged.pop(event.order_id)
+            prior_notional, prior_charge = self._charged.get(original, (0.0, 0.0))
+            self._charged[original] = (prior_notional + notional, prior_charge + charge)
 
     async def _on_fill(self, event: OrderFilledEvent) -> None:
         if event.quantity <= 0 or event.price <= 0:

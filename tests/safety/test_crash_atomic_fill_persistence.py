@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import Position
+from qat.data.broker.adapter import BrokerFill, Position
 from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.events import OrderFilledEvent
@@ -213,3 +213,34 @@ async def test_a_partial_close_receipt_survives_sibling_failure_and_restart(tmp_
     assert await restarted_bus.publish(event) == ()
     assert [trade.quantity for trade in restarted.closed_trades()] == [40.0]
     assert [lot.quantity for lot in restarted.open_lots("AAA")] == [60.0]
+
+
+@pytest.mark.asyncio
+async def test_missing_receipt_destination_cannot_retire_a_canonical_delivery(
+    tmp_path, monkeypatch
+):
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    bus = EventBus()
+    switch = KillSwitch()
+    oms = OMS(
+        MockBroker(seed=1),
+        RiskEngine(bus, switch, settings=settings),
+        switch,
+        bus=bus,
+        settings=settings,
+    )
+    order = oms._new_pending_order("AAA", "buy", 10.0, 100.0, "swing")
+    app_id = order.order_id
+    oms._order_identity.put(app_id, order, stage="transmitting")
+    assert oms.register_broker_order_id("998877", app_id)
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    await ledger.start()
+    with monkeypatch.context() as patch:
+        patch.setattr(oms, "_fill_state_path", None)
+        await oms._account_execution(
+            BrokerFill("998877", "AAA", "buy", 10.0, 102.0, datetime.now(UTC), app_id)
+        )
+        oms._prune_completed_order_identities()
+    assert switch.tripped
+    assert ledger.open_lots("AAA") == []
+    assert app_id in oms._order_identity.records

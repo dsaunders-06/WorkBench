@@ -10,17 +10,21 @@ duplicate-transmission guard.
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import Order
+from qat.data.broker.adapter import BrokerFill, Order
 from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
-from qat.domain.events import OrderRejectedEvent
+from qat.domain.events import BrokerOrderIdResolvedEvent, OrderFilledEvent, OrderRejectedEvent
 from qat.domain.oms.oms import OMS
+from qat.domain.oms.signal_bridge import SignalToOrderBridge
+from qat.domain.performance.trades import TradeLedger
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
@@ -260,3 +264,203 @@ def test_unreadable_identity_store_halts_order_flow(tmp_path) -> None:
     assert restarted.orders() == []
     assert switch.tripped
     assert "identity unreadable" in switch.reason
+
+
+async def _restart_stack(tmp_path):
+    oms, _ = _oms(tmp_path, _LateIdBroker())
+    ledger = TradeLedger(oms.bus, tmp_path, settings=oms.settings)
+    bridge = SignalToOrderBridge(oms.bus, oms, settings=oms.settings, trade_ledger=ledger)
+    oms.bus.subscribe(OrderFilledEvent, bridge._on_fill, critical=True)
+    oms.bus.subscribe(BrokerOrderIdResolvedEvent, bridge._on_order_id_resolved)
+    await ledger.start()
+    await bridge.restore_open_lots()
+    oms.watch_symbols_for_fills(["WOW.AX"])
+    return oms, oms.broker, bridge, ledger
+
+
+async def _partially_filled_qat_order(tmp_path, quantity=4.0):
+    oms, broker, bridge, ledger = await _restart_stack(tmp_path)
+    order = oms._new_pending_order("WOW.AX", "buy", 10.0, 100.0, "swing")
+    app_id = order.order_id
+    await oms.sign_off(app_id, "operator")
+    broker._broker_fills[:] = [
+        BrokerFill(app_id, "WOW.AX", "buy", quantity, 101.0, datetime.now(UTC))
+    ]
+    await oms.absorb_broker_fills()
+    assert bridge.position_entries()["WOW.AX"].quantity == quantity
+    return oms, broker, bridge, ledger, app_id
+
+
+async def _stop_at_identity_boundary(first, cumulative, crash_point, monkeypatch):
+    if crash_point == "before_resolution":
+        return
+    store = first._order_identity
+    assert store is not None
+    if crash_point == "after_identity":
+        original = store.put
+
+        def crash(*args, **kwargs):
+            original(*args, **kwargs)
+            raise SystemExit("after_identity")
+
+        monkeypatch.setattr(store, "put", crash)
+    elif crash_point == "after_alias":
+        original = first._save_fill_state
+
+        def crash():
+            result = original()
+            if getattr(first, "_fill_aliases", {}).get("998877") == cumulative.app_order_id:
+                assert result
+                raise SystemExit("after_alias")
+            return result
+
+        monkeypatch.setattr(first, "_save_fill_state", crash)
+    else:
+        original = store.remove
+
+        def crash(*args, **kwargs):
+            original(*args, **kwargs)
+            raise SystemExit("after_retirement")
+
+        monkeypatch.setattr(store, "remove", crash)
+    first.broker._broker_fills[:] = [cumulative]
+    with pytest.raises(SystemExit, match=crash_point):
+        first.register_broker_order_id("998877", cumulative.app_order_id)
+        await first.bus.publish(
+            BrokerOrderIdResolvedEvent(order_id="998877", app_order_id=cumulative.app_order_id)
+        )
+        await first.absorb_broker_fills()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "crash_point", ["before_resolution", "after_identity", "after_alias", "after_retirement"]
+)
+async def test_late_broker_id_restart_keeps_one_cumulative_receipt(
+    tmp_path, crash_point, monkeypatch
+):
+    first, _, _, _, app_id = await _partially_filled_qat_order(tmp_path)
+    cumulative = BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, datetime.now(UTC), app_id)
+    await _stop_at_identity_boundary(first, cumulative, crash_point, monkeypatch)
+
+    restarted, broker, bridge, ledger = await _restart_stack(tmp_path)
+    broker._broker_fills[:] = [cumulative]
+    await restarted.absorb_broker_fills()
+    await restarted.absorb_broker_fills()
+
+    entry = bridge.position_entries()["WOW.AX"]
+    lots = ledger.open_lots("WOW.AX")
+    assert entry.quantity == 10.0
+    assert entry.price == pytest.approx(102.0)
+    assert entry.order_id == app_id
+    assert sum(lot.quantity for lot in lots) == 10.0
+    assert {lot.order_id for lot in lots} == {app_id}
+    assert {fill_id for lot in lots for fill_id in lot.fill_ids} == {
+        f"{app_id}|WOW.AX|buy|4",
+        f"{app_id}|WOW.AX|buy|10",
+    }
+    assert sum(lot.entry_cost for lot in lots) == pytest.approx(ledger._fill_cost(10.0, 102.0))
+    assert not restarted.kill_switch.tripped
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("crash_point", ["after_identity", "after_alias", "after_retirement"])
+async def test_durable_resolution_handles_a_broker_only_replay(tmp_path, monkeypatch, crash_point):
+    first, _, _, _, app_id = await _partially_filled_qat_order(tmp_path)
+    cumulative = BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, datetime.now(UTC), app_id)
+    await _stop_at_identity_boundary(first, cumulative, crash_point, monkeypatch)
+    restarted, broker, bridge, ledger = await _restart_stack(tmp_path)
+    broker._broker_fills[:] = [replace(cumulative, app_order_id=None)]
+    await restarted.absorb_broker_fills()
+    await restarted.absorb_broker_fills()
+    assert bridge.position_entries()["WOW.AX"].quantity == 10.0
+    assert sum(lot.quantity for lot in ledger.open_lots("WOW.AX")) == 10.0
+    assert sum(lot.entry_cost for lot in ledger.open_lots("WOW.AX")) == pytest.approx(6.60)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["identity", "aliases", "missing_alias_path"])
+async def test_failed_resolution_keeps_receipt_and_identity_replayable(
+    tmp_path, monkeypatch, failure
+):
+    first, broker, bridge, ledger, app_id = await _partially_filled_qat_order(tmp_path)
+    cumulative = BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, datetime.now(UTC), app_id)
+    broker._broker_fills[:] = [cumulative]
+    with monkeypatch.context() as patch:
+        if failure == "identity":
+
+            def fail(*args, **kwargs):
+                raise OSError("identity disk unavailable")
+
+            patch.setattr(first._order_identity, "put", fail)
+        elif failure == "aliases":
+            patch.setattr(first, "_save_fill_state", lambda: False)
+        else:
+            patch.setattr(first, "_fill_state_path", None)
+        await first.absorb_broker_fills()
+        first._prune_completed_order_identities()
+    assert first.kill_switch.tripped
+    assert bridge.position_entries()["WOW.AX"].quantity == 4.0
+    assert sum(lot.quantity for lot in ledger.open_lots("WOW.AX")) == 4.0
+    assert app_id in first._order_identity.records
+    assert "998877" not in first._fill_aliases
+    restarted, broker, bridge, ledger = await _restart_stack(tmp_path)
+    broker._broker_fills[:] = [cumulative]
+    await restarted.absorb_broker_fills()
+    assert bridge.position_entries()["WOW.AX"].quantity == 10.0
+    assert sum(lot.entry_cost for lot in ledger.open_lots("WOW.AX")) == pytest.approx(6.60)
+
+
+@pytest.mark.asyncio
+async def test_pending_canonical_delivery_survives_late_resolution_and_restart(tmp_path):
+    first, broker, bridge, _, app_id = await _partially_filled_qat_order(tmp_path)
+
+    async def fail(_event):
+        raise OSError("consumer unavailable after entry persistence")
+
+    first.bus.subscribe(OrderFilledEvent, fail, critical=True)
+    cumulative = BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, datetime.now(UTC), app_id)
+    broker._broker_fills[:] = [cumulative]
+    await first.absorb_broker_fills()
+    assert first.kill_switch.tripped
+    assert bridge.position_entries()["WOW.AX"].quantity == 10.0
+    assert list(first._pending_fill_deliveries) == [f"{app_id}|WOW.AX|buy|10"]
+    assert app_id in first._order_identity.records
+    restarted, broker, bridge, ledger = await _restart_stack(tmp_path)
+    broker._broker_fills[:] = [replace(cumulative, app_order_id=None)]
+    await restarted.absorb_broker_fills()
+    await restarted.absorb_broker_fills()
+    assert bridge.position_entries()["WOW.AX"].quantity == 10.0
+    assert sum(lot.quantity for lot in ledger.open_lots("WOW.AX")) == 10.0
+    assert sum(lot.entry_cost for lot in ledger.open_lots("WOW.AX")) == pytest.approx(6.60)
+    assert restarted._pending_fill_deliveries == {}
+
+
+@pytest.mark.parametrize(
+    "aliases", [{"": "app"}, {"broker": ""}, {"broker": 42}, {"a": "b", "b": "a"}, []]
+)
+def test_invalid_fill_aliases_halt_restart(tmp_path, aliases):
+    (tmp_path / "absorbed_fills.json").write_text(
+        json.dumps(
+            {"watermark": datetime.now(UTC).isoformat(), "absorbed": {}, "aliases": aliases}
+        ),
+        encoding="utf-8",
+    )
+    _, switch = _oms(tmp_path)
+    assert switch.tripped
+    assert "journal unreadable" in switch.reason
+
+
+@pytest.mark.asyncio
+async def test_legacy_fill_file_without_aliases_retains_its_receipt(tmp_path):
+    first, _, _, _, app_id = await _partially_filled_qat_order(tmp_path)
+    path = tmp_path / "absorbed_fills.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("aliases", None)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    restarted, broker, bridge, _ = await _restart_stack(tmp_path)
+    broker._broker_fills[:] = [
+        BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, datetime.now(UTC), app_id)
+    ]
+    await restarted.absorb_broker_fills()
+    assert bridge.position_entries()["WOW.AX"].quantity == 10.0

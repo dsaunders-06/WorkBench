@@ -169,7 +169,9 @@ async def test_the_recorded_exit_price_is_corrected_on_disk(tmp_path):
     the in-memory object."""
     broker = _ExitAcknowledgingBroker()
     oms, ledger = await _opened_position(tmp_path, broker)
-    await _sold(oms)
+    order = await oms.submit_exit_order("AAA", 10.0, _SIZED_AT, reason="signal")
+    app_id = order.order_id
+    await oms.sign_off(app_id, "operator")
 
     assert ledger.closed_trades() == []
 
@@ -188,7 +190,7 @@ async def test_the_recorded_exit_price_is_corrected_on_disk(tmp_path):
     # that rounding.
     assert float(rows[0]["exit_cost"]) == pytest.approx(memory.exit_cost, abs=0.01)
     assert float(rows[0]["r_multiple"]) == pytest.approx(memory.r_multiple, abs=1e-4)
-    assert rows[0]["order_id"] == "broker-1"
+    assert rows[0]["order_id"] == app_id
 
 
 # --- what must NOT happen --------------------------------------------------

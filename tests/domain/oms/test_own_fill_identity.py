@@ -430,5 +430,5 @@ async def test_execution_query_resolves_late_id_before_accounting_cumulative_fil
     assert await oms.absorb_broker_fills() == []
     assert bridge.position_entries()["WOW.AX"].price == 102.0
     lots = ledger.open_lots("WOW.AX")
-    assert {lot.order_id for lot in lots} == {"998877"}
+    assert {lot.order_id for lot in lots} == {original_id}
     assert sum(lot.entry_cost for lot in lots) == pytest.approx(ledger._fill_cost(10.0, 102.0))
