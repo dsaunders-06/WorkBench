@@ -177,6 +177,7 @@ async def test_a_later_piece_at_a_different_price_is_recovered_correctly(tmp_pat
     PRIOR average as though both were cumulative, and the absorbed increment
     below would NOT read 30.00.
     """
+    start = datetime(2026, 8, 26, 0, 6, 31, tzinfo=UTC)
     settings = Settings(_env_file=None, data_dir=str(tmp_path))
     bus = EventBus()
     switch = KillSwitch()
@@ -188,10 +189,12 @@ async def test_a_later_piece_at_a_different_price_is_recovered_correctly(tmp_pat
         switch,
         bus=bus,
         settings=settings,
+        # Keep the historical execution inside the 30-day cumulative-receipt
+        # retention window. A wall clock made this test expire on 25 September.
+        clock=lambda: start + timedelta(seconds=2),
     )
     await oms.adopt_broker_positions()
 
-    start = datetime(2026, 8, 26, 0, 6, 31, tzinfo=UTC)
     oms._last_fill_scan = start - timedelta(seconds=1)
 
     first_piece = _ib_execution(
