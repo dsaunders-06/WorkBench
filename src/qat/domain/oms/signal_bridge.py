@@ -431,7 +431,7 @@ class SignalToOrderBridge:
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill, critical=True)
-        self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
+        self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved, critical=True)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         self.oms.watch_symbols_for_fills(self._entries)
         snapshot = await self.oms.prepare_missed_fill_replay()
@@ -883,6 +883,9 @@ class SignalToOrderBridge:
         ledger = self._lot_store()
         if ledger is None:
             return []
+        # Persist UUID receipt identities before restoring deduplication and
+        # commission accumulation in the ledger. Repeating after a crash is safe.
+        self._canonicalize_entry_identities()
         if snapshot is not None:
             positions = [Position(symbol, quantity, 0.0) for symbol, quantity in snapshot.positions]
         else:
@@ -1358,10 +1361,35 @@ class SignalToOrderBridge:
         """Keep entry identity stable when a broker alias becomes available."""
         if event.app_order_id is None:
             return
-        for symbol, entry in list(self._entries.items()):
-            if entry.order_id == event.order_id:
-                self._entries[symbol] = replace(entry, order_id=event.app_order_id)
-        self._save_entries()
+        self._canonicalize_entry_identities({event.order_id: event.app_order_id})
+
+    def _canonicalize_entry_identities(self, aliases: dict[str, str] | None = None) -> None:
+        aliases = aliases or {}
+
+        def resolve(order_id: str) -> str:
+            return aliases.get(order_id, self.oms.canonical_order_id(order_id))
+
+        prior_entries = self._entries
+        migrated = {}
+        for symbol, entry in prior_entries.items():
+            receipts = []
+            for receipt in entry.fill_ids:
+                order_id, separator, suffix = receipt.partition("|")
+                receipts.append(resolve(order_id) + separator + suffix)
+            migrated[symbol] = replace(
+                entry,
+                order_id=resolve(entry.order_id) if entry.order_id is not None else None,
+                fill_ids=tuple(dict.fromkeys(receipts)),
+            )
+        if migrated == prior_entries:
+            return
+        self._entries = migrated
+        try:
+            self._save_entries(required=True)
+        except OSError:
+            self._entries = prior_entries
+            self.oms.kill_switch.trip("entry identity migration could not be persisted")
+            raise
 
     async def _on_entry_price_corrected(self, event: EntryPriceCorrectedEvent) -> None:
         """Puts the price actually paid into the entry record, mid-session (M70).

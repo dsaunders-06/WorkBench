@@ -10,9 +10,12 @@ duplicate-transmission guard.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import shutil
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -81,7 +84,7 @@ class _AcknowledgementLostBroker(_CountingBroker):
         raise TimeoutError("acceptance unknown")
 
 
-def _oms(tmp_path, broker=None) -> tuple[OMS, KillSwitch]:
+def _oms(tmp_path, broker=None, clock=None) -> tuple[OMS, KillSwitch]:
     settings = Settings(_env_file=None, data_dir=str(tmp_path))
     bus = EventBus()
     switch = KillSwitch(data_dir=tmp_path)
@@ -94,6 +97,7 @@ def _oms(tmp_path, broker=None) -> tuple[OMS, KillSwitch]:
             max_order_pct_of_cash=1.0,
             bus=bus,
             settings=settings,
+            clock=clock,
         ),
         switch,
     )
@@ -266,12 +270,12 @@ def test_unreadable_identity_store_halts_order_flow(tmp_path) -> None:
     assert "identity unreadable" in switch.reason
 
 
-async def _restart_stack(tmp_path):
-    oms, _ = _oms(tmp_path, _LateIdBroker())
+async def _restart_stack(tmp_path, clock=None):
+    oms, _ = _oms(tmp_path, _LateIdBroker(), clock=clock)
     ledger = TradeLedger(oms.bus, tmp_path, settings=oms.settings)
     bridge = SignalToOrderBridge(oms.bus, oms, settings=oms.settings, trade_ledger=ledger)
     oms.bus.subscribe(OrderFilledEvent, bridge._on_fill, critical=True)
-    oms.bus.subscribe(BrokerOrderIdResolvedEvent, bridge._on_order_id_resolved)
+    oms.bus.subscribe(BrokerOrderIdResolvedEvent, bridge._on_order_id_resolved, critical=True)
     await ledger.start()
     await bridge.restore_open_lots()
     oms.watch_symbols_for_fills(["WOW.AX"])
@@ -464,3 +468,136 @@ async def test_legacy_fill_file_without_aliases_retains_its_receipt(tmp_path):
     ]
     await restarted.absorb_broker_fills()
     assert bridge.position_entries()["WOW.AX"].quantity == 10.0
+
+
+@pytest.mark.asyncio
+async def test_resolution_during_failed_delivery_cannot_commit_tentative_receipt(
+    tmp_path, monkeypatch
+):
+    first, broker, bridge, _, app_id = await _partially_filled_qat_order(tmp_path)
+
+    def fail_entry_save(*args, **kwargs):
+        raise OSError("entry disk unavailable")
+
+    async def resolve_during_delivery(_event):
+        assert first.register_broker_order_id("998877", app_id)
+        first._prune_completed_order_identities()
+        assert app_id in first._order_identity.records
+
+    monkeypatch.setattr(bridge, "_save_entries", fail_entry_save)
+    first.bus.subscribe(OrderFilledEvent, resolve_during_delivery, critical=True)
+    when = datetime.now(UTC)
+    broker._broker_fills[:] = [BrokerFill(app_id, "WOW.AX", "buy", 10.0, 102.0, when)]
+    await first.absorb_broker_fills()
+    first._prune_completed_order_identities()
+    assert first.kill_switch.tripped
+    state = json.loads((tmp_path / "absorbed_fills.json").read_text(encoding="utf-8"))
+    assert bridge.position_entries()["WOW.AX"].quantity == 4.0
+    assert state["absorbed"][app_id]["quantity"] == 4.0
+    assert state["absorbed"]["998877"]["quantity"] == 4.0
+    assert list(state["pending_deliveries"]) == [f"{app_id}|WOW.AX|buy|10"]
+    assert app_id in first._order_identity.records
+    restarted, broker, bridge, ledger = await _restart_stack(tmp_path)
+    broker._broker_fills[:] = [BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, when)]
+    await restarted.absorb_broker_fills()
+    await restarted.absorb_broker_fills()
+    assert bridge.position_entries()["WOW.AX"].quantity == 10.0
+    assert sum(lot.quantity for lot in ledger.open_lots("WOW.AX")) == 10.0
+    assert sum(lot.entry_cost for lot in ledger.open_lots("WOW.AX")) == pytest.approx(6.60)
+    assert restarted._pending_fill_deliveries == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_state", ["settled", "pending"])
+async def test_real_legacy_broker_receipts_migrate_before_broker_only_replay(
+    tmp_path, legacy_state
+):
+    fixture = Path(__file__).parents[1] / "fixtures" / "legacy_fill_receipts" / legacy_state
+    for source in fixture.glob("*.json"):
+        shutil.copyfile(source, tmp_path / source.name)
+    identities = json.loads((tmp_path / "inflight_orders.json").read_text(encoding="utf-8"))
+    app_id = next(iter(identities["orders"]))
+    saved = json.loads((tmp_path / "open_position_entries.json").read_text(encoding="utf-8"))
+    assert saved["WOW.AX"]["order_id"] == "998877"
+    assert saved["WOW.AX"]["quantity"] == (10.0 if legacy_state == "pending" else 4.0)
+    when = datetime(2026, 9, 25, 12, tzinfo=UTC) + timedelta(seconds=1)
+    cumulative = BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, when)
+    for _ in range(3):
+        restarted, broker, bridge, ledger = await _restart_stack(tmp_path, clock=lambda: when)
+        broker._broker_fills[:] = [cumulative]
+        await restarted.absorb_broker_fills()
+        await restarted.absorb_broker_fills()
+        entry = bridge.position_entries()["WOW.AX"]
+        lots = ledger.open_lots("WOW.AX")
+        assert entry.quantity == 10.0
+        assert entry.order_id == app_id
+        assert entry.price == pytest.approx(102.0)
+        assert sum(lot.quantity for lot in lots) == 10.0
+        assert {lot.order_id for lot in lots} == {app_id}
+        assert {fill_id for lot in lots for fill_id in lot.fill_ids} == {
+            f"{app_id}|WOW.AX|buy|4",
+            f"{app_id}|WOW.AX|buy|10",
+        }
+        assert sum(lot.entry_cost for lot in lots) == pytest.approx(6.60)
+        assert set(ledger._charged) == {app_id}
+        assert restarted._pending_fill_deliveries == {}
+
+
+@pytest.mark.asyncio
+async def test_overlapping_deliveries_commit_one_cumulative_receipt(tmp_path):
+    oms, _, bridge, ledger, app_id = await _partially_filled_qat_order(tmp_path)
+
+    async def yield_during_delivery(_event):
+        await asyncio.sleep(0)
+
+    oms.bus.subscribe(OrderFilledEvent, yield_during_delivery, critical=True)
+    cumulative = BrokerFill(app_id, "WOW.AX", "buy", 10.0, 102.0, datetime.now(UTC))
+    await asyncio.gather(oms._account_execution(cumulative), oms._account_execution(cumulative))
+    assert oms._filled_quantities["WOW.AX"] == 10.0
+    assert bridge.position_entries()["WOW.AX"].quantity == 10.0
+    assert sum(lot.quantity for lot in ledger.open_lots("WOW.AX")) == 10.0
+    assert oms._pending_fill_deliveries == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["before_entry_write", "after_entry_write"])
+async def test_legacy_migration_interruption_leaves_pending_delivery_recoverable(
+    tmp_path, monkeypatch, boundary
+):
+    fixture = Path(__file__).parents[1] / "fixtures" / "legacy_fill_receipts" / "pending"
+    for source in fixture.glob("*.json"):
+        shutil.copyfile(source, tmp_path / source.name)
+    when = datetime(2026, 9, 25, 12, tzinfo=UTC) + timedelta(seconds=1)
+    oms, _ = _oms(tmp_path, clock=lambda: when)
+    ledger = TradeLedger(oms.bus, tmp_path, settings=oms.settings)
+    bridge = SignalToOrderBridge(oms.bus, oms, settings=oms.settings, trade_ledger=ledger)
+    oms.bus.subscribe(OrderFilledEvent, bridge._on_fill, critical=True)
+    oms.bus.subscribe(BrokerOrderIdResolvedEvent, bridge._on_order_id_resolved, critical=True)
+    await ledger.start()
+    original = bridge._save_entries
+
+    def interrupt(*args, **kwargs):
+        if boundary == "after_entry_write":
+            original(*args, **kwargs)
+            raise SystemExit("after legacy consumer migration")
+        raise OSError("entry migration unavailable")
+
+    monkeypatch.setattr(bridge, "_save_entries", interrupt)
+    if boundary == "after_entry_write":
+        with pytest.raises(SystemExit, match="legacy consumer migration"):
+            await bridge.restore_open_lots()
+    else:
+        await oms.absorb_broker_fills()
+        assert oms.kill_switch.tripped
+        assert bridge.position_entries()["WOW.AX"].order_id == "998877"
+        assert ledger.open_lots("WOW.AX") == []
+    state = json.loads((tmp_path / "absorbed_fills.json").read_text(encoding="utf-8"))
+    assert list(state["pending_deliveries"]) == ["998877|WOW.AX|buy|10"]
+    restarted, broker, bridge, ledger = await _restart_stack(tmp_path, clock=lambda: when)
+    broker._broker_fills[:] = [BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, when)]
+    await restarted.absorb_broker_fills()
+    await restarted.absorb_broker_fills()
+    assert bridge.position_entries()["WOW.AX"].quantity == 10.0
+    assert sum(lot.quantity for lot in ledger.open_lots("WOW.AX")) == 10.0
+    assert sum(lot.entry_cost for lot in ledger.open_lots("WOW.AX")) == pytest.approx(6.60)
+    assert restarted._pending_fill_deliveries == {}

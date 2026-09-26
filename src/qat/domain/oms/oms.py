@@ -262,6 +262,7 @@ class OMS:
         self._absorbed_fills: dict[str, _AbsorbedFill] = {}
         self._fill_aliases: dict[str, str] = {}
         self._pending_fill_deliveries: dict[str, tuple[BrokerFill, str, bool]] = {}
+        self._fill_delivery_lock = asyncio.Lock()
         # When an order THIS app sent was first seen partially filled (M70).
         # In memory only, and deliberately: it exists to widen one query window
         # while a fill is outstanding, and an order still filling across a
@@ -1490,6 +1491,17 @@ class OMS:
     async def _account_execution(
         self, raw: BrokerFill, *, record_only: bool = False, operator: str = "broker"
     ) -> BrokerFill | None:
+        # Committed receipts stay unchanged during awaited subscriber work.
+        # Serialize competing polls/acknowledgements so they cannot both apply
+        # the same delta while the first delivery is still outstanding.
+        async with self._fill_delivery_lock:
+            return await self._account_execution_locked(
+                raw, record_only=record_only, operator=operator
+            )
+
+    async def _account_execution_locked(
+        self, raw: BrokerFill, *, record_only: bool = False, operator: str = "broker"
+    ) -> BrokerFill | None:
         """Apply a cumulative execution's unaccounted delta, preserving order context."""
         if self.settings is not None and self._fill_state_path is None:
             self.kill_switch.trip("confirmed broker fill has no durable receipt destination")
@@ -1504,6 +1516,20 @@ class OMS:
         ):
             self._fill_delivery_failed = True
             return None
+        # Consumers may have loaded broker-keyed receipts from an older
+        # version. Complete their idempotent migration before emitting a UUID
+        # delivery, even when no fresh adapter resolution event will arrive.
+        if self.bus is not None:
+            for alias, target in list(self._fill_aliases.items()):
+                if target != canonical or alias == canonical:
+                    continue
+                failures = await self.bus.publish(
+                    BrokerOrderIdResolvedEvent(order_id=alias, app_order_id=canonical)
+                )
+                if failures:
+                    self.kill_switch.trip("fill consumer identity migration could not be persisted")
+                    self._fill_delivery_failed = True
+                    return None
         raw = replace(raw, order_id=canonical)
         order = self._order_the_broker_calls(canonical)
         if order is not None and (
@@ -1520,8 +1546,19 @@ class OMS:
             self.kill_switch.trip("broker cumulative execution implies invalid incremental price")
             return None
         fill_id = f"{raw.order_id}|{raw.symbol}|{raw.side}|{raw.quantity:.12g}"
-        if fill_id not in self._pending_fill_deliveries:
+        # A legacy journal key remains a valid obligation until delivery is
+        # committed. Both spellings identify the same receipt after the
+        # consumer migration above; remove them together on successful commit.
+        pending_keys = [
+            key
+            for key, (pending, _, _) in self._pending_fill_deliveries.items()
+            if self.canonical_order_id(pending.order_id) == canonical
+            and (pending.symbol, pending.side, pending.quantity)
+            == (raw.symbol, raw.side, raw.quantity)
+        ]
+        if not pending_keys:
             self._pending_fill_deliveries[fill_id] = (raw, operator, record_only)
+            pending_keys = [fill_id]
             if self._fill_state_path is not None and not self._save_fill_state():
                 self._pending_fill_deliveries.pop(fill_id, None)
                 self.kill_switch.trip("confirmed broker fill could not be journalled")
@@ -1534,7 +1571,6 @@ class OMS:
         # idempotent using this cumulative identity.
         prior_quantities = dict(self._filled_quantities)
         prior_stops = dict(self._position_stops)
-        prior_absorbed = dict(self._absorbed_fills)
         prior_order = (
             (order.status, order.filled_quantity, order.filled_price) if order is not None else None
         )
@@ -1547,19 +1583,10 @@ class OMS:
                 self._position_stops[fill.symbol] = stop
             elif abs(self._filled_quantities[fill.symbol]) < _POSITION_EPSILON:
                 self._position_stops.pop(fill.symbol, None)
-        self._absorbed_fills[raw.order_id] = _AbsorbedFill(
-            filled_at=raw.filled_at, quantity=raw.quantity, price=raw.price
-        )
-        for alias, target in self._fill_aliases.items():
-            if target == canonical:
-                self._absorbed_fills[alias] = self._absorbed_fills[canonical]
         if order is not None:
             order.filled_quantity = raw.quantity
             order.filled_price = raw.price
             self._close_out_own_order(raw)
-            for alias, known in self._orders.items():
-                if known is order:
-                    self._absorbed_fills[alias] = self._absorbed_fills[raw.order_id]
         logger.warning(
             "BROKER-SIDE FILL absorbed: %s %g %s at %.4f (order %s)",
             fill.side,
@@ -1601,7 +1628,6 @@ class OMS:
             if failures:
                 self._filled_quantities = prior_quantities
                 self._position_stops = prior_stops
-                self._absorbed_fills = prior_absorbed
                 if order is not None and prior_order is not None:
                     order.status, order.filled_quantity, order.filled_price = prior_order
                 self.kill_switch.trip(
@@ -1609,11 +1635,25 @@ class OMS:
                 )
                 self._fill_delivery_failed = True
                 return None
+        # Publish only committed cumulative receipts to other persistence paths.
+        # A late identity callback can save aliases while delivery is awaited.
+        # Until every critical subscriber accepts this fill, it must see the
+        # prior receipt and the outstanding delivery, never the tentative total.
+        prior_absorbed = dict(self._absorbed_fills)
+        self._absorbed_fills[canonical] = _AbsorbedFill(
+            filled_at=raw.filled_at, quantity=raw.quantity, price=raw.price
+        )
+        for alias, target in self._fill_aliases.items():
+            if target == canonical:
+                self._absorbed_fills[alias] = self._absorbed_fills[canonical]
+        if order is not None:
+            for alias, known in self._orders.items():
+                if known is order:
+                    self._absorbed_fills[alias] = self._absorbed_fills[canonical]
         if self._fill_state_path is not None:
-            pending = self._pending_fill_deliveries.pop(fill_id, None)
+            pending = {key: self._pending_fill_deliveries.pop(key) for key in pending_keys}
             if not self._save_fill_state():
-                if pending is not None:
-                    self._pending_fill_deliveries[fill_id] = pending
+                self._pending_fill_deliveries.update(pending)
                 self._filled_quantities = prior_quantities
                 self._position_stops = prior_stops
                 self._absorbed_fills = prior_absorbed
@@ -1713,16 +1753,18 @@ class OMS:
 
     def _canonical_execution_id(self, fill: BrokerFill) -> str:
         """Resolve execution identity before consulting cumulative receipts."""
-        if fill.app_order_id:
-            return self._fill_aliases.get(fill.app_order_id, fill.app_order_id)
-        if fill.order_id in self._fill_aliases:
-            return self._fill_aliases[fill.order_id]
+        return self.canonical_order_id(fill.app_order_id or fill.order_id)
+
+    def canonical_order_id(self, order_id: str) -> str:
+        """Resolve persisted consumer identities without fresh broker evidence."""
+        if order_id in self._fill_aliases:
+            return self._fill_aliases[order_id]
         # A crash can leave the identity write committed before the alias write.
         if self._order_identity is not None:
-            app_id = self._order_identity.application_id_for(fill.order_id)
+            app_id = self._order_identity.application_id_for(order_id)
             if app_id is not None:
                 return app_id
-        return fill.order_id
+        return order_id
 
     def register_broker_order_id(self, order_id: str, app_order_id: str | None = None) -> bool:
         """Persist identity, then aliases and the strongest cumulative receipt."""
@@ -2810,6 +2852,10 @@ class OMS:
             if (
                 order.status == "filled"
                 and alias_is_durable
+                and not any(
+                    self._canonical_execution_id(pending) == app_order_id
+                    for pending, _, _ in self._pending_fill_deliveries.values()
+                )
                 and absorbed is not None
                 and absorbed.quantity_known
                 and absorbed.quantity + _POSITION_EPSILON >= order.quantity

@@ -743,7 +743,7 @@ class TradeLedger:
 
     async def start(self) -> None:
         self.bus.subscribe(OrderFilledEvent, self._on_fill, critical=True)
-        self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
+        self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved, critical=True)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
         self.bus.subscribe(ExitPriceCorrectedEvent, self._on_exit_price_corrected)
         self.bus.subscribe(RegimeEvent, self._on_regime)
@@ -1107,10 +1107,19 @@ class TradeLedger:
         original = event.app_order_id
         if original is None or original == event.order_id:
             return
+
+        def receipt_id(fill_id: str) -> str:
+            order_id, separator, suffix = fill_id.partition("|")
+            return (original if order_id == event.order_id else order_id) + separator + suffix
+
         for lots in self._open_lots.values():
             for index, lot in enumerate(lots):
-                if lot.order_id == event.order_id:
-                    lots[index] = replace(lot, order_id=original)
+                lots[index] = replace(
+                    lot,
+                    order_id=original if lot.order_id == event.order_id else lot.order_id,
+                    fill_ids=tuple(dict.fromkeys(receipt_id(value) for value in lot.fill_ids)),
+                )
+        self._processed_fill_ids = {receipt_id(value) for value in self._processed_fill_ids}
         if event.order_id in self._charged:
             notional, charge = self._charged.pop(event.order_id)
             prior_notional, prior_charge = self._charged.get(original, (0.0, 0.0))
