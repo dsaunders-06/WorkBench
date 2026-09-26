@@ -60,6 +60,11 @@ from qat.domain.events import (
 
 logger = logging.getLogger(__name__)
 
+
+class UnaccountedExecutionError(RuntimeError):
+    """A confirmed execution cannot be fully reconciled with recorded lots."""
+
+
 TRADES_FILENAME = "closed_trades.csv"
 
 _FIELDS = (
@@ -1166,7 +1171,13 @@ class TradeLedger:
             return 0.0
         return self._costs.charge(abs(quantity) * price)
 
-    def _increment_cost(self, order_id: str | None, quantity: float, price: float) -> float:
+    def _increment_cost(
+        self,
+        order_id: str | None,
+        quantity: float,
+        price: float,
+        charged: dict[str, tuple[float, float]] | None = None,
+    ) -> float:
         """What THIS piece of an order adds to the order's bill (M175).
 
         The floor is charged once per ORDER, so each increment pays the
@@ -1179,22 +1190,24 @@ class TradeLedger:
         notional = abs(quantity) * price
         if not order_id:
             return self._costs.charge(notional)
-        booked_notional, booked_charge = self._charged.get(order_id, (0.0, 0.0))
+        charges = self._charged if charged is None else charged
+        booked_notional, booked_charge = charges.get(order_id, (0.0, 0.0))
         total_notional = booked_notional + notional
         total_charge = self._costs.charge(total_notional)
-        self._charged[order_id] = (total_notional, total_charge)
+        charges[order_id] = (total_notional, total_charge)
         return total_charge - booked_charge
 
-    def _close_against_lots(self, event: OrderFilledEvent) -> None:
+    def _close_against_lots(self, event: OrderFilledEvent) -> float:
         remaining = event.quantity
-        lots = self._open_lots[event.symbol]
-        original_lots = deque(lots)
-        original_charged = dict(self._charged)
+        lots = deque(self._open_lots.get(event.symbol, ()))
+        staged_charged = dict(self._charged)
         staged: list[ClosedTrade] = []
         # The exit's cost belongs to the whole sell, so it is apportioned
         # across whatever lots this sell happens to close - by quantity, the
         # same basis the entry cost is split on.
-        exit_cost_total = self._increment_cost(event.order_id, event.quantity, event.price)
+        exit_cost_total = self._increment_cost(
+            event.order_id, event.quantity, event.price, staged_charged
+        )
         exit_quantity = event.quantity
 
         while remaining > 1e-9 and lots:
@@ -1214,10 +1227,8 @@ class TradeLedger:
             # closed an hour before they opened, worth -$167.90 nobody lost, in
             # the file the promotion gate reads.
             #
-            # Refused rather than repaired, and LOUDLY: the lot is left intact
-            # and the fill is dropped from the match. A fill this old belongs to
-            # a position this process never opened, so there is no correct lot
-            # for it here - inventing one is what produced the corruption.
+            # Refused rather than repaired: the lot stays intact and the
+            # confirmed fill stays pending until its true entry is known.
             #
             # NARROWED, and an existing test is what narrowed it. The first
             # version refused on the timestamps alone and broke
@@ -1240,17 +1251,16 @@ class TradeLedger:
             if lot.strategy is not None and event.ts < lot.opened_at:
                 logger.error(
                     "REFUSED an impossible closed trade: %s exit at %s precedes the lot "
-                    "it would close, opened %s. Dropping %g shares from the match rather "
-                    "than recording a trade that closed before it opened. This is the "
-                    "24 August absorb-replay signature - check the fill watermark in "
-                    "absorbed_fills.json against when this process started.",
+                    "it would close, opened %s. Keeping %g shares pending for "
+                    "reconciliation; check the fill watermark in absorbed_fills.json.",
                     event.symbol,
                     event.ts.isoformat(timespec="seconds"),
                     lot.opened_at.isoformat(timespec="seconds"),
                     remaining,
                 )
-                self._charged = original_charged
-                return
+                raise UnaccountedExecutionError(
+                    f"{event.symbol} confirmed sell precedes its recorded lot"
+                )
             matched = min(remaining, lot.quantity)
             # ⚠️ THE EXIT IS PART OF THE EXCURSION (31 August). worst/best were
             # only ever updated by `_on_price` from a market tick, so a
@@ -1335,24 +1345,21 @@ class TradeLedger:
                 )
 
         if remaining > 1e-9:
-            # A sell with no matching entry. Real when a position was adopted
-            # from a previous session: this app never saw the buy, so it cannot
-            # compute a P&L for it and must not invent one.
-            logger.info(
-                "Sell of %g %s exceeded tracked entries by %g - unmatched portion "
-                "ignored (likely an adopted position this session never opened)",
+            logger.error(
+                "REFUSED a partly unmatched confirmed sell: %g %s has %g "
+                "shares without a recorded lot; keeping the execution pending",
                 event.quantity,
                 event.symbol,
                 remaining,
             )
+            raise UnaccountedExecutionError(
+                f"{event.symbol} confirmed sell has {remaining:g} unmatched shares"
+            )
 
-        if staged:
-            try:
-                self._record_many(staged)
-            except OSError:
-                self._open_lots[event.symbol] = original_lots
-                self._charged = original_charged
-                raise
+        self._record_many(staged)
+        self._open_lots[event.symbol] = lots
+        self._charged = staged_charged
+        return event.quantity
 
     @staticmethod
     def repair_header(path: Path) -> bool:

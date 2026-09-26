@@ -85,7 +85,9 @@ async def test_an_exit_before_its_lot_records_no_trade(tmp_path, caplog):
     ledger = _ledger(tmp_path)
     await _open_lot(ledger, _OPENED)
 
-    with caplog.at_level("ERROR"):
+    from qat.domain.performance.trades import UnaccountedExecutionError
+
+    with caplog.at_level("ERROR"), pytest.raises(UnaccountedExecutionError):
         await _exit(ledger, _EXIT_BEFORE)
 
     assert ledger.closed_trades() == [], (
@@ -103,9 +105,41 @@ async def test_the_lot_survives_the_refusal(tmp_path):
     ledger = _ledger(tmp_path)
     await _open_lot(ledger, _OPENED)
 
-    await _exit(ledger, _EXIT_BEFORE)
+    from qat.domain.performance.trades import UnaccountedExecutionError
+
+    with pytest.raises(UnaccountedExecutionError):
+        await _exit(ledger, _EXIT_BEFORE)
 
     assert ledger.open_lots("TNE.AX"), "the refusal consumed the lot it declined to close"
+
+
+async def test_an_impossible_later_lot_rolls_back_earlier_matches(tmp_path):
+    from qat.domain.events import OrderFilledEvent
+    from qat.domain.performance.trades import UnaccountedExecutionError
+
+    ledger = _ledger(tmp_path)
+    await _open_lot(ledger, _OPENED - timedelta(days=1), quantity=2.0)
+    await _open_lot(ledger, _OPENED, quantity=3.0)
+    original_deque = ledger._open_lots["TNE.AX"]
+    original_lots = ledger.open_lots("TNE.AX")
+    event = OrderFilledEvent(
+        order_id="crossing-exit",
+        symbol="TNE.AX",
+        side="sell",
+        quantity=4.0,
+        price=32.52,
+        ts=_EXIT_BEFORE,
+        fill_id="crossing-exit|TNE.AX|sell|4",
+    )
+
+    with pytest.raises(UnaccountedExecutionError):
+        await ledger._on_fill(event)
+
+    assert ledger._open_lots["TNE.AX"] is original_deque
+    assert ledger.open_lots("TNE.AX") == original_lots
+    assert ledger.closed_trades() == []
+    assert event.fill_id not in ledger._processed_fill_ids
+    assert not (tmp_path / "closed_trades.csv").exists()
 
 
 async def test_a_normal_exit_still_closes(tmp_path):
@@ -120,6 +154,25 @@ async def test_a_normal_exit_still_closes(tmp_path):
     assert len(trades) == 1
     assert trades[0].quantity == 487.0
     assert trades[0].closed_at > trades[0].opened_at
+
+
+async def test_a_complete_match_commits_once_and_returns_its_quantity(tmp_path):
+    from qat.domain.events import OrderFilledEvent
+
+    ledger = _ledger(tmp_path)
+    await _open_lot(ledger, _OPENED, quantity=4.0)
+    event = OrderFilledEvent(
+        order_id="complete-exit",
+        symbol="TNE.AX",
+        side="sell",
+        quantity=3.0,
+        price=32.52,
+        ts=_EXIT_AFTER,
+    )
+
+    assert ledger._close_against_lots(event) == 3.0
+    assert [trade.quantity for trade in ledger.closed_trades()] == [3.0]
+    assert [lot.quantity for lot in ledger.open_lots("TNE.AX")] == [1.0]
 
 
 async def test_the_m50_replay_still_works(tmp_path):

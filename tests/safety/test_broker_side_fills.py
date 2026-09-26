@@ -589,21 +589,20 @@ def caplog_at_warning():
 
 
 @pytest.mark.asyncio
-async def test_an_adopted_position_stopping_out_is_absorbed():
-    """The case the old window could never return. An adopted position's
-    protection was placed in an earlier session, so its `submitted_at` is days
-    old - and the query bounded on submitted_at asked only about the last five
-    minutes."""
+async def test_an_adopted_position_without_entry_evidence_halts_pending(tmp_path):
+    """A broker holding alone cannot supply the entry needed to book P&L."""
     bus = EventBus()
-    ledger = TradeLedger(bus, tempfile.mkdtemp())
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
     await ledger.start()
-    settings = Settings(_env_file=None)
     switch = KillSwitch()
     broker = MockBroker(seed=1)
     # Held before this process existed, protected by an order it never sent.
     broker._positions["OLD"] = Position(symbol="OLD", quantity=20.0, avg_price=50.0)
     broker._resting_stops["OLD"] = 45.0
-    oms = OMS(broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus)
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
     await oms.adopt_broker_positions()
     # Windows' clock granularity is coarse enough that construction and the
     # fill below can land on the same microsecond, and the watermark is
@@ -614,8 +613,12 @@ async def test_an_adopted_position_stopping_out_is_absorbed():
     broker.fill_resting_stop("OLD", price=44.80)
     mismatch = await oms.check_reconciliation()
 
-    assert mismatch is False
-    assert switch.tripped is False
+    state = json.loads((tmp_path / "absorbed_fills.json").read_text(encoding="utf-8"))
+    assert mismatch is True
+    assert switch.tripped is True
+    assert len(state["pending_deliveries"]) == 1
+    assert state["absorbed"] == {}
+    assert ledger.closed_trades() == []
 
 
 @pytest.mark.asyncio

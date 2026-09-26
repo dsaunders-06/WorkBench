@@ -34,6 +34,54 @@ def _candidate() -> OrderCandidate:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sell_quantity", "sell_time"),
+    [
+        (10.0, datetime(2026, 9, 2, tzinfo=UTC)),
+        (2.0, datetime(2026, 8, 31, tzinfo=UTC)),
+    ],
+    ids=["partly-unmatched", "pre-entry"],
+)
+async def test_unaccounted_sell_stays_pending_without_changing_the_ledger(
+    tmp_path, sell_quantity, sell_time
+):
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), apply_costs_in_paper=True)
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = MockBroker(seed=1)
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    await ledger.start()
+    assert ledger.restore_open_lot(
+        "AAA", 4.0, 100.0, 95.0, "swing", datetime(2026, 9, 1, tzinfo=UTC)
+    )
+    before_lots = ledger.open_lots("AAA")
+    original_deque = ledger._open_lots["AAA"]
+    before_charged = dict(ledger._charged)
+    path = tmp_path / "closed_trades.csv"
+    before_csv = path.read_bytes() if path.exists() else b""
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    await oms.adopt_broker_positions()
+    oms.watch_symbols_for_fills(["AAA"])
+    oms._last_fill_scan = sell_time - timedelta(seconds=1)
+    broker._broker_fills.append(BrokerFill("sell-1", "AAA", "sell", sell_quantity, 94.0, sell_time))
+
+    await oms.absorb_broker_fills()
+
+    state = json.loads((tmp_path / "absorbed_fills.json").read_text(encoding="utf-8"))
+    assert switch.tripped
+    assert len(state["pending_deliveries"]) == 1
+    assert state["absorbed"] == {}
+    assert ledger.closed_trades() == []
+    assert ledger.open_lots("AAA") == before_lots
+    assert ledger._open_lots["AAA"] is original_deque
+    assert ledger._charged == before_charged
+    assert not ledger._processed_fill_ids
+    assert (path.read_bytes() if path.exists() else b"") == before_csv
+
+
+@pytest.mark.asyncio
 async def test_a_failed_closed_trade_write_keeps_the_fill_replayable(tmp_path):
     """A logged ledger failure must not become a permanently absorbed fill.
 

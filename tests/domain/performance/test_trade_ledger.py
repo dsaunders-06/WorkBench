@@ -18,7 +18,13 @@ from qat.config import Settings
 from qat.domain.bus import EventBus
 from qat.domain.events import ExitPriceCorrectedEvent, MarketDataEvent, OrderFilledEvent
 from qat.domain.performance import trades as trades_module
-from qat.domain.performance.trades import _FIELDS, ClosedTrade, EquityCurve, TradeLedger
+from qat.domain.performance.trades import (
+    _FIELDS,
+    ClosedTrade,
+    EquityCurve,
+    TradeLedger,
+    UnaccountedExecutionError,
+)
 
 _BASE = datetime(2026, 7, 20, 14, 0, tzinfo=UTC)
 
@@ -237,13 +243,14 @@ async def test_one_sell_can_close_several_lots(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_an_unmatched_sell_is_ignored_not_invented(tmp_path):
-    """Real for an adopted position: this app never saw the entry, so it cannot
-    compute a P&L and must not guess one."""
+async def test_an_unmatched_sell_is_refused_without_inventing_a_trade(tmp_path):
+    """The missing entry must be reconciled before a confirmed sell is retired."""
     ledger = await _ledger(tmp_path)
-    await _fill(ledger, "sell", 50, 100.0)
+    with pytest.raises(UnaccountedExecutionError, match="50 unmatched shares"):
+        await _fill(ledger, "sell", 50, 100.0)
 
     assert ledger.closed_trades() == []
+    assert not (tmp_path / "closed_trades.csv").exists()
 
 
 @pytest.mark.asyncio
@@ -721,47 +728,38 @@ async def test_a_matching_order_id_for_a_different_symbol_amends_nothing(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_the_exit_cost_basis_matches_the_write_path(tmp_path):
-    """Minor 6: `_close_against_lots` bases the exit cost on the FULL sell
-    quantity and apportions on it; the amendment used to base it on the
-    matched rows' own quantity total instead. Not the same once a per-order
-    commission floor binds at one basis and not the other - exactly the case
-    of a sell that partly closed an untracked position, where
-    `_close_against_lots` logs "unmatched portion ignored" and only the
-    matched part becomes a ClosedTrade row."""
+async def test_a_rejected_sell_does_not_charge_a_later_valid_exit(tmp_path):
+    """A failed match cannot add notional to the later valid sell's cost basis."""
     ledger = await _costed_ledger(
         tmp_path, broker_min_commission=6.0, commission_bps=50.0, slippage_bps=0.0
     )
     await _fill(ledger, "buy", 10, 100.0, stop=95.0)
-    # The sell is for 20; only 10 are tracked, so 10 are unmatched and
-    # ignored - one ClosedTrade row, quantity=10, even though the order's OWN
-    # quantity (what the write path costed the exit against) was 20.
+    before_charged = dict(ledger._charged)
+    with pytest.raises(UnaccountedExecutionError, match="10 unmatched shares"):
+        await ledger._on_fill(
+            OrderFilledEvent(
+                order_id="sell-1",
+                symbol="AAA",
+                side="sell",
+                quantity=20,
+                price=110.0,
+                ts=_BASE + timedelta(days=1),
+            )
+        )
+    assert ledger._charged == before_charged
+    assert ledger.closed_trades() == []
+
     await ledger._on_fill(
         OrderFilledEvent(
             order_id="sell-1",
             symbol="AAA",
             side="sell",
-            quantity=20,
+            quantity=10,
             price=110.0,
             ts=_BASE + timedelta(days=1),
         )
     )
-    assert len(ledger.closed_trades()) == 1
-
-    await ledger._on_exit_price_corrected(
-        ExitPriceCorrectedEvent(
-            order_id="sell-1", symbol="AAA", price=112.0, announced_price=110.0, quantity=20.0
-        )
-    )
-
-    amended = ledger.closed_trades()[0]
-    # Recomputed on the order's full quantity (20) - the basis
-    # `_close_against_lots` used - not the 10 that matched a tracked lot.
-    # At 50bps: 10 shares @112 = $1,120 notional, 0.5% = $5.60, under the $6
-    # floor - so a matched-total basis would charge the FULL $6.00 floor to
-    # this one row. 20 shares @112 = $2,240 notional, 0.5% = $11.20, over the
-    # floor - so the correct basis charges this row its half-share, $5.60.
-    assert amended.exit_cost == pytest.approx(5.60, abs=1e-6)
+    assert [trade.exit_cost for trade in ledger.closed_trades()] == [pytest.approx(6.0)]
 
 
 @pytest.mark.asyncio
