@@ -5,6 +5,12 @@ The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
 misleading. Nothing was deleted; it was archived and this was written fresh.
 **Keep this file short.** It went stale by growing.
 
+## Current Phase 1 status — 26 September 2026
+
+M176 is a **code-complete release candidate** on `recovery/phase-1-safety-and-truth`. Tasks 1–6 passed independent review after required fixes, and the combined Phase 1 test set passed. The release-readiness record is `docs/phase-1-release-readiness-checkpoint.md`. M176 has **not** been merged, packaged, signed, deployed or launched. The dated audit and operational observations below remain historical snapshots, not a current launch instruction.
+
+The first launch remains **paper-only, supervised and in `QAT_EXECUTION_MODE=recommend`**, with an empty `QAT_AUTONOMOUS_STRATEGIES` allowlist and verified configuration and data backups beforehand. Nine legacy entry records require migration at that launch. Autonomous trading remains suspended. The application and correction apply share a fixed OS lock; correction dry-run remains unlocked and read-only.
+
 ---
 
 ## ⚙️ Before quoting any figure in here, run this

@@ -60,3 +60,7 @@ The journal independently records the same before/after hashes, unique target an
 ## Remaining boundary
 
 The bounded historical correction has now been applied to the hash-matched operational ledger and independently verified. This checkpoint does not deploy or launch the recovery build, resume trading, merge the draft pull request or approve `master`.
+
+## Application lock clarification (Phase 1)
+
+The QAT application and `--apply` correction now acquire the same fixed operating-system lock for QAT operational data. The application holds it from before startup migration through shutdown; correction apply holds it through evidence revalidation, replacement, verification and recovery. If QAT owns the lock, apply refuses before writing a backup or staging file. The default dry run remains unlocked and read-only with respect to operational data. This describes the Phase 1 code-complete candidate; the earlier operational correction and its evidence above remain the historical record.
