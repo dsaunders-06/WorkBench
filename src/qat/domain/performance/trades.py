@@ -33,11 +33,15 @@ callers must now say `gross_pnl` or `net_pnl` and mean it.
 from __future__ import annotations
 
 import csv
+import hashlib
+import io
 import logging
 import math
 import os
 import shutil
+import tempfile
 import threading
+import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field, replace
@@ -121,6 +125,30 @@ _FIELDS = (
     "order_id",
     "fill_id",
 )
+
+
+@dataclass(frozen=True, slots=True)
+class LedgerSchemaMigration:
+    source_sha256: str
+    corrected: bytes
+
+
+def _header_repaired_bytes(source: bytes, fields: Sequence[str]) -> bytes:
+    """Name appended columns without changing any bytes in the data rows."""
+    if not source:
+        return source
+    stream = io.StringIO(source.decode("utf-8"), newline="")
+    reader = csv.reader(stream)
+    header = next(reader, [])
+    if header == list(fields):
+        return source
+    if not header or header != list(fields[: len(header)]):
+        raise ValueError("Ledger header is not a strict prefix of the current schema")
+    body_start = stream.tell()
+    if any(len(row) > len(fields) for row in reader):
+        raise ValueError("Ledger row is wider than the current schema")
+    # The known column names cannot contain CSV quoting or embedded newlines.
+    return (",".join(fields) + "\r\n" + stream.getvalue()[body_start:]).encode("utf-8")
 
 
 def repair_csv_header(path: Path, fields: Sequence[str]) -> bool:
@@ -653,12 +681,14 @@ class TradeLedger:
         trades: list[ClosedTrade] = []
         skipped = 0
         try:
-            # Item 63, BEFORE the DictReader runs: a header that has fallen
-            # behind `_FIELDS` makes every field added since unreadable, and
-            # `market` is what `EdgeEstimator` filters on.
-            repair_csv_header(self.path, _FIELDS)
             with self.path.open(newline="", encoding="utf-8") as handle:
-                for row in csv.DictReader(handle):
+                reader = csv.DictReader(handle)
+                header = reader.fieldnames
+                if header and header == list(_FIELDS[: len(header)]):
+                    # Historical writers appended current-width rows under an
+                    # old header. Read those columns without repairing the file.
+                    reader.fieldnames = list(_FIELDS)
+                for row in reader:
                     trade = ClosedTrade.from_row(row)
                     if trade is None:
                         skipped += 1
@@ -675,6 +705,90 @@ class TradeLedger:
                 f", skipping {skipped} unreadable row(s)" if skipped else "",
             )
         return trades
+
+    def prepare_schema_migration(self) -> LedgerSchemaMigration | None:
+        """Read-only, source-bound plan; the bridge supplies the stability gate."""
+        if not self.path.exists():
+            return None
+        source = self.path.read_bytes()
+        corrected = _header_repaired_bytes(source, _FIELDS)
+        if corrected == source:
+            return None
+        return LedgerSchemaMigration(hashlib.sha256(source).hexdigest(), corrected)
+
+    def apply_schema_migration(self, plan: LedgerSchemaMigration) -> bool:
+        """Back up, atomically replace, audit, and restore on validation failure."""
+        with self._lock:
+            backup: Path | None = None
+            temporary: Path | None = None
+            replaced = False
+            try:
+                source = self.path.read_bytes()
+                if hashlib.sha256(source).hexdigest() != plan.source_sha256:
+                    return False
+                # Refuse stale or fabricated plans, including current-schema no-ops.
+                if (
+                    plan.corrected == source
+                    or _header_repaired_bytes(source, _FIELDS) != plan.corrected
+                ):
+                    return False
+                stamp = time.time_ns()
+                backup = self.path.with_name(f"{self.path.name}.bak-pre-schema-{stamp}")
+                with backup.open("xb") as handle:
+                    handle.write(source)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                if hashlib.sha256(backup.read_bytes()).hexdigest() != plan.source_sha256:
+                    raise OSError("Schema backup verification failed")
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=self.path.parent, prefix=f"{self.path.name}.tmp-", delete=False
+                ) as handle:
+                    temporary = Path(handle.name)
+                    handle.write(plan.corrected)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                # Check again after I/O, before overwriting another writer's data.
+                if hashlib.sha256(self.path.read_bytes()).hexdigest() != plan.source_sha256:
+                    raise OSError("Ledger changed during schema migration")
+                os.replace(temporary, self.path)
+                replaced = True
+                if self.path.read_bytes() != plan.corrected:
+                    raise OSError("Schema replacement verification failed")
+                findings = audit_closed_trades(self.path)
+                if findings:
+                    raise ValueError("Schema migration audit failed: " + "; ".join(findings))
+                return True
+            except Exception:
+                logger.exception("Closed-trade ledger schema migration failed")
+                if replaced and backup is not None:
+                    try:
+                        original = backup.read_bytes()
+                        if hashlib.sha256(original).hexdigest() != plan.source_sha256:
+                            raise OSError("Schema backup is no longer valid")
+                        with tempfile.NamedTemporaryFile(
+                            mode="wb",
+                            dir=self.path.parent,
+                            prefix=f"{self.path.name}.tmp-",
+                            delete=False,
+                        ) as handle:
+                            temporary = Path(handle.name)
+                            handle.write(original)
+                            handle.flush()
+                            os.fsync(handle.fileno())
+                        os.replace(temporary, self.path)
+                        if self.path.read_bytes() != original:
+                            raise OSError("Schema restore verification failed")
+                    except Exception:
+                        logger.critical(
+                            "Could not restore ledger; recover from %s", backup, exc_info=True
+                        )
+                return False
+            finally:
+                if temporary is not None:
+                    try:
+                        temporary.unlink(missing_ok=True)
+                    except OSError:
+                        logger.warning("Could not remove schema temporary file %s", temporary)
 
     def restore_open_lot(
         self,

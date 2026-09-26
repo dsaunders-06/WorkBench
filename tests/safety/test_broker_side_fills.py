@@ -17,6 +17,7 @@ Two things followed from that, and both bite on the first day a stop fires:
 from __future__ import annotations
 
 import asyncio
+import csv
 import json
 import logging
 import tempfile
@@ -34,9 +35,95 @@ from qat.domain.bus import EventBus
 from qat.domain.events import OrderFilledEvent
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
-from qat.domain.performance.trades import TradeLedger
+from qat.domain.performance.trades import _FIELDS, ClosedTrade, TradeLedger
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy,stable", [(True, False), (True, True), (False, True)])
+async def test_startup_schema_migration_requires_stability(tmp_path, legacy, stable):
+    path = tmp_path / "closed_trades.csv"
+    stamp = datetime.now(UTC) - timedelta(days=2)
+    trade = ClosedTrade(
+        symbol="AAA",
+        strategy="swing",
+        quantity=10,
+        entry_price=100,
+        exit_price=110,
+        stop_price=95,
+        opened_at=stamp,
+        closed_at=stamp + timedelta(days=1),
+    )
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(_FIELDS[:-3] if legacy else _FIELDS)
+        writer.writerow([trade.as_row()[name] for name in _FIELDS])
+    before = path.read_bytes()
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    bus, switch, broker = EventBus(), KillSwitch(), MockBroker(seed=1)
+    calls = 0
+
+    async def read_positions():
+        nonlocal calls
+        calls += 1
+        # Every snapshot read must precede migration, including the final read.
+        assert path.read_bytes() == before
+        if not stable and calls % 2:
+            return [Position(symbol="OLD", quantity=1, avg_price=50)]
+        return []
+
+    broker.positions = read_positions  # type: ignore[assignment]
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+    try:
+        await bridge.start()
+        backups = list(tmp_path.glob("closed_trades.csv.bak-pre-schema-*"))
+        if legacy and stable:
+            assert not switch.tripped
+            assert path.read_bytes() != before
+            assert len(backups) == 1 and backups[0].read_bytes() == before
+        else:
+            assert switch.tripped is (not stable)
+            assert path.read_bytes() == before
+            assert not backups
+    finally:
+        await bridge.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_header", [False, True])
+async def test_startup_schema_failure_halts_before_entry_migration(tmp_path, bad_header):
+    path = tmp_path / "closed_trades.csv"
+    # A non-prefix header fails planning; an unreadable row fails the real audit.
+    header = "unrecognised" if bad_header else ",".join(_FIELDS[:-3])
+    path.write_text(header + "\nunparseable,row\n", encoding="utf-8")
+    before = path.read_bytes()
+    _entries_file(tmp_path)
+    entries_path = tmp_path / "open_position_entries.json"
+    entries_before = entries_path.read_bytes()
+    settings = Settings(_env_file=None, data_dir=str(tmp_path))
+    bus, switch, broker = EventBus(), KillSwitch(), MockBroker(seed=1)
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+    try:
+        await bridge.start()
+        assert switch.tripped
+        assert switch.reason == "closed-trade ledger schema migration failed"
+        assert path.read_bytes() == before
+        assert entries_path.read_bytes() == entries_before
+        assert not (tmp_path / "absorbed_fills.json").exists()
+        assert ledger.open_lots() == []
+        assert bridge._sweep_task is None
+        assert bridge._warm_task is None
+    finally:
+        await bridge.stop()
 
 
 def _candidate(symbol: str = "AAA", price: float = 100.0) -> OrderCandidate:

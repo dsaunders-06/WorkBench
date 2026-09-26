@@ -64,6 +64,7 @@ from qat.domain.events import (
 from qat.domain.oms import earnings_watch
 from qat.domain.oms.oms import OMS, _FillReplaySnapshot
 from qat.domain.performance.edge import ClosedTradeSource, EdgeEstimator
+from qat.domain.performance.trades import LedgerSchemaMigration
 from qat.domain.risk_engine.engine import OrderCandidate
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,10 @@ class _LotStore(Protocol):
     """
 
     def open_lots(self, symbol: str | None = None) -> list[Any]: ...
+
+    def prepare_schema_migration(self) -> LedgerSchemaMigration | None: ...
+
+    def apply_schema_migration(self, plan: LedgerSchemaMigration) -> bool: ...
 
     def restore_open_lot(
         self,
@@ -438,6 +443,17 @@ class SignalToOrderBridge:
         if snapshot is None:
             self.oms.kill_switch.trip("broker startup replay snapshot unavailable")
             return
+        ledger = self._lot_store()
+        if ledger is not None:
+            try:
+                migration = ledger.prepare_schema_migration()
+                if migration is not None and not ledger.apply_schema_migration(migration):
+                    self.oms.kill_switch.trip("closed-trade ledger schema migration failed")
+                    return
+            except Exception:
+                logger.exception("Could not prepare closed-trade ledger schema migration")
+                self.oms.kill_switch.trip("closed-trade ledger schema migration failed")
+                return
         if not self._migrate_legacy_entry_quantities(snapshot):
             return
         # Before restore_open_lots, or the ledger is rebuilt from the price the
