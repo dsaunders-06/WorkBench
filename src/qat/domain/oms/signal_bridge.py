@@ -1467,9 +1467,22 @@ class SignalToOrderBridge:
                 raise ValueError(f"{field} must be a string or null")
             return value or None
 
+        def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            values: dict[str, object] = {}
+            for key, value in pairs:
+                if key in values:
+                    raise ValueError(f"duplicate entry evidence key: {key}")
+                values[key] = value
+            return values
+
+        def reject_constant(value: str) -> None:
+            raise ValueError(f"nonstandard JSON constant: {value}")
+
         entries: dict[str, _Entry] = {}
         try:
-            raw = json.loads(source)
+            raw = json.loads(
+                source, object_pairs_hook=unique_object, parse_constant=reject_constant
+            )
             if not isinstance(raw, dict):
                 raise ValueError("entry root must be an object")
             for symbol, row in raw.items():
@@ -1518,7 +1531,7 @@ class SignalToOrderBridge:
                     # nothing about where its price came from, and None is that.
                     price_source=price_source,
                 )
-        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        except (KeyError, TypeError, ValueError, OverflowError, RecursionError) as exc:
             raise EntryStoreError(f"invalid entry evidence in {self._entries_path}: {exc}") from exc
         if entries:
             # M110. This said "for %d held position(s)", which asserts a fact

@@ -102,6 +102,35 @@ def _unstarted_bridge(tmp_path):
         '"fill_ids": "receipt"}}',
         '{"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", "price": 50, '
         '"price_source": "guess"}}',
+        pytest.param(
+            '{"WOW.AX": {"opened_at": "bad", "price": 50}, '
+            '"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", "price": 50}}',
+            id="duplicate-symbol",
+        ),
+        pytest.param(
+            '{"WOW.AX": {"opened_at": "bad", '
+            '"opened_at": "2026-07-20T00:00:00+00:00", "price": 50}}',
+            id="duplicate-row-field",
+        ),
+        pytest.param(
+            '{"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", ' '"price": 50, "extra": NaN}}',
+            id="ignored-nan",
+        ),
+        pytest.param(
+            '{"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", '
+            '"price": 50, "extra": Infinity}}',
+            id="ignored-positive-infinity",
+        ),
+        pytest.param(
+            '{"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", '
+            '"price": 50, "extra": -Infinity}}',
+            id="ignored-negative-infinity",
+        ),
+        pytest.param(
+            '{"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", '
+            '"price": 50, "extra": ' + "[" * 10000 + "0" + "]" * 10000 + "}}",
+            id="excessive-nesting",
+        ),
     ],
 )
 async def test_corrupt_entry_evidence_halts_before_startup_side_effects(tmp_path, payload):
