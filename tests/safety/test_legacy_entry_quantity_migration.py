@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -57,6 +58,110 @@ async def _started_bridge(tmp_path, broker: MockBroker):
     await oms.adopt_broker_positions()
     await bridge.start()
     return bridge, ledger, switch
+
+
+class _CountingBroker(MockBroker):
+    def __init__(self) -> None:
+        super().__init__(seed=1)
+        self.position_calls = 0
+        self.recent_fill_calls = 0
+
+    async def positions(self):
+        self.position_calls += 1
+        return await super().positions()
+
+    async def recent_fills(self, since, symbols=None):
+        self.recent_fill_calls += 1
+        return await super().recent_fills(since, symbols)
+
+
+def _unstarted_bridge(tmp_path):
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), deployed_strategies="swing")
+    bus = EventBus()
+    switch = KillSwitch()
+    broker = _CountingBroker()
+    ledger = TradeLedger(bus, tmp_path, settings=settings)
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+    bridge = SignalToOrderBridge(bus, oms, settings=settings, trade_ledger=ledger)
+    return bridge, bus, switch, broker, ledger, oms
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "{not-json",
+        "[]",
+        '{"WOW.AX": {"opened_at": "bad"}}',
+        '{"GOOD.AX": {"opened_at": "2026-07-20T00:00:00+00:00", "price": 50}, '
+        '"BAD.AX": {"opened_at": "bad", "price": 20}}',
+        '{"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", "price": "not-a-price"}}',
+        '{"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", "price": 50, '
+        '"fill_ids": "receipt"}}',
+        '{"WOW.AX": {"opened_at": "2026-07-20T00:00:00+00:00", "price": 50, '
+        '"price_source": "guess"}}',
+    ],
+)
+async def test_corrupt_entry_evidence_halts_before_startup_side_effects(tmp_path, payload):
+    path = tmp_path / "open_position_entries.json"
+    path.write_text(payload, encoding="utf-8")
+    before = path.read_bytes()
+    bridge, bus, switch, broker, ledger, oms = _unstarted_bridge(tmp_path)
+    subscriptions_before = {event: tuple(handlers) for event, handlers in bus._handlers.items()}
+    migration_calls = []
+    ledger.prepare_schema_migration = lambda: migration_calls.append(True)
+
+    await bridge.start()
+
+    assert switch.tripped is True
+    assert switch.reason == "position-entry evidence is unreadable"
+    assert bridge._entries == {}
+    assert bridge._entry_store_error is not None
+    assert broker.position_calls == broker.recent_fill_calls == 0
+    assert migration_calls == []
+    assert {
+        event: tuple(handlers) for event, handlers in bus._handlers.items()
+    } == subscriptions_before
+    assert oms._fill_watch_hint == set()
+    assert bridge._sweep_task is None and bridge._warm_task is None
+    assert path.read_bytes() == before
+    assert not path.with_name(path.name + ".bak-pre-quantity-migration").exists()
+
+
+@pytest.mark.asyncio
+async def test_unreadable_entry_file_halts_without_mutation(tmp_path, monkeypatch):
+    path = tmp_path / "open_position_entries.json"
+    path.write_text("private evidence", encoding="utf-8")
+    before = path.read_bytes()
+    original_read_text = Path.read_text
+
+    def unreadable_target(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("access denied")
+        return original_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", unreadable_target)
+    bridge, bus, switch, broker, ledger, oms = _unstarted_bridge(tmp_path)
+    subscriptions_before = {event: tuple(handlers) for event, handlers in bus._handlers.items()}
+    migration_calls = []
+    ledger.prepare_schema_migration = lambda: migration_calls.append(True)
+
+    await bridge.start()
+
+    assert switch.tripped is True
+    assert switch.reason == "position-entry evidence is unreadable"
+    assert bridge._entries == {}
+    assert bridge._entry_store_error is not None
+    assert broker.position_calls == broker.recent_fill_calls == 0
+    assert migration_calls == []
+    assert {
+        event: tuple(handlers) for event, handlers in bus._handlers.items()
+    } == subscriptions_before
+    assert oms._fill_watch_hint == set()
+    assert bridge._sweep_task is None and bridge._warm_task is None
+    assert path.read_bytes() == before
 
 
 @pytest.mark.asyncio

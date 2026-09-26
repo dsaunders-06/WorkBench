@@ -78,6 +78,10 @@ _ENTRY_QUANTITY_EPSILON = 1e-6
 _ENTRY_PRICE_TOLERANCE = 1e-4
 
 
+class EntryStoreError(ValueError):
+    """Position-entry evidence exists but cannot be read in full."""
+
+
 class _CorporateActions(Protocol):
     """The slice of the corporate-action monitor this bridge needs (M39).
 
@@ -423,7 +427,12 @@ class SignalToOrderBridge:
         # hold and time stop both treat an unknown entry as "never applies", so
         # a restart silently disarmed both rails on everything already held.
         self._entries_path = Path(self.settings.data_dir) / _ENTRIES_FILENAME
-        self._entries: dict[str, _Entry] = self._load_entries()
+        self._entry_store_error: EntryStoreError | None = None
+        try:
+            self._entries: dict[str, _Entry] = self._load_entries()
+        except EntryStoreError as exc:
+            self._entry_store_error = exc
+            self._entries = {}
         # Symbols warned about for having no sector mapping (item 44),
         # so the warning is once a session rather than once a signal.
         self._unmapped_sectors_logged: set[str] = set()
@@ -433,6 +442,12 @@ class SignalToOrderBridge:
         self._sweep_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
+        if self._entry_store_error is not None:
+            logger.error(
+                "Cannot start with unreadable position-entry evidence: %s", self._entry_store_error
+            )
+            self.oms.kill_switch.trip("position-entry evidence is unreadable")
+            return
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
         self.bus.subscribe(OrderFilledEvent, self._on_fill, critical=True)
@@ -1426,58 +1441,85 @@ class SignalToOrderBridge:
         self._save_entries()
 
     def _load_entries(self) -> dict[str, _Entry]:
-        """Entry records previously written to disk, whatever is held now.
-
-        A missing or unreadable file is not an error - it is a first run, or a
-        machine where the previous session never opened anything. It reads as
-        "no known entries", which is exactly the pre-M31b behaviour.
-        """
+        """Read every entry, allowing only a missing file as a clean first run."""
         try:
-            raw = json.loads(self._entries_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            source = self._entries_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return {}
+        except (OSError, UnicodeError) as exc:
+            raise EntryStoreError(f"cannot read {self._entries_path}: {exc}") from exc
+
+        def number(value: object, field: str) -> float:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{field} must be a number")
+            result = float(value)
+            if not math.isfinite(result) or result <= 0:
+                raise ValueError(f"{field} must be finite and positive")
+            return result
+
+        def optional_number(value: object, field: str) -> float | None:
+            return None if value is None else number(value, field)
+
+        def optional_text(value: object, field: str) -> str | None:
+            if value is None:
+                return None
+            if not isinstance(value, str):
+                raise ValueError(f"{field} must be a string or null")
+            return value or None
+
         entries: dict[str, _Entry] = {}
-        for symbol, row in raw.items():
-            try:
+        try:
+            raw = json.loads(source)
+            if not isinstance(raw, dict):
+                raise ValueError("entry root must be an object")
+            for symbol, row in raw.items():
+                if not isinstance(symbol, str) or not symbol:
+                    raise ValueError("entry symbol must be a nonempty string")
+                if not isinstance(row, dict):
+                    raise ValueError(f"{symbol} entry must be an object")
+                opened_at = row["opened_at"]
+                if not isinstance(opened_at, str):
+                    raise ValueError(f"{symbol}.opened_at must be an ISO timestamp")
+                opened = datetime.fromisoformat(opened_at)
+                if opened.tzinfo is None or opened.utcoffset() is None:
+                    raise ValueError(f"{symbol}.opened_at must include a timezone")
+                fill_ids = row.get("fill_ids", [])
+                if not isinstance(fill_ids, list) or any(
+                    not isinstance(value, str) or not value for value in fill_ids
+                ):
+                    raise ValueError(f"{symbol}.fill_ids must be a list of nonempty strings")
+                price_source = row.get("price_source")
+                if price_source not in (None, "fill", "reference"):
+                    raise ValueError(f"{symbol}.price_source is invalid")
                 entries[symbol] = _Entry(
-                    order_id=row.get("order_id"),
-                    quantity=float(row["quantity"]) if row.get("quantity") is not None else None,
-                    fill_ids=tuple(str(value) for value in (row.get("fill_ids") or ())),
-                    opened_at=datetime.fromisoformat(row["opened_at"]),
-                    price=float(row["price"]),
-                    stop_price=(
-                        float(row["stop_price"]) if row.get("stop_price") is not None else None
-                    ),
+                    order_id=optional_text(row.get("order_id"), f"{symbol}.order_id"),
+                    quantity=optional_number(row.get("quantity"), f"{symbol}.quantity"),
+                    fill_ids=tuple(fill_ids),
+                    opened_at=opened,
+                    price=number(row["price"], f"{symbol}.price"),
+                    stop_price=optional_number(row.get("stop_price"), f"{symbol}.stop_price"),
                     # .get, not [...]: every file written before M33 lacks this
                     # key, and a restart that discarded its entry dates over a
                     # missing target would disarm the churn rails to add one.
-                    target_price=(
-                        float(row["target_price"]) if row.get("target_price") is not None else None
-                    ),
+                    target_price=optional_number(row.get("target_price"), f"{symbol}.target_price"),
                     # Same reasoning for M49's addition. A file written before
                     # it names no strategy, and the fallback is resolved at
                     # restore time from what is actually deployed rather than
                     # guessed here.
-                    strategy=row.get("strategy") or None,
+                    strategy=optional_text(row.get("strategy"), f"{symbol}.strategy"),
                     # Same `.get` reasoning a third time (M44). A file written
                     # before this field existed names no reference price, and
                     # `None` there means UNKNOWN - never the entry price, which
                     # would report zero slippage on a trade nobody measured.
-                    reference_price=(
-                        float(row["reference_price"])
-                        if row.get("reference_price") is not None
-                        else None
+                    reference_price=optional_number(
+                        row.get("reference_price"), f"{symbol}.reference_price"
                     ),
                     # M175, `.get` for the fourth time: a pre-M175 record says
                     # nothing about where its price came from, and None is that.
-                    price_source=(
-                        row["price_source"]
-                        if row.get("price_source") in ("fill", "reference")
-                        else None
-                    ),
+                    price_source=price_source,
                 )
-            except (KeyError, TypeError, ValueError):
-                logger.warning("Ignoring an unreadable entry record for %s", symbol)
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise EntryStoreError(f"invalid entry evidence in {self._entries_path}: {exc}") from exc
         if entries:
             # M110. This said "for %d held position(s)", which asserts a fact
             # this method has no way to establish: it has read a JSON file and
