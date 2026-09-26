@@ -4,11 +4,14 @@ import csv
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
 
+from qat.application_lock import ApplicationLock, ApplicationLockUnavailable
 from qat.domain.performance import historical_correction
 from qat.domain.performance.historical_correction import (
     CorrectionRefused,
@@ -241,8 +244,8 @@ def test_cli_apply_requires_the_id_printed_by_the_reviewed_dry_run(tmp_path, mon
     monkeypatch.setattr(script, "APPROVED_PROPOSAL_SHA256", _sha(proposal))
     monkeypatch.setattr(
         script,
-        "_app_is_running",
-        lambda: pytest.fail("app state must not be queried before confirmation"),
+        "ApplicationLock",
+        lambda *args: pytest.fail("lock must not be acquired before confirmation"),
     )
     monkeypatch.setattr(
         sys,
@@ -263,3 +266,144 @@ def test_cli_apply_requires_the_id_printed_by_the_reviewed_dry_run(tmp_path, mon
 
     assert "requires --confirm-correction-id" in capsys.readouterr().out
     assert {path.name: path.read_bytes() for path in tmp_path.iterdir()} == before
+
+
+def _cli(tmp_path, monkeypatch, *, apply=True):
+    proposal, statement, ledger = _evidence(tmp_path)
+    script_path = Path(__file__).parents[3] / "scripts" / "apply_historical_correction.py"
+    spec = importlib.util.spec_from_file_location("qat_correction_lock_script", script_path)
+    assert spec is not None and spec.loader is not None
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    monkeypatch.setattr(script, "APPROVED_PROPOSAL_SHA256", _sha(proposal))
+    lock_path = tmp_path / "application.lock"
+    argv = [
+        str(script_path),
+        "--proposal",
+        str(proposal),
+        "--statement",
+        str(statement),
+        "--ledger",
+        str(ledger),
+        "--application-lock",
+        str(lock_path),
+    ]
+    if apply:
+        argv += [
+            "--apply",
+            "--confirm-correction-id",
+            _prepare(proposal, statement, ledger).correction_id,
+        ]
+    monkeypatch.setattr(sys, "argv", argv)
+    return script, proposal, statement, ledger, lock_path
+
+
+def test_cli_dry_run_does_not_acquire_lock(tmp_path, monkeypatch, capsys):
+    script, _, _, ledger, lock_path = _cli(tmp_path, monkeypatch, apply=False)
+    before = ledger.read_bytes()
+    monkeypatch.setattr(script, "ApplicationLock", lambda *args: pytest.fail("dry run locked"))
+    with ApplicationLock(lock_path):
+        assert script.main() == 0
+    assert "DRY RUN" in capsys.readouterr().out
+    assert ledger.read_bytes() == before
+
+
+def test_cli_apply_refuses_child_owner_before_backup_or_staging(tmp_path, monkeypatch, capsys):
+    script, _, _, ledger, lock_path = _cli(tmp_path, monkeypatch)
+    before = ledger.read_bytes()
+    ready = tmp_path / "owner.ready"
+    code = """
+import sys
+from pathlib import Path
+from qat.application_lock import ApplicationLock
+with ApplicationLock(Path(sys.argv[1])):
+    Path(sys.argv[2]).write_text('ready')
+    sys.stdin.read()
+"""
+    child = subprocess.Popen(
+        [sys.executable, "-c", code, str(lock_path), str(ready)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 15
+        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert ready.exists(), "child did not acquire lock"
+        snapshot = {
+            path.name: path.read_bytes() for path in tmp_path.iterdir() if path != lock_path
+        }
+        monkeypatch.setattr(
+            script, "write_candidate_for_audit", lambda *args: pytest.fail("staged")
+        )
+        monkeypatch.setattr(script, "apply_correction", lambda *args: pytest.fail("applied"))
+        assert script.main() == 1
+        assert "operational-data lock" in capsys.readouterr().out
+        assert {
+            path.name: path.read_bytes() for path in tmp_path.iterdir() if path != lock_path
+        } == snapshot
+        assert ledger.read_bytes() == before
+    finally:
+        try:
+            child.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            child.kill()
+            child.communicate(timeout=15)
+    assert child.returncode == 0
+    with ApplicationLock(lock_path):
+        pass
+
+
+@pytest.mark.parametrize("changed", ["proposal", "statement", "ledger"])
+def test_cli_apply_revalidates_all_evidence_after_acquiring_lock(
+    tmp_path, monkeypatch, capsys, changed
+):
+    script, proposal, statement, ledger, lock_path = _cli(tmp_path, monkeypatch)
+    target = {"proposal": proposal, "statement": statement, "ledger": ledger}[changed]
+
+    class ChangedWhileAcquiring(ApplicationLock):
+        def acquire(self):
+            super().acquire()
+            target.write_bytes(target.read_bytes() + b" ")
+
+    monkeypatch.setattr(script, "ApplicationLock", ChangedWhileAcquiring)
+    assert script.main() == 1
+    assert "SHA-256" in capsys.readouterr().out
+    assert not list(tmp_path.glob("*.bak-pre-*"))
+    assert not list(tmp_path.glob("*.tmp*"))
+    assert not list(tmp_path.glob("*.correction-*.json"))
+    with ApplicationLock(lock_path):
+        pass
+
+
+def test_cli_apply_holds_lock_through_staging_backup_replace_and_audit(tmp_path, monkeypatch):
+    script, _, _, ledger, lock_path = _cli(tmp_path, monkeypatch)
+    events = []
+
+    def guard(function, name):
+        def wrapped(*args, **kwargs):
+            with pytest.raises(ApplicationLockUnavailable), ApplicationLock(lock_path):
+                pass
+            events.append(name)
+            return function(*args, **kwargs)
+
+        return wrapped
+
+    monkeypatch.setattr(
+        historical_correction, "_write_synced", guard(historical_correction._write_synced, "write")
+    )
+    monkeypatch.setattr(
+        historical_correction.os, "replace", guard(historical_correction.os.replace, "replace")
+    )
+    monkeypatch.setattr(
+        historical_correction,
+        "audit_closed_trades",
+        guard(historical_correction.audit_closed_trades, "audit"),
+    )
+    assert script.main() == 0
+    assert events == ["write", "audit", "write", "write", "replace", "audit", "replace"]
+    assert audit_closed_trades(ledger) == []
+    with ApplicationLock(lock_path):
+        pass
