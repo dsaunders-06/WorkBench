@@ -1,0 +1,29 @@
+{
+  "watermark": "2026-09-25T12:00:00+00:00",
+  "absorbed": {
+    "6144a3eb35a64c8eb3d00c07f73b46c4": {
+      "filled_at": "2026-09-25T12:00:00+00:00",
+      "quantity": 4.0,
+      "price": 101.0,
+      "quantity_known": true
+    },
+    "998877": {
+      "filled_at": "2026-09-25T12:00:00+00:00",
+      "quantity": 4.0,
+      "price": 101.0,
+      "quantity_known": true
+    }
+  },
+  "pending_deliveries": {
+    "998877|WOW.AX|buy|10": {
+      "order_id": "998877",
+      "symbol": "WOW.AX",
+      "side": "buy",
+      "quantity": 10.0,
+      "price": 102.0,
+      "filled_at": "2026-09-25T12:00:01+00:00",
+      "operator": "broker",
+      "record_only": false
+    }
+  }
+}

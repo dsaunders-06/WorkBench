@@ -57,6 +57,9 @@ class _RenamingBroker(MockBroker):
         self.assigned.append(placed.order_id)
         if not self._fills_immediately and not placed.is_protective_stop:
             placed.status = "transmitted"
+            placed.filled_quantity = 0.0
+            placed.filled_price = None
+            self._positions.pop(placed.symbol, None)
         elif placed.status == "filled":
             # Alpaca's closed-order query returns EVERY filled order, including
             # the ones this app sent. That is the mechanism: absorb sees its

@@ -1,13 +1,8 @@
-"""Close one app-managed position in full, from the operator's hand.
+"""Manual full-close requests and operator results.
 
-⚠️ THE ORDER OF OPERATIONS IS THE WHOLE SAFETY OF THIS. Every position carries
-two OCA-linked resting SELL orders for its full quantity. Selling without
-cancelling them first leaves them resting against a position no longer held -
-they execute and put the account SHORT.
-
-Separate from `oms.py` deliberately: that file carries the reconciliation rail,
-the resting-order scan and fill absorption. This choreographs one irreversible
-operation with its own recovery branch, which is a different job.
+OMS owns protection cancellation, durable recovery intent and transmission.
+The closer preserves the managed-position preconditions and reports issued
+versus confirmed cancellations without sending recovery orders itself.
 """
 
 from __future__ import annotations
@@ -17,46 +12,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 
-from qat.data.broker.adapter import BrokerAdapter, Order, RestingOrder, is_protective_leg
+from qat.data.broker.adapter import BrokerAdapter, Order, is_protective_leg
 from qat.domain.oms.oms import OMS
-from qat.domain.oms.resting_orders import TERMINAL_STATUSES, WORKING_STATUSES
+from qat.domain.oms.resting_orders import TERMINAL_STATUSES
 from qat.domain.oms.signal_bridge import PositionEntry
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
 logger = logging.getLogger(__name__)
 
 _SCRIPT_HINT = "scripts/flatten_positions.py"
-
-# ⚠️ A SELL THAT IS WORKING AT THE BROKER IS A SUCCESS, NOT A FAILURE.
-#
-# `ib_translate._IB_STATUS_MAP` maps `Submitted`, `PreSubmitted`,
-# `PendingSubmit`, `ApiPending` and `PendingCancel` ALL to `"transmitted"`;
-# only `Filled` maps to `"filled"`. A normal IBKR market sell therefore comes
-# back `"transmitted"`, and a `!= "filled"` test called that a failed sell: it
-# ran recovery, re-read the still-unfilled full position, and placed a NEW
-# full-size OCA bracket over a sell already in flight. The sell filled, the
-# account went flat, and the fresh bracket rested orphaned - it fires and the
-# account goes SHORT.
-#
-# `MockBroker` fills synchronously, which is the only reason the original read
-# as correct in the tests. IBKR does not.
-_SELL_IS_WORKING_OR_DONE = frozenset({"transmitted", "filled"})
-
-# IBKR order types (`order.orderType`, carried RAW through
-# `from_ib_open_order`) that a protective bracket leg can be. A held position's
-# bracket is a STP and a LMT, OCA-linked.
-#
-# ⚠️ Residual, recorded rather than hidden: a manual resting limit SELL placed
-# by hand in TWS is indistinguishable from a take-profit leg by this test, and
-# would be cancelled as one. That is strictly safer than the alternative
-# (treating it as an intruder and refusing every close on a symbol whose
-# target leg is a plain LMT), and the spec's "known interaction" section
-# already records that hand-placed orders on a managed symbol are outside what
-# this button reasons about.
-# Moved beside `RestingOrder` so the AUTONOMOUS exit path can share it - see
-# `adapter.is_protective_leg`. Re-exported under the old private name so this
-# module's many references read unchanged.
-_is_protective_leg = is_protective_leg
 
 
 class CloseOutcome(Enum):
@@ -68,69 +32,14 @@ class CloseOutcome(Enum):
 
 @dataclass(frozen=True, slots=True)
 class CloseResult:
+    """Confirmed removals and issued requests are separate operator facts."""
+
     outcome: CloseOutcome
     symbol: str
     quantity: float
-    # Legs a cancel was ISSUED for and which are not still resting afterwards.
-    #
-    # ⚠️ Non-empty on a REFUSED result means the refusal came AFTER protection
-    # was already removed, which is a materially different event from a
-    # refusal that changed nothing - the dashboard routes it to a blocking
-    # dialog for exactly that reason. When `detail` says the post-cancel read
-    # could not be trusted, these are the legs whose outcome is UNKNOWN rather
-    # than confirmed gone; the wording carries that and this tuple cannot.
     cancelled_legs: tuple[str, ...]
     detail: str
-    # Legs a cancel was SENT for, whatever came back - a superset of
-    # `cancelled_legs`.
-    #
-    # ⚠️ THIS, NOT `cancelled_legs`, IS "SOMETHING ALREADY HAPPENED".
-    # `close_position` used to key that decision on `cancelled_legs`, i.e. on
-    # legs CONFIRMED GONE, so a close whose cancels went out and came back
-    # confirming nothing - both legs still settling in `PendingCancel`, or the
-    # second cancel raising after the first was accepted - reported an EMPTY
-    # tuple, fell through to a plain refusal, and reached the operator as a
-    # NON-BLOCKING information dialog saying nothing had been cancelled. The
-    # accepted cancel then lands and the position is part or wholly bare with
-    # nothing on screen.
-    #
-    # The two are kept apart rather than merged because they mean different
-    # things and the operator acts differently on each: `cancelled_legs` is
-    # protection that is definitely OFF, this is protection whose state is
-    # UNKNOWN. Both are serious; only the first is certain.
     issued_legs: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class _CancelReport:
-    """What `_cancel_legs` actually did, rather than a bare pass/fail.
-
-    `_cancel_legs` used to return `(captured, failure_message)`, and
-    `close_position` funnelled every failure through `_refuse` - which reports
-    `cancelled_legs=()` and attempts no recovery. Three of those branches run
-    AFTER `cancel_order` has already gone out, so the operator was told
-    "NOTHING was cancelled and NOTHING was sold" over a position whose bracket
-    was half or wholly stripped.
-    """
-
-    captured: list[RestingOrder]
-    # Cancels that returned without raising, minus anything still resting.
-    cancelled: tuple[str, ...]
-    # Cancels that returned without raising, FULL STOP - the ones that went
-    # out. `cancelled` is this minus the survivors, and can be empty while this
-    # is not: that is a cancel whose outcome is unknown, not a cancel that did
-    # not happen. Routing on `cancelled` instead of this is why such a close
-    # reported "nothing happened".
-    issued: tuple[str, ...]
-    # Working orders for this symbol AFTER the cancels.
-    survivors: tuple[str, ...]
-    # Working orders belonging to OTHER symbols before the cancels. The
-    # discriminator for an empty read: those cannot have vanished too.
-    others_working_before: int
-    # False when the post-cancel read collapsed the whole book to empty while
-    # other symbols' orders were working. Nothing may be re-placed on it.
-    book_is_credible: bool
-    failure: str | None
 
 
 class PositionCloser:
@@ -151,34 +60,8 @@ class PositionCloser:
         return CloseResult(CloseOutcome.REFUSED, symbol, 0.0, (), detail)
 
     def believed_legs_for(self, symbol: str) -> tuple[Order, ...]:
-        """The protective leg(s) this app currently BELIEVES are resting for
-        symbol - synchronous, from the OMS's own local record, for a
-        confirmation dialog to itemise before the operator commits.
-
-        ⚠️ NOT broker truth, and the name says so on its own - unlike
-        `_held_quantity` (also a preview of the broker's own fact), this reads
-        `self.oms.orders()`, the app's LOCAL record, filtered on side/type/
-        status. `_cancel_legs` cancels whatever `_working_orders()` returns
-        from the BROKER instead, with no such filter, so this preview can
-        differ from what actually gets cancelled two ways: it can be STALE,
-        and a working order of a different side or type is cancelled there
-        without ever appearing here. Public rather than a leading underscore
-        despite that gap, because the dashboard (a different module) is a
-        legitimate caller of exactly this preview, for exactly this dialog -
-        an underscore would misrepresent a supported cross-module API as
-        internal-only. The name carries the warning a leading underscore
-        would otherwise have to stand in for.
-
-        Deliberately NOT `_working_orders()`: that reads the broker and is
-        async, and a Qt slot cannot await before opening its confirm dialog.
-        `close_position` itself re-reads and re-verifies the broker before
-        cancelling or selling anything, exactly as `_cancel_legs` requires -
-        this method is never consulted on that path, only by the dialog that
-        precedes it.
-
-        A bracket is ONE `Order` record per entry (`submit_protective_stop`
-        carries both `stop_price` and `take_profit_price` on it), not two -
-        so this normally returns zero or one order, not two.
+        """Return the app's local protective-order preview for the confirmation dialog. The OMS
+        re-reads broker truth at sign-off; this preview never authorises cancellation.
         """
         return tuple(
             order
@@ -190,352 +73,17 @@ class PositionCloser:
         )
 
     async def _held_quantity(self, symbol: str) -> float:
-        """The BROKER's quantity, SIGNED. App records are a claim; this is the
-        fact.
-
-        ⚠️ NOT `abs()`. It was, and that made a SHORT position read as held:
-        `close_position` would then send another SELL, DOUBLING the short
-        rather than covering it. A negative here is refused by the caller.
+        """Read the broker's signed holding. A negative quantity must never be closed by sending
+        another sell.
         """
         for position in await self.broker.positions():
             if position.symbol == symbol:
                 return position.quantity
         return 0.0
 
-    async def _working_orders(self) -> list[RestingOrder]:
-        """Every WORKING order, account-wide, read with `open_orders()`.
-
-        ⚠️ THE CAPTURE PREDICATE, AND ONLY THE CAPTURE PREDICATE. It answers
-        "what is working, so what must I cancel and what levels would I
-        re-place" - not "is it gone". Verifying a cancel with this read sent a
-        SELL over two still-resting legs; see `_live_orders`.
-
-        NOT `openTrades()`: that read is clientId-scoped and on 24 August
-        reported zero protective stops while sixteen were resting.
-        """
-        orders = await self.broker.open_orders()
-        return [o for o in orders if o.status in WORKING_STATUSES]
-
-    async def _live_orders(self) -> list[RestingOrder]:
-        """Everything the broker is STILL SHOWING that has not finished.
-
-        ⚠️ THE VERIFICATION PREDICATE, AND IT IS NOT `_working_orders()`.
-        Using that one to answer "is the leg gone?" was the round-3 Critical.
-
-        `WORKING_STATUSES` is {Submitted, PreSubmitted, PendingSubmit,
-        ApiPending, ApiUpdate} - raw IBKR statuses, since `from_ib_open_order`
-        passes `str(trade.orderStatus.status)` straight through - and
-        **`PendingCancel` is not among them**. So the post-cancel read DROPPED
-        any leg sitting in `PendingCancel`, `survivors` came back empty, the
-        "stop dead if a leg survives" step passed, and the market SELL went out
-        with both OCA legs STILL RESTING at the broker. A short position,
-        reported to the operator as a clean close.
-
-        ⚠️ AND IT FIRED ON THE HAPPY PATH. `PendingCancel` is BOTH the
-        19 August rejected-cancel state (error 10147, the order belongs to
-        another clientId) AND the ordinary transient of a cancel that IS being
-        honoured. It needed nothing worse than normal IBKR cancel latency.
-
-        ⚠️ THIS REPO HAD ALREADY DOCUMENTED THE TRAP, TWICE - `adapter.py:151`
-        and `ib_adapter.py:638` both say that after a cancel IBKR STILL SHOWS
-        the order reporting `PendingCancel`, and that VISIBLE IS NOT GONE.
-
-        So this fails CLOSED and the sets are asymmetric on purpose: an order
-        is gone only if it is ABSENT from `open_orders()` entirely or reports a
-        TERMINAL status. Anything else still visible is a SURVIVOR - it can
-        still fill, which is the only property that matters here.
-        """
-        orders = await self.broker.open_orders()
-        return [o for o in orders if o.status not in TERMINAL_STATUSES]
-
-    async def _cancel_legs(self, symbol: str) -> _CancelReport:
-        """Cancel every working leg, then RE-READ to prove they are gone.
-
-        ⚠️ The cancel's own response is not evidence. On 19 August one reported
-        PendingCancel while being rejected outright (error 10147).
-
-        ⚠️ Nor is an empty re-read, on its own. `IBAdapter.open_orders()`
-        returns `[]` for two different situations - a genuinely clean broker,
-        and a client that could not answer (not yet connected, or too old to
-        carry `reqAllOpenOrdersAsync`) - and its own docstring says so. A
-        connection blip landing between the cancel and this re-read produces
-        the SAME `[]` a clean book would, and `open_orders()` gives this layer
-        no way to tell the two apart.
-
-        The discriminator: read the WHOLE book, not just `symbol`, before and
-        after cancelling. If OTHER symbols' orders were working beforehand and
-        the account-wide total has collapsed to zero afterward, that emptiness
-        is not credible - those orders cannot all have vanished along with the
-        ones just cancelled. Treat that as UNVERIFIED and refuse, distinctly
-        from "a leg is still resting": one means the read could not be
-        trusted, the other means the broker was asked and answered.
-        """
-        before = await self._working_orders()
-        mine = [o for o in before if o.symbol == symbol]
-        others_before = len(before) - len(mine)
-
-        def refused_untouched(detail: str) -> _CancelReport:
-            """A refusal that precedes every cancel: nothing was touched."""
-            return _CancelReport([], (), (), (), others_before, True, detail)
-
-        # ⚠️ M139's precondition, and it comes BEFORE any cancel. "No working
-        # order for the symbol beyond its protective legs." This loop used to
-        # cancel EVERY working order on the symbol, unfiltered by side or by
-        # order type - so a working BUY would have been silently cancelled and
-        # the close proceeded on top of it. On 24 August a working order
-        # re-transmitted every 60s left the account holding 4x the intended
-        # position - never send while another one works.
-        intruders = [o for o in mine if not _is_protective_leg(o)]
-        if intruders:
-            described = ", ".join(f"{o.order_id} ({o.side} {o.order_type})" for o in intruders)
-            return refused_untouched(
-                f"{len(intruders)} working order(s) for {symbol} are not protective "
-                f"legs: {described}. NOTHING was cancelled and NOTHING was sold - "
-                f"this close cancels a bracket, and it will not act while another "
-                f"order for the same symbol is working. Deal with that order first."
-            )
-
-        captured = mine
-
-        # ⚠️ ZERO LEGS ON A HELD POSITION IS A FAILED READ, NOT A CLEAN BOOK.
-        #
-        # `IBAdapter.open_orders()` returns `[]` for BOTH "the book is clean"
-        # and "the client could not answer" - its own docstring says so, and
-        # this layer cannot tell them apart. If that happens on the FIRST
-        # read, `before` and `captured` are both empty: the account-wide
-        # collapse guard below cannot fire (it needs orders to have collapsed
-        # FROM something), no leg can survive a cancel that never ran, and the
-        # sell would have gone out with both legs still resting - the exact
-        # short-position trap this whole sequence exists to prevent. A
-        # read-only probe of TWS did exactly this on 1 September, reporting
-        # "0 open orders" against a book carrying twenty.
-        #
-        # Every position this app holds carries protection, so for a symbol
-        # the BROKER says is held, zero is not a credible answer. Cross-check
-        # against the app's own belief and refuse.
-        if not captured:
-            believed = len(self.believed_legs_for(symbol))
-            return refused_untouched(
-                f"the broker holds {symbol} but reports NO working orders for it, and "
-                f"this app believes {believed} protective leg(s) are resting. A held "
-                f"position in this system always carries protection, so an empty read "
-                f"means the read FAILED, not that the position is bare - open_orders() "
-                f"returns the same empty list when the client cannot answer as when the "
-                f"book is clean. NOTHING was cancelled and NOTHING was sold; selling on "
-                f"this read could leave both legs resting and put the account short. "
-                f"If {symbol} really is held with no protection at all, this button "
-                f"cannot close it - it has no bracket to cancel and will refuse every "
-                f"time. Use {_SCRIPT_HINT} for that."
-            )
-
-        # Cancels that went out without the call itself raising. NOT proof they
-        # took effect - 19 August, error 10147 - which is what the re-read below
-        # is for. Recorded per leg so a raise on the SECOND one still reports the
-        # first as issued, rather than reporting the whole attempt as untouched.
-        issued: list[str] = []
-        cancel_failure: str | None = None
-        for leg in captured:
-            try:
-                await self.broker.cancel_order(leg.order_id)
-            except Exception as exc:  # noqa: BLE001 - report it, never proceed
-                cancel_failure = f"cancel of leg {leg.order_id} failed: {exc}"
-                break
-            issued.append(leg.order_id)
-
-        # ⚠️ `_live_orders`, NOT `_working_orders`. This read asks "is it
-        # GONE", and a leg in `PendingCancel` is neither working nor finished -
-        # it is VISIBLE AT THE BROKER AND CAN STILL FILL. Reading it with the
-        # capture predicate dropped it, found no survivors, and sold over it.
-        after = await self._live_orders()
-        survivors = tuple(o.order_id for o in after if o.symbol == symbol)
-        book_is_credible = bool(after) or others_before == 0
-        # What is CONFIRMED gone. A leg whose cancel was issued and which is
-        # still resting is not cancelled, whatever the cancel's own response said.
-        gone = tuple(order_id for order_id in issued if order_id not in survivors)
-
-        def report(detail: str | None) -> _CancelReport:
-            return _CancelReport(
-                captured,
-                gone,
-                tuple(issued),
-                survivors,
-                others_before,
-                book_is_credible,
-                detail,
-            )
-
-        if cancel_failure is not None:
-            return report(cancel_failure)
-        if not book_is_credible:
-            return report(
-                f"cancel of {symbol} could NOT BE VERIFIED: {len(before)} order(s) were "
-                f"working account-wide before the cancel but only {len(captured)} belonged "
-                f"to {symbol}, yet the post-cancel read reports the ENTIRE book empty. "
-                f"Other positions' orders cannot have vanished too, so this read is not "
-                f"credible - most likely a connection blip, not a clean broker. NOTHING "
-                f"was sold. This is a READ FAILURE, distinct from a leg still resting: it "
-                f"means the cancel's outcome is unknown, not that it succeeded."
-            )
-        if survivors:
-            return report(
-                f"{len(survivors)} leg(s) still resting after the cancel "
-                f"({', '.join(survivors)}). NOTHING was sold - selling now would leave "
-                f"them resting against a position no longer held and put the account short."
-            )
-        return report(None)
-
-    async def _refuse_after_cancels(self, symbol: str, report: _CancelReport) -> CloseResult:
-        """A refusal raised AFTER `cancel_order` has already gone out.
-
-        ⚠️ NOT THE SAME EVENT AS AN ORDINARY REFUSAL, and treating it as one
-        was defect N3. `_refuse` reports `cancelled_legs=()` and attempts no
-        recovery, so all three post-cancel branches told the operator "NOTHING
-        was cancelled and NOTHING was sold" over a position whose bracket had
-        been half or wholly stripped. The survivors branch was the worst of
-        them: it listed the legs still resting and never mentioned that the
-        OTHER one was already gone - a bare downside reading as reassuring, in
-        a non-blocking information dialog.
-
-        Three cases, and they are NOT interchangeable:
-
-        1. **The post-cancel read is not credible.** Nothing may be re-placed
-           on it. The legs may still be resting, and a fresh full-size bracket
-           over them is the short trap approached from the other side. Say so,
-           name the legs the cancel went out for, and say their outcome is
-           UNKNOWN.
-        2. **A leg is still resting.** The position keeps part of its
-           protection, so re-arming would again stack a full-size sell on a
-           resting one. Name what is gone as well as what remains.
-        3. **Nothing rests for this symbol.** The position is BARE and the
-           bracket must go back - `_recover` does exactly that, and its own
-           guards still apply.
-
-        The outcome stays REFUSED in cases 1 and 2, as the spec's failure
-        table requires ("Legs untouched or partially cancelled - reported
-        exactly"). What changes is that `cancelled_legs` is now populated, and
-        the dashboard renders a REFUSED result carrying cancelled legs as a
-        BLOCKING error rather than an information dialog.
-
-        ⚠️ AND "CONFIRMED GONE" AND "SENT, OUTCOME UNKNOWN" ARE DIFFERENT
-        THINGS TO SAY. `report.cancelled` can be EMPTY here while cancels
-        genuinely went out - every leg still settling in `PendingCancel` is
-        exactly that, and it is the ordinary shape of an honoured cancel read a
-        moment too early. Text that says "leg(s)  WERE cancelled and are gone"
-        over an empty list is worse than useless, so each branch below states
-        what is confirmed and what is merely issued, separately.
-        """
-        detail = report.failure or "the close was refused after the cancels went out"
-        cancelled_text = ", ".join(report.cancelled)
-        issued_text = ", ".join(report.issued)
-        # What is CONFIRMED gone, in words - or an honest statement that
-        # nothing is, which is a different claim from "nothing was cancelled".
-        if report.cancelled:
-            confirmed_text = f"leg(s) {cancelled_text} WERE cancelled and are CONFIRMED GONE"
-        else:
-            confirmed_text = (
-                f"NO LEG IS CONFIRMED GONE, but a cancel WAS SENT for leg(s) "
-                f"{issued_text} and its outcome is UNKNOWN - a cancel still "
-                f"settling lands moments later"
-            )
-
-        if not report.book_is_credible:
-            logger.critical(
-                "MANUAL CLOSE of %s: %s Cancels had ALREADY been issued for %s, and "
-                "their outcome is unknown. NO bracket was re-placed - the legs may "
-                "still be resting. Check the broker by hand.",
-                symbol,
-                detail,
-                issued_text,
-            )
-            return CloseResult(
-                CloseOutcome.REFUSED,
-                symbol,
-                0.0,
-                report.cancelled,
-                f"{detail} A cancel had ALREADY been sent for leg(s) {issued_text}, "
-                f"so this is not 'nothing happened': their true state is UNKNOWN, and "
-                f"{symbol} may be holding with part or all of its bracket gone. No "
-                f"bracket was re-placed, because placing one on a read that answered "
-                f"nothing could stack it on legs still resting. Check the broker by "
-                f"hand before doing anything else.",
-                issued_legs=report.issued,
-            )
-
-        if report.survivors:
-            logger.critical(
-                "MANUAL CLOSE of %s: %s %s; %s still rest. Nothing was sold and no "
-                "bracket was re-placed. The position is only partly protected.",
-                symbol,
-                detail,
-                confirmed_text,
-                ", ".join(report.survivors),
-            )
-            return CloseResult(
-                CloseOutcome.REFUSED,
-                symbol,
-                0.0,
-                report.cancelled,
-                f"{detail} ⚠️ This is NOT 'nothing happened': {confirmed_text}. "
-                f"{symbol} still shows {len(report.survivors)} leg(s) at the broker "
-                f"({', '.join(report.survivors)}) - a leg reporting PendingCancel is "
-                f"VISIBLE AND CAN STILL FILL, so it is counted as resting, not as "
-                f"gone. No bracket was re-placed, because a fresh full-size bracket "
-                f"stacked on a leg still resting is the same short trap from the other "
-                f"side. Deal with this position by hand, or use {_SCRIPT_HINT}.",
-                issued_legs=report.issued,
-            )
-
-        # Nothing rests for this symbol and the read is credible: BARE.
-        logger.critical(
-            "MANUAL CLOSE of %s: %s %s, and NOTHING rests for this symbol - the "
-            "position is BARE. Re-placing the bracket.",
-            symbol,
-            detail,
-            confirmed_text,
-        )
-        return await self._recover(symbol, report, f"{detail} {confirmed_text}")
-
     async def _sign_off_or_reread(self, order: Order, operator: str) -> Order | None:
-        """Sign `order` off - and treat an order ALREADY signed off as what it
-        is, which is a SUCCESS.
-
-        ⚠️ THIS CLOSER DOES NOT OWN SIGN-OFF, AND ASSUMING IT DID WAS A
-        CRITICAL DEFECT.
-
-        `OMS._announce_pending` publishes `OrderPendingSignoffEvent`, and
-        `EventBus.publish` AWAITS its handlers (`asyncio.gather` over the
-        handler coroutines) - so a subscriber runs to completion INSIDE
-        `submit_exit_order` and `submit_protective_stop`, before either
-        returns. `AutonomousExecutor._on_pending` is subscribed from
-        `start()`, and `AutonomyGate.evaluate` allows EVERY sell
-        unconditionally ("risk-reducing orders are not gated on appetite
-        limits") and every protective stop unconditionally as well
-        (`is_protective_stop`, which outranks even the closed-session check).
-
-        In `execution_mode="auto"` the executor has therefore already signed
-        the order off and handed it to the broker by the time this method is
-        called. `OMS._sign_off_locked` then raises `ValueError` - from the
-        "not pending sign-off" check, or from the `_transmitted` duplicate
-        guard behind it - and the ORIGINAL code let that escape:
-
-        * out of `close_position`, into the dashboard's `except`, which told
-          the operator "The close FAILED ... held with NO STOP" over a sell
-          that was in flight with the legs correctly gone;
-        * out of `_recover`'s `submit_protective_stop` block, into the broad
-          `except Exception`, which reported UNPROTECTED and "re-place it by
-          hand now" over a bracket that IS live. An operator obeying that
-          hand-places a SECOND full-size protective sell - the SHORT trap this
-          whole feature exists to prevent, walked into from the other side.
-
-        So: re-read the order and judge it by its ACTUAL status. Returns None
-        only when the order cannot be re-read at all, which the callers treat
-        as the failure it is.
-
-        ⚠️ The `except` is NOT defensive padding around an impossible case.
-        `tests/safety/test_manual_close_end_to_end.py::
-        test_autonomy_signs_the_exit_off_inside_submit_exit_order` pins the
-        mechanism; if that ever stops holding, this branch becomes dead code
-        and should be revisited rather than left.
+        """Sign the approved order, or re-read it if another event handler already signed it. A
+        competing sign-off does not justify retransmission.
         """
         try:
             return await self.oms.sign_off(order.order_id, operator)
@@ -574,18 +122,9 @@ class PositionCloser:
         operator: str,
         quantity: float | None = None,
     ) -> CloseResult:
-        """⚠️ There is NO `acknowledge_halt`, and its absence is the fix.
-
-        The first version let an operator override the kill switch behind a
-        second confirmation. That could not work, because the halt cannot be
-        honoured half-way: `_cancel_legs` calls `broker.cancel_order()`
-        DIRECTLY and never passes sign-off, so the cancel succeeded during a
-        halt; the sell goes through `sign_off`, which `OMS._sign_off_locked`
-        rejects unconditionally while the switch is tripped; and re-protecting
-        needs sign-off too, so recovery was rejected for the same reason. The
-        sequence was: legs cancelled, nothing sold, bracket unrestorable - the
-        operator left holding the full position with the STOP DELETED, at the
-        exact moment the system had already decided something was wrong.
+        """Request a full manual close through the shared OMS safety boundary. Preflight refusal
+        is reversible; only OMS sign-off may cancel protection, send the exit or restore its
+        captured stop.
         """
         if quantity is not None:
             return self._refuse(
@@ -594,8 +133,6 @@ class PositionCloser:
                 "would leave the remainder needing a re-placed bracket.",
             )
 
-        # ⚠️ FIRST, and before the broker is touched at all. Every refusal
-        # below this line is cheap; a refusal AFTER `_cancel_legs` is not.
         if self.kill_switch.tripped:
             return self._refuse(
                 symbol,
@@ -618,13 +155,6 @@ class PositionCloser:
         if held == 0:
             return self._refuse(symbol, f"{symbol} is not held at the broker")
 
-        # ⚠️ BOUND ONCE, HERE, BEFORE ANYTHING IS CANCELLED. This is not a
-        # style preference. `runtime._LiveEntries` reads THROUGH to
-        # `SignalToOrderBridge.position_entries()` on every access, and the
-        # bridge POPS a symbol's entry the moment it observes the position
-        # close - so a second lookup, taken after `_cancel_legs`, can raise
-        # `KeyError` with the protection already deleted and nothing on
-        # screen. One lookup, taken while refusing is still free.
         entry = self.entries.get(symbol)
         if entry is None:
             return self._refuse(
@@ -633,351 +163,113 @@ class PositionCloser:
                 f"trade and no R-multiple. Use {_SCRIPT_HINT} instead.",
             )
 
-        report = await self._cancel_legs(symbol)
-        if report.failure is not None:
-            # ⚠️ A refusal raised AFTER cancel_order has already run is NOT the
-            # same event as one raised before it, and reporting both as a plain
-            # `_refuse` was defect N3: `cancelled_legs=()` and no recovery
-            # attempt, over a position whose bracket had been half or wholly
-            # stripped.
-            #
-            # ⚠️ KEYED ON `issued`, NOT `cancelled`. It was `cancelled` - legs
-            # CONFIRMED GONE - so a close whose cancels went out and confirmed
-            # NOTHING fell through here into a plain refusal reporting
-            # `cancelled_legs=()`, which the dashboard renders as a
-            # non-blocking information dialog. The accepted cancel then lands
-            # and the position is part or wholly bare with nothing on screen.
-            # "A cancel was sent" is the question; "was it confirmed" is
-            # exactly what is unknown, and cannot be the gate on saying so.
-            if report.issued:
-                return await self._refuse_after_cancels(symbol, report)
-            return self._refuse(symbol, report.failure)
-        cancelled = report.cancelled
+        live = [
+            o
+            for o in await self.broker.open_orders()
+            if o.symbol == symbol and o.status not in TERMINAL_STATUSES
+        ]
+        if not live:
+            return self._refuse(
+                symbol,
+                (
+                    f"The broker reports no protective legs; this app believes "
+                    f"{len(self.believed_legs_for(symbol))} are resting. Verify the position "
+                    f"and use {_SCRIPT_HINT} for an unprotected holding."
+                ),
+            )
+        intruders = [o for o in live if not is_protective_leg(o)]
+        if intruders:
+            return self._refuse(
+                symbol,
+                "Non-protective orders are working: " + ", ".join(o.order_id for o in intruders),
+            )
 
-        quantity = await self._held_quantity(symbol)
-        if quantity < 0:
-            # Cannot happen from a long that was verified long moments ago,
-            # which is exactly why it is CRITICAL rather than a quiet refusal:
-            # the protection has already been cancelled and the account is on
-            # the wrong side.
-            logger.critical(
-                "MANUAL CLOSE of %s: the broker now reports a SHORT %g after the "
-                "legs were cancelled. Nothing was sold. Intervene by hand.",
-                symbol,
-                abs(quantity),
+        order = await self.oms.submit_exit_order(symbol, held, entry.price, reason="manual_close")
+        signed: Order | None = order
+        if order.status == "pending_signoff":
+            signed = await self._sign_off_or_reread(order, operator)
+        attempt = self.oms.exit_attempt(order.order_id)
+        transmission_uncertain = signed is not None and (
+            self.oms.transmission_uncertain(order.order_id)
+            or self.oms.transmission_uncertain(signed.order_id)
+        )
+        if (
+            signed is not None
+            and not transmission_uncertain
+            and (
+                signed.status == "transmitted"
+                or (
+                    signed.status == "filled"
+                    and signed.filled_quantity is not None
+                    and signed.filled_quantity > 0
+                    and signed.filled_price is not None
+                )
             )
-            return CloseResult(
-                CloseOutcome.UNPROTECTED,
-                symbol,
-                0.0,
-                cancelled,
-                f"{len(cancelled)} leg(s) were cancelled and the broker then reported "
-                f"{symbol} SHORT {abs(quantity):g}. NOTHING was sold - a sell would "
-                f"deepen the short. Intervene by hand now.",
-                issued_legs=report.issued,
-            )
-        if quantity == 0:
-            # Nothing to sell, and that is a success rather than an error -
-            # but WHICH of the two things happened is not knowable from here,
-            # and the wording must not pick one. "Already flat after the legs
-            # were cancelled" implied the cancels did it; a leg may equally
-            # have FILLED during the race, which means the position closed at
-            # the stop or the target rather than at market and lands in the
-            # ledger by a different path.
+        ):
+            if signed.status == "filled":
+                detail = f"The broker reports {signed.filled_quantity:g} {symbol} FILLED."
+            elif signed.filled_quantity is not None and signed.filled_quantity > 0:
+                detail = (
+                    f"The broker confirms {signed.filled_quantity:g} {symbol} filled; "
+                    f"{max(0.0, signed.quantity - signed.filled_quantity):g} shares remain "
+                    "on the WORKING sell order."
+                )
+            else:
+                detail = (
+                    f"The market sell of {held:g} {symbol} is WORKING at the broker; "
+                    "the broker has not reported a fill yet."
+                )
             return CloseResult(
                 CloseOutcome.CLOSED,
                 symbol,
-                0.0,
-                cancelled,
-                f"{symbol} was already flat when the broker was re-read: either a "
-                f"protective leg FILLED during the cancel, or the position was "
-                f"already gone before it. Nothing was sold. Check which - the two "
-                f"close at different prices.",
-                issued_legs=report.issued,
+                held,
+                attempt.cancelled,
+                detail,
+                issued_legs=attempt.issued,
             )
-
-        order = await self.oms.submit_exit_order(
-            symbol,
-            quantity,
-            entry.price,
-            reason="manual_close",
-            # `_cancel_legs` above already did this, with a re-read and the
-            # recovery `_recover` needs. Letting the OMS repeat it would have
-            # two layers judging the same broker state.
-            legs_already_released=True,
-        )
-        if order.status == "rejected":
-            return await self._recover(symbol, report, "the exit order was rejected")
-
-        # ⚠️ Signed off as the OPERATOR, bypassing the AutonomyGate. The gate
-        # decides whether the SYSTEM may act unattended; a human has already
-        # approved this specific order in the dialog. It must never queue in the
-        # blotter for a second sign-off.
-        #
-        # ⚠️ ...and it does NOT own sign-off. In auto mode the autonomous
-        # executor has already signed this exit off, synchronously, inside
-        # `submit_exit_order` above. See `_sign_off_or_reread`.
-        signed = await self._sign_off_or_reread(order, operator)
-        if signed is None:
-            return await self._recover(
-                symbol, report, "the exit order could not be signed off and could not be re-read"
+        if not attempt.issued and not self.oms.exit_protection_pending(symbol):
+            return self._refuse(symbol, "The OMS refused the close before cancelling protection.")
+        try:
+            remaining = await self._held_quantity(symbol)
+        except Exception:
+            remaining = None
+        if remaining == 0 and not self.oms.exit_protection_pending(symbol):
+            return CloseResult(
+                CloseOutcome.CLOSED,
+                symbol,
+                0,
+                attempt.cancelled,
+                (
+                    "The broker now reports the position FLAT. A protective leg may have filled "
+                    "during cancellation. No additional sell or stop was sent by the closer."
+                ),
+                issued_legs=attempt.issued,
             )
-        if signed.status not in _SELL_IS_WORKING_OR_DONE:
-            # Genuinely failed: rejected, or cancelled. Nothing is working, so
-            # the position is BARE and the bracket must go back.
-            return await self._recover(symbol, report, f"the exit order ended {signed.status}")
-
-        logger.warning(
-            "MANUAL CLOSE: %s %g sold by %s (%s), %d protective leg(s) cancelled first",
-            symbol,
-            quantity,
-            operator,
-            signed.status,
-            len(cancelled),
-        )
-        if signed.status == "filled":
+        if not self.oms.exit_protection_pending(symbol) and remaining is not None and remaining > 0:
+            outcome = CloseOutcome.RECOVERED if attempt.cancelled else CloseOutcome.REFUSED
             detail = (
-                f"closed {quantity:g} {symbol} at market - the broker reports it "
-                f"FILLED; {len(cancelled)} leg(s) cancelled first"
+                "The close did not execute; recovery verified the original stop "
+                "protecting the remaining holding."
             )
         else:
-            # ⚠️ Do not claim a fill the broker has not reported. IBKR answers
-            # a market sell with Submitted/PreSubmitted, which maps to
-            # "transmitted" - the order is live, not yet executed.
+            outcome = CloseOutcome.REFUSED if attempt.issued else CloseOutcome.UNPROTECTED
             detail = (
-                f"the market sell of {quantity:g} {symbol} is WORKING at the broker "
-                f"({len(cancelled)} leg(s) cancelled first). The broker has not "
-                f"reported a fill yet; a market order does not rest for long, and "
-                f"the ledger records the exit when the fill lands."
+                "The close did not complete. Orders may still be resting. Cancellation or "
+                "transmission remains uncertain; protection recovery is pending. "
+                "Check broker orders before retrying or placing protection."
             )
-        return CloseResult(
-            CloseOutcome.CLOSED, symbol, quantity, cancelled, detail, issued_legs=report.issued
-        )
-
-    async def _recover(self, symbol: str, report: _CancelReport, why: str) -> CloseResult:
-        """Put the protection back. The position is BARE until this succeeds.
-
-        ⚠️ EXCEPT when a sell is still working, in which case putting a
-        bracket back is the dangerous move, not the safe one - see below.
-        """
-        captured = report.captured
-        cancelled = report.cancelled
-        stop = next((leg.stop_price for leg in captured if leg.stop_price), None)
-        target = next((leg.limit_price for leg in captured if leg.limit_price), None)
-
-        # ⚠️ NEVER RE-ARM OVER AN IN-FLIGHT SELL.
-        #
-        # A bracket is a full-size resting SELL. Place one while another sell
-        # for the same symbol is still working and there are two full-size
-        # sells against one position: the working one fills, the account goes
-        # flat, and the bracket is left orphaned against nothing - it fires
-        # and the account goes SHORT. That is the trap the entire
-        # cancel-then-verify sequence exists to prevent, and recovery must not
-        # walk into it from the other side.
-        #
-        # The status check at the call site should already have caught this
-        # (a working sell reports "transmitted", which is a SUCCESS). This is
-        # the belt to that pair of braces, asked of the BROKER rather than of
-        # a status field, because a status field is exactly what was wrong.
-        #
-        # ⚠️ AND IT IS `_live_orders`, THE SAME PREDICATE `_cancel_legs`
-        # VERIFIES WITH. This read used `_working_orders()`, so a protective
-        # leg still visible in `PendingCancel` - or this app's own sell, sitting
-        # in the same status - was invisible to the guard and a fresh full-size
-        # bracket went on top of something that can still fill: the short trap
-        # from the other side. One notion of "still live" in this file, not two.
-        still_working = await self._live_orders()
-
-        # ⚠️ AND THE GUARD ABOVE MUST FAIL CLOSED, NOT OPEN.
-        #
-        # `IBAdapter.open_orders()` returns `[]` for an unanswerable client
-        # exactly as it does for a clean book. An empty read therefore proved
-        # NOTHING about whether a sell is in flight, yet it sent this straight
-        # down the re-arm path - failing OPEN on precisely the read
-        # `_cancel_legs` refuses on. Two layers, one broker method, opposite
-        # verdicts.
-        #
-        # Same discriminator as `_cancel_legs`, so the two agree: an empty
-        # account-wide book is credible only if nothing else was working before
-        # the cancels. If other symbols' orders WERE working, they cannot all
-        # have vanished, and a full-size bracket placed on that read could land
-        # on top of an in-flight sell.
-        if not still_working and report.others_working_before > 0:
+        if remaining is not None and remaining < 0:
             logger.critical(
-                "MANUAL CLOSE of %s: %s, and the broker then reported an EMPTY book "
-                "account-wide although %d order(s) for other symbols were working "
-                "before the cancel. That read cannot be trusted, so NO bracket was "
-                "re-placed - it could stack on a sell this app cannot see. %s may be "
-                "held with no stop. Check the broker by hand.",
-                symbol,
-                why,
-                report.others_working_before,
-                symbol,
+                "Manual close found %s SHORT %g; no sell stop may be placed", symbol, abs(remaining)
             )
-            return CloseResult(
-                CloseOutcome.UNPROTECTED,
-                symbol,
-                0.0,
-                cancelled,
-                f"{why}, and the broker then reported NO working orders at all - "
-                f"although {report.others_working_before} order(s) for other symbols "
-                f"were working moments before. Those cannot all have vanished, so the "
-                f"read is not credible and the bracket was NOT re-placed: placed on a "
-                f"read that answered nothing, it could stack on a sell still in "
-                f"flight and put the account SHORT. {symbol} may be held with NO STOP. "
-                f"Check the broker by hand before doing anything else.",
-                issued_legs=report.issued,
+            detail += (
+                " The broker reports a SHORT position. Do NOT place a sell stop; "
+                "it would deepen the short."
             )
-
-        working_sells = [
-            o for o in still_working if o.symbol == symbol and o.side.lower() == "sell"
-        ]
-        if working_sells:
-            ids = ", ".join(o.order_id for o in working_sells)
-            logger.critical(
-                "MANUAL CLOSE of %s: %s, and a working sell (%s) is STILL LIVE at the "
-                "broker, so NO bracket was re-placed - stacking one over an in-flight "
-                "sell puts the account SHORT when that sell fills. Watch this symbol.",
-                symbol,
-                why,
-                ids,
-            )
-            return CloseResult(
-                CloseOutcome.UNPROTECTED,
-                symbol,
-                0.0,
-                cancelled,
-                f"{why}, but a working sell for {symbol} is still live at the broker "
-                f"({ids}), so the bracket was NOT re-placed - a second full-size sell "
-                f"stacked on an in-flight one puts the account SHORT when the first "
-                f"fills. {symbol} currently has no protective bracket. Watch it and "
-                f"act by hand.",
-                issued_legs=report.issued,
-            )
-
-        quantity = await self._held_quantity(symbol)
-
-        # ⚠️ A POSITION THAT IS NOT HELD CANNOT BE UNPROTECTED, AND TELLING THE
-        # OPERATOR OTHERWISE ASKS FOR A NAKED SHORT.
-        #
-        # This fell straight into the block below with `quantity=0`.
-        # `OMS.submit_protective_stop` rejects a non-positive quantity outright
-        # (`oms.py:1319`), so `protective.status == "rejected"` raised into the
-        # broad `except` and the loudest branch in the file announced
-        # "{symbol} is held with NO STOP. Re-place it by hand now" over a
-        # position holding NOTHING. An operator obeying that hand-places a
-        # full-size protective SELL against no position - a NAKED SHORT, which
-        # is the exact trap this whole feature exists to prevent, reached
-        # through the recovery path and with the operator's own hand.
-        #
-        # Guarded BEFORE the try, and the two non-positive cases are reported
-        # differently because they are not the same event.
-        if quantity < 0:
-            # A protective stop is a SELL. Over a short it DEEPENS the short.
-            # Loud, because the account is on the wrong side with no bracket.
-            logger.critical(
-                "MANUAL CLOSE of %s: %s, and the broker now reports a SHORT %g. NO "
-                "protective stop was re-placed - a protective stop is a SELL and "
-                "would deepen the short. Intervene by hand now.",
-                symbol,
-                why,
-                abs(quantity),
-            )
-            return CloseResult(
-                CloseOutcome.UNPROTECTED,
-                symbol,
-                0.0,
-                cancelled,
-                f"{why}, and the broker now reports {symbol} SHORT {abs(quantity):g}. "
-                f"No protective stop was re-placed, and none should be: a protective "
-                f"stop is a SELL, so placing one over a short DEEPENS it rather than "
-                f"protecting anything. Do NOT place one by hand. Cover the short at "
-                f"the broker, or use {_SCRIPT_HINT}.",
-                issued_legs=report.issued,
-            )
-        if quantity == 0:
-            # Nothing held, so nothing bare. Not a success of this close - it
-            # sold nothing - but there is no protection missing and no action
-            # for the operator to take, and inventing one is the harm.
-            logger.warning(
-                "MANUAL CLOSE of %s: %s, and the broker reports the position FLAT. "
-                "Nothing was sold and NO bracket was re-placed - there is nothing "
-                "held to protect.",
-                symbol,
-                why,
-            )
-            return CloseResult(
-                CloseOutcome.CLOSED,
-                symbol,
-                0.0,
-                cancelled,
-                f"{why}, but {symbol} is now FLAT at the broker - either a protective "
-                f"leg FILLED during the cancel or the position was already gone. "
-                f"Nothing was sold and NO bracket was re-placed, because there is "
-                f"nothing held to protect. ⚠️ Do NOT place a stop by hand: against no "
-                f"position that is a naked short. Check which way the position closed "
-                f"- a leg filling and a market exit close at different prices.",
-                issued_legs=report.issued,
-            )
-
-        try:
-            if stop is None:
-                # `submit_protective_stop` requires a float stop. Without one
-                # captured there is nothing to restore, and pretending otherwise
-                # would report RECOVERED over a bare position.
-                raise ValueError("no stop price was captured from the original legs")
-            # ⚠️ SIGN IT OFF. `submit_protective_stop` only ever creates a
-            # pending_signoff order - "nothing reaches the broker without
-            # sign-off". Without this the bracket is proposed and never placed,
-            # and the position stays bare while the result claims RECOVERED.
-            protective = await self.oms.submit_protective_stop(
-                symbol, quantity, stop, take_profit_price=target
-            )
-            if protective.status == "rejected":
-                raise RuntimeError(f"protective stop rejected for {symbol}")
-            #
-            # ⚠️ ...and the executor may have signed it off first, on the bus,
-            # inside `submit_protective_stop`. A ValueError here used to fall
-            # into the `except` below and report UNPROTECTED over a LIVE
-            # bracket - see `_sign_off_or_reread`.
-            placed = await self._sign_off_or_reread(protective, "auto-reprotect")
-            if placed is None:
-                raise RuntimeError(
-                    f"the protective stop for {symbol} could not be signed off "
-                    f"and could not be re-read"
-                )
-            if placed.status not in ("transmitted", "filled"):
-                raise RuntimeError(f"protective stop ended {placed.status}")
-        except Exception:  # noqa: BLE001 - the loudest branch in the file
-            logger.critical(
-                "MANUAL CLOSE LEFT %s UNPROTECTED: %s, and re-placing the bracket "
-                "FAILED. %g shares are held with no resting stop. Re-place by hand.",
-                symbol,
-                why,
-                quantity,
-            )
-            return CloseResult(
-                CloseOutcome.UNPROTECTED,
-                symbol,
-                0.0,
-                cancelled,
-                f"{why}, AND the bracket could not be re-placed. {symbol} is held "
-                f"with NO STOP. Re-place it by hand now.",
-                issued_legs=report.issued,
-            )
-        logger.error(
-            "Manual close of %s failed (%s) - original bracket re-placed at stop=%s target=%s",
-            symbol,
-            why,
-            stop,
-            target,
+        detail += (
+            f" Cancels issued: {', '.join(attempt.issued)}. "
+            f"Confirmed gone: {', '.join(attempt.cancelled) or 'none'}."
         )
         return CloseResult(
-            CloseOutcome.RECOVERED,
-            symbol,
-            0.0,
-            cancelled,
-            f"{why}. The original bracket was re-placed (stop {stop}, target "
-            f"{target}); the position is protected and still held.",
-            issued_legs=report.issued,
+            outcome, symbol, 0, attempt.cancelled, detail, issued_legs=attempt.issued
         )

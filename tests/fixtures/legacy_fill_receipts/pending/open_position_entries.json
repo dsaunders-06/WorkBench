@@ -1,0 +1,17 @@
+{
+  "WOW.AX": {
+    "order_id": "998877",
+    "quantity": 10.0,
+    "opened_at": "2026-09-25T12:00:00+00:00",
+    "price": 102.0,
+    "stop_price": null,
+    "target_price": null,
+    "strategy": "swing",
+    "reference_price": 100.0,
+    "price_source": "fill",
+    "fill_ids": [
+      "6144a3eb35a64c8eb3d00c07f73b46c4|WOW.AX|buy|4",
+      "998877|WOW.AX|buy|10"
+    ]
+  }
+}

@@ -36,6 +36,8 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
+import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta, tzinfo
@@ -46,30 +48,38 @@ import pandas as pd
 
 from qat.config import Settings
 from qat.data.bars import MultiSymbolAggregator, floor_to_interval
-from qat.data.broker.adapter import Position
+from qat.data.broker.adapter import BrokerFill, Position
 from qat.data.earnings import EarningsCalendar, NullEarningsCalendar
 from qat.data.features import compute_atr
 from qat.data.sectors import SECTOR_BY_SYMBOL
 from qat.domain.backtester.costs import CostModel
 from qat.domain.bus import EventBus
 from qat.domain.events import (
+    BrokerOrderIdResolvedEvent,
     EntryPriceCorrectedEvent,
     MarketDataEvent,
     OrderFilledEvent,
     SignalEvent,
 )
 from qat.domain.oms import earnings_watch
-from qat.domain.oms.oms import OMS
+from qat.domain.oms.oms import OMS, _FillReplaySnapshot
 from qat.domain.performance.edge import ClosedTradeSource, EdgeEstimator
+from qat.domain.performance.trades import LedgerSchemaMigration
 from qat.domain.risk_engine.engine import OrderCandidate
 
 logger = logging.getLogger(__name__)
 
 _ENTRIES_FILENAME = "open_position_entries.json"
+_LEGACY_QUANTITY_BACKUP_SUFFIX = ".bak-pre-quantity-migration"
+_ENTRY_QUANTITY_EPSILON = 1e-6
 # A recorded entry price within this of what the broker charged is the same
 # price. Relative rather than absolute, for the reason M59 gives: a book holding
 # WFC at 87 and GS at 1,040 cannot share an absolute epsilon.
 _ENTRY_PRICE_TOLERANCE = 1e-4
+
+
+class EntryStoreError(ValueError):
+    """Position-entry evidence exists but cannot be read in full."""
 
 
 class _CorporateActions(Protocol):
@@ -94,6 +104,10 @@ class _LotStore(Protocol):
 
     def open_lots(self, symbol: str | None = None) -> list[Any]: ...
 
+    def prepare_schema_migration(self) -> LedgerSchemaMigration | None: ...
+
+    def apply_schema_migration(self, plan: LedgerSchemaMigration) -> bool: ...
+
     def restore_open_lot(
         self,
         symbol: str,
@@ -105,6 +119,8 @@ class _LotStore(Protocol):
         reference_price: float | None = None,
         worst_price: float | None = None,
         best_price: float | None = None,
+        order_id: str | None = None,
+        fill_ids: tuple[str, ...] = (),
     ) -> bool: ...
 
 
@@ -140,6 +156,13 @@ class _Entry:
     # "reference" is the sizing price published at transmit. `None` is a
     # record written before M175, which says neither.
     price_source: Literal["fill", "reference"] | None = None
+    order_id: str | None = None
+    # Execution-accounted shares; None identifies legacy records without a baseline.
+    quantity: float | None = None
+    # Stable cumulative-fill identities already folded into this entry. Kept
+    # in the same atomic JSON record as the quantity so replay cannot observe
+    # one without the other.
+    fill_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +188,10 @@ class PositionEntry:
     reference_price: float | None = None
     # M175, same reasoning: where `price` came from.
     price_source: Literal["fill", "reference"] | None = None
+    order_id: str | None = None
+    # Execution-accounted shares; None identifies legacy records without a baseline.
+    quantity: float | None = None
+    fill_ids: tuple[str, ...] = ()
 
 
 def _returns_by_ts(bars: pd.DataFrame) -> pd.Series:
@@ -400,7 +427,12 @@ class SignalToOrderBridge:
         # hold and time stop both treat an unknown entry as "never applies", so
         # a restart silently disarmed both rails on everything already held.
         self._entries_path = Path(self.settings.data_dir) / _ENTRIES_FILENAME
-        self._entries: dict[str, _Entry] = self._load_entries()
+        self._entry_store_error: EntryStoreError | None = None
+        try:
+            self._entries: dict[str, _Entry] = self._load_entries()
+        except EntryStoreError as exc:
+            self._entry_store_error = exc
+            self._entries = {}
         # Symbols warned about for having no sector mapping (item 44),
         # so the warning is once a session rather than once a signal.
         self._unmapped_sectors_logged: set[str] = set()
@@ -408,12 +440,39 @@ class SignalToOrderBridge:
         self._time_stopped: set[str] = set()
         self._hold_blocked: set[str] = set()
         self._sweep_task: asyncio.Task[None] | None = None
+        self._subscribed = False
 
     async def start(self) -> None:
+        if self._entry_store_error is not None:
+            logger.error(
+                "Cannot start with unreadable position-entry evidence: %s", self._entry_store_error
+            )
+            self.oms.kill_switch.trip("position-entry evidence is unreadable")
+            return
         self.bus.subscribe(MarketDataEvent, self._on_market_data)
         self.bus.subscribe(SignalEvent, self._on_signal)
-        self.bus.subscribe(OrderFilledEvent, self._on_fill)
+        self.bus.subscribe(OrderFilledEvent, self._on_fill, critical=True)
+        self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved, critical=True)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+        self._subscribed = True
+        self.oms.watch_symbols_for_fills(self._entries)
+        snapshot = await self.oms.prepare_missed_fill_replay()
+        if snapshot is None:
+            self.oms.kill_switch.trip("broker startup replay snapshot unavailable")
+            return
+        ledger = self._lot_store()
+        if ledger is not None:
+            try:
+                migration = ledger.prepare_schema_migration()
+                if migration is not None and not ledger.apply_schema_migration(migration):
+                    self.oms.kill_switch.trip("closed-trade ledger schema migration failed")
+                    return
+            except Exception:
+                logger.exception("Could not prepare closed-trade ledger schema migration")
+                self.oms.kill_switch.trip("closed-trade ledger schema migration failed")
+                return
+        if not self._migrate_legacy_entry_quantities(snapshot):
+            return
         # Before restore_open_lots, or the ledger is rebuilt from the price the
         # order was SIZED against rather than the one it filled at (M65).
         await self.reconcile_entry_prices()
@@ -421,8 +480,8 @@ class SignalToOrderBridge:
         # one deployed strategy to resolve: after a second is deployed the
         # attribution on a pre-M49 record is gone for good (M86).
         await self.reconcile_entry_strategies()
-        await self.restore_open_lots()
-        await self.replay_missed_exits()
+        await self.restore_open_lots(snapshot)
+        await self.replay_missed_exits(snapshot)
         await self.rearm_protective_stops()
         self._sweep_task = asyncio.create_task(self._sweep_protection())
         self._warm_task = asyncio.create_task(self._warm_earnings())
@@ -456,7 +515,7 @@ class SignalToOrderBridge:
                 self.settings.earnings_event_size_scalar * 100,
             )
 
-    async def replay_missed_exits(self) -> list[str]:
+    async def replay_missed_exits(self, snapshot: _FillReplaySnapshot | None = None) -> list[str]:
         """Records exits that executed while this application was not running.
 
         `restore_open_lots` rebuilds lots for what is HELD, which is exactly the
@@ -481,11 +540,15 @@ class SignalToOrderBridge:
         # so both of the sets the OMS can build on its own are empty for exactly
         # the symbol whose exit needs recording.
         self.oms.watch_symbols_for_fills(self._entries)
-        try:
-            missed = await self.oms.missed_fills()
-        except Exception:
-            logger.exception("Could not check for exits missed while the app was not running")
+        if snapshot is None:
+            try:
+                snapshot = await self.oms.prepare_missed_fill_replay()
+            except Exception:
+                logger.exception("Could not check for exits missed while the app was not running")
+                return []
+        if snapshot is None:
             return []
+        missed = list(snapshot.missed)
         if not missed:
             return []
 
@@ -495,15 +558,17 @@ class SignalToOrderBridge:
                 if fill.side != "sell" or entry is None or ledger.open_lots(fill.symbol):
                     continue
                 ledger.restore_open_lot(
+                    order_id=entry.order_id,
                     symbol=fill.symbol,
                     quantity=fill.quantity,
                     price=entry.price,
                     stop_price=entry.stop_price,
                     strategy=entry.strategy or self._sole_deployed_strategy(),
                     opened_at=entry.opened_at,
+                    fill_ids=entry.fill_ids,
                 )
 
-        absorbed = await self.oms.absorb_broker_fills(record_only=True)
+        absorbed = await self.oms.absorb_broker_fills(record_only=True, replay_snapshot=snapshot)
         replayed = sorted({fill.symbol for fill in absorbed})
         if replayed:
             # Counted by side (M81). "These are recorded as closed trades now"
@@ -742,7 +807,94 @@ class SignalToOrderBridge:
             return None, None, 0
         return float(after["low"].min()), float(after["high"].max()), len(after)
 
-    async def restore_open_lots(self) -> list[str]:
+    def _migrate_legacy_entry_quantities(self, snapshot: _FillReplaySnapshot) -> bool:
+        """Settle pre-quantity entries from one stable broker observation.
+
+        The current broker position is the post-replay quantity. Reversing the
+        unabsorbed execution deltas reconstructs what the entry held at the
+        saved watermark. Flat records with no earlier quantity are retired from
+        the active book; the byte-for-byte backup retains their evidence.
+        """
+        legacy = {
+            symbol: entry for symbol, entry in self._entries.items() if entry.quantity is None
+        }
+        if not legacy:
+            return True
+
+        positions = dict(snapshot.positions)
+        fills_by_symbol: dict[str, list[BrokerFill]] = {}
+        for fill in snapshot.missed:
+            fills_by_symbol.setdefault(fill.symbol, []).append(fill)
+
+        migrated: dict[str, _Entry] = dict(self._entries)
+        migrated_symbols: list[str] = []
+        retired_symbols: list[str] = []
+        for symbol, entry in legacy.items():
+            current = positions.get(symbol, 0.0)
+            fills = fills_by_symbol.get(symbol, [])
+            signed_delta = sum(
+                fill.quantity if fill.side == "buy" else -fill.quantity for fill in fills
+            )
+            baseline = current - signed_delta
+            if (
+                not math.isfinite(current)
+                or not math.isfinite(baseline)
+                or current < -_ENTRY_QUANTITY_EPSILON
+                or baseline < -_ENTRY_QUANTITY_EPSILON
+                or any(fill.filled_at < entry.opened_at for fill in fills)
+            ):
+                self.oms.kill_switch.trip(
+                    "legacy entry quantities contradict stable broker evidence"
+                )
+                return False
+            if baseline <= _ENTRY_QUANTITY_EPSILON:
+                migrated.pop(symbol, None)
+                retired_symbols.append(symbol)
+            else:
+                migrated[symbol] = replace(entry, quantity=baseline)
+                migrated_symbols.append(symbol)
+
+        try:
+            source = self._entries_path.read_bytes()
+            backup = self._entries_path.with_name(
+                f"{self._entries_path.name}{_LEGACY_QUANTITY_BACKUP_SUFFIX}"
+            )
+            try:
+                with backup.open("xb") as handle:
+                    handle.write(source)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except FileExistsError:
+                if not backup.is_file() or backup.read_bytes() != source:
+                    raise OSError(
+                        "legacy quantity backup does not match the source entry file"
+                    ) from None
+        except OSError:
+            logger.exception("Could not secure the legacy entry quantity backup")
+            self.oms.kill_switch.trip("legacy entry quantity backup could not be secured")
+            return False
+
+        original = self._entries
+        self._entries = migrated
+        try:
+            self._save_entries(required=True)
+        except OSError:
+            self._entries = original
+            self.oms.kill_switch.trip("legacy entry quantity migration could not be persisted")
+            return False
+
+        logger.warning(
+            "Migrated %d legacy entry quantity record(s): %s. Retired %d flat legacy "
+            "record(s) from the active book: %s. The original file is preserved at %s.",
+            len(migrated_symbols),
+            ", ".join(sorted(migrated_symbols)) or "none",
+            len(retired_symbols),
+            ", ".join(sorted(retired_symbols)) or "none",
+            backup,
+        )
+        return True
+
+    async def restore_open_lots(self, snapshot: _FillReplaySnapshot | None = None) -> list[str]:
         """Gives the trade ledger back the entry lots it forgot (M49).
 
         Here for the same reason `rearm_protective_stops` is: this is the only
@@ -764,11 +916,25 @@ class SignalToOrderBridge:
         ledger = self._lot_store()
         if ledger is None:
             return []
-        try:
-            positions = await self.oms.broker.positions()
-        except Exception:
-            logger.exception("Could not read positions to restore the trade ledger's open lots")
-            return []
+        # Persist UUID receipt identities before restoring deduplication and
+        # commission accumulation in the ledger. Repeating after a crash is safe.
+        self._canonicalize_entry_identities()
+        if snapshot is not None:
+            positions = [Position(symbol, quantity, 0.0) for symbol, quantity in snapshot.positions]
+        else:
+            try:
+                positions = await self.oms.broker.positions()
+            except Exception:
+                logger.exception("Could not read positions to restore the trade ledger's open lots")
+                return []
+
+        # Include accounted positions which closed while offline: their entry
+        # lots must exist before replay can apply the missing sell executions.
+        by_symbol = {position.symbol: position for position in positions}
+        for symbol, saved_entry in self._entries.items():
+            if saved_entry.quantity is not None:
+                by_symbol[symbol] = Position(symbol, saved_entry.quantity, saved_entry.price)
+        positions = list(by_symbol.values())
 
         restored: list[str] = []
         unknown: list[str] = []
@@ -788,6 +954,7 @@ class SignalToOrderBridge:
                 continue
             worst, best, bar_count = self._excursion_since(position.symbol, entry.opened_at)
             if ledger.restore_open_lot(
+                order_id=entry.order_id,
                 symbol=position.symbol,
                 quantity=quantity,
                 price=entry.price,
@@ -797,6 +964,7 @@ class SignalToOrderBridge:
                 reference_price=entry.reference_price,
                 worst_price=worst,
                 best_price=best,
+                fill_ids=entry.fill_ids,
             ):
                 restored.append(position.symbol)
                 (backfilled if bar_count else no_bars).append(position.symbol)
@@ -958,6 +1126,8 @@ class SignalToOrderBridge:
         """
         return {
             symbol: PositionEntry(
+                order_id=entry.order_id,
+                quantity=entry.quantity,
                 opened_at=entry.opened_at,
                 price=entry.price,
                 stop_price=entry.stop_price,
@@ -965,6 +1135,7 @@ class SignalToOrderBridge:
                 strategy=entry.strategy,
                 reference_price=entry.reference_price,
                 price_source=entry.price_source,
+                fill_ids=entry.fill_ids,
             )
             for symbol, entry in self._entries.items()
         }
@@ -1088,10 +1259,13 @@ class SignalToOrderBridge:
         return proposed
 
     async def stop(self) -> None:
-        self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
-        self.bus.unsubscribe(SignalEvent, self._on_signal)
-        self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
-        self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+        if self._subscribed:
+            self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
+            self.bus.unsubscribe(SignalEvent, self._on_signal)
+            self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+            self.bus.unsubscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
+            self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+            self._subscribed = False
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1132,7 +1306,19 @@ class SignalToOrderBridge:
         been held, and how far it has moved against the stop it was sized on -
         cannot be answered without one.
         """
+        prior_entries = dict(self._entries)
+        prior_entry_times = list(self._entry_times)
+        prior_time_stopped = set(self._time_stopped)
+        existing = self._entries.get(event.symbol)
+        if (
+            event.fill_id is not None
+            and existing is not None
+            and event.fill_id in existing.fill_ids
+        ):
+            return
+        receipt = (event.fill_id,) if event.fill_id is not None else ()
         if event.side == "buy":
+            new_entry = event.symbol not in self._entries
             self._entries.setdefault(
                 event.symbol,
                 _Entry(
@@ -1145,9 +1331,40 @@ class SignalToOrderBridge:
                     # simply dropped it, so it never survived to the ledger.
                     reference_price=event.reference_price,
                     price_source="fill" if event.price_is_fill else "reference",
+                    order_id=event.order_id,
+                    fill_ids=receipt,
                 ),
             )
-            self._entry_times.append(event.ts)
+            entry = self._entries[event.symbol]
+            if new_entry:
+                self._entries[event.symbol] = replace(entry, quantity=event.quantity)
+                self._entry_times.append(event.ts)
+            elif entry.quantity is not None:
+                quantity = entry.quantity + event.quantity
+                self._entries[event.symbol] = replace(
+                    entry,
+                    quantity=quantity,
+                    price=(entry.quantity * entry.price + event.quantity * event.price) / quantity,
+                    fill_ids=entry.fill_ids + receipt,
+                )
+            elif entry.order_id == event.order_id and event.order_average_price is not None:
+                self._entries[event.symbol] = replace(
+                    entry, price=event.order_average_price, fill_ids=entry.fill_ids + receipt
+                )
+        elif (
+            sell_entry := self._entries.get(event.symbol)
+        ) is not None and sell_entry.quantity is not None:
+            remaining = sell_entry.quantity - event.quantity
+            if remaining < -1e-9:
+                self.oms.kill_switch.trip("sell execution exceeds the recorded entry quantity")
+                return
+            if remaining <= 1e-9:
+                self._entries.pop(event.symbol, None)
+                self._time_stopped.discard(event.symbol)
+            else:
+                self._entries[event.symbol] = replace(
+                    sell_entry, quantity=remaining, fill_ids=sell_entry.fill_ids + receipt
+                )
         elif await self._is_flat(event.symbol):
             self._entries.pop(event.symbol, None)
             self._time_stopped.discard(event.symbol)
@@ -1167,7 +1384,47 @@ class SignalToOrderBridge:
                 event.symbol,
                 "shares",
             )
-        self._save_entries()
+        try:
+            self._save_entries(required=True)
+        except OSError:
+            self._entries = prior_entries
+            self._entry_times = prior_entry_times
+            self._time_stopped = prior_time_stopped
+            raise
+
+    async def _on_order_id_resolved(self, event: BrokerOrderIdResolvedEvent) -> None:
+        """Keep entry identity stable when a broker alias becomes available."""
+        if event.app_order_id is None:
+            return
+        self._canonicalize_entry_identities({event.order_id: event.app_order_id})
+
+    def _canonicalize_entry_identities(self, aliases: dict[str, str] | None = None) -> None:
+        aliases = aliases or {}
+
+        def resolve(order_id: str) -> str:
+            return aliases.get(order_id, self.oms.canonical_order_id(order_id))
+
+        prior_entries = self._entries
+        migrated = {}
+        for symbol, entry in prior_entries.items():
+            receipts = []
+            for receipt in entry.fill_ids:
+                order_id, separator, suffix = receipt.partition("|")
+                receipts.append(resolve(order_id) + separator + suffix)
+            migrated[symbol] = replace(
+                entry,
+                order_id=resolve(entry.order_id) if entry.order_id is not None else None,
+                fill_ids=tuple(dict.fromkeys(receipts)),
+            )
+        if migrated == prior_entries:
+            return
+        self._entries = migrated
+        try:
+            self._save_entries(required=True)
+        except OSError:
+            self._entries = prior_entries
+            self.oms.kill_switch.trip("entry identity migration could not be persisted")
+            raise
 
     async def _on_entry_price_corrected(self, event: EntryPriceCorrectedEvent) -> None:
         """Puts the price actually paid into the entry record, mid-session (M70).
@@ -1188,55 +1445,98 @@ class SignalToOrderBridge:
         self._save_entries()
 
     def _load_entries(self) -> dict[str, _Entry]:
-        """Entry records previously written to disk, whatever is held now.
-
-        A missing or unreadable file is not an error - it is a first run, or a
-        machine where the previous session never opened anything. It reads as
-        "no known entries", which is exactly the pre-M31b behaviour.
-        """
+        """Read every entry, allowing only a missing file as a clean first run."""
         try:
-            raw = json.loads(self._entries_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            source = self._entries_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
             return {}
+        except (OSError, UnicodeError) as exc:
+            raise EntryStoreError(f"cannot read {self._entries_path}: {exc}") from exc
+
+        def number(value: object, field: str) -> float:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"{field} must be a number")
+            result = float(value)
+            if not math.isfinite(result) or result <= 0:
+                raise ValueError(f"{field} must be finite and positive")
+            return result
+
+        def optional_number(value: object, field: str) -> float | None:
+            return None if value is None else number(value, field)
+
+        def optional_text(value: object, field: str) -> str | None:
+            if value is None:
+                return None
+            if not isinstance(value, str):
+                raise ValueError(f"{field} must be a string or null")
+            return value or None
+
+        def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            values: dict[str, object] = {}
+            for key, value in pairs:
+                if key in values:
+                    raise ValueError(f"duplicate entry evidence key: {key}")
+                values[key] = value
+            return values
+
+        def reject_constant(value: str) -> None:
+            raise ValueError(f"nonstandard JSON constant: {value}")
+
         entries: dict[str, _Entry] = {}
-        for symbol, row in raw.items():
-            try:
+        try:
+            raw = json.loads(
+                source, object_pairs_hook=unique_object, parse_constant=reject_constant
+            )
+            if not isinstance(raw, dict):
+                raise ValueError("entry root must be an object")
+            for symbol, row in raw.items():
+                if not isinstance(symbol, str) or not symbol:
+                    raise ValueError("entry symbol must be a nonempty string")
+                if not isinstance(row, dict):
+                    raise ValueError(f"{symbol} entry must be an object")
+                opened_at = row["opened_at"]
+                if not isinstance(opened_at, str):
+                    raise ValueError(f"{symbol}.opened_at must be an ISO timestamp")
+                opened = datetime.fromisoformat(opened_at)
+                if opened.tzinfo is None or opened.utcoffset() is None:
+                    raise ValueError(f"{symbol}.opened_at must include a timezone")
+                fill_ids = row.get("fill_ids", [])
+                if not isinstance(fill_ids, list) or any(
+                    not isinstance(value, str) or not value for value in fill_ids
+                ):
+                    raise ValueError(f"{symbol}.fill_ids must be a list of nonempty strings")
+                price_source = row.get("price_source")
+                if price_source not in (None, "fill", "reference"):
+                    raise ValueError(f"{symbol}.price_source is invalid")
                 entries[symbol] = _Entry(
-                    opened_at=datetime.fromisoformat(row["opened_at"]),
-                    price=float(row["price"]),
-                    stop_price=(
-                        float(row["stop_price"]) if row.get("stop_price") is not None else None
-                    ),
+                    order_id=optional_text(row.get("order_id"), f"{symbol}.order_id"),
+                    quantity=optional_number(row.get("quantity"), f"{symbol}.quantity"),
+                    fill_ids=tuple(fill_ids),
+                    opened_at=opened,
+                    price=number(row["price"], f"{symbol}.price"),
+                    stop_price=optional_number(row.get("stop_price"), f"{symbol}.stop_price"),
                     # .get, not [...]: every file written before M33 lacks this
                     # key, and a restart that discarded its entry dates over a
                     # missing target would disarm the churn rails to add one.
-                    target_price=(
-                        float(row["target_price"]) if row.get("target_price") is not None else None
-                    ),
+                    target_price=optional_number(row.get("target_price"), f"{symbol}.target_price"),
                     # Same reasoning for M49's addition. A file written before
                     # it names no strategy, and the fallback is resolved at
                     # restore time from what is actually deployed rather than
                     # guessed here.
-                    strategy=row.get("strategy") or None,
+                    strategy=optional_text(row.get("strategy"), f"{symbol}.strategy"),
                     # Same `.get` reasoning a third time (M44). A file written
                     # before this field existed names no reference price, and
                     # `None` there means UNKNOWN - never the entry price, which
                     # would report zero slippage on a trade nobody measured.
-                    reference_price=(
-                        float(row["reference_price"])
-                        if row.get("reference_price") is not None
-                        else None
+                    reference_price=optional_number(
+                        row.get("reference_price"), f"{symbol}.reference_price"
                     ),
                     # M175, `.get` for the fourth time: a pre-M175 record says
                     # nothing about where its price came from, and None is that.
-                    price_source=(
-                        row["price_source"]
-                        if row.get("price_source") in ("fill", "reference")
-                        else None
-                    ),
+                    price_source=price_source,
                 )
-            except (KeyError, TypeError, ValueError):
-                logger.warning("Ignoring an unreadable entry record for %s", symbol)
+        except (KeyError, TypeError, ValueError, OverflowError, RecursionError) as exc:
+            raise EntryStoreError(f"invalid entry evidence in {self._entries_path}: {exc}") from exc
         if entries:
             # M110. This said "for %d held position(s)", which asserts a fact
             # this method has no way to establish: it has read a JSON file and
@@ -1255,12 +1555,14 @@ class SignalToOrderBridge:
             )
         return entries
 
-    def _save_entries(self) -> None:
+    def _save_entries(self, *, required: bool = False) -> None:
         """Written on every change rather than at shutdown: a process that is
         killed never gets to run a shutdown hook, and this file exists
         precisely for the restart that was not planned."""
         payload = {
             symbol: {
+                "order_id": entry.order_id,
+                "quantity": entry.quantity,
                 "opened_at": entry.opened_at.isoformat(),
                 "price": entry.price,
                 "stop_price": entry.stop_price,
@@ -1268,14 +1570,22 @@ class SignalToOrderBridge:
                 "strategy": entry.strategy,
                 "reference_price": entry.reference_price,
                 "price_source": entry.price_source,
+                "fill_ids": list(entry.fill_ids),
             }
             for symbol, entry in self._entries.items()
         }
         try:
             self._entries_path.parent.mkdir(parents=True, exist_ok=True)
-            self._entries_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            temporary = self._entries_path.with_name(f"{self._entries_path.name}.tmp-{os.getpid()}")
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, self._entries_path)
         except OSError:
             logger.exception("Could not persist position entry dates")
+            if required:
+                raise
 
     async def _on_market_data(self, event: MarketDataEvent) -> None:
         self.bars.add_tick(event.symbol, event.ts, event.price, event.volume)

@@ -17,6 +17,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pytest
+
 from qat.data.broker.ib_translate import from_ib_fill
 
 
@@ -86,3 +88,28 @@ def test_the_symbol_is_still_translated_back():
     assert out.symbol == "LOV.AX"
     assert out.order_id == "1216552509"
     assert out.side == "sell"
+
+
+@pytest.mark.parametrize(
+    "reference, expected",
+    [
+        ("e17bb4c8-b3d8-4d4a-a5bb-5bd2fb0d80ce", "e17bb4c8-b3d8-4d4a-a5bb-5bd2fb0d80ce"),
+        ("e17bb4c8-b3d8-4d4a-a5bb-5bd2fb0d80ce:target", None),
+        ("shared-foreign-reference", None),
+        ("", None),
+        ("{e17bb4c8-b3d8-4d4a-a5bb-5bd2fb0d80ce}", None),
+        ("e17bb4c8b3d84d4aa5bb5bd2fb0d80ce", "e17bb4c8b3d84d4aa5bb5bd2fb0d80ce"),
+        ("E17BB4C8-B3D8-4D4A-A5BB-5BD2FB0D80CE", None),
+    ],
+)
+def test_ib_fill_promotes_only_canonical_application_uuid(reference, expected) -> None:
+    for broker_id in (998877, 998878):
+        raw = _fill(shares=4.0, cum_qty=4.0)
+        raw.execution.permId = broker_id
+        raw.execution.orderRef = reference
+
+        out = from_ib_fill(raw, "ASX")
+
+        assert out is not None
+        assert out.app_order_id == expected
+        assert out.order_id == str(broker_id)

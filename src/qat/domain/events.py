@@ -93,6 +93,14 @@ class OrderFilledEvent(Event):
     side: Literal["buy", "sell"]
     quantity: float
     price: float
+    # Cumulative average for this order; quantity/price above describe only
+    # the newly confirmed execution delta used by the ledger.
+    order_average_price: float | None = None
+    # Stable identity for one cumulative broker-fill observation. Consumers
+    # persist this with their own state so a crash can replay the event without
+    # applying a successful sibling write twice.
+    fill_id: str | None = None
+    cumulative_quantity: float | None = None
     strategy: str | None = None
     stop_price: float | None = None
     # Carried for the same reason stop_price is (M33): the bracket legs die
@@ -235,6 +243,7 @@ class BrokerOrderIdResolvedEvent(Event):
     """
 
     order_id: str
+    app_order_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

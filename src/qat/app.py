@@ -15,6 +15,7 @@ import qasync
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from qat.application_lock import ApplicationLock, ApplicationLockUnavailable
 from qat.config import Settings
 from qat.logging import configure_logging
 from qat.migration import migrate_legacy_layout
@@ -33,6 +34,14 @@ def main() -> None:
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
 
+    try:
+        with ApplicationLock():
+            _run_application(app, loop)
+    except ApplicationLockUnavailable:
+        raise SystemExit("Quant Advisory Terminal is already running") from None
+
+
+def _run_application(app: QApplication, loop: qasync.QEventLoop) -> None:
     # Settings first, then logging, then the runtime. build_demo resolves the
     # broker, the market data source and the fundamentals source, and warns
     # loudly when any of them degrades - logging afterwards discarded exactly

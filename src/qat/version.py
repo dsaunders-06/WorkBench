@@ -2061,7 +2061,9 @@ from qat.domain.display_dates import format_display_date
 # the same audit and the rewrite would have refused. `as_row` now derives every
 # column from exactly what it stores. And a commission report redelivered by
 # the five-minute reqExecutions poll is reported once, not once per poll.
-MILESTONE = "M175"
+# M176: canonical receipts, fail-closed entry evidence, stable-gated ledger
+# migration, and one application lock for startup and correction apply.
+MILESTONE = "M176"
 
 _UNKNOWN = "unknown"
 

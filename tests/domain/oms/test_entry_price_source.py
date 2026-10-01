@@ -83,13 +83,14 @@ async def test_the_announcement_says_whether_its_price_is_a_fill(tmp_path):
         order_id="b",
         status="filled",
         filled_price=135.736,
+        filled_quantity=363,
         reference_price=136.54,
     )
 
     await oms._announce_fill(transmitted, "test")
     await oms._announce_fill(filled, "test")
 
-    assert [(e.price, e.price_is_fill) for e in seen] == [(136.54, False), (135.736, True)]
+    assert [(e.price, e.price_is_fill) for e in seen] == [(135.736, True)]
 
 
 @pytest.mark.asyncio

@@ -24,24 +24,37 @@ Handler = Callable[[E], Awaitable[None]]
 class EventBus:
     def __init__(self) -> None:
         self._handlers: dict[type[Event], list[Handler[Any]]] = defaultdict(list)
+        self._critical_handlers: set[tuple[type[Event], Handler[Any]]] = set()
 
-    def subscribe(self, event_type: type[E], handler: Handler[E]) -> None:
+    def subscribe(
+        self, event_type: type[E], handler: Handler[E], *, critical: bool = False
+    ) -> None:
         self._handlers[event_type].append(handler)
+        if critical:
+            self._critical_handlers.add((event_type, handler))
 
     def unsubscribe(self, event_type: type[E], handler: Handler[E]) -> None:
         self._handlers[event_type].remove(handler)
+        self._critical_handlers.discard((event_type, handler))
 
-    async def publish(self, event: Event) -> None:
-        handlers = self._handlers.get(type(event), [])
+    async def publish(self, event: Event) -> tuple[Exception, ...]:
+        # A handler can subscribe/unsubscribe while another handler awaits.
+        # Delivery and result classification must use one immutable snapshot.
+        handlers = tuple(self._handlers.get(type(event), ()))
         if not handlers:
-            return
+            return ()
+        critical = tuple((type(event), handler) in self._critical_handlers for handler in handlers)
         results = await asyncio.gather(
             *(self._run_handler(handler, event) for handler in handlers),
             return_exceptions=True,
         )
-        for result in results:
+        failures: list[Exception] = []
+        for is_critical, result in zip(critical, results, strict=True):
             if isinstance(result, Exception):
                 logger.exception("EventBus handler failed", exc_info=result)
+                if is_critical:
+                    failures.append(result)
+        return tuple(failures)
 
     async def _run_handler(self, handler: Handler[Any], event: Event) -> None:
         await handler(event)

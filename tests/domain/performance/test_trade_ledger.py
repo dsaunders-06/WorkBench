@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import logging
 import os
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -18,9 +20,235 @@ from qat.config import Settings
 from qat.domain.bus import EventBus
 from qat.domain.events import ExitPriceCorrectedEvent, MarketDataEvent, OrderFilledEvent
 from qat.domain.performance import trades as trades_module
-from qat.domain.performance.trades import _FIELDS, ClosedTrade, EquityCurve, TradeLedger
+from qat.domain.performance.trades import (
+    _FIELDS,
+    ClosedTrade,
+    EquityCurve,
+    TradeLedger,
+    UnaccountedExecutionError,
+)
 
 _BASE = datetime(2026, 7, 20, 14, 0, tzinfo=UTC)
+
+
+def _schema_fixture(tmp_path, *, legacy=True):
+    path = tmp_path / "closed_trades.csv"
+    trade = ClosedTrade(
+        symbol="AAA",
+        strategy="swing, legacy",
+        quantity=10,
+        entry_price=100,
+        exit_price=110,
+        stop_price=95,
+        opened_at=_BASE,
+        closed_at=_BASE + timedelta(days=1),
+        market="ASX",
+        currency="AUD",
+        order_id="exit-1",
+        fill_id="execution-1",
+    )
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(_FIELDS[:-3] if legacy else _FIELDS)
+        writer.writerow([trade.as_row()[name] for name in _FIELDS])
+    return path
+
+
+def test_constructing_ledger_never_repairs_an_old_header(tmp_path):
+    path = _schema_fixture(tmp_path)
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    assert ledger.closed_trades()[0].fill_id == "execution-1"
+    assert ledger.closed_trades()[0].currency == "AUD"
+    assert ledger._load_closed()[0].order_id == "exit-1"
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_schema_plan_is_read_only_and_hash_bound(tmp_path):
+    path = _schema_fixture(tmp_path)
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+    assert plan.source_sha256 == hashlib.sha256(before).hexdigest()
+    assert plan.corrected.split(b"\n", 1)[1] == before.split(b"\n", 1)[1]
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_schema_migration_is_backed_up_validated_and_idempotent(tmp_path):
+    path = _schema_fixture(tmp_path)
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+    assert ledger.apply_schema_migration(plan)
+    assert path.read_bytes() == plan.corrected
+    backups = list(tmp_path.glob("closed_trades.csv.bak-pre-schema-*"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == before
+    assert trades_module.audit_closed_trades(path) == []
+    assert ledger.prepare_schema_migration() is None
+    assert not ledger.apply_schema_migration(plan)
+    assert list(tmp_path.glob("closed_trades.csv.bak-pre-schema-*")) == backups
+
+
+def test_current_schema_has_no_plan_or_writes(tmp_path):
+    path = _schema_fixture(tmp_path, legacy=False)
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    assert ledger.prepare_schema_migration() is None
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_schema_migration_refuses_changed_source_without_backup(tmp_path):
+    path = _schema_fixture(tmp_path)
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+    changed = path.read_bytes() + b"\r\n"
+    path.write_bytes(changed)
+    assert not ledger.apply_schema_migration(plan)
+    assert path.read_bytes() == changed
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("failure", ["fsync", "replace", "audit", "audit_exception"])
+def test_schema_migration_failure_preserves_or_restores_exact_source(
+    tmp_path, monkeypatch, failure
+):
+    path = _schema_fixture(tmp_path)
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+
+    def fail(*args, **kwargs):
+        raise OSError("injected migration failure")
+
+    if failure in {"fsync", "replace"}:
+        monkeypatch.setattr(trades_module.os, failure, fail)
+    elif failure == "audit":
+        monkeypatch.setattr(trades_module, "audit_closed_trades", lambda _: ["bad row"])
+    else:
+        monkeypatch.setattr(trades_module, "audit_closed_trades", fail)
+    assert not ledger.apply_schema_migration(plan)
+    assert path.read_bytes() == before
+    backups = list(tmp_path.glob("closed_trades.csv.bak-pre-schema-*"))
+    assert backups and backups[0].read_bytes() == before
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
+@pytest.mark.parametrize("content", [b"", b"unrecognised,header\ninvalid,row\n"])
+def test_constructing_ledger_leaves_other_existing_files_untouched(tmp_path, content):
+    path = tmp_path / "closed_trades.csv"
+    path.write_bytes(content)
+    ledger = TradeLedger(EventBus(), tmp_path)
+    assert ledger.closed_trades() == []
+    assert path.read_bytes() == content
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_schema_migration_refuses_an_unverified_backup(tmp_path, monkeypatch):
+    path = _schema_fixture(tmp_path)
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+    read_bytes = Path.read_bytes
+
+    def damaged_backup_read(candidate):
+        if ".bak-pre-schema-" in candidate.name:
+            return b"damaged backup"
+        return read_bytes(candidate)
+
+    monkeypatch.setattr(Path, "read_bytes", damaged_backup_read)
+    assert not ledger.apply_schema_migration(plan)
+    assert path.read_bytes() == before
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
+def test_schema_migration_temp_sync_failure_keeps_verified_backup(tmp_path, monkeypatch):
+    path = _schema_fixture(tmp_path)
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+    fsync = os.fsync
+    calls = 0
+
+    def fail_second_sync(fd):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("temporary file sync failed")
+        fsync(fd)
+
+    monkeypatch.setattr(trades_module.os, "fsync", fail_second_sync)
+    assert not ledger.apply_schema_migration(plan)
+    assert path.read_bytes() == before
+    assert next(tmp_path.glob("*.bak-pre-schema-*")).read_bytes() == before
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
+def test_schema_migration_real_audit_failure_restores_original(tmp_path):
+    path = _schema_fixture(tmp_path)
+    # A malformed legacy row must not be silently dropped to pass migration.
+    with path.open("ab") as handle:
+        handle.write(b"unparseable,row\r\n")
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+    assert not ledger.apply_schema_migration(plan)
+    assert path.read_bytes() == before
+    assert next(tmp_path.glob("*.bak-pre-schema-*")).read_bytes() == before
+
+
+def test_schema_migration_restore_failure_retains_recoverable_backup(tmp_path, monkeypatch, caplog):
+    path = _schema_fixture(tmp_path)
+    before = path.read_bytes()
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+    atomic_replace = os.replace
+    calls = 0
+
+    def fail_restore(source, destination):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("restore denied")
+        atomic_replace(source, destination)
+
+    monkeypatch.setattr(trades_module.os, "replace", fail_restore)
+    monkeypatch.setattr(trades_module, "audit_closed_trades", lambda _: ["audit rejected"])
+    assert not ledger.apply_schema_migration(plan)
+    assert path.read_bytes() == plan.corrected
+    assert next(tmp_path.glob("*.bak-pre-schema-*")).read_bytes() == before
+    assert "Could not restore ledger; recover from" in caplog.text
+    assert not list(tmp_path.glob("*.tmp-*"))
+
+
+def test_schema_migration_rechecks_source_after_backup(tmp_path, monkeypatch):
+    path = _schema_fixture(tmp_path)
+    before = path.read_bytes()
+    changed = before + b"\r\n"
+    ledger = TradeLedger(EventBus(), tmp_path)
+    plan = ledger.prepare_schema_migration()
+    assert plan is not None
+    fsync = os.fsync
+
+    def change_source(fd):
+        fsync(fd)
+        path.write_bytes(changed)
+
+    monkeypatch.setattr(trades_module.os, "fsync", change_source)
+    assert not ledger.apply_schema_migration(plan)
+    assert path.read_bytes() == changed
+    assert next(tmp_path.glob("*.bak-pre-schema-*")).read_bytes() == before
 
 
 async def _ledger(tmp_path) -> TradeLedger:
@@ -237,13 +465,14 @@ async def test_one_sell_can_close_several_lots(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_an_unmatched_sell_is_ignored_not_invented(tmp_path):
-    """Real for an adopted position: this app never saw the entry, so it cannot
-    compute a P&L and must not guess one."""
+async def test_an_unmatched_sell_is_refused_without_inventing_a_trade(tmp_path):
+    """The missing entry must be reconciled before a confirmed sell is retired."""
     ledger = await _ledger(tmp_path)
-    await _fill(ledger, "sell", 50, 100.0)
+    with pytest.raises(UnaccountedExecutionError, match="50 unmatched shares"):
+        await _fill(ledger, "sell", 50, 100.0)
 
     assert ledger.closed_trades() == []
+    assert not (tmp_path / "closed_trades.csv").exists()
 
 
 @pytest.mark.asyncio
@@ -721,47 +950,38 @@ async def test_a_matching_order_id_for_a_different_symbol_amends_nothing(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_the_exit_cost_basis_matches_the_write_path(tmp_path):
-    """Minor 6: `_close_against_lots` bases the exit cost on the FULL sell
-    quantity and apportions on it; the amendment used to base it on the
-    matched rows' own quantity total instead. Not the same once a per-order
-    commission floor binds at one basis and not the other - exactly the case
-    of a sell that partly closed an untracked position, where
-    `_close_against_lots` logs "unmatched portion ignored" and only the
-    matched part becomes a ClosedTrade row."""
+async def test_a_rejected_sell_does_not_charge_a_later_valid_exit(tmp_path):
+    """A failed match cannot add notional to the later valid sell's cost basis."""
     ledger = await _costed_ledger(
         tmp_path, broker_min_commission=6.0, commission_bps=50.0, slippage_bps=0.0
     )
     await _fill(ledger, "buy", 10, 100.0, stop=95.0)
-    # The sell is for 20; only 10 are tracked, so 10 are unmatched and
-    # ignored - one ClosedTrade row, quantity=10, even though the order's OWN
-    # quantity (what the write path costed the exit against) was 20.
+    before_charged = dict(ledger._charged)
+    with pytest.raises(UnaccountedExecutionError, match="10 unmatched shares"):
+        await ledger._on_fill(
+            OrderFilledEvent(
+                order_id="sell-1",
+                symbol="AAA",
+                side="sell",
+                quantity=20,
+                price=110.0,
+                ts=_BASE + timedelta(days=1),
+            )
+        )
+    assert ledger._charged == before_charged
+    assert ledger.closed_trades() == []
+
     await ledger._on_fill(
         OrderFilledEvent(
             order_id="sell-1",
             symbol="AAA",
             side="sell",
-            quantity=20,
+            quantity=10,
             price=110.0,
             ts=_BASE + timedelta(days=1),
         )
     )
-    assert len(ledger.closed_trades()) == 1
-
-    await ledger._on_exit_price_corrected(
-        ExitPriceCorrectedEvent(
-            order_id="sell-1", symbol="AAA", price=112.0, announced_price=110.0, quantity=20.0
-        )
-    )
-
-    amended = ledger.closed_trades()[0]
-    # Recomputed on the order's full quantity (20) - the basis
-    # `_close_against_lots` used - not the 10 that matched a tracked lot.
-    # At 50bps: 10 shares @112 = $1,120 notional, 0.5% = $5.60, under the $6
-    # floor - so a matched-total basis would charge the FULL $6.00 floor to
-    # this one row. 20 shares @112 = $2,240 notional, 0.5% = $11.20, over the
-    # floor - so the correct basis charges this row its half-share, $5.60.
-    assert amended.exit_cost == pytest.approx(5.60, abs=1e-6)
+    assert [trade.exit_cost for trade in ledger.closed_trades()] == [pytest.approx(6.0)]
 
 
 @pytest.mark.asyncio
