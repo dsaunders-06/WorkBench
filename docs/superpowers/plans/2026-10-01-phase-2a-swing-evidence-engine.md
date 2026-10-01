@@ -163,6 +163,8 @@ class RuleEvidence:
 @dataclass(frozen=True, slots=True)
 class PatternCandidate:
     pattern: Pattern
+    pattern_instance_id: str
+    breakout_event_id: str | None
     signal_session: date
     signal_close: float
     invalidation: float
@@ -371,9 +373,18 @@ git commit -m "feat: detect authoritative bull flags"
 - Consumes: `SwingHistory` and canonical indicators.
 - Produces: `evaluate_double_bottom(history, volume_multiplier=1.5) -> PatternDecision`.
 
-- [ ] **Step 1: Write failing tests for pivots, spacing, tolerance, neckline, and pair tie-breaks**
+- [ ] **Step 1: Write failing tests for pivots, spacing, neckline crossing, expiry, and identities**
 
-Pin three bars on each side of each strict local low, 5/30-session spacing, bottom-price difference divided by their mean, neckline strictly between bottoms, `max(3%, 1 ATR)` neckline depth, close above neckline and EMA20, rising EMA20, volume, weekly filter, and most-recent-pair selection. Assert that EMA20 may remain below EMA50.
+Pin three bars on each side of each strict local low, 5/30-session spacing,
+bottom-price difference divided by their mean, neckline strictly between
+bottoms, all session-ordered source bars tied at the highest neckline price,
+`max(3%, 1 ATR)` neckline depth, and most-recent-pair selection. Require
+the immediately preceding completed close to be at or below the neckline and
+the signal close to cross strictly above it no later than 20 completed sessions
+after the second bottom. Also pin close above EMA20, rising EMA20, volume, the
+weekly filter, and that EMA20 may remain below EMA50. Test that a cross before
+the second bottom is confirmed cannot become a stale signal while price stays
+above the neckline.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -381,7 +392,12 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative
 
 - [ ] **Step 3: Implement confirmed-pivot and pair selection logic**
 
-Sort qualifying pairs by second-bottom session descending, then first-bottom session descending. Record both bottom sessions, prices, neckline source session, ATR, and distance in evidence.
+Sort qualifying pairs by second-bottom session descending, then first-bottom
+session descending. Derive a stable pattern-instance ID from both bottom
+sessions and all neckline source-bar identities. Derive a breakout-event ID by
+adding the crossing session. Record the IDs, both bottom sessions and prices,
+neckline members, ATR, elapsed sessions, and distance in evidence. Lifecycle
+consumption and recross eligibility are enforced in Phase 2B.
 
 - [ ] **Step 4: Run focused tests and type check**
 
@@ -404,7 +420,7 @@ git commit -m "feat: detect authoritative double bottoms"
 
 **Interfaces:**
 - Consumes: three calendar years of prior `FinalBar` objects, candidate stop and signal close.
-- Produces: `find_resistance_zones()`, `nearest_resistance_above()`, and `entry_limit_for(candidate, history)`.
+- Produces: `find_resistance_zones()`, `nearest_relevant_resistance()`, and `entry_limit_for(candidate, history)`.
 
 - [ ] **Step 1: Write failing tests for swing highs, zone grouping, strict 2R clearance, and insufficient data**
 
@@ -421,7 +437,18 @@ def test_unadjusted_or_short_history_abstains() -> None:
     assert entry_limit_for(candidate(), invalid_history()).status is DecisionStatus.ABSTAIN
 ```
 
-Also test five bars on both sides, two highs at least 20 sessions apart, 1% median membership, nearest-zone selection, and exact-zone-touch rejection.
+Also test five bars on both sides and the exact canonical grouping contract:
+sort by `(price, source-bar session and digest)`, enumerate all contiguous
+groups of at least two highs, calculate an odd-count middle or even-count
+two-middle arithmetic median `M`, require every member price `P` to satisfy
+`abs(P - M) / M <= 0.01`, require at least one member pair separated by at
+least 20 completed sessions, deduplicate identical member sets,
+remove groups wholly contained in another qualifying group, and retain
+overlapping maximal groups. Assert lower and upper edges are member minimum and
+maximum, final ordering is `(lower, upper, ordered member identities)`, and
+input permutations produce byte-identical zones. Test a candidate inside a
+zone, exact edge touches, overlap anywhere from entry through 2R, deterministic
+nearest-barrier tie-breaking, and a zone wholly below entry.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -429,7 +456,15 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative
 
 - [ ] **Step 3: Implement deterministic zone construction and algebraic ceiling**
 
-Solve `E + 2(E - S) < zone_lower` for the maximum `E`, then walk down valid ASX ticks until the strict inequality holds. Cap it at signal close. Store every zone member and chosen edge in evidence.
+Construct maximal zones exactly as specified, retaining overlapping maximal
+sets. Ignore only zones whose upper edge is below the candidate entry. Reject
+an entry inside a zone; otherwise choose the nearest zone by
+`max(entry, zone.lower)`, with canonical order as the tie-break. Solve
+`E + 2(E - S) < zone_lower` for the maximum `E`, then walk down valid ASX ticks
+until the strict inequality holds and cap it at signal close. A signal close
+inside a zone is rejected rather than rescued by lowering its limit. Store
+every zone member, both edges, relevance decision, and chosen barrier in
+evidence.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -449,12 +484,16 @@ git commit -m "feat: validate swing resistance clearance"
 - Create: `tests/domain/strategies/authoritative_swing/test_sizing.py`
 
 **Interfaces:**
-- Consumes: equity, entry, stop, and existing `CostModel`.
-- Produces: `size_for_risk(equity, entry, stop, costs, risk_fraction=0.01) -> SizingDecision`.
+- Consumes: equity, submitted limit price, stop, and existing `CostModel`.
+- Produces: `size_for_risk(equity, limit_price, stop, costs, risk_fraction=0.01) -> SizingDecision`.
 
 - [ ] **Step 1: Write failing tests for commission floors, exchange fees, slippage, and two-share minimum**
 
-Use the real ASX fixed and tiered profiles in parameterized tests. Assert the returned quantity is the largest integer whose entry risk plus modeled entry and stop-exit costs is at or below budget, and that `quantity + 1` breaches it.
+Use the real ASX fixed and tiered profiles in parameterized tests. Assert the
+returned quantity is the largest integer whose limit-price risk plus modeled
+entry and stop-exit costs is at or below budget, and that `quantity + 1`
+breaches it. Demonstrate that the quantity is fixed before the open and cannot
+increase when an actual fill is below the submitted limit.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -462,7 +501,11 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative
 
 - [ ] **Step 3: Implement monotone integer sizing**
 
-Reject non-positive equity or risk distance. Compute a safe upper bound from price risk, then decrement until the complete cost inequality passes. Return `REJECTED` when fewer than two shares fit, with budget and cost components in evidence.
+Reject non-positive equity or limit-to-stop risk distance. Compute a safe upper
+bound from worst-case limit-price risk, then decrement until the complete cost
+inequality passes. Return `REJECTED` when fewer than two shares fit, with the
+limit price, budget, and cost components in evidence. Actual-fill risk and net-R
+accounting belong to Phase 2B.
 
 - [ ] **Step 4: Run focused and existing cost tests**
 
@@ -503,7 +546,10 @@ def test_phase2_package_has_no_execution_imports() -> None:
     assert not imported_modules_under(authoritative_swing_root()) & set(forbidden)
 ```
 
-Also test that any required-data defect abstains, a measured failed gate rejects, analysis regime cannot change the result, and a conservative confluence can fail resistance after its wider stop is applied.
+Also test that any required-data defect abstains, a measured failed gate
+rejects, analysis regime cannot change the result, a conservative confluence
+can fail resistance after its wider stop is applied, and every emitted
+double-bottom candidate carries stable pattern-instance and breakout-event IDs.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -511,7 +557,12 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative
 
 - [ ] **Step 3: Implement common-gate ordering and immutable output**
 
-Evaluate all three patterns independently, retain their evidence, combine simultaneous qualifiers, recalculate resistance and sizing once on final terms, and compute the decision ID from the complete semantic envelope. Existing positions are not an input in Phase 2A; lifecycle blocking belongs to Phase 2B.
+Evaluate all three patterns independently, retain their evidence, combine
+simultaneous qualifiers, recalculate resistance and limit-price sizing once on
+final terms, and compute the decision ID from the complete semantic envelope,
+including any pattern-instance and breakout-event IDs. Existing positions and
+consumed identities are not inputs in Phase 2A; lifecycle blocking belongs to
+Phase 2B.
 
 - [ ] **Step 4: Run the package suite and static checks**
 

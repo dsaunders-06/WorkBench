@@ -19,6 +19,10 @@
 - Resolve unknowable same-bar order in the strategy's worst feasible sequence and flag it.
 - Keep all quantities whole and require at least two shares at entry.
 - Use actual simulated fills to define R, target, cash, costs, and realized results.
+- Keep the quantity submitted from Phase 2A's limit-price sizing fixed after the
+  open; never resize upward from a better fill.
+- Track consumed double-bottom pattern instances and used breakout events so a
+  replay cannot duplicate an instruction or filled pattern.
 - A replay must be deterministic from strategy version, dataset manifest, cost model, and ordered events.
 
 ## File Structure
@@ -71,7 +75,11 @@ def test_replaying_a_fill_id_is_a_no_op() -> None:
     assert apply_entry_fill(once, fill(event_id="fill-1")) == once
 ```
 
-Also test valid transitions only, total quantity conservation, entry session count one, and rejection of a fill at/below stop.
+Also test valid transitions only, total quantity conservation, entry session
+count one, and rejection of a fill at/below stop. Assert that initial risk
+dollars equal `filled quantity × (actual fill - initial stop)`, a fill below the
+limit leaves the submitted quantity unchanged, and the same structural stop
+produces the actual-fill 1R target.
 
 - [ ] **Step 2: Run and confirm import failure**
 
@@ -99,6 +107,7 @@ class SwingPosition:
     initial_stop: float
     current_stop: float
     initial_r: float
+    initial_risk_dollars: float
     total_quantity: int
     banked_quantity: int
     runner_quantity: int
@@ -108,7 +117,7 @@ class SwingPosition:
     applied_event_ids: frozenset[str]
 ```
 
-All reducers and market events are frozen records keyed by stable event ID and effective session. Define `SwingMarketEvent = SplitEvent | CashDividendEvent | SymbolChangeEvent | SuspensionEvent | DelistingEvent`. Invalid transitions raise `LifecycleInvariantError`; duplicate event IDs return the unchanged state.
+All reducers and market events are frozen records keyed by stable event ID and effective session. Define `SwingMarketEvent = SplitEvent | CashDividendEvent | SymbolChangeEvent | SuspensionEvent | DelistingEvent`. Invalid transitions raise `LifecycleInvariantError`; duplicate event IDs return the unchanged state. Pending-entry/replay state also records `used_breakout_event_ids` and `consumed_pattern_instance_ids`. Cancelling or failing to fill an instruction consumes only its breakout event. Confirming a fill consumes both the breakout event and its pattern instance permanently.
 
 - [ ] **Step 4: Run focused tests and type check**
 
@@ -247,8 +256,10 @@ class SwingTrade:
     exit_price: float
     initial_stop: float
     gross_pnl: float
+    eligible_dividends: float
     costs: float
     net_pnl: float
+    initial_risk_dollars: float
     r_multiple: float
     mfe_r: float
     mae_r: float
@@ -276,6 +287,11 @@ class SwingReplayResult:
     ambiguities: tuple[FillAmbiguity, ...]
     invalid_reasons: tuple[str, ...] = ()
 ```
+
+Compute `net_pnl` across all exit legs and eligible dividends after commission,
+exchange charges, and slippage. Define `r_multiple` as
+`net_pnl / initial_risk_dollars`; do not average leg-level R values. Splits must
+transform quantity and prices while preserving `initial_risk_dollars`.
 
 - [ ] **Step 4: Run focused and cost tests**
 
@@ -312,7 +328,12 @@ def test_symbol_input_order_cannot_choose_a_winner() -> None:
     assert by_symbol(forward) == by_symbol(reverse)
 ```
 
-Also test existing positions reserve purchase cost, commission floors after scaling, whole shares, removal below two shares, cash debits/credits, dividend credit, and no negative cash.
+Also test existing positions reserve purchase cost, commission floors after
+scaling, whole shares, removal below two shares, cash debits/credits, dividend
+credit, and no negative cash. Do not add a per-position notional cap or minimum
+stop distance in Phase 2. Record each allocation's notional exposure and
+cost-to-risk ratio so Phase 2C can report the uncapped replay as a concentration
+and gap-risk stress case.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -357,6 +378,10 @@ Create fixed fixtures for:
 - tenth-session exit;
 - simultaneous signals scaled against cash;
 - every qualified setup replayed independently in the signal-level arm even when positions overlap or portfolio cash is exhausted;
+- a fill below its limit preserving submitted quantity while recalculating
+  actual R, target, costs, and resistance clearance;
+- double-bottom cancellation consuming one breakout event, recross permitting
+  one later event within expiry, and a filled pair being permanently consumed;
 - signal while open recorded but not traded; and
 - repeated session input rejected before state changes.
 
@@ -377,7 +402,8 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_re
 For each official session:
 
 1. apply pre-open splits and symbol changes;
-2. resolve gap stops, scheduled exits, and prior entry instructions;
+2. resolve gap stops and scheduled exits, then resolve prior entry instructions
+   at their fixed submitted quantities;
 3. process intraday protective stops and targets;
 4. apply entitled cash-dividend credits;
 5. mark positions at the completed close;
@@ -388,7 +414,23 @@ For each official session:
 
 Use symbol-specific calendars and membership; do not intersect all symbol dates. A missing required session is an abstention for that symbol, not a fabricated carried-forward bar.
 
-In the same module, implement `replay_signal_candidates()` by running every qualified setup in its own isolated lifecycle through the same fill resolver. This arm ignores capital competition and existing portfolio positions, permits overlapping hypothetical trades, and writes `signal_trades`; it must not copy entry or exit logic.
+For every entry fill, recompute and record actual price risk, costs, and the 2R
+resistance test from the actual fill and unchanged structural stop. A valid fill
+cannot exceed the limit, so resistance clearance cannot worsen; any failed
+post-fill invariant makes the run `INVALID` rather than resizing or altering
+the trade. Mark the breakout-event ID used whenever its instruction is emitted
+or cancelled, and mark its pattern-instance ID consumed only when a fill is
+confirmed. A later signal for the same double-bottom pair requires a distinct
+recross event within the 20-session expiry; no event is emitted while price
+merely remains above the neckline.
+
+In the same module, implement `replay_signal_candidates()` by running every
+qualified setup in its own isolated lifecycle through the same fill resolver.
+Use one fixed reference equity from the run manifest, normally starting equity,
+for every independent candidate's 1% risk budget. This arm does not compound,
+ignores capital competition and existing portfolio positions, permits
+overlapping hypothetical trades, and writes `signal_trades`; it must not copy
+entry or exit logic. The separate portfolio arm compounds current equity.
 
 - [ ] **Step 4: Run focused, determinism, and no-broker tests**
 
@@ -417,7 +459,14 @@ git commit -m "feat: replay authoritative swing lifecycle"
 
 - [ ] **Step 1: Write failing event tests**
 
-Assert a 2-for-1 split doubles quantity and halves entry, stops, and target without P&L; a consolidation preserves value; an entitled dividend credits cash once; a suspension defers a scheduled open exit; a symbol change preserves position identity; a delisting uses its explicit realizable outcome; and a missing terminal outcome invalidates the run.
+Assert a 2-for-1 split doubles quantity and halves entry, stops, and target
+without P&L or changing initial risk dollars; a consolidation preserves value;
+an entitled dividend credits cash and trade P&L once; a suspension defers a
+scheduled open exit; a symbol change preserves position identity; a delisting
+uses its explicit realizable outcome; and a missing terminal outcome invalidates
+the run. Include a multi-leg trade proving that equal halves at +1R and +2R
+produce +1.5R gross before costs and net R uses total net P&L over initial risk
+dollars.
 
 - [ ] **Step 2: Run and confirm failure**
 

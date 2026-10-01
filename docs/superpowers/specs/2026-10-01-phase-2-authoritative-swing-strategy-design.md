@@ -1,6 +1,6 @@
 # Phase 2 — Authoritative Swing Strategy Design
 
-**Status:** Approved design, 1 October 2026
+**Status:** Revised draft for operator approval, 1 October 2026
 
 **Recovery phase:** Phase 2 — Authoritative strategy
 
@@ -237,6 +237,10 @@ both sides of it. Two confirmed local lows form a candidate pair when:
 - a valid neckline exists at the highest completed-bar high strictly between
   the lows.
 
+When more than one between-bottom bar shares that highest high, every tied bar
+is a neckline source member in ascending session order. The neckline price and
+the ordered source-member identities are part of the pattern identity.
+
 The neckline must stand above the average bottom price by more than the greater
 of:
 
@@ -245,6 +249,7 @@ of:
 
 The current finalized breakout session qualifies when:
 
+- the immediately preceding completed close is at or below the neckline;
 - its close is strictly above the neckline;
 - its close is above daily EMA20;
 - EMA20 is above its value five completed sessions earlier;
@@ -256,26 +261,59 @@ pair with the most recent second bottom; break any remaining tie with the most
 recent first bottom. The structural invalidation is the second-bottom low. The
 initial stop is one valid tick below it.
 
+The breakout must occur no later than 20 completed sessions after the second
+bottom. A pattern-instance identity is derived from the first-bottom session,
+second-bottom session, and the neckline source bars. A breakout-event identity
+adds the crossing session. One crossing can create at most one instruction.
+
+A cancelled or unfilled instruction consumes that breakout event but not the
+pattern instance. The same bottom pair may qualify again only after a completed
+close returns to or below the neckline and a later completed close crosses
+strictly above it before the 20-session expiry. Once an entry for the pair
+fills, the pattern instance is consumed permanently. A later filled trade
+requires a newly confirmed pair. A cross that occurred before the second
+bottom became confirmed cannot create a stale signal while price remains above
+the neckline; it must recross or form a new pair.
+
 ## 7. Historical resistance and entry instruction
 
 Resistance uses the three calendar years of split-normalized, completed daily
 bars known at the signal close. A swing high is strictly greater than each of
-the five highs before and five highs after it. A major resistance zone requires
-at least two swing highs:
+the five highs before and five highs after it. Sort swing highs by price and
+then by stable session/member identity. Enumerate every contiguous group in
+that order containing at least two highs. A group qualifies when:
 
-- separated by at least 20 completed sessions; and
-- each within 1% of the zone's median swing-high price.
+- for median price `M`, every member price `P` satisfies
+  `abs(P - M) / M <= 0.01`; and
+- at least one pair of member sessions is separated by at least 20 completed
+  sessions.
 
-Zones are built deterministically in ascending price order and record every
-member and session. The nearest qualifying zone whose lower edge is above the
-candidate entry is the relevant zone. If sufficient valid history exists but
-no zone exists above the entry, the path is clear. Insufficient, unadjusted,
-malformed, synthetic, or unverifiable history produces `ABSTAIN`.
+`M` is the middle sorted price for an odd member count and the arithmetic mean
+of the two middle prices for an even count. A member identity is its source-bar
+session and digest; those values break equal-price ties.
+
+Deduplicate identical member sets, then remove any qualifying group whose
+members are wholly contained in another qualifying group. Distinct maximal
+groups may overlap. For each retained zone, the lower edge is the minimum
+member price and the upper edge is the maximum member price. Canonical zone
+order is `(lower edge, upper edge, ordered member identities)`. Each zone
+records all members and sessions. These rules are normative so independent
+implementations produce identical zones.
 
 For an entry price `E` and initial stop `S`, `R = E - S` and the 2R price is
-`E + 2R`. The resistance zone's lower edge must be strictly above the 2R price.
+`E + 2R`. A zone is relevant when its upper edge is at or above `E`; only a zone
+whose upper edge is below `E` is ignored. If `E` lies within a relevant zone,
+including either edge, reject the candidate. Otherwise choose the nearest
+relevant zone by the barrier `max(E, lower edge)`, breaking ties with canonical
+zone order. Its lower edge must be strictly above the 2R price. Equivalently,
+any relevant zone that intersects the closed path from `E` through the 2R price
+rejects that entry. If sufficient valid history exists but no relevant zone
+exists, the path is clear. Insufficient, unadjusted, malformed, synthetic, or
+unverifiable history produces `ABSTAIN`.
+
 The highest acceptable entry imposed by resistance is rounded down to the
-greatest valid tick for which that strict inequality remains true.
+greatest valid tick for which the strict clearance rule remains true. A signal
+close inside a zone is rejected; it cannot be rescued by lowering the limit.
 
 The completed signal close is the no-chase reference price. The one-session buy
 limit is the lower of:
@@ -311,14 +349,16 @@ replace, or reset the position.
 
 ## 9. Position sizing and capital allocation
 
-The baseline account risk budget is 1% of current portfolio equity. No 2%
-baseline, Kelly term, AI confidence, conviction scalar, or placeholder edge is
-permitted.
+For the cash-funded portfolio arm, the baseline account risk budget is 1% of
+current portfolio equity. The independent signal-level arm substitutes its
+fixed manifest reference equity as specified below. No 2% baseline, Kelly term,
+AI confidence, conviction scalar, or placeholder edge is permitted.
 
-Choose the largest whole-share quantity `q` satisfying:
+Before the next session opens, choose the largest whole-share quantity `q`
+using the submitted limit price `L` as the worst permitted entry price:
 
 ```
-q × (entry fill - initial stop)
+q × (L - initial stop)
 + modeled entry costs(q)
 + modeled stop-exit costs(q)
 <= 0.01 × current portfolio equity
@@ -326,22 +366,38 @@ q × (entry fill - initial stop)
 
 Costs include the configured IBKR commission floors, applicable exchange
 charges, and modeled entry and stop-exit slippage. Quantity must be at least two
-shares. The stop is fixed by chart structure; sizing may never move it.
+shares. The stop is fixed by chart structure; sizing may never move it. The
+submitted quantity is never increased after the opening fill is known.
+
+After a fill, actual price risk per share is `actual fill - initial stop`. The
+1R target, runner accounting, and net-R denominator use that actual value. The
+engine re-evaluates and records resistance clearance and cost/risk constraints
+at the actual fill. Because a valid fill cannot exceed the limit and the stop
+is unchanged, a lower fill can only improve resistance clearance; a failed
+post-fill invariant therefore invalidates the run instead of changing the
+trade.
 
 The primary edge report measures every qualified trade in R independently of
-capital competition. The portfolio replay is long-only, fully cash-funded, and
-uses no borrowing, leverage, or margin. Existing positions reserve their
-purchase cost.
+capital competition. It uses one fixed reference equity recorded in the run
+manifest, normally the run's starting equity, for every independent trade. Its
+1% risk budget does not compound and it ignores capital competition and signal
+overlap. The portfolio replay separately compounds actual current equity. It is
+long-only, fully cash-funded, and uses no borrowing, leverage, or margin.
+Existing positions reserve their purchase cost.
 
 When simultaneous entries require more cash than is available, scale all their
 risk budgets by the same factor, recalculate and round quantities down to whole
 shares, and remove allocations below two shares. Repeat until the batch is
 cash-feasible. Do not rank symbols with a score absent from the methodology.
 
-The source methodology's aggregate appetite controls are reported but not used
-to change Phase 2 strategy-edge decisions. Their integration belongs to Phase
-4, where existing concentration, aggregate-risk, and portfolio safety rails
-will be evaluated separately.
+Phase 2 deliberately adds neither a per-position notional cap nor an arbitrary
+minimum stop distance. The source methodology's aggregate appetite controls
+are reported but do not change strategy-edge decisions. Their integration
+belongs to Phase 4, where concentration limits, aggregate-risk controls, and a
+minimum acceptable stop distance or cost-to-risk threshold will be selected
+and the portfolio replay rerun. Until then, the uncapped cash-funded portfolio
+is a concentration and gap-risk stress case, not a deployable portfolio
+forecast.
 
 ## 10. Position lifecycle
 
@@ -370,8 +426,13 @@ After the confirmed entry fill:
 - allocate the remainder to the runner; and
 - place the banked target at `actual entry fill + R`.
 
-R is a price-risk unit. Commissions and other costs are reported separately in
-net results and do not redefine R.
+Initial risk dollars are
+`filled quantity × (actual entry fill - initial structural stop)`. Net R is the
+total net P&L across every exit leg and eligible dividend, after commissions,
+exchange charges, and slippage, divided by those initial risk dollars. For
+example, equal halves exited at +1R and +2R produce +1.5R gross before costs.
+Splits adjust quantity and prices so the initial risk-dollar denominator is
+preserved.
 
 ### 10.3 Target fill and runner
 
@@ -528,14 +589,40 @@ schema into the strategy engine.
 
 Promotion history is split chronologically without random shuffling:
 
-- first 60%: development and verification;
+- first 50%: development and verification;
 - next 20%: validation and declared sensitivity checks; and
-- final 20%: locked holdout.
+- final 30%: locked holdout.
 
 The holdout is evaluated only after rules, thresholds, data processing, and
 cost assumptions are frozen. Any strategy-rule change after viewing it creates
 a new strategy version and requires a fresh holdout. Results are also reported
 by calendar year and recorded regime to reveal instability.
+
+The locked holdout must span at least 36 calendar months. Each pattern seeking
+promotion must contain completed trade outcomes in at least 36 distinct
+holdout entry-month clusters and must also meet the 100-trade promotion gate.
+Before the holdout is unlocked,
+use development and validation entry-month variability to publish a
+detectable-effect and power audit. If the planned holdout is underpowered,
+extend the dataset; do not lower the confidence requirement.
+
+The audit freezes an expected mean-R effect from development plus validation,
+then estimates prospective power for the planned holdout with the same
+studentized month-cluster procedure. Required power is at least 80% at the 5%
+family-wise error level. It also publishes the minimum detectable mean R. As a
+scale check before multiplicity and finite-sample effects, a zero lower bound
+requires roughly `1.96 / sqrt(G)` month-block standard deviations: 0.400 for 24
+clusters, 0.327 for 36, and 0.283 for 48. The bootstrap simulation, rather than
+this approximation, governs the audit.
+
+Partition ownership is determined by entry session, never exit session. Each
+partition starts flat. Earlier bars may be read only as indicator and pattern
+warm-up. No new entry may occur before the partition begins or after it ends.
+After the final partition session, an outcome buffer continues until all open
+positions close, normally within ten additional tradable sessions but longer
+when suspensions or delistings require it. The complete outcome remains
+attributed to its entry partition. The holdout trade count includes entries in
+the holdout whose outcomes complete in that buffer.
 
 No parameter optimization is part of Phase 2. Sensitivity values are declared
 in advance and remain secondary to the frozen baseline.
@@ -577,9 +664,13 @@ report, tied to deterministic checksums. Report separately:
 
 Metrics include trade count, net expectancy in R, confidence interval, win and
 loss distribution, profit factor, maximum drawdown, exposure, turnover, holding
-time, cost drag, maximum favorable and adverse excursion, regime segmentation,
+time, cost drag, cost-to-risk ratio, maximum favorable and adverse excursion,
+maximum and average single-position notional exposure, days above declared
+concentration levels, gap loss beyond planned 1% risk, regime segmentation,
 symbol/year/trade concentration, rejections, abstentions, and ambiguous-bar
-impact.
+impact. Portfolio drawdown is reported for holdout, validation plus holdout,
+and the full-history baseline. Full-history drawdown is a risk diagnostic, not
+an unbiased estimate of edge.
 
 Compare portfolio results with an ASX 200 accumulation or equivalent
 total-return benchmark over identical sessions. The benchmark source and
@@ -591,22 +682,49 @@ Each pattern is assessed separately; a weak pattern cannot hide inside combined
 results. Promotion from research authorizes later shadow testing only. It does
 not authorize paper orders, autonomous action, or live money.
 
-All of these gates must pass on the frozen baseline:
+The seven edge gates are conjunctive; they define one hypothesis and require no
+correction among themselves. All must pass on the frozen baseline:
 
 1. at least 100 completed holdout trades;
 2. positive net expectancy after modeled costs;
-3. the 95% block-bootstrap lower confidence bound for mean R is above zero;
+3. the 95% studentized entry-month cluster-bootstrap lower confidence bound for
+   mean R is above zero and the Romano–Wolf adjusted one-sided p-value is below
+   0.05;
 4. profit factor is at least 1.20;
-5. maximum portfolio drawdown is no greater than 20% with approved 1% sizing;
-6. expectancy remains positive with doubled slippage and commission
+5. expectancy remains positive with doubled slippage and commission
    assumptions; and
-7. results are not dominated by one symbol, year, or small group of exceptional
+6. results are not dominated by one symbol, year, or small group of exceptional
    trades.
+7. the pre-holdout power audit, minimum 36-month/36-cluster holdout, and locked
+   partition protocol are satisfied.
 
 For the confidence gate, group completed trades by their entry calendar month
-so simultaneous and nearby signals remain together. Resample those month blocks
-with replacement 10,000 times using a seed derived from the run manifest, and
-use the 2.5th percentile of bootstrapped mean net R as the lower bound.
+so simultaneous and nearby signals remain together. Let `N` be trade count,
+`G` be month-cluster count, `mean` be mean net R, and
+`U_g = sum(R_i - mean)` within cluster `g`. Estimate the cluster-robust standard
+error as:
+
+```
+SE = sqrt((G / (G - 1)) * sum(U_g ** 2) / N ** 2)
+```
+
+Resample whole month clusters with replacement 10,000 times using common
+resamples and a seed derived from the run manifest. For each resample compute
+`mean*`, `SE*`, and `t* = (mean* - mean) / SE*`. The one-sided lower confidence
+bound is `mean - q0.975(t*) × SE`. A zero or undefined standard error, too few
+clusters, or another degenerate sample is `INSUFFICIENT_EVIDENCE`, never a pass.
+
+EMA pullback, bull flag, and double bottom are three separately promotable
+hypotheses. Apply Romano–Wolf stepdown control at family-wise error rate 5%,
+using common entry-month resamples to preserve dependence among patterns. Use
+the union of their holdout entry months as the cluster frame; a pattern may
+have an empty cluster in a month. For each pattern use observed
+`t = mean / SE` and the null-centered resampled `t*` values already produced by
+the studentized bootstrap. Order hypotheses by descending observed `t`, compare
+each against the resampled maximum over hypotheses still in the stepdown set,
+and enforce monotone adjusted p-values. The combined portfolio is secondary
+and cannot pass when any included constituent pattern fails. Sensitivity runs
+cannot promote a pattern.
 
 The concentration gate passes only when net expectancy remains above zero in
 all three deterministic leave-out tests:
@@ -617,6 +735,20 @@ all three deterministic leave-out tests:
 
 The report publishes the full symbol, year, and trade concentration
 distributions as well as these tests.
+
+Portfolio safety is assessed separately from statistical edge. The approved
+cash-funded 1% replay must have maximum drawdown no greater than 20% in both the
+holdout and full-history baseline to authorize shadow testing. The result state
+is:
+
+- `PASS` when edge and portfolio safety both pass;
+- `FAIL` when an edge requirement fails; or
+- `EDGE_PASS_PORTFOLIO_RISK_BLOCKED` when edge passes but portfolio safety
+  fails.
+
+The blocked state records evidence of edge but does not authorize shadow
+testing. Phase 4 must introduce concentration controls and rerun the portfolio
+safety assessment before promotion can proceed.
 
 Failure or insufficient sample size is a valid Phase 2 result. It cannot be
 converted into a pass by relaxing a threshold after seeing the evidence.
