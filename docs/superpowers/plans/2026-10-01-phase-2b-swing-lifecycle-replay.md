@@ -6,7 +6,7 @@
 
 **Architecture:** Keep lifecycle transitions as pure reducers in the authoritative strategy package. A dedicated backtester adapter walks exchange sessions, applies corporate actions and opening fills, processes protective events, evaluates completed closes, and records immutable evidence. It does not route through the production OMS; production-stack parity replay remains deferred.
 
-**Tech Stack:** Python 3.12, Phase 2A domain types, existing `CostModel`, ASX calendar/ticks, pytest, mypy, ruff.
+**Tech Stack:** Python 3.12, `decimal.Decimal`, Phase 2A domain and exact-cost types, ASX calendar/ticks, pytest, mypy, ruff.
 
 **Spec:** `docs/superpowers/specs/2026-10-01-phase-2-authoritative-swing-strategy-design.md`
 
@@ -19,6 +19,8 @@
 - Resolve unknowable same-bar order in the strategy's worst feasible sequence and flag it.
 - Keep all quantities whole and require at least two shares at entry.
 - Use actual simulated fills to define R, target, cash, costs, and realized results.
+- Preserve decimal prices, money, risks, and R multiples end-to-end; do not
+  convert execution state through binary floats.
 - Keep the quantity submitted from Phase 2A's limit-price sizing fixed after the
   open; never resize upward from a better fill.
 - Track consumed double-bottom pattern instances and used breakout events so a
@@ -63,12 +65,12 @@
 
 ```python
 def test_entry_fill_defines_r_and_rounds_banked_half_up() -> None:
-    position = apply_entry_fill(pending(quantity=5, stop=9.0), fill(price=10.0, quantity=5))
+    position = apply_entry_fill(pending(quantity=5, stop=D("9.00")), fill(price=D("10.00"), quantity=5))
     assert position.state is PositionState.OPEN_FULL
-    assert position.initial_r == 1.0
+    assert position.initial_r == D("1.00")
     assert position.banked_quantity == 3
     assert position.runner_quantity == 2
-    assert position.target_price == 11.0
+    assert position.target_price == D("11.00")
 
 def test_replaying_a_fill_id_is_a_no_op() -> None:
     once = apply_entry_fill(pending(), fill(event_id="fill-1"))
@@ -103,17 +105,17 @@ class SwingPosition:
     symbol: str
     state: PositionState
     entry_session: date
-    entry_fill: float
-    initial_stop: float
-    current_stop: float
-    initial_r: float
-    initial_risk_dollars: float
+    entry_fill: Decimal
+    initial_stop: Decimal
+    current_stop: Decimal
+    initial_r: Decimal
+    initial_risk_dollars: Decimal
     total_quantity: int
     banked_quantity: int
     runner_quantity: int
-    target_price: float
+    target_price: Decimal
     completed_sessions: int
-    highest_high: float
+    highest_high: Decimal
     applied_event_ids: frozenset[str]
 ```
 
@@ -146,15 +148,15 @@ git commit -m "feat: add swing position state machine"
 
 ```python
 def test_target_fill_moves_runner_to_breakeven() -> None:
-    position = apply_target_fill(open_position(), fill(price=11.0, quantity=5))
+    position = apply_target_fill(open_position(), fill(price=D("11.00"), quantity=5))
     assert position.state is PositionState.RUNNER
     assert position.current_stop == position.entry_fill
 
 def test_trail_uses_highest_high_and_never_moves_down() -> None:
-    first = evaluate_completed_close(runner(stop=10.0), bar(high=13.0), ema20=11.0, atr14=1.0)
-    second = evaluate_completed_close(first.position, bar(high=12.0), ema20=11.0, atr14=1.5)
-    assert first.position.current_stop == 11.0
-    assert second.position.current_stop == 11.0
+    first = evaluate_completed_close(runner(stop=D("10")), bar(high=D("13")), ema20=D("11"), atr14=D("1"))
+    second = evaluate_completed_close(first.position, bar(high=D("12")), ema20=D("11"), atr14=D("1.5"))
+    assert first.position.current_stop == D("11")
+    assert second.position.current_stop == D("11")
 
 def test_tenth_completed_session_schedules_next_open_exit() -> None:
     result = evaluate_completed_close(position(completed_sessions=9), healthy_bar(), ema20=10, atr14=1)
@@ -191,7 +193,7 @@ git commit -m "feat: manage swing exits and runner stops"
 - Create: `tests/domain/backtester/test_swing_fills.py`
 
 **Interfaces:**
-- Consumes: one raw traded daily bar, pending entry or open position, and `CostModel`.
+- Consumes: one raw traded daily bar, pending entry or open position, and Phase 2A `ExactCostProfile`.
 - Produces: ordered `SimulatedFill` tuples plus `FillAmbiguity` evidence through `resolve_entry_open()`, `resolve_open_exit()`, and `resolve_protective_session()`.
 
 - [ ] **Step 1: Write failing tests for every execution branch**
@@ -200,12 +202,12 @@ Cover valid open plus capped buy slippage, gap above limit cancellation, open at
 
 ```python
 def test_stop_wins_a_bar_that_can_touch_stop_and_target() -> None:
-    fills = resolve_protective_session(position(), bar(low=8.9, high=11.2), costs())
+    fills = resolve_protective_session(position(), bar(low=D("8.9"), high=D("11.2")), costs())
     assert [(f.reason, f.quantity) for f in fills] == [("protective_stop", position().total_quantity)]
     assert fills[0].ambiguous is True
 
 def test_target_then_breakeven_is_worst_feasible_when_initial_stop_is_safe() -> None:
-    fills = resolve_protective_session(position(stop=9, entry=10, target=11), bar(low=9.8, high=11.2), costs())
+    fills = resolve_protective_session(position(stop=D("9"), entry=D("10"), target=D("11")), bar(low=D("9.8"), high=D("11.2")), costs())
     assert [f.reason for f in fills] == ["banked_target", "runner_breakeven"]
 ```
 
@@ -215,7 +217,12 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_fi
 
 - [ ] **Step 3: Implement explicit opening, stop, then target ordering**
 
-Apply slippage once in fill price and broker charges separately in `SimulatedFill.cost`. A sell target gapped above fills at `max(target, open - sell_slippage)`. Ambiguous baseline and optimistic sensitivity use the same resolver with `AmbiguityPolicy.CONSERVATIVE` or `OPTIMISTIC`.
+Apply decimal slippage/impact once in fill price and broker charges separately in
+`SimulatedFill.cost`. A sell target gapped above fills at
+`max(target, open - sell_slippage)`. Preserve an exact raw auction open even if
+it is off the normal order-entry grid. Ambiguous baseline and optimistic
+sensitivity use the same resolver with `AmbiguityPolicy.CONSERVATIVE` or
+`OPTIMISTIC`.
 
 Define the shared result shapes in `swing_results.py` here so later replay and reporting tasks use one vocabulary:
 
@@ -224,6 +231,17 @@ class RunStatus(StrEnum):
     VALID = "valid"
     INVALID = "invalid"
 
+class ReplayArm(StrEnum):
+    EMA_PULLBACK = "ema_pullback"
+    BULL_FLAG = "bull_flag"
+    DOUBLE_BOTTOM = "double_bottom"
+    COMBINED = "combined"
+
+class PostFillResistanceDiagnostic(StrEnum):
+    CLEAR = "post_fill_resistance_clear"
+    INSIDE_ZONE = "post_fill_resistance_inside_zone"
+    PATH_BLOCKED = "post_fill_resistance_path_blocked"
+
 @dataclass(frozen=True, slots=True)
 class SimulatedFill:
     event_id: str
@@ -231,8 +249,8 @@ class SimulatedFill:
     session: date
     side: str
     quantity: int
-    price: float
-    cost: float
+    price: Decimal
+    cost: Decimal
     reason: str
     ambiguous: bool = False
 
@@ -252,31 +270,33 @@ class SwingTrade:
     entry_session: date
     exit_session: date
     quantity: int
-    entry_price: float
-    exit_price: float
-    initial_stop: float
-    gross_pnl: float
-    eligible_dividends: float
-    costs: float
-    net_pnl: float
-    initial_risk_dollars: float
-    r_multiple: float
-    mfe_r: float
-    mae_r: float
+    entry_price: Decimal
+    exit_price: Decimal
+    initial_stop: Decimal
+    gross_pnl: Decimal
+    eligible_dividends: Decimal
+    costs: Decimal
+    net_pnl: Decimal
+    initial_risk_dollars: Decimal
+    r_multiple: Decimal
+    mfe_r: Decimal
+    mae_r: Decimal
     exit_reason: str
     observed_triggers: tuple[str, ...]
+    post_fill_resistance: PostFillResistanceDiagnostic
     analysis_regime: str | None
 
 @dataclass(frozen=True, slots=True)
 class ReplayEquityPoint:
     session: date
-    equity: float
-    cash: float
-    position_value: float
+    equity: Decimal
+    cash: Decimal
+    position_value: Decimal
 
 @dataclass(frozen=True, slots=True)
 class SwingReplayResult:
     status: RunStatus
+    arm: ReplayArm
     decisions: tuple[SetupDecision, ...]
     position_events: tuple[LifecycleAction, ...]
     fills: tuple[SimulatedFill, ...]
@@ -311,7 +331,7 @@ git commit -m "feat: simulate conservative swing fills"
 - Create: `tests/domain/backtester/test_swing_portfolio.py`
 
 **Interfaces:**
-- Consumes: cash, positions, same-session qualified entry batch, and `CostModel`.
+- Consumes: decimal cash, positions, same-session qualified entry batch, and `ExactCostProfile`.
 - Produces: `PortfolioState`, `allocate_entry_batch()`, `apply_fills()`, and `mark_to_market()`.
 
 - [ ] **Step 1: Write failing cash, no-leverage, and order-independence tests**
@@ -379,7 +399,9 @@ Create fixed fixtures for:
 - simultaneous signals scaled against cash;
 - every qualified setup replayed independently in the signal-level arm even when positions overlap or portfolio cash is exhausted;
 - a fill below its limit preserving submitted quantity while recalculating
-  actual R, target, costs, and resistance clearance;
+  actual R, target, costs, and the resistance diagnostic;
+- gap-down fills that land inside a formerly lower zone or place that zone in
+  the new entry-to-2R path, both retained as baseline trades;
 - double-bottom cancellation consuming one breakout event, recross permitting
   one later event within expiry, and a filled pair being permanently consumed;
 - signal while open recorded but not traded; and
@@ -391,6 +413,16 @@ def test_daily_invalidation_keeps_stop_until_replacement_open() -> None:
     assert result.trades[0].exit_reason == "protective_stop"
     assert "daily_invalidation" in result.trades[0].observed_triggers
     assert result.position_events.count_reason("sell_fill") == 1
+
+def test_gap_down_can_make_formerly_lower_zone_block_actual_fill_without_invalidating() -> None:
+    result = run_entry(limit="10.00", fill="9.40", stop="9.00", zone=("9.50", "9.60"))
+    assert result.status is RunStatus.VALID
+    assert result.trades[0].post_fill_resistance is PostFillResistanceDiagnostic.PATH_BLOCKED
+
+def test_gap_down_inside_zone_is_retained_and_diagnosed() -> None:
+    result = run_entry(limit="10.00", fill="9.90", stop="9.00", zone=("9.80", "9.95"))
+    assert result.status is RunStatus.VALID
+    assert result.trades[0].post_fill_resistance is PostFillResistanceDiagnostic.INSIDE_ZONE
 ```
 
 - [ ] **Step 2: Run and confirm failure**
@@ -414,15 +446,17 @@ For each official session:
 
 Use symbol-specific calendars and membership; do not intersect all symbol dates. A missing required session is an abstention for that symbol, not a fabricated carried-forward bar.
 
-For every entry fill, recompute and record actual price risk, costs, and the 2R
-resistance test from the actual fill and unchanged structural stop. A valid fill
-cannot exceed the limit, so resistance clearance cannot worsen; any failed
-post-fill invariant makes the run `INVALID` rather than resizing or altering
-the trade. Mark the breakout-event ID used whenever its instruction is emitted
-or cancelled, and mark its pattern-instance ID consumed only when a fill is
-confirmed. A later signal for the same double-bottom pair requires a distinct
-recross event within the 20-session expiry; no event is emitted while price
-merely remains above the neckline.
+For every entry fill, recompute and record actual price risk, exact costs, and
+the actual-fill 2R resistance relationship from the unchanged structural stop.
+Classify it as clear, inside-zone, or path-blocked. Keep all three as baseline
+trades because the pre-open order has already executed; never resize, cancel,
+or invalidate a run from this diagnostic. `RunStatus.INVALID` is reserved for
+impossible execution or corrupt data, including a buy fill above its limit or
+at/below invalidation. Mark the breakout-event ID used whenever its instruction
+is emitted or cancelled, and mark its pattern-instance ID consumed only when a
+fill is confirmed. A later signal for the same double-bottom pair requires a
+distinct recross event within the 20-session expiry; no event is emitted while
+price merely remains above the neckline.
 
 In the same module, implement `replay_signal_candidates()` by running every
 qualified setup in its own isolated lifecycle through the same fill resolver.

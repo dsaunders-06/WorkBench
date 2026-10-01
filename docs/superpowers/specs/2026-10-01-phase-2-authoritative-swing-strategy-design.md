@@ -1,6 +1,6 @@
 # Phase 2 — Authoritative Swing Strategy Design
 
-**Status:** Revised draft for operator approval, 1 October 2026
+**Status:** Second revised draft for operator approval, 1 October 2026
 
 **Recovery phase:** Phase 2 — Authoritative strategy
 
@@ -8,7 +8,8 @@
 
 **Baseline:** `87ba9f4782e7f0d0aaf32505704400c8298a7a4f` (merged Phase 1)
 
-**Authority:** the operator-approved decisions recorded here, interpreted in the
+**Authority:** the operator-approved decisions recorded here plus the current
+review corrections, which remain pending operator approval, interpreted in the
 context of `C:\ShareTrader\Swing Trader methodology.md` and the QAT Recovery &
 Migration Brief. Historical code and earlier AI-authored material are evidence,
 not authority where they conflict with this specification.
@@ -62,8 +63,9 @@ The implementation and evidence must preserve these invariants:
 Phase 2 adopts a **shared deterministic strategy engine**.
 
 The engine is a pure domain component. It accepts validated market history,
-portfolio equity, a versioned cost model, and the prior strategy-position state.
-It returns typed evidence and proposed state transitions. It has no broker,
+portfolio equity, versioned decimal/cost/liquidity policies, and the prior
+strategy-position state. It returns typed evidence and proposed state
+transitions. It has no broker,
 network, database, wall-clock, UI, scheduler, or AI dependency.
 
 The engine contains:
@@ -94,13 +96,37 @@ decision. The shared engine remains the rule authority in either architecture.
 
 All calculations use completed ASX sessions in chronological order.
 
-### 4.1 EMA
+### 4.1 Exact numeric and price bases
+
+Price, money, adjustment-factor, indicator, threshold, risk, and R-multiple
+values use decimal arithmetic constructed from source text. Binary floating
+point is prohibited in strategy-domain state, evidence, order calculations,
+cost calculations, and canonical identifiers. The implementation uses one
+versioned decimal precision and rounding context and serializes decimals in a
+canonical, non-scientific form. Whole-share quantities and raw share volume use
+integers.
+
+Analytical OHLCV, indicators, pattern geometry, and resistance zones use the
+split-normalized analytical basis. At the signal session, the candidate entry,
+structural invalidation, stop, and relevant resistance edges are converted to
+raw as-traded basis with the manifest's auditable split factor. The resistance
+test is repeated after conversion and order-price rounding. Pending orders,
+fills, commissions, cash, P&L, and position state remain in raw as-traded basis.
+Later splits transform open quantities and raw prices without changing value or
+initial risk dollars.
+
+Statistical routines may use explicitly versioned IEEE 754 binary64 arrays
+after immutable decimal trade results are converted at the statistics boundary.
+Their seed, library/runtime versions, algorithms, and output formatting belong
+in the run manifest and do not enter strategy decision identifiers.
+
+### 4.2 EMA
 
 `EMA(n)` uses the standard exponential multiplier `2 / (n + 1)`, seeded with
 the simple mean of the first `n` valid closes. A value is unavailable until the
 seed exists. EMA comparisons do not use rounded display values.
 
-### 4.2 ATR
+### 4.3 ATR
 
 For daily session `t`:
 
@@ -115,15 +141,16 @@ TR[t] = max(
 `ATR(14)` uses Wilder smoothing, seeded with the simple mean of the first 14
 valid true ranges. It is unavailable until that history exists.
 
-### 4.3 Exchange ticks
+### 4.4 Exchange ticks
 
-Every order price is normalized with the ASX tick schedule effective for the
-instrument and session. A stop one tick below an invalidation is exactly one
-valid tick at that price. Conservative maximum buy prices round down. Protective
-sell-stop calculations round down so rounding cannot tighten risk beyond the
-specified structural value.
+Every order price is normalized in raw as-traded basis with the ASX price-step
+schedule effective for the instrument and session. A stop one tick below an
+invalidation subtracts exactly one valid raw price step, then rounds down to a
+valid order price. Conservative maximum buy prices also round down. Actual
+auction and market fills retain the exact raw traded price supplied by the
+dataset even when that price is not on the ordinary order-entry grid.
 
-### 4.4 Weekly bars
+### 4.5 Weekly bars
 
 Daily sessions are aggregated to the official ASX trading week. Only weeks
 whose final scheduled trading session has completed may enter weekly EMA
@@ -142,6 +169,7 @@ A long setup can qualify only when all common requirements are satisfied:
 - the pattern-specific structural invalidation is below the proposed entry;
 - the resistance test leaves a clear path beyond 2R;
 - the cost-aware 1% sizing rule yields at least two whole shares; and
+- the frozen liquidity-capacity model permits at least two whole shares; and
 - no position or entry instruction already exists for the symbol in the
   combined portfolio.
 
@@ -171,6 +199,28 @@ source.
 The baseline multiplier is frozen at 1.5. Multipliers 1.25 and 2.0 may appear
 only as declared sensitivity runs and cannot replace the baseline after holdout
 results are known.
+
+### 5.3 Liquidity and capacity
+
+Promotion replay requires a versioned liquidity-capacity profile frozen before
+holdout access. It contains a maximum participation fraction and a
+participation-aware price-impact/slippage curve justified from sources outside
+the holdout. The values may be selected using development and validation data,
+then become part of the holdout fingerprint. Calibration targets execution
+capacity and cost realism; it may not maximize strategy returns.
+
+For each instruction, calculate capacity only from the preceding 20 completed
+sessions of verified raw share volume and raw dollar volume. The capacity
+quantity is the smaller whole-share quantity allowed by the profile against
+the median share volume and median dollar volume. Current-session volume,
+opening-auction volume inferred from the completed daily bar, or future volume
+is forbidden. Submitted quantity is the minimum of risk-sized, cash-feasible,
+and capacity quantities. A result below two shares rejects the entry.
+
+Daily data cannot prove opening-auction liquidity. Unless promotion data
+contains auditable auction volume, every report must disclose this limitation
+and publish participation and price-impact sensitivities. A promotion-grade
+fingerprint cannot be created with a missing or provisional capacity profile.
 
 ## 6. Entry patterns
 
@@ -371,11 +421,19 @@ submitted quantity is never increased after the opening fill is known.
 
 After a fill, actual price risk per share is `actual fill - initial stop`. The
 1R target, runner accounting, and net-R denominator use that actual value. The
-engine re-evaluates and records resistance clearance and cost/risk constraints
-at the actual fill. Because a valid fill cannot exceed the limit and the stop
-is unchanged, a lower fill can only improve resistance clearance; a failed
-post-fill invariant therefore invalidates the run instead of changing the
-trade.
+submitted quantity remains fixed. Re-evaluate and record the actual-fill
+cost/risk result and classify resistance as `POST_FILL_RESISTANCE_CLEAR`,
+`POST_FILL_RESISTANCE_INSIDE_ZONE`, or
+`POST_FILL_RESISTANCE_PATH_BLOCKED`.
+
+A gap down can make a zone that was below the limit relevant to the actual
+fill. That is an executable market outcome, not a corrupted replay. Keep the
+trade in the baseline and report the diagnostic. An exclusion sensitivity may
+show what would have happened without post-fill-blocked trades, but it is not
+executable under the approved pre-open order model and cannot promote. Mark the
+run `INVALID` only for an impossible or corrupt event, such as a buy fill above
+the limit, at or below the structural invalidation, or derived from invalid
+source data.
 
 The primary edge report measures every qualified trade in R independently of
 capital competition. It uses one fixed reference equity recorded in the run
@@ -398,6 +456,10 @@ minimum acceptable stop distance or cost-to-risk threshold will be selected
 and the portfolio replay rerun. Until then, the uncapped cash-funded portfolio
 is a concentration and gap-risk stress case, not a deployable portfolio
 forecast.
+
+A 2% account-risk replay is a declared portfolio-risk sensitivity. It is
+reported separately, cannot replace the 1% baseline, and cannot promote a
+pattern or portfolio.
 
 ## 10. Position lifecycle
 
@@ -476,9 +538,11 @@ governs the state and P&L.
 The Phase 2 replay uses a conservative daily-bar fill model:
 
 - Valid next-session entries fill at open plus buy slippage, capped at the
-  limit.
+  limit, at the quantity fixed before the open.
 - An entry open above the limit or at/below structural invalidation cancels the
   instruction.
+- A valid gap-down fill remains a trade even when the actual-fill resistance
+  diagnostic is inside-zone or path-blocked.
 - A protective sell stop crossed by a gap fills at open minus sell slippage.
 - An intraday stop touch fills at the stop minus sell slippage.
 - Close-based and time-based exits fill at the next tradable open minus sell
@@ -519,6 +583,15 @@ adjust open quantities, cost basis, stops, and pending orders without creating
 P&L. Eligible cash dividends are credited separately. Dividend-back-adjusted
 prices are not used for signals or fills.
 
+Strict authoritative decisions require verified split-only provenance for all
+analytical prices used by daily and weekly EMA, ATR, candle and pattern
+geometry, structural stops, resistance, and raw-to-analytical conversion.
+Bull-flag and double-bottom volume rules additionally require verified volume
+provenance. Historical execution requires raw as-traded OHLC, while lifecycle
+accounting requires auditable corporate actions. `VENDOR_ADJUSTED` data that
+cannot distinguish split and dividend transformations fails these requirements;
+strict mode records typed abstentions rather than producing a trade.
+
 Promotion data must provide realizable delisting proceeds or another explicit,
 auditable terminal outcome. A silent disappearance is a dataset integrity
 failure.
@@ -541,7 +614,10 @@ Each evaluated symbol-session emits an immutable decision envelope containing:
 - every measured value, threshold, and pass/fail result;
 - rejection or abstention reason codes;
 - resistance-zone members and chosen zone;
-- proposed entry, stop, target, quantity, and modeled costs;
+- analytical-to-raw split factor and both price bases;
+- proposed entry, stop, target, risk quantity, capacity quantity, submitted
+  quantity, participation estimate, and modeled costs;
+- actual-fill resistance diagnostic and its zone/path evidence;
 - prior state, proposed transition, and resulting state;
 - every active exit trigger;
 - fill assumptions and ambiguity flags; and
@@ -565,10 +641,23 @@ it cannot replace or alter the primary result. Strategy rotation remains Phase
 
 ### 15.1 Engineering evidence
 
-The existing static ASX snapshot may be used immediately to validate machinery,
-schemas, state transitions, and provisional comparisons. Every output must call
-it survivorship-biased and non-promotional. It cannot prove an edge or satisfy a
-promotion gate.
+Engineering evidence has two explicit lanes:
+
+1. a frozen synthetic split-only golden dataset that produces every pattern and
+   exercises entries, cancellations, partial exits, stops, ambiguity,
+   corporate actions, diagnostics, and terminal outcomes; and
+2. the existing static ASX snapshot in strict provenance mode.
+
+The static snapshot is marked `VENDOR_ADJUSTED`, survivorship-biased, missing
+independent raw prices and corporate-action lineage, and non-promotional. Its
+strict replay may legitimately produce zero trades when provenance-dependent
+rules abstain. That replay validates loading, disclosure, abstention, and
+artifact machinery; the synthetic lane proves complete lifecycle execution.
+
+An optional mechanical diagnostic may treat the static adjusted series as an
+analytical proxy to estimate provisional pattern frequency. It uses a distinct
+mode and evidence namespace, cannot emit authoritative decisions, and cannot
+prove an edge or satisfy any promotion gate.
 
 ### 15.2 Promotion evidence
 
@@ -593,27 +682,46 @@ Promotion history is split chronologically without random shuffling:
 - next 20%: validation and declared sensitivity checks; and
 - final 30%: locked holdout.
 
-The holdout is evaluated only after rules, thresholds, data processing, and
-cost assumptions are frozen. Any strategy-rule change after viewing it creates
-a new strategy version and requires a fresh holdout. Results are also reported
-by calendar year and recorded regime to reveal instability.
+Development and validation remain accessible even when the planned holdout is
+too short or underpowered. The validation plan records those shortfalls and
+sets `promotion_eligible=false`; it does not prevent engineering, development,
+or validation runs. Holdout access remains denied until rules, thresholds,
+numeric policy, data processing, liquidity, costs, and fill assumptions are
+frozen.
 
-The locked holdout must span at least 36 calendar months. Each pattern seeking
-promotion must contain completed trade outcomes in at least 36 distinct
-holdout entry-month clusters and must also meet the 100-trade promotion gate.
-Before the holdout is unlocked,
-use development and validation entry-month variability to publish a
-detectable-effect and power audit. If the planned holdout is underpowered,
-extend the dataset; do not lower the confidence requirement.
+The planned holdout must span at least 36 calendar months. Before it is
+unlocked, use development and validation entry-month variability and observed
+signal frequency to freeze, separately for each pattern:
 
-The audit freezes an expected mean-R effect from development plus validation,
-then estimates prospective power for the planned holdout with the same
-studentized month-cluster procedure. Required power is at least 80% at the 5%
-family-wise error level. It also publishes the minimum detectable mean R. As a
-scale check before multiplicity and finite-sample effects, a zero lower bound
+- expected mean R used only for prospective power planning;
+- required completed-trade count `N_required`, with an absolute floor of 100;
+- required nonempty entry-month cluster count `G_required`;
+- minimum detectable mean R; and
+- projected power under the frozen studentized and multiplicity procedures.
+
+Required prospective power is at least 80% at a 5% family-wise error level. As
+a scale check before multiplicity and finite-sample effects, a zero lower bound
 requires roughly `1.96 / sqrt(G)` month-block standard deviations: 0.400 for 24
 clusters, 0.327 for 36, and 0.283 for 48. The bootstrap simulation, rather than
-this approximation, governs the audit.
+this approximation, governs the audit. Actual holdout shortfalls return
+`INSUFFICIENT_EVIDENCE`; thresholds are never relaxed after holdout access.
+
+Holdout execution requires an operator-signed permit that binds the strategy
+and evidence versions, code commit, dataset manifest, exact holdout boundaries,
+numeric policy, liquidity/cost/fill profiles, fingerprint, and a unique nonce.
+The runner verifies the permit with a configured public key; the signing key is
+outside the repository and unavailable to the runner or automated agent. A
+computable fingerprint or approval string is not authorization.
+
+An operator-controlled append-only holdout ledger first reserves the signed
+permit, strategy lineage, and period before any holdout bytes are loaded, then
+appends run identity, artifact hashes, completion status, and reproductions.
+An exact-fingerprint rerun may be recorded as
+`REPRODUCTION` and cannot create a new promotion claim. A changed fingerprint
+cannot evaluate a period already exposed for that strategy lineage. After a
+rule change, a fresh holdout means a genuinely unused later period or newly
+acquired dataset; relabelling the same bars is forbidden. Any outcome-blind
+sequential extension rule must be approved and frozen before first exposure.
 
 Partition ownership is determined by entry session, never exit session. Each
 partition starts flat. Earlier bars may be read only as indicator and pattern
@@ -624,15 +732,22 @@ when suspensions or delistings require it. The complete outcome remains
 attributed to its entry partition. The holdout trade count includes entries in
 the holdout whose outcomes complete in that buffer.
 
+A full-history replay reads holdout bars and is therefore protected by the same
+permit and ledger. It may run only after the authorized holdout result exists,
+with the identical frozen fingerprint, and is labelled a post-holdout portfolio
+risk diagnostic. It cannot feed rule, threshold, or model changes.
+
 No parameter optimization is part of Phase 2. Sensitivity values are declared
-in advance and remain secondary to the frozen baseline.
+in advance and remain secondary to the frozen baseline. Results are also
+reported by calendar year and recorded regime to reveal instability.
 
 ## 17. Verification layers
 
 Verification proceeds in this order:
 
-1. **Canonical calculation tests** for EMA, Wilder ATR, tick normalization,
-   weekly aggregation, and cost-aware sizing.
+1. **Canonical calculation tests** for decimal parsing and serialization, EMA,
+   Wilder ATR, raw/analytical conversion, tick normalization, weekly
+   aggregation, liquidity capacity, and cost-aware sizing.
 2. **Pattern examples and counterexamples** for every individual rule, boundary,
    missing-data case, and tie-break.
 3. **Golden lifecycle scenarios** covering entry gaps, cancellations, stops,
@@ -640,10 +755,22 @@ Verification proceeds in this order:
    stops, splits, dividends, suspensions, and delistings.
 4. **Determinism tests** proving identical inputs produce identical evidence and
    repeated events cannot duplicate an order or fill.
-5. **Isolation tests** proving the Phase 2 research path cannot reach broker
-   submission interfaces.
-6. **Engineering replay** on the current static ASX snapshot.
-7. **Promotion replay** on the frozen point-in-time dataset, only when available.
+5. **Prefix-invariance tests** proving the decision at session `t` is identical
+   when later bars are absent or arbitrarily changed, including membership,
+   corporate-action, calendar, and weekly-boundary inputs.
+6. **Independent reference tests** comparing tick, EMA, ATR, resistance, sizing,
+   and bootstrap results with small test-only implementations that share no
+   production helpers.
+7. **Isolation tests** traversing transitive internal imports and proving the
+   Phase 2 research path cannot reach broker, OMS, autonomy, network, DNS, or
+   process-launch interfaces. Runtime tests deny sockets and subprocesses in
+   addition to spying on known client libraries.
+8. **Synthetic engineering replay** exercising every strategy and lifecycle
+   path on split-only golden data.
+9. **Strict static-cache replay** validating provenance abstentions and
+   disclosures, even when it produces zero trades.
+10. **Promotion replay** on the frozen point-in-time dataset, only when an
+    operator-signed permit and unused holdout ledger entry exist.
 
 Tests use fixed clocks, official exchange calendars, and immutable fixtures.
 They must not depend on the machine's current date, network state, or changing
@@ -659,7 +786,9 @@ report, tied to deterministic checksums. Report separately:
 - normalized signal-level R outcomes;
 - fully cash-funded portfolio outcomes;
 - development, validation, and holdout periods;
-- baseline and predeclared sensitivities; and
+- baseline and predeclared volume, fill-order, doubled-cost, post-fill
+  resistance-exclusion, liquidity/impact, regime, and 2% sizing sensitivities;
+  and
 - static-universe and promotion-grade evidence tiers.
 
 Metrics include trade count, net expectancy in R, confidence interval, win and
@@ -667,10 +796,12 @@ loss distribution, profit factor, maximum drawdown, exposure, turnover, holding
 time, cost drag, cost-to-risk ratio, maximum favorable and adverse excursion,
 maximum and average single-position notional exposure, days above declared
 concentration levels, gap loss beyond planned 1% risk, regime segmentation,
-symbol/year/trade concentration, rejections, abstentions, and ambiguous-bar
-impact. Portfolio drawdown is reported for holdout, validation plus holdout,
-and the full-history baseline. Full-history drawdown is a risk diagnostic, not
-an unbiased estimate of edge.
+symbol/year/trade concentration, liquidity participation, capacity binding,
+price impact, post-fill resistance classifications, rejections, abstentions,
+and ambiguous-bar impact. Portfolio drawdown is reported for holdout,
+validation plus holdout, and—only after authorized holdout evaluation—the
+full-history baseline. Full-history drawdown is a risk diagnostic, not an
+unbiased estimate of edge.
 
 Compare portfolio results with an ASX 200 accumulation or equivalent
 total-return benchmark over identical sessions. The benchmark source and
@@ -685,17 +816,20 @@ not authorize paper orders, autonomous action, or live money.
 The seven edge gates are conjunctive; they define one hypothesis and require no
 correction among themselves. All must pass on the frozen baseline:
 
-1. at least 100 completed holdout trades;
+1. at least the frozen `N_required` completed holdout trades, where
+   `N_required >= 100`, and at least the frozen `G_required` nonempty
+   entry-month clusters;
 2. positive net expectancy after modeled costs;
-3. the 95% studentized entry-month cluster-bootstrap lower confidence bound for
-   mean R is above zero and the Romano–Wolf adjusted one-sided p-value is below
-   0.05;
+3. the 97.5% one-sided studentized entry-month cluster-bootstrap lower bound
+   for mean R is above zero and the Romano–Wolf adjusted one-sided p-value is
+   below 0.05;
 4. profit factor is at least 1.20;
 5. expectancy remains positive with doubled slippage and commission
-   assumptions; and
+   assumptions;
 6. results are not dominated by one symbol, year, or small group of exceptional
-   trades.
-7. the pre-holdout power audit, minimum 36-month/36-cluster holdout, and locked
+   trades; and
+7. the pre-holdout power audit, minimum 36-calendar-month holdout, liquidity
+   profile, signed permit, valid first-exposure ledger receipt, and locked
    partition protocol are satisfied.
 
 For the confidence gate, group completed trades by their entry calendar month
@@ -710,13 +844,16 @@ SE = sqrt((G / (G - 1)) * sum(U_g ** 2) / N ** 2)
 
 Resample whole month clusters with replacement 10,000 times using common
 resamples and a seed derived from the run manifest. For each resample compute
-`mean*`, `SE*`, and `t* = (mean* - mean) / SE*`. The one-sided lower confidence
-bound is `mean - q0.975(t*) × SE`. A zero or undefined standard error, too few
-clusters, or another degenerate sample is `INSUFFICIENT_EVIDENCE`, never a pass.
+`mean*`, `SE*`, and `t* = (mean* - mean) / SE*`. The bound
+`mean - q0.975(t*) × SE` is explicitly a 97.5% one-sided lower bound, equivalent
+to the lower endpoint of a two-sided 95% interval. A zero or undefined standard
+error, fewer than the frozen `G_required` clusters, or another degenerate sample
+is `INSUFFICIENT_EVIDENCE`, never a pass.
 
 EMA pullback, bull flag, and double bottom are three separately promotable
-hypotheses. Apply Romano–Wolf stepdown control at family-wise error rate 5%,
-using common entry-month resamples to preserve dependence among patterns. Use
+hypotheses. Apply a one-sided Romano–Wolf stepdown test at family-wise error
+rate 5%, using common entry-month resamples to preserve dependence among
+patterns. Use
 the union of their holdout entry months as the cluster frame; a pattern may
 have an empty cluster in a month. For each pattern use observed
 `t = mean / SE` and the null-centered resampled `t*` values already produced by
@@ -763,6 +900,9 @@ converted into a pass by relaxing a threshold after seeing the evidence.
 - Research artifacts are namespaced by strategy version, dataset manifest, cost
   profile, fill model, and code commit.
 - Earlier evidence is never overwritten.
+- Holdout permits and ledger records are signature-verified; a missing,
+  invalid, reused, or scope-mismatched permit fails closed before holdout bytes
+  are loaded.
 - CI verifies deterministic replay, rule coverage, schema compatibility, and
   broker isolation.
 - Logs and artifacts must not contain credentials, account secrets, or broker
@@ -789,9 +929,13 @@ Phase 2 implementation is complete only when:
 
 1. one deterministic engine implements every baseline rule in this
    specification;
-2. all golden, boundary, determinism, and broker-isolation tests pass;
-3. the static ASX engineering replay completes with explicit survivorship
-   caveats and reproducible artifacts;
+2. all golden, boundary, prefix-invariance, independent-reference,
+   determinism, transitive-import, network/process-isolation, and
+   broker-isolation tests pass;
+3. the synthetic split-only engineering replay exercises every pattern and
+   lifecycle path, while the strict static ASX replay completes with explicit
+   provenance and survivorship caveats; zero strict static trades are
+   acceptable when every abstention is attributable and reproducible;
 4. every decision can be traced to versioned inputs and rule evidence;
 5. existing production behavior and the Phase 1 safety invariants remain
    unchanged;

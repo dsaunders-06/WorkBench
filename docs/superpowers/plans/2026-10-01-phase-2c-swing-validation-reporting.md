@@ -4,9 +4,9 @@
 
 **Goal:** Validate datasets, enforce the approved chronological protocol, calculate promotion evidence, and emit reproducible machine and human artifacts for the Phase 2 engine and replay.
 
-**Architecture:** A versioned dataset adapter translates frozen historical files into Phase 2 domain inputs and corporate-action events. A validation coordinator controls development/validation/holdout access. Statistics and promotion rules operate only on immutable replay results. An append-only artifact writer produces manifests, decisions, trades, metrics, checksums, and a concise report.
+**Architecture:** A versioned dataset adapter translates frozen historical files into exact Phase 2 domain inputs and corporate-action events. A validation coordinator controls development/validation access, while an operator-signed permit and external append-only ledger control holdout exposure and reproductions. Statistics and promotion rules operate only on immutable replay results. An append-only artifact writer produces manifests, decisions, trades, metrics, checksums, and a concise report.
 
-**Tech Stack:** Python 3.12, pandas, numpy, Phase 2A/2B APIs, JSON/CSV/Markdown artifacts, pytest, mypy, ruff.
+**Tech Stack:** Python 3.12, `Decimal`, pandas, numpy, Ed25519 verification, Phase 2A/2B APIs, JSON/CSV/Markdown artifacts, pytest, mypy, ruff.
 
 **Spec:** `docs/superpowers/specs/2026-10-01-phase-2-authoritative-swing-strategy-design.md`
 
@@ -16,10 +16,11 @@
 - The existing static 2026 ASX snapshot is engineering evidence only and must always be labeled survivorship-biased and non-promotional.
 - Promotion data must be point-in-time, include delistings, and carry split/corporate-action provenance.
 - Split chronologically by unique official sessions: first 50%, next 20%, final 30%.
-- Require the holdout to span at least 36 calendar months and each pattern
-  seeking promotion to have at least 36 distinct nonempty holdout entry-month
-  clusters with completed outcomes.
-- Holdout execution requires a frozen strategy/data/cost/fill fingerprint and an explicit matching approval value.
+- Require the planned holdout to span at least 36 calendar months. Freeze each
+  pattern's `N_required >= 100` and `G_required` from the pre-holdout power
+  audit; do not require every holdout month to contain a trade.
+- Holdout execution requires a frozen strategy/data/numeric/liquidity/cost/fill
+  fingerprint, an operator-signed permit, and an unused-period ledger entry.
 - Run and publish the detectable-effect/power audit before holdout unlock; an
   underpowered plan extends the dataset rather than lowering confidence.
 - Do not optimize parameters or overwrite any previous artifact directory.
@@ -31,6 +32,7 @@
 
 - `src/qat/domain/backtester/swing_dataset.py` — dataset schema, manifest hashing, integrity validation, and loaders.
 - `src/qat/domain/backtester/swing_validation.py` — chronological partitions, freeze fingerprint, and holdout lock.
+- `src/qat/domain/backtester/swing_holdout.py` — signed permits, append-only ledger, exposure/reproduction rules, and full-history lock.
 - `src/qat/domain/backtester/swing_statistics.py` — trade/portfolio metrics, studentized cluster bootstrap, Romano–Wolf adjustment, concentration, and sensitivities.
 - `src/qat/domain/backtester/swing_promotion.py` — per-pattern and combined promotion verdicts.
 - `src/qat/domain/backtester/swing_artifacts.py` — append-only JSON/CSV/checksum writer and Markdown report.
@@ -38,6 +40,7 @@
 - `docs/phase-2-authoritative-swing-runbook.md` — operator run and interpretation guide.
 - `tests/domain/backtester/test_swing_dataset.py` — data integrity tests.
 - `tests/domain/backtester/test_swing_validation.py` — partition and holdout tests.
+- `tests/domain/backtester/test_swing_holdout.py` — permit, ledger, reuse, and full-history-lock tests.
 - `tests/domain/backtester/test_swing_statistics.py` — statistical tests.
 - `tests/domain/backtester/test_swing_promotion.py` — gate tests.
 - `tests/domain/backtester/test_swing_artifacts.py` — serialization and append-only tests.
@@ -48,6 +51,9 @@
 - A symbol leaving the index or trading on a different set of sessions must not force common-index trimming or carried-forward bars; Task 1 pins it.
 - A corrected file with the same filename must create a different manifest and decision lineage; Tasks 1 and 5 pin it.
 - Warm-up history may precede a partition, but entries and metrics must not leak across its boundary; Task 2 pins it.
+- A computable fingerprint cannot authorize holdout access, and a changed
+  fingerprint cannot reuse exposed bars; Task 2 pins signatures and ledger
+  lineage.
 - Bootstrap groups all trades from one entry month together, uses common
   manifest-seeded resamples, and applies Romano–Wolf across patterns; Task 3
   pins repeatability, studentization, and clustered signals.
@@ -79,7 +85,7 @@ dataset/
   daily/CBA.AX.csv
 ```
 
-Daily columns are `session,raw_open,raw_high,raw_low,raw_close,raw_volume,adjusted_open,adjusted_high,adjusted_low,adjusted_close,adjusted_volume,source,quality,finalized`. Membership columns are `session,symbol,is_member`. Corporate-action columns are `event_id,symbol,effective_session,kind,ratio,cash_amount,new_symbol,terminal_price,currency`.
+Daily columns are `session,raw_open,raw_high,raw_low,raw_close,raw_volume,adjusted_open,adjusted_high,adjusted_low,adjusted_close,adjusted_volume,raw_to_adjusted_price_factor,source,quality,finalized`. Price, factor, ratio, cash, and terminal-price fields are parsed from their original text directly into `Decimal`; volume is an integer. Membership columns are `session,symbol,is_member`. Corporate-action columns are `event_id,symbol,effective_session,kind,ratio,cash_amount,new_symbol,terminal_price,currency`.
 
 ```python
 def test_membership_is_point_in_time_without_index_intersection() -> None:
@@ -97,6 +103,9 @@ def test_changed_source_bytes_change_dataset_id() -> None:
 ```
 
 Also test duplicate sessions, partial bars, non-finite values, raw OHLC geometry, missing source/quality, unresolved symbol changes, missing delisting outcome, mismatched currency, bad corporate-action ratio, and benchmark gaps. Duplicate/order/hash/schema/corporate-action lineage errors invalidate the dataset. A malformed symbol bar is retained with a non-verified quality state so its symbol-session can abstain and be disclosed.
+Test that source text `0.011` remains exactly `Decimal("0.011")`, raw/adjusted
+factor round trips are exact, and no binary float is present in loaded semantic
+records.
 
 - [ ] **Step 2: Run and confirm import failure**
 
@@ -106,8 +115,13 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_da
 
 ```python
 class DatasetTier(StrEnum):
+    ENGINEERING_SYNTHETIC = "engineering_synthetic"
     ENGINEERING_STATIC = "engineering_static"
     PROMOTION_POINT_IN_TIME = "promotion_point_in_time"
+
+class EngineeringMode(StrEnum):
+    STRICT_AUTHORITATIVE = "strict_authoritative"
+    MECHANICAL_DIAGNOSTIC = "mechanical_diagnostic"
 
 @dataclass(frozen=True, slots=True)
 class SwingDatasetManifest:
@@ -134,7 +148,25 @@ class SwingDataset:
     benchmark: tuple[FinalBar, ...]
 ```
 
-Compute `dataset_id` from canonical manifest content and file hashes. Validate every file before constructing `SwingDataset`. A promotion-tier manifest must assert point-in-time membership, an accumulation/equivalent total-return benchmark, and at least ten years of complete history; a shorter longest-complete period requires a nonempty `coverage_limit_reason` that is printed in every report. Translate rows to Phase 2A `FinalBar` and Phase 2B corporate-action event types. Structural corruption invalidates the load; symbol-bar defects become non-verified bars and recorded issues. The static adapter reads existing `scripts/research/asx_bars/*.csv`, sets raw and analytical values from the cached adjusted series, marks the adjustment `VENDOR_ADJUSTED` because the cache cannot separate split and dividend transformations, and injects the required survivorship, absent raw-price, dividend-separation, and unavailable-corporate-action limitations. Authoritative rules that require split-only provenance abstain on this input rather than silently accepting it.
+Compute `dataset_id` from canonical manifest content and file hashes. Validate
+every file before constructing `SwingDataset`. A promotion-tier manifest must
+assert point-in-time membership, an accumulation/equivalent total-return
+benchmark, exact split factors, raw as-traded data, and at least ten years of
+complete history; a shorter longest-complete period requires a nonempty
+`coverage_limit_reason` printed in every report. Translate decimal rows to
+Phase 2A `FinalBar` and Phase 2B corporate-action event types. Structural
+corruption invalidates the load; symbol-bar defects become non-verified bars
+and recorded issues.
+
+The synthetic engineering dataset is split-only and must generate full golden
+lifecycle coverage. The static adapter reads existing
+`scripts/research/asx_bars/*.csv`, marks the cache `VENDOR_ADJUSTED`, and injects
+survivorship, absent-raw-price, dividend-separation, and unavailable-action
+limitations. In `STRICT_AUTHORITATIVE` mode, every rule requiring split-only
+price/volume provenance or raw execution data abstains, so zero trades are
+valid. `MECHANICAL_DIAGNOSTIC` mode may use the cached series only as a named
+analytical proxy in a distinct non-authoritative namespace; it cannot emit a
+promotion verdict.
 
 - [ ] **Step 4: Run tests and static checks**
 
@@ -153,13 +185,15 @@ git commit -m "feat: validate authoritative swing datasets"
 
 **Files:**
 - Create: `src/qat/domain/backtester/swing_validation.py`
+- Create: `src/qat/domain/backtester/swing_holdout.py`
 - Create: `tests/domain/backtester/test_swing_validation.py`
+- Create: `tests/domain/backtester/test_swing_holdout.py`
 
 **Interfaces:**
-- Consumes: dataset sessions, strategy configuration, cost profile, and fill policy.
-- Produces: `ValidationPartition`, `ValidationPlan`, `freeze_fingerprint()`, and `authorize_partition()`.
+- Consumes: dataset sessions, strategy/numeric/liquidity/cost/fill configuration, Ed25519 public key, signed permit, and external ledger.
+- Produces: `ValidationPartition`, `ValidationPlan`, `HoldoutPermit`, `HoldoutLedger`, `freeze_fingerprint()`, `verify_holdout_permit()`, `authorize_partition()`, `authorize_full_history()`, and `attribute_partition()`.
 
-- [ ] **Step 1: Write failing boundary, warm-up, and lock tests**
+- [ ] **Step 1: Write failing boundary, signature, ledger, attribution, and lock tests**
 
 ```python
 def test_unique_sessions_split_50_20_30_without_overlap() -> None:
@@ -171,32 +205,64 @@ def test_unique_sessions_split_50_20_30_without_overlap() -> None:
 
 def test_holdout_refuses_without_exact_frozen_fingerprint() -> None:
     with pytest.raises(HoldoutLockedError):
-        authorize_partition(plan, ValidationPartition.HOLDOUT, supplied_approval=None)
+        authorize_partition(plan, ValidationPartition.HOLDOUT, permit=None, ledger=ledger())
+
+def test_computable_fingerprint_string_is_not_authorization() -> None:
+    with pytest.raises(InvalidPermitError):
+        authorize_partition(plan, ValidationPartition.HOLDOUT, permit=f"holdout:{fingerprint}", ledger=ledger())
+
+def test_changed_fingerprint_cannot_reuse_exposed_holdout() -> None:
+    first = authorize_partition(plan, HOLDOUT, signed_permit(fingerprint="a"), ledger=ledger())
+    expose(first)
+    with pytest.raises(HoldoutAlreadyExposedError):
+        authorize_partition(plan, HOLDOUT, signed_permit(fingerprint="b"), ledger=first.ledger)
+
+def test_exact_rerun_is_labelled_reproduction_not_new_evaluation() -> None:
+    second = authorize_partition(exposed_plan(), HOLDOUT, original_signed_permit(), ledger=exposed_ledger())
+    assert second.mode is HoldoutRunMode.REPRODUCTION
 
 def test_warmup_bars_cannot_create_pre_partition_trade() -> None:
     result = run_partition_with_warmup(ValidationPartition.VALIDATION)
     assert min(t.entry_session for t in result.trades) >= result.partition.first_session
 
-def test_holdout_requires_36_calendar_months() -> None:
-    with pytest.raises(InsufficientHoldoutError):
-        build_validation_plan(dataset_with_only_35_holdout_calendar_months())
+def test_short_holdout_keeps_development_available_but_is_not_promotable() -> None:
+    plan = build_validation_plan(dataset_with_only_35_holdout_calendar_months())
+    assert plan.promotion_eligible is False
+    assert authorize_partition(plan, ValidationPartition.DEVELOPMENT)
+    with pytest.raises(HoldoutLockedError):
+        authorize_partition(plan, ValidationPartition.HOLDOUT, signed_permit(), ledger=ledger())
 
 def test_trade_belongs_to_entry_partition_and_may_exit_in_buffer() -> None:
     trade = run_entry_on_last_holdout_session_and_exit_later()
-    assert trade.partition is ValidationPartition.HOLDOUT
+    assert attribute_partition(trade.entry_session, plan) is ValidationPartition.HOLDOUT
+
+def test_full_history_is_locked_until_authorized_holdout_exists() -> None:
+    with pytest.raises(HoldoutLockedError):
+        authorize_full_history(plan, signed_permit(), ledger_without_completed_holdout())
 ```
 
 - [ ] **Step 2: Run and confirm failure**
 
-Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_validation.py -q`
+Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_validation.py tests/domain/backtester/test_swing_holdout.py -q`
 
-- [ ] **Step 3: Implement session-based splits, outcome buffers, power audit, and fingerprint lock**
+- [ ] **Step 3: Implement session splits, outcome buffers, signed permits, and exposure ledger**
 
-The fingerprint is SHA-256 over strategy version/config, evidence schema,
-dataset ID, cost model, ambiguity policy, and replay code commit. Development
-and validation are always accessible. Holdout requires a supplied approval
-string exactly equal to `holdout:<fingerprint>` and records that value in the
-run manifest.
+The fingerprint is SHA-256 over strategy/evidence versions and configuration,
+decimal policy, dataset ID and boundaries, liquidity profile, cost model,
+ambiguity policy, fill model, and replay code commit. Development and validation
+remain accessible even when the holdout is short or power-ineligible.
+
+Verify an Ed25519 permit binding that fingerprint, strategy lineage, exact
+holdout sessions, public-key identity, unique nonce, and approval timestamp.
+The private signing key is never read by the application or repository. Use a
+configured operator-controlled append-only ledger outside the artifact root.
+Hash-chain records and reject mutation, missing history, invalid signatures,
+nonce reuse, scope mismatch, and a changed fingerprint against an exposed
+period. Append an `EXPOSURE_RESERVED` record before loading holdout bytes and a
+completion/failure receipt afterward. An exact-fingerprint rerun is
+`REPRODUCTION` and links to the original
+evaluation without creating another promotion claim. Full-history access
+requires a completed authorized holdout for the same fingerprint.
 
 Assign trades by entry session, never exit session. Start every partition flat;
 allow prior bars only as warm-up, block entries outside the partition, and
@@ -206,27 +272,20 @@ and delistings may extend it. Attribute every later fill and the full result to
 the entry partition. Count holdout trades only when their holdout entries have
 completed outcomes.
 
-Reject a holdout plan with fewer than 36 calendar months. After replay, record
-the distinct nonempty entry-month cluster count for each pattern; Phase 2C
-promotion requires at least 36 for any pattern seeking promotion. Before
-authorization, calculate and record a detectable-effect/power audit from
-development-plus-validation month-cluster
-variability and freeze the expected mean-R effect in the fingerprint. Estimate
-prospective power with the same studentized cluster process, require at least
-80% power at 5% family-wise error, and publish the minimum detectable mean R.
-Include the approximation `1.96 / sqrt(G)` as a scale diagnostic (0.400, 0.327,
-and 0.283 block standard deviations for 24, 36, and 48 clusters), while making
-the bootstrap simulation authoritative. An underpowered result requires more
-history; it cannot change the confidence level or statistical gate.
+For a holdout shorter than 36 calendar months, return a plan with
+`promotion_eligible=False` and a typed shortfall; do not raise during plan
+construction or block earlier partitions. Task 3 supplies the frozen
+pattern-specific `N_required`, `G_required`, effect, power, and minimum
+detectable effect before Task 2 can issue a promotable fingerprint.
 
 - [ ] **Step 4: Run focused tests**
 
-Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_validation.py -q`
+Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_validation.py tests/domain/backtester/test_swing_holdout.py -q`
 
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/qat/domain/backtester/swing_validation.py tests/domain/backtester/test_swing_validation.py
+git add src/qat/domain/backtester/swing_validation.py src/qat/domain/backtester/swing_holdout.py tests/domain/backtester/test_swing_validation.py tests/domain/backtester/test_swing_holdout.py
 git commit -m "feat: lock chronological swing validation"
 ```
 
@@ -238,7 +297,7 @@ git commit -m "feat: lock chronological swing validation"
 
 **Interfaces:**
 - Consumes: Phase 2B trades/equity, benchmark returns, regime labels, and manifest fingerprint.
-- Produces: `SwingStatistics`, `studentized_month_cluster_bootstrap()`, `romano_wolf_stepdown()`, `detectable_effect_audit()`, `concentration_tests()`, `cost_stress()`, and `compute_swing_statistics()`.
+- Produces: `SwingStatistics`, `PowerRequirement`, `studentized_month_cluster_bootstrap()`, `romano_wolf_stepdown()`, `detectable_effect_audit()`, `concentration_tests()`, `cost_stress()`, and `compute_swing_statistics()`.
 
 - [ ] **Step 1: Write failing hand-calculated metric and deterministic-bootstrap tests**
 
@@ -267,6 +326,15 @@ def test_romano_wolf_uses_common_resamples_across_patterns() -> None:
 def test_degenerate_cluster_se_is_insufficient_evidence() -> None:
     assert studentized_month_cluster_bootstrap(degenerate_trades(), 10_000, "m").status == "insufficient_evidence"
 
+def test_power_audit_freezes_pattern_specific_trade_and_cluster_requirements() -> None:
+    requirement = detectable_effect_audit(development_and_validation_trades())
+    assert requirement.n_required >= 100
+    assert requirement.g_required > 0
+    assert requirement.projected_power >= Decimal("0.80")
+
+def test_36_month_holdout_does_not_require_every_month_to_be_nonempty() -> None:
+    assert promotion_sample_check(trades_in_frozen_required_clusters()).passed
+
 def test_concentration_removes_symbol_year_and_top_five_percent() -> None:
     result = concentration_tests(concentrated_trades())
     assert result.without_best_symbol_expectancy <= 0
@@ -288,33 +356,42 @@ mean net R `mean`, and cluster scores `U_g = sum(R_i - mean)`, calculate:
 SE = sqrt((G / (G - 1)) * sum(U_g ** 2) / N ** 2)
 ```
 
-For each resample compute `mean*`, `SE*`, and
-`t* = (mean* - mean) / SE*`. Use
-`mean - q0.975(t*) * SE` as the one-sided lower bound. Return
+Convert immutable decimal R results to versioned binary64 arrays only at this
+statistics boundary and record runtime/library versions. For each resample
+compute `mean*`, `SE*`, and `t* = (mean* - mean) / SE*`. Use
+`mean - q0.975(t*) * SE` as a 97.5% one-sided lower bound, equivalent to the
+lower endpoint of a two-sided 95% interval. Return
 `INSUFFICIENT_EVIDENCE` for zero/undefined SE, too few clusters, or a
 degenerate resample distribution.
 
 Use common month-cluster resamples across the three pattern hypotheses and
-implement Romano–Wolf stepdown at family-wise error rate 5%, preserving their
+implement a one-sided Romano–Wolf stepdown test at family-wise error rate 5%, preserving their
 cross-pattern dependence. Use the union of holdout entry months as the common
 cluster frame, including empty pattern-month clusters. For each pattern use
 observed `t = mean / SE` and its null-centered bootstrap `t*`; order hypotheses
 by descending observed `t`, compare each with the resampled maximum over the
 remaining stepdown set, and enforce monotone adjusted p-values. Require both
-the pattern's 95% studentized lower bound above zero and its adjusted one-sided
+the pattern's 97.5% one-sided studentized lower bound above zero and its adjusted one-sided
 p-value below 0.05. The seven gates within one pattern remain conjunctive and
 receive no additional multiplicity correction. The combined portfolio is
 secondary, cannot pass when an included constituent pattern fails, and no
 sensitivity run can promote.
 
-Use development-plus-validation cluster variability to calculate the
-pre-holdout detectable-effect/power audit. Remove
+Use development-plus-validation cluster variability and signal frequency to
+calculate each pattern's pre-holdout detectable-effect/power audit. Freeze
+`N_required >= 100`, `G_required`, expected effect, minimum detectable effect,
+and projected power of at least 80% before permit issuance. Do not require all
+36 calendar months to be nonempty. Realized shortfalls are
+`INSUFFICIENT_EVIDENCE`, and requirements cannot be relaxed after exposure.
+Include `1.96 / sqrt(G)` only as the documented scale diagnostic. Remove
 `ceil(0.05 * trade_count)` trades for the exceptional-trade concentration test.
 Double commission and slippage for stress while retaining third-party charges,
 then recompute fills and results through Phase 2B rather than subtracting an
-estimate afterward. Report maximum drawdown for holdout,
-validation-plus-holdout, and full-history baseline; label the last as a risk
-diagnostic rather than an unbiased edge estimate.
+estimate afterward. Compute post-fill resistance-exclusion, liquidity/impact,
+and 2% sizing sensitivities as non-promotional results. Report maximum drawdown
+for holdout and validation-plus-holdout. Calculate full-history baseline only
+after Task 2 authorizes it for the completed holdout fingerprint; label it a
+post-holdout risk diagnostic rather than an unbiased edge estimate.
 
 - [ ] **Step 4: Run focused tests and type check**
 
@@ -354,13 +431,16 @@ def test_each_failed_edge_gate_returns_fail(failure: str) -> None:
     assert verdict.gates[failure].passed is False
 
 @pytest.mark.parametrize("shortfall", [
-    "under_100_trades", "under_36_months", "under_36_clusters",
+    "under_n_required", "under_g_required", "under_36_calendar_months",
     "underpowered", "degenerate_standard_error",
 ])
 def test_evidence_shortfall_is_not_strategy_failure(shortfall: str) -> None:
     assert evaluate_promotion(case_with_only_failure(shortfall)).status is PromotionStatus.INSUFFICIENT_EVIDENCE
 
-@pytest.mark.parametrize("reason", ["engineering_tier", "invalid_run", "not_holdout"])
+@pytest.mark.parametrize("reason", [
+    "engineering_tier", "invalid_run", "not_holdout", "invalid_permit",
+    "reused_holdout_period", "provisional_liquidity_profile",
+])
 def test_ineligible_inputs_cannot_be_scored(reason: str) -> None:
     assert evaluate_promotion(case_with_only_failure(reason)).status is PromotionStatus.INELIGIBLE
 
@@ -370,12 +450,12 @@ def test_patterns_are_scored_separately() -> None:
     assert verdicts[Pattern.BULL_FLAG].status is PromotionStatus.FAIL
 
 def test_edge_pass_with_unsafe_drawdown_is_portfolio_risk_blocked() -> None:
-    verdict = evaluate_promotion(edge_pass_case(holdout_drawdown=.21))
+    verdict = evaluate_promotion(edge_pass_case(holdout_drawdown=D("0.21")))
     assert verdict.status is PromotionStatus.EDGE_PASS_PORTFOLIO_RISK_BLOCKED
 
 def test_combined_cannot_pass_with_failed_constituent() -> None:
     verdicts = evaluate_all_patterns(one_failed_constituent())
-    assert verdicts[Pattern.COMBINED].status is not PromotionStatus.PASS
+    assert verdicts[ReplayArm.COMBINED].status is not PromotionStatus.PASS
 ```
 
 - [ ] **Step 2: Run and confirm failure**
@@ -384,12 +464,14 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_pr
 
 - [ ] **Step 3: Implement named gates with measured and required values**
 
-For each pattern, require the locked partition and pre-holdout power protocol,
-at least 36 holdout calendar months, at least 36 nonempty entry-month clusters,
-at least 100 completed holdout trades, net expectancy above zero, a statistical
-confidence gate requiring both a 95% studentized cluster-bootstrap lower bound
-above zero and a Romano–Wolf adjusted one-sided p-value below 0.05, profit
-factor at least 1.20, positive
+For each pattern, require a valid signed permit and unused-period ledger record,
+the locked partition and pre-holdout power protocol, at least 36 holdout
+calendar months, at least frozen `G_required` nonempty entry-month clusters,
+at least frozen `N_required >= 100` completed trades, a final liquidity profile,
+net expectancy above zero, and a statistical confidence gate requiring both a
+97.5% one-sided studentized cluster-bootstrap lower bound above zero and a
+one-sided Romano–Wolf adjusted p-value below 0.05. Also require profit factor at
+least 1.20, positive
 doubled-cost expectancy, and all three leave-out expectancies above zero. These
 seven logical gates are conjunctive; do not adjust them against each other.
 
@@ -400,6 +482,7 @@ fails; this status cannot authorize shadow testing until Phase 4 adds
 concentration controls and the replay passes. Return `FAIL` for an edge-gate
 failure, `INSUFFICIENT_EVIDENCE` for sample, cluster, degeneracy, or power
 shortfall, and `INELIGIBLE` for engineering-tier/non-holdout input.
+Missing authorized full-history diagnostics also prevent a final `PASS`.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -435,6 +518,8 @@ Require this run directory:
   equity.csv
   metrics.json
   promotion.json
+  holdout_permit.json      # holdout/full-history runs only; public signed payload
+  ledger_receipt.json      # holdout/full-history runs only
   report.md
   SHA256SUMS
 ```
@@ -456,9 +541,12 @@ Also verify every checksum, stable JSON ordering, no NaN/Infinity
 serialization, evidence IDs in trade rows, separate pattern/combined sections,
 ambiguity sensitivity, regime segmentation, and holdout authorization metadata.
 The manifest records fixed signal-level reference equity, partition dates,
-entry-month cluster counts, outcome-buffer completion, power audit, bootstrap
-seed/resample digest, and multiplicity method. The report distinguishes edge
-gates from portfolio safety and renders
+frozen `N_required`/`G_required`, entry-month cluster counts, outcome-buffer
+completion, decimal/numeric policy, liquidity profile, signed-permit digest,
+ledger record identity, exposure or reproduction mode, power audit, bootstrap
+seed/resample digest, and multiplicity method. Decimal semantic values serialize
+canonically as strings. The report distinguishes edge gates from portfolio
+safety and renders
 `EDGE_PASS_PORTFOLIO_RISK_BLOCKED` explicitly.
 
 - [ ] **Step 2: Run and confirm failure**
@@ -480,7 +568,9 @@ it reports holdout, validation-plus-holdout, and full-history drawdown; maximum
 and average single-position notional exposure; cost-to-risk ratios; days above
 declared concentration levels; gap losses beyond the planned 1% risk; and the
 uncapped portfolio's status as a concentration/gap-risk stress case rather than
-a deployable forecast.
+a deployable forecast. It also reports liquidity participation/capacity,
+post-fill resistance classifications, the strict-versus-mechanical engineering
+mode, and every declared non-promotional sensitivity including 2% sizing.
 
 - [ ] **Step 5: Commit**
 
@@ -497,7 +587,7 @@ git commit -m "feat: write reproducible swing evidence artifacts"
 - Create: `docs/phase-2-authoritative-swing-runbook.md`
 
 **Interfaces:**
-- Consumes: `--dataset`, `--out`, `--partition`, `--ambiguity-policy`, `--volume-multiplier`, and optional `--holdout-approval`.
+- Consumes: `--dataset`, `--engineering-mode`, `--out`, `--partition`, `--ambiguity-policy`, `--volume-multiplier`, and for holdout/full-history only `--permit`, `--public-key`, and `--ledger`.
 - Produces: one artifact directory and process exit code 0 for a valid replay, 2 for invalid data/configuration, or 3 for a locked holdout.
 
 - [ ] **Step 1: Write failing CLI and frozen end-to-end tests**
@@ -510,11 +600,22 @@ def test_static_asx_run_cannot_claim_promotion(tmp_path: Path) -> None:
     assert promotion["status"] == "ineligible"
 
 def test_cli_never_fetches_network_data(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("requests.Session.request", forbidden_network_call)
+    deny_socket_connect_and_dns(monkeypatch)
+    deny_subprocess_and_process_launch(monkeypatch)
+    deny_known_http_clients(monkeypatch)
     assert run_small_fixture(tmp_path).returncode == 0
 ```
 
-The integration fixture must contain one trade per pattern, one rejected setup, one abstention, one ambiguous fill, and one confluence candidate.
+`deny_known_http_clients()` covers `requests`, `urllib`, `httpx`, `aiohttp`, and
+configured broker SDK entry points; the socket/DNS guard remains the lower-level
+backstop.
+
+The split-only synthetic integration fixture must contain one trade per pattern,
+one rejected setup, one abstention, one ambiguous fill, one confluence
+candidate, one capacity-bound instruction, and both blocked post-fill resistance
+diagnostics. The strict static-cache fixture may contain zero trades but must
+produce the exact provenance abstentions. Mechanical static mode must be
+structurally incapable of promotion.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -522,26 +623,32 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/integration/test_authoritative_
 
 - [ ] **Step 3: Implement the offline coordinator and runbook**
 
-The CLI loads only frozen local inputs, constructs the ASX cost profile,
-validates partition access, and runs four arms: each pattern independently and
-the combined portfolio. It runs the baseline plus approved sensitivities
-(volume 1.25/1.5/2.0, optimistic ambiguity, doubled costs, and 2% sizing
-disclosed separately), writes artifacts, prints their absolute path, and never
-changes deployed settings. Only frozen baseline pattern arms enter the
-Romano–Wolf family; sensitivities remain diagnostic.
+The CLI loads only frozen local inputs, constructs exact cost/liquidity profiles,
+validates partition access, and runs four `ReplayArm` values: each pattern and
+`COMBINED`. It runs the baseline plus approved sensitivities (volume
+1.25/1.5/2.0, optimistic ambiguity, doubled costs, post-fill resistance
+exclusion, liquidity/impact, and 2% sizing), writes artifacts, prints their
+absolute path, and never changes deployed settings. Only frozen baseline
+pattern arms enter the Romano–Wolf family; sensitivities remain diagnostic.
 
 The runbook documents the exact commands, evidence tiers, 50/20/30 partitions,
-entry-session ownership and outcome buffers, pre-holdout power audit, holdout
-fingerprint flow, exit codes, artifact meanings, promotion statuses, and why a
+entry-session ownership and outcome buffers, pre-holdout power audit, signing
+the permit outside the runner, ledger/reproduction rules, full-history lock,
+exit codes, artifact meanings, promotion statuses, engineering modes, and why a
 static-universe result cannot promote the strategy.
 
 - [ ] **Step 4: Run the frozen integration test and actual engineering replay**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/integration/test_authoritative_swing_engineering_replay.py -q`
 
-Run: `.\.venv\Scripts\python.exe scripts/research/run_authoritative_swing.py --dataset static-asx --partition development --out data/phase2-engineering`
+Run: `.\.venv\Scripts\python.exe scripts/research/run_authoritative_swing.py --dataset synthetic-golden --partition development --out data/phase2-engineering-synthetic`
 
-Expected: exit 0, an absolute artifact path, explicit survivorship and vendor-adjustment warnings, no promotion pass, and no broker/network access. If the current cache lacks three years of valid split-only history, the report must show the resulting resistance/data-provenance abstentions rather than manufacture trades.
+Run: `.\.venv\Scripts\python.exe scripts/research/run_authoritative_swing.py --dataset static-asx --engineering-mode strict_authoritative --partition development --out data/phase2-engineering-static`
+
+Expected: both exit 0 with absolute artifact paths and no broker/network/process
+access. The synthetic run exercises every pattern and lifecycle path. The
+static run leads with survivorship and vendor-adjustment warnings, cannot pass
+promotion, and may report zero trades when strict provenance rules abstain.
 
 - [ ] **Step 5: Commit code and documentation, excluding runtime artifacts**
 
@@ -554,6 +661,9 @@ git commit -m "feat: run Phase 2 swing engineering evidence"
 
 **Files:**
 - Modify only files implicated by failures found in this task.
+- Create: `tests/reference/authoritative_swing_reference.py`
+- Create: `tests/domain/backtester/test_swing_reference_parity.py`
+- Create: `tests/domain/backtester/test_swing_prefix_invariance.py`
 - Create: `docs/phase-2-authoritative-swing-checkpoint.md`
 
 **Interfaces:**
@@ -562,11 +672,17 @@ git commit -m "feat: run Phase 2 swing engineering evidence"
 
 - [ ] **Step 1: Run the same frozen integration replay twice**
 
-Run the integration fixture into two empty temporary output roots. Compare `decisions.jsonl`, `fills.csv`, `trades.csv`, `equity.csv`, `metrics.json`, and `promotion.json` byte-for-byte. Compare semantic manifest fields while excluding `created_at` and artifact path.
+Run the integration fixture into two empty temporary output roots. Compare `decisions.jsonl`, `fills.csv`, `trades.csv`, `equity.csv`, `metrics.json`, and `promotion.json` byte-for-byte. Compare semantic manifest fields while excluding `created_at` and artifact path. Verify exact decimal strings and IDs are unchanged by equivalent source decimal spellings.
+
+For every evaluated session `t`, compare the normal result with a dataset
+truncated at `t`, then mutate all later bars, membership rows, corporate actions,
+and calendar inputs. The decision and evidence at `t` must remain byte-identical.
+Compare production tick, EMA, ATR, resistance, sizing, and bootstrap outputs to
+small test-only reference implementations that import no production helpers.
 
 - [ ] **Step 2: Run focused safety and Phase 2 tests**
 
-Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative_swing tests/domain/backtester/test_swing_fills.py tests/domain/backtester/test_swing_portfolio.py tests/domain/backtester/test_swing_replay.py tests/domain/backtester/test_swing_corporate_actions.py tests/domain/backtester/test_swing_dataset.py tests/domain/backtester/test_swing_validation.py tests/domain/backtester/test_swing_statistics.py tests/domain/backtester/test_swing_promotion.py tests/domain/backtester/test_swing_artifacts.py tests/integration/test_authoritative_swing_engineering_replay.py tests/safety/test_phase2_strategy_isolation.py -q`
+Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative_swing tests/domain/backtester/test_swing_fills.py tests/domain/backtester/test_swing_portfolio.py tests/domain/backtester/test_swing_replay.py tests/domain/backtester/test_swing_corporate_actions.py tests/domain/backtester/test_swing_dataset.py tests/domain/backtester/test_swing_validation.py tests/domain/backtester/test_swing_holdout.py tests/domain/backtester/test_swing_statistics.py tests/domain/backtester/test_swing_promotion.py tests/domain/backtester/test_swing_artifacts.py tests/domain/backtester/test_swing_reference_parity.py tests/domain/backtester/test_swing_prefix_invariance.py tests/integration/test_authoritative_swing_engineering_replay.py tests/safety/test_phase2_strategy_isolation.py -q`
 
 Expected: PASS.
 
@@ -574,7 +690,7 @@ Expected: PASS.
 
 Run: `.\.venv\Scripts\python.exe -m ruff check src tests scripts/research/run_authoritative_swing.py`
 
-Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative_swing src/qat/domain/backtester/swing_events.py src/qat/domain/backtester/swing_fills.py src/qat/domain/backtester/swing_results.py src/qat/domain/backtester/swing_portfolio.py src/qat/domain/backtester/swing_replay.py src/qat/domain/backtester/swing_dataset.py src/qat/domain/backtester/swing_validation.py src/qat/domain/backtester/swing_statistics.py src/qat/domain/backtester/swing_promotion.py src/qat/domain/backtester/swing_artifacts.py`
+Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative_swing src/qat/domain/backtester/swing_events.py src/qat/domain/backtester/swing_fills.py src/qat/domain/backtester/swing_results.py src/qat/domain/backtester/swing_portfolio.py src/qat/domain/backtester/swing_replay.py src/qat/domain/backtester/swing_dataset.py src/qat/domain/backtester/swing_validation.py src/qat/domain/backtester/swing_holdout.py src/qat/domain/backtester/swing_statistics.py src/qat/domain/backtester/swing_promotion.py src/qat/domain/backtester/swing_artifacts.py`
 
 Run: `.\.venv\Scripts\python.exe -m pytest -q`
 
@@ -582,7 +698,12 @@ Expected: PASS. Record command, result, duration, and environment in the checkpo
 
 - [ ] **Step 4: Write the Phase 2 checkpoint**
 
-Document implemented spec sections, commits, test evidence, engineering replay artifact ID, survivorship limitation, absence or status of promotion-grade data, unchanged production behavior, and the deferred Option 3 parity replay. Do not state that the strategy has an edge unless a promotion-grade holdout has actually passed.
+Document implemented spec sections, commits, decimal/reference/prefix/isolation
+test evidence, both engineering replay artifact IDs, strict static abstentions,
+survivorship limitation, permit/ledger status, absence or status of
+promotion-grade data, unchanged production behavior, and the deferred Option 3
+parity replay. Do not state that the strategy has an edge unless a signed,
+unused-period promotion holdout has actually passed.
 
 - [ ] **Step 5: Commit**
 
