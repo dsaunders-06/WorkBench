@@ -14,6 +14,7 @@ from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.oms.oms import OMS
 from qat.domain.oms.signal_bridge import SignalToOrderBridge
+from qat.domain.orchestrator import Orchestrator
 from qat.domain.performance.trades import TradeLedger
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -330,3 +331,53 @@ async def test_a_failed_legacy_backup_leaves_the_entry_file_unchanged(tmp_path):
     finally:
         await bridge.stop()
         await ledger.stop()
+
+
+@pytest.mark.asyncio
+async def test_corrupt_entry_start_can_stop_repeatedly_and_preserves_bytes(tmp_path):
+    path = tmp_path / "open_position_entries.json"
+    evidence = b"{corrupt-entry-evidence"
+    path.write_bytes(evidence)
+    bridge, _, switch, broker, _, _ = _unstarted_bridge(tmp_path)
+    await bridge.start()
+    await bridge.stop()
+    await bridge.stop()
+    assert switch.tripped
+    assert broker.position_calls == broker.recent_fill_calls == 0
+    assert path.read_bytes() == evidence
+
+
+@pytest.mark.asyncio
+async def test_bridge_stop_is_idempotent_after_successful_start(tmp_path):
+    bridge, _, _ = await _started_bridge(tmp_path, MockBroker(seed=1))
+    await bridge.stop()
+    await bridge.stop()
+    assert bridge._sweep_task is None
+    assert bridge._warm_task is None
+    assert all(bridge._on_fill not in handlers for handlers in bridge.bus._handlers.values())
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_cleans_other_engines_after_corrupt_bridge_start(tmp_path):
+    path = tmp_path / "open_position_entries.json"
+    path.write_bytes(b"{corrupt-entry-evidence")
+    bridge, bus, _, _, _, _ = _unstarted_bridge(tmp_path)
+    stopped = []
+
+    class OtherEngine:
+        name = "other"
+
+        async def start(self):
+            pass
+
+        async def stop(self):
+            stopped.append(True)
+
+    orchestrator = Orchestrator(bus)
+    orchestrator.register(OtherEngine())
+    orchestrator.register(bridge)
+    await orchestrator.start_all()
+    await orchestrator.stop_all()
+    assert stopped == [True]
+    assert not orchestrator.is_running
+    assert path.read_bytes() == b"{corrupt-entry-evidence"

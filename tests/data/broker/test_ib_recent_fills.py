@@ -242,7 +242,7 @@ async def test_a_us_fill_keeps_its_plain_symbol() -> None:
 
 async def test_recent_fill_resolves_order_reference_after_adapter_restart() -> None:
     raw = _fill("WOW", "BOT", perm_id=998877)
-    raw.execution.orderRef = "app-order-123"
+    raw.execution.orderRef = "e17bb4c8-b3d8-4d4a-a5bb-5bd2fb0d80ce"
     client = FillsIB([raw])
     bus = EventBus()
     seen: list[BrokerOrderIdResolvedEvent] = []
@@ -260,5 +260,7 @@ async def test_recent_fill_resolves_order_reference_after_adapter_restart() -> N
 
     fills = await adapter.recent_fills(SINCE)
 
-    assert fills[0].app_order_id == "app-order-123"
-    assert [(e.order_id, e.app_order_id) for e in seen] == [("998877", "app-order-123")]
+    assert fills[0].app_order_id == "e17bb4c8-b3d8-4d4a-a5bb-5bd2fb0d80ce"
+    assert [(e.order_id, e.app_order_id) for e in seen] == [
+        ("998877", "e17bb4c8-b3d8-4d4a-a5bb-5bd2fb0d80ce")
+    ]

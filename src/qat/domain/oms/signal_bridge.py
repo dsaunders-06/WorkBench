@@ -440,6 +440,7 @@ class SignalToOrderBridge:
         self._time_stopped: set[str] = set()
         self._hold_blocked: set[str] = set()
         self._sweep_task: asyncio.Task[None] | None = None
+        self._subscribed = False
 
     async def start(self) -> None:
         if self._entry_store_error is not None:
@@ -453,6 +454,7 @@ class SignalToOrderBridge:
         self.bus.subscribe(OrderFilledEvent, self._on_fill, critical=True)
         self.bus.subscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved, critical=True)
         self.bus.subscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+        self._subscribed = True
         self.oms.watch_symbols_for_fills(self._entries)
         snapshot = await self.oms.prepare_missed_fill_replay()
         if snapshot is None:
@@ -1257,11 +1259,13 @@ class SignalToOrderBridge:
         return proposed
 
     async def stop(self) -> None:
-        self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
-        self.bus.unsubscribe(SignalEvent, self._on_signal)
-        self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
-        self.bus.unsubscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
-        self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+        if self._subscribed:
+            self.bus.unsubscribe(MarketDataEvent, self._on_market_data)
+            self.bus.unsubscribe(SignalEvent, self._on_signal)
+            self.bus.unsubscribe(OrderFilledEvent, self._on_fill)
+            self.bus.unsubscribe(BrokerOrderIdResolvedEvent, self._on_order_id_resolved)
+            self.bus.unsubscribe(EntryPriceCorrectedEvent, self._on_entry_price_corrected)
+            self._subscribed = False
         if self._sweep_task is not None:
             self._sweep_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

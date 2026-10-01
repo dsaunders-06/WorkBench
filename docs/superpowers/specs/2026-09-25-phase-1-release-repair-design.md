@@ -1,8 +1,8 @@
 # Phase 1 release repair design
 
-**Date:** 25 September 2026  
-**Status:** Approved design; implementation not started  
-**Branch:** `recovery/phase-1-safety-and-truth`  
+**Date:** 25 September 2026
+**Status:** Approved design; implementation not started
+**Branch:** `recovery/phase-1-safety-and-truth`
 **Base:** `master` at `5757fd28d96453441a9514b9c696a027b2e46247`
 
 ## Purpose

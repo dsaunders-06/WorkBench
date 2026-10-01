@@ -16,12 +16,14 @@ import shutil
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
 from qat.data.broker.adapter import BrokerFill, Order
+from qat.data.broker.ib_translate import from_ib_fill
 from qat.data.broker.mock_broker import MockBroker
 from qat.domain.bus import EventBus
 from qat.domain.events import BrokerOrderIdResolvedEvent, OrderFilledEvent, OrderRejectedEvent
@@ -344,7 +346,22 @@ async def test_late_broker_id_restart_keeps_one_cumulative_receipt(
     tmp_path, crash_point, monkeypatch
 ):
     first, _, _, _, app_id = await _partially_filled_qat_order(tmp_path)
-    cumulative = BrokerFill("998877", "WOW.AX", "buy", 10.0, 102.0, datetime.now(UTC), app_id)
+    cumulative = from_ib_fill(
+        SimpleNamespace(
+            contract=SimpleNamespace(symbol="WOW"),
+            execution=SimpleNamespace(
+                execId="late-buy",
+                permId=998877,
+                side="BOT",
+                cumQty=10.0,
+                avgPrice=102.0,
+                time=datetime.now(UTC),
+                orderRef=app_id,
+            ),
+        ),
+        "ASX",
+    )
+    assert cumulative is not None and cumulative.app_order_id == app_id
     await _stop_at_identity_boundary(first, cumulative, crash_point, monkeypatch)
 
     restarted, broker, bridge, ledger = await _restart_stack(tmp_path)
@@ -601,3 +618,60 @@ async def test_legacy_migration_interruption_leaves_pending_delivery_recoverable
     assert sum(lot.quantity for lot in ledger.open_lots("WOW.AX")) == 10.0
     assert sum(lot.entry_cost for lot in ledger.open_lots("WOW.AX")) == pytest.approx(6.60)
     assert restarted._pending_fill_deliveries == {}
+
+
+@pytest.mark.asyncio
+async def test_translated_standalone_target_closes_ten_shares_across_restart(tmp_path):
+    first, _, _, _, _ = await _partially_filled_qat_order(tmp_path, quantity=10.0)
+    stop = first._new_pending_order("WOW.AX", "sell", 10.0, 90.0, "swing")
+    stop_id = stop.order_id
+    await first.sign_off(stop_id, "operator")
+    assert first.register_broker_order_id("998876", stop_id)
+
+    restarted, broker, bridge, ledger = await _restart_stack(tmp_path)
+    assert restarted.get_order("998876") is restarted.get_order(stop_id)
+    assert sum(lot.quantity for lot in ledger.open_lots("WOW.AX")) == 10.0
+    fill = from_ib_fill(
+        SimpleNamespace(
+            contract=SimpleNamespace(symbol="WOW"),
+            execution=SimpleNamespace(
+                execId="target-execution",
+                permId=998877,
+                side="SLD",
+                shares=10.0,
+                cumQty=10.0,
+                price=110.0,
+                avgPrice=110.0,
+                time=datetime.now(UTC),
+                orderRef=f"{stop_id}:target",
+            ),
+        ),
+        "ASX",
+    )
+    assert fill is not None
+    broker._broker_fills[:] = [fill]
+    pending_during_delivery = []
+
+    async def observe_pending(event):
+        pending_during_delivery.append(
+            json.loads((tmp_path / "absorbed_fills.json").read_text())["pending_deliveries"]
+        )
+
+    restarted.bus.subscribe(OrderFilledEvent, observe_pending, critical=True)
+    await restarted.absorb_broker_fills(record_only=True)
+    assert sum(trade.quantity for trade in ledger.closed_trades()) == 10.0
+    assert ledger.open_lots("WOW.AX") == []
+    assert "WOW.AX" not in bridge.position_entries()
+    assert not restarted.kill_switch.tripped
+    assert pending_during_delivery and pending_during_delivery[0]
+    assert restarted._pending_fill_deliveries == {}
+    assert "998877" not in restarted._fill_aliases
+
+    replay, replay_broker, _, replay_ledger = await _restart_stack(tmp_path)
+    replay_broker._broker_fills[:] = [fill]
+    await replay.absorb_broker_fills(record_only=True)
+    await replay.absorb_broker_fills(record_only=True)
+    assert sum(trade.quantity for trade in replay_ledger.closed_trades()) == 10.0
+    assert replay_ledger.open_lots("WOW.AX") == []
+    assert replay._pending_fill_deliveries == {}
+    assert not replay.kill_switch.tripped

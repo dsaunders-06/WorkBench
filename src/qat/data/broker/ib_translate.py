@@ -8,6 +8,7 @@ objects requiring no network connection.
 from __future__ import annotations
 
 import logging
+from uuid import UUID
 
 from ib_async import AccountValue, Contract, Fill, Stock
 from ib_async import Position as IBPosition
@@ -432,7 +433,17 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
             execution.side,
         )
         return None
-    app_order_id = str(getattr(execution, "orderRef", "") or "") or None
+    reference = str(getattr(execution, "orderRef", "") or "")
+    app_order_id = None
+    try:
+        application_uuid = UUID(reference)
+    except ValueError:
+        pass
+    else:
+        # QAT generates uuid4().hex IDs. Accept the standard dashed spelling
+        # too, but never alias a separate OCA target (UUID:target) to its stop.
+        if reference in (application_uuid.hex, str(application_uuid)):
+            app_order_id = reference
     return BrokerFill(
         order_id=str(execution.permId),
         symbol=from_ibkr(fill.contract.symbol, market),
