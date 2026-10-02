@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -31,6 +32,18 @@ class PostFillResistanceDiagnostic(StrEnum):
     CLEAR = "post_fill_resistance_clear"
     INSIDE_ZONE = "post_fill_resistance_inside_zone"
     PATH_BLOCKED = "post_fill_resistance_path_blocked"
+
+
+class LifecycleActionSeries(tuple[LifecycleAction, ...]):
+    """Immutable lifecycle evidence with an exact reason-count helper."""
+
+    def __new__(
+        cls, values: Iterable[LifecycleAction] = ()
+    ) -> LifecycleActionSeries:
+        return super().__new__(cls, values)
+
+    def count_reason(self, reason: str) -> int:
+        return sum(action.reason == reason for action in self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,7 +130,7 @@ class SwingReplayResult:
     status: RunStatus
     arm: ReplayArm
     decisions: tuple[SetupDecision, ...]
-    position_events: tuple[LifecycleAction, ...]
+    position_events: LifecycleActionSeries
     fills: tuple[SimulatedFill, ...]
     trades: tuple[SwingTrade, ...]
     signal_trades: tuple[SwingTrade, ...]

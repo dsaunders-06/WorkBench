@@ -3,9 +3,25 @@
 from __future__ import annotations
 
 import ast
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
+import pytest
 from support.source_corpus import source_files
+
+from qat.domain.backtester.swing_fills import AmbiguityPolicy
+from qat.domain.backtester.swing_replay import (
+    AuthoritativeSwingReplay,
+    ReplayCalendarRow,
+    SessionKind,
+)
+from qat.domain.backtester.swing_results import RunStatus
+from qat.domain.oms.oms import OMS
+from qat.domain.strategies.authoritative_swing.sizing import (
+    ExactCostProfile,
+    LiquidityProfile,
+)
 
 ROOT = Path(__file__).parents[2]
 SOURCE = ROOT / "src"
@@ -93,3 +109,41 @@ def test_phase2_transitive_import_graph_has_no_network_or_process_interfaces() -
         for name in imported
         for root in forbidden
     )
+
+
+def test_complete_phase2_replay_never_invokes_oms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def forbidden(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("Phase 2 replay reached the production OMS")
+
+    for method in ("submit_order", "submit_exit_order", "sign_off"):
+        monkeypatch.setattr(OMS, method, forbidden)
+
+    session = date(2026, 1, 5)
+    replay = AuthoritativeSwingReplay(
+        calendar_rows=(
+            ReplayCalendarRow(
+                session,
+                SessionKind.FULL,
+                "fixture-calendar",
+                "normal session",
+                "calendar-2026-01-05",
+                True,
+            ),
+        ),
+        bars={},
+        membership={session: frozenset()},
+        corporate_actions=(),
+        benchmark=(),
+        engine=object(),  # type: ignore[arg-type]
+        starting_equity=Decimal("10000"),
+        costs=ExactCostProfile(
+            "fixture-v1", "fixture", Decimal(0), Decimal(0), "AUD", False, Decimal(0)
+        ),
+        liquidity=LiquidityProfile("fixture-v1", Decimal(1), Decimal(0), Decimal(0)),
+        ambiguity_policy=AmbiguityPolicy.CONSERVATIVE,
+    )
+
+    assert replay.run().status is RunStatus.VALID
