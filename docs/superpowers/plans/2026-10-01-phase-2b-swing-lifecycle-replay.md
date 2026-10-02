@@ -28,6 +28,9 @@
   replay cannot duplicate an instruction or filled pattern.
 - A replay must be deterministic from strategy version, signed dataset catalog
   and authorized shard identities, cost model, and ordered events.
+- Promotion replay advances only through Phase 2C's signed official-session
+  sequence. The rule-derived production calendar is a fixture/cross-check and
+  cannot invent a missing session or erase an ad hoc closure.
 - Treat the uncapped cash-funded arm as engineering evidence with status
   `PORTFOLIO_RISK_DESIGN_PENDING`. Promotion-tier development and validation
   are replayed from the beginning only after Phase 4 sizing and risk rules are
@@ -554,6 +557,14 @@ face value at `T64` without loading the next partition.
 Keep original and transformed quantities/prices in evidence. Dataset-wide
 integrity errors return `RunStatus.INVALID` and suppress promotion scoring; they
 do not produce a plausible partial result.
+
+These immutable exact-decimal/rational historical events deliberately diverge
+from `qat.domain.corporate_actions`. The existing package is a live broker
+announcement/detection/stop-adjustment subsystem with float values and OMS
+dependencies. Reuse vendor source facts only through Phase 2C's normalization
+adapter; do not import its `AnnouncementStore`, `SplitDetector`, `StopAdjuster`,
+or `CorporateActionMonitor` anywhere in the research dependency graph. Add a
+transitive-import test that fails if this boundary is crossed.
 
 - [ ] **Step 4: Run Phase 2A/2B and full repository verification**
 

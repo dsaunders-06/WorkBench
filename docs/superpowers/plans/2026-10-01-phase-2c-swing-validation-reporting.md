@@ -58,7 +58,7 @@ separate Phase 2D plan.
 - `docs/phase-2-authoritative-swing-runbook.md` — operator run and interpretation guide.
 - `tests/domain/backtester/test_swing_dataset.py` — data integrity tests.
 - `tests/domain/backtester/test_swing_validation.py` — partition, named-boundary,
-  tail-isolation, and no-cross-boundary tests.
+  tail-isolation, and no-cross-boundary tests, including optional `T65`.
 - `tests/domain/backtester/test_swing_reference.py` — incidence, support,
   bucket, overlap, and holdout-cutoff tests.
 - `tests/domain/backtester/test_swing_statistics.py` — statistical tests.
@@ -92,7 +92,7 @@ separate Phase 2D plan.
 **Interfaces:**
 - Consumes: a signed public dataset catalog and an authorized shard handle.
 - Produces: `DatasetTier`, `DatasetCatalog`, `DatasetShardManifest`,
-  `PartitionAccess`, `SwingDataset`, `validate_catalog()`,
+  `OfficialSessionCalendar`, `PartitionAccess`, `SwingDataset`, `validate_catalog()`,
   `load_swing_dataset(access)`, and `load_static_asx_engineering_dataset()`.
 
 - [ ] **Step 1: Write failing manifest, membership, and corruption tests**
@@ -106,6 +106,7 @@ dataset-catalog/
 
 operator-data/
   development-signal/
+    sessions.csv
     membership.csv
     corporate_actions.csv
     benchmark.csv
@@ -137,6 +138,8 @@ positive integer pairs; volume is an integer. Membership columns are
 `event_id,symbol,declaration_date,ex_session,record_date,payment_date,kind,ratio_numerator,ratio_denominator,cash_amount,new_symbol,terminal_price,currency`.
 Regime columns are
 `session,label,probabilities_json,model_version,model_code_hash,configuration_hash,training_start,training_end,input_cutoff,max_input_session,input_hash,fit_id,output_hash`.
+Official-session columns are
+`session,open_time,close_time,session_kind,source,source_version,source_hash,finalized`.
 The reference exposure view contains pseudonymous issuer, window start,
 eligibility and index labels, market-cap/liquidity bucket labels, event category
 and onset, consideration category, and custodian-source hash. It contains no
@@ -171,6 +174,11 @@ def test_catalog_validation_does_not_hash_sealed_observations() -> None:
         validate_catalog(public_catalog())
     assert opened == {public_catalog().manifest_path}
 
+def test_signed_official_calendar_preserves_ad_hoc_closure() -> None:
+    dataset = load_swing_dataset(development_access(ad_hoc_closure_fixture()))
+    assert closure_date() not in dataset.official_sessions
+    assert dataset.official_sessions.source_hash == declared_calendar_hash()
+
 def test_reference_view_has_no_return_or_exact_value_columns() -> None:
     assert set(reference_view().columns).isdisjoint(
         {"open", "high", "low", "close", "market_cap", "traded_value", "return", "r_order"}
@@ -180,7 +188,14 @@ def test_holdout_crossing_reference_window_is_excluded() -> None:
     assert max(w.end for w in reference_view().windows) < catalog().holdout_start
 ```
 
-Also test duplicate sessions, partial bars, non-finite values, raw OHLC geometry, missing source/quality, unresolved symbol changes, missing delisting outcome, mismatched currency, bad corporate-action ratio, and benchmark gaps. Duplicate/order/hash/schema/corporate-action lineage errors invalidate the dataset. A malformed symbol bar is retained with a non-verified quality state so its symbol-session can abstain and be disclosed.
+Also test duplicate sessions, partial bars, non-finite values, raw OHLC geometry,
+missing source/quality, unresolved symbol changes, missing delisting outcome,
+mismatched currency, bad corporate-action ratio, benchmark gaps, and bars not
+present in the official-session table. Duplicate/order/hash/schema/calendar/
+corporate-action lineage errors invalidate the dataset. The rule-derived
+`market_calendar.py` cross-check must disclose recurring-rule differences but
+cannot overwrite the signed session sequence. A malformed symbol bar is retained
+with a non-verified quality state so its symbol-session can abstain and be disclosed.
 Test that source text `0.011` remains exactly `Decimal("0.011")`, factors such
 as `3/10` remain reduced rationals, reconstructed raw prices agree after the
 declared analytical quantum and raw normalization, and no binary float is
@@ -240,6 +255,7 @@ class DatasetCatalog:
 class SwingDataset:
     catalog: DatasetCatalog
     manifest: DatasetShardManifest
+    official_sessions: OfficialSessionCalendar
     bars: Mapping[str, tuple[FinalBar, ...]]
     membership: Mapping[date, frozenset[str]]
     corporate_actions: tuple[SwingMarketEvent, ...]
@@ -248,7 +264,9 @@ class SwingDataset:
     authorized_tail: DatasetShardManifest | None
 ```
 
-The operator packager computes `dataset_id` and sealed shard hashes. The runner
+The operator packager computes `dataset_id` and sealed shard hashes. The catalog
+binds the official calendar source, version, retrieval time, content hash, and
+effective interval. The runner
 validates the signed catalog without opening any observation shard, then
 validates every file in the one authorized shard before constructing
 `SwingDataset`. `PartitionAccess` exposes only explicit shard handles; a path
@@ -270,13 +288,19 @@ then may this loader verify their bytes against the catalog.
 
 The synthetic engineering dataset is split-only and must generate full golden
 lifecycle coverage. The static adapter reads existing
-`scripts/research/asx_bars/*.csv`, marks the cache `VENDOR_ADJUSTED`, and injects
-survivorship, absent-raw-price, dividend-separation, and unavailable-action
-limitations. In `STRICT_AUTHORITATIVE` mode, every rule requiring split-only
-price/volume provenance or raw execution data abstains, so zero trades are
-valid. `MECHANICAL_DIAGNOSTIC` mode may use the cached series only as a named
-analytical proxy in a distinct non-authoritative namespace; it cannot emit a
-promotion verdict.
+`scripts/research/asx_bars/*.csv`: 95 files, exactly 500 sessions per file, from
+26 August 2024 through 14 August 2026, with
+`ts,open,high,low,close,volume`. Mark the cache `VENDOR_ADJUSTED` and inject
+survivorship, absent-raw-price, dividend-separation, unavailable-action, and
+under-three-year resistance-history limitations. In `STRICT_AUTHORITATIVE`
+mode, provenance-dependent rules abstain and every candidate reaching resistance
+returns `INSUFFICIENT_RESISTANCE_HISTORY`, so zero trades are valid.
+`MECHANICAL_DIAGNOSTIC` may report pre-resistance pattern candidates, the same
+typed history failure, candidates per 1,000 eligible symbol-months, and a
+coverage-scaled ASX 200 planning proxy (`rate_per_symbol_month × 200`) beside
+the observed 95-symbol exposure, with a symbol/month clustered range. It
+must not shorten the resistance lookback, label candidates as trades, emit a
+promotion verdict, or enter the formal frequency planner.
 
 - [ ] **Step 4: Run tests and static checks**
 
@@ -307,11 +331,19 @@ git commit -m "feat: validate authoritative swing datasets"
 
 ```python
 def test_named_sessions_pin_instruction_fill_exit_and_terminal() -> None:
-    b = boundaries_for(final_entry_fill=date(2020, 12, 31), calendar=asx_calendar())
+    b = boundaries_for(
+        final_entry_fill=date(2020, 12, 31), calendar=official_calendar_fixture()
+    )
     assert b.t0 == previous_session(b.t1)
     assert b.t10 == advance_sessions(b.t1, 9)
     assert b.t11 == advance_sessions(b.t1, 10)
     assert b.t64 == advance_sessions(b.t1, 63)
+    assert b.t65 == advance_sessions(b.t1, 64)
+
+def test_ad_hoc_closure_uses_signed_sessions_not_rule_calendar() -> None:
+    b = boundaries_for(final_entry_fill=t1(), calendar=calendar_with_ad_hoc_closure())
+    assert b.t10 == tenth_signed_session_from_t1()
+    assert ad_hoc_closure_date() not in b.tail_sessions
 
 def test_instruction_that_would_fill_after_t1_is_rejected() -> None:
     assert not may_emit_instruction(session=boundaries.t1, boundaries=boundaries)
@@ -352,7 +384,8 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_va
 - [ ] **Step 3: Implement the chronological contract**
 
 Allocate complete entry-fill months, then attach a distinct 63-session tail to
-each partition. Name `T0`, `T1`, `T10`, `T11`, and `T64` exactly as the spec.
+each partition. Name `T0`, `T1`, `T10`, `T11`, `T64`, and optional `T65`
+exactly as the spec.
 The final instruction is at `T0`, final fill at `T1`, tenth holding close at
 `T10`, scheduled exit open at `T11`, and tail terminal at `T64`. Partition
 ownership follows entry fill. Tail and interstitial rows may resolve positions
@@ -364,6 +397,11 @@ tradable opportunity through `T64`; otherwise apply documented irrevocable
 consideration or zero. Mark equity to zero at onset, keep cash unavailable, and
 avoid duplicate loss at terminal close. Missing data needed to apply the rule
 invalidates the run. Do not implement `BOUNDARY_CENSORED` exclusion.
+
+All boundary advancement uses `SwingDataset.official_sessions`. The
+rule-derived ASX calendar is a fixture and recurring-holiday cross-check only;
+it cannot invent a promotion session, override an ad hoc closure, or fill a
+calendar gap.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -413,6 +451,10 @@ def test_sequential_monte_carlo_extension() -> None:
     near = audit_at_20k(upper_limit_within_points="0.25")
     assert near.requested_outer_runs == 100_000
 
+def test_final_audit_uses_upper_monte_carlo_limit() -> None:
+    result = audit_at_100k(point_estimate_below_cap=True, upper_limit_above_cap=True)
+    assert result.status is MethodStatus.METHOD_INADEQUATE
+
 def test_tail_only_months_are_absent_but_real_zero_months_remain() -> None:
     vector = eligible_month_count_vector(plan(), replay())
     assert development_tail_month() not in vector
@@ -458,8 +500,10 @@ With 9,999 inner draws, start with 20,000 outer simulations. Accept early only
 when the upper 95% Monte Carlo limit is at least 0.25 percentage points below
 3.25% for the confidence gate and 6% for FWER. Reject early when the lower limit
 is at least 0.25 points above. Otherwise extend to 100,000. Every mandatory cell
-must pass. `METHOD_INADEQUATE` blocks promotion and cannot be repaired with a
-trimmed or winsorized estimand.
+must pass. At 100,000, accept a cell only when its upper 95% Monte Carlo limit
+is less than or equal to the applicable 3.25% or 6% cap; a point estimate below
+the cap is insufficient. Every other final result is `METHOD_INADEQUATE`, which
+blocks promotion and cannot be repaired with a trimmed or winsorized estimand.
 
 Recompute `N_required >= 100` and `G_required` under the accepted method using
 the maximum requirement across mandatory power scenarios. `delta_MME` is
@@ -509,6 +553,12 @@ git commit -m "feat: audit swing inference and holdout feasibility"
   `PromotionVerdict`, `calibrate_terminal_incidence()`,
   `evaluate_structural_risk()`, and `evaluate_promotion()`.
 
+`PromotionStatus` includes `PORTFOLIO_RISK_DESIGN_PENDING`,
+`INCIDENCE_DATA_INSUFFICIENT`, `PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE`,
+`INSUFFICIENT_EVIDENCE`, `METHOD_INADEQUATE`,
+`TERMINAL_OUTCOME_SENSITIVE`, `FAIL`,
+`EDGE_PASS_PORTFOLIO_RISK_BLOCKED`, and `PASS`.
+
 - [ ] **Step 1: Write failing incidence and structural tests**
 
 ```python
@@ -526,6 +576,11 @@ def test_overlapping_windows_use_clustered_bound() -> None:
     result = calibrate_terminal_incidence(reference_view())
     assert result.primary_bound == max(result.clustered_upper, result.landmark_exact_upper)
 
+def test_under_supported_incidence_stops_duration_planning() -> None:
+    result = calibrate_terminal_incidence(reference_view_below_merged_support())
+    assert result.status is PromotionStatus.INCIDENCE_DATA_INSUFFICIENT
+    assert result.recommended_holdout_months is None
+
 def test_phase2_engineering_cannot_pass() -> None:
     assert evaluate_promotion(engineering_case()).status is PromotionStatus.PORTFOLIO_RISK_DESIGN_PENDING
 
@@ -536,8 +591,12 @@ def test_structurally_infeasible_stops_before_duration_advice() -> None:
 
 def test_zero_price_loss_is_applied_to_every_funded_trade_placement() -> None:
     result = evaluate_structural_risk(cash_funded_replay())
-    assert result.placements_tested == len(cash_funded_replay().trades)
+    assert result.placements_tested == len(all_exposed_trade_session_pairs(cash_funded_replay()))
     assert result.max_drawdown == max(p.max_drawdown for p in result.placements)
+
+def test_recovery_only_pass_is_non_promotable() -> None:
+    result = evaluate_promotion(conservative_fails_recovery_passes())
+    assert result.status is PromotionStatus.TERMINAL_OUTCOME_SENSITIVE
 ```
 
 Also test event categories, known consideration, short halts, unresolved
@@ -572,16 +631,24 @@ Primary weights use development/validation entry counts and labels only; add a
 mandatory +25 percentage-point highest-risk shift and a non-promotional
 all-worst-bucket sensitivity.
 
+If the declared merge path still cannot reach both support minima, return
+`INCIDENCE_DATA_INSUFFICIENT`, report the support and attempted merges, and stop
+probabilistic calibration, method/power work, and duration advice. A
+deterministic design-envelope diagnostic may still be written but cannot
+authorize promotion.
+
 - [ ] **Step 4: Implement structural and tail gates**
 
 Run the Phase 4 design-envelope check before promotion outcomes. After signed
 development and validation release, run the funded-trade structural preflight
 before method, power, or duration planning. For each funded development or
-validation trade, replace its exit with zero at event onset, retain cash lock
-through `T64`, and recompute the actual equity path. Repeat the identical test
-on holdout and authorized full-history results only after exposure. Require
-worst placement and the 95th-percentile probabilistic tail drawdown no greater
-than 20% at every applicable stage. Phase 4 policy supplies notional,
+validation trade, inject onset at every official session on which the position
+is exposed, starting immediately after entry fill and ending before baseline
+exit. Mark it to zero at that onset, retain cash lock through `T64`, recompute
+the actual equity path, and take the worst trade/session placement. Repeat the
+identical test on holdout and authorized full-history results only after
+exposure. Require worst placement and the 95th-percentile probabilistic tail
+drawdown no greater than 20% at every applicable stage. Phase 4 policy supplies notional,
 stop-distance, cost-to-risk, aggregate, and sector caps. The design envelope is
 `1 - (1 - ordinary_drawdown_budget) * (1 - zero_price_loss)`.
 
@@ -592,6 +659,15 @@ simulated mean net `R_order` above zero and verify it against an analytical
 expected-value calculation. Report signal and cash ES1/ES5 without an ES pass
 threshold. Report deterministic simultaneous two-issuer zero as a sensitivity.
 Never impose a single-event mean gate whose effect dilutes with `N`.
+
+When conservative terminal valuation fails but the later-recovery sensitivity
+passes every otherwise applicable gate, return
+`TERMINAL_OUTCOME_SENSITIVE`; it is non-promotable. If development/validation
+structural preflight fails, return
+`PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE` with no duration advice. A revised
+Phase 4 policy must enter a new signed protocol lineage and replay development
+and validation from the beginning; an unopened, unchanged sealed holdout
+remains eligible, subject to recomputed feasibility and permit inputs.
 
 Keep the seven pure edge gates and status taxonomy from the spec. During Phase
 2, every result is engineering-tier and must return
@@ -659,7 +735,7 @@ ambiguity sensitivity, regime segmentation, and explicit absence of holdout
 authorization metadata in Phase 2.
 The manifest records fixed signal-level reference equity; eligible and
 overlap-suppressed trade counts; `R_order` and `R_fill`; catalog/shard
-identities; `T0/T1/T10/T11/T64`; signal, tail, and interstitial windows;
+identities; `T0/T1/T10/T11/T64/T65`; signal, tail, and interstitial windows;
 terminal-valued outcomes and influence; decimal/rational numeric policy;
 liquidity profile; WCR-S implementation/reference identity; generic pilot and
 scenario-matrix hashes; size caps; method status; power and duration planner
@@ -669,7 +745,8 @@ multiplicity method. Later Phase 2D runs add declaration, permit, rehearsal,
 ledger, exposure, and bundle receipts without changing this base schema.
 Decimal semantic values serialize
 canonically as strings. The report distinguishes edge gates from portfolio
-safety and renders
+safety and renders `INCIDENCE_DATA_INSUFFICIENT`,
+`PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE`, `TERMINAL_OUTCOME_SENSITIVE`, and
 `EDGE_PASS_PORTFOLIO_RISK_BLOCKED` explicitly.
 
 - [ ] **Step 2: Run and confirm failure**
@@ -749,9 +826,17 @@ dividend receivable and later cash settlement, and point-in-time regime
 metadata. The strict static-cache fixture may contain zero trades but must
 produce the exact provenance abstentions. Mechanical static mode must be
 structurally incapable of promotion.
-The synthetic fixture also pins `T0/T1/T10/T11/T64`, a temporary halt resolving
+The synthetic fixture also pins `T0/T1/T10/T11/T64/T65`, a temporary halt resolving
 inside the tail, an unresolved halt valued at zero on onset, terminal close
 without duplicate loss, and a tail signal that cannot enter.
+
+The real static replay asserts the baseline inventory exactly: 95 files, 500
+sessions per file, 26 August 2024 through 14 August 2026. Strict mode reports
+provenance failures and `INSUFFICIENT_RESISTANCE_HISTORY`. Mechanical mode
+stops before resistance, reports candidates per 1,000 eligible symbol-months,
+and computes its ASX 200 planning proxy from symbol-session exposure with a
+symbol/month clustered range. It must not run a shorter-lookback resistance
+variant or pass those counts to `plan_holdout_duration()`.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -770,7 +855,7 @@ pattern arms enter the Romano–Wolf family; sensitivities remain diagnostic.
 
 The runbook documents the exact commands, evidence tiers, signed catalog and
 physical signal/tail shards, complete-month 50/20/30 allocation,
-`T0/T1/T10/T11/T64`, entry-fill ownership, terminal valuation, the structural
+`T0/T1/T10/T11/T64/T65`, entry-fill ownership, terminal valuation, the structural
 extract allowlist, declaration order, method and incidence audits, Phase 4
 dependency, Phase 2D handoff, exit codes, artifact meanings, engineering
 statuses, and why neither static nor synthetic evidence can promote the

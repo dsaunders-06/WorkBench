@@ -248,11 +248,11 @@ git commit -m "feat: add authoritative swing evidence types"
 
 **Interfaces:**
 - Consumes: decimal source text, reduced integer split factors,
-  `tuple[FinalBar, ...]`, ASX calendar functions, and the existing ASX tick
-  schedule.
+  `tuple[FinalBar, ...]`, an explicit ordered official-session sequence, and the
+  existing ASX tick schedule.
 - Produces: `SplitFactor`, `parse_decimal()`, `canonical_decimal()`,
   `to_raw_price()`, `to_analytical_price()`, `ema(values, period)`,
-  `wilder_atr(bars, period=14)`, `completed_weekly_bars(bars)`, and
+  `wilder_atr(bars, period=14)`, `completed_weekly_bars(bars, sessions)`, and
   `previous_raw_order_tick(price, market)`.
 
 - [ ] **Step 1: Write failing hand-calculated indicator and calendar tests**
@@ -266,12 +266,22 @@ def test_wilder_atr_uses_previous_close_for_gaps() -> None:
     assert values[-1] == hand_calculated_decimal_atr()
 
 def test_current_week_is_excluded_but_christmas_short_week_is_complete() -> None:
-    weekly = completed_weekly_bars(daily_fixture_through("2026-12-29"))
+    weekly = completed_weekly_bars(
+        daily_fixture_through("2026-12-29"), official_sessions_through("2026-12-29")
+    )
     assert weekly[-1].session == date(2026, 12, 24)
+
+def test_dataset_ad_hoc_closure_controls_week_completion() -> None:
+    sessions = official_sessions_with_ad_hoc_friday_closure()
+    assert completed_weekly_bars(bars(), sessions)[-1].session == thursday()
 
 @pytest.mark.parametrize(("price", "expected"), [("0.10", "0.099"), ("2.00", "1.995"), ("0.011", "0.010")])
 def test_previous_tick_crosses_asx_bands_without_float_drift(price: str, expected: str) -> None:
     assert previous_raw_order_tick(D(price), "ASX") == D(expected)
+
+def test_asx_band_edges_use_the_upper_band() -> None:
+    assert tick_size(D("0.10"), "ASX") == D("0.005")
+    assert tick_size(D("2.00"), "ASX") == D("0.01")
 
 def test_split_factor_is_reduced_and_conversion_uses_declared_quantum() -> None:
     factor = SplitFactor(3, 10)
@@ -303,12 +313,23 @@ declared quantum and source/tick normalization; do not require naive decimal
 division and multiplication to be identical for recurring ratios. `ema()`
 returns one item per input and `None`
 before the simple-mean seed. `wilder_atr()` implements spec §4.3 and returns
-`None` before its seed. `completed_weekly_bars()` groups official ASX sessions
-and includes a group only when the next ASX trading day lies in a later ISO
-week. Reuse the existing ASX tick schedule but perform the arithmetic in
-`Decimal`. `previous_raw_order_tick()` returns the greatest valid raw order
-price strictly below the input, including across tick-band boundaries. Do not
-quantize actual auction fills to the ordinary order grid.
+`None` before its seed. `completed_weekly_bars()` groups the caller-supplied
+official sessions and includes a group only when the next official session lies
+in a later ISO week. Promotion callers must supply Phase 2C's signed dataset
+calendar. The rule-derived `qat.domain.market_calendar` is used only for
+fixtures and recurring-holiday cross-checks; it cannot synthesize a promotion
+session or override an ad hoc closure.
+
+Reuse the existing ASX tick schedule but perform the arithmetic in `Decimal`.
+Pin the published ordinary-equity bands as `0.001` through `0.099`, `0.005`
+from `0.100` through `1.995`, and `0.01` from `2.00` upward, with source URL,
+retrieval date, hash, and effective interval in the versioned profile. The
+current source is `https://www.asx.com.au/markets/trade-our-cash-market/asx-equities-trading/`.
+`previous_raw_order_tick()` returns the greatest valid raw order price strictly
+below the input, including across tick-band boundaries. It must search the
+lower-band grid at `0.10` and `2.00`; calling `tick_size(input)` and subtracting
+would incorrectly return `0.095` and `1.99`. Do not quantize actual auction
+fills to the ordinary order grid.
 
 - [ ] **Step 4: Run focused and existing tick/calendar tests**
 
@@ -540,7 +561,7 @@ git commit -m "feat: validate swing resistance clearance"
 
 **Files:**
 - Create: `src/qat/domain/strategies/authoritative_swing/sizing.py`
-- Modify: `src/qat/domain/backtester/market_cost_profiles.py`
+- Modify: `src/qat/domain/backtester/costs.py`
 - Create: `tests/domain/strategies/authoritative_swing/test_sizing.py`
 - Modify: `tests/domain/backtester/test_market_cost_profiles.py`
 
@@ -569,10 +590,13 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative
 - [ ] **Step 3: Implement exact costs, prior-data capacity, and monotone integer sizing**
 
 Define immutable decimal cost and liquidity profiles with version identifiers.
-Factor approved fee parameters into canonical text configuration consumed by
-both the unchanged legacy float adapter and the new exact-decimal adapter, so
-fee schedules have one source without routing Phase 2 arithmetic through
-floats.
+In the existing `costs.py`, factor `_ASX_FIXED` and `_ASX_TIERED_1` fee values
+into canonical source-text parameters. Construct the existing float
+`MarketCostProfile` objects from those parameters without changing their public
+API or results, and construct the new `ExactCostProfile` with `Decimal` directly
+from the same text. Tests must prove every rate, floor, currency, pass-through
+flag, and worked example agrees across adapters while no Phase 2 calculation
+passes through float.
 Reject non-positive equity or limit-to-stop risk distance. Require every exact
 cost profile to prove and test that total modeled risk is monotone
 nondecreasing in quantity. Compute the safe upper bound
@@ -593,7 +617,7 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add src/qat/domain/strategies/authoritative_swing/sizing.py src/qat/domain/backtester/market_cost_profiles.py tests/domain/strategies/authoritative_swing/test_sizing.py tests/domain/backtester/test_market_cost_profiles.py
+git add src/qat/domain/strategies/authoritative_swing/sizing.py src/qat/domain/backtester/costs.py tests/domain/strategies/authoritative_swing/test_sizing.py tests/domain/backtester/test_market_cost_profiles.py
 git commit -m "feat: size authoritative swing entries"
 ```
 

@@ -1,6 +1,6 @@
 # Phase 2 — Authoritative Swing Strategy Design
 
-**Status:** Fourth revised draft for operator approval, 2 October 2026
+**Status:** Fifth revised draft for operator approval, 2 October 2026
 
 **Recovery phase:** Phase 2 — Authoritative strategy
 
@@ -94,7 +94,13 @@ decision. The shared engine remains the rule authority in either architecture.
 
 ## 4. Canonical market calculations
 
-All calculations use completed ASX sessions in chronological order.
+All calculations use completed ASX sessions in chronological order. For
+promotion evidence, the signed dataset's versioned official-session table is
+the authority for session identity, order, ad hoc closures, and shortened
+sessions. The repository's rule-derived `market_calendar.py` is a fixture and
+cross-check only; it must not add, remove, or synthesize a promotion session.
+A missing, duplicated, contradictory, or unverifiable official-session row is
+a dataset integrity failure.
 
 ### 4.1 Exact numeric and price bases
 
@@ -161,6 +167,14 @@ invalidation subtracts exactly one valid raw price step, then rounds down to a
 valid order price. Conservative maximum buy prices also round down. Actual
 auction and market fills retain the exact raw traded price supplied by the
 dataset even when that price is not on the ordinary order-entry grid.
+
+The baseline ASX ordinary-equity schedule, verified against the ASX price-step
+table on 2 October 2026, is `0.001` through `0.099`, `0.005` from `0.100`
+through `1.995`, and `0.01` from `2.00` upward. The manifest records the
+published schedule URL, retrieval date, content hash, and effective interval.
+At a band edge, `previous_raw_order_tick()` must search the lower band's valid
+grid rather than call `tick_size()` on the edge and subtract that upper-band
+tick: the required predecessors of `0.10` and `2.00` are `0.099` and `1.995`.
 
 ### 4.5 Weekly bars
 
@@ -636,6 +650,14 @@ partition closes with the receivable asset at face value and does not read the
 next shard merely to settle cash.
 Dividend-back-adjusted prices are not used for signals or fills.
 
+The historical `SwingMarketEvent` types deliberately do not reuse the existing
+`qat.domain.corporate_actions` operational classes. That package stores broker
+announcements as floats, reads live positions and orders, and can modify broker
+state. The promotion dataset adapter may normalize the same underlying vendor
+facts, but it must map them into immutable exact-decimal/rational replay events.
+The authoritative research path cannot import the operational detector,
+adjuster, announcement store, or monitor.
+
 Promotion history is physically sharded into complete-calendar-month signal
 windows and separate outcome tails for development, validation, and holdout.
 Every signal window ends with its final permissible entry fill. Its physical
@@ -644,8 +666,8 @@ validation are separated from the following signal window by their tails and
 any interstitial sessions through that calendar month-end. Interstitial rows
 may later be used only as warm-up for the next authorized partition.
 
-Each shard contains its own daily bars, membership, corporate actions,
-benchmark rows, and point-in-time regime evidence. A public signed catalog
+Each shard contains its own official-session table, daily bars, membership,
+corporate actions, benchmark rows, and point-in-time regime evidence. A public signed catalog
 contains shard identities, boundaries, and hashes but no sealed observations.
 Development and validation processes have no filesystem or decryption access
 to later signal or tail shards. A partition-aware loader validates only
@@ -736,16 +758,28 @@ Engineering evidence has two explicit lanes:
    corporate actions, diagnostics, and terminal outcomes; and
 2. the existing static ASX snapshot in strict provenance mode.
 
-The static snapshot is marked `VENDOR_ADJUSTED`, survivorship-biased, missing
-independent raw prices and corporate-action lineage, and non-promotional. Its
-strict replay may legitimately produce zero trades when provenance-dependent
-rules abstain. That replay validates loading, disclosure, abstention, and
-artifact machinery; the synthetic lane proves complete lifecycle execution.
+The static snapshot contains 95 files with 500 sessions each, from 26 August
+2024 through 14 August 2026. It is marked `VENDOR_ADJUSTED`,
+survivorship-biased, missing independent raw prices and corporate-action
+lineage, shorter than the three calendar years required for resistance, and
+non-promotional. Its strict replay therefore abstains for both provenance and
+`INSUFFICIENT_RESISTANCE_HISTORY`. Zero trades are expected and acceptable.
+That replay validates loading, disclosure, abstention, and artifact machinery;
+the synthetic lane proves complete lifecycle execution.
 
 An optional mechanical diagnostic may treat the static adjusted series as an
-analytical proxy to estimate provisional pattern frequency. It uses a distinct
-mode and evidence namespace, cannot emit authoritative decisions, and cannot
-prove an edge or satisfy any promotion gate.
+analytical proxy and report pattern-qualified counts before resistance plus
+`INSUFFICIENT_RESISTANCE_HISTORY`; it must not introduce a shorter resistance
+lookback or call those candidates trades. Report the raw count, candidates per
+1,000 eligible symbol-months, and a coverage-scaled ASX 200 planning proxy:
+`candidate_rate_per_symbol_month × 200`; also show the unscaled 95-symbol
+observed exposure. Resample symbol and calendar-month clusters to publish a
+planning range. This is an upper-bound
+procurement diagnostic from a survivorship-biased sample: a low rate can show
+that procurement is implausible, while a high rate cannot establish final
+trade frequency, power, or edge. It uses a distinct mode and evidence
+namespace, cannot emit authoritative decisions, and cannot satisfy any
+promotion gate.
 
 Phase 2 engineering may inspect synthetic fixture outcomes. It may inspect
 static-cache signal-time geometry, frequency, and rejection counts, but it must
@@ -833,6 +867,18 @@ reviewed structural extractor. Validation receives its own
 `VALIDATION_DATA_RELEASED` receipt only after development artifacts and the
 fingerprint are locked.
 
+Development data is reusable for declared development work, but access is not
+an unlogged bearer capability. Every open is scoped to a reviewed bundle and
+fingerprint and records `DEV_DATA_OPENED`. A semantics-preserving defect repair
+may receive `DEV_RERUN_AUTHORIZED` after operator review links the failed run,
+the exact code diff, and the replacement bundle. A strategy, eligibility,
+calendar, numeric, cost, sizing, or inference change starts a new declaration
+lineage and replays development from the beginning; prior outcomes remain
+disclosed as examined. `DEV_STRUCTURE_DERIVED` is reusable only when its
+extractor dependency-closure hash, schema, source shard, and numeric/data
+policies are byte-identical. Any affected dependency change requires a new
+structural extract and receipt.
+
 ### 16.3 Chronological windows and outcome tails
 
 The initial promotion history uses complete-calendar-month signal windows in a
@@ -853,6 +899,7 @@ T10  holding session 10 close
 T11  scheduled time-exit open
 T2..T64  the 63-session physical outcome tail
 T64  terminal valuation session
+T65  first official session after the physical tail, when one exists
 ```
 
 The entry-fill window ends on the final official session of a complete calendar
@@ -860,7 +907,7 @@ month. No instruction may produce a fill after `T1`. Partition ownership is by
 entry-fill session. A normal tenth-session exit completes at `T11`; a halt,
 suspension, delisting, or delayed corporate action may resolve through `T64`.
 Tail rows cannot create entries, increase `N`, create edge observations, or
-extend the signal window. Sessions from `T64` through the next month-end are
+extend the signal window. Sessions from `T65` through the next month-end are
 interstitial: they remain ineligible and may become warm-up only after the next
 partition is authorized. No partition counts as available until its complete
 tail is acquired, sealed, catalogued, and hashed. Holdout therefore cannot end
@@ -870,7 +917,11 @@ All eligible outcomes remain in the denominator. `BOUNDARY_CENSORED` exclusion
 is forbidden. Unresolved positions receive the Section 12 terminal rule at
 `T64`; missing data that prevents that rule is `INVALID`. Later recovery and
 terminal-outcome influence are reported as sensitivities but cannot override
-the conservative primary result.
+the conservative primary result. If the recovery sensitivity passes every
+otherwise applicable gate while the conservative terminal valuation causes the
+primary result to fail, classify the result
+`TERMINAL_OUTCOME_SENSITIVE`. It is non-promotable and is not converted to
+`PASS` by later recovery.
 
 ### 16.4 Corporate-event incidence and structural risk preflight
 
@@ -904,10 +955,18 @@ Primary weights use development/validation entry counts and bucket labels only,
 never outcomes. The mandatory audit also shifts 25 percentage points of weight
 to the highest-risk bucket; all-trades-in-that-bucket is a sensitivity.
 
+If the predeclared merge path cannot produce an effective bucket with at least
+500 unique issuer-years and 100 distinct issuers, return
+`INCIDENCE_DATA_INSUFFICIENT`. Publish the available support and merge path,
+stop probabilistic tail calibration, method/power work, and holdout-duration
+planning, and do not issue a promotion permit. The deterministic design-envelope
+diagnostic may still be reported, but it cannot repair missing incidence data.
+
 Before power or duration planning, use the frozen Phase 4 sizing rules to run a
-structural preflight. For every cash-funded trade, replace its actual exit at
-event onset with a zero-price loss, recompute the equity path, and require the
-worst actual funded placement to keep maximum drawdown at or below 20%. Signal
+structural preflight. For every cash-funded trade, place a zero-price onset at
+each official session on which the position was exposed, recompute the equity
+path, and require the worst funded trade/session placement to keep maximum
+drawdown at or below 20%. Signal
 trades excluded by cash competition remain in signal-level tail reports but do
 not create portfolio loss. The structural envelope is
 `1 - (1 - ordinary_drawdown_budget) * (1 - zero_price_loss)`; Phase 4 must set
@@ -917,7 +976,16 @@ aggregate/sector caps; a deterministic simultaneous two-issuer zero is a
 sensitivity.
 
 Failure stops planning as `PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE`. It must not
-trigger a recommendation to buy more holdout data.
+trigger a recommendation to buy more holdout data. If refreshed development
+and validation fail this preflight, close the lineage without opening holdout.
+Any Phase 4 risk-policy revision requires a new
+`PROMOTION_PROTOCOL_DECLARED` lineage and new receipts binding the revised
+specification, bundle, and fingerprint; unchanged effect and method declarations
+are re-signed into that lineage rather than silently reused. Re-run the
+structural extract when its dependency closure changed, then replay development
+and validation from the beginning. The sealed holdout remains untouched and
+eligible only when no holdout byte was opened and its catalog/window remains
+unchanged; feasibility and every permit input must be recomputed.
 
 ### 16.5 Method audit, power, and frequency feasibility
 
@@ -938,9 +1006,11 @@ Accept early when the upper 95% Monte Carlo limit is at least 0.25 percentage
 points below its cap; reject early when the lower limit is at least 0.25 points
 above; otherwise extend to 100,000. The one-sided confidence-bound false-positive
 upper limit is 3.25% against nominal 2.5%; the Romano-Wolf family-wise upper
-limit is 6% against nominal 5%. If no method passes the calibrated envelope at
-a feasible sample size, return `METHOD_INADEQUATE`; trimmed or winsorized means
-cannot replace mean `R_order`.
+limit is 6% against nominal 5%. At 100,000 outer simulations a mandatory cell
+passes only when its upper 95% Monte Carlo limit is less than or equal to the
+applicable cap; every other result is a failure. If no method passes the
+calibrated envelope at a feasible sample size, return `METHOD_INADEQUATE`;
+trimmed or winsorized means cannot replace mean `R_order`.
 
 The operator declares positive `delta_MME` before outcomes. It cannot be raised
 to reduce sample needs. The accepted method recomputes pattern-specific
@@ -984,6 +1054,13 @@ Windows host or mutually authenticated streaming across hosts. A trusted
 artifact writer, not the runner, enforces typed schemas, row/field/file/size
 limits, and forbids raw-bar output. Administrators and anyone able to replace
 service binaries are outside the protection boundary.
+
+The operator, data custodian, and permit signer may be roles performed by one
+human. The required separation is technical: distinct least-privilege accounts,
+non-exportable or separately stored signing/decryption keys, service ACLs, and
+an automated-agent account that possesses none of them. The runbook must state
+when one human fills multiple roles and must not describe that arrangement as
+independent human review or dual control.
 
 The ledger uses a scoped chain keyed by strategy, catalog, and holdout window,
 with signed head attestations and a global service checkpoint. `SCOPE_RESERVED`
@@ -1168,8 +1245,13 @@ simulated mean net `R_order` to remain above zero. An analytical expected-value
 calculation must agree within the frozen numeric tolerance.
 
 For the deterministic portfolio test, inject one zero-price outcome into each
-cash-funded trade in turn at its actual time and require the worst resulting
-maximum drawdown to remain no greater than 20%. Do not dilute this gate through
+cash-funded trade in turn at every official session on which that position is
+exposed, beginning immediately after its entry fill and ending before its
+baseline exit. Recognize the loss at the candidate onset, lock its cash through
+the partition's `T64`, and take the worst maximum drawdown across all
+trade/session placements. A placement at the baseline trough is included when
+the position was then open; no typical or preferred placement is used. Require
+that worst result to remain no greater than 20%. Do not dilute this gate through
 trade count or apply it to unfunded signal-arm trades. The approved cash-funded
 1% replay must also have realized maximum drawdown no greater than 20% in both
 holdout and authorized full-history baseline, and the calibrated probabilistic
@@ -1180,6 +1262,8 @@ The result state is:
 
 - `PASS` when edge and portfolio safety both pass;
 - `FAIL` when an edge requirement fails; or
+- `TERMINAL_OUTCOME_SENSITIVE` when only the reported recovery sensitivity
+  removes a conservative terminal-valuation failure; or
 - `EDGE_PASS_PORTFOLIO_RISK_BLOCKED` when edge passes but portfolio safety
   fails.
 

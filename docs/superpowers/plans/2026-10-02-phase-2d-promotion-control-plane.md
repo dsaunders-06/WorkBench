@@ -45,6 +45,11 @@ development/validation results under their final fingerprint.
   budgets. The runner cannot create final artifacts directly.
 - Administrators and anyone able to replace service binaries are explicitly
   outside the protection boundary.
+- The operator, custodian, and permit signer may be the same human, but the
+  custodian, signing, service, and automated-agent identities use distinct
+  least-privilege accounts and separately controlled keys. The runbooks state
+  the actual role assignment and never claim independent human review or dual
+  control when one person fills multiple roles.
 
 ## Stage A — Before Phase 4 promotion-tier outcomes
 
@@ -142,6 +147,15 @@ def test_release_receipt_precedes_handle_return() -> None:
     handle = access.open()
     assert access.latest_receipt.state == "DEV_DATA_RELEASED"
     assert handle.shard_id == declared_development_shard_id()
+
+def test_semantics_preserving_bugfix_requires_logged_rerun_authority() -> None:
+    with pytest.raises(DevelopmentLockedError):
+        open_development(replacement_bundle(), previous_release())
+    access = authorize_development_rerun(reviewed_bugfix_receipt())
+    assert access.latest_receipt.state == "DEV_RERUN_AUTHORIZED"
+
+def test_engine_dependency_change_expires_structural_extract() -> None:
+    assert not structural_receipt().valid_for(bundle_with_changed_detector())
 ```
 
 Before returning the field-limited reference view, append
@@ -160,7 +174,20 @@ aggregate.
 
 The development gate verifies all declarations and tokens, catalog/shard,
 runner bundle, scope, and prior head; it appends `DEV_DATA_RELEASED` before
-returning the scoped handle. Validation remains locked until development
+returning the scoped handle and `DEV_DATA_OPENED` for every actual open.
+Development observations may be replayed, but the service never issues an
+unlogged reusable bearer capability. A semantics-preserving bug repair needs an
+operator-reviewed `DEV_RERUN_AUTHORIZED` receipt binding the failed run, exact
+diff, replacement bundle, and unchanged specification. A strategy, eligibility,
+calendar, numeric, cost, sizing, or inference change starts a new declaration
+lineage and replays development from the beginning with prior examined outcomes
+disclosed.
+
+`DEV_STRUCTURE_DERIVED` binds an explicit dependency-closure hash covering the
+extractor, pattern engine, eligibility, normalization, official calendar,
+numeric, cost, and sizing code plus schema and source shard. It is reusable
+across a report-writer-only change, but any dependency change requires a fresh
+extract and receipt. Validation remains locked until development
 artifacts and fingerprint are frozen, then follows the same flow with
 `VALIDATION_DATA_RELEASED`.
 
@@ -200,11 +227,11 @@ behavior.
 - Create: `src/qat/promotion/ledger_service.py`
 - Create: `src/qat/promotion/sealed_data_service.py`
 - Create: `src/qat/promotion/artifact_gateway.py`
-- Create: `src/qat/domain/backtester/swing_holdout.py`
+- Create: `src/qat/promotion/holdout_runner.py`
 - Create: `tests/promotion/test_ledger_service.py`
 - Create: `tests/promotion/test_sealed_data_service.py`
 - Create: `tests/promotion/test_artifact_gateway.py`
-- Create: `tests/domain/backtester/test_swing_holdout.py`
+- Create: `tests/promotion/test_holdout_runner.py`
 
 Use a scoped chain keyed by strategy, catalog, and holdout window. Signed head
 attestations include scoped sequence/head and a global service checkpoint.
@@ -221,6 +248,12 @@ The writer accepts only canonical typed decisions, fills, trades, equity,
 metrics, verdicts, and receipts. Enforce field length, row count, file count,
 total bytes, allowed decimal precision, and forbidden raw-bar fields. Reject
 arbitrary logs or undeclared output.
+
+Keep every permit, service-client, streaming, ledger, and trusted-writer import
+under `qat.promotion`. Pure strategy and `qat.domain.backtester` modules expose
+only data and replay interfaces and cannot import `qat.promotion`; the promotion
+runner depends inward on them. Transitive-import and runtime isolation tests
+must prove the engineering research path cannot reach these I/O clients.
 
 ### Task 5: Holdout-scale rehearsal and failure injection
 
@@ -252,9 +285,19 @@ expires it.
 - Create: `docs/phase-2d-promotion-runbook.md`
 
 The permit binds all declarations and timestamp tokens, promotion bundle,
-review receipt, rehearsal receipt, exact signal/tail shards, `T0/T1/T10/T11/T64`,
+review receipt, rehearsal receipt, exact signal/tail shards, `T0/T1/T10/T11/T64/T65`,
 numeric/cost/fill/Phase 4 policies, incidence/method/power/frequency results,
 scoped ledger head, nonce, and approval time.
+
+Refuse a permit for `INCIDENCE_DATA_INSUFFICIENT`,
+`PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE`, `METHOD_INADEQUATE`, or infeasible
+duration. If development/validation structural evidence causes a Phase 4 policy
+revision, close the current lineage and issue a new
+`PROMOTION_PROTOCOL_DECLARED` lineage; re-sign carried-forward effect/method
+declarations, refresh every affected structural receipt, and replay development
+and validation. The original sealed holdout remains eligible only if no
+`DATA_OPENED` exists for its scope, its bytes and window are unchanged, and all
+feasibility inputs are recomputed before a new permit.
 
 Progress through `EXPOSURE_RESERVED`, `DATA_OPENED`, and `COMPLETED`,
 `FAILED_PRE_EXPOSURE`, `FAILED_AFTER_EXPOSURE`, or descriptive
@@ -278,7 +321,8 @@ the operator requests a permit.
 - [ ] Prove the writer rejects raw rows and every undeclared output channel.
 - [ ] Reproduce the bundle and rehearsal receipt from clean inputs.
 - [ ] Record operator review, host/account/ACL topology, service identities,
-      key custody, test outputs, and remaining administrator boundary.
+      key custody, whether one human fills multiple roles, test outputs, and
+      remaining administrator boundary.
 
 Stage B is ready for permit request only after every check passes. Permit
 issuance and actual holdout execution require separate operator approval.
