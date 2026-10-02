@@ -28,9 +28,11 @@
   replay cannot duplicate an instruction or filled pattern.
 - A replay must be deterministic from strategy version, signed dataset catalog
   and authorized shard identities, cost model, and ordered events.
-- Promotion replay advances only through Phase 2C's signed official-session
-  sequence. The rule-derived production calendar is a fixture/cross-check and
-  cannot invent a missing session or erase an ad hoc closure.
+- Promotion replay advances only through the `FULL` and `SHORTENED` projection
+  of Phase 2C's signed official-calendar ledger. Explicit `AD_HOC_CLOSED`,
+  `SCHEDULED_CLOSED`, and `WEEKEND` rows cannot carry bars. The rule-derived
+  production calendar is a fixture/cross-check and cannot invent a missing
+  session, erase a closure, or reclassify a signed row.
 - Treat the uncapped cash-funded arm as engineering evidence with status
   `PORTFOLIO_RISK_DESIGN_PENDING`. Promotion-tier development and validation
   are replayed from the beginning only after Phase 4 sizing and risk rules are
@@ -473,7 +475,15 @@ For each official session:
 8. allocate the same-session batch from the remaining flat-symbol candidates; and
 9. append immutable equity and decision evidence.
 
-Use symbol-specific calendars and membership; do not intersect all symbol dates. A missing required session is an abstention for that symbol, not a fabricated carried-forward bar.
+Use the signed calendar's explicit row classifications and symbol-specific
+membership; do not infer a closure from an absent row or intersect all symbol
+dates. A symbol bar missing on a signed `FULL` or `SHORTENED` session is an
+abstention for that symbol and a disclosed data defect, not a fabricated
+carried-forward bar. A missing, duplicated, contradictory, or unverifiable
+calendar row, or any traded bar on a closed row, invalidates the dataset before
+the session loop. Add fixtures proving a documented ad hoc closure advances no
+lifecycle counter while a missing bar on a normal session abstains and a
+missing normal calendar row invalidates the run.
 
 For every entry fill, recompute and record actual price risk, exact costs, and
 the actual-fill 2R resistance relationship from the unchanged structural stop.

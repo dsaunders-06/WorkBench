@@ -138,8 +138,12 @@ positive integer pairs; volume is an integer. Membership columns are
 `event_id,symbol,declaration_date,ex_session,record_date,payment_date,kind,ratio_numerator,ratio_denominator,cash_amount,new_symbol,terminal_price,currency`.
 Regime columns are
 `session,label,probabilities_json,model_version,model_code_hash,configuration_hash,training_start,training_end,input_cutoff,max_input_session,input_hash,fit_id,output_hash`.
-Official-session columns are
-`session,open_time,close_time,session_kind,source,source_version,source_hash,finalized`.
+Official-calendar columns are
+`calendar_date,session_kind,open_time,close_time,source,source_version,source_notice,reason,retrieved_at,source_hash,finalized`.
+The file contains one row for every civil date in the effective interval.
+`session_kind` is exactly `FULL`, `SHORTENED`, `AD_HOC_CLOSED`,
+`SCHEDULED_CLOSED`, or `WEEKEND`; only the first two kinds project into the
+ordered `official_sessions` sequence and require market rows.
 The reference exposure view contains pseudonymous issuer, window start,
 eligibility and index labels, market-cap/liquidity bucket labels, event category
 and onset, consideration category, and custodian-source hash. It contains no
@@ -176,8 +180,21 @@ def test_catalog_validation_does_not_hash_sealed_observations() -> None:
 
 def test_signed_official_calendar_preserves_ad_hoc_closure() -> None:
     dataset = load_swing_dataset(development_access(ad_hoc_closure_fixture()))
+    row = dataset.official_calendar.row(closure_date())
+    assert row.session_kind is SessionKind.AD_HOC_CLOSED
+    assert row.source_notice == declared_closure_notice()
     assert closure_date() not in dataset.official_sessions
-    assert dataset.official_sessions.source_hash == declared_calendar_hash()
+    assert dataset.official_calendar.source_hash == declared_calendar_hash()
+
+def test_missing_normal_calendar_row_is_not_treated_as_a_closure() -> None:
+    with pytest.raises(DatasetIntegrityError, match="calendar row"):
+        load_swing_dataset(development_access(calendar_missing_normal_date()))
+
+def test_tradable_rows_require_bars_and_closed_rows_prohibit_them() -> None:
+    with pytest.raises(DatasetIntegrityError, match="tradable calendar row"):
+        load_swing_dataset(development_access(full_session_without_market_rows()))
+    with pytest.raises(DatasetIntegrityError, match="closed calendar row"):
+        load_swing_dataset(development_access(ad_hoc_closure_with_market_rows()))
 
 def test_reference_view_has_no_return_or_exact_value_columns() -> None:
     assert set(reference_view().columns).isdisjoint(
@@ -188,10 +205,11 @@ def test_holdout_crossing_reference_window_is_excluded() -> None:
     assert max(w.end for w in reference_view().windows) < catalog().holdout_start
 ```
 
-Also test duplicate sessions, partial bars, non-finite values, raw OHLC geometry,
+Also test duplicate sessions, missing civil dates, invalid session kinds,
+missing closure notice/reason, shortened-session times, partial bars, non-finite values, raw OHLC geometry,
 missing source/quality, unresolved symbol changes, missing delisting outcome,
 mismatched currency, bad corporate-action ratio, benchmark gaps, and bars not
-present in the official-session table. Duplicate/order/hash/schema/calendar/
+consistent with the official-calendar ledger. Duplicate/order/hash/schema/calendar/
 corporate-action lineage errors invalidate the dataset. The rule-derived
 `market_calendar.py` cross-check must disclose recurring-rule differences but
 cannot overwrite the signed session sequence. A malformed symbol bar is retained
@@ -221,6 +239,33 @@ class DatasetTier(StrEnum):
 class EngineeringMode(StrEnum):
     STRICT_AUTHORITATIVE = "strict_authoritative"
     MECHANICAL_DIAGNOSTIC = "mechanical_diagnostic"
+
+class SessionKind(StrEnum):
+    FULL = "FULL"
+    SHORTENED = "SHORTENED"
+    AD_HOC_CLOSED = "AD_HOC_CLOSED"
+    SCHEDULED_CLOSED = "SCHEDULED_CLOSED"
+    WEEKEND = "WEEKEND"
+
+@dataclass(frozen=True, slots=True)
+class OfficialCalendarRow:
+    calendar_date: date
+    session_kind: SessionKind
+    open_time: time | None
+    close_time: time | None
+    source: str
+    source_version: str
+    source_notice: str | None
+    reason: str
+    retrieved_at: datetime
+    source_hash: str
+    finalized: bool
+
+@dataclass(frozen=True, slots=True)
+class OfficialSessionCalendar:
+    rows: tuple[OfficialCalendarRow, ...]
+    official_sessions: tuple[date, ...]
+    source_hash: str
 
 @dataclass(frozen=True, slots=True)
 class DatasetShardManifest:
@@ -255,7 +300,8 @@ class DatasetCatalog:
 class SwingDataset:
     catalog: DatasetCatalog
     manifest: DatasetShardManifest
-    official_sessions: OfficialSessionCalendar
+    official_calendar: OfficialSessionCalendar
+    official_sessions: tuple[date, ...]
     bars: Mapping[str, tuple[FinalBar, ...]]
     membership: Mapping[date, frozenset[str]]
     corporate_actions: tuple[SwingMarketEvent, ...]
@@ -266,7 +312,9 @@ class SwingDataset:
 
 The operator packager computes `dataset_id` and sealed shard hashes. The catalog
 binds the official calendar source, version, retrieval time, content hash, and
-effective interval. The runner
+effective interval. The packager requires one explicit row for every civil date,
+derives `official_sessions` only from `FULL` and `SHORTENED`, requires matching
+market rows for those dates, and rejects market rows on every closed date. The runner
 validates the signed catalog without opening any observation shard, then
 validates every file in the one authorized shard before constructing
 `SwingDataset`. `PartitionAccess` exposes only explicit shard handles; a path
@@ -342,8 +390,13 @@ def test_named_sessions_pin_instruction_fill_exit_and_terminal() -> None:
 
 def test_ad_hoc_closure_uses_signed_sessions_not_rule_calendar() -> None:
     b = boundaries_for(final_entry_fill=t1(), calendar=calendar_with_ad_hoc_closure())
+    assert b.calendar.row(ad_hoc_closure_date()).session_kind is SessionKind.AD_HOC_CLOSED
     assert b.t10 == tenth_signed_session_from_t1()
     assert ad_hoc_closure_date() not in b.tail_sessions
+
+def test_missing_normal_calendar_date_invalidates_instead_of_advancing_boundary() -> None:
+    with pytest.raises(DatasetIntegrityError):
+        boundaries_for(final_entry_fill=t1(), calendar=calendar_with_missing_normal_row())
 
 def test_instruction_that_would_fill_after_t1_is_rejected() -> None:
     assert not may_emit_instruction(session=boundaries.t1, boundaries=boundaries)
@@ -399,9 +452,10 @@ avoid duplicate loss at terminal close. Missing data needed to apply the rule
 invalidates the run. Do not implement `BOUNDARY_CENSORED` exclusion.
 
 All boundary advancement uses `SwingDataset.official_sessions`. The
-rule-derived ASX calendar is a fixture and recurring-holiday cross-check only;
-it cannot invent a promotion session, override an ad hoc closure, or fill a
-calendar gap.
+sequence is the validated tradable projection of the complete signed calendar
+ledger. The rule-derived ASX calendar is a fixture and recurring-holiday
+cross-check only; it cannot invent a promotion session, override an ad hoc
+closure, reclassify a signed row, or fill a calendar gap.
 
 - [ ] **Step 4: Run focused tests**
 
@@ -429,6 +483,12 @@ git commit -m "feat: define swing signal windows and outcome tails"
   `PowerRequirement`, `FrequencyPlan`, `wcr_s_mean_test()`,
   `romano_wolf_stepdown()`, `audit_method_size()`, `audit_power()`, and
   `plan_holdout_duration()`.
+
+`FeasibilityStatus` is exactly `FEASIBLE`, `DATASET_INSUFFICIENT`, or
+`FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON`. `FrequencyPlan` always records the
+required duration when one exists, available untouched duration, binding
+pattern and rate source, predictive probabilities, and whether forward-only
+acquisition could make the plan feasible.
 
 - [ ] **Step 1: Write failing metric, size, power, and duration tests**
 
@@ -467,6 +527,29 @@ def test_required_duration_is_found_before_available_data_check() -> None:
 
 def test_no_duration_through_120_is_frequency_inadequate() -> None:
     assert plan_holdout_duration(near_zero_frequency()).status is FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
+
+def test_dataset_shortfall_maps_to_insufficient_evidence() -> None:
+    verdict = evaluate_promotion(case_with_feasibility(FeasibilityStatus.DATASET_INSUFFICIENT))
+    assert verdict.status is PromotionStatus.INSUFFICIENT_EVIDENCE
+    assert verdict.feasibility_reason is FeasibilityStatus.DATASET_INSUFFICIENT
+    assert verdict.forward_acquisition_could_help is True
+
+def test_frequency_shortfall_maps_to_insufficient_evidence_without_extension_advice() -> None:
+    verdict = evaluate_promotion(
+        case_with_feasibility(FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON)
+    )
+    assert verdict.status is PromotionStatus.INSUFFICIENT_EVIDENCE
+    assert verdict.recommended_holdout_months is None
+
+def test_feasible_planner_result_is_not_a_promotion_pass() -> None:
+    verdict = evaluate_promotion(case_where_feasibility_is_only_satisfied_gate())
+    assert verdict.feasibility_reason is FeasibilityStatus.FEASIBLE
+    assert verdict.status is PromotionStatus.INSUFFICIENT_EVIDENCE
+
+def test_engineering_status_remains_pending_while_feasibility_is_reported() -> None:
+    verdict = evaluate_promotion(engineering_case_with_synthetic_feasibility())
+    assert verdict.status is PromotionStatus.PORTFOLIO_RISK_DESIGN_PENDING
+    assert verdict.feasibility_reason is not None
 ```
 
 Also pin signal-level `R_order` expectancy, diagnostic `R_fill`, profit factor,
@@ -553,6 +636,10 @@ git commit -m "feat: audit swing inference and holdout feasibility"
   `PromotionVerdict`, `calibrate_terminal_incidence()`,
   `evaluate_structural_risk()`, and `evaluate_promotion()`.
 
+`PromotionVerdict` retains `feasibility_reason`, required and available months,
+binding source, recommended operator action, and whether forward acquisition
+could help even when its overall status is a different enum.
+
 `PromotionStatus` includes `PORTFOLIO_RISK_DESIGN_PENDING`,
 `INCIDENCE_DATA_INSUFFICIENT`, `PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE`,
 `INSUFFICIENT_EVIDENCE`, `METHOD_INADEQUATE`,
@@ -593,6 +680,22 @@ def test_zero_price_loss_is_applied_to_every_funded_trade_placement() -> None:
     result = evaluate_structural_risk(cash_funded_replay())
     assert result.placements_tested == len(all_exposed_trade_session_pairs(cash_funded_replay()))
     assert result.max_drawdown == max(p.max_drawdown for p in result.placements)
+
+def test_halted_position_remains_exposed_until_session_before_terminal_exit() -> None:
+    pairs = all_exposed_trade_session_pairs(unresolved_halt_ending_at_t64())
+    assert (halted_trade_id(), previous_session(boundaries().t64)) in pairs
+    assert (halted_trade_id(), boundaries().t64) not in pairs
+
+def test_incremental_exposure_sweep_matches_brute_force_reference() -> None:
+    optimized = evaluate_structural_risk(exposure_parity_fixture())
+    reference = brute_force_structural_risk(exposure_parity_fixture())
+    assert optimized.placement_drawdowns == reference.placement_drawdowns
+    assert optimized.parity_digest == reference.parity_digest
+
+def test_exposure_sweep_does_not_rerun_strategy_or_fill_resolution(monkeypatch) -> None:
+    monkeypatch.setattr(AuthoritativeSwingEngine, "evaluate", forbidden)
+    monkeypatch.setattr(swing_fills, "resolve_protective_session", forbidden)
+    assert evaluate_structural_risk(frozen_baseline_replay()).placements_tested > 0
 
 def test_recovery_only_pass_is_non_promotable() -> None:
     result = evaluate_promotion(conservative_fails_recovery_passes())
@@ -652,6 +755,19 @@ drawdown no greater than 20% at every applicable stage. Phase 4 policy supplies 
 stop-distance, cost-to-risk, aggregate, and sector caps. The design envelope is
 `1 - (1 - ordinary_drawdown_budget) * (1 - zero_price_loss)`.
 
+Build the baseline event-sourced equity ledger once. For each placement, apply
+an exact-decimal sparse delta stream to cached position marks, exit proceeds,
+dividends, cash locks, and the affected equity suffix; never rerun signal
+generation, fill resolution, or allocation. A halt does not end exposure. A
+position exiting on resumption at `T40` accepts onset placements only through
+the prior official session; an unresolved position terminally closed at `T64`
+accepts them through the official session immediately before `T64`, with zero
+mark and unavailable cash through `T64`. Compare every
+placement with a brute-force reference on frozen fixtures and compare a
+deterministic stratified production sample spanning ordinary exits, dividends,
+halts, resumptions, and terminal valuations. Record affected point count,
+sample identities, and parity digest.
+
 For probabilistic stress, select trades using calibrated bucket probabilities
 and common market/sector shocks, replace outcomes at event onset, and recompute
 `R_order`, `R_fill`, costs, cash, and equity. Require the fifth percentile of
@@ -673,6 +789,16 @@ Keep the seven pure edge gates and status taxonomy from the spec. During Phase
 2, every result is engineering-tier and must return
 `PORTFOLIO_RISK_DESIGN_PENDING`, `INVALID`, or another non-pass status. Actual
 permit and exposure enforcement belongs to Phase 2D.
+
+Implement one exhaustive feasibility mapping: `FEASIBLE` continues through the
+remaining gates without implying `PASS`; `DATASET_INSUFFICIENT` and
+`FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON` return
+`INSUFFICIENT_EVIDENCE` with their original reason retained. The latter carries
+no recommendation to extend within the declared 120-month maximum. Method and
+incidence failures retain `METHOD_INADEQUATE` and
+`INCIDENCE_DATA_INSUFFICIENT` precedence. Phase 2 engineering reports the
+synthetic planner result but keeps overall status
+`PORTFOLIO_RISK_DESIGN_PENDING`.
 
 - [ ] **Step 5: Run focused tests and commit**
 
@@ -860,6 +986,9 @@ extract allowlist, declaration order, method and incidence audits, Phase 4
 dependency, Phase 2D handoff, exit codes, artifact meanings, engineering
 statuses, and why neither static nor synthetic evidence can promote the
 strategy. It must state that Phase 2 opens no promotion-tier observation.
+It also documents every `FeasibilityStatus` to `PromotionStatus` mapping and
+operator action, the complete calendar-row contract, the exposure-sweep parity
+evidence, and the boundary rule for halted positions through `T64`.
 
 - [ ] **Step 4: Run the frozen integration test and actual engineering replay**
 

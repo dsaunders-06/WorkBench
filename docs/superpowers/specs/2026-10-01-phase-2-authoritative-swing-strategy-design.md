@@ -95,12 +95,23 @@ decision. The shared engine remains the rule authority in either architecture.
 ## 4. Canonical market calculations
 
 All calculations use completed ASX sessions in chronological order. For
-promotion evidence, the signed dataset's versioned official-session table is
+promotion evidence, the signed dataset's versioned official-calendar ledger is
 the authority for session identity, order, ad hoc closures, and shortened
-sessions. The repository's rule-derived `market_calendar.py` is a fixture and
-cross-check only; it must not add, remove, or synthesize a promotion session.
-A missing, duplicated, contradictory, or unverifiable official-session row is
-a dataset integrity failure.
+sessions. It contains one row for every civil date in its effective interval
+with `session_kind` equal to `FULL`, `SHORTENED`, `AD_HOC_CLOSED`,
+`SCHEDULED_CLOSED`, or `WEEKEND`. Every row binds source identity, retrieval
+time, content hash, reason or notice reference, and the expected open and close
+times when tradable. `FULL` and `SHORTENED` rows project the ordered
+`official_sessions` sequence. They require one matching session of market data;
+closed rows prohibit a traded bar. A missing normal date, a bar missing from a
+tradable row, or a bar attached to a closed row is therefore distinguishable
+from a documented closure and is a dataset integrity failure.
+
+The repository's rule-derived `market_calendar.py` is a fixture and
+cross-check only; it must disclose differences but must not add, remove,
+reclassify, or synthesize a promotion-calendar row. A missing, duplicated,
+contradictory, or unverifiable signed calendar row is a dataset integrity
+failure.
 
 ### 4.1 Exact numeric and price bases
 
@@ -666,7 +677,8 @@ validation are separated from the following signal window by their tails and
 any interstitial sessions through that calendar month-end. Interstitial rows
 may later be used only as warm-up for the next authorized partition.
 
-Each shard contains its own official-session table, daily bars, membership,
+Each shard contains its own complete official-calendar ledger and
+tradable-session projection, daily bars, membership,
 corporate actions, benchmark rows, and point-in-time regime evidence. A public signed catalog
 contains shard identities, boundaries, and hashes but no sealed observations.
 Development and validation processes have no filesystem or decryption access
@@ -869,15 +881,37 @@ fingerprint are locked.
 
 Development data is reusable for declared development work, but access is not
 an unlogged bearer capability. Every open is scoped to a reviewed bundle and
-fingerprint and records `DEV_DATA_OPENED`. A semantics-preserving defect repair
-may receive `DEV_RERUN_AUTHORIZED` after operator review links the failed run,
-the exact code diff, and the replacement bundle. A strategy, eligibility,
-calendar, numeric, cost, sizing, or inference change starts a new declaration
-lineage and replays development from the beginning; prior outcomes remain
-disclosed as examined. `DEV_STRUCTURE_DERIVED` is reusable only when its
-extractor dependency-closure hash, schema, source shard, and numeric/data
-policies are byte-identical. Any affected dependency change requires a new
-structural extract and receipt.
+fingerprint and records `DEV_DATA_OPENED`.
+
+A repair is semantics-preserving only when the strategy specification,
+eligibility, calendar contract, numeric policy, costs, sizing, and inferential
+method are unchanged and the patch restores behavior already determined by
+that frozen contract. Before replacement data access, the operator must approve
+a defect dossier containing a pre-patch failing conformance test or independent
+reference oracle, the predeclared affected input/output scope, discovery time
+and actor, discovery channel, data tier and outcomes already visible, the
+original symptom and hypothesis, failed-run identity, exact diff, old and new
+bundle hashes, and the expected differential-artifact digest. Frozen fixtures
+and replay artifacts outside the approved scope must remain byte-identical;
+changed outputs inside it must match the independent oracle. Determinism,
+prefix invariance across bars, membership, corporate actions and calendar,
+reference parity, isolation, and the complete regression suite must pass.
+
+An outcome anomaly may reveal a real defect, but the examined outcome and its
+role in discovery remain recorded permanently. It receives same-lineage
+`DEV_RERUN_AUTHORIZED` only when the frozen contract and independent oracle
+prove the correction without choosing a favorable result. Otherwise it begins
+a new declaration lineage. No new parameter, threshold, exception, data-driven
+branch, or strategy, eligibility, calendar, numeric, cost, sizing, or inference
+change qualifies as semantics-preserving. After holdout `DATA_OPENED`, a changed
+bundle cannot regain freshness under this rule.
+
+`DEV_RERUN_AUTHORIZED` binds the signed defect dossier, failed run, exact code
+diff, replacement bundle, unchanged specification, permitted changed artifacts,
+and comparison results. Prior outcomes remain disclosed as examined.
+`DEV_STRUCTURE_DERIVED` is reusable only when its extractor dependency-closure
+hash, schema, source shard, and numeric/data policies are byte-identical. Any
+affected dependency change requires a new structural extract and receipt.
 
 ### 16.3 Chronological windows and outcome tails
 
@@ -1034,6 +1068,18 @@ and 10th/5th/1st percentile counts. If none passes through 120 months, return
 duration with untouched data and return `DATASET_INSUFFICIENT` when required
 exceeds available. Extension is forward-only with unseen observations and a
 complete new tail.
+
+The feasibility planner and promotion verdict use separate types but one frozen
+mapping. `FEASIBLE` continues to the remaining gates and is never itself a
+promotion pass. `DATASET_INSUFFICIENT` and
+`FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON` both map to
+`INSUFFICIENT_EVIDENCE`; the report retains the exact feasibility reason,
+required and available months, binding pattern/rate source, and whether a
+forward extension can help. A method failure maps to `METHOD_INADEQUATE`, and
+unsupported incidence maps to `INCIDENCE_DATA_INSUFFICIENT`, before feasibility
+is evaluated. No permit is issued for any non-feasible result. Engineering-tier
+runs still return `PORTFOLIO_RISK_DESIGN_PENDING` as their overall promotion
+status while reporting the synthetic feasibility result separately.
 
 ### 16.6 Promotion control plane and exposure
 
@@ -1247,16 +1293,32 @@ calculation must agree within the frozen numeric tolerance.
 For the deterministic portfolio test, inject one zero-price outcome into each
 cash-funded trade in turn at every official session on which that position is
 exposed, beginning immediately after its entry fill and ending before its
-baseline exit. Recognize the loss at the candidate onset, lock its cash through
-the partition's `T64`, and take the worst maximum drawdown across all
-trade/session placements. A placement at the baseline trough is included when
-the position was then open; no typical or preferred placement is used. Require
-that worst result to remain no greater than 20%. Do not dilute this gate through
-trade count or apply it to unfunded signal-arm trades. The approved cash-funded
-1% replay must also have realized maximum drawdown no greater than 20% in both
-holdout and authorized full-history baseline, and the calibrated probabilistic
-tail simulation's 95th-percentile maximum drawdown must remain no greater than
-20%. Phase 4 notional and aggregate caps are part of this fingerprint.
+baseline exit. Non-tradability does not end exposure: a halted position remains
+exposed throughout the unresolved interval. If it resumes at `T40` and exits at
+that session, candidate onsets end at `T39`; if it is terminally closed at
+`T64`, candidate onsets end at the official session immediately before `T64`,
+while the zero mark and unavailable cash remain in force through `T64`.
+
+Build the baseline decisions, fills, position marks, dividends, exit proceeds,
+cash ledger, and equity path once. Each placement then applies an exact-decimal
+sparse delta stream that removes the affected position contribution, cancels or
+replaces its later proceeds and dividends, and preserves the cash lock. It must
+not rerun pattern detection, fill resolution, or allocation per placement.
+Recompute drawdown only over the affected cached equity suffix or chunks and
+take the worst maximum drawdown across all placements. The optimized sweep must
+be byte-identical to a brute-force full-ledger reference on frozen fixtures and
+on a deterministic stratified production sample covering entry, ordinary exit,
+halt, resumption, dividend, and `T64` cases. Record placement count, affected
+points processed, reference-sample identities, and parity digest.
+
+A placement at the baseline trough is included when the position was then open;
+no typical or preferred placement is used. Require that worst result to remain
+no greater than 20%. Do not dilute this gate through trade count or apply it to
+unfunded signal-arm trades. The approved cash-funded 1% replay must also have
+realized maximum drawdown no greater than 20% in both holdout and authorized
+full-history baseline, and the calibrated probabilistic tail simulation's
+95th-percentile maximum drawdown must remain no greater than 20%. Phase 4
+notional and aggregate caps are part of this fingerprint.
 
 The result state is:
 

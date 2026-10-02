@@ -154,6 +154,32 @@ def test_semantics_preserving_bugfix_requires_logged_rerun_authority() -> None:
     access = authorize_development_rerun(reviewed_bugfix_receipt())
     assert access.latest_receipt.state == "DEV_RERUN_AUTHORIZED"
 
+def test_rerun_receipt_binds_discovery_and_differential_proof() -> None:
+    receipt = reviewed_bugfix_receipt()
+    assert receipt.discovery_channel in {"failing_test", "reference_oracle", "outcome_anomaly"}
+    assert receipt.first_observed_at < receipt.patch_authored_at
+    assert receipt.visible_outcome_artifacts == disclosed_examined_artifacts()
+    assert receipt.pre_patch_failure_hash == failing_conformance_test_hash()
+    assert receipt.permitted_changed_artifacts == predeclared_defect_scope()
+    assert receipt.unchanged_artifact_digest == byte_identical_control_digest()
+    assert receipt.changed_artifact_digest == independent_oracle_digest()
+
+def test_outcome_triggered_change_without_independent_oracle_starts_new_lineage() -> None:
+    with pytest.raises(NewDeclarationLineageRequired):
+        authorize_development_rerun(outcome_triggered_patch_without_oracle())
+
+def test_parameter_or_policy_change_cannot_be_called_semantics_preserving() -> None:
+    for patch in (changed_threshold(), changed_calendar(), changed_numeric_policy()):
+        with pytest.raises(NewDeclarationLineageRequired):
+            authorize_development_rerun(reviewed_patch(patch))
+
+def test_changed_bundle_cannot_regain_holdout_freshness_after_data_opened() -> None:
+    with pytest.raises(FreshHoldoutRequired):
+        authorize_holdout_rerun(
+            ledger=ledger_with_data_opened(),
+            replacement_bundle=semantics_preserving_bugfix_bundle(),
+        )
+
 def test_engine_dependency_change_expires_structural_extract() -> None:
     assert not structural_receipt().valid_for(bundle_with_changed_detector())
 ```
@@ -177,11 +203,24 @@ runner bundle, scope, and prior head; it appends `DEV_DATA_RELEASED` before
 returning the scoped handle and `DEV_DATA_OPENED` for every actual open.
 Development observations may be replayed, but the service never issues an
 unlogged reusable bearer capability. A semantics-preserving bug repair needs an
-operator-reviewed `DEV_RERUN_AUTHORIZED` receipt binding the failed run, exact
-diff, replacement bundle, and unchanged specification. A strategy, eligibility,
-calendar, numeric, cost, sizing, or inference change starts a new declaration
-lineage and replays development from the beginning with prior examined outcomes
-disclosed.
+operator-reviewed `DEV_RERUN_AUTHORIZED` receipt binding the signed defect
+dossier, failed run, exact diff, replacement bundle, unchanged specification,
+permitted changed artifacts, and differential comparison results. The dossier
+records discovery time and actor, discovery channel, data tier and every outcome
+already visible, original symptom and hypothesis, a pre-patch failing
+conformance test or independent reference oracle, the predeclared affected
+scope, bundle hashes, and expected differential digest. Outputs outside that
+scope must be byte-identical; outputs inside it must match the oracle. The
+replacement must pass determinism, complete prefix invariance, reference parity,
+isolation, and full regression gates.
+
+An outcome-triggered defect remains permanently disclosed. It may retain the
+lineage only when the unchanged frozen contract and an independent oracle prove
+the correction without selecting a favorable result. Otherwise require a new
+declaration lineage. Any new parameter, threshold, exception, data-dependent
+branch, or strategy, eligibility, calendar, numeric, cost, sizing, or inference
+change is not semantics-preserving and replays development from the beginning.
+No changed bundle can regain holdout freshness after `DATA_OPENED`.
 
 `DEV_STRUCTURE_DERIVED` binds an explicit dependency-closure hash covering the
 extractor, pattern engine, eligibility, normalization, official calendar,
@@ -286,12 +325,21 @@ expires it.
 
 The permit binds all declarations and timestamp tokens, promotion bundle,
 review receipt, rehearsal receipt, exact signal/tail shards, `T0/T1/T10/T11/T64/T65`,
+complete official-calendar ledger hash and tradable-session projection,
 numeric/cost/fill/Phase 4 policies, incidence/method/power/frequency results,
 scoped ledger head, nonce, and approval time.
 
 Refuse a permit for `INCIDENCE_DATA_INSUFFICIENT`,
 `PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE`, `METHOD_INADEQUATE`, or infeasible
-duration. If development/validation structural evidence causes a Phase 4 policy
+duration. Treat both `DATASET_INSUFFICIENT` and
+`FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON` as
+`INSUFFICIENT_EVIDENCE`; retain the exact planner reason in the refusal receipt.
+`FEASIBLE` only permits evaluation of the remaining gates and never authorizes a
+permit or `PASS` by itself. Add permit tests for every feasibility value and a
+runbook table mapping planner status, promotion status, exit code, operator
+action, and whether forward acquisition could help.
+
+If development/validation structural evidence causes a Phase 4 policy
 revision, close the current lineage and issue a new
 `PROMOTION_PROTOCOL_DECLARED` lineage; re-sign carried-forward effect/method
 declarations, refresh every affected structural receipt, and replay development
