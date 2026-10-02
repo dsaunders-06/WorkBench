@@ -6,7 +6,7 @@
 
 **Architecture:** Add an `authoritative_swing` domain package beside the existing `swing.py`. Typed finalized bars enter pure functions; pattern modules return rule evidence; one engine applies common gates, resistance, exact cost/liquidity sizing, and confluence. Calendar and tick schedules are reused, but all Phase 2 price and money arithmetic is decimal and cannot call the existing float-based `CostModel` arithmetic.
 
-**Tech Stack:** Python 3.12, `decimal.Decimal`, frozen dataclasses, `StrEnum`, pytest, mypy, ruff.
+**Tech Stack:** Python 3.12, `decimal.Decimal`, `fractions.Fraction`, frozen dataclasses, `StrEnum`, pytest, mypy, ruff.
 
 **Spec:** `docs/superpowers/specs/2026-10-01-phase-2-authoritative-swing-strategy-design.md`
 
@@ -19,7 +19,9 @@
   rules; do not pass price-bearing values through the existing float-based
   `CostModel` methods.
 - Use ASX ticks from `qat.data.broker.ticks`; never duplicate the tick table.
-- Parse prices and adjustment factors from source text into `Decimal`; raw share
+- Parse prices from source text into `Decimal`; store split factors as reduced
+  integer rationals. Use numeric policy `phase2-decimal-v1`: precision 50,
+  `ROUND_HALF_EVEN`, and analytical quantum `Decimal("1E-12")`. Raw share
   volume and quantity are integers. Binary floats are forbidden in semantic
   strategy state and canonical evidence.
 - Use strategy version `phase2-swing-v1` and schema version `swing-evidence-v1`.
@@ -157,7 +159,7 @@ class FinalBar:
     source: str
     quality: DataQuality
     adjustment: AdjustmentStatus
-    raw_to_adjusted_price_factor: Decimal
+    raw_to_adjusted_price_factor: SplitFactor  # reduced numerator/denominator
     finalized: bool
     digest: str
 
@@ -241,8 +243,13 @@ git commit -m "feat: add authoritative swing evidence types"
 - Modify: `tests/data/broker/test_ticks.py`
 
 **Interfaces:**
-- Consumes: decimal source text, `tuple[FinalBar, ...]`, ASX calendar functions, and the existing ASX tick schedule.
-- Produces: `parse_decimal()`, `canonical_decimal()`, `to_raw_price()`, `to_analytical_price()`, `ema(values, period)`, `wilder_atr(bars, period=14)`, `completed_weekly_bars(bars)`, and `previous_raw_order_tick(price, market)`.
+- Consumes: decimal source text, reduced integer split factors,
+  `tuple[FinalBar, ...]`, ASX calendar functions, and the existing ASX tick
+  schedule.
+- Produces: `SplitFactor`, `parse_decimal()`, `canonical_decimal()`,
+  `to_raw_price()`, `to_analytical_price()`, `ema(values, period)`,
+  `wilder_atr(bars, period=14)`, `completed_weekly_bars(bars)`, and
+  `previous_raw_order_tick(price, market)`.
 
 - [ ] **Step 1: Write failing hand-calculated indicator and calendar tests**
 
@@ -262,9 +269,16 @@ def test_current_week_is_excluded_but_christmas_short_week_is_complete() -> None
 def test_previous_tick_crosses_asx_bands_without_float_drift(price: str, expected: str) -> None:
     assert previous_raw_order_tick(D(price), "ASX") == D(expected)
 
-def test_raw_adjusted_round_trip_is_exact() -> None:
-    assert to_raw_price(D("4.125"), D("0.5")) == D("8.25")
-    assert to_analytical_price(D("8.25"), D("0.5")) == D("4.125")
+def test_split_factor_is_reduced_and_conversion_uses_declared_quantum() -> None:
+    factor = SplitFactor(3, 10)
+    adjusted = to_analytical_price(D("1"), factor)
+    assert adjusted == D("0.300000000000")
+    assert normalize_reconstructed_raw(to_raw_price(adjusted, factor), D("1")) == D("1")
+
+def test_numeric_policy_is_frozen() -> None:
+    assert NUMERIC_POLICY.precision == 50
+    assert NUMERIC_POLICY.rounding == ROUND_HALF_EVEN
+    assert NUMERIC_POLICY.analytical_quantum == D("1E-12")
 ```
 
 - [ ] **Step 2: Verify the tests fail on absent APIs**
@@ -275,8 +289,15 @@ Expected: FAIL because the new functions are absent.
 
 - [ ] **Step 3: Implement exact calculations**
 
-Set one versioned decimal context for the package and construct decimals only
-from source strings or integers. `ema()` returns one item per input and `None`
+Implement reduced positive integer `SplitFactor` values and reject decimal or
+floating adjustment factors in semantic state. Set precision 50,
+`ROUND_HALF_EVEN`, and analytical quantum `1E-12` for versioned policy
+`phase2-decimal-v1`; construct decimals only from source strings or integers.
+Convert price bases through an exact `Fraction` intermediate and quantize once
+at the analytical boundary. Test reconstructed raw equality only after the
+declared quantum and source/tick normalization; do not require naive decimal
+division and multiplication to be identical for recurring ratios. `ema()`
+returns one item per input and `None`
 before the simple-mean seed. `wilder_atr()` implements spec §4.3 and returns
 `None` before its seed. `completed_weekly_bars()` groups official ASX sessions
 and includes a group only when the next ASX trading day lies in a later ISO
@@ -532,7 +553,10 @@ breaches it. Derive capacity from the smaller quantity allowed by the frozen
 participation fraction against prior-20 median raw share volume and median raw
 dollar volume. Assert current/future volume cannot change it, capacity can bind
 below risk size, missing/unverified history abstains, and the final submitted
-quantity is fixed before the open.
+quantity is fixed before the open. Give a tiny-stop fixture with an upper bound
+above one million shares and assert integer bisection finds the maximal quantity
+in at most 32 cost evaluations. Test every approved fee profile for monotone
+nondecreasing total modeled risk.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -545,9 +569,13 @@ Factor approved fee parameters into canonical text configuration consumed by
 both the unchanged legacy float adapter and the new exact-decimal adapter, so
 fee schedules have one source without routing Phase 2 arithmetic through
 floats.
-Reject non-positive equity or limit-to-stop risk distance. Compute a safe upper
-bound from worst-case limit-price risk, then decrement until the complete exact
-cost inequality passes. Calculate capacity without reading the entry session.
+Reject non-positive equity or limit-to-stop risk distance. Require every exact
+cost profile to prove and test that total modeled risk is monotone
+nondecreasing in quantity. Compute the safe upper bound
+`floor(budget / (limit - stop))`, then use integer bisection to find the largest
+quantity satisfying the complete exact-cost inequality. Assert the selected
+quantity passes and `quantity + 1` fails. Calculate capacity without reading
+the entry session.
 Return `REJECTED` when `min(risk_quantity, capacity_quantity)` is below two,
 with price basis, budget, participation, impact, and cost components in
 evidence. A missing or provisional liquidity profile makes a promotion

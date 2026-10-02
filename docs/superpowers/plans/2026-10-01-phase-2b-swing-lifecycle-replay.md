@@ -18,14 +18,16 @@
 - Preserve protection during `EXIT_PENDING`; gap-stop processing precedes a scheduled open exit.
 - Resolve unknowable same-bar order in the strategy's worst feasible sequence and flag it.
 - Keep all quantities whole and require at least two shares at entry.
-- Use actual simulated fills to define R, target, cash, costs, and realized results.
+- Use actual simulated fills to define lifecycle R, target, cash, costs, and
+  realized P&L; retain the submitted-limit denominator for primary `R_order`.
 - Preserve decimal prices, money, risks, and R multiples end-to-end; do not
   convert execution state through binary floats.
 - Keep the quantity submitted from Phase 2A's limit-price sizing fixed after the
   open; never resize upward from a better fill.
 - Track consumed double-bottom pattern instances and used breakout events so a
   replay cannot duplicate an instruction or filled pattern.
-- A replay must be deterministic from strategy version, dataset manifest, cost model, and ordered events.
+- A replay must be deterministic from strategy version, signed dataset catalog
+  and authorized shard identities, cost model, and ordered events.
 
 ## File Structure
 
@@ -78,10 +80,13 @@ def test_replaying_a_fill_id_is_a_no_op() -> None:
 ```
 
 Also test valid transitions only, total quantity conservation, entry session
-count one, and rejection of a fill at/below stop. Assert that initial risk
-dollars equal `filled quantity × (actual fill - initial stop)`, a fill below the
-limit leaves the submitted quantity unchanged, and the same structural stop
-produces the actual-fill 1R target.
+count one, and rejection of a fill at/below stop. Assert that
+`fill_initial_risk_dollars` equals
+`filled quantity × (actual fill - initial stop)`,
+`order_initial_risk_dollars` equals
+`filled quantity × (submitted limit - initial stop)`, a fill below the limit
+leaves the submitted quantity unchanged, and the same structural stop produces
+the actual-fill 1R target.
 
 - [ ] **Step 2: Run and confirm import failure**
 
@@ -105,11 +110,13 @@ class SwingPosition:
     symbol: str
     state: PositionState
     entry_session: date
+    submitted_limit: Decimal
     entry_fill: Decimal
     initial_stop: Decimal
     current_stop: Decimal
     initial_r: Decimal
-    initial_risk_dollars: Decimal
+    order_initial_risk_dollars: Decimal
+    fill_initial_risk_dollars: Decimal
     total_quantity: int
     banked_quantity: int
     runner_quantity: int
@@ -270,6 +277,7 @@ class SwingTrade:
     entry_session: date
     exit_session: date
     quantity: int
+    submitted_limit: Decimal
     entry_price: Decimal
     exit_price: Decimal
     initial_stop: Decimal
@@ -277,14 +285,20 @@ class SwingTrade:
     eligible_dividends: Decimal
     costs: Decimal
     net_pnl: Decimal
-    initial_risk_dollars: Decimal
-    r_multiple: Decimal
-    mfe_r: Decimal
-    mae_r: Decimal
+    order_initial_risk_dollars: Decimal
+    fill_initial_risk_dollars: Decimal
+    order_r_multiple: Decimal
+    fill_r_multiple: Decimal
+    mfe_order_r: Decimal
+    mae_order_r: Decimal
+    mfe_fill_r: Decimal
+    mae_fill_r: Decimal
     exit_reason: str
     observed_triggers: tuple[str, ...]
     post_fill_resistance: PostFillResistanceDiagnostic
     analysis_regime: str | None
+    edge_sample_eligible: bool
+    edge_exclusion_reason: str | None
 
 @dataclass(frozen=True, slots=True)
 class ReplayEquityPoint:
@@ -292,6 +306,7 @@ class ReplayEquityPoint:
     equity: Decimal
     cash: Decimal
     position_value: Decimal
+    dividend_receivables: Decimal
 
 @dataclass(frozen=True, slots=True)
 class SwingReplayResult:
@@ -308,10 +323,12 @@ class SwingReplayResult:
     invalid_reasons: tuple[str, ...] = ()
 ```
 
-Compute `net_pnl` across all exit legs and eligible dividends after commission,
-exchange charges, and slippage. Define `r_multiple` as
-`net_pnl / initial_risk_dollars`; do not average leg-level R values. Splits must
-transform quantity and prices while preserving `initial_risk_dollars`.
+Compute `net_pnl` across all exit legs and accrued eligible dividends after
+commission, exchange charges, and slippage. Define `order_r_multiple` as
+`net_pnl / order_initial_risk_dollars` and `fill_r_multiple` as
+`net_pnl / fill_initial_risk_dollars`; do not average leg-level R values or use
+their per-trade minimum as the baseline. Splits must transform quantity and
+prices while preserving both denominators.
 
 - [ ] **Step 4: Run focused and cost tests**
 
@@ -397,9 +414,12 @@ Create fixed fixtures for:
 - daily invalidation with protection surviving until next open;
 - tenth-session exit;
 - simultaneous signals scaled against cash;
-- every qualified setup replayed independently in the signal-level arm even when positions overlap or portfolio cash is exhausted;
-- a fill below its limit preserving submitted quantity while recalculating
-  actual R, target, costs, and the resistance diagnostic;
+- every qualified setup recorded in the signal-level arm while only the first
+  unique same-pattern/same-symbol event remains edge-eligible until its
+  isolated lifecycle closes;
+- a fill below its limit preserving submitted quantity while calculating
+  lifecycle `R_fill`, primary `R_order`, target, costs, and the resistance
+  diagnostic;
 - gap-down fills that land inside a formerly lower zone or place that zone in
   the new entry-to-2R path, both retained as baseline trades;
 - double-bottom cancellation consuming one breakout event, recross permitting
@@ -437,7 +457,8 @@ For each official session:
 2. resolve gap stops and scheduled exits, then resolve prior entry instructions
    at their fixed submitted quantities;
 3. process intraday protective stops and targets;
-4. apply entitled cash-dividend credits;
+4. accrue ex-date dividend receivables and settle payment-date receivables to
+   cash;
 5. mark positions at the completed close;
 6. evaluate lifecycle close rules for open positions;
 7. evaluate setup evidence for every active member with finalized bars, recording but blocking any candidate whose symbol already has a position or pending entry;
@@ -458,13 +479,16 @@ fill is confirmed. A later signal for the same double-bottom pair requires a
 distinct recross event within the 20-session expiry; no event is emitted while
 price merely remains above the neckline.
 
-In the same module, implement `replay_signal_candidates()` by running every
-qualified setup in its own isolated lifecycle through the same fill resolver.
-Use one fixed reference equity from the run manifest, normally starting equity,
-for every independent candidate's 1% risk budget. This arm does not compound,
-ignores capital competition and existing portfolio positions, permits
-overlapping hypothetical trades, and writes `signal_trades`; it must not copy
-entry or exit logic. The separate portfolio arm compounds current equity.
+In the same module, implement `replay_signal_candidates()` through the same
+fill resolver. Use one fixed reference equity from the run manifest, normally
+starting equity, for every candidate's 1% risk budget. This arm does not
+compound and ignores cash competition. For each pattern and symbol, the first
+unique event opens an isolated signal lifecycle; later events before that
+lifecycle closes are recorded as `OVERLAPPING_EVENT` and cannot create a trade
+or increase the promotion sample. Different patterns retain separate
+lifecycles and may share a price path. The module writes all evidence and the
+eligible `signal_trades`; it must not copy entry or exit logic. The separate
+portfolio arm compounds current equity.
 
 - [ ] **Step 4: Run focused, determinism, and no-broker tests**
 
@@ -494,13 +518,16 @@ git commit -m "feat: replay authoritative swing lifecycle"
 - [ ] **Step 1: Write failing event tests**
 
 Assert a 2-for-1 split doubles quantity and halves entry, stops, and target
-without P&L or changing initial risk dollars; a consolidation preserves value;
-an entitled dividend credits cash and trade P&L once; a suspension defers a
+without P&L or changing either initial risk denominator; a consolidation
+preserves value; a position held at the close before an ex-date accrues one
+dividend receivable and trade P&L once, a purchase on the ex-date receives
+nothing, and the payment date converts the receivable to cash without more
+P&L; a suspension defers a
 scheduled open exit; a symbol change preserves position identity; a delisting
 uses its explicit realizable outcome; and a missing terminal outcome invalidates
 the run. Include a multi-leg trade proving that equal halves at +1R and +2R
-produce +1.5R gross before costs and net R uses total net P&L over initial risk
-dollars.
+produce +1.5 `R_fill` gross before costs while `R_order` uses total net P&L over
+the submitted-limit denominator.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -508,7 +535,16 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_co
 
 - [ ] **Step 3: Implement event transformations and invalid-run result**
 
-Use the corporate-action event dataclasses established in Task 1 and add any transformation helpers required by this task. Keep original and transformed quantities/prices in evidence. Dataset-wide integrity errors return `RunStatus.INVALID` and suppress promotion scoring; they do not produce a plausible partial result.
+Use the corporate-action event dataclasses established in Task 1 and add
+`DividendReceivable` with declaration, ex, record, and payment dates. Entitlement
+is the quantity held at the completed close immediately before the ex-session.
+Accrue its face value on ex-date, attribute it to the originating trade, carry
+it as a non-spendable portfolio asset, and settle it to cash on payment date.
+When payment falls after a development or validation boundary, retain the face
+value in terminal receivables without loading the next partition.
+Keep original and transformed quantities/prices in evidence. Dataset-wide
+integrity errors return `RunStatus.INVALID` and suppress promotion scoring; they
+do not produce a plausible partial result.
 
 - [ ] **Step 4: Run Phase 2A/2B and full repository verification**
 

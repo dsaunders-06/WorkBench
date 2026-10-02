@@ -1,6 +1,6 @@
 # Phase 2 — Authoritative Swing Strategy Design
 
-**Status:** Second revised draft for operator approval, 1 October 2026
+**Status:** Third revised draft for operator approval, 2 October 2026
 
 **Recovery phase:** Phase 2 — Authoritative strategy
 
@@ -98,13 +98,22 @@ All calculations use completed ASX sessions in chronological order.
 
 ### 4.1 Exact numeric and price bases
 
-Price, money, adjustment-factor, indicator, threshold, risk, and R-multiple
-values use decimal arithmetic constructed from source text. Binary floating
-point is prohibited in strategy-domain state, evidence, order calculations,
-cost calculations, and canonical identifiers. The implementation uses one
-versioned decimal precision and rounding context and serializes decimals in a
-canonical, non-scientific form. Whole-share quantities and raw share volume use
-integers.
+Price, money, indicator, threshold, risk, and R-multiple values use decimal
+arithmetic constructed from source text. Binary floating point is prohibited
+in strategy-domain state, evidence, order calculations, cost calculations, and
+canonical identifiers. The package uses precision 50, `ROUND_HALF_EVEN`, and
+an analytical-price quantum of `1E-12 AUD`; this is numeric policy
+`phase2-decimal-v1`. Decimals serialize in canonical, non-scientific form.
+Whole-share quantities and raw share volume use integers.
+
+Split and consolidation ratios, including cumulative raw-to-analytical
+factors, are reduced integer rationals. Raw source prices remain exact
+`Decimal` values. Price-basis conversion first uses an exact rational
+intermediate, then quantizes the analytical result once to `1E-12 AUD` under
+the versioned context. A general factor such as `3/10` is not required to
+satisfy naive decimal equality `(x / f) * f == x`. Conversion tests instead
+require the reconstructed raw value to equal the original after the declared
+analytical quantum and raw price/tick normalization.
 
 Analytical OHLCV, indicators, pattern geometry, and resistance zones use the
 split-normalized analytical basis. At the signal session, the candidate entry,
@@ -113,7 +122,10 @@ raw as-traded basis with the manifest's auditable split factor. The resistance
 test is repeated after conversion and order-price rounding. Pending orders,
 fills, commissions, cash, P&L, and position state remain in raw as-traded basis.
 Later splits transform open quantities and raw prices without changing value or
-initial risk dollars.
+either recorded initial risk denominator. The independent reference
+implementation uses integer-rational arithmetic rather than importing the
+production decimal helpers, then compares at the declared quantum and tick
+boundary.
 
 Statistical routines may use explicitly versioned IEEE 754 binary64 arrays
 after immutable decimal trade results are converted at the statistics boundary.
@@ -420,9 +432,21 @@ shares. The stop is fixed by chart structure; sizing may never move it. The
 submitted quantity is never increased after the opening fill is known.
 
 After a fill, actual price risk per share is `actual fill - initial stop`. The
-1R target, runner accounting, and net-R denominator use that actual value. The
-submitted quantity remains fixed. Re-evaluate and record the actual-fill
-cost/risk result and classify resistance as `POST_FILL_RESISTANCE_CLEAR`,
+1R target and lifecycle geometry use that actual value, while the primary
+promotion return uses the risk known before the open. Record both:
+
+```
+R_order = net P&L / [filled quantity × (submitted limit - initial stop)]
+R_fill  = net P&L / [filled quantity × (actual fill - initial stop)]
+```
+
+Costs remain in net P&L and are not added to either price-risk denominator.
+`R_order` is the primary signal-level expectancy, bootstrap, profit-factor,
+and concentration unit. `R_fill` is an execution and tail-risk diagnostic. A
+trade-by-trade minimum of the two is a declared stress diagnostic only; it is
+not a coherent baseline risk unit and cannot promote. The submitted quantity
+remains fixed. Re-evaluate and record the actual-fill cost/risk result and
+classify resistance as `POST_FILL_RESISTANCE_CLEAR`,
 `POST_FILL_RESISTANCE_INSIDE_ZONE`, or
 `POST_FILL_RESISTANCE_PATH_BLOCKED`.
 
@@ -435,13 +459,17 @@ run `INVALID` only for an impossible or corrupt event, such as a buy fill above
 the limit, at or below the structural invalidation, or derived from invalid
 source data.
 
-The primary edge report measures every qualified trade in R independently of
+The primary edge report uses a per-pattern signal-level arm independently of
 capital competition. It uses one fixed reference equity recorded in the run
-manifest, normally the run's starting equity, for every independent trade. Its
-1% risk budget does not compound and it ignores capital competition and signal
-overlap. The portfolio replay separately compounds actual current equity. It is
-long-only, fully cash-funded, and uses no borrowing, leverage, or margin.
-Existing positions reserve their purchase cost.
+manifest, normally the run's starting equity, for every eligible trade. Its 1%
+risk budget does not compound. Within one pattern and symbol, accept the first
+unique pattern event and suppress later events until that isolated lifecycle
+closes; suppressed overlaps remain in decision evidence and do not increase
+the promotion trade count. Simultaneous signals from different patterns remain
+in their separate hypothesis samples. The portfolio replay separately
+compounds actual current equity. It is long-only, fully cash-funded, and uses
+no borrowing, leverage, or margin. Existing positions reserve their purchase
+cost.
 
 When simultaneous entries require more cash than is available, scale all their
 risk budgets by the same factor, recalculate and round quantities down to whole
@@ -488,13 +516,16 @@ After the confirmed entry fill:
 - allocate the remainder to the runner; and
 - place the banked target at `actual entry fill + R`.
 
-Initial risk dollars are
-`filled quantity × (actual entry fill - initial structural stop)`. Net R is the
-total net P&L across every exit leg and eligible dividend, after commissions,
-exchange charges, and slippage, divided by those initial risk dollars. For
-example, equal halves exited at +1R and +2R produce +1.5R gross before costs.
-Splits adjust quantity and prices so the initial risk-dollar denominator is
-preserved.
+Record `fill_initial_risk_dollars` as
+`filled quantity × (actual entry fill - initial structural stop)` and
+`order_initial_risk_dollars` as
+`filled quantity × (submitted limit - initial structural stop)`. Net P&L is
+the total across every exit leg and eligible dividend after commissions,
+exchange charges, and slippage. Divide it by the order denominator for primary
+`R_order` and by the fill denominator for diagnostic `R_fill`. For example,
+equal halves exited at actual-fill +1R and +2R produce +1.5 `R_fill` gross
+before costs; their `R_order` depends on the submitted limit. Splits adjust
+quantity and prices so both initial risk-dollar denominators are preserved.
 
 ### 10.3 Target fill and runner
 
@@ -573,15 +604,33 @@ The frozen dataset contains:
 - raw OHLCV as traded;
 - split-normalized analytical OHLCV;
 - split and consolidation events;
-- cash-dividend events;
+- cash-dividend events with declaration, ex, record, and payment dates;
 - symbol changes, suspensions, index membership, and delisting outcomes; and
 - an integrity manifest with hashes and coverage diagnostics.
 
 Indicators and pattern geometry use split-normalized data. Fill and commission
 calculations use prices and quantities as traded. Splits and consolidations
 adjust open quantities, cost basis, stops, and pending orders without creating
-P&L. Eligible cash dividends are credited separately. Dividend-back-adjusted
-prices are not used for signals or fills.
+P&L. A position is entitled to a cash dividend only when it holds the shares at
+the close immediately before the ex-dividend session. Accrue a dividend
+receivable and attribute it to trade P&L once on the ex-date; convert the
+receivable to spendable cash on the payment date without creating more P&L. A
+purchase on or after the ex-date has no entitlement. An unpaid receivable
+remains a separately valued portfolio asset and cannot fund entries.
+If its payment date lies beyond a development or validation boundary, that
+partition closes with the receivable asset at face value and does not read the
+next shard merely to settle cash.
+Dividend-back-adjusted prices are not used for signals or fills.
+
+Promotion history is physically sharded by development, validation, holdout,
+and holdout outcome tail. Each shard contains its own daily bars, membership,
+corporate actions, and benchmark rows. A public signed catalog contains shard
+identities, boundaries, and hashes but no holdout observations. Development
+and validation processes have no filesystem or decryption access to holdout
+shards. A partition-aware loader validates only authorized shards; it must not
+open the holdout or outcome-tail shard to calculate its hash before permit and
+ledger authorization. The operator-controlled data service verifies the sealed
+shard against the catalog when access is granted.
 
 Strict authoritative decisions require verified split-only provenance for all
 analytical prices used by daily and weekly EMA, ATR, candle and pattern
@@ -607,7 +656,8 @@ Each evaluated symbol-session emits an immutable decision envelope containing:
 
 - deterministic decision and parent-event identifiers;
 - strategy and schema versions;
-- dataset-manifest identity and code commit;
+- signed dataset-catalog and authorized shard identities, strategy-spec hash,
+  and runner-build hash/code commit;
 - symbol, exchange session, and evaluation timestamp;
 - input-bar identities or hashes;
 - pattern name or confluence membership;
@@ -617,11 +667,15 @@ Each evaluated symbol-session emits an immutable decision envelope containing:
 - analytical-to-raw split factor and both price bases;
 - proposed entry, stop, target, risk quantity, capacity quantity, submitted
   quantity, participation estimate, and modeled costs;
+- order and fill initial-risk dollars, `R_order`, `R_fill`, and edge-sample
+  eligibility or overlap-suppression reason;
+- dividend entitlement, receivable, payment, and cash-settlement evidence;
 - actual-fill resistance diagnostic and its zone/path evidence;
 - prior state, proposed transition, and resulting state;
 - every active exit trigger;
 - fill assumptions and ambiguity flags; and
-- regime label and probabilities for analysis only.
+- regime label, probabilities, model version, input cutoff, and input hash for
+  analysis only.
 
 Identical semantic inputs must produce the same identifier and content.
 Evidence is append-only. Corrected source data creates a new manifest and new
@@ -632,10 +686,16 @@ decisions rather than silently rewriting earlier evidence.
 The approved weekly filter is part of the authoritative strategy. QAT's existing
 market-regime classification is not an entry gate in the primary Phase 2 test.
 
-Every trade records the contemporaneous regime for segmented analysis. A
-regime-gated variant may be reported as a declared sensitivity experiment, but
-it cannot replace or alter the primary result. Strategy rotation remains Phase
-7 work.
+Every trade records the contemporaneous regime for segmented analysis. The
+frozen dataset carries a point-in-time regime series containing session, label,
+probabilities, model version, input cutoff, and input hash. It is generated by
+an expanding-window or walk-forward run that uses no information after the
+labelled session. A model fitted on full history cannot backfill regime labels.
+The existing QAT regime engine may supply the series only through that frozen
+offline procedure. Missing or invalid regime evidence is `UNKNOWN` and cannot
+affect entry, sizing, lifecycle, or promotion eligibility. A regime-gated
+variant may be reported as a declared sensitivity experiment, but it cannot
+replace or alter the primary result. Strategy rotation remains Phase 7 work.
 
 ## 15. Universe and evidence tiers
 
@@ -668,7 +728,7 @@ Promotion-grade evidence requires:
 - split-normalized OHLCV and auditable corporate actions;
 - at least ten years, or the longest complete period available with the
   shortfall stated explicitly; and
-- a frozen, hashed dataset manifest.
+- a signed catalog with frozen, hashed physical shards.
 
 Acquiring a commercial historical source is a later procurement decision. The
 implementation must expose a source port and must not encode one vendor's
@@ -687,16 +747,36 @@ too short or underpowered. The validation plan records those shortfalls and
 sets `promotion_eligible=false`; it does not prevent engineering, development,
 or validation runs. Holdout access remains denied until rules, thresholds,
 numeric policy, data processing, liquidity, costs, and fill assumptions are
-frozen.
+frozen. Development and validation load only their physical shards and prior
+authorized warm-up data; filtering a fully loaded history is forbidden.
 
-The planned holdout must span at least 36 calendar months. Before it is
-unlocked, use development and validation entry-month variability and observed
-signal frequency to freeze, separately for each pattern:
+Development and validation each have an entry window followed by a
+ten-trading-session outcome-only embargo within that same shard. No new
+instruction may be emitted in the embargo. The cutoff ensures a normal
+tenth-session time exit can execute by the partition boundary without reading
+the next partition. A suspension or other exceptional event that remains
+unresolved at the boundary produces a typed `BOUNDARY_CENSORED` result, is
+excluded from power and edge statistics, and is disclosed. Development cannot
+read validation outcomes, and validation cannot read holdout outcomes. The
+holdout entry window may run through its final session because the sealed
+permit covers both the holdout shard and its separate outcome-tail shard.
 
-- expected mean R used only for prospective power planning;
+The planned holdout must span at least 36 calendar months. Before any strategy
+outcomes are examined, the operator freezes one positive minimum meaningful
+net effect `delta_MME` in `R_order`. It is an economic/research threshold, not
+the observed strategy mean or a data-fitted shrinkage estimate, and cannot be selected to make the audit
+pass. Development and validation estimate entry-month variability and signal
+frequency. Their observed means are reported only as diagnostics.
+If `delta_MME <= 0` the plan is invalid; if development-plus-validation net
+expectancy is nonpositive, holdout unlock is refused.
+
+Use `delta_MME`, development/validation variability, and observed signal
+frequency to freeze separately for each pattern:
+
+- the planning effect `delta_MME`;
 - required completed-trade count `N_required`, with an absolute floor of 100;
 - required nonempty entry-month cluster count `G_required`;
-- minimum detectable mean R; and
+- minimum detectable mean `R_order`; and
 - projected power under the frozen studentized and multiplicity procedures.
 
 Required prospective power is at least 80% at a 5% family-wise error level. As
@@ -707,30 +787,43 @@ this approximation, governs the audit. Actual holdout shortfalls return
 `INSUFFICIENT_EVIDENCE`; thresholds are never relaxed after holdout access.
 
 Holdout execution requires an operator-signed permit that binds the strategy
-and evidence versions, code commit, dataset manifest, exact holdout boundaries,
-numeric policy, liquidity/cost/fill profiles, fingerprint, and a unique nonce.
+and evidence versions, strategy-spec hash, runner-build hash/code commit,
+dataset catalog and sealed shard identities, exact holdout boundaries, numeric
+policy, liquidity/cost/fill profiles, power requirement, fingerprint, ledger
+identity and expected head, and a unique nonce.
 The runner verifies the permit with a configured public key; the signing key is
 outside the repository and unavailable to the runner or automated agent. A
 computable fingerprint or approval string is not authorization.
 
-An operator-controlled append-only holdout ledger first reserves the signed
-permit, strategy lineage, and period before any holdout bytes are loaded, then
-appends run identity, artifact hashes, completion status, and reproductions.
-An exact-fingerprint rerun may be recorded as
-`REPRODUCTION` and cannot create a new promotion claim. A changed fingerprint
-cannot evaluate a period already exposed for that strategy lineage. After a
-rule change, a fresh holdout means a genuinely unused later period or newly
-acquired dataset; relabelling the same bars is forbidden. Any outcome-blind
-sequential extension rule must be approved and frozen before first exposure.
+An operator-controlled append-only service owns the holdout ledger. Promotion
+mode cannot accept an arbitrary writable ledger file. The service verifies the
+permit, ledger identity, sequence, and expected head, atomically appends a
+record, and returns a signed receipt. The runner has no authority to replace,
+truncate, roll back, or initialize the promotion ledger. Local file ledgers are
+permitted only in engineering tests.
+
+Ledger state progresses through `EXPOSURE_RESERVED`, `DATA_OPENED`, then
+`COMPLETED`, `FAILED_PRE_EXPOSURE`, or `FAILED_AFTER_EXPOSURE`. The data service
+must record `DATA_OPENED` before returning any sealed holdout byte. A failure
+before that state may be cancelled by the operator and receive a replacement
+permit, including for a patched build. Once `DATA_OPENED` exists, the period is
+consumed. An exact-fingerprint rerun is `REPRODUCTION` and cannot create a new
+promotion claim. A patched or otherwise changed build may use the period only
+for a labelled repair diagnostic and needs genuinely unused later data or a
+newly acquired dataset for promotion. This rule does not depend on a
+post-result judgement about whether the patch changed strategy semantics.
+Relabelling the same bars is forbidden. Any outcome-blind sequential extension
+rule must be approved and frozen before first exposure.
 
 Partition ownership is determined by entry session, never exit session. Each
-partition starts flat. Earlier bars may be read only as indicator and pattern
-warm-up. No new entry may occur before the partition begins or after it ends.
-After the final partition session, an outcome buffer continues until all open
-positions close, normally within ten additional tradable sessions but longer
-when suspensions or delistings require it. The complete outcome remains
-attributed to its entry partition. The holdout trade count includes entries in
-the holdout whose outcomes complete in that buffer.
+partition starts flat. Earlier authorized bars may be read only as indicator
+and pattern warm-up. No new entry may occur before the entry window begins or
+after it ends. Development and validation positions resolve only inside their
+own outcome embargo. Holdout positions may continue into the authorized sealed
+outcome-tail shard until they close, including longer suspensions or delisting
+resolution. The complete outcome remains attributed to its entry partition.
+The holdout trade count includes eligible holdout entries whose outcomes
+complete in that tail.
 
 A full-history replay reads holdout bars and is therefore protected by the same
 permit and ledger. It may run only after the authorized holdout result exists,
@@ -745,22 +838,26 @@ reported by calendar year and recorded regime to reveal instability.
 
 Verification proceeds in this order:
 
-1. **Canonical calculation tests** for decimal parsing and serialization, EMA,
-   Wilder ATR, raw/analytical conversion, tick normalization, weekly
-   aggregation, liquidity capacity, and cost-aware sizing.
+1. **Canonical calculation tests** for decimal parsing and serialization,
+   reduced rational factors, recurring-ratio conversion and quantization, EMA,
+   Wilder ATR, tick normalization, weekly aggregation, liquidity capacity,
+   monotone costs, and maximal bisection sizing.
 2. **Pattern examples and counterexamples** for every individual rule, boundary,
    missing-data case, and tie-break.
 3. **Golden lifecycle scenarios** covering entry gaps, cancellations, stops,
    targets, ambiguous bars, partial exits, runner ratchets, invalidations, time
-   stops, splits, dividends, suspensions, and delistings.
+   stops, splits, ex-date dividend entitlement, payment-date settlement,
+   suspensions, and delistings.
 4. **Determinism tests** proving identical inputs produce identical evidence and
    repeated events cannot duplicate an order or fill.
 5. **Prefix-invariance tests** proving the decision at session `t` is identical
    when later bars are absent or arbitrarily changed, including membership,
-   corporate-action, calendar, and weekly-boundary inputs.
-6. **Independent reference tests** comparing tick, EMA, ATR, resistance, sizing,
-   and bootstrap results with small test-only implementations that share no
-   production helpers.
+   corporate-action, point-in-time regime, calendar, and weekly-boundary
+   inputs.
+6. **Independent reference tests** comparing rational price conversion, tick,
+   EMA, ATR, resistance, bisection sizing, and bootstrap results with small
+   test-only implementations that share no production helpers or decimal
+   context.
 7. **Isolation tests** traversing transitive internal imports and proving the
    Phase 2 research path cannot reach broker, OMS, autonomy, network, DNS, or
    process-launch interfaces. Runtime tests deny sockets and subprocesses in
@@ -783,7 +880,8 @@ report, tied to deterministic checksums. Report separately:
 
 - EMA20 pullback, bull flag, and double bottom;
 - combined confluence portfolio;
-- normalized signal-level R outcomes;
+- non-overlapping signal-level `R_order` outcomes and diagnostic `R_fill`
+  outcomes;
 - fully cash-funded portfolio outcomes;
 - development, validation, and holdout periods;
 - baseline and predeclared volume, fill-order, doubled-cost, post-fill
@@ -791,7 +889,8 @@ report, tied to deterministic checksums. Report separately:
   and
 - static-universe and promotion-grade evidence tiers.
 
-Metrics include trade count, net expectancy in R, confidence interval, win and
+Metrics include eligible and overlap-suppressed trade counts, net expectancy in
+`R_order`, diagnostic `R_fill` expectancy and tails, confidence interval, win and
 loss distribution, profit factor, maximum drawdown, exposure, turnover, holding
 time, cost drag, cost-to-risk ratio, maximum favorable and adverse excursion,
 maximum and average single-position notional exposure, days above declared
@@ -813,15 +912,22 @@ Each pattern is assessed separately; a weak pattern cannot hide inside combined
 results. Promotion from research authorizes later shadow testing only. It does
 not authorize paper orders, autonomous action, or live money.
 
+The per-pattern, non-overlapping signal-level arm supplies trade count,
+`R_order` expectancy, confidence, profit factor, cost stress, and concentration
+for the seven edge gates. The cash-funded arm supplies allocation, exposure,
+drawdown, and final portfolio safety. Cash competition cannot remove a valid
+signal from the edge sample, and a suppressed same-pattern/same-symbol overlap
+cannot increase `N_required`.
+
 The seven edge gates are conjunctive; they define one hypothesis and require no
 correction among themselves. All must pass on the frozen baseline:
 
 1. at least the frozen `N_required` completed holdout trades, where
    `N_required >= 100`, and at least the frozen `G_required` nonempty
    entry-month clusters;
-2. positive net expectancy after modeled costs;
-3. the 97.5% one-sided studentized entry-month cluster-bootstrap lower bound
-   for mean R is above zero and the Romano–Wolf adjusted one-sided p-value is
+2. positive net `R_order` expectancy after modeled costs;
+3. the 97.5% one-sided studentized entry-month cluster-multiplier lower bound
+   for mean `R_order` is above zero and the Romano–Wolf adjusted one-sided p-value is
    below 0.05;
 4. profit factor is at least 1.20;
 5. expectancy remains positive with doubled slippage and commission
@@ -832,9 +938,9 @@ correction among themselves. All must pass on the frozen baseline:
    profile, signed permit, valid first-exposure ledger receipt, and locked
    partition protocol are satisfied.
 
-For the confidence gate, group completed trades by their entry calendar month
-so simultaneous and nearby signals remain together. Let `N` be trade count,
-`G` be month-cluster count, `mean` be mean net R, and
+For the confidence gate, group eligible signal-level trades by their entry
+calendar month so simultaneous and nearby signals remain together. Let `N` be
+trade count, `G` be month-cluster count, `mean` be mean net `R_order`, and
 `U_g = sum(R_i - mean)` within cluster `g`. Estimate the cluster-robust standard
 error as:
 
@@ -842,23 +948,31 @@ error as:
 SE = sqrt((G / (G - 1)) * sum(U_g ** 2) / N ** 2)
 ```
 
-Resample whole month clusters with replacement 10,000 times using common
-resamples and a seed derived from the run manifest. For each resample compute
-`mean*`, `SE*`, and `t* = (mean* - mean) / SE*`. The bound
-`mean - q0.975(t*) × SE` is explicitly a 97.5% one-sided lower bound, equivalent
-to the lower endpoint of a two-sided 95% interval. A zero or undefined standard
-error, fewer than the frozen `G_required` clusters, or another degenerate sample
-is `INSUFFICIENT_EVIDENCE`, never a pass.
+Use a fixed-frame studentized cluster-multiplier bootstrap with 10,000 draws and
+a seed derived from the run manifest. The frame is the union of holdout entry
+months across the three patterns; an empty pattern-month has cluster score
+zero. For draw `b`, generate one common Rademacher weight
+`w[b,g] in {-1,+1}` per month and calculate for pattern `p`:
+
+```
+t_star[p,b] = (sum_g(w[b,g] * U[p,g]) / N[p]) / SE[p]
+```
+
+The fixed observed `N`, month frame, and `SE` mean a draw never has an undefined
+zero-trade sample. The bound `mean - q0.975(t_star) × SE` is explicitly a 97.5%
+one-sided lower bound, equivalent to the lower endpoint of a two-sided 95%
+interval. An observed pattern with zero trades, zero or undefined `SE`, fewer
+than its frozen `G_required` nonempty clusters, or a collapsed multiplier
+distribution is `INSUFFICIENT_EVIDENCE`, never a pass. The exact bootstrap and
+small-cluster behavior must pass the frozen pre-holdout simulation audit.
 
 EMA pullback, bull flag, and double bottom are three separately promotable
 hypotheses. Apply a one-sided Romano–Wolf stepdown test at family-wise error
-rate 5%, using common entry-month resamples to preserve dependence among
-patterns. Use
-the union of their holdout entry months as the cluster frame; a pattern may
-have an empty cluster in a month. For each pattern use observed
-`t = mean / SE` and the null-centered resampled `t*` values already produced by
-the studentized bootstrap. Order hypotheses by descending observed `t`, compare
-each against the resampled maximum over hypotheses still in the stepdown set,
+rate 5%, using the common month weights to preserve dependence among patterns.
+For each pattern use observed `t = mean / SE` and the null-centered
+`t_star` values already produced by the multiplier bootstrap. Order hypotheses
+by descending observed `t`, compare
+each against the multiplier maximum over hypotheses still in the stepdown set,
 and enforce monotone adjusted p-values. The combined portfolio is secondary
 and cannot pass when any included constituent pattern fails. Sensitivity runs
 cannot promote a pattern.
@@ -868,7 +982,8 @@ all three deterministic leave-out tests:
 
 - remove every trade in the most profitable symbol;
 - remove every trade entered in the most profitable calendar year; and
-- remove the top 5% of trades ranked by net R, rounding the removal count up.
+- remove the top 5% of trades ranked by net `R_order`, rounding the removal
+  count up.
 
 The report publishes the full symbol, year, and trade concentration
 distributions as well as these tests.
@@ -897,12 +1012,15 @@ converted into a pass by relaxing a threshold after seeing the evidence.
   scored for promotion.
 - A run with disclosed symbol-level abstentions remains analyzable, with counts
   and reasons reported.
-- Research artifacts are namespaced by strategy version, dataset manifest, cost
-  profile, fill model, and code commit.
+- Research artifacts are namespaced by strategy version, signed dataset catalog
+  and shard identities, cost profile, fill model, and code commit.
 - Earlier evidence is never overwritten.
 - Holdout permits and ledger records are signature-verified; a missing,
   invalid, reused, or scope-mismatched permit fails closed before holdout bytes
   are loaded.
+- Promotion ledger identity, sequence, and expected head are permit-bound. The
+  sealed-data service records `DATA_OPENED` before returning a handle; rolled
+  back or caller-created ledgers cannot authorize a run.
 - CI verifies deterministic replay, rule coverage, schema compatibility, and
   broker isolation.
 - Logs and artifacts must not contain credentials, account secrets, or broker
@@ -929,9 +1047,10 @@ Phase 2 implementation is complete only when:
 
 1. one deterministic engine implements every baseline rule in this
    specification;
-2. all golden, boundary, prefix-invariance, independent-reference,
-   determinism, transitive-import, network/process-isolation, and
-   broker-isolation tests pass;
+2. all golden, boundary, physical-shard isolation, embargo/censoring,
+   ledger-rollback, data-open ordering, prefix-invariance,
+   independent-reference, determinism, transitive-import,
+   network/process-isolation, and broker-isolation tests pass;
 3. the synthetic split-only engineering replay exercises every pattern and
    lifecycle path, while the strict static ASX replay completes with explicit
    provenance and survivorship caveats; zero strict static trades are
