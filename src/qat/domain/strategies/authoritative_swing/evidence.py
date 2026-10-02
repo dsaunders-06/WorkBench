@@ -10,18 +10,12 @@ from datetime import date
 from decimal import Decimal
 from enum import Enum
 
-
-def _canonical_decimal(value: Decimal) -> str:
-    if not value.is_finite():
-        raise ValueError("canonical decimal values must be finite")
-    if value.is_zero():
-        return "0"
-    return format(value.normalize(), "f")
+from qat.domain.strategies.authoritative_swing.numeric import canonical_decimal
 
 
 def _semantic_value(value: object) -> object:
     if isinstance(value, Decimal):
-        return _canonical_decimal(value)
+        return canonical_decimal(value)
     if isinstance(value, float):
         raise TypeError("binary float values are forbidden in canonical evidence")
     if isinstance(value, Enum):

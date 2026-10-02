@@ -33,7 +33,10 @@ wrong.
 
 from __future__ import annotations
 
-from decimal import ROUND_DOWN, ROUND_FLOOR, ROUND_UP, Decimal
+import hashlib
+from dataclasses import dataclass
+from datetime import date
+from decimal import ROUND_CEILING, ROUND_DOWN, ROUND_FLOOR, ROUND_UP, Decimal
 
 from qat.domain.market_calendar import Market
 
@@ -55,6 +58,33 @@ _TICK_TABLES: dict[str, tuple[tuple[Decimal | None, Decimal], ...]] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class TickProfile:
+    """Auditable provenance for an exchange price-step schedule."""
+
+    version: str
+    source_url: str
+    retrieved_on: date
+    content_sha256: str
+    effective_from: date
+    effective_to: date | None
+
+
+# SHA-256 covers this normalized three-row price-step table from the source,
+# rather than unrelated mutable page furniture.
+_ASX_NORMALIZED_PRICE_STEP_CONTENT = (
+    "ASX ordinary equities|0.001:[0,0.10)|0.005:[0.10,2.00)|0.01:[2.00,infinity)"
+)
+ASX_ORDINARY_EQUITY_TICK_PROFILE = TickProfile(
+    version="asx-ordinary-equity-price-steps-2026-10-02",
+    source_url="https://www.asx.com.au/markets/trade-our-cash-market/asx-equities-trading/",
+    retrieved_on=date(2026, 10, 2),
+    content_sha256=hashlib.sha256(_ASX_NORMALIZED_PRICE_STEP_CONTENT.encode()).hexdigest(),
+    effective_from=date(2024, 4, 15),
+    effective_to=None,
+)
+
+
 def tick_size(price: float | Decimal, market: Market) -> Decimal:
     """The minimum price increment at `price` on `market`."""
     value = Decimal(str(price))
@@ -62,6 +92,27 @@ def tick_size(price: float | Decimal, market: Market) -> Decimal:
         if bound is None or value < bound:
             return tick
     raise AssertionError(f"no tick band for {price} on {market}")  # pragma: no cover
+
+
+def previous_raw_order_tick(price: Decimal, market: Market) -> Decimal:
+    """Return the greatest valid order-grid price strictly below ``price``."""
+
+    if not price.is_finite() or price <= 0:
+        raise ValueError(f"cannot find a positive tick predecessor for {price}")
+
+    lower = Decimal(0)
+    candidates: list[Decimal] = []
+    for upper, tick in _TICK_TABLES[market]:
+        steps = (price / tick).to_integral_value(rounding=ROUND_CEILING) - 1
+        candidate = steps * tick
+        if candidate > 0 and candidate >= lower and (upper is None or candidate < upper):
+            candidates.append(candidate)
+        if upper is not None:
+            lower = upper
+
+    if not candidates:
+        raise ValueError(f"price {price} has no positive order-tick predecessor")
+    return max(candidates)
 
 
 def round_to_tick(price: float, market: Market, side: str) -> float:
