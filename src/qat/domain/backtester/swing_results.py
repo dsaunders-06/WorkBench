@@ -138,3 +138,4 @@ class SwingReplayResult:
     abstentions: tuple[RuleEvidence, ...]
     ambiguities: tuple[FillAmbiguity, ...]
     invalid_reasons: tuple[str, ...] = ()
+    signal_decisions: tuple[SetupDecision, ...] = ()

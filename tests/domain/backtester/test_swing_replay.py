@@ -7,6 +7,8 @@ from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
+
 from qat.domain.backtester.swing_fills import AmbiguityPolicy
 from qat.domain.backtester.swing_replay import (
     AuthoritativeSwingReplay,
@@ -19,6 +21,7 @@ from qat.domain.backtester.swing_results import (
     RunStatus,
     SwingReplayResult,
 )
+from qat.domain.oms.oms import OMS
 from qat.domain.strategies.authoritative_swing.model import (
     AdjustmentStatus,
     DataQuality,
@@ -193,6 +196,7 @@ def _run(
     calendar: Sequence[ReplayCalendarRow] | None = None,
     membership: Mapping[date, frozenset[str]] | None = None,
     benchmark: Sequence[FinalBar] | None = None,
+    engine: _FixtureEngine | None = None,
 ) -> SwingReplayResult:
     calendar_rows = tuple(calendar) if calendar is not None else _calendar(first, last)
     official = tuple(row.calendar_date for row in calendar_rows if row.is_tradable)
@@ -215,13 +219,71 @@ def _run(
         membership=replay_membership,
         corporate_actions=(),
         benchmark=replay_benchmark,
-        engine=_FixtureEngine(decisions),
+        engine=engine if engine is not None else _FixtureEngine(decisions),
         starting_equity=D(starting_equity),
         costs=COSTS,
         liquidity=LIQUIDITY,
         ambiguity_policy=AmbiguityPolicy.CONSERVATIVE,
     )
     return replay.run()
+
+
+def test_signal_arm_ignores_portfolio_cash_after_another_symbol_fills() -> None:
+    first, second, third, fourth = _business_days(date(2026, 1, 5), 4)
+    aaa = _decision("AAA.AX", first, quantity=100)
+    bbb = _decision("BBB.AX", second, quantity=5)
+
+    class CashAwareEngine(_FixtureEngine):
+        def evaluate(
+            self,
+            history: SwingHistory,
+            equity: Decimal,
+            costs: ExactCostProfile,
+            liquidity: LiquidityProfile | None,
+            *,
+            available_cash: Decimal | None = None,
+            analysis_regime: str | None = None,
+            evaluation_session: date | None = None,
+        ) -> SetupDecision:
+            if (
+                history.symbol == "BBB.AX"
+                and evaluation_session == second
+                and available_cash == 0
+            ):
+                return _decision("BBB.AX", second, status=DecisionStatus.REJECTED)
+            return super().evaluate(
+                history,
+                equity,
+                costs,
+                liquidity,
+                available_cash=available_cash,
+                analysis_regime=analysis_regime,
+                evaluation_session=evaluation_session,
+            )
+
+    bars = {
+        "AAA.AX": tuple(_bar("AAA.AX", session) for session in (first, second, third, fourth)),
+        "BBB.AX": (
+            _bar("BBB.AX", first),
+            _bar("BBB.AX", second),
+            _bar("BBB.AX", third),
+            _bar("BBB.AX", fourth, low="8.5", close="9"),
+        ),
+    }
+    result = _run(
+        bars=bars,
+        decisions={("AAA.AX", first): aaa, ("BBB.AX", second): bbb},
+        first=first,
+        last=fourth,
+        starting_equity="1000",
+        engine=CashAwareEngine({("AAA.AX", first): aaa, ("BBB.AX", second): bbb}),
+    )
+
+    assert result.status is RunStatus.VALID
+    assert result.decisions[3].status is DecisionStatus.REJECTED
+    assert result.signal_decisions[3].status is DecisionStatus.QUALIFIED
+    assert any(trade.symbol == "BBB.AX" for trade in result.signal_trades)
+    assert not any(trade.symbol == "BBB.AX" for trade in result.trades)
 
 
 def test_qualify_at_close_fills_next_open_and_stops_later() -> None:
@@ -251,6 +313,43 @@ def test_qualify_at_close_fills_next_open_and_stops_later() -> None:
     assert len(result.trades) == 1
     assert result.trades[0].entry_price == D("9.8")
     assert result.trades[0].exit_reason == "protective_stop"
+
+
+def test_complete_fill_and_exit_replay_does_not_call_production_oms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def forbidden(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise AssertionError("research replay invoked the production OMS")
+
+    for method in (
+        "submit_order",
+        "submit_exit_order",
+        "submit_protective_stop",
+        "cancel_order",
+        "sign_off",
+    ):
+        monkeypatch.setattr(OMS, method, forbidden)
+
+    signal, entry, stopped = _business_days(date(2026, 1, 5), 3)
+    result = _run(
+        bars={
+            "AAA.AX": (
+                _bar("AAA.AX", signal),
+                _bar("AAA.AX", entry, open_="9.8", high="10.2", low="9.4"),
+                _bar("AAA.AX", stopped, open_="9.5", high="9.7", low="8.8", close="9"),
+            )
+        },
+        decisions={("AAA.AX", signal): _decision("AAA.AX", signal)},
+        first=signal,
+        last=stopped,
+    )
+
+    assert result.status is RunStatus.VALID
+    assert [(fill.side, fill.reason) for fill in result.fills] == [
+        ("buy", "entry"),
+        ("sell", "protective_stop"),
+    ]
 
 
 def test_daily_invalidation_keeps_stop_until_replacement_open() -> None:

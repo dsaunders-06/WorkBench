@@ -269,6 +269,7 @@ class AuthoritativeSwingReplay:
         portfolio = PortfolioState(self._starting_equity, self._starting_equity)
         pending: dict[str, PendingEntry] = {}
         decisions: list[SetupDecision] = []
+        signal_decisions: list[SetupDecision] = []
         position_events: list[LifecycleAction] = []
         fills: list[SimulatedFill] = []
         trades: list[SwingTrade] = []
@@ -371,6 +372,20 @@ class AuthoritativeSwingReplay:
                     evaluation_session=session,
                 )
                 decisions.append(decision)
+                signal_decision = (
+                    decision
+                    if point.equity == self._starting_equity
+                    and portfolio.available_cash == self._starting_equity
+                    else self._engine.evaluate(
+                        history,
+                        self._starting_equity,
+                        self._costs,
+                        self._liquidity,
+                        available_cash=self._starting_equity,
+                        evaluation_session=session,
+                    )
+                )
+                signal_decisions.append(signal_decision)
                 decision_by_id[decision.decision_id] = decision
                 if decision.status is not DecisionStatus.QUALIFIED:
                     abstentions.extend(
@@ -439,7 +454,7 @@ class AuthoritativeSwingReplay:
         signal_trades, signal_abstentions = replay_signal_candidates(
             calendar_rows=self._calendar_rows,
             bars=self._bars,
-            decisions=decisions,
+            decisions=signal_decisions,
             reference_equity=self._starting_equity,
             costs=self._costs,
             liquidity=self._liquidity,
@@ -457,6 +472,7 @@ class AuthoritativeSwingReplay:
             tuple(equity),
             tuple(abstentions),
             tuple(ambiguities),
+            signal_decisions=tuple(signal_decisions),
         )
 
     def _resolve_pending_entries(
