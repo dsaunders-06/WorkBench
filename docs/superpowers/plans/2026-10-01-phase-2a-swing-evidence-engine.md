@@ -27,6 +27,10 @@
 - Use strategy version `phase2-swing-v1` and schema version `swing-evidence-v1`.
 - All evidence identifiers derive from canonical semantic content and contain no wall-clock value.
 - No network, broker adapter/submission, database, UI, scheduler, or AI import is allowed in the new package. The pure exchange-tick utility is permitted.
+- Implement the uncapped 1% sizing rule for engineering evidence only.
+  Promotion-tier sizing is replayed from the beginning after Phase 4 freezes
+  notional, minimum-stop, cost-to-risk, aggregate, and liquidity controls. This
+  plan must not open promotion-grade development observations.
 
 ## Execution Preflight
 

@@ -28,6 +28,10 @@
   replay cannot duplicate an instruction or filled pattern.
 - A replay must be deterministic from strategy version, signed dataset catalog
   and authorized shard identities, cost model, and ordered events.
+- Treat the uncapped cash-funded arm as engineering evidence with status
+  `PORTFOLIO_RISK_DESIGN_PENDING`. Promotion-tier development and validation
+  are replayed from the beginning only after Phase 4 sizing and risk rules are
+  frozen.
 
 ## File Structure
 
@@ -368,9 +372,10 @@ def test_symbol_input_order_cannot_choose_a_winner() -> None:
 Also test existing positions reserve purchase cost, commission floors after
 scaling, whole shares, removal below two shares, cash debits/credits, dividend
 credit, and no negative cash. Do not add a per-position notional cap or minimum
-stop distance in Phase 2. Record each allocation's notional exposure and
-cost-to-risk ratio so Phase 2C can report the uncapped replay as a concentration
-and gap-risk stress case.
+stop distance in Phase 2. Record each allocation's notional exposure,
+zero-price equity loss, stop distance, and cost-to-risk ratio so Phase 2C can
+report the uncapped replay as a concentration and gap-risk engineering stress
+case and Phase 4 can define structural controls without inspecting returns.
 
 - [ ] **Step 2: Run and confirm failure**
 
@@ -522,10 +527,13 @@ without P&L or changing either initial risk denominator; a consolidation
 preserves value; a position held at the close before an ex-date accrues one
 dividend receivable and trade P&L once, a purchase on the ex-date receives
 nothing, and the payment date converts the receivable to cash without more
-P&L; a suspension defers a
-scheduled open exit; a symbol change preserves position identity; a delisting
-uses its explicit realizable outcome; and a missing terminal outcome invalidates
-the run. Include a multi-leg trade proving that equal halves at +1R and +2R
+P&L; a suspension defers a scheduled open exit; a symbol change preserves
+position identity; a delisting uses its explicit realizable outcome; a
+suspension resolving inside a 63-session tail exits at its first executable
+opportunity; an unresolved position is marked to zero at event onset and closes
+at named terminal session `T64` without recognizing the loss twice; and missing
+identity, quantity, or event data needed for terminal valuation invalidates the
+run. Include a multi-leg trade proving that equal halves at +1R and +2R
 produce +1.5 `R_fill` gross before costs while `R_order` uses total net P&L over
 the submitted-limit denominator.
 
@@ -540,8 +548,9 @@ Use the corporate-action event dataclasses established in Task 1 and add
 is the quantity held at the completed close immediately before the ex-session.
 Accrue its face value on ex-date, attribute it to the originating trade, carry
 it as a non-spendable portfolio asset, and settle it to cash on payment date.
-When payment falls after a development or validation boundary, retain the face
-value in terminal receivables without loading the next partition.
+When payment falls after a signal window, use only its authorized 63-session
+tail; if payment remains later, retain an irrevocably established receivable at
+face value at `T64` without loading the next partition.
 Keep original and transformed quantities/prices in evidence. Dataset-wide
 integrity errors return `RunStatus.INVALID` and suppress promotion scoring; they
 do not produce a plausible partial result.

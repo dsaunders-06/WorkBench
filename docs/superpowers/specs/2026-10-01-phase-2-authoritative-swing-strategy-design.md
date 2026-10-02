@@ -1,6 +1,6 @@
 # Phase 2 — Authoritative Swing Strategy Design
 
-**Status:** Third revised draft for operator approval, 2 October 2026
+**Status:** Fourth revised draft for operator approval, 2 October 2026
 
 **Recovery phase:** Phase 2 — Authoritative strategy
 
@@ -215,11 +215,14 @@ results are known.
 ### 5.3 Liquidity and capacity
 
 Promotion replay requires a versioned liquidity-capacity profile frozen before
-holdout access. It contains a maximum participation fraction and a
-participation-aware price-impact/slippage curve justified from sources outside
-the holdout. The values may be selected using development and validation data,
-then become part of the holdout fingerprint. Calibration targets execution
-capacity and cost realism; it may not maximize strategy returns.
+the first promotion-tier outcome. It contains a maximum participation fraction
+and a participation-aware price-impact/slippage curve justified from execution
+studies outside the strategy outcome data, the signed reference view, and the
+blinded development structural extract defined in Section 16. It may not use
+development or validation returns, fills, exits, P&L, or any other forward
+outcome. The profile becomes part of every later promotion fingerprint.
+Calibration targets execution capacity and cost realism; it may not maximize
+strategy returns.
 
 For each instruction, calculate capacity only from the preceding 20 completed
 sessions of verified raw share volume and raw dollar volume. The capacity
@@ -441,7 +444,7 @@ R_fill  = net P&L / [filled quantity × (actual fill - initial stop)]
 ```
 
 Costs remain in net P&L and are not added to either price-risk denominator.
-`R_order` is the primary signal-level expectancy, bootstrap, profit-factor,
+`R_order` is the primary signal-level expectancy, WCR-S inference, profit-factor,
 and concentration unit. `R_fill` is an execution and tail-risk diagnostic. A
 trade-by-trade minimum of the two is a declared stress diagnostic only; it is
 not a coherent baseline risk unit and cannot promote. The submitted quantity
@@ -480,10 +483,21 @@ Phase 2 deliberately adds neither a per-position notional cap nor an arbitrary
 minimum stop distance. The source methodology's aggregate appetite controls
 are reported but do not change strategy-edge decisions. Their integration
 belongs to Phase 4, where concentration limits, aggregate-risk controls, and a
-minimum acceptable stop distance or cost-to-risk threshold will be selected
-and the portfolio replay rerun. Until then, the uncapped cash-funded portfolio
-is a concentration and gap-risk stress case, not a deployable portfolio
-forecast.
+minimum acceptable stop distance or cost-to-risk threshold will be selected.
+Until then, the uncapped cash-funded portfolio is an engineering concentration
+and gap-risk stress case, not a deployable portfolio forecast and not eligible
+for promotion-tier development, validation, or holdout access.
+
+Phase 4 freezes its risk rules from structural quantities without seeing any
+real strategy outcome. Permitted inputs are signal-time stop distances,
+notional exposures, cost-to-risk ratios, contemporaneous liquidity, pattern
+frequency, candidate rejection counts, strategy-independent overnight-gap
+data, corporate-event incidence, and synthetic mechanical fixtures. Forward
+returns, fills, exits, P&L, R, MFE, MAE, win rate, profit factor, and drawdown
+remain blinded until the declaration protocol in Section 16 is complete. Once
+Phase 4 is frozen, all promotion-tier development and validation evidence is
+computed afresh under its final sizing, commission, liquidity, and eligibility
+fingerprint.
 
 A 2% account-risk replay is a declared portfolio-risk sensitivity. It is
 reported separately, cannot replace the 1% baseline, and cannot promote a
@@ -622,15 +636,22 @@ partition closes with the receivable asset at face value and does not read the
 next shard merely to settle cash.
 Dividend-back-adjusted prices are not used for signals or fills.
 
-Promotion history is physically sharded by development, validation, holdout,
-and holdout outcome tail. Each shard contains its own daily bars, membership,
-corporate actions, and benchmark rows. A public signed catalog contains shard
-identities, boundaries, and hashes but no holdout observations. Development
-and validation processes have no filesystem or decryption access to holdout
-shards. A partition-aware loader validates only authorized shards; it must not
-open the holdout or outcome-tail shard to calculate its hash before permit and
-ledger authorization. The operator-controlled data service verifies the sealed
-shard against the catalog when access is granted.
+Promotion history is physically sharded into complete-calendar-month signal
+windows and separate outcome tails for development, validation, and holdout.
+Every signal window ends with its final permissible entry fill. Its physical
+tail contains the next 63 official exchange sessions. Development and
+validation are separated from the following signal window by their tails and
+any interstitial sessions through that calendar month-end. Interstitial rows
+may later be used only as warm-up for the next authorized partition.
+
+Each shard contains its own daily bars, membership, corporate actions,
+benchmark rows, and point-in-time regime evidence. A public signed catalog
+contains shard identities, boundaries, and hashes but no sealed observations.
+Development and validation processes have no filesystem or decryption access
+to later signal or tail shards. A partition-aware loader validates only
+authorized shards; it must not open a later shard merely to calculate its hash.
+The operator-controlled data service verifies each sealed shard against the
+catalog when access is granted.
 
 Strict authoritative decisions require verified split-only provenance for all
 analytical prices used by daily and weekly EMA, ATR, candle and pattern
@@ -643,7 +664,14 @@ strict mode records typed abstentions rather than producing a trade.
 
 Promotion data must provide realizable delisting proceeds or another explicit,
 auditable terminal outcome. A silent disappearance is a dataset integrity
-failure.
+failure. When a position becomes untradeable, keep it through its authorized
+tail. If it remains unresolved after the sixty-third official session following
+its final eligible entry fill, value documented irrevocable proceeds at their
+known amount and every other remaining equity interest at zero. Recognize the
+zero-price loss at event onset for equity and drawdown, keep cash unavailable,
+and close the accounting state at the terminal session without recognizing the
+loss twice. Apply this rule identically to development, validation, and
+holdout; later recovery is a sensitivity only.
 
 Missing, partial, synthetic, conflicting, or unverifiable required data yields
 `ABSTAIN`. A symbol-specific defect may be isolated while replay continues, but
@@ -719,6 +747,12 @@ analytical proxy to estimate provisional pattern frequency. It uses a distinct
 mode and evidence namespace, cannot emit authoritative decisions, and cannot
 prove an edge or satisfy any promotion gate.
 
+Phase 2 engineering may inspect synthetic fixture outcomes. It may inspect
+static-cache signal-time geometry, frequency, and rejection counts, but it must
+not use static-cache forward returns, fills, exits, P&L, R, MFE, MAE, win rate,
+profit factor, or drawdown to select a Phase 4 risk rule. No promotion-grade
+development or validation observation is released during Phase 2.
+
 ### 15.2 Promotion evidence
 
 Promotion-grade evidence requires:
@@ -734,105 +768,259 @@ Acquiring a commercial historical source is a later procurement decision. The
 implementation must expose a source port and must not encode one vendor's
 schema into the strategy engine.
 
+A separately signed reference-data view may be released before the strategy
+declarations. It carries pseudonymous issuer identity, exposure-window start,
+eligibility, index-membership and market-cap/liquidity bucket labels,
+corporate-event category and onset, consideration category, and hashes back to
+custodian records. It contains no daily OHLC path, exact market-cap or
+traded-value path, strategy signal, or forward strategy outcome. Its history
+ends before holdout; a ten-session exposure window that would cross the
+holdout start is excluded. Before returning the view, the custodian records a
+signed `REFERENCE_VIEW_RELEASED` receipt binding its schema, row and issuer
+counts, maximum included session, source-record hashes, output hash, catalog,
+and release identity.
+
 ## 16. Validation protocol
 
-Promotion history is split chronologically without random shuffling:
+### 16.1 Phase boundary and blind design inputs
 
-- first 50%: development and verification;
-- next 20%: validation and declared sensitivity checks; and
-- final 30%: locked holdout.
+Phase 2 ends with engineering evidence and status
+`PORTFOLIO_RISK_DESIGN_PENDING`. It does not open promotion-grade development,
+validation, or holdout observations. Phase 4 freezes its notional,
+stop-distance, cost-to-risk, aggregate, and liquidity rules before the first
+promotion-tier outcome. The only real-market Phase 4 inputs are the signed
+reference view and a blinded structural extract produced by a reviewed
+custodian process from the development shard.
 
-Development and validation remain accessible even when the planned holdout is
-too short or underpowered. The validation plan records those shortfalls and
-sets `promotion_eligible=false`; it does not prevent engineering, development,
-or validation runs. Holdout access remains denied until rules, thresholds,
-numeric policy, data processing, liquidity, costs, and fill assumptions are
-frozen. Development and validation load only their physical shards and prior
-authorized warm-up data; filtering a fully loaded history is forbidden.
+The structural extractor may return only signal-time stop distances, pattern
+and candidate counts, contemporaneous rejection reasons, price/liquidity
+buckets, cost-to-planned-risk values, quantities, notional exposures, and
+frequency by pattern and complete calendar month. It cannot return raw rows,
+identifiers that join to later observations, post-signal prices, fills, exits,
+P&L, R, MFE, MAE, win rate, profit factor, or drawdown. Its code, schema, input
+shard, and output hashes are recorded as `DEV_STRUCTURE_DERIVED` before the
+operator sees the aggregate. Strategy-independent overnight-gap and
+corporate-event inputs come from the reference view, never from
+signal-conditioned forward development outcomes.
 
-Development and validation each have an entry window followed by a
-ten-trading-session outcome-only embargo within that same shard. No new
-instruction may be emitted in the embargo. The cutoff ensures a normal
-tenth-session time exit can execute by the partition boundary without reading
-the next partition. A suspension or other exceptional event that remains
-unresolved at the boundary produces a typed `BOUNDARY_CENSORED` result, is
-excluded from power and edge statistics, and is disclosed. Development cannot
-read validation outcomes, and validation cannot read holdout outcomes. The
-holdout entry window may run through its final session because the sealed
-permit covers both the holdout shard and its separate outcome-tail shard.
+### 16.2 Declarations and first development release
 
-The planned holdout must span at least 36 calendar months. Before any strategy
-outcomes are examined, the operator freezes one positive minimum meaningful
-net effect `delta_MME` in `R_order`. It is an economic/research threshold, not
-the observed strategy mean or a data-fitted shrinkage estimate, and cannot be selected to make the audit
-pass. Development and validation estimate entry-month variability and signal
-frequency. Their observed means are reported only as diagnostics.
-If `delta_MME <= 0` the plan is invalid; if development-plus-validation net
-expectancy is nonpositive, holdout unlock is refused.
+Before the first promotion-tier outcome, an operator-controlled Declaration
+Authority records these append-only signed declarations:
 
-Use `delta_MME`, development/validation variability, and observed signal
-frequency to freeze separately for each pattern:
+- `EFFECT_DECLARED`, binding positive `delta_MME` in `R_order` and its economic
+  rationale;
+- `PROMOTION_PROTOCOL_DECLARED`, binding every edge, tail-risk, data,
+  portfolio, and feasibility rule; and
+- `METHOD_AUDIT_DECLARED`, binding the inferential method family, complete
+  scenario matrix, generators, acceptance caps, code, seeds, and generic pilot
+  report.
 
-- the planning effect `delta_MME`;
-- required completed-trade count `N_required`, with an absolute floor of 100;
-- required nonempty entry-month cluster count `G_required`;
-- minimum detectable mean `R_order`; and
-- projected power under the frozen studentized and multiplicity procedures.
+Each record binds operator identity, strategy-spec hash, catalog identity,
+ledger identity, sequence, previous head, UTC time, unique nonce, and a valid
+RFC 3161 timestamp token. The signing key and declaration ledger are outside
+the repository and unavailable to the runner or automated agent. The generic
+method pilot may iterate before declaration only on declared synthetic
+families; it cannot use QAT engineering, static-cache, development, or
+validation outcomes. Preserve every attempted method and its result in the
+hashed pilot report.
 
-Required prospective power is at least 80% at a 5% family-wise error level. As
-a scale check before multiplicity and finite-sample effects, a zero lower bound
-requires roughly `1.96 / sqrt(G)` month-block standard deviations: 0.400 for 24
-clusters, 0.327 for 36, and 0.283 for 48. The bootstrap simulation, rather than
-this approximation, governs the audit. Actual holdout shortfalls return
-`INSUFFICIENT_EVIDENCE`; thresholds are never relaxed after holdout access.
+A minimal development-release gate holds the development decryption key. It
+verifies all three declarations, timestamp tokens, ledger lineage, requested
+bundle, and shard identity, then appends signed `DEV_DATA_RELEASED` before
+returning a scoped development handle. Before declarations it may run only the
+reviewed structural extractor. Validation receives its own
+`VALIDATION_DATA_RELEASED` receipt only after development artifacts and the
+fingerprint are locked.
 
-Holdout execution requires an operator-signed permit that binds the strategy
-and evidence versions, strategy-spec hash, runner-build hash/code commit,
-dataset catalog and sealed shard identities, exact holdout boundaries, numeric
-policy, liquidity/cost/fill profiles, power requirement, fingerprint, ledger
-identity and expected head, and a unique nonce.
-The runner verifies the permit with a configured public key; the signing key is
-outside the repository and unavailable to the runner or automated agent. A
-computable fingerprint or approval string is not authorization.
+### 16.3 Chronological windows and outcome tails
 
-An operator-controlled append-only service owns the holdout ledger. Promotion
-mode cannot accept an arbitrary writable ledger file. The service verifies the
-permit, ledger identity, sequence, and expected head, atomically appends a
-record, and returns a signed receipt. The runner has no authority to replace,
-truncate, roll back, or initialize the promotion ledger. Local file ledgers are
-permitted only in engineering tests.
+The initial promotion history uses complete-calendar-month signal windows in a
+50/20/30 development/validation/holdout allocation. The ten-year minimum
+applies after tails are removed. Each partition additionally reserves 63
+official sessions after its final entry fill, so a nominal ten-year dataset
+normally needs about 189 more sessions plus warm-up. If feasibility later
+extends holdout forward, development and validation and the holdout start remain
+fixed; the final holdout share may exceed 30%. Examined validation observations
+can never become holdout.
+
+Use these exact boundary identities for every partition:
+
+```text
+T0   final permissible instruction close
+T1   final permissible entry fill; holding session 1
+T10  holding session 10 close
+T11  scheduled time-exit open
+T2..T64  the 63-session physical outcome tail
+T64  terminal valuation session
+```
+
+The entry-fill window ends on the final official session of a complete calendar
+month. No instruction may produce a fill after `T1`. Partition ownership is by
+entry-fill session. A normal tenth-session exit completes at `T11`; a halt,
+suspension, delisting, or delayed corporate action may resolve through `T64`.
+Tail rows cannot create entries, increase `N`, create edge observations, or
+extend the signal window. Sessions from `T64` through the next month-end are
+interstitial: they remain ineligible and may become warm-up only after the next
+partition is authorized. No partition counts as available until its complete
+tail is acquired, sealed, catalogued, and hashed. Holdout therefore cannot end
+at the present.
+
+All eligible outcomes remain in the denominator. `BOUNDARY_CENSORED` exclusion
+is forbidden. Unresolved positions receive the Section 12 terminal rule at
+`T64`; missing data that prevents that rule is `INVALID`. Later recovery and
+terminal-outcome influence are reported as sensitivities but cannot override
+the conservative primary result.
+
+### 16.4 Corporate-event incidence and structural risk preflight
+
+Estimate terminal-event incidence independently of strategy outcomes. A
+qualifying event is administration, receivership, liquidation, cancellation of
+ordinary equity, delisting without irrevocable consideration, or a suspension
+lasting beyond `T64`. Short halts and known nonzero consideration are not zero
+events; vendor omissions are data failures.
+
+Use broader ASX ordinary-equity history only inside the point-in-time market-cap,
+price, and liquidity support of the eligible strategy universe. Include former
+members and delisted names. At each eligible ten-session window start, freeze
+membership and the market-cap/liquidity bucket and count a qualifying onset in
+the next ten sessions even if eligibility later deteriorates. No exposure
+window may cross holdout start.
+
+Start with four predeclared buckets: smaller/larger market capitalization crossed
+with lower/higher traded-value liquidity. Split at exposure-weighted medians of
+the eligible strategy universe. Each effective bucket requires 500 unique
+issuer-years and 100 distinct issuers. Merge insufficient liquidity bands
+within market-cap band, then merge market-cap bands, following the declared
+rule without looking at event counts. Observations outside common support have
+zero primary weight and form a separate micro-cap sensitivity.
+
+For eligible window start `(i,t)`, define `Y[i,t]=1` when an event begins within
+the next ten sessions and estimate `sum(Y)/eligible_window_starts`. Use the
+larger of the one-sided 95% issuer-year clustered-bootstrap upper bound and an
+exact upper bound from non-overlapping ten-session landmark windows. When fewer
+than five issuer-year event clusters exist, the exact landmark bound binds.
+Primary weights use development/validation entry counts and bucket labels only,
+never outcomes. The mandatory audit also shifts 25 percentage points of weight
+to the highest-risk bucket; all-trades-in-that-bucket is a sensitivity.
+
+Before power or duration planning, use the frozen Phase 4 sizing rules to run a
+structural preflight. For every cash-funded trade, replace its actual exit at
+event onset with a zero-price loss, recompute the equity path, and require the
+worst actual funded placement to keep maximum drawdown at or below 20%. Signal
+trades excluded by cash competition remain in signal-level tail reports but do
+not create portfolio loss. The structural envelope is
+`1 - (1 - ordinary_drawdown_budget) * (1 - zero_price_loss)`; Phase 4 must set
+its notional and aggregate caps with enough room under the same 20% limit.
+Correlated market/sector events enter the probabilistic simulation and Phase 4
+aggregate/sector caps; a deterministic simultaneous two-issuer zero is a
+sensitivity.
+
+Failure stops planning as `PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE`. It must not
+trigger a recommendation to buy more holdout data.
+
+### 16.5 Method audit, power, and frequency feasibility
+
+The candidate inferential method is the exact restricted wild-cluster
+bootstrap with jackknife-transformed scores (`WCR-S`), specialized to the
+intercept-only mean and using common month weights for Romano-Wolf. The method
+audit uses development/validation residuals recentered to zero, joint 3-, 6-,
+and 12-month blocks, observed and stressed cluster imbalance, empirical skew,
+complete and partial nulls, and a calibrated mandatory terminal-loss envelope.
+The broader `0.2%/0.5%/1%` by `-20R/-50R` contamination grid is a tail
+sensitivity unless it lies inside the calibrated envelope. Recentering the
+whole mixture to mean zero is intentional: normal-period gains must not cause a
+false edge claim when rare losses offset them.
+
+Every mandatory scenario must pass; averages across scenarios cannot hide a
+failure. With 9,999 inner bootstrap draws, run 20,000 outer null simulations.
+Accept early when the upper 95% Monte Carlo limit is at least 0.25 percentage
+points below its cap; reject early when the lower limit is at least 0.25 points
+above; otherwise extend to 100,000. The one-sided confidence-bound false-positive
+upper limit is 3.25% against nominal 2.5%; the Romano-Wolf family-wise upper
+limit is 6% against nominal 5%. If no method passes the calibrated envelope at
+a feasible sample size, return `METHOD_INADEQUATE`; trimmed or winsorized means
+cannot replace mean `R_order`.
+
+The operator declares positive `delta_MME` before outcomes. It cannot be raised
+to reduce sample needs. The accepted method recomputes pattern-specific
+`N_required >= 100`, `G_required`, minimum detectable effect, and at least 80%
+prospective power. A nonpositive development-plus-validation expectancy refuses
+holdout. Thresholds never relax after exposure.
+
+The frequency model contains complete signal-eligible calendar months only,
+including genuine zero-entry months. Tail, warm-up, interstitial, and
+partition-created partial months are excluded; blocks cannot bridge a tail.
+Resample joint pattern-count vectors in 3-, 6-, and 12-month blocks. Define the
+low-frequency rate for each pattern as the minimum of its lowest rolling
+36-month development rate, full validation-window rate, and one-sided 90%
+lower predictive rate. Publish which source binds.
+
+Scan 36 through 120 eligible holdout months. Select the first duration with at
+least 90% baseline joint probability and 80% low-frequency-stress probability
+of every pattern satisfying both `N_required` and `G_required`. Publish expected
+and 10th/5th/1st percentile counts. If none passes through 120 months, return
+`FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON`. Otherwise compare the required
+duration with untouched data and return `DATASET_INSUFFICIENT` when required
+exceeds available. Extension is forward-only with unseen observations and a
+complete new tail.
+
+### 16.6 Promotion control plane and exposure
+
+The production control plane is built only after Phase 4 rules and the refreshed
+development/validation fingerprint are final. The operator signs a complete
+read-only promotion bundle containing reviewed source and commit, built wheel,
+pinned interpreter, hash-locked wheels/native libraries, configuration,
+schemas, entrypoint, SBOM, and reproducibility metadata. Operator review covers
+all I/O, dependencies, permit states, raw-data egress, determinism, reference
+parity, and failure handling; another model may assist but cannot authorize.
+
+The dataset packager and keys run under a custodian account. Ledger and sealed
+data run under a separate non-interactive service account or machine. The
+automated agent has no holdout files, keys, promotion account, interactive
+shell in that account, network, DNS, clipboard, child-process, broker, or
+arbitrary filesystem access. Prefer authenticated named-pipe streaming on one
+Windows host or mutually authenticated streaming across hosts. A trusted
+artifact writer, not the runner, enforces typed schemas, row/field/file/size
+limits, and forbids raw-bar output. Administrators and anyone able to replace
+service binaries are outside the protection boundary.
+
+The ledger uses a scoped chain keyed by strategy, catalog, and holdout window,
+with signed head attestations and a global service checkpoint. `SCOPE_RESERVED`
+normally expires after 24 hours and never later than 72 hours before data open;
+the operator may append `RESERVATION_CANCELLED` or `RESERVATION_EXPIRED`. A
+permit binds that reservation, declarations, rehearsal receipt, promotion
+bundle, exact shards, numeric/cost/fill/risk policies, power and duration
+requirements, ledger identity/head, nonce, and approval time.
+
+The exact bundle must first complete a holdout-scale synthetic rehearsal through
+the deployed packager, ledger, sealed-data, and artifact services. Inject every
+service-step failure, insufficient disk, stream interruption, runner death, and
+final-append failure. Bind runner, service, packager, schema, configuration,
+environment, fixture, and rehearsal-ledger hashes into the receipt. Any change
+expires it.
 
 Ledger state progresses through `EXPOSURE_RESERVED`, `DATA_OPENED`, then
-`COMPLETED`, `FAILED_PRE_EXPOSURE`, or `FAILED_AFTER_EXPOSURE`. The data service
-must record `DATA_OPENED` before returning any sealed holdout byte. A failure
-before that state may be cancelled by the operator and receive a replacement
-permit, including for a patched build. Once `DATA_OPENED` exists, the period is
-consumed. An exact-fingerprint rerun is `REPRODUCTION` and cannot create a new
-promotion claim. A patched or otherwise changed build may use the period only
-for a labelled repair diagnostic and needs genuinely unused later data or a
-newly acquired dataset for promotion. This rule does not depend on a
-post-result judgement about whether the patch changed strategy semantics.
-Relabelling the same bars is forbidden. Any outcome-blind sequential extension
-rule must be approved and frozen before first exposure.
+`COMPLETED`, `FAILED_PRE_EXPOSURE`, `FAILED_AFTER_EXPOSURE`, or descriptive
+`FAILED_INFRASTRUCTURE_AFTER_EXPOSURE`. The data service records `DATA_OPENED`
+before returning any plaintext byte or handle. Before it, cancellation or a
+patched build may receive a replacement permit. After it, every crash, sleep,
+restart, lease expiry, or infrastructure failure consumes the holdout even when
+the writer emitted no result. Phase 2D initially has no checkpoint resume. An
+exact-bundle rerun is reproduction-only; any changed bundle needs fresh data.
 
-Partition ownership is determined by entry session, never exit session. Each
-partition starts flat. Earlier authorized bars may be read only as indicator
-and pattern warm-up. No new entry may occur before the entry window begins or
-after it ends. Development and validation positions resolve only inside their
-own outcome embargo. Holdout positions may continue into the authorized sealed
-outcome-tail shard until they close, including longer suspensions or delisting
-resolution. The complete outcome remains attributed to its entry partition.
-The holdout trade count includes eligible holdout entries whose outcomes
-complete in that tail.
+The runbook records rehearsal p50/p95/p99 runtime, peak memory/disk, lease,
+safety margin, host sleep/update controls, and permanent post-open failure
+consequences. A future checkpoint design requires a new threat model and must
+prove kill/resume artifacts byte-identical to uninterrupted output.
 
-A full-history replay reads holdout bars and is therefore protected by the same
+### 16.7 Full-history diagnostic
+
+A full-history replay reads holdout observations and remains behind the same
 permit and ledger. It may run only after the authorized holdout result exists,
 with the identical frozen fingerprint, and is labelled a post-holdout portfolio
-risk diagnostic. It cannot feed rule, threshold, or model changes.
-
-No parameter optimization is part of Phase 2. Sensitivity values are declared
-in advance and remain secondary to the frozen baseline. Results are also
-reported by calendar year and recorded regime to reveal instability.
+risk diagnostic. It cannot feed rule, threshold, or model changes. No parameter
+optimization is part of Phase 2; declared sensitivities remain secondary.
 
 ## 17. Verification layers
 
@@ -855,9 +1043,9 @@ Verification proceeds in this order:
    corporate-action, point-in-time regime, calendar, and weekly-boundary
    inputs.
 6. **Independent reference tests** comparing rational price conversion, tick,
-   EMA, ATR, resistance, bisection sizing, and bootstrap results with small
-   test-only implementations that share no production helpers or decimal
-   context.
+   EMA, ATR, resistance, bisection sizing, WCR-S, Romano-Wolf, incidence, and
+   duration-planner results with small test-only implementations that share no
+   production helpers or decimal context.
 7. **Isolation tests** traversing transitive internal imports and proving the
    Phase 2 research path cannot reach broker, OMS, autonomy, network, DNS, or
    process-launch interfaces. Runtime tests deny sockets and subprocesses in
@@ -866,8 +1054,10 @@ Verification proceeds in this order:
    path on split-only golden data.
 9. **Strict static-cache replay** validating provenance abstentions and
    disclosures, even when it produces zero trades.
-10. **Promotion replay** on the frozen point-in-time dataset, only when an
-    operator-signed permit and unused holdout ledger entry exist.
+10. **Promotion evidence replay** on frozen point-in-time development and
+    validation shards only after declarations and their signed release receipts;
+    holdout and authorized full-history replay additionally require an
+    operator-signed permit and unused scoped-ledger reservation.
 
 Tests use fixed clocks, official exchange calendars, and immutable fixtures.
 They must not depend on the machine's current date, network state, or changing
@@ -920,62 +1110,42 @@ signal from the edge sample, and a suppressed same-pattern/same-symbol overlap
 cannot increase `N_required`.
 
 The seven edge gates are conjunctive; they define one hypothesis and require no
-correction among themselves. All must pass on the frozen baseline:
+correction among themselves. All must pass on the post-Phase-4 frozen baseline:
 
 1. at least the frozen `N_required` completed holdout trades, where
    `N_required >= 100`, and at least the frozen `G_required` nonempty
    entry-month clusters;
 2. positive net `R_order` expectancy after modeled costs;
-3. the 97.5% one-sided studentized entry-month cluster-multiplier lower bound
-   for mean `R_order` is above zero and the Romano–Wolf adjusted one-sided p-value is
-   below 0.05;
+3. the 97.5% one-sided WCR-S entry-month cluster lower bound for mean `R_order`
+   is above zero and the Romano-Wolf adjusted one-sided p-value is below 0.05;
 4. profit factor is at least 1.20;
 5. expectancy remains positive with doubled slippage and commission
    assumptions;
 6. results are not dominated by one symbol, year, or small group of exceptional
    trades; and
-7. the pre-holdout power audit, minimum 36-calendar-month holdout, liquidity
-   profile, signed permit, valid first-exposure ledger receipt, and locked
-   partition protocol are satisfied.
+7. the declared method audit, power and duration plan, minimum 36 complete
+   signal-eligible holdout months, Phase 4 risk profile, signed declarations,
+   permit, rehearsal, first-exposure ledger receipt, and locked partition
+   protocol are satisfied.
 
-For the confidence gate, group eligible signal-level trades by their entry
-calendar month so simultaneous and nearby signals remain together. Let `N` be
-trade count, `G` be month-cluster count, `mean` be mean net `R_order`, and
-`U_g = sum(R_i - mean)` within cluster `g`. Estimate the cluster-robust standard
-error as:
-
-```
-SE = sqrt((G / (G - 1)) * sum(U_g ** 2) / N ** 2)
-```
-
-Use a fixed-frame studentized cluster-multiplier bootstrap with 10,000 draws and
-a seed derived from the run manifest. The frame is the union of holdout entry
-months across the three patterns; an empty pattern-month has cluster score
-zero. For draw `b`, generate one common Rademacher weight
-`w[b,g] in {-1,+1}` per month and calculate for pattern `p`:
-
-```
-t_star[p,b] = (sum_g(w[b,g] * U[p,g]) / N[p]) / SE[p]
-```
-
-The fixed observed `N`, month frame, and `SE` mean a draw never has an undefined
-zero-trade sample. The bound `mean - q0.975(t_star) × SE` is explicitly a 97.5%
-one-sided lower bound, equivalent to the lower endpoint of a two-sided 95%
-interval. An observed pattern with zero trades, zero or undefined `SE`, fewer
-than its frozen `G_required` nonempty clusters, or a collapsed multiplier
-distribution is `INSUFFICIENT_EVIDENCE`, never a pass. The exact bootstrap and
-small-cluster behavior must pass the frozen pre-holdout simulation audit.
+For the confidence gate, group eligible signal-level trades by complete entry
+calendar month so simultaneous and nearby signals remain together. Apply the
+exact restricted wild-cluster bootstrap with jackknife-transformed scores
+(`WCR-S`) frozen by Section 16. Use 9,999 common draws across patterns and invert
+the one-sided test to produce the 97.5% lower confidence bound. Empty
+pattern-months in the common holdout frame carry zero score. Zero trades,
+undefined variance, fewer than `G_required` nonempty clusters, a collapsed
+bootstrap, or any failed mandatory method-audit scenario is
+`INSUFFICIENT_EVIDENCE` or `METHOD_INADEQUATE`, never a pass.
 
 EMA pullback, bull flag, and double bottom are three separately promotable
-hypotheses. Apply a one-sided Romano–Wolf stepdown test at family-wise error
-rate 5%, using the common month weights to preserve dependence among patterns.
-For each pattern use observed `t = mean / SE` and the null-centered
-`t_star` values already produced by the multiplier bootstrap. Order hypotheses
-by descending observed `t`, compare
-each against the multiplier maximum over hypotheses still in the stepdown set,
-and enforce monotone adjusted p-values. The combined portfolio is secondary
-and cannot pass when any included constituent pattern fails. Sensitivity runs
-cannot promote a pattern.
+hypotheses. Apply a one-sided Romano-Wolf stepdown test at family-wise error
+rate 5%, using common WCR-S month weights to preserve dependence. Audit the
+complete null and every one- and two-null partial configuration. Order
+hypotheses by descending observed statistic, compare each with the bootstrap
+maximum over the remaining stepdown set, and enforce monotone adjusted
+p-values. The combined portfolio is secondary and cannot pass when any
+included constituent pattern fails. Sensitivity runs cannot promote.
 
 The concentration gate passes only when net expectancy remains above zero in
 all three deterministic leave-out tests:
@@ -988,10 +1158,25 @@ all three deterministic leave-out tests:
 The report publishes the full symbol, year, and trade concentration
 distributions as well as these tests.
 
-Portfolio safety is assessed separately from statistical edge. The approved
-cash-funded 1% replay must have maximum drawdown no greater than 20% in both the
-holdout and full-history baseline to authorize shadow testing. The result state
-is:
+Tail and portfolio safety are assessed separately from statistical edge. ES1
+and ES5 are reported for signal-level net `R_order` and cash-funded percentage
+of entry equity, without an arbitrary ES pass threshold. In the calibrated
+probabilistic terminal-event simulation, replace selected exits at event onset
+with zero-price outcomes using each trade's submitted limit, stop, quantity,
+bucket, costs, and actual portfolio timing. Require the fifth percentile of
+simulated mean net `R_order` to remain above zero. An analytical expected-value
+calculation must agree within the frozen numeric tolerance.
+
+For the deterministic portfolio test, inject one zero-price outcome into each
+cash-funded trade in turn at its actual time and require the worst resulting
+maximum drawdown to remain no greater than 20%. Do not dilute this gate through
+trade count or apply it to unfunded signal-arm trades. The approved cash-funded
+1% replay must also have realized maximum drawdown no greater than 20% in both
+holdout and authorized full-history baseline, and the calibrated probabilistic
+tail simulation's 95th-percentile maximum drawdown must remain no greater than
+20%. Phase 4 notional and aggregate caps are part of this fingerprint.
+
+The result state is:
 
 - `PASS` when edge and portfolio safety both pass;
 - `FAIL` when an edge requirement fails; or
@@ -999,8 +1184,10 @@ is:
   fails.
 
 The blocked state records evidence of edge but does not authorize shadow
-testing. Phase 4 must introduce concentration controls and rerun the portfolio
-safety assessment before promotion can proceed.
+testing. A structural preflight expected to fail cannot consume holdout merely
+to produce this state. If a post-exposure Phase 4 change is ever required, the
+same holdout can support only a diagnostic rerun; a new promotion claim needs
+fresh prospective data.
 
 Failure or insufficient sample size is a valid Phase 2 result. It cannot be
 converted into a pass by relaxing a threshold after seeing the evidence.
@@ -1015,12 +1202,19 @@ converted into a pass by relaxing a threshold after seeing the evidence.
 - Research artifacts are namespaced by strategy version, signed dataset catalog
   and shard identities, cost profile, fill model, and code commit.
 - Earlier evidence is never overwritten.
+- Reference-view release, declaration, structural-extract,
+  development-release, validation-release, reservation, data-open, and
+  completion receipts are signature- and timestamp-verified in one lineage.
 - Holdout permits and ledger records are signature-verified; a missing,
   invalid, reused, or scope-mismatched permit fails closed before holdout bytes
   are loaded.
-- Promotion ledger identity, sequence, and expected head are permit-bound. The
+- Promotion scoped-ledger identity, sequence, expected head, and signed service
+  checkpoint are permit-bound. The
   sealed-data service records `DATA_OPENED` before returning a handle; rolled
   back or caller-created ledgers cannot authorize a run.
+- No post-`DATA_OPENED` crash, restart, sleep event, lease expiry, or
+  infrastructure classification restores freshness. Phase 2D has no
+  checkpoint-resume path.
 - CI verifies deterministic replay, rule coverage, schema compatibility, and
   broker isolation.
 - Logs and artifacts must not contain credentials, account secrets, or broker
@@ -1036,6 +1230,10 @@ The following work is outside this specification:
 - autonomous or recommend-only paper trading;
 - live-money migration;
 - aggregate portfolio appetite calibration;
+- selection of the Phase 4 notional, minimum-stop, cost-to-risk, sector, and
+  aggregate exposure controls;
+- production operation of the promotion control plane before Phase 4 rules are
+  frozen;
 - a 60-day holding horizon;
 - regime-gated primary trading or multi-strategy rotation;
 - parameter optimization; and
@@ -1043,12 +1241,12 @@ The following work is outside this specification:
 
 ## 22. Acceptance criteria
 
-Phase 2 implementation is complete only when:
+Phase 2 engineering implementation is complete only when:
 
 1. one deterministic engine implements every baseline rule in this
    specification;
-2. all golden, boundary, physical-shard isolation, embargo/censoring,
-   ledger-rollback, data-open ordering, prefix-invariance,
+2. all golden, named-session boundary, physical-shard isolation,
+   terminal-valuation, prefix-invariance,
    independent-reference, determinism, transitive-import,
    network/process-isolation, and broker-isolation tests pass;
 3. the synthetic split-only engineering replay exercises every pattern and
@@ -1058,12 +1256,20 @@ Phase 2 implementation is complete only when:
 4. every decision can be traced to versioned inputs and rule evidence;
 5. existing production behavior and the Phase 1 safety invariants remain
    unchanged;
-6. implementation documentation identifies all evidence that remains
-   provisional because promotion-grade data is unavailable; and
-7. a separate approval occurs before any integration with the live application,
+6. implementation documentation records `PORTFOLIO_RISK_DESIGN_PENDING`,
+   identifies all provisional evidence, and proves no promotion-grade
+   development, validation, or holdout observation was released;
+7. the Declaration Authority, blinded structural-extract contract, and
+   development-release interface are specified and tested with engineering
+   keys and fixtures; and
+8. a separate approval occurs before any integration with the live application,
    paper environment, AI layer, or OMS.
 
-Promotion-grade results are conditional on obtaining the required point-in-time
-dataset. Lack of that dataset does not prevent completion of the deterministic
-engine or engineering validation, but it does prevent any claim that the
-strategy has proven edge.
+Promotion readiness is a later milestone. It additionally requires frozen
+Phase 4 risk rules, externally timestamped declarations, refreshed
+promotion-tier development and validation evidence, a passing structural and
+method audit, feasible untouched holdout duration, the production Phase 2D
+control plane, a successful holdout-scale rehearsal, and an unused signed
+permit. Lack of any item does not prevent Phase 2 engineering completion, but
+it prevents any claim that the strategy has proven edge or is ready for shadow
+testing.
