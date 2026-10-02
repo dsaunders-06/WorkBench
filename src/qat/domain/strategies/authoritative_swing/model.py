@@ -136,3 +136,4 @@ class SetupDecision:
     quantity: int
     input_digests: tuple[str, ...]
     analysis_regime: str | None = None
+    setup_rules: tuple[RuleEvidence, ...] = ()
