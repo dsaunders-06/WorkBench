@@ -650,7 +650,14 @@ The frozen dataset contains:
 Indicators and pattern geometry use split-normalized data. Fill and commission
 calculations use prices and quantities as traded. Splits and consolidations
 adjust open quantities, cost basis, stops, and pending orders without creating
-P&L. A position is entitled to a cash dividend only when it holds the shares at
+P&L. Every consolidation in a promotion shard must state `fractional_rule`
+(`round_down`, `round_half_up`, `round_half_even`, `round_up`, or
+`cash_in_lieu`). Cash-in-lieu requires an exact non-negative
+`cash_in_lieu_price` per fractional share; the
+typed event retains both facts. Engineering replay may mark an unmodeled
+fractional holding `INVALID`; promotion cannot silently infer a rule or
+proceed with an unmodeled settlement.
+A position is entitled to a cash dividend only when it holds the shares at
 the close immediately before the ex-dividend session. Accrue a dividend
 receivable and attribute it to trade P&L once on the ex-date; convert the
 receivable to spendable cash on the payment date without creating more P&L. A
@@ -686,6 +693,14 @@ to later signal or tail shards. A partition-aware loader validates only
 authorized shards; it must not open a later shard merely to calculate its hash.
 The operator-controlled data service verifies each sealed shard against the
 catalog when access is granted.
+
+Before signing a shard, the packager checks every official tradable session
+for a raw traded bar for each point-in-time member and each symbol held in the
+deterministic preflight replay. A documented halt or unresolved delisting
+accounts explicitly for an untradeable held symbol; a halt does not remove
+index membership. An unexplained gap refuses packaging. If one nevertheless
+reaches an open position during replay, the run remains `INVALID`; no price is
+invented or carried forward without a documented halt.
 
 Strict authoritative decisions require verified split-only provenance for all
 analytical prices used by daily and weekly EMA, ATR, candle and pattern

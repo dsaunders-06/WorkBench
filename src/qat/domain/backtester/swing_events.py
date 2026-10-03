@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
+from enum import StrEnum
 
 from qat.domain.strategies.authoritative_swing.lifecycle import PendingEntry, SwingPosition
 from qat.domain.strategies.authoritative_swing.numeric import SplitFactor, to_raw_price
@@ -15,6 +16,33 @@ def _validate_identity(event_id: str, symbol: str) -> None:
         raise ValueError("event identity and symbol are required")
 
 
+class FractionalShareRule(StrEnum):
+    ROUND_DOWN = "round_down"
+    ROUND_HALF_UP = "round_half_up"
+    ROUND_HALF_EVEN = "round_half_even"
+    ROUND_UP = "round_up"
+    CASH_IN_LIEU = "cash_in_lieu"
+
+
+@dataclass(frozen=True, slots=True)
+class ConsolidationSettlement:
+    rule: FractionalShareRule
+    cash_in_lieu_price: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.rule, FractionalShareRule):
+            raise TypeError("consolidation rule must be a typed fractional-share rule")
+        if self.rule is FractionalShareRule.CASH_IN_LIEU:
+            if (
+                not isinstance(self.cash_in_lieu_price, Decimal)
+                or not self.cash_in_lieu_price.is_finite()
+                or self.cash_in_lieu_price < 0
+            ):
+                raise ValueError("cash-in-lieu rule requires a finite non-negative price")
+        elif self.cash_in_lieu_price is not None:
+            raise ValueError("rounding rule cannot include cash-in-lieu price")
+
+
 @dataclass(frozen=True, slots=True)
 class SplitEvent:
     event_id: str
@@ -22,6 +50,7 @@ class SplitEvent:
     effective_session: date
     numerator: int
     denominator: int
+    consolidation_settlement: ConsolidationSettlement | None = None
 
     def __post_init__(self) -> None:
         _validate_identity(self.event_id, self.symbol)

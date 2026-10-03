@@ -227,6 +227,8 @@ Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative
 
 Run: `.\.venv\Scripts\python.exe -m ruff check src/qat/domain/strategies/authoritative_swing tests/domain/strategies/authoritative_swing`
 
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -335,6 +337,8 @@ fills to the ordinary order grid.
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative_swing/test_numeric.py tests/domain/strategies/authoritative_swing/test_indicators.py tests/data/broker/test_ticks.py tests/domain/test_market_calendar.py -q`
 
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -387,6 +391,8 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative
 
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative_swing/ema_pullback.py`
 
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -434,6 +440,8 @@ Evaluate candidate flag lengths in descending order from 8 to 3 and return the f
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative_swing/test_bull_flag.py -q`
 
 Run: `.\.venv\Scripts\python.exe -m ruff check src/qat/domain/strategies/authoritative_swing/bull_flag.py tests/domain/strategies/authoritative_swing/test_bull_flag.py`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 5: Commit**
 
@@ -483,6 +491,8 @@ consumption and recross eligibility are enforced in Phase 2B.
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative_swing/test_double_bottom.py -q`
 
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative_swing/double_bottom.py`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 5: Commit**
 
@@ -550,6 +560,8 @@ before emitting an instruction.
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative_swing/test_resistance.py -q`
 
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 - [ ] **Step 5: Commit**
 
 ```powershell
@@ -613,6 +625,8 @@ fingerprint ineligible. Actual-fill risk and net-R accounting belong to Phase
 - [ ] **Step 4: Run focused and existing cost tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative_swing/test_sizing.py tests/domain/backtester/test_costs.py tests/domain/backtester/test_market_cost_profiles.py -q`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 5: Commit**
 
@@ -689,6 +703,8 @@ Expected: PASS.
 - [ ] **Step 5: Run the full suite and commit**
 
 Run: `.\.venv\Scripts\python.exe -m pytest -q`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 Expected: PASS with the deployed `SwingStrategy` tests unchanged.
 

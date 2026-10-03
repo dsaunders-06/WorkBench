@@ -11,7 +11,7 @@ import hashlib
 import io
 import json
 from collections import defaultdict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
@@ -26,7 +26,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from qat.domain.backtester.swing_events import (
     CashDividendEvent,
+    ConsolidationSettlement,
     DelistingEvent,
+    FractionalShareRule,
     SplitEvent,
     SuspensionEvent,
     SwingMarketEvent,
@@ -123,6 +125,7 @@ CORPORATE_COLUMNS = frozenset(
         "currency",
     }
 )
+FRACTIONAL_COLUMNS = frozenset({"fractional_rule", "cash_in_lieu_price"})
 REGIME_COLUMNS = frozenset(
     {
         "session",
@@ -281,6 +284,47 @@ class SwingDataset:
     def members(self, session: date | str) -> frozenset[str]:
         day = date.fromisoformat(session) if isinstance(session, str) else session
         return self.membership.get(day, frozenset())
+
+
+def validate_packaging_bar_coverage(
+    official_sessions: Sequence[date],
+    bars: Mapping[str, Sequence[FinalBar]],
+    membership: Mapping[date, frozenset[str] | set[str]],
+    held_by_session: Mapping[date, frozenset[str] | set[str]],
+    events: Sequence[SwingMarketEvent],
+) -> None:
+    """Reject missing member or held bars before sealing a replay shard."""
+
+    sessions = set(official_sessions)
+    if any(day not in sessions for day in held_by_session):
+        raise DatasetIntegrityError("held-symbol coverage includes a non-tradable session")
+    available = {symbol: {bar.session for bar in history} for symbol, history in bars.items()}
+    for day in official_sessions:
+        members = set(membership.get(day, ()))
+        held = set(held_by_session.get(day, ()))
+        for symbol in sorted(members | held):
+            if day in available.get(symbol, set()):
+                continue
+            untradeable = any(
+                (
+                    isinstance(event, SuspensionEvent)
+                    and event.symbol == symbol
+                    and event.effective_session <= day
+                    and (event.resume_session is None or day < event.resume_session)
+                )
+                or (
+                    isinstance(event, DelistingEvent)
+                    and symbol in held
+                    and event.symbol == symbol
+                    and event.effective_session <= day
+                )
+                for event in events
+            )
+            if untradeable:
+                continue
+            if symbol in held:
+                raise DatasetIntegrityError(f"held symbol {symbol} lacks bar on {day}")
+            raise DatasetIntegrityError(f"tradable calendar row {day} lacks member bars")
 
 
 def select_regime_audit_sessions(
@@ -565,10 +609,15 @@ def _rows(files: dict[str, bytes], name: str) -> tuple[dict[str, str], ...]:
         if not reader.fieldnames or len(set(reader.fieldnames)) != len(reader.fieldnames):
             raise DatasetIntegrityError(f"{name} has invalid columns")
         expected = DAILY_COLUMNS if name.startswith("daily/") else EXPECTED_COLUMNS.get(name)
-        if name == "corporate_actions.csv" and set(reader.fieldnames) == (
-            CORPORATE_COLUMNS | {"resume_session"}
-        ):
-            expected = CORPORATE_COLUMNS | {"resume_session"}
+        if name == "corporate_actions.csv":
+            observed = frozenset(reader.fieldnames)
+            if observed in (
+                CORPORATE_COLUMNS,
+                CORPORATE_COLUMNS | {"resume_session"},
+                CORPORATE_COLUMNS | FRACTIONAL_COLUMNS,
+                CORPORATE_COLUMNS | FRACTIONAL_COLUMNS | {"resume_session"},
+            ):
+                expected = observed
         if expected is None or set(reader.fieldnames) != expected:
             raise DatasetIntegrityError(f"{name} has missing or unlisted columns")
         rows = tuple(dict(row) for row in reader)
@@ -740,7 +789,9 @@ def _bar(symbol: str, row: dict[str, str], content_hash: str) -> tuple[FinalBar,
     )
 
 
-def _events(files: dict[str, bytes], currency: str) -> tuple[SwingMarketEvent, ...]:
+def _events(
+    files: dict[str, bytes], currency: str, tier: DatasetTier = DatasetTier.ENGINEERING_SYNTHETIC
+) -> tuple[SwingMarketEvent, ...]:
     events: list[SwingMarketEvent] = []
     identities: set[str] = set()
     for row in _rows(files, "corporate_actions.csv"):
@@ -754,13 +805,35 @@ def _events(files: dict[str, bytes], currency: str) -> tuple[SwingMarketEvent, .
         effective = _day(row.get("ex_session"), f"{event_id} effective session")
         kind = row.get("kind")
         if kind in {"split", "consolidation"}:
+            numerator = _int(row.get("ratio_numerator"), "split numerator")
+            denominator = _int(row.get("ratio_denominator"), "split denominator")
+            is_consolidation = kind == "consolidation" or numerator < denominator
+            settlement = None
+            if is_consolidation and (
+                tier is DatasetTier.PROMOTION_POINT_IN_TIME or row.get("fractional_rule")
+            ):
+                try:
+                    rule = FractionalShareRule(
+                        _required(row.get("fractional_rule"), "consolidation fractional rule")
+                    )
+                except ValueError as error:
+                    raise DatasetIntegrityError("invalid consolidation fractional rule") from error
+                price_text = row.get("cash_in_lieu_price")
+                if rule is FractionalShareRule.CASH_IN_LIEU and not price_text:
+                    raise DatasetIntegrityError("cash-in-lieu price is required")
+                price = _decimal(price_text, "cash-in-lieu price") if price_text else None
+                try:
+                    settlement = ConsolidationSettlement(rule, price)
+                except ValueError as error:
+                    raise DatasetIntegrityError(str(error)) from error
             events.append(
                 SplitEvent(
                     event_id,
                     symbol,
                     effective,
-                    _int(row.get("ratio_numerator"), "split numerator"),
-                    _int(row.get("ratio_denominator"), "split denominator"),
+                    numerator,
+                    denominator,
+                    settlement,
                 )
             )
         elif kind == "cash_dividend":
@@ -922,20 +995,8 @@ def load_swing_dataset(access: PartitionAccess) -> SwingDataset:
             raise DatasetIntegrityError("benchmark includes a non-finalized bar")
         if any(not membership[day] for day in calendar.official_sessions):
             raise DatasetIntegrityError("tradable calendar row lacks point-in-time membership")
-        events = _events(files, catalog.currency)
-        for day, members in membership.items():
-            if any(
-                not any(bar.session == day for bar in bars.get(symbol, ()))
-                and not any(
-                    isinstance(event, SuspensionEvent)
-                    and event.symbol == symbol
-                    and event.effective_session <= day
-                    and (event.resume_session is None or day < event.resume_session)
-                    for event in events
-                )
-                for symbol in members
-            ):
-                raise DatasetIntegrityError(f"tradable calendar row {day} lacks member bars")
+        events = _events(files, catalog.currency, catalog.tier)
+        validate_packaging_bar_coverage(calendar.official_sessions, bars, membership, {}, events)
         if any(
             event.effective_session in closed or event.effective_session not in sessions
             for event in events

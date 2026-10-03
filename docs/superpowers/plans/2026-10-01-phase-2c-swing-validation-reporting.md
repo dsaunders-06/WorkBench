@@ -223,6 +223,10 @@ changing an included input so the provenance digest changes. Production
 packaging verifies every input hash and recomputes a stratified sample covering
 at least 1% of labels, 100 labels per model version, every calendar year, and
 every transition type; any failure makes that model version `UNKNOWN`.
+Add a coverage test for a former member still held after index removal: an
+unexplained missing bar refuses packaging, while a documented halt may account
+for the missing trade without removing point-in-time membership. A missing bar
+under an open position remains `INVALID` if it reaches replay.
 
 - [ ] **Step 2: Run and confirm import failure**
 
@@ -328,6 +332,17 @@ Phase 2A `FinalBar`, point-in-time regime records, and Phase 2B corporate-action
 event types. Structural
 corruption invalidates the load; symbol-bar defects become non-verified bars
 and recorded issues.
+The packager calls `validate_packaging_bar_coverage` with the official session
+ledger, member symbols, and held-symbol/session ledger from a deterministic
+preflight replay before signing. Documented halts and unresolved delistings
+account for untradeable held symbols; other missing member or held bars refuse
+the package. Every promotion consolidation row must include
+`fractional_rule` (`round_down`, `round_half_up`, `round_half_even`, `round_up`, or
+`cash_in_lieu`); cash-in-lieu additionally requires an exact non-negative
+`cash_in_lieu_price`. Keep these facts on the typed event. Engineering shards
+may retain legacy rows and fail `INVALID` on an unmodeled fractional holding.
+Promotion execution remains gated until the chosen settlement rule is modeled
+and tested through quantities, cash, and P&L.
 
 Development and validation processes receive no handle, mount, or decryption
 key for later shards. Phase 2 tests only synthetic capabilities. Phase 2D later
@@ -355,6 +370,8 @@ promotion verdict, or enter the formal frequency planner.
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_dataset.py tests/domain/backtester/test_research_universe.py -q`
 
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/backtester/swing_dataset.py`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 5: Commit**
 
@@ -466,6 +483,8 @@ closure, reclassify a signed row, or fill a calendar gap.
 - [ ] **Step 4: Run focused tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_validation.py -q`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 5: Commit**
 
@@ -620,6 +639,8 @@ available, and shortfall months. Extension is forward-only.
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_statistics.py tests/domain/backtester/test_swing_method_audit.py -q`
 
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/backtester/swing_statistics.py src/qat/domain/backtester/swing_method_audit.py`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 6: Commit**
 
@@ -810,6 +831,8 @@ synthetic planner result but keeps overall status
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_reference.py tests/domain/backtester/test_swing_promotion.py -q`
 
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 ```powershell
 git add src/qat/domain/backtester/swing_reference.py src/qat/domain/backtester/swing_promotion.py tests/domain/backtester/test_swing_reference.py tests/domain/backtester/test_swing_promotion.py
 git commit -m "feat: evaluate swing incidence and structural feasibility"
@@ -892,6 +915,8 @@ Write into a sibling temporary directory, calculate all hashes, write `SHA256SUM
 - [ ] **Step 4: Run focused tests and verify a fixture report manually**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_artifacts.py -q`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 Open the generated fixture `report.md` and confirm the evidence tier, period,
 costs, fill model, limitations, per-pattern results, combined portfolio,
@@ -985,6 +1010,11 @@ four `ReplayArm` values: each pattern and
 exclusion, liquidity/impact, `R_fill`, minimum-R stress, and 2% sizing), writes artifacts, prints their
 absolute path, and never changes deployed settings. Only frozen baseline
 pattern arms enter the Romano–Wolf family; sensitivities remain diagnostic.
+The operator packager refuses to sign an authorized shard until
+`validate_packaging_bar_coverage` has checked every member and preflight-held
+symbol on each official session, with documented market events explaining
+untradeable intervals. The offline runner retains its independent `INVALID`
+guard if a held-symbol gap escapes packaging.
 
 The runbook documents the exact commands, evidence tiers, signed catalog and
 physical signal/tail shards, complete-month 50/20/30 allocation,
@@ -1004,6 +1034,8 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/integration/test_authoritative_
 Run: `.\.venv\Scripts\python.exe scripts/research/run_authoritative_swing.py --catalog synthetic-golden --partition development --out data/phase2-engineering-synthetic`
 
 Run: `.\.venv\Scripts\python.exe scripts/research/run_authoritative_swing.py --catalog static-asx --engineering-mode strict_authoritative --partition development --out data/phase2-engineering-static`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 Expected: both exit 0 with absolute artifact paths and no broker/network/process
 access. The synthetic run exercises every pattern and lifecycle path. The
@@ -1057,6 +1089,8 @@ Run: `.\.venv\Scripts\python.exe -m ruff check src tests scripts/research/run_au
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative_swing src/qat/domain/backtester/swing_events.py src/qat/domain/backtester/swing_fills.py src/qat/domain/backtester/swing_results.py src/qat/domain/backtester/swing_portfolio.py src/qat/domain/backtester/swing_replay.py src/qat/domain/backtester/swing_dataset.py src/qat/domain/backtester/swing_validation.py src/qat/domain/backtester/swing_reference.py src/qat/domain/backtester/swing_statistics.py src/qat/domain/backtester/swing_method_audit.py src/qat/domain/backtester/swing_promotion.py src/qat/domain/backtester/swing_artifacts.py`
 
 Run: `.\.venv\Scripts\python.exe -m pytest -q`
+
+Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 Expected: PASS. Record command, result, duration, and environment in the checkpoint.
 

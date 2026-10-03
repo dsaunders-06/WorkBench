@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import hashlib
+import io
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import replace
@@ -15,19 +16,27 @@ from pathlib import Path
 import pytest
 
 from qat.domain.backtester.swing_dataset import (
+    CORPORATE_COLUMNS,
     DatasetIntegrityError,
     DatasetTier,
     PartitionAccess,
     PointInTimeRegime,
     SessionKind,
+    _events,
     audit_regime_provenance,
     load_static_asx_engineering_dataset,
     load_swing_dataset,
     select_regime_audit_sessions,
     shard_merkle_root,
     validate_catalog,
+    validate_packaging_bar_coverage,
 )
-from qat.domain.backtester.swing_events import CashDividendEvent, SplitEvent, SuspensionEvent
+from qat.domain.backtester.swing_events import (
+    CashDividendEvent,
+    FractionalShareRule,
+    SplitEvent,
+    SuspensionEvent,
+)
 from qat.domain.strategies.authoritative_swing.model import AdjustmentStatus, FinalBar
 from qat.domain.strategies.authoritative_swing.numeric import (
     normalize_reconstructed_raw,
@@ -662,6 +671,63 @@ def test_index_member_missing_bar_without_halt_is_integrity_failure(tmp_path: Pa
 
     with pytest.raises(DatasetIntegrityError, match="lacks member bars"):
         load_swing_dataset(_fixture(tmp_path, mutate))
+
+
+def test_packaging_checks_bar_coverage_for_held_former_member(tmp_path: Path) -> None:
+    dataset = load_swing_dataset(_fixture(tmp_path))
+    held = {date(2020, 1, 3): frozenset({"OLD.AX"})}
+
+    with pytest.raises(DatasetIntegrityError, match="held symbol OLD.AX"):
+        validate_packaging_bar_coverage(
+            dataset.official_sessions, dataset.bars, dataset.membership, held, ()
+        )
+
+    validate_packaging_bar_coverage(
+        dataset.official_sessions,
+        dataset.bars,
+        dataset.membership,
+        held,
+        (SuspensionEvent("old-halt", "OLD.AX", date(2020, 1, 3), None),),
+    )
+
+
+def test_promotion_consolidation_requires_explicit_fractional_settlement() -> None:
+    def actions(rule: str, price: str, kind: str = "consolidation") -> dict[str, bytes]:
+        columns = sorted(CORPORATE_COLUMNS | {"fractional_rule", "cash_in_lieu_price"})
+        row = dict.fromkeys(columns, "")
+        row.update(
+            event_id="reverse-old",
+            symbol="OLD.AX",
+            ex_session="2020-01-03",
+            kind=kind,
+            ratio_numerator="1",
+            ratio_denominator="2",
+            currency="AUD",
+            fractional_rule=rule,
+            cash_in_lieu_price=price,
+        )
+        stream = io.StringIO()
+        writer = csv.DictWriter(stream, fieldnames=columns)
+        writer.writeheader()
+        writer.writerow(row)
+        return {"corporate_actions.csv": stream.getvalue().encode()}
+
+    with pytest.raises(DatasetIntegrityError, match="fractional rule"):
+        _events(actions("", ""), "AUD", DatasetTier.PROMOTION_POINT_IN_TIME)
+    with pytest.raises(DatasetIntegrityError, match="fractional rule"):
+        _events(actions("", "", "split"), "AUD", DatasetTier.PROMOTION_POINT_IN_TIME)
+    with pytest.raises(DatasetIntegrityError, match="fractional rule"):
+        _events(actions("round_nearest", ""), "AUD", DatasetTier.PROMOTION_POINT_IN_TIME)
+    with pytest.raises(DatasetIntegrityError, match="cash-in-lieu price"):
+        _events(actions("cash_in_lieu", ""), "AUD", DatasetTier.PROMOTION_POINT_IN_TIME)
+    rounded = _events(actions("round_down", ""), "AUD", DatasetTier.PROMOTION_POINT_IN_TIME)
+    assert isinstance(rounded[0], SplitEvent)
+    assert rounded[0].consolidation_settlement is not None
+    assert rounded[0].consolidation_settlement.rule is FractionalShareRule.ROUND_DOWN
+    cashed = _events(actions("cash_in_lieu", "0.25"), "AUD", DatasetTier.PROMOTION_POINT_IN_TIME)
+    assert isinstance(cashed[0], SplitEvent)
+    assert cashed[0].consolidation_settlement is not None
+    assert cashed[0].consolidation_settlement.cash_in_lieu_price == Decimal("0.25")
 
 
 def test_bad_corporate_ratio_and_currency_are_integrity_errors(tmp_path: Path) -> None:

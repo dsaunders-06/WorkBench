@@ -8,6 +8,7 @@ import pytest
 
 from qat.domain.backtester.swing_events import (
     CashDividendEvent,
+    ConsolidationSettlement,
     DelistingEvent,
     SplitEvent,
     SuspensionEvent,
@@ -45,6 +46,8 @@ def test_invalid_market_event_facts_are_rejected() -> None:
         SplitEvent("bad", "BHP.AX", date(2026, 1, 6), 0, 1)
     with pytest.raises(ValueError):
         DelistingEvent("bad", "BHP.AX", date(2026, 1, 10), Decimal("NaN"))
+    with pytest.raises(TypeError):
+        ConsolidationSettlement("cash_in_lieu", Decimal("0.25"))  # type: ignore[arg-type]
 
 
 def test_historical_events_reject_binary_float_and_boolean_numbers() -> None:
