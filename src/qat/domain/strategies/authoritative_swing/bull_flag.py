@@ -63,10 +63,7 @@ def _least_squares_slope(bars: Sequence[FinalBar]) -> Decimal:
         Decimal(0),
     )
     denominator = sum(
-        (
-            (Decimal(index) - x_mean) * (Decimal(index) - x_mean)
-            for index in range(count)
-        ),
+        ((Decimal(index) - x_mean) * (Decimal(index) - x_mean) for index in range(count)),
         Decimal(0),
     )
     return numerator / denominator
@@ -74,16 +71,11 @@ def _least_squares_slope(bars: Sequence[FinalBar]) -> Decimal:
 
 def _verified_positive_volume(bars: Sequence[FinalBar]) -> bool:
     return all(
-        bar.finalized
-        and bar.quality is DataQuality.VERIFIED
-        and bar.raw.volume > 0
-        for bar in bars
+        bar.finalized and bar.quality is DataQuality.VERIFIED and bar.raw.volume > 0 for bar in bars
     )
 
 
-def _weekly_filter(
-    history: SwingHistory, official_sessions: Sequence[date]
-) -> RuleEvidence:
+def _weekly_filter(history: SwingHistory, official_sessions: Sequence[date]) -> RuleEvidence:
     try:
         weekly = completed_weekly_bars(history.daily, official_sessions)
     except ValueError as error:

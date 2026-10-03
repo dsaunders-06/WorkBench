@@ -76,8 +76,7 @@ class SwingHistory:
             raise ValueError("every history bar must match the history symbol")
         sessions = tuple(bar.session for bar in self.daily)
         if any(
-            current >= following
-            for current, following in zip(sessions, sessions[1:], strict=False)
+            current >= following for current, following in zip(sessions, sessions[1:], strict=False)
         ):
             raise ValueError("history sessions must be unique and strictly increasing")
 

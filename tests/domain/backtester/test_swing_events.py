@@ -55,8 +55,14 @@ def test_historical_events_reject_binary_float_and_boolean_numbers() -> None:
         SplitEvent("bool-ratio", "BHP.AX", session, True, 1)
     with pytest.raises(TypeError):
         CashDividendEvent(
-            "float-dividend", "BHP.AX", session, session, session, session,
-            session, 0.2  # type: ignore[arg-type]
+            "float-dividend",
+            "BHP.AX",
+            session,
+            session,
+            session,
+            session,
+            session,
+            0.2,  # type: ignore[arg-type]
         )
     with pytest.raises(TypeError):
         DelistingEvent("float-outcome", "BHP.AX", session, 1.5)  # type: ignore[arg-type]

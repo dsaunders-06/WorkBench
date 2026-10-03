@@ -171,8 +171,7 @@ def test_every_approved_profile_has_monotone_nondecreasing_total_risk(
 ) -> None:
     cost = exact_cost_profile("ASX", pricing_model)
     totals = [
-        modeled_total_risk(quantity, D("10"), D("9"), cost, LIQUIDITY)
-        for quantity in range(1001)
+        modeled_total_risk(quantity, D("10"), D("9"), cost, LIQUIDITY) for quantity in range(1001)
     ]
 
     assert totals == sorted(totals)

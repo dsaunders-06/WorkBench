@@ -280,15 +280,11 @@ def resolve_protective_session(
             return (target,)
         return (
             target,
-            _runner_breakeven_fill(
-                position, bar, costs, liquidity, ambiguous=False
-            ),
+            _runner_breakeven_fill(position, bar, costs, liquidity, ambiguous=False),
         )
 
     stop_touched = bar.low <= position.current_stop
-    target_touched = (
-        position.state is PositionState.OPEN_FULL and bar.high >= position.target_price
-    )
+    target_touched = position.state is PositionState.OPEN_FULL and bar.high >= position.target_price
     if position.state is not PositionState.OPEN_FULL:
         if not stop_touched:
             return ()
@@ -315,9 +311,7 @@ def resolve_protective_session(
             )
         return (
             _target_fill(position, bar, costs, liquidity, ambiguous=True),
-            _runner_breakeven_fill(
-                position, bar, costs, liquidity, ambiguous=True
-            ),
+            _runner_breakeven_fill(position, bar, costs, liquidity, ambiguous=True),
         )
     if stop_touched:
         return (

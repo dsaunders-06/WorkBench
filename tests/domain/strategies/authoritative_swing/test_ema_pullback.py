@@ -27,9 +27,7 @@ def D(value: str | int) -> Decimal:
 def _sessions(weeks: int) -> tuple[date, ...]:
     first = date(2025, 1, 6)
     return tuple(
-        first + timedelta(days=week * 7 + weekday)
-        for week in range(weeks)
-        for weekday in range(5)
+        first + timedelta(days=week * 7 + weekday) for week in range(weeks) for weekday in range(5)
     )
 
 

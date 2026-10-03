@@ -112,35 +112,57 @@ def _fixture(
     )
     _write_csv(
         root / "corporate_actions.csv",
-        [{
-            "event_id": "old-delisting", "symbol": "OLD.AX", "declaration_date": "",
-            "ex_session": "2020-01-03", "record_date": "", "payment_date": "",
-            "kind": "delisting", "ratio_numerator": "", "ratio_denominator": "",
-            "cash_amount": "", "new_symbol": "", "terminal_price": "0.011",
-            "currency": "AUD",
-        }],
+        [
+            {
+                "event_id": "old-delisting",
+                "symbol": "OLD.AX",
+                "declaration_date": "",
+                "ex_session": "2020-01-03",
+                "record_date": "",
+                "payment_date": "",
+                "kind": "delisting",
+                "ratio_numerator": "",
+                "ratio_denominator": "",
+                "cash_amount": "",
+                "new_symbol": "",
+                "terminal_price": "0.011",
+                "currency": "AUD",
+            }
+        ],
     )
     _write_csv(
         root / "regimes.csv",
-        [{
-            "session": day, "label": "UNKNOWN", "probabilities_json": "{}",
-            "model_version": "fixture-v1", "model_code_hash": "code-hash",
-            "configuration_hash": "config-hash", "training_start": "2019-01-01",
-            "training_end": "2019-12-31", "input_cutoff": day,
-            "max_input_session": day, "input_hash": "fixture-input-hash",
-            "fit_id": "fixture-fit", "output_hash": "fixture-output-hash",
-        } for day in ("2020-01-02", "2020-01-03")],
+        [
+            {
+                "session": day,
+                "label": "UNKNOWN",
+                "probabilities_json": "{}",
+                "model_version": "fixture-v1",
+                "model_code_hash": "code-hash",
+                "configuration_hash": "config-hash",
+                "training_start": "2019-01-01",
+                "training_end": "2019-12-31",
+                "input_cutoff": day,
+                "max_input_session": day,
+                "input_hash": "fixture-input-hash",
+                "fit_id": "fixture-fit",
+                "output_hash": "fixture-output-hash",
+            }
+            for day in ("2020-01-02", "2020-01-03")
+        ],
     )
     if mutate_shard is not None:
         mutate_shard(root)
     with (root / "sessions.csv").open(newline="", encoding="utf-8") as stream:
         tradable = [
-            row["calendar_date"] for row in csv.DictReader(stream)
+            row["calendar_date"]
+            for row in csv.DictReader(stream)
             if row["session_kind"] in {"FULL", "SHORTENED"}
         ]
     files = {
         path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in root.rglob("*") if path.is_file()
+        for path in root.rglob("*")
+        if path.is_file()
     }
     merkle_root = shard_merkle_root(files)
     holdout_files = {"secret.csv": "0" * 64}
@@ -159,25 +181,35 @@ def _fixture(
         "limitations": ["synthetic engineering only"],
         "shards": {
             "development-signal": {
-                "shard_id": "development-signal", "partition": "development",
-                "first_session": tradable[0], "last_session": tradable[-1],
-                "files_sha256": files, "merkle_root": merkle_root,
-                "shard_kind": "signal", "signal_months": ["2020-01"],
+                "shard_id": "development-signal",
+                "partition": "development",
+                "first_session": tradable[0],
+                "last_session": tradable[-1],
+                "files_sha256": files,
+                "merkle_root": merkle_root,
+                "shard_kind": "signal",
+                "signal_months": ["2020-01"],
                 "boundary_ids": {},
             },
             "holdout-signal": {
-                "shard_id": "holdout-signal", "partition": "holdout",
-                "first_session": "2026-01-02", "last_session": "2026-01-02",
-                "files_sha256": holdout_files, "merkle_root": holdout_root,
-                "shard_kind": "signal", "signal_months": ["2026-01"],
+                "shard_id": "holdout-signal",
+                "partition": "holdout",
+                "first_session": "2026-01-02",
+                "last_session": "2026-01-02",
+                "files_sha256": holdout_files,
+                "merkle_root": holdout_root,
+                "shard_kind": "signal",
+                "signal_months": ["2026-01"],
                 "boundary_ids": {},
             },
         },
     }
     if mutate_catalog is not None:
         mutate_catalog(payload)
+
     def canonical(value: object) -> bytes:
         return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
     payload["dataset_id"] = hashlib.sha256(canonical(payload)).hexdigest()
     key = Ed25519PrivateKey.generate()
     payload["operator_signature"] = key.sign(canonical(payload)).hex()
@@ -194,9 +226,7 @@ def _fixture(
     )
 
 
-def _edit_csv(
-    root: Path, relative: str, change: Callable[[list[dict[str, str]]], None]
-) -> None:
+def _edit_csv(root: Path, relative: str, change: Callable[[list[dict[str, str]]], None]) -> None:
     path = root / relative
     with path.open(newline="", encoding="utf-8") as stream:
         rows = list(csv.DictReader(stream))
@@ -288,7 +318,8 @@ def test_signed_calendar_missing_civil_date_invalidates(tmp_path: Path) -> None:
 def test_signed_symbol_bar_on_closed_date_invalidates(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         _edit_csv(
-            root, "daily/NEW.AX.csv",
+            root,
+            "daily/NEW.AX.csv",
             lambda rows: rows.append(_daily("NEW.AX", "2020-01-04")),
         )
 
@@ -320,7 +351,8 @@ def test_nonfinite_symbol_price_invalidates_before_semantic_load(tmp_path: Path)
 def test_missing_delisting_outcome_invalidates(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         _edit_csv(
-            root, "corporate_actions.csv",
+            root,
+            "corporate_actions.csv",
             lambda rows: rows[0].update(terminal_price=""),
         )
 
@@ -331,7 +363,8 @@ def test_missing_delisting_outcome_invalidates(tmp_path: Path) -> None:
 def test_unresolved_symbol_change_lineage_invalidates(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         _edit_csv(
-            root, "corporate_actions.csv",
+            root,
+            "corporate_actions.csv",
             lambda rows: rows[0].update(kind="symbol_change", new_symbol="GHOST.AX"),
         )
 
@@ -369,20 +402,31 @@ def test_signed_ad_hoc_closure_overrides_rule_calendar_without_filling_bars(
     def mutate(root: Path) -> None:
         def sessions(rows: list[dict[str, str]]) -> None:
             rows[1].update(
-                session_kind="AD_HOC_CLOSED", open_time="", close_time="",
-                source_notice="exchange-notice-2020-01-03", reason="ad hoc closure",
+                session_kind="AD_HOC_CLOSED",
+                open_time="",
+                close_time="",
+                source_notice="exchange-notice-2020-01-03",
+                reason="ad hoc closure",
             )
             rows.append({**rows[2], "calendar_date": "2020-01-05"})
-            rows.append({
-                **rows[0], "calendar_date": "2020-01-06",
-                "source_notice": "", "reason": "ordinary session",
-            })
+            rows.append(
+                {
+                    **rows[0],
+                    "calendar_date": "2020-01-06",
+                    "source_notice": "",
+                    "reason": "ordinary session",
+                }
+            )
 
         _edit_csv(root, "sessions.csv", sessions)
         for relative in (
-            "daily/NEW.AX.csv", "benchmark.csv", "membership.csv", "regimes.csv",
+            "daily/NEW.AX.csv",
+            "benchmark.csv",
+            "membership.csv",
+            "regimes.csv",
             "corporate_actions.csv",
         ):
+
             def move(rows: list[dict[str, str]], *, column: str) -> None:
                 for row in rows:
                     if row.get(column) == "2020-01-03":
@@ -403,7 +447,8 @@ def test_signed_ad_hoc_closure_overrides_rule_calendar_without_filling_bars(
 def test_shortened_session_with_full_regular_hours_invalidates(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         _edit_csv(
-            root, "sessions.csv",
+            root,
+            "sessions.csv",
             lambda rows: rows[1].update(session_kind="SHORTENED"),
         )
 
@@ -462,7 +507,9 @@ def test_regime_audit_hashes_every_prefix_and_recomputes_selected_labels(
     regimes = {}
     for session, regime in dataset.regimes.items():
         prefix = tuple(
-            bar for symbol in sorted(dataset.bars) for bar in dataset.bars[symbol]
+            bar
+            for symbol in sorted(dataset.bars)
+            for bar in dataset.bars[symbol]
             if bar.session <= session
         )
         regimes[session] = replace(regime, input_hash=prefix_hash(session, prefix))
@@ -493,9 +540,19 @@ def test_regime_audit_hashes_every_prefix_and_recomputes_selected_labels(
 
 def test_regime_audit_sample_covers_each_model_year_and_transition() -> None:
     template = PointInTimeRegime(
-        date(2020, 1, 2), "CALM", {}, "v1", "code", "config",
-        date(2019, 1, 1), date(2019, 12, 31), date(2020, 1, 2),
-        date(2020, 1, 2), "input", "fit", "output",
+        date(2020, 1, 2),
+        "CALM",
+        {},
+        "v1",
+        "code",
+        "config",
+        date(2019, 1, 1),
+        date(2019, 12, 31),
+        date(2020, 1, 2),
+        date(2020, 1, 2),
+        "input",
+        "fit",
+        "output",
     )
     rows = {
         date(year, 1, day): replace(
@@ -533,21 +590,39 @@ def test_corrected_source_with_same_filename_creates_new_dataset_lineage(
 def test_typed_split_dividend_and_suspension_events_use_exact_facts(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         def events(rows: list[dict[str, str]]) -> None:
-            rows.append({
-                **rows[0], "event_id": "new-split", "symbol": "NEW.AX",
-                "kind": "split", "ratio_numerator": "3", "ratio_denominator": "10",
-                "terminal_price": "",
-            })
-            rows.append({
-                **rows[0], "event_id": "new-dividend", "symbol": "NEW.AX",
-                "kind": "cash_dividend", "declaration_date": "2020-01-02",
-                "record_date": "2020-01-03", "payment_date": "2020-01-06",
-                "cash_amount": "0.011", "terminal_price": "",
-            })
-            rows.append({
-                **rows[0], "event_id": "old-suspension", "symbol": "OLD.AX",
-                "kind": "suspension", "terminal_price": "",
-            })
+            rows.append(
+                {
+                    **rows[0],
+                    "event_id": "new-split",
+                    "symbol": "NEW.AX",
+                    "kind": "split",
+                    "ratio_numerator": "3",
+                    "ratio_denominator": "10",
+                    "terminal_price": "",
+                }
+            )
+            rows.append(
+                {
+                    **rows[0],
+                    "event_id": "new-dividend",
+                    "symbol": "NEW.AX",
+                    "kind": "cash_dividend",
+                    "declaration_date": "2020-01-02",
+                    "record_date": "2020-01-03",
+                    "payment_date": "2020-01-06",
+                    "cash_amount": "0.011",
+                    "terminal_price": "",
+                }
+            )
+            rows.append(
+                {
+                    **rows[0],
+                    "event_id": "old-suspension",
+                    "symbol": "OLD.AX",
+                    "kind": "suspension",
+                    "terminal_price": "",
+                }
+            )
 
         _edit_csv(root, "corporate_actions.csv", events)
 
@@ -564,9 +639,12 @@ def test_typed_split_dividend_and_suspension_events_use_exact_facts(tmp_path: Pa
 def test_bad_corporate_ratio_and_currency_are_integrity_errors(tmp_path: Path) -> None:
     def bad_ratio(root: Path) -> None:
         _edit_csv(
-            root, "corporate_actions.csv",
+            root,
+            "corporate_actions.csv",
             lambda rows: rows[0].update(
-                kind="split", ratio_numerator="0", ratio_denominator="2",
+                kind="split",
+                ratio_numerator="0",
+                ratio_denominator="2",
             ),
         )
 
@@ -575,7 +653,8 @@ def test_bad_corporate_ratio_and_currency_are_integrity_errors(tmp_path: Path) -
 
     def bad_currency(root: Path) -> None:
         _edit_csv(
-            root, "corporate_actions.csv",
+            root,
+            "corporate_actions.csv",
             lambda rows: rows[0].update(currency="USD"),
         )
 
@@ -586,7 +665,8 @@ def test_bad_corporate_ratio_and_currency_are_integrity_errors(tmp_path: Path) -
 def test_nonfinalized_symbol_bar_is_retained_but_nonverified(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         _edit_csv(
-            root, "daily/OLD.AX.csv",
+            root,
+            "daily/OLD.AX.csv",
             lambda rows: rows[0].update(finalized="false"),
         )
 
@@ -598,7 +678,8 @@ def test_nonfinalized_symbol_bar_is_retained_but_nonverified(tmp_path: Path) -> 
 def test_signed_daily_schema_rejects_unlisted_columns(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         _edit_csv(
-            root, "daily/OLD.AX.csv",
+            root,
+            "daily/OLD.AX.csv",
             lambda rows: rows[0].update(hidden_return="0.5"),
         )
 
@@ -638,7 +719,8 @@ def test_signed_non_split_adjustment_cannot_be_labeled_split_normalized(
 def test_delisting_with_later_traded_bar_invalidates(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         _edit_csv(
-            root, "daily/OLD.AX.csv",
+            root,
+            "daily/OLD.AX.csv",
             lambda rows: rows.append(_daily("OLD.AX", "2020-01-03")),
         )
 
@@ -660,7 +742,8 @@ def test_promotion_catalog_needs_partition_tails_before_any_data_open(
 def test_signed_adjusted_volume_must_match_split_factor(tmp_path: Path) -> None:
     def mutate(root: Path) -> None:
         _edit_csv(
-            root, "daily/OLD.AX.csv",
+            root,
+            "daily/OLD.AX.csv",
             lambda rows: rows[0].update(adjusted_volume="1"),
         )
 
@@ -705,9 +788,7 @@ def test_signed_catalog_rejects_duplicate_json_keys_even_if_last_value_is_signed
         ("future-regime-input", "regime provenance"),
     ],
 )
-def test_signed_structural_defects_fail_closed(
-    tmp_path: Path, case: str, reason: str
-) -> None:
+def test_signed_structural_defects_fail_closed(tmp_path: Path, case: str, reason: str) -> None:
     def mutate(root: Path) -> None:
         if case == "duplicate-calendar":
             _edit_csv(root, "sessions.csv", lambda rows: rows.append(dict(rows[1])))
@@ -717,9 +798,12 @@ def test_signed_structural_defects_fail_closed(
             _edit_csv(root, "sessions.csv", lambda rows: rows[2].update(reason=""))
         elif case == "missing-ad-hoc-notice":
             _edit_csv(
-                root, "sessions.csv",
+                root,
+                "sessions.csv",
                 lambda rows: rows[1].update(
-                    session_kind="AD_HOC_CLOSED", open_time="", close_time="",
+                    session_kind="AD_HOC_CLOSED",
+                    open_time="",
+                    close_time="",
                 ),
             )
         elif case == "partial-bar":
@@ -730,7 +814,8 @@ def test_signed_structural_defects_fail_closed(
             _edit_csv(root, "daily/OLD.AX.csv", lambda rows: rows[0].update(quality=""))
         elif case == "future-regime-input":
             _edit_csv(
-                root, "regimes.csv",
+                root,
+                "regimes.csv",
                 lambda rows: rows[0].update(input_cutoff="2020-01-05"),
             )
 

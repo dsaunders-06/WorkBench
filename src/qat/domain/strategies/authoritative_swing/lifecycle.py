@@ -46,11 +46,14 @@ class ConfirmedFill:
             raise ValueError("fill side must be buy or sell")
         if self.quantity <= 0:
             raise ValueError("fill quantity must be positive")
-        if not self.price.is_finite() or self.price < 0 or (
-            self.price == 0
-            and (
-                self.side != "sell"
-                or self.reason not in {"terminal_zero", "delisting_outcome"}
+        if (
+            not self.price.is_finite()
+            or self.price < 0
+            or (
+                self.price == 0
+                and (
+                    self.side != "sell" or self.reason not in {"terminal_zero", "delisting_outcome"}
+                )
             )
         ):
             raise ValueError("fill price must be finite and positive")
@@ -139,8 +142,7 @@ class SwingPosition:
         if self.state in {PositionState.CLOSED, PositionState.CANCELLED}:
             return 0
         if self.state is PositionState.RUNNER or (
-            self.state is PositionState.EXIT_PENDING
-            and self.target_fill_session is not None
+            self.state is PositionState.EXIT_PENDING and self.target_fill_session is not None
         ):
             return self.runner_quantity
         return self.total_quantity
@@ -190,9 +192,7 @@ def pending_entry_from_setup(decision: SetupDecision) -> PendingEntry:
     )
 
 
-def apply_entry_fill(
-    current: PendingEntry | SwingPosition, fill: ConfirmedFill
-) -> SwingPosition:
+def apply_entry_fill(current: PendingEntry | SwingPosition, fill: ConfirmedFill) -> SwingPosition:
     """Confirm an entry once and define actual-fill R without resizing."""
 
     if fill.event_id in current.applied_event_ids:
@@ -372,16 +372,9 @@ def evaluate_completed_close(
         triggers.append("time_stop")
 
     current_stop = position.current_stop
-    if (
-        position.target_fill_session is not None
-        and bar.session > position.target_fill_session
-    ):
+    if position.target_fill_session is not None and bar.session > position.target_fill_session:
         trail_candidate = highest_high - Decimal(2) * atr14
-        trail = (
-            _floor_raw_stop(trail_candidate)
-            if trail_candidate > current_stop
-            else current_stop
-        )
+        trail = _floor_raw_stop(trail_candidate) if trail_candidate > current_stop else current_stop
         current_stop = max(current_stop, position.entry_fill, trail)
 
     updated = replace(

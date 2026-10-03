@@ -129,20 +129,21 @@ class AuthoritativeSwingEngine:
         evaluators: Sequence[PatternEvaluator] | None = None,
     ) -> None:
         self._official_sessions = tuple(official_sessions)
-        self._evaluators = tuple(evaluators) if evaluators is not None else (
-            evaluate_ema_pullback,
-            evaluate_bull_flag,
-            evaluate_double_bottom,
+        self._evaluators = (
+            tuple(evaluators)
+            if evaluators is not None
+            else (
+                evaluate_ema_pullback,
+                evaluate_bull_flag,
+                evaluate_double_bottom,
+            )
         )
 
     def evaluate_patterns(
         self, history: SwingHistory, evaluation_session: date | None = None
     ) -> tuple[PatternDecision, ...]:
         if not history.daily:
-            return tuple(
-                evaluator(history, ())
-                for evaluator in self._evaluators
-            )
+            return tuple(evaluator(history, ()) for evaluator in self._evaluators)
         session = evaluation_session or history.daily[-1].session
         prefix = SwingHistory(
             history.symbol,
@@ -299,9 +300,7 @@ class AuthoritativeSwingEngine:
             raw_invalidation = to_raw_price(analytical_stop, factor)
             raw_stop = previous_raw_order_tick(raw_invalidation, "ASX")
         except ValueError as error:
-            setup_rules.append(
-                RuleEvidence("raw_conversion", RuleOutcome.FAIL, reason=str(error))
-            )
+            setup_rules.append(RuleEvidence("raw_conversion", RuleOutcome.FAIL, reason=str(error)))
             return self._empty_decision(
                 history.symbol,
                 session,

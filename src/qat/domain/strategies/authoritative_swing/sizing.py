@@ -217,18 +217,14 @@ def capacity_quantity(
     ):
         return None
     share_median = _median(tuple(Decimal(bar.raw.volume) for bar in prior))
-    dollar_median = _median(
-        tuple(bar.raw.close * Decimal(bar.raw.volume) for bar in prior)
-    )
+    dollar_median = _median(tuple(bar.raw.close * Decimal(bar.raw.volume) for bar in prior))
     share_quantity = int(
-        (share_median * liquidity_profile.max_participation).to_integral_value(
-            rounding=ROUND_FLOOR
-        )
+        (share_median * liquidity_profile.max_participation).to_integral_value(rounding=ROUND_FLOOR)
     )
     dollar_quantity = int(
-        (
-            dollar_median * liquidity_profile.max_participation / limit
-        ).to_integral_value(rounding=ROUND_FLOOR)
+        (dollar_median * liquidity_profile.max_participation / limit).to_integral_value(
+            rounding=ROUND_FLOOR
+        )
     )
     return CapacityResult(
         min(share_quantity, dollar_quantity),

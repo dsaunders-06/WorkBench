@@ -68,10 +68,7 @@ def _finite_history(history: SwingHistory) -> bool:
 
 def _verified_positive_volume(bars: Sequence[FinalBar]) -> bool:
     return all(
-        bar.finalized
-        and bar.quality is DataQuality.VERIFIED
-        and bar.raw.volume > 0
-        for bar in bars
+        bar.finalized and bar.quality is DataQuality.VERIFIED and bar.raw.volume > 0 for bar in bars
     )
 
 
@@ -107,9 +104,7 @@ def _qualifying_pairs(
                 continue
             neckline = max(bar.adjusted.high for bar in between)
             members = tuple(
-                index
-                for index in range(first + 1, second)
-                if bars[index].adjusted.high == neckline
+                index for index in range(first + 1, second) if bars[index].adjusted.high == neckline
             )
             second_atr = atr_values[second]
             if second_atr is None:
@@ -237,9 +232,7 @@ def evaluate_double_bottom(
         RuleEvidence(
             "first_close_crossing",
             _outcome(bars[-2].adjusted.close <= pair.neckline < bars[-1].adjusted.close),
-            measured=(
-                f"previous={bars[-2].adjusted.close};current={bars[-1].adjusted.close}"
-            ),
+            measured=(f"previous={bars[-2].adjusted.close};current={bars[-1].adjusted.close}"),
             threshold=pair.neckline,
         ),
     ]
@@ -313,8 +306,7 @@ def evaluate_double_bottom(
     assert current_atr is not None
     signal = bars[-1]
     member_identities = tuple(
-        f"{bars[index].session.isoformat()}:{bars[index].digest}"
-        for index in pair.neckline_members
+        f"{bars[index].session.isoformat()}:{bars[index].digest}" for index in pair.neckline_members
     )
     pattern_id = stable_decision_id(
         {

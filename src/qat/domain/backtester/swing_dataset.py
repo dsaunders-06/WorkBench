@@ -71,27 +71,75 @@ class SessionKind(StrEnum):
 
 TRADABLE_KINDS = frozenset({SessionKind.FULL, SessionKind.SHORTENED})
 SCHEMA_VERSION = "phase2-swing-dataset-v1"
-DAILY_COLUMNS = frozenset({
-    "session", "raw_open", "raw_high", "raw_low", "raw_close", "raw_volume",
-    "adjusted_open", "adjusted_high", "adjusted_low", "adjusted_close",
-    "adjusted_volume", "split_factor_numerator", "split_factor_denominator",
-    "source", "quality", "finalized",
-})
-CALENDAR_COLUMNS = frozenset({
-    "calendar_date", "session_kind", "open_time", "close_time", "source",
-    "source_version", "source_notice", "reason", "retrieved_at", "source_hash",
-    "finalized",
-})
-CORPORATE_COLUMNS = frozenset({
-    "event_id", "symbol", "declaration_date", "ex_session", "record_date",
-    "payment_date", "kind", "ratio_numerator", "ratio_denominator",
-    "cash_amount", "new_symbol", "terminal_price", "currency",
-})
-REGIME_COLUMNS = frozenset({
-    "session", "label", "probabilities_json", "model_version", "model_code_hash",
-    "configuration_hash", "training_start", "training_end", "input_cutoff",
-    "max_input_session", "input_hash", "fit_id", "output_hash",
-})
+DAILY_COLUMNS = frozenset(
+    {
+        "session",
+        "raw_open",
+        "raw_high",
+        "raw_low",
+        "raw_close",
+        "raw_volume",
+        "adjusted_open",
+        "adjusted_high",
+        "adjusted_low",
+        "adjusted_close",
+        "adjusted_volume",
+        "split_factor_numerator",
+        "split_factor_denominator",
+        "source",
+        "quality",
+        "finalized",
+    }
+)
+CALENDAR_COLUMNS = frozenset(
+    {
+        "calendar_date",
+        "session_kind",
+        "open_time",
+        "close_time",
+        "source",
+        "source_version",
+        "source_notice",
+        "reason",
+        "retrieved_at",
+        "source_hash",
+        "finalized",
+    }
+)
+CORPORATE_COLUMNS = frozenset(
+    {
+        "event_id",
+        "symbol",
+        "declaration_date",
+        "ex_session",
+        "record_date",
+        "payment_date",
+        "kind",
+        "ratio_numerator",
+        "ratio_denominator",
+        "cash_amount",
+        "new_symbol",
+        "terminal_price",
+        "currency",
+    }
+)
+REGIME_COLUMNS = frozenset(
+    {
+        "session",
+        "label",
+        "probabilities_json",
+        "model_version",
+        "model_code_hash",
+        "configuration_hash",
+        "training_start",
+        "training_end",
+        "input_cutoff",
+        "max_input_session",
+        "input_hash",
+        "fit_id",
+        "output_hash",
+    }
+)
 EXPECTED_COLUMNS = {
     "sessions.csv": CALENDAR_COLUMNS,
     "membership.csv": frozenset({"session", "symbol", "is_member"}),
@@ -367,8 +415,11 @@ def _digest(value: object, label: str) -> str:
 
 def _safe_relative(name: str) -> PurePosixPath:
     path = PurePosixPath(name)
-    if not name or "\\" in name or path.is_absolute() or any(
-        part in {"", ".", ".."} for part in path.parts
+    if (
+        not name
+        or "\\" in name
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
     ):
         raise DatasetIntegrityError(f"unsafe shard file path: {name}")
     return path
@@ -389,9 +440,7 @@ def validate_catalog(catalog_path: Path, verification_key: bytes) -> DatasetCata
         except ValueError as error:
             raise DatasetIntegrityError("catalog signature is not hexadecimal") from error
         signed = {key: value for key, value in payload.items() if key != "operator_signature"}
-        Ed25519PublicKey.from_public_bytes(verification_key).verify(
-            signature, _canonical(signed)
-        )
+        Ed25519PublicKey.from_public_bytes(verification_key).verify(signature, _canonical(signed))
         dataset_id = _digest(signed.get("dataset_id"), "dataset id")
         identity = {key: value for key, value in signed.items() if key != "dataset_id"}
         if dataset_id != _sha256(_canonical(identity)):
@@ -436,8 +485,7 @@ def validate_catalog(catalog_path: Path, verification_key: bytes) -> DatasetCata
         first = _day(signed.get("first_session"), "catalog first session")
         last = _day(signed.get("last_session"), "catalog last session")
         if last < first or any(
-            shard.first_session < first or shard.last_session > last
-            for shard in shards.values()
+            shard.first_session < first or shard.last_session > last for shard in shards.values()
         ):
             raise DatasetIntegrityError("shard boundary lies outside catalog interval")
         try:
@@ -456,17 +504,14 @@ def validate_catalog(catalog_path: Path, verification_key: bytes) -> DatasetCata
                 raise DatasetIntegrityError("promotion requires an accumulation benchmark")
             for partition in ("development", "validation", "holdout"):
                 kinds = {
-                    shard.shard_kind for shard in shards.values()
-                    if shard.partition == partition
+                    shard.shard_kind for shard in shards.values() if shard.partition == partition
                 }
                 if not {"signal", "tail"}.issubset(kinds):
                     raise DatasetIntegrityError(
                         f"promotion catalog lacks signal and tail shards for {partition}"
                     )
             for shard in shards.values():
-                if shard.shard_kind == "tail" and not {"T1", "T64"}.issubset(
-                    shard.boundary_ids
-                ):
+                if shard.shard_kind == "tail" and not {"T1", "T64"}.issubset(shard.boundary_ids):
                     raise DatasetIntegrityError(
                         f"promotion tail {shard.shard_id} lacks named boundaries"
                     )
@@ -527,8 +572,9 @@ def _rows(files: dict[str, bytes], name: str) -> tuple[dict[str, str], ...]:
         if expected is None or set(reader.fieldnames) != expected:
             raise DatasetIntegrityError(f"{name} has missing or unlisted columns")
         rows = tuple(dict(row) for row in reader)
-        if any(set(row) != expected or any(value is None for value in row.values())
-               for row in rows):
+        if any(
+            set(row) != expected or any(value is None for value in row.values()) for row in rows
+        ):
             raise DatasetIntegrityError(f"{name} has invalid row width")
         return rows
     except (KeyError, UnicodeError, csv.Error) as error:
@@ -570,7 +616,10 @@ def _calendar(files: dict[str, bytes], manifest: DatasetShardManifest) -> Offici
             raise DatasetIntegrityError(f"ad hoc calendar row {day} lacks closure notice")
         calendar_rows.append(
             OfficialCalendarRow(
-                day, kind, open_time, close_time,
+                day,
+                kind,
+                open_time,
+                close_time,
                 _required(row.get("source"), "calendar source"),
                 _required(row.get("source_version"), "calendar source version"),
                 row.get("source_notice") or None,
@@ -584,8 +633,7 @@ def _calendar(files: dict[str, bytes], manifest: DatasetShardManifest) -> Offici
     if not dates or dates != tuple(sorted(set(dates))):
         raise DatasetIntegrityError("calendar rows are duplicated or unordered")
     expected = tuple(
-        dates[0] + timedelta(days=offset)
-        for offset in range((dates[-1] - dates[0]).days + 1)
+        dates[0] + timedelta(days=offset) for offset in range((dates[-1] - dates[0]).days + 1)
     )
     if dates != expected:
         raise DatasetIntegrityError("calendar row missing for a civil date")
@@ -633,7 +681,9 @@ def _ohlcv(row: dict[str, str], prefix: str) -> Ohlcv:
 
 def _geometry_valid(bar: Ohlcv) -> bool:
     return (
-        bar.low > 0 and bar.open > 0 and bar.close > 0
+        bar.low > 0
+        and bar.open > 0
+        and bar.close > 0
         and bar.high >= max(bar.open, bar.close)
         and bar.low <= min(bar.open, bar.close)
         and bar.volume >= 0
@@ -655,8 +705,10 @@ def _bar(symbol: str, row: dict[str, str], content_hash: str) -> tuple[FinalBar,
     if any(
         normalize_reconstructed_raw(to_raw_price(value, factor), source) != source
         for value, source in (
-            (adjusted.open, raw.open), (adjusted.high, raw.high),
-            (adjusted.low, raw.low), (adjusted.close, raw.close),
+            (adjusted.open, raw.open),
+            (adjusted.high, raw.high),
+            (adjusted.low, raw.low),
+            (adjusted.close, raw.close),
         )
     ):
         raise DatasetIntegrityError(f"{symbol} adjustment lineage disagrees with raw prices")
@@ -673,10 +725,16 @@ def _bar(symbol: str, row: dict[str, str], content_hash: str) -> tuple[FinalBar,
         quality = DataQuality.UNVERIFIED
     return (
         FinalBar(
-            symbol, session, raw, adjusted,
-            _required(row.get("source"), "bar source"), quality,
-            AdjustmentStatus.SPLIT_NORMALIZED, factor,
-            finalized, content_hash,
+            symbol,
+            session,
+            raw,
+            adjusted,
+            _required(row.get("source"), "bar source"),
+            quality,
+            AdjustmentStatus.SPLIT_NORMALIZED,
+            factor,
+            finalized,
+            content_hash,
         ),
         issue,
     )
@@ -696,27 +754,50 @@ def _events(files: dict[str, bytes], currency: str) -> tuple[SwingMarketEvent, .
         effective = _day(row.get("ex_session"), f"{event_id} effective session")
         kind = row.get("kind")
         if kind in {"split", "consolidation"}:
-            events.append(SplitEvent(event_id, symbol, effective,
-                                     _int(row.get("ratio_numerator"), "split numerator"),
-                                     _int(row.get("ratio_denominator"), "split denominator")))
+            events.append(
+                SplitEvent(
+                    event_id,
+                    symbol,
+                    effective,
+                    _int(row.get("ratio_numerator"), "split numerator"),
+                    _int(row.get("ratio_denominator"), "split denominator"),
+                )
+            )
         elif kind == "cash_dividend":
-            events.append(CashDividendEvent(
-                event_id, symbol, effective,
-                _day(row.get("declaration_date"), "dividend declaration"), effective,
-                _day(row.get("record_date"), "dividend record"),
-                _day(row.get("payment_date"), "dividend payment"),
-                _decimal(row.get("cash_amount"), "cash dividend"),
-            ))
+            events.append(
+                CashDividendEvent(
+                    event_id,
+                    symbol,
+                    effective,
+                    _day(row.get("declaration_date"), "dividend declaration"),
+                    effective,
+                    _day(row.get("record_date"), "dividend record"),
+                    _day(row.get("payment_date"), "dividend payment"),
+                    _decimal(row.get("cash_amount"), "cash dividend"),
+                )
+            )
         elif kind == "symbol_change":
-            events.append(SymbolChangeEvent(event_id, symbol, effective,
-                                            _required(row.get("new_symbol"), "new symbol")))
+            events.append(
+                SymbolChangeEvent(
+                    event_id, symbol, effective, _required(row.get("new_symbol"), "new symbol")
+                )
+            )
         elif kind == "suspension":
             resume = row.get("resume_session")
-            events.append(SuspensionEvent(event_id, symbol, effective,
-                                          _day(resume, "resume session") if resume else None))
+            events.append(
+                SuspensionEvent(
+                    event_id, symbol, effective, _day(resume, "resume session") if resume else None
+                )
+            )
         elif kind == "delisting":
-            events.append(DelistingEvent(event_id, symbol, effective,
-                                         _decimal(row.get("terminal_price"), "terminal price")))
+            events.append(
+                DelistingEvent(
+                    event_id,
+                    symbol,
+                    effective,
+                    _decimal(row.get("terminal_price"), "terminal price"),
+                )
+            )
         else:
             raise DatasetIntegrityError(f"unknown corporate action kind: {kind}")
     return tuple(events)
@@ -749,11 +830,16 @@ def _regimes(files: dict[str, bytes], sessions: tuple[date, ...]) -> dict[date, 
         if not start <= end <= cutoff <= session or max_input > cutoff:
             raise DatasetIntegrityError("regime provenance crosses its session cutoff")
         result[session] = PointInTimeRegime(
-            session, _required(row.get("label"), "regime label"), probabilities,
+            session,
+            _required(row.get("label"), "regime label"),
+            probabilities,
             _required(row.get("model_version"), "regime model version"),
             _required(row.get("model_code_hash"), "regime model code hash"),
             _required(row.get("configuration_hash"), "regime configuration hash"),
-            start, end, cutoff, max_input,
+            start,
+            end,
+            cutoff,
+            max_input,
             _required(row.get("input_hash"), "regime input hash"),
             _required(row.get("fit_id"), "regime fit id"),
             _required(row.get("output_hash"), "regime output hash"),
@@ -774,11 +860,17 @@ def load_swing_dataset(access: PartitionAccess) -> SwingDataset:
     manifest = catalog.shards[access.shard_id]
     try:
         files = _authorized_files(access, manifest)
-        unknown = set(files) - set(EXPECTED_COLUMNS) - {
-            name for name in files
-            if name.startswith("daily/") and name.endswith(".csv")
-            and len(PurePosixPath(name).parts) == 2
-        }
+        unknown = (
+            set(files)
+            - set(EXPECTED_COLUMNS)
+            - {
+                name
+                for name in files
+                if name.startswith("daily/")
+                and name.endswith(".csv")
+                and len(PurePosixPath(name).parts) == 2
+            }
+        )
         if unknown:
             raise DatasetIntegrityError(f"authorized shard has unknown file: {sorted(unknown)[0]}")
         calendar = _calendar(files, manifest)
@@ -832,13 +924,14 @@ def load_swing_dataset(access: PartitionAccess) -> SwingDataset:
             raise DatasetIntegrityError("tradable calendar row lacks point-in-time membership")
         for day, members in membership.items():
             if any(
-                not any(bar.session == day for bar in bars.get(symbol, ()))
-                for symbol in members
+                not any(bar.session == day for bar in bars.get(symbol, ())) for symbol in members
             ):
                 raise DatasetIntegrityError(f"tradable calendar row {day} lacks member bars")
         events = _events(files, catalog.currency)
-        if any(event.effective_session in closed or event.effective_session not in sessions
-               for event in events):
+        if any(
+            event.effective_session in closed or event.effective_session not in sessions
+            for event in events
+        ):
             raise DatasetIntegrityError("corporate action lies outside tradable calendar rows")
         for event in events:
             if event.symbol not in bars:
@@ -869,9 +962,15 @@ def load_swing_dataset(access: PartitionAccess) -> SwingDataset:
                 )
         regimes = _regimes(files, calendar.official_sessions)
         return SwingDataset(
-            catalog, manifest, calendar, calendar.official_sessions, bars,
+            catalog,
+            manifest,
+            calendar,
+            calendar.official_sessions,
+            bars,
             {day: frozenset(symbols) for day, symbols in membership.items()},
-            events, benchmark, regimes,
+            events,
+            benchmark,
+            regimes,
             catalog.shards.get(access.authorized_tail_id) if access.authorized_tail_id else None,
             tuple(issues),
         )
@@ -940,8 +1039,10 @@ def load_static_asx_engineering_dataset(cache_dir: Path | None = None) -> SwingD
     calendar_rows = tuple(
         OfficialCalendarRow(
             day,
-            SessionKind.FULL if day in official else (
-                SessionKind.WEEKEND if day.weekday() >= 5 else SessionKind.SCHEDULED_CLOSED
+            (
+                SessionKind.FULL
+                if day in official
+                else (SessionKind.WEEKEND if day.weekday() >= 5 else SessionKind.SCHEDULED_CLOSED)
             ),
             time(10) if day in official else None,
             time(16) if day in official else None,
@@ -953,21 +1054,18 @@ def load_static_asx_engineering_dataset(cache_dir: Path | None = None) -> SwingD
             static_hash,
             True,
         )
-        for day in (first + timedelta(days=offset)
-                    for offset in range((last - first).days + 1))
+        for day in (first + timedelta(days=offset) for offset in range((last - first).days + 1))
     )
     calendar = OfficialSessionCalendar(calendar_rows, official, static_hash)
     membership = {
         day: frozenset(
-            symbol for symbol, history in bars.items()
-            if any(bar.session == day for bar in history)
+            symbol for symbol, history in bars.items() if any(bar.session == day for bar in history)
         )
         for day in official
     }
     benchmark = bars.get("STW.AX")
     benchmark_complete = (
-        benchmark is not None
-        and tuple(bar.session for bar in benchmark) == official
+        benchmark is not None and tuple(bar.session for bar in benchmark) == official
     )
     limitations = (
         "survivorship-biased static 95-symbol snapshot; no former members or delistings",
@@ -977,12 +1075,21 @@ def load_static_asx_engineering_dataset(cache_dir: Path | None = None) -> SwingD
         "official exchange-calendar signatures and acquisition timestamps unavailable",
         "under-three-year resistance history; strict mode abstains",
         "benchmark is a vendor-adjusted price proxy, not accumulation total return",
-    ) + (() if benchmark_complete else (
-        "STW.AX benchmark proxy has missing sessions; no prices are carried or fabricated",
-    ))
+    ) + (
+        ()
+        if benchmark_complete
+        else ("STW.AX benchmark proxy has missing sessions; no prices are carried or fabricated",)
+    )
     manifest = DatasetShardManifest(
-        "static-asx", "engineering", first, last, files, static_hash,
-        "signal", tuple(sorted({day.strftime("%Y-%m") for day in official})), {},
+        "static-asx",
+        "engineering",
+        first,
+        last,
+        files,
+        static_hash,
+        "signal",
+        tuple(sorted({day.strftime("%Y-%m") for day in official})),
+        {},
     )
     catalog = DatasetCatalog(
         SCHEMA_VERSION,
@@ -1001,7 +1108,15 @@ def load_static_asx_engineering_dataset(cache_dir: Path | None = None) -> SwingD
         limitations,
     )
     return SwingDataset(
-        catalog, manifest, calendar, official, bars, membership,
-        (), benchmark if benchmark_complete and benchmark is not None else (),
-        {}, None, tuple(issues),
+        catalog,
+        manifest,
+        calendar,
+        official,
+        bars,
+        membership,
+        (),
+        benchmark if benchmark_complete and benchmark is not None else (),
+        {},
+        None,
+        tuple(issues),
     )

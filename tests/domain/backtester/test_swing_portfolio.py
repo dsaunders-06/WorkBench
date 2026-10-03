@@ -48,9 +48,7 @@ def _candidate(symbol: str, *, quantity: int = 20) -> SetupDecision:
         D("95"),
         D("2"),
     )
-    pattern = PatternDecision(
-        Pattern.EMA_PULLBACK, DecisionStatus.QUALIFIED, (), pattern_candidate
-    )
+    pattern = PatternDecision(Pattern.EMA_PULLBACK, DecisionStatus.QUALIFIED, (), pattern_candidate)
     return SetupDecision(
         "phase2-swing-v1",
         "swing-evidence-v1",
@@ -112,15 +110,12 @@ def test_commission_floor_is_reserved_after_scaling() -> None:
     )
     assert sum((item.reserved_cash for item in allocations), D("0")) <= D("3020")
     assert all(
-        item.reserved_cash == D(item.quantity) * D("100") + D("6.60")
-        for item in allocations
+        item.reserved_cash == D(item.quantity) * D("100") + D("6.60") for item in allocations
     )
 
 
 def test_pending_purchase_reservations_reduce_available_cash() -> None:
-    allocation = allocate_entry_batch(
-        D("3000"), (_candidate("AAA.AX"),), COSTS, LIQUIDITY
-    )[0]
+    allocation = allocate_entry_batch(D("3000"), (_candidate("AAA.AX"),), COSTS, LIQUIDITY)[0]
     state = PortfolioState(D("3000"), D("3000"), pending_allocations=(allocation,))
     assert state.available_cash == D("1000")
     with pytest.raises(ValueError):

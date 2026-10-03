@@ -194,7 +194,8 @@ def _run(
         bars=histories,
         membership={
             session: frozenset(
-                symbol for symbol, history in histories.items()
+                symbol
+                for symbol, history in histories.items()
                 if any(item.session == session for item in history)
             )
             for session in sessions
@@ -235,7 +236,8 @@ def test_two_for_one_split_preserves_value_and_initial_risk() -> None:
     assert transformation.event_id == "split-aaa"
     assert (transformation.quantity_before, transformation.quantity_after) == (5, 10)
     assert (transformation.entry_price_before, transformation.entry_price_after) == (
-        D("10"), D("5")
+        D("10"),
+        D("5"),
     )
     assert (transformation.stop_before, transformation.stop_after) == (D("9"), D("4.5"))
     assert (transformation.target_before, transformation.target_after) == (D("11"), D("5.5"))
@@ -243,9 +245,7 @@ def test_two_for_one_split_preserves_value_and_initial_risk() -> None:
 
 
 def test_dividend_accrues_once_then_settles_without_second_pnl() -> None:
-    signal, entry, ex_date, stopped, payment = (
-        date(2026, 1, day) for day in (5, 6, 7, 8, 9)
-    )
+    signal, entry, ex_date, stopped, payment = (date(2026, 1, day) for day in (5, 6, 7, 8, 9))
     result = _run(
         bars=(
             _bar("AAA.AX", signal),
@@ -337,7 +337,8 @@ def test_symbol_change_keeps_the_position_identity_through_exit() -> None:
 
     assert result.status is RunStatus.VALID
     assert [(fill.symbol, fill.side) for fill in result.fills] == [
-        ("OLD.AX", "buy"), ("NEW.AX", "sell")
+        ("OLD.AX", "buy"),
+        ("NEW.AX", "sell"),
     ]
     assert result.position_events[0].position_id == result.position_events[-1].position_id
     assert result.signal_trades[0].exit_session == stopped
@@ -480,8 +481,7 @@ def test_dividend_payment_after_t64_remains_a_receivable_at_face_value() -> None
         decision=_decision("AAA.AX", signal),
         events=(
             CashDividendEvent(
-                "div-aaa", "AAA.AX", ex_date, signal, ex_date, ex_date,
-                sessions[65], D("0.20")
+                "div-aaa", "AAA.AX", ex_date, signal, ex_date, ex_date, sessions[65], D("0.20")
             ),
         ),
         last_session=sessions[64],
@@ -504,20 +504,24 @@ def test_multileg_exit_uses_total_net_for_order_r_and_fill_r() -> None:
         cursor += timedelta(days=1)
     signal, entry, target = sessions[19:22]
     exit_session = sessions[30]
-    bars = tuple(_bar("AAA.AX", day) for day in sessions[:20]) + (
-        _bar("AAA.AX", entry, open_="9.8", high="10.2", low="9.6", close="10"),
-        _bar("AAA.AX", target, open_="10", high="10.7", low="10", close="10.4"),
-    ) + tuple(
-        _bar("AAA.AX", day, open_="10.1", high="10.4", low="9.9", close="10.1")
-        for day in sessions[22:30]
-    ) + (
-        _bar("AAA.AX", exit_session, open_="11.4", high="11.5", low="11.2", close="11.4"),
+    bars = (
+        tuple(_bar("AAA.AX", day) for day in sessions[:20])
+        + (
+            _bar("AAA.AX", entry, open_="9.8", high="10.2", low="9.6", close="10"),
+            _bar("AAA.AX", target, open_="10", high="10.7", low="10", close="10.4"),
+        )
+        + tuple(
+            _bar("AAA.AX", day, open_="10.1", high="10.4", low="9.9", close="10.1")
+            for day in sessions[22:30]
+        )
+        + (_bar("AAA.AX", exit_session, open_="11.4", high="11.5", low="11.2", close="11.4"),)
     )
     result = _run(bars=bars, decision=_decision("AAA.AX", signal, quantity=4), events=())
 
     assert result.status is RunStatus.VALID
     assert [(fill.reason, fill.quantity) for fill in result.fills if fill.side == "sell"] == [
-        ("banked_target", 2), ("scheduled_open_exit", 2)
+        ("banked_target", 2),
+        ("scheduled_open_exit", 2),
     ]
     assert result.trades[0].gross_pnl == D("4.8")
     assert result.trades[0].fill_r_multiple == D("1.5")
@@ -525,9 +529,7 @@ def test_multileg_exit_uses_total_net_for_order_r_and_fill_r() -> None:
 
 
 def test_exit_price_uses_original_share_basis_across_a_split() -> None:
-    signal, entry, target, split, delisted = (
-        date(2026, 1, day) for day in (5, 6, 7, 8, 9)
-    )
+    signal, entry, target, split, delisted = (date(2026, 1, day) for day in (5, 6, 7, 8, 9))
     result = _run(
         bars=(
             _bar("AAA.AX", signal),
@@ -545,7 +547,8 @@ def test_exit_price_uses_original_share_basis_across_a_split() -> None:
 
     assert result.status is RunStatus.VALID
     assert [(fill.quantity, fill.price) for fill in result.fills if fill.side == "sell"] == [
-        (2, D("11")), (4, D("5.5"))
+        (2, D("11")),
+        (4, D("5.5")),
     ]
     assert result.trades[0].gross_pnl == D("4")
     assert result.trades[0].entry_price == D("10")
@@ -569,9 +572,7 @@ def test_signal_only_open_position_missing_bar_invalidates_the_run() -> None:
     result = _run(
         bars=histories,
         decision=_decision("AAA.AX", first_signal, quantity=999),
-        later_decisions={
-            ("BBB.AX", second_signal): _decision("BBB.AX", second_signal, quantity=5)
-        },
+        later_decisions={("BBB.AX", second_signal): _decision("BBB.AX", second_signal, quantity=5)},
         events=(),
         last_session=missing,
     )
@@ -597,9 +598,7 @@ def test_fully_spent_portfolio_still_records_later_isolated_signal() -> None:
             ),
         },
         decision=_decision("AAA.AX", first_signal, quantity=1000),
-        later_decisions={
-            ("BBB.AX", second_signal): _decision("BBB.AX", second_signal, quantity=5)
-        },
+        later_decisions={("BBB.AX", second_signal): _decision("BBB.AX", second_signal, quantity=5)},
         events=(),
     )
 
@@ -698,7 +697,8 @@ def test_symbol_change_before_next_open_preserves_pending_signal_identity() -> N
 
     assert result.status is RunStatus.VALID
     assert [(fill.symbol, fill.side) for fill in result.fills] == [
-        ("NEW.AX", "buy"), ("NEW.AX", "sell")
+        ("NEW.AX", "buy"),
+        ("NEW.AX", "sell"),
     ]
     assert result.position_events[0].position_id == result.position_events[-1].position_id
     assert result.signal_trades[0].entry_session == renamed_entry
@@ -773,24 +773,22 @@ def test_same_day_split_precedes_symbol_change_independent_of_input_order() -> N
 
     assert result.status is RunStatus.VALID
     assert [(fill.symbol, fill.quantity) for fill in result.fills] == [
-        ("NEW.AX", 10), ("NEW.AX", 10)
+        ("NEW.AX", 10),
+        ("NEW.AX", 10),
     ]
     assert [item.event_id for item in result.corporate_action_evidence] == [
-        "split-old", "rename-old"
+        "split-old",
+        "rename-old",
     ]
     assert result.signal_trades[0].entry_session == transformed_entry
 
 
 def test_symbol_change_during_suspension_carries_the_zero_mark_and_resume_exit() -> None:
-    signal, entry, suspended, renamed, resumed = (
-        date(2026, 1, day) for day in (5, 6, 7, 8, 12)
-    )
+    signal, entry, suspended, renamed, resumed = (date(2026, 1, day) for day in (5, 6, 7, 8, 12))
     result = _run(
         bars={
             "OLD.AX": (_bar("OLD.AX", signal), _bar("OLD.AX", entry)),
-            "NEW.AX": (
-                _bar("NEW.AX", resumed, open_="9.5", high="9.8", low="9.2", close="9.5"),
-            ),
+            "NEW.AX": (_bar("NEW.AX", resumed, open_="9.5", high="9.8", low="9.2", close="9.5"),),
         },
         decision=_decision("OLD.AX", signal),
         events=(
@@ -844,8 +842,7 @@ def test_dividend_payment_on_closed_calendar_date_settles_before_next_session() 
         decision=_decision("AAA.AX", signal),
         events=(
             CashDividendEvent(
-                "div-aaa", "AAA.AX", ex_date, signal, ex_date, ex_date,
-                payment, D("0.20")
+                "div-aaa", "AAA.AX", ex_date, signal, ex_date, ex_date, payment, D("0.20")
             ),
         ),
     )

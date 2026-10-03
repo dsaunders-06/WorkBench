@@ -245,11 +245,7 @@ def test_signal_arm_ignores_portfolio_cash_after_another_symbol_fills() -> None:
             analysis_regime: str | None = None,
             evaluation_session: date | None = None,
         ) -> SetupDecision:
-            if (
-                history.symbol == "BBB.AX"
-                and evaluation_session == second
-                and available_cash == 0
-            ):
+            if history.symbol == "BBB.AX" and evaluation_session == second and available_cash == 0:
                 return _decision("BBB.AX", second, status=DecisionStatus.REJECTED)
             return super().evaluate(
                 history,
@@ -404,9 +400,7 @@ def test_signal_arm_suppresses_same_pattern_overlap_until_lifecycle_closes() -> 
         )
     }
     decisions = {
-        ("AAA.AX", first_signal): _decision(
-            "AAA.AX", first_signal, pattern_id="pattern-first"
-        ),
+        ("AAA.AX", first_signal): _decision("AAA.AX", first_signal, pattern_id="pattern-first"),
         ("AAA.AX", entry_and_overlap): _decision(
             "AAA.AX", entry_and_overlap, pattern_id="pattern-overlap"
         ),
@@ -456,9 +450,7 @@ def test_simultaneous_signals_scale_without_symbol_order_bias() -> None:
         for symbol in ("AAA.AX", "BBB.AX")
     }
     decisions = {
-        (symbol, signal): _decision(
-            symbol, signal, limit="100", stop="95", quantity=20
-        )
+        (symbol, signal): _decision(symbol, signal, limit="100", stop="95", quantity=20)
         for symbol in bars
     }
 
@@ -504,30 +496,33 @@ def test_better_fill_preserves_quantity_and_records_both_r_denominators() -> Non
 
 
 def test_actual_fill_resistance_classifies_inside_and_path_blocked() -> None:
-    assert classify_post_fill_resistance(
-        D("9.90"), D("9.00"), ((D("9.80"), D("9.95")),)
-    ) is PostFillResistanceDiagnostic.INSIDE_ZONE
-    assert classify_post_fill_resistance(
-        D("9.40"), D("9.00"), ((D("9.50"), D("9.60")),)
-    ) is PostFillResistanceDiagnostic.PATH_BLOCKED
+    assert (
+        classify_post_fill_resistance(D("9.90"), D("9.00"), ((D("9.80"), D("9.95")),))
+        is PostFillResistanceDiagnostic.INSIDE_ZONE
+    )
+    assert (
+        classify_post_fill_resistance(D("9.40"), D("9.00"), ((D("9.50"), D("9.60")),))
+        is PostFillResistanceDiagnostic.PATH_BLOCKED
+    )
 
 
 def test_duplicate_or_missing_calendar_row_invalidates_before_state_changes() -> None:
     first = date(2026, 1, 5)
     second = date(2026, 1, 6)
     duplicate = _calendar(first, second) + (_calendar(first, second)[-1],)
-    missing = (_calendar(first, first)[0], ReplayCalendarRow(
-        date(2026, 1, 7),
-        SessionKind.FULL,
-        "fixture-calendar",
-        "normal session",
-        "calendar-2026-01-07",
-        True,
-    ))
-
-    duplicate_result = _run(
-        bars={}, decisions={}, first=first, last=second, calendar=duplicate
+    missing = (
+        _calendar(first, first)[0],
+        ReplayCalendarRow(
+            date(2026, 1, 7),
+            SessionKind.FULL,
+            "fixture-calendar",
+            "normal session",
+            "calendar-2026-01-07",
+            True,
+        ),
     )
+
+    duplicate_result = _run(bars={}, decisions={}, first=first, last=second, calendar=duplicate)
     missing_result = _run(
         bars={}, decisions={}, first=first, last=date(2026, 1, 7), calendar=missing
     )
@@ -597,21 +592,19 @@ def test_documented_closure_does_not_advance_tenth_session_exit() -> None:
     tenth_completed = sessions[30]
     exit_session = sessions[31]
     calendar = tuple(
-        replace(
-            row,
-            session_kind=SessionKind.AD_HOC_CLOSED,
-            reason="documented exchange closure",
+        (
+            replace(
+                row,
+                session_kind=SessionKind.AD_HOC_CLOSED,
+                reason="documented exchange closure",
+            )
+            if row.calendar_date == closure
+            else row
         )
-        if row.calendar_date == closure
-        else row
         for row in _calendar(sessions[0], exit_session)
     )
     bars = {
-        "AAA.AX": tuple(
-            _bar("AAA.AX", session)
-            for session in sessions[:32]
-            if session != closure
-        )
+        "AAA.AX": tuple(_bar("AAA.AX", session) for session in sessions[:32] if session != closure)
     }
 
     result = _run(
@@ -661,9 +654,7 @@ def test_target_banks_half_then_later_close_trails_runner_before_stop() -> None:
 
 
 def test_double_bottom_cancel_recross_and_filled_pair_consumption() -> None:
-    first_signal, cancelled, recross, entry, stopped = _business_days(
-        date(2026, 1, 5), 5
-    )
+    first_signal, cancelled, recross, entry, stopped = _business_days(date(2026, 1, 5), 5)
     bars = {
         "AAA.AX": (
             _bar("AAA.AX", first_signal),
@@ -719,9 +710,7 @@ def test_post_fill_zone_diagnostic_is_retained_on_baseline_trade() -> None:
     prior: list[FinalBar] = []
     for index, session in enumerate(prior_sessions):
         high = "9.5" if index == 5 else "9.55" if index == 30 else "9.4"
-        prior.append(
-            _bar("AAA.AX", session, open_="9", high=high, low="8.5", close="9")
-        )
+        prior.append(_bar("AAA.AX", session, open_="9", high=high, low="8.5", close="9"))
     bars = {
         "AAA.AX": tuple(prior)
         + (
@@ -739,10 +728,7 @@ def test_post_fill_zone_diagnostic_is_retained_on_baseline_trade() -> None:
     )
 
     assert result.status is RunStatus.VALID
-    assert (
-        result.trades[0].post_fill_resistance
-        is PostFillResistanceDiagnostic.PATH_BLOCKED
-    )
+    assert result.trades[0].post_fill_resistance is PostFillResistanceDiagnostic.PATH_BLOCKED
 
 
 def test_replay_is_deterministic_for_identical_inputs() -> None:
@@ -791,9 +777,7 @@ def test_benchmark_gap_invalidates_before_replay() -> None:
         decisions={},
         first=first,
         last=second,
-        benchmark=(
-            _bar("BENCH.AX", first, open_="100", high="101", low="99", close="100"),
-        ),
+        benchmark=(_bar("BENCH.AX", first, open_="100", high="101", low="99", close="100"),),
     )
 
     assert result.status is RunStatus.INVALID

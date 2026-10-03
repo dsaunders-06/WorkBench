@@ -68,8 +68,7 @@ def _zone_key(zone: ResistanceZone) -> tuple[Decimal, Decimal, tuple[tuple[date,
 def _swing_highs(bars: Sequence[FinalBar]) -> tuple[ResistanceMember, ...]:
     ordered = tuple(sorted(bars, key=lambda bar: (bar.session, bar.digest)))
     if any(
-        left.session == right.session
-        for left, right in zip(ordered, ordered[1:], strict=False)
+        left.session == right.session for left, right in zip(ordered, ordered[1:], strict=False)
     ):
         raise ValueError("resistance history contains duplicate sessions")
     highs: list[ResistanceMember] = []
@@ -99,14 +98,15 @@ def find_resistance_zones(bars: Sequence[FinalBar]) -> tuple[ResistanceZone, ...
             median = _median(members)
             with localcontext(_context()):
                 within_band = all(
-                    abs(member.price - median) / median <= Decimal("0.01")
-                    for member in members
+                    abs(member.price - median) / median <= Decimal("0.01") for member in members
                 )
             if not within_band:
                 continue
-            if max(member.ordinal for member in members) - min(
-                member.ordinal for member in members
-            ) < 20:
+            if (
+                max(member.ordinal for member in members)
+                - min(member.ordinal for member in members)
+                < 20
+            ):
                 continue
             member_set = frozenset(member.identity for member in members)
             qualifying[member_set] = ResistanceZone(

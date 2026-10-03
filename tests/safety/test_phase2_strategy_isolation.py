@@ -97,9 +97,7 @@ def test_phase2_transitive_import_graph_has_no_execution_dependencies() -> None:
     imported = _transitive_imports()
 
     assert not any(
-        name == root or name.startswith(root + ".")
-        for name in imported
-        for root in forbidden
+        name == root or name.startswith(root + ".") for name in imported for root in forbidden
     )
 
 
@@ -108,9 +106,7 @@ def test_phase2_transitive_import_graph_has_no_network_or_process_interfaces() -
     imported = _transitive_imports()
 
     assert not any(
-        name == root or name.startswith(root + ".")
-        for name in imported
-        for root in forbidden
+        name == root or name.startswith(root + ".") for name in imported for root in forbidden
     )
 
 

@@ -179,13 +179,14 @@ def evaluate_ema_pullback(
                 "upper_third_close",
                 _outcome(
                     candle_range > 0
-                    and Decimal(3) * (prices.close - prices.low)
-                    >= Decimal(2) * candle_range
+                    and Decimal(3) * (prices.close - prices.low) >= Decimal(2) * candle_range
                 ),
                 measured=prices.close,
-                threshold=(prices.low + (Decimal(2) * candle_range / Decimal(3)))
-                if candle_range > 0
-                else None,
+                threshold=(
+                    (prices.low + (Decimal(2) * candle_range / Decimal(3)))
+                    if candle_range > 0
+                    else None
+                ),
             ),
         )
     )
@@ -218,9 +219,7 @@ def evaluate_ema_pullback(
                 RuleEvidence(
                     "weekly_filter",
                     _outcome(not (close_below and ema20_below)),
-                    measured=(
-                        f"close_below={close_below};ema20_below_ema50={ema20_below}"
-                    ),
+                    measured=(f"close_below={close_below};ema20_below_ema50={ema20_below}"),
                     threshold="reject_when_both_true",
                 )
             )

@@ -93,10 +93,7 @@ def _aggregate_ohlcv(bars: Sequence[FinalBar], basis: str) -> Ohlcv:
 
 
 def _validate_ordered_unique(values: Sequence[date], label: str) -> None:
-    if any(
-        current >= following
-        for current, following in zip(values, values[1:], strict=False)
-    ):
+    if any(current >= following for current, following in zip(values, values[1:], strict=False)):
         raise ValueError(f"{label} must be unique and strictly increasing")
 
 
@@ -139,9 +136,7 @@ def completed_weekly_bars(
                 adjusted=_aggregate_ohlcv(inputs, "adjusted"),
                 source=last.source if len(sources) == 1 else "mixed",
                 quality=max((bar.quality for bar in inputs), key=_QUALITY_RANK.__getitem__),
-                adjustment=(
-                    last.adjustment if len(adjustments) == 1 else AdjustmentStatus.UNKNOWN
-                ),
+                adjustment=(last.adjustment if len(adjustments) == 1 else AdjustmentStatus.UNKNOWN),
                 raw_to_adjusted_price_factor=last.raw_to_adjusted_price_factor,
                 finalized=all(bar.finalized for bar in inputs),
                 digest=stable_decision_id(

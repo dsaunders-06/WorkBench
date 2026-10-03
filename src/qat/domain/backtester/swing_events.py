@@ -53,9 +53,7 @@ class CashDividendEvent:
             raise TypeError("cash dividend requires an exact Decimal amount")
         if self.effective_session != self.ex_session:
             raise ValueError("cash dividend becomes effective on its ex-session")
-        if not (
-            self.declaration_date <= self.ex_session <= self.record_date <= self.payment_date
-        ):
+        if not (self.declaration_date <= self.ex_session <= self.record_date <= self.payment_date):
             raise ValueError("cash dividend dates are out of order")
         if not self.amount_per_share.is_finite() or self.amount_per_share < 0:
             raise ValueError("cash dividend must be finite and non-negative")
@@ -96,9 +94,7 @@ class DelistingEvent:
 
     def __post_init__(self) -> None:
         _validate_identity(self.event_id, self.symbol)
-        if self.realizable_price is not None and not isinstance(
-            self.realizable_price, Decimal
-        ):
+        if self.realizable_price is not None and not isinstance(self.realizable_price, Decimal):
             raise TypeError("delisting proceeds require an exact Decimal amount")
         if self.realizable_price is not None and (
             not self.realizable_price.is_finite() or self.realizable_price < 0
@@ -177,9 +173,7 @@ def apply_split_to_position(position: SwingPosition, event: SplitEvent) -> Swing
     )
 
 
-def apply_symbol_change_to_pending(
-    pending: PendingEntry, event: SymbolChangeEvent
-) -> PendingEntry:
+def apply_symbol_change_to_pending(pending: PendingEntry, event: SymbolChangeEvent) -> PendingEntry:
     if pending.symbol != event.symbol or event.event_id in pending.applied_event_ids:
         return pending
     return replace(
@@ -202,9 +196,5 @@ def apply_symbol_change_to_position(
 
 
 SwingMarketEvent = (
-    SplitEvent
-    | CashDividendEvent
-    | SymbolChangeEvent
-    | SuspensionEvent
-    | DelistingEvent
+    SplitEvent | CashDividendEvent | SymbolChangeEvent | SuspensionEvent | DelistingEvent
 )

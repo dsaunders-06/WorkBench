@@ -141,8 +141,7 @@ def allocate_entry_batch(
     )
     if desired_reservation <= cash:
         return tuple(
-            _allocation(item, item.quantity, Decimal(1), cash, costs, liquidity)
-            for item in ordered
+            _allocation(item, item.quantity, Decimal(1), cash, costs, liquidity) for item in ordered
         )
 
     scale = cash / desired_reservation
@@ -152,9 +151,7 @@ def allocate_entry_batch(
             limit = item.entry_limit_raw
             stop = item.initial_stop_raw
             assert limit is not None and stop is not None
-            original_risk = modeled_total_risk(
-                item.quantity, limit, stop, costs, liquidity
-            )
+            original_risk = modeled_total_risk(item.quantity, limit, stop, costs, liquidity)
             scaled = size_for_risk(
                 original_risk * scale * Decimal(100),
                 limit,

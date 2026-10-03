@@ -311,8 +311,7 @@ class AuthoritativeSwingReplay:
         if dates != tuple(sorted(dates)):
             reasons.append("official calendar rows are not ordered")
         expected = tuple(
-            dates[0] + timedelta(days=offset)
-            for offset in range((dates[-1] - dates[0]).days + 1)
+            dates[0] + timedelta(days=offset) for offset in range((dates[-1] - dates[0]).days + 1)
         )
         if dates != expected:
             reasons.append("official calendar is missing a civil date")
@@ -370,15 +369,12 @@ class AuthoritativeSwingReplay:
             ):
                 reasons.append(f"suspension {event.event_id} has contradictory traded bars")
             if isinstance(event, DelistingEvent) and any(
-                bar.session >= event.effective_session
-                for bar in self._bars.get(event.symbol, ())
+                bar.session >= event.effective_session for bar in self._bars.get(event.symbol, ())
             ):
                 reasons.append(f"delisting {event.event_id} has contradictory traded bars")
         if not self._starting_equity.is_finite() or self._starting_equity <= 0:
             reasons.append("starting equity must be finite and positive")
-        tradable = tuple(
-            row.calendar_date for row in self._calendar_rows if row.is_tradable
-        )
+        tradable = tuple(row.calendar_date for row in self._calendar_rows if row.is_tradable)
         if self._final_entry_session is not None:
             if self._final_entry_session not in tradable:
                 reasons.append("final entry session is absent from the official calendar")
@@ -387,8 +383,10 @@ class AuthoritativeSwingReplay:
             elif dates[-1] > tradable[tradable.index(self._final_entry_session) + 63]:
                 reasons.append("calendar includes rows beyond authorized T64")
         elif any(
-            isinstance(event, DelistingEvent) and event.realizable_price is None
-            or isinstance(event, SuspensionEvent) and event.resume_session is None
+            isinstance(event, DelistingEvent)
+            and event.realizable_price is None
+            or isinstance(event, SuspensionEvent)
+            and event.resume_session is None
             for event in self._corporate_actions
         ):
             reasons.append("unresolved market event requires an authorized 63-session tail")
@@ -400,8 +398,7 @@ class AuthoritativeSwingReplay:
             return _empty_result(status=RunStatus.INVALID, invalid_reasons=invalid_reasons)
 
         bars_by_session = {
-            symbol: {bar.session: bar for bar in items}
-            for symbol, items in self._bars.items()
+            symbol: {bar.session: bar for bar in items} for symbol, items in self._bars.items()
         }
         portfolio = PortfolioState(self._starting_equity, self._starting_equity)
         pending: dict[str, PendingEntry] = {}
@@ -454,16 +451,15 @@ class AuthoritativeSwingReplay:
             for event in sorted(events_by_session[session], key=_event_order):
                 if isinstance(event, SplitEvent):
                     affected_quantities = (
-                        (() if event.symbol not in pending else (pending[event.symbol].quantity,))
-                        + tuple(
-                            quantity
-                            for position in portfolio.positions
-                            if position.symbol == event.symbol
-                            for quantity in (
-                                position.total_quantity,
-                                position.banked_quantity,
-                                position.runner_quantity,
-                            )
+                        () if event.symbol not in pending else (pending[event.symbol].quantity,)
+                    ) + tuple(
+                        quantity
+                        for position in portfolio.positions
+                        if position.symbol == event.symbol
+                        for quantity in (
+                            position.total_quantity,
+                            position.banked_quantity,
+                            position.runner_quantity,
                         )
                     )
                     if any(
@@ -490,16 +486,12 @@ class AuthoritativeSwingReplay:
                                 _corporate_action_evidence(event, position, updated)
                             )
                             state = trade_states[position.position_id]
-                            state.quantity_ratio *= Fraction(
-                                event.numerator, event.denominator
-                            )
+                            state.quantity_ratio *= Fraction(event.numerator, event.denominator)
                         transformed.append(updated)
                     portfolio = replace(portfolio, positions=tuple(transformed))
                 elif isinstance(event, SymbolChangeEvent):
                     if event.symbol in active_suspensions:
-                        active_suspensions[event.new_symbol] = active_suspensions.pop(
-                            event.symbol
-                        )
+                        active_suspensions[event.new_symbol] = active_suspensions.pop(event.symbol)
                         suspension_event_ids[event.new_symbol] = suspension_event_ids.pop(
                             event.symbol
                         )
@@ -511,9 +503,7 @@ class AuthoritativeSwingReplay:
                         before = pending.pop(event.symbol)
                         pending[event.new_symbol] = apply_symbol_change_to_pending(before, event)
                         corporate_action_evidence.append(
-                            _corporate_action_evidence(
-                                event, before, pending[event.new_symbol]
-                            )
+                            _corporate_action_evidence(event, before, pending[event.new_symbol])
                         )
                     transformed = []
                     for position in portfolio.positions:
@@ -528,9 +518,11 @@ class AuthoritativeSwingReplay:
                         portfolio,
                         positions=tuple(transformed),
                         pending_allocations=tuple(
-                            replace(allocation, symbol=event.new_symbol)
-                            if allocation.symbol == event.symbol
-                            else allocation
+                            (
+                                replace(allocation, symbol=event.new_symbol)
+                                if allocation.symbol == event.symbol
+                                else allocation
+                            )
                             for allocation in portfolio.pending_allocations
                         ),
                     )
@@ -540,9 +532,11 @@ class AuthoritativeSwingReplay:
                     portfolio = replace(
                         portfolio,
                         positions=tuple(
-                            schedule_exit(position, ("suspension_exit",))
-                            if position.symbol == event.symbol
-                            else position
+                            (
+                                schedule_exit(position, ("suspension_exit",))
+                                if position.symbol == event.symbol
+                                else position
+                            )
                             for position in portfolio.positions
                         ),
                     )
@@ -661,9 +655,7 @@ class AuthoritativeSwingReplay:
                         for symbol in missing_open
                     ),
                 )
-            closing_prices = {
-                symbol: bar.raw.close for symbol, bar in session_bars.items()
-            }
+            closing_prices = {symbol: bar.raw.close for symbol, bar in session_bars.items()}
             closing_prices.update((symbol, Decimal(0)) for symbol in zero_marked)
             point = mark_to_market(
                 portfolio,
@@ -678,9 +670,7 @@ class AuthoritativeSwingReplay:
             )
 
             qualified: list[SetupDecision] = []
-            blocked_symbols = {
-                position.symbol for position in portfolio.positions
-            } | set(pending)
+            blocked_symbols = {position.symbol for position in portfolio.positions} | set(pending)
             if self._final_entry_session is not None and session >= self._final_entry_session:
                 equity.append(point)
                 continue
@@ -988,9 +978,7 @@ class AuthoritativeSwingReplay:
                 positions.append(position)
                 continue
             traded = _traded(source)
-            evidence = ambiguity_for_session(
-                position, traded, self._costs, self._liquidity
-            )
+            evidence = ambiguity_for_session(position, traded, self._costs, self._liquidity)
             if evidence is not None:
                 ambiguities.append(evidence)
             simulated = resolve_protective_session(
@@ -1001,12 +989,8 @@ class AuthoritativeSwingReplay:
                 policy=self._ambiguity_policy,
             )
             state = trade_states[position.position_id]
-            state.highest_high = max(
-                state.highest_high, _entry_basis_price(source.raw.high, state)
-            )
-            state.lowest_low = min(
-                state.lowest_low, _entry_basis_price(source.raw.low, state)
-            )
+            state.highest_high = max(state.highest_high, _entry_basis_price(source.raw.high, state))
+            state.lowest_low = min(state.lowest_low, _entry_basis_price(source.raw.low, state))
             updated = position
             for fill in simulated:
                 before = updated.state
@@ -1077,11 +1061,7 @@ class AuthoritativeSwingReplay:
         stop = decision.initial_stop_raw
         if stop is None:
             return PostFillResistanceDiagnostic.CLEAR
-        prior = tuple(
-            bar
-            for bar in self._bars[decision.symbol]
-            if bar.session < decision.session
-        )
+        prior = tuple(bar for bar in self._bars[decision.symbol] if bar.session < decision.session)
         try:
             analytical_zones = find_resistance_zones(prior)
         except ValueError:
@@ -1135,10 +1115,7 @@ def replay_signal_candidates(
 ]:
     """Replay per-pattern candidates at one fixed risk-equity reference."""
 
-    indexed = {
-        symbol: {bar.session: bar for bar in history}
-        for symbol, history in bars.items()
-    }
+    indexed = {symbol: {bar.session: bar for bar in history} for symbol, history in bars.items()}
     by_session: dict[date, list[SetupDecision]] = defaultdict(list)
     for decision in decisions:
         if decision.status is DecisionStatus.QUALIFIED:
@@ -1191,12 +1168,8 @@ def replay_signal_candidates(
                     positions[key] = transformed_position
             elif isinstance(event, SymbolChangeEvent):
                 if event.symbol in active_suspensions:
-                    active_suspensions[event.new_symbol] = active_suspensions.pop(
-                        event.symbol
-                    )
-                    suspension_event_ids[event.new_symbol] = suspension_event_ids.pop(
-                        event.symbol
-                    )
+                    active_suspensions[event.new_symbol] = active_suspensions.pop(event.symbol)
+                    suspension_event_ids[event.new_symbol] = suspension_event_ids.pop(event.symbol)
                 if event.symbol in unresolved_delistings:
                     unresolved_delistings[event.new_symbol] = unresolved_delistings.pop(
                         event.symbol
@@ -1285,9 +1258,7 @@ def replay_signal_candidates(
                 and position.symbol not in active_suspensions
                 and position.symbol not in unresolved_delistings
             ):
-                raise ValueError(
-                    f"missing signal position mark for {position.symbol} on {session}"
-                )
+                raise ValueError(f"missing signal position mark for {position.symbol} on {session}")
 
         if session == terminal_session:
             for key, position in tuple(positions.items()):
@@ -1367,12 +1338,8 @@ def replay_signal_candidates(
             if source is None:
                 continue
             state = trade_states[key]
-            state.highest_high = max(
-                state.highest_high, _entry_basis_price(source.raw.high, state)
-            )
-            state.lowest_low = min(
-                state.lowest_low, _entry_basis_price(source.raw.low, state)
-            )
+            state.highest_high = max(state.highest_high, _entry_basis_price(source.raw.high, state))
+            state.lowest_low = min(state.lowest_low, _entry_basis_price(source.raw.low, state))
             intraday = resolve_protective_session(
                 position,
                 _traded(source),
@@ -1425,12 +1392,9 @@ def replay_signal_candidates(
                         )
                     )
                     continue
-                if (
-                    candidate.pattern_instance_id in consumed_patterns[key]
-                    or (
-                        candidate.breakout_event_id is not None
-                        and candidate.breakout_event_id in used_breakouts[key]
-                    )
+                if candidate.pattern_instance_id in consumed_patterns[key] or (
+                    candidate.breakout_event_id is not None
+                    and candidate.breakout_event_id in used_breakouts[key]
                 ):
                     abstentions.append(
                         RuleEvidence(
@@ -1557,9 +1521,7 @@ def _trade(
 ) -> SwingTrade:
     del position
     quantity = state.entry.quantity
-    exit_notional = sum(
-        (Decimal(fill.quantity) * fill.price for fill in state.exits), Decimal(0)
-    )
+    exit_notional = sum((Decimal(fill.quantity) * fill.price for fill in state.exits), Decimal(0))
     exit_price = exit_notional / Decimal(quantity)
     gross = exit_notional - Decimal(quantity) * state.entry.price
     costs = state.entry.cost + sum((fill.cost for fill in state.exits), Decimal(0))

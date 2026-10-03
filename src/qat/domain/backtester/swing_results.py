@@ -38,9 +38,7 @@ class PostFillResistanceDiagnostic(StrEnum):
 class LifecycleActionSeries(tuple[LifecycleAction, ...]):
     """Immutable lifecycle evidence with an exact reason-count helper."""
 
-    def __new__(
-        cls, values: Iterable[LifecycleAction] = ()
-    ) -> LifecycleActionSeries:
+    def __new__(cls, values: Iterable[LifecycleAction] = ()) -> LifecycleActionSeries:
         return super().__new__(cls, values)
 
     def count_reason(self, reason: str) -> int:
@@ -65,11 +63,14 @@ class SimulatedFill:
             raise ValueError("simulated fill identity, symbol, and reason are required")
         if self.side not in {"buy", "sell"} or self.quantity <= 0:
             raise ValueError("simulated fill side and quantity are invalid")
-        if not self.price.is_finite() or self.price < 0 or (
-            self.price == 0
-            and (
-                self.side != "sell"
-                or self.reason not in {"terminal_zero", "delisting_outcome"}
+        if (
+            not self.price.is_finite()
+            or self.price < 0
+            or (
+                self.price == 0
+                and (
+                    self.side != "sell" or self.reason not in {"terminal_zero", "delisting_outcome"}
+                )
             )
         ):
             raise ValueError("simulated fill price must be finite and positive")
