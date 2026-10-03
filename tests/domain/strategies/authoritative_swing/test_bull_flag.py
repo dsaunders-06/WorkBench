@@ -105,6 +105,17 @@ def _replace_prices(history: SwingHistory, index: int, prices: Ohlcv) -> SwingHi
     return SwingHistory(history.symbol, tuple(bars))
 
 
+def test_short_history_abstains_without_indexing_before_first_bar() -> None:
+    sessions = _sessions()[:2]
+    prices = Ohlcv(D("10"), D("10.1"), D("9.9"), D("10"), 1000)
+    history = SwingHistory(
+        "BHP.AX", tuple(_bar(day, index, prices) for index, day in enumerate(sessions))
+    )
+    result = evaluate_bull_flag(history, sessions)
+    assert result.status is DecisionStatus.ABSTAIN
+    assert _rule(result.rules, "pole_move").outcome is RuleOutcome.ABSTAIN
+
+
 def test_eight_session_flag_qualifies_and_longest_window_wins() -> None:
     history, sessions = _history(8)
 

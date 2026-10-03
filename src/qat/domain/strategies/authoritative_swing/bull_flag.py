@@ -191,6 +191,14 @@ def _window_rules(
     breakout_index = len(bars) - 1
     flag_start = breakout_index - flag_sessions
     pole_start = flag_start - 5
+    if pole_start < 0:
+        return (
+            RuleEvidence(
+                "pole_move",
+                RuleOutcome.ABSTAIN,
+                reason="five pole sessions and pole-end ATR14 are required",
+            ),
+        )
     pole = bars[pole_start:flag_start]
     flag = bars[flag_start:breakout_index]
     pole_atr = atr_values[flag_start - 1]

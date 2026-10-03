@@ -243,6 +243,21 @@ def _edit_csv(root: Path, relative: str, change: Callable[[list[dict[str, str]]]
     _write_csv(path, rows)
 
 
+def test_required_tier_is_checked_before_authorized_shard_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import qat.domain.backtester.swing_dataset as dataset_module
+
+    access = replace(_fixture(tmp_path), required_tier=DatasetTier.PROMOTION_POINT_IN_TIME)
+
+    def forbidden_files(*_args: object) -> None:
+        raise AssertionError("shard observation was opened before tier check")
+
+    monkeypatch.setattr(dataset_module, "_authorized_files", forbidden_files)
+    with pytest.raises(DatasetIntegrityError, match="tier"):
+        load_swing_dataset(access)
+
+
 def test_membership_remains_point_in_time_without_trimming_symbol_histories(
     tmp_path: Path,
 ) -> None:

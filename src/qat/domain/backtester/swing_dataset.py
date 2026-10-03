@@ -231,6 +231,7 @@ class PartitionAccess:
     shard_root: Path
     verification_key: bytes
     authorized_tail_id: str | None = None
+    required_tier: DatasetTier | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -926,6 +927,8 @@ def load_swing_dataset(access: PartitionAccess) -> SwingDataset:
     """Verify one explicitly authorized shard and map it into Phase 2A/B records."""
 
     catalog = validate_catalog(access.catalog_path, access.verification_key)
+    if access.required_tier is not None and catalog.tier is not access.required_tier:
+        raise DatasetIntegrityError("authorized catalog tier differs from required tier")
     if catalog.adjustment_policy != "split_only":
         raise DatasetIntegrityError("signed shard loader requires split-only prices")
     if access.shard_id not in catalog.shards:

@@ -26,7 +26,7 @@ from qat.domain.backtester.swing_results import (
     SwingTrade,
 )
 
-ARTIFACT_SCHEMA_VERSION = "phase-2c-swing-evidence-v1"
+ARTIFACT_SCHEMA_VERSION = "phase-2c-swing-evidence-v2"
 _ARMS = tuple(ReplayArm)
 
 
@@ -125,6 +125,12 @@ def _rows(run: SwingArtifactRun, kind: str) -> list[dict[str, object]]:
     return output
 
 
+def _overlap_suppressed(replay: SwingReplayResult) -> int:
+    return sum(not trade.edge_sample_eligible for trade in replay.signal_trades) + sum(
+        rule.code == "OVERLAPPING_EVENT" for rule in replay.abstentions
+    )
+
+
 def _report(run: SwingArtifactRun, run_id: str) -> bytes:
     lines = ["# Authoritative swing Phase 2C engineering evidence", ""]
     if run.evidence_tier != "promotion_point_in_time":
@@ -151,7 +157,7 @@ def _report(run: SwingArtifactRun, run_id: str) -> bytes:
     for arm in _ARMS:
         replay = run.replays[arm]
         eligible = sum(trade.edge_sample_eligible for trade in replay.signal_trades)
-        suppressed = len(replay.signal_trades) - eligible
+        suppressed = _overlap_suppressed(replay)
         lines.extend(
             [
                 f"### {labels[arm]}",
@@ -160,6 +166,8 @@ def _report(run: SwingArtifactRun, run_id: str) -> bytes:
                 f"eligible signal trades: {eligible}; "
                 f"overlap-suppressed: {suppressed}; "
                 f"ambiguities: {len(replay.ambiguities)}.",
+                "Abstention codes: "
+                + ", ".join(sorted({rule.code for rule in replay.abstentions})),
                 "",
             ]
         )
@@ -244,9 +252,7 @@ def write_swing_artifacts(run: SwingArtifactRun, output_root: Path) -> Path:
         "signal_counts": {
             arm.value: {
                 "eligible": sum(t.edge_sample_eligible for t in run.replays[arm].signal_trades),
-                "overlap_suppressed": sum(
-                    not t.edge_sample_eligible for t in run.replays[arm].signal_trades
-                ),
+                "overlap_suppressed": _overlap_suppressed(run.replays[arm]),
             }
             for arm in _ARMS
         },
