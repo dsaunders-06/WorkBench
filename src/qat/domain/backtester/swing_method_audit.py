@@ -493,7 +493,12 @@ def _predictive_lower(counts: Sequence[int]) -> Decimal:
     if len(counts) == 1:
         return Decimal(str(mean))
     variance = sum((value - mean) ** 2 for value in counts) / (len(counts) - 1)
-    lower = max(0.0, mean - NormalDist().inv_cdf(0.9) * math.sqrt(variance / len(counts)))
+    # Predict one future monthly count, including its observation variance;
+    # variance / n alone would bound the historical mean instead.
+    lower = max(
+        0.0,
+        mean - NormalDist().inv_cdf(0.9) * math.sqrt(variance * (1 + 1 / len(counts))),
+    )
     return Decimal(str(lower))
 
 

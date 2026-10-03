@@ -13,6 +13,7 @@ import pytest
 
 from qat.domain.backtester.swing_artifacts import SwingArtifactRun, write_swing_artifacts
 from qat.domain.backtester.swing_promotion import PromotionCase, evaluate_promotion
+from qat.domain.backtester.swing_reference import PromotionStatus
 from qat.domain.backtester.swing_results import (
     LifecycleActionSeries,
     ReplayArm,
@@ -111,4 +112,12 @@ def test_nonfinite_payload_is_rejected_before_directory_publish(tmp_path: Path) 
     run = replace(_run(), metrics={"combined": {"bad": float("nan")}})
     with pytest.raises(ValueError, match="non-finite"):
         write_swing_artifacts(run, tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
+def test_phase2_writer_rejects_even_a_forged_pass_verdict(tmp_path: Path) -> None:
+    run = _run()
+    forged = replace(run, promotion=replace(run.promotion, status=PromotionStatus.PASS))
+    with pytest.raises(ValueError, match="cannot claim promotion PASS"):
+        write_swing_artifacts(forged, tmp_path)
     assert not list(tmp_path.iterdir())

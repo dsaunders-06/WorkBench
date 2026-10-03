@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -65,7 +65,7 @@ from qat.domain.strategies.authoritative_swing.model import (
     SetupDecision,
     SwingHistory,
 )
-from qat.domain.strategies.authoritative_swing.numeric import SplitFactor
+from qat.domain.strategies.authoritative_swing.numeric import SplitFactor, canonical_decimal
 from qat.domain.strategies.authoritative_swing.sizing import ExactCostProfile, LiquidityProfile
 
 _STARTING_EQUITY = Decimal("10000")
@@ -170,6 +170,40 @@ class _GoldenEngine:
         )
 
 
+class _RiskScaledEngine(AuthoritativeSwingEngine):
+    """Diagnostic 2% budget while preserving the funded cash constraint."""
+
+    def __init__(
+        self,
+        official_sessions: Sequence[date],
+        evaluators: Sequence[PatternEvaluator],
+        multiplier: int,
+    ) -> None:
+        super().__init__(official_sessions, evaluators)
+        self._multiplier = multiplier
+
+    def evaluate(
+        self,
+        history: SwingHistory,
+        equity: Decimal,
+        costs: ExactCostProfile,
+        liquidity: LiquidityProfile | None,
+        *,
+        available_cash: Decimal | None = None,
+        analysis_regime: str | None = None,
+        evaluation_session: date | None = None,
+    ) -> SetupDecision:
+        return super().evaluate(
+            history,
+            equity * self._multiplier,
+            costs,
+            liquidity,
+            available_cash=available_cash,
+            analysis_regime=analysis_regime,
+            evaluation_session=evaluation_session,
+        )
+
+
 def _sessions(first: date, count: int) -> tuple[date, ...]:
     output: list[date] = []
     current = first
@@ -201,7 +235,7 @@ def _golden_bar(
         AdjustmentStatus.SPLIT_NORMALIZED,
         SplitFactor(1, 1),
         True,
-        f"golden-{symbol}-{session.isoformat()}-{open_price}-{low}",
+        f"golden-{symbol}-{session.isoformat()}-{canonical_decimal(open_price)}-{canonical_decimal(low)}",
     )
 
 
@@ -561,7 +595,13 @@ def _run_golden(
 
 
 def _run_signed_dataset(
-    dataset: SwingDataset, ambiguity: AmbiguityPolicy, volume_multiplier: Decimal
+    dataset: SwingDataset,
+    ambiguity: AmbiguityPolicy,
+    volume_multiplier: Decimal,
+    *,
+    costs: ExactCostProfile = _COSTS,
+    liquidity: LiquidityProfile = _LIQUIDITY,
+    risk_multiplier: int = 1,
 ) -> dict[ReplayArm, SwingReplayResult]:
     bull_flag = partial(evaluate_bull_flag, volume_multiplier=volume_multiplier)
     evaluators: dict[ReplayArm, tuple[PatternEvaluator, ...]] = {
@@ -584,10 +624,10 @@ def _run_signed_dataset(
             membership=dataset.membership,
             corporate_actions=dataset.corporate_actions,
             benchmark=dataset.benchmark,
-            engine=AuthoritativeSwingEngine(dataset.official_sessions, evaluators[arm]),
+            engine=_RiskScaledEngine(dataset.official_sessions, evaluators[arm], risk_multiplier),
             starting_equity=_STARTING_EQUITY,
-            costs=_COSTS,
-            liquidity=_LIQUIDITY,
+            costs=costs,
+            liquidity=liquidity,
             ambiguity_policy=ambiguity,
             final_entry_session=final_entry,
         ).run()
@@ -597,6 +637,12 @@ def _run_signed_dataset(
 
 def _replay_summary(replay: SwingReplayResult) -> dict[str, object]:
     eligible = tuple(trade for trade in replay.signal_trades if trade.edge_sample_eligible)
+    entry_equity = {point.session: point.equity for point in replay.equity}
+    single_entry_exposures = tuple(
+        trade.entry_price * Decimal(trade.quantity) / entry_equity[trade.entry_session]
+        for trade in replay.trades
+        if trade.entry_session in entry_equity and entry_equity[trade.entry_session] > 0
+    )
     statistics = summarize_swing_statistics(
         signal_trades=replay.signal_trades,
         equity=replay.equity,
@@ -616,6 +662,14 @@ def _replay_summary(replay: SwingReplayResult) -> dict[str, object]:
         "maximum_drawdown": statistics.maximum_drawdown,
         "maximum_exposure": statistics.maximum_exposure,
         "average_exposure": statistics.average_exposure,
+        "maximum_single_position_entry_notional_exposure": max(
+            single_entry_exposures, default=Decimal(0)
+        ),
+        "average_single_position_entry_notional_exposure": (
+            sum(single_entry_exposures, Decimal(0)) / Decimal(len(single_entry_exposures))
+            if single_entry_exposures
+            else Decimal(0)
+        ),
         "cost_to_risk": statistics.cost_to_risk,
         "costs": statistics.total_costs,
         "capacity_bound_decisions": sum(
@@ -639,17 +693,53 @@ def _replay_summary(replay: SwingReplayResult) -> dict[str, object]:
     }
 
 
-def _golden_sensitivities(
-    fixture: _GoldenFixture, baseline: SwingReplayResult
+def _golden_case(
+    volume: Decimal,
+    ambiguity: AmbiguityPolicy,
+    costs: ExactCostProfile,
+    liquidity: LiquidityProfile,
+    risk_multiplier: int,
+) -> SwingReplayResult:
+    return _run_golden(
+        _synthetic_golden(volume),
+        ambiguity,
+        costs=costs,
+        liquidity=liquidity,
+        risk_multiplier=risk_multiplier,
+    )[ReplayArm.COMBINED]
+
+
+def _signed_case(
+    dataset: SwingDataset,
+    volume: Decimal,
+    ambiguity: AmbiguityPolicy,
+    costs: ExactCostProfile,
+    liquidity: LiquidityProfile,
+    risk_multiplier: int,
+) -> SwingReplayResult:
+    return _run_signed_dataset(
+        dataset,
+        ambiguity,
+        volume,
+        costs=costs,
+        liquidity=liquidity,
+        risk_multiplier=risk_multiplier,
+    )[ReplayArm.COMBINED]
+
+
+def _scenario_sensitivities(
+    run_case: Callable[
+        [Decimal, AmbiguityPolicy, ExactCostProfile, LiquidityProfile, int], SwingReplayResult
+    ],
+    baseline: SwingReplayResult,
+    baseline_volume: Decimal,
 ) -> dict[str, object]:
     sensitivity: dict[str, object] = {}
     for multiplier in (Decimal("1.25"), Decimal("1.5"), Decimal("2.0")):
-        volume_replay = _run_golden(_synthetic_golden(multiplier), AmbiguityPolicy.CONSERVATIVE)[
-            ReplayArm.COMBINED
-        ]
+        volume_replay = run_case(multiplier, AmbiguityPolicy.CONSERVATIVE, _COSTS, _LIQUIDITY, 1)
         sensitivity[f"volume_{multiplier}"] = _replay_summary(volume_replay)
     sensitivity["optimistic_ambiguity"] = _replay_summary(
-        _run_golden(fixture, AmbiguityPolicy.OPTIMISTIC)[ReplayArm.COMBINED]
+        run_case(baseline_volume, AmbiguityPolicy.OPTIMISTIC, _COSTS, _LIQUIDITY, 1)
     )
     doubled_costs = replace(
         _COSTS,
@@ -659,7 +749,7 @@ def _golden_sensitivities(
         third_party_bps=_COSTS.third_party_bps * 2,
     )
     sensitivity["doubled_costs"] = _replay_summary(
-        _run_golden(fixture, AmbiguityPolicy.CONSERVATIVE, costs=doubled_costs)[ReplayArm.COMBINED]
+        run_case(baseline_volume, AmbiguityPolicy.CONSERVATIVE, doubled_costs, _LIQUIDITY, 1)
     )
     impact_profile = replace(
         _LIQUIDITY,
@@ -668,12 +758,10 @@ def _golden_sensitivities(
         stop_exit_impact_bps=_LIQUIDITY.stop_exit_impact_bps * 2,
     )
     sensitivity["doubled_liquidity_impact"] = _replay_summary(
-        _run_golden(fixture, AmbiguityPolicy.CONSERVATIVE, liquidity=impact_profile)[
-            ReplayArm.COMBINED
-        ]
+        run_case(baseline_volume, AmbiguityPolicy.CONSERVATIVE, _COSTS, impact_profile, 1)
     )
     sensitivity["two_percent_sizing"] = _replay_summary(
-        _run_golden(fixture, AmbiguityPolicy.CONSERVATIVE, risk_multiplier=2)[ReplayArm.COMBINED]
+        run_case(baseline_volume, AmbiguityPolicy.CONSERVATIVE, _COSTS, _LIQUIDITY, 2)
     )
     clear = tuple(
         trade
@@ -783,6 +871,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     symbol: len(history) for symbol, history in dataset.bars.items()
                 },
                 "signal_reference_equity": _STARTING_EQUITY,
+                "cost_profile": _COSTS,
+                "liquidity_profile": _LIQUIDITY,
                 "partition": args.partition,
                 "engineering_mode": args.engineering_mode,
                 "limitations": dataset.catalog.limitations,
@@ -820,6 +910,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "official_session_count": len(dataset.official_sessions),
                 "symbol_count": len(dataset.bars),
                 "signal_reference_equity": _STARTING_EQUITY,
+                "cost_profile": _COSTS,
+                "liquidity_profile": _LIQUIDITY,
                 "partition": args.partition,
                 "engineering_mode": args.engineering_mode,
                 "limitations": dataset.catalog.limitations,
@@ -834,7 +926,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             "diagnostic_only": True,
         }
         if args.catalog == "synthetic-golden":
-            sensitivity.update(_golden_sensitivities(fixture, combined))
+            sensitivity.update(_scenario_sensitivities(_golden_case, combined, multiplier))
+        elif args.catalog != "static-asx":
+            sensitivity.update(
+                _scenario_sensitivities(partial(_signed_case, dataset), combined, multiplier)
+            )
         metrics: dict[str, object] = {
             "arms": {
                 arm.value: {

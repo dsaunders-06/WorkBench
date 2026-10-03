@@ -239,11 +239,24 @@ def test_forward_only_holdout_extension_keeps_earlier_starts() -> None:
     original_calendar = _calendar(date(2010, 1, 1), date(2020, 10, 31))
     original = build_validation_plan(_catalog(original_calendar), original_calendar)
     extended_calendar = _calendar(date(2010, 1, 1), date(2021, 10, 31))
-    extended = build_validation_plan(
+    extension_catalog = replace(
         _catalog(extended_calendar, holdout_months=48),
+        dataset_id="f" * 64,
+        parent_dataset_id=original.catalog_id,
+    )
+    extended = build_validation_plan(
+        extension_catalog,
         extended_calendar,
         previous_plan=original,
     )
+    assert extended.catalog_id != original.catalog_id
+    assert extended.parent_catalog_id == original.catalog_id
+    with pytest.raises(DatasetIntegrityError, match="parent catalog link"):
+        build_validation_plan(
+            replace(extension_catalog, parent_dataset_id=None),
+            extended_calendar,
+            previous_plan=original,
+        )
     assert tuple(window.first_signal_session for window in extended.partitions) == tuple(
         window.first_signal_session for window in original.partitions
     )

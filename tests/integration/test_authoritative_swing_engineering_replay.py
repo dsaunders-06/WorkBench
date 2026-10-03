@@ -50,6 +50,28 @@ def test_synthetic_golden_creates_four_arm_non_promotional_bundle(tmp_path: Path
     assert manifest["signal_counts"]["combined"]["overlap_suppressed"] >= 1
     assert all(manifest["dataset"][key] for key in ("T0", "T1", "T10", "T11", "T64", "T65"))
     assert manifest["dataset"]["regime_provenance"]["max_input_session"] < manifest["dataset"]["T1"]
+    report = (bundle / "report.md").read_text(encoding="utf-8")
+    for label in (
+        "Costs:",
+        "Fill model:",
+        "T0:",
+        "T1:",
+        "T10:",
+        "T11:",
+        "T64:",
+        "T65:",
+        "Terminal-valued trades:",
+        "Maximum single-position entry notional exposure:",
+        "Average single-position entry notional exposure:",
+        "Cost to risk:",
+        "Gap losses beyond planned 1% risk:",
+        "Minimum-R stress:",
+        "Method audit:",
+        "Reference incidence:",
+        "Duration feasibility:",
+        "2% sizing",
+    ):
+        assert label in report
 
 
 def test_golden_lifecycle_covers_overlap_dividend_halts_and_terminal_value() -> None:
@@ -180,6 +202,17 @@ def test_authorized_signed_engineering_shard_replays_offline(tmp_path: Path) -> 
     manifest = json.loads((_bundle(output) / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["dataset"]["shard_ids"] == [access.shard_id]
     assert all(status == "valid" for status in manifest["replay_status"].values())
+    assert {
+        "volume_1.25",
+        "volume_1.5",
+        "volume_2.0",
+        "optimistic_ambiguity",
+        "doubled_costs",
+        "doubled_liquidity_impact",
+        "two_percent_sizing",
+        "post_fill_resistance_exclusion",
+        "minimum_r_stress",
+    } <= set(manifest["sensitivities"])
 
 
 def test_promotion_catalog_is_rejected_before_loading_any_shard(

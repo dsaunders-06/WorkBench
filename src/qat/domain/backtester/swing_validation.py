@@ -73,6 +73,7 @@ class ValidationPlan:
     catalog_id: str
     partitions: tuple[PartitionWindow, PartitionWindow, PartitionWindow]
     signal_history_calendar_years: Decimal
+    parent_catalog_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,8 +191,8 @@ def _check_initial_allocation(windows: tuple[PartitionWindow, ...]) -> None:
 
 
 def _check_forward_extension(plan: ValidationPlan, previous: ValidationPlan) -> None:
-    if plan.catalog_id != previous.catalog_id:
-        raise DatasetIntegrityError("holdout extension changed the catalog identity")
+    if plan.catalog_id == previous.catalog_id or plan.parent_catalog_id != previous.catalog_id:
+        raise DatasetIntegrityError("holdout extension lacks a signed parent catalog link")
     for current, prior in zip(plan.partitions[:2], previous.partitions[:2], strict=True):
         if (
             current.signal_months != prior.signal_months
@@ -285,6 +286,7 @@ def build_validation_plan(
         catalog.dataset_id,
         partition_windows,
         Decimal(sum(len(window.signal_months) for window in windows)) / Decimal(12),
+        catalog.parent_dataset_id,
     )
     if previous_plan is None:
         _check_initial_allocation(partition_windows)

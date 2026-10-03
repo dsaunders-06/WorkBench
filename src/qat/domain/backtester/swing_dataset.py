@@ -217,6 +217,7 @@ class DatasetCatalog:
     shards: Mapping[str, DatasetShardManifest]
     operator_signature: str
     limitations: tuple[str, ...]
+    parent_dataset_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "shards", MappingProxyType(dict(self.shards)))
@@ -575,6 +576,11 @@ def validate_catalog(catalog_path: Path, verification_key: bytes) -> DatasetCata
             shards,
             signature_hex,
             tuple(str(item) for item in signed.get("limitations", ())),
+            (
+                _digest(signed["parent_dataset_id"], "parent dataset id")
+                if signed.get("parent_dataset_id") is not None
+                else None
+            ),
         )
     except (OSError, json.JSONDecodeError, UnicodeError, InvalidSignature) as error:
         raise DatasetIntegrityError(

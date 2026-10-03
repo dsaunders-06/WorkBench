@@ -131,6 +131,26 @@ def _overlap_suppressed(replay: SwingReplayResult) -> int:
     )
 
 
+def _display(value: object) -> str:
+    if value is None:
+        return "unavailable"
+    plain = _plain(value)
+    if isinstance(plain, (dict, list)):
+        return json.dumps(plain, sort_keys=True, separators=(",", ":"))
+    return str(plain)
+
+
+def _combined_summary(run: SwingArtifactRun) -> Mapping[str, object]:
+    arms = run.metrics.get("arms")
+    if isinstance(arms, Mapping):
+        combined = arms.get("combined")
+        if isinstance(combined, Mapping):
+            summary = combined.get("summary")
+            if isinstance(summary, Mapping):
+                return summary
+    return {}
+
+
 def _report(run: SwingArtifactRun, run_id: str) -> bytes:
     lines = ["# Authoritative swing Phase 2C engineering evidence", ""]
     if run.evidence_tier != "promotion_point_in_time":
@@ -143,11 +163,29 @@ def _report(run: SwingArtifactRun, run_id: str) -> bytes:
             f"Period: {run.dataset_manifest.get('T0', 'unavailable')} through "
             f"{run.dataset_manifest.get('T64', 'unavailable')}",
             f"Verdict: **{run.promotion.status.value}**",
+            f"Engineering mode: {_display(run.dataset_manifest.get('engineering_mode'))}",
+            "",
+            "## Inputs and execution contract",
+            "",
+            f"Costs: {_display(run.dataset_manifest.get('cost_profile'))}",
+            "Liquidity participation/capacity: "
+            f"{_display(run.dataset_manifest.get('liquidity_profile'))}",
+            "Fill model: next open is processed first; stop wins a same-bar stop/target "
+            f"ambiguity; policy={_display(run.sensitivities.get('ambiguity_policy'))}.",
             "",
             "## Signal-level edge (R_order primary; R_fill diagnostic)",
             "",
         ]
     )
+    boundaries = run.dataset_manifest.get("boundaries")
+    for name in ("T0", "T1", "T10", "T11", "T64", "T65"):
+        value = run.dataset_manifest.get(name)
+        if value is None and isinstance(boundaries, Mapping):
+            value = boundaries.get(name)
+        lines.insert(
+            lines.index("## Signal-level edge (R_order primary; R_fill diagnostic)"),
+            f"{name}: {_display(value)}",
+        )
     labels = {
         ReplayArm.EMA_PULLBACK: "EMA pullback",
         ReplayArm.BULL_FLAG: "Bull flag",
@@ -158,6 +196,11 @@ def _report(run: SwingArtifactRun, run_id: str) -> bytes:
         replay = run.replays[arm]
         eligible = sum(trade.edge_sample_eligible for trade in replay.signal_trades)
         suppressed = _overlap_suppressed(replay)
+        arm_metrics = run.metrics.get("arms")
+        arm_record = arm_metrics.get(arm.value) if isinstance(arm_metrics, Mapping) else None
+        arm_summary = arm_record.get("summary") if isinstance(arm_record, Mapping) else None
+        if not isinstance(arm_summary, Mapping):
+            arm_summary = {}
         lines.extend(
             [
                 f"### {labels[arm]}",
@@ -166,6 +209,9 @@ def _report(run: SwingArtifactRun, run_id: str) -> bytes:
                 f"eligible signal trades: {eligible}; "
                 f"overlap-suppressed: {suppressed}; "
                 f"ambiguities: {len(replay.ambiguities)}.",
+                f"Mean net R_order: {_display(arm_summary.get('mean_r_order'))}; "
+                f"diagnostic R_fill: {_display(arm_summary.get('mean_r_fill'))}; "
+                f"costs: {_display(arm_summary.get('costs'))}.",
                 "Abstention codes: "
                 + ", ".join(sorted({rule.code for rule in replay.abstentions})),
                 "",
@@ -177,6 +223,69 @@ def _report(run: SwingArtifactRun, run_id: str) -> bytes:
             "",
             "The uncapped portfolio is a concentration and gap-risk stress case, "
             "not a deployable forecast. Phase 4 risk policy and promotion controls remain pending.",
+            "",
+        ]
+    )
+    summary = _combined_summary(run)
+    for label, key in (
+        ("Terminal-valued trades", "terminal_valued_trades"),
+        (
+            "Maximum single-position entry notional exposure",
+            "maximum_single_position_entry_notional_exposure",
+        ),
+        (
+            "Average single-position entry notional exposure",
+            "average_single_position_entry_notional_exposure",
+        ),
+        ("Maximum aggregate exposure", "maximum_exposure"),
+        ("Average aggregate exposure", "average_exposure"),
+        ("Cost to risk", "cost_to_risk"),
+        ("Capacity-bound decisions", "capacity_bound_decisions"),
+        ("Days above concentration levels", "days_above_concentration"),
+        ("Gap losses beyond planned 1% risk", "gap_losses_beyond_planned_1pct"),
+        ("Post-fill resistance classifications", "post_fill_resistance"),
+    ):
+        lines.append(f"{label}: {_display(summary.get(key))}")
+    lines.extend(
+        [
+            f"Minimum-R stress: {_display(run.sensitivities.get('minimum_r_stress'))}",
+            f"Method audit: {_display(run.method_audit.get('status'))}",
+            f"Reference incidence: {_display(run.reference_incidence.get('status'))}",
+            f"Duration feasibility: {_display(run.feasibility.get('status'))}",
+            "",
+            "Non-promotional sensitivity runs:",
+        ]
+    )
+    for key, label in (
+        ("volume_1.25", "Volume 1.25x"),
+        ("volume_1.5", "Volume 1.5x"),
+        ("volume_2.0", "Volume 2.0x"),
+        ("optimistic_ambiguity", "Optimistic ambiguity"),
+        ("doubled_costs", "Doubled costs"),
+        ("doubled_liquidity_impact", "Doubled liquidity impact"),
+        ("two_percent_sizing", "2% sizing"),
+        ("post_fill_resistance_exclusion", "Post-fill resistance exclusion"),
+    ):
+        case = run.sensitivities.get(key)
+        if isinstance(case, Mapping):
+            visible = {
+                name: case.get(name)
+                for name in (
+                    "eligible_signal_trades",
+                    "mean_r_order",
+                    "final_equity",
+                    "maximum_drawdown",
+                )
+                if name in case
+            }
+            lines.append(f"- {label}: {_display(visible)}")
+        else:
+            lines.append(f"- {label}: unavailable")
+    limitations = run.dataset_manifest.get("limitations", run.metrics.get("limitations", ()))
+    if isinstance(limitations, (tuple, list)) and limitations:
+        lines.extend(["", "Limitations:", *(f"- {item}" for item in limitations)])
+    lines.extend(
+        [
             "",
             "## Metrics and non-promotional sensitivities",
             "",

@@ -372,17 +372,27 @@ def _policy_violations(
         active = [
             position
             for position in positions
-            if position.entry_session < session < position.exit_session
+            if position.entry_session <= session < position.exit_session
         ]
         if not active:
             continue
         equity = baseline_equity[session]
-        aggregate = sum((position.marks[session] for position in active), Decimal(0)) / equity
+        # The open fill funds the position on its entry session. Its initial
+        # notional is the available entry-day measure; later sessions use marks.
+        notional = {
+            position.trade_id: (
+                position.initial_notional
+                if session == position.entry_session
+                else position.marks[session]
+            )
+            for position in active
+        }
+        aggregate = sum(notional.values(), Decimal(0)) / equity
         if aggregate > policy.maximum_aggregate_notional:
             violations.append(f"{session.isoformat()}:aggregate_notional")
         by_sector: dict[str, Decimal] = defaultdict(Decimal)
         for position in active:
-            by_sector[position.sector] += position.marks[session]
+            by_sector[position.sector] += notional[position.trade_id]
         if any(value / equity > policy.maximum_sector_notional for value in by_sector.values()):
             violations.append(f"{session.isoformat()}:sector_notional")
     return tuple(sorted(set(violations))), maximum_envelope

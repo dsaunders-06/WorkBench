@@ -153,6 +153,32 @@ def test_under_supported_reference_stops_calibration_and_duration_advice() -> No
     assert result.status is PromotionStatus.INCIDENCE_DATA_INSUFFICIENT
     assert result.recommended_holdout_months is None
     assert result.primary_bound is None
+    assert result.support_bounds["market_cap"] == (Decimal(100), Decimal(400))
+    assert result.available_bucket_support["all"] == (100, 20, 100)
+
+
+def test_microcap_outside_support_is_a_separate_zero_weight_sensitivity() -> None:
+    view = _view(event_count=0)
+    original = view.observations[0]
+    microcap = replace(original, issuer_id="microcap", market_cap=Decimal(1))
+    event = ReferenceEvent(
+        "microcap-event",
+        "microcap",
+        view.official_sessions[view.official_sessions.index(microcap.session) + 5],
+        "administration",
+    )
+    baseline = calibrate_terminal_incidence(view, bootstrap_draws=99)
+    result = calibrate_terminal_incidence(
+        replace(view, observations=view.observations + (microcap,), events=(event,)),
+        bootstrap_draws=99,
+    )
+    assert result.primary_bound == baseline.primary_bound
+    assert result.excluded_outside_support == 1
+    assert result.microcap_sensitivity is not None
+    assert result.microcap_sensitivity.window_count == 1
+    assert result.microcap_sensitivity.event_count == 1
+    assert result.microcap_sensitivity.primary_weight == 0
+    assert result.microcap_sensitivity.upper_bound == 1
 
 
 def test_vendor_omission_is_integrity_error_not_a_zero_event() -> None:

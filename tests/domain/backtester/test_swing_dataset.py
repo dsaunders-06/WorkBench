@@ -243,6 +243,17 @@ def _edit_csv(root: Path, relative: str, change: Callable[[list[dict[str, str]]]
     _write_csv(path, rows)
 
 
+def test_signed_catalog_retains_parent_content_hash(tmp_path: Path) -> None:
+    parent = "a" * 64
+    access = _fixture(
+        tmp_path,
+        mutate_catalog=lambda payload: payload.update(parent_dataset_id=parent),
+    )
+    catalog = validate_catalog(access.catalog_path, access.verification_key)
+    assert catalog.parent_dataset_id == parent
+    assert catalog.dataset_id != parent
+
+
 def test_required_tier_is_checked_before_authorized_shard_bytes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

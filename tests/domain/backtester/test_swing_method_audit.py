@@ -16,6 +16,7 @@ from qat.domain.backtester.swing_method_audit import (
     PowerScenario,
     ScenarioSizeAudit,
     SyntheticScenario,
+    _predictive_lower,
     audit_method_size,
     audit_power,
     eligible_month_count_vector,
@@ -127,6 +128,22 @@ def test_required_duration_precedes_available_data_check() -> None:
     assert result.required_months == 111
     assert result.status is FeasibilityStatus.DATASET_INSUFFICIENT
     assert result.forward_acquisition_could_help
+
+
+def test_variable_months_use_next_month_predictive_lower_rate() -> None:
+    counts = (0, 4) * 42
+    assert _predictive_lower(counts) == Decimal(0)
+    result = plan_holdout_duration(
+        development={name: counts[:60] for name in ("ema", "flag", "bottom")},
+        validation={name: counts[60:] for name in ("ema", "flag", "bottom")},
+        requirements=_requirements(100),
+        available_months=120,
+        simulations=20,
+        seed=17,
+    )
+    assert result.binding_rate_source == "predictive_90_lower"
+    assert all(rate == 0 for rate in result.stress_rates.values())
+    assert result.status is FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
 
 
 def test_no_duration_through_120_is_frequency_inadequate() -> None:

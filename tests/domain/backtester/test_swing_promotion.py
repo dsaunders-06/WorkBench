@@ -119,6 +119,21 @@ def test_structurally_infeasible_preflight_gives_no_duration_advice() -> None:
     assert result.recommended_holdout_months is None
 
 
+def test_entry_session_funded_positions_count_toward_aggregate_and_sector_caps() -> None:
+    sessions = _sessions()
+    first = replace(_position(sessions), exit_session=sessions[1], marks={})
+    second = replace(first, trade_id="funded-2", issuer_id="issuer-2")
+    policy = replace(
+        _policy(),
+        maximum_aggregate_notional=Decimal("0.15"),
+        maximum_sector_notional=Decimal("0.15"),
+    )
+    result = evaluate_structural_risk(sessions, _equity(sessions), (first, second), policy)
+    assert result.status is StructuralStatus.PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE
+    assert f"{sessions[0]}:aggregate_notional" in result.policy_violations
+    assert f"{sessions[0]}:sector_notional" in result.policy_violations
+
+
 def _frequency(status: FeasibilityStatus) -> FrequencyPlan:
     return FrequencyPlan(
         status,

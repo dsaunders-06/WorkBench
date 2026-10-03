@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
@@ -90,6 +90,18 @@ class BucketIncidence:
 
 
 @dataclass(frozen=True, slots=True)
+class MicrocapSensitivity:
+    window_count: int
+    event_count: int
+    unique_issuer_years: int
+    unique_issuers: int
+    clustered_upper: Decimal | None
+    landmark_exact_upper: Decimal | None
+    upper_bound: Decimal | None
+    primary_weight: Decimal = Decimal(0)
+
+
+@dataclass(frozen=True, slots=True)
 class IncidenceCalibration:
     status: PromotionStatus
     eligible_window_count: int
@@ -102,9 +114,16 @@ class IncidenceCalibration:
     stressed_bound: Decimal | None
     worst_bucket_bound: Decimal | None
     recommended_holdout_months: int | None = None
+    support_bounds: Mapping[str, tuple[Decimal, Decimal]] = field(default_factory=dict)
+    available_bucket_support: Mapping[str, tuple[int, int, int]] = field(default_factory=dict)
+    microcap_sensitivity: MicrocapSensitivity | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "merge_path", MappingProxyType(dict(self.merge_path)))
+        object.__setattr__(self, "support_bounds", MappingProxyType(dict(self.support_bounds)))
+        object.__setattr__(
+            self, "available_bucket_support", MappingProxyType(dict(self.available_bucket_support))
+        )
 
 
 BUCKETS = ("small_low", "small_high", "large_low", "large_high")
@@ -322,6 +341,76 @@ def _landmark_upper(
     )
 
 
+def _outside_support_windows(
+    view: ReferenceView,
+    support: tuple[Decimal, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal, Decimal],
+) -> tuple[int, tuple[IncidenceWindow, ...]]:
+    """Keep low-cap starts separate from the support-matched primary sample."""
+    index = {session: ordinal for ordinal, session in enumerate(view.official_sessions)}
+    events: dict[str, list[ReferenceEvent]] = defaultdict(list)
+    for event in view.events:
+        events[event.issuer_id].append(event)
+    excluded = 0
+    microcaps: list[IncidenceWindow] = []
+    for observation in view.observations:
+        ordinal = index[observation.session]
+        if (
+            not observation.ordinary_equity
+            or ordinal + 10 >= len(view.official_sessions)
+            or view.official_sessions[ordinal + 10] >= view.holdout_start
+        ):
+            continue
+        in_support = (
+            support[0] <= observation.market_cap <= support[1]
+            and support[2] <= observation.price <= support[3]
+            and support[4] <= observation.traded_value <= support[5]
+        )
+        if in_support:
+            continue
+        excluded += 1
+        if observation.market_cap >= support[0]:
+            continue
+        qualifying = any(
+            ordinal < index[event.onset_session] <= ordinal + 10 and _qualifies(event)
+            for event in events[observation.issuer_id]
+        )
+        microcaps.append(
+            IncidenceWindow(
+                observation.issuer_id,
+                observation.session,
+                (observation.issuer_id, observation.session.year),
+                "outside_support_microcap",
+                qualifying,
+                observation.member_at_start,
+            )
+        )
+    return excluded, tuple(sorted(microcaps, key=lambda item: (item.start, item.issuer_id)))
+
+
+def _microcap_sensitivity(
+    windows: tuple[IncidenceWindow, ...],
+    session_index: Mapping[date, int],
+    *,
+    draws: int,
+    seed: int,
+) -> MicrocapSensitivity:
+    years, issuers = _support_count(windows)
+    if not windows:
+        return MicrocapSensitivity(0, 0, 0, 0, None, None, None)
+    clustered = _clustered_upper(windows, draws=draws, seed=seed)
+    exact = _landmark_upper(windows, session_index)
+    event_clusters = len({item.issuer_year for item in windows if item.event_within_ten_sessions})
+    return MicrocapSensitivity(
+        len(windows),
+        sum(item.event_within_ten_sessions for item in windows),
+        years,
+        issuers,
+        clustered,
+        exact,
+        exact if event_clusters < 5 else max(clustered, exact),
+    )
+
+
 def calibrate_terminal_incidence(
     view: ReferenceView,
     *,
@@ -335,16 +424,24 @@ def calibrate_terminal_incidence(
         raise ValueError("cluster bootstrap draws must be positive")
     windows = build_incidence_windows(view)
     merged = merge_buckets(windows, min_issuer_years=min_issuer_years, min_issuers=min_issuers)
-    included_starts = {(window.issuer_id, window.start) for window in windows}
-    excluded = sum(
-        observation.ordinary_equity
-        and (observation.issuer_id, observation.session) not in included_starts
-        for observation in view.observations
+    support = _support(view)
+    excluded, microcap_windows = _outside_support_windows(view, support)
+    session_index = {session: index for index, session in enumerate(view.official_sessions)}
+    microcap = _microcap_sensitivity(
+        microcap_windows, session_index, draws=bootstrap_draws, seed=seed + 1000
     )
+    support_bounds = {
+        "market_cap": (support[0], support[1]),
+        "price": (support[2], support[3]),
+        "traded_value": (support[4], support[5]),
+    }
     effective = tuple(sorted(set(merged.values())))
     by_bucket = {
         bucket: tuple(window for window in windows if merged[window.initial_bucket] == bucket)
         for bucket in effective
+    }
+    available_bucket_support = {
+        bucket: (*_support_count(group), len(group)) for bucket, group in by_bucket.items()
     }
     if any(
         (counts := _support_count(group))[0] < min_issuer_years or counts[1] < min_issuers
@@ -361,14 +458,15 @@ def calibrate_terminal_incidence(
             None,
             None,
             None,
+            support_bounds=support_bounds,
+            available_bucket_support=available_bucket_support,
+            microcap_sensitivity=microcap,
         )
-    support = _support(view)
     entry_weights = {bucket: 0 for bucket in effective}
     for exposure in view.strategy_exposures:
         initial = _bucket(exposure.market_cap, exposure.traded_value, support[6], support[7])
         entry_weights[merged[initial]] += exposure.entry_count
     total_entries = sum(entry_weights.values())
-    session_index = {session: index for index, session in enumerate(view.official_sessions)}
     buckets: list[BucketIncidence] = []
     for index, bucket in enumerate(effective):
         group = by_bucket[bucket]
@@ -413,4 +511,7 @@ def calibrate_terminal_incidence(
         primary,
         stressed,
         highest.primary_upper,
+        support_bounds=support_bounds,
+        available_bucket_support=available_bucket_support,
+        microcap_sensitivity=microcap,
     )
