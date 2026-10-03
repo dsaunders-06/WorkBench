@@ -137,7 +137,7 @@ def nearest_relevant_resistance(
     )
 
 
-def _three_year_cutoff(signal_session: date) -> date:
+def three_year_cutoff(signal_session: date) -> date:
     try:
         return signal_session.replace(year=signal_session.year - 3)
     except ValueError:
@@ -178,7 +178,7 @@ def analytical_entry_ceiling_for(
 ) -> ResistanceDecision:
     """Apply three-year resistance in analytical basis before raw conversion."""
 
-    cutoff = _three_year_cutoff(candidate.signal_session)
+    cutoff = three_year_cutoff(candidate.signal_session)
     ordered = tuple(sorted(history, key=lambda bar: (bar.session, bar.digest)))
     prior = tuple(bar for bar in ordered if cutoff <= bar.session < candidate.signal_session)
     if (

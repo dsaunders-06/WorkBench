@@ -922,12 +922,20 @@ def load_swing_dataset(access: PartitionAccess) -> SwingDataset:
             raise DatasetIntegrityError("benchmark includes a non-finalized bar")
         if any(not membership[day] for day in calendar.official_sessions):
             raise DatasetIntegrityError("tradable calendar row lacks point-in-time membership")
+        events = _events(files, catalog.currency)
         for day, members in membership.items():
             if any(
-                not any(bar.session == day for bar in bars.get(symbol, ())) for symbol in members
+                not any(bar.session == day for bar in bars.get(symbol, ()))
+                and not any(
+                    isinstance(event, SuspensionEvent)
+                    and event.symbol == symbol
+                    and event.effective_session <= day
+                    and (event.resume_session is None or day < event.resume_session)
+                    for event in events
+                )
+                for symbol in members
             ):
                 raise DatasetIntegrityError(f"tradable calendar row {day} lacks member bars")
-        events = _events(files, catalog.currency)
         if any(
             event.effective_session in closed or event.effective_session not in sessions
             for event in events

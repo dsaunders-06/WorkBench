@@ -50,6 +50,10 @@ from qat.domain.backtester.swing_results import (
     SwingReplayResult,
     SwingTrade,
 )
+from qat.domain.strategies.authoritative_swing.engine import (
+    raw_order_terms,
+    raw_resistance_rule,
+)
 from qat.domain.strategies.authoritative_swing.evidence import stable_decision_id
 from qat.domain.strategies.authoritative_swing.indicators import ema, wilder_atr
 from qat.domain.strategies.authoritative_swing.lifecycle import (
@@ -76,11 +80,15 @@ from qat.domain.strategies.authoritative_swing.model import (
     SwingHistory,
 )
 from qat.domain.strategies.authoritative_swing.numeric import SplitFactor, to_raw_price
-from qat.domain.strategies.authoritative_swing.resistance import find_resistance_zones
+from qat.domain.strategies.authoritative_swing.resistance import (
+    find_resistance_zones,
+    three_year_cutoff,
+)
 from qat.domain.strategies.authoritative_swing.sizing import (
     ExactCostProfile,
     LiquidityProfile,
     size_for_risk,
+    size_instruction,
 )
 
 
@@ -419,6 +427,7 @@ class AuthoritativeSwingReplay:
         tradable_sessions = tuple(
             row.calendar_date for row in self._calendar_rows if row.is_tradable
         )
+        official_ordinal = {day: index for index, day in enumerate(tradable_sessions)}
         terminal_session = (
             tradable_sessions[tradable_sessions.index(self._final_entry_session) + 63]
             if self._final_entry_session is not None
@@ -431,6 +440,7 @@ class AuthoritativeSwingReplay:
         active_suspensions: dict[str, date | None] = {}
         suspension_event_ids: dict[str, str] = {}
         unresolved_delistings: dict[str, str] = {}
+        last_traded_close: dict[str, Decimal] = {}
 
         for row in self._calendar_rows:
             if not row.is_tradable:
@@ -450,6 +460,11 @@ class AuthoritativeSwingReplay:
 
             for event in sorted(events_by_session[session], key=_event_order):
                 if isinstance(event, SplitEvent):
+                    if event.symbol in last_traded_close:
+                        last_traded_close[event.symbol] = to_raw_price(
+                            last_traded_close[event.symbol],
+                            SplitFactor(event.numerator, event.denominator),
+                        )
                     affected_quantities = (
                         () if event.symbol not in pending else (pending[event.symbol].quantity,)
                     ) + tuple(
@@ -490,6 +505,8 @@ class AuthoritativeSwingReplay:
                         transformed.append(updated)
                     portfolio = replace(portfolio, positions=tuple(transformed))
                 elif isinstance(event, SymbolChangeEvent):
+                    if event.symbol in last_traded_close:
+                        last_traded_close[event.new_symbol] = last_traded_close.pop(event.symbol)
                     if event.symbol in active_suspensions:
                         active_suspensions[event.new_symbol] = active_suspensions.pop(event.symbol)
                         suspension_event_ids[event.new_symbol] = suspension_event_ids.pop(
@@ -529,17 +546,6 @@ class AuthoritativeSwingReplay:
                 elif isinstance(event, SuspensionEvent):
                     active_suspensions[event.symbol] = event.resume_session
                     suspension_event_ids[event.symbol] = event.event_id
-                    portfolio = replace(
-                        portfolio,
-                        positions=tuple(
-                            (
-                                schedule_exit(position, ("suspension_exit",))
-                                if position.symbol == event.symbol
-                                else position
-                            )
-                            for position in portfolio.positions
-                        ),
-                    )
                 elif isinstance(event, DelistingEvent):
                     if event.realizable_price is None:
                         unresolved_delistings[event.symbol] = event.event_id
@@ -586,6 +592,9 @@ class AuthoritativeSwingReplay:
                 if resume is not None and session >= resume:
                     active_suspensions.pop(symbol)
                     suspension_event_ids.pop(symbol)
+            last_traded_close.update(
+                (symbol, bar.raw.close) for symbol, bar in session_bars.items()
+            )
 
             portfolio, closed = self._resolve_opening_positions(
                 portfolio,
@@ -645,8 +654,20 @@ class AuthoritativeSwingReplay:
                     receivables.pop(receivable.event_id)
 
             open_symbols = {position.symbol for position in portfolio.positions}
-            zero_marked = active_suspensions.keys() | unresolved_delistings.keys()
-            missing_open = tuple(sorted(open_symbols - session_bars.keys() - zero_marked))
+            stale_symbols = open_symbols & active_suspensions.keys()
+            missing_stale = tuple(sorted(stale_symbols - last_traded_close.keys()))
+            if missing_stale:
+                return _empty_result(
+                    status=RunStatus.INVALID,
+                    invalid_reasons=tuple(
+                        f"missing last traded close for halted position {symbol} on {session}"
+                        for symbol in missing_stale
+                    ),
+                )
+            zero_marked = unresolved_delistings.keys()
+            missing_open = tuple(
+                sorted(open_symbols - session_bars.keys() - stale_symbols - zero_marked)
+            )
             if missing_open:
                 return _empty_result(
                     status=RunStatus.INVALID,
@@ -656,11 +677,25 @@ class AuthoritativeSwingReplay:
                     ),
                 )
             closing_prices = {symbol: bar.raw.close for symbol, bar in session_bars.items()}
+            stale_marks = tuple(
+                (symbol, last_traded_close[symbol]) for symbol in sorted(stale_symbols)
+            )
+            closing_prices.update(stale_marks)
             closing_prices.update((symbol, Decimal(0)) for symbol in zero_marked)
             point = mark_to_market(
                 portfolio,
                 session,
                 closing_prices,
+                stale_marks,
+            )
+            abstentions.extend(
+                RuleEvidence(
+                    "stale_halt_mark",
+                    RuleOutcome.ABSTAIN,
+                    measured=f"{symbol}:{price}",
+                    reason="last traded close carried while trading is suspended",
+                )
+                for symbol, price in stale_marks
             )
             portfolio = self._evaluate_closes(
                 portfolio,
@@ -668,6 +703,13 @@ class AuthoritativeSwingReplay:
                 trade_states,
                 abstentions,
             )
+            advanced = tuple(
+                _advance_official_holding_session(position, session, official_ordinal)
+                for position in portfolio.positions
+            )
+            for position in advanced:
+                trade_states[position.position_id].position = position
+            portfolio = replace(portfolio, positions=advanced)
 
             qualified: list[SetupDecision] = []
             blocked_symbols = {position.symbol for position in portfolio.positions} | set(pending)
@@ -752,9 +794,21 @@ class AuthoritativeSwingReplay:
                     qualified,
                     self._costs,
                     self._liquidity,
+                    current_equity=point.equity,
                 )
                 if qualified and portfolio.available_cash > 0
                 else ()
+            )
+            allocated_ids = {allocation.decision.decision_id for allocation in allocations}
+            abstentions.extend(
+                RuleEvidence(
+                    "portfolio_allocation",
+                    RuleOutcome.ABSTAIN,
+                    measured=decision.symbol,
+                    reason="available cash cannot fund the minimum two-share allocation",
+                )
+                for decision in qualified
+                if decision.decision_id not in allocated_ids
             )
             for allocation in allocations:
                 instruction_id = stable_decision_id(
@@ -1096,6 +1150,20 @@ def _traded(bar: FinalBar) -> TradedDailyBar:
     )
 
 
+def _advance_official_holding_session(
+    position: SwingPosition,
+    session: date,
+    ordinal: Mapping[date, int],
+) -> SwingPosition:
+    """Count exchange sessions even when a halt supplies no symbol bar."""
+
+    held = ordinal[session] - ordinal[position.entry_session] + 1
+    updated = replace(position, completed_sessions=max(position.completed_sessions, held))
+    if held >= 10:
+        updated = schedule_exit(updated, ("time_stop",))
+    return updated
+
+
 def replay_signal_candidates(
     *,
     calendar_rows: Sequence[ReplayCalendarRow],
@@ -1118,7 +1186,10 @@ def replay_signal_candidates(
     indexed = {symbol: {bar.session: bar for bar in history} for symbol, history in bars.items()}
     by_session: dict[date, list[SetupDecision]] = defaultdict(list)
     for decision in decisions:
-        if decision.status is DecisionStatus.QUALIFIED:
+        if any(
+            item.status is DecisionStatus.QUALIFIED and item.candidate is not None
+            for item in decision.pattern_decisions
+        ):
             by_session[decision.session].append(decision)
 
     pending: dict[tuple[str, object], PendingEntry] = {}
@@ -1137,6 +1208,11 @@ def replay_signal_candidates(
     active_suspensions: dict[str, date | None] = {}
     suspension_event_ids: dict[str, str] = {}
     unresolved_delistings: dict[str, str] = {}
+    last_traded_close: dict[str, Decimal] = {}
+    official_ordinal = {
+        row.calendar_date: index
+        for index, row in enumerate(item for item in calendar_rows if item.is_tradable)
+    }
 
     for row in calendar_rows:
         if not row.is_tradable:
@@ -1149,6 +1225,11 @@ def replay_signal_candidates(
         }
         for event in sorted(events_by_session[session], key=_event_order):
             if isinstance(event, SplitEvent):
+                if event.symbol in last_traded_close:
+                    last_traded_close[event.symbol] = to_raw_price(
+                        last_traded_close[event.symbol],
+                        SplitFactor(event.numerator, event.denominator),
+                    )
                 for key, instruction in tuple(pending.items()):
                     transformed_pending = apply_split_to_pending(instruction, event)
                     if transformed_pending is not instruction:
@@ -1167,6 +1248,8 @@ def replay_signal_candidates(
                         )
                     positions[key] = transformed_position
             elif isinstance(event, SymbolChangeEvent):
+                if event.symbol in last_traded_close:
+                    last_traded_close[event.new_symbol] = last_traded_close.pop(event.symbol)
                 if event.symbol in active_suspensions:
                     active_suspensions[event.new_symbol] = active_suspensions.pop(event.symbol)
                     suspension_event_ids[event.new_symbol] = suspension_event_ids.pop(event.symbol)
@@ -1206,9 +1289,6 @@ def replay_signal_candidates(
             elif isinstance(event, SuspensionEvent):
                 active_suspensions[event.symbol] = event.resume_session
                 suspension_event_ids[event.symbol] = event.event_id
-                for key, position in tuple(positions.items()):
-                    if position.symbol == event.symbol:
-                        positions[key] = schedule_exit(position, ("suspension_exit",))
             elif isinstance(event, DelistingEvent):
                 if event.realizable_price is None:
                     unresolved_delistings[event.symbol] = event.event_id
@@ -1251,6 +1331,7 @@ def replay_signal_candidates(
             if resume is not None and session >= resume:
                 active_suspensions.pop(symbol)
                 suspension_event_ids.pop(symbol)
+        last_traded_close.update((symbol, bar.raw.close) for symbol, bar in session_bars.items())
 
         for position in positions.values():
             if (
@@ -1259,6 +1340,20 @@ def replay_signal_candidates(
                 and position.symbol not in unresolved_delistings
             ):
                 raise ValueError(f"missing signal position mark for {position.symbol} on {session}")
+            if position.symbol in active_suspensions:
+                price = last_traded_close.get(position.symbol)
+                if price is None:
+                    raise ValueError(
+                        f"missing last traded close for halted signal position {position.symbol}"
+                    )
+                abstentions.append(
+                    RuleEvidence(
+                        "stale_halt_mark",
+                        RuleOutcome.ABSTAIN,
+                        measured=f"{position.symbol}:{price}",
+                        reason="last traded close carried while trading is suspended",
+                    )
+                )
 
         if session == terminal_session:
             for key, position in tuple(positions.items()):
@@ -1366,6 +1461,11 @@ def replay_signal_candidates(
             state.position = updated
             positions[key] = updated
 
+        for key, position in tuple(positions.items()):
+            advanced = _advance_official_holding_session(position, session, official_ordinal)
+            positions[key] = advanced
+            trade_states[key].position = advanced
+
         for decision in sorted(
             by_session.get(session, ()), key=lambda item: (item.symbol, item.decision_id)
         ):
@@ -1405,15 +1505,110 @@ def replay_signal_candidates(
                         )
                     )
                     continue
-                limit = decision.entry_limit_raw
-                stop = decision.initial_stop_raw
-                assert limit is not None and stop is not None
-                risk_quantity = size_for_risk(
-                    reference_equity, limit, stop, costs, liquidity
-                ).quantity
-                capacity = decision.capacity_quantity or risk_quantity
-                quantity = min(risk_quantity, capacity)
+                analytical_limit = next(
+                    (
+                        rule.threshold
+                        for rule in matching[0].rules
+                        if rule.code == "analytical_resistance"
+                        and rule.outcome is RuleOutcome.PASS
+                        and isinstance(rule.threshold, Decimal)
+                    ),
+                    None,
+                )
+                if analytical_limit is not None:
+                    signal_bar = indexed[decision.symbol][decision.session]
+                    try:
+                        limit, stop, raw_invalidation = raw_order_terms(
+                            analytical_limit,
+                            candidate.analytical_invalidation,
+                            signal_bar.raw_to_adjusted_price_factor,
+                        )
+                    except ValueError as error:
+                        abstentions.append(
+                            RuleEvidence(
+                                "isolated_raw_terms",
+                                RuleOutcome.ABSTAIN,
+                                measured=f"{decision.symbol}:{pattern.value}",
+                                reason=str(error),
+                            )
+                        )
+                        continue
+                    resistance_bars = tuple(
+                        bar
+                        for bar in bars[decision.symbol]
+                        if three_year_cutoff(decision.session) <= bar.session < decision.session
+                    )
+                    try:
+                        zones = find_resistance_zones(resistance_bars)
+                    except ValueError as error:
+                        abstentions.append(
+                            RuleEvidence(
+                                "isolated_raw_resistance",
+                                RuleOutcome.ABSTAIN,
+                                measured=f"{decision.symbol}:{pattern.value}",
+                                reason=str(error),
+                            )
+                        )
+                        continue
+                    raw_resistance = raw_resistance_rule(
+                        limit, stop, zones, signal_bar.raw_to_adjusted_price_factor
+                    )
+                    if raw_resistance.outcome is not RuleOutcome.PASS:
+                        abstentions.append(raw_resistance)
+                        continue
+                elif len(decision.patterns) == 1 and decision.status is DecisionStatus.QUALIFIED:
+                    assert decision.entry_limit_raw is not None
+                    assert decision.initial_stop_raw is not None
+                    limit = decision.entry_limit_raw
+                    stop = decision.initial_stop_raw
+                    raw_invalidation = decision.structural_invalidation_raw or stop
+                else:
+                    abstentions.append(
+                        RuleEvidence(
+                            "isolated_raw_terms",
+                            RuleOutcome.ABSTAIN,
+                            measured=f"{decision.symbol}:{pattern.value}",
+                            reason="qualified pattern lacks independent analytical limit",
+                        )
+                    )
+                    continue
+                if analytical_limit is not None:
+                    sizing = size_instruction(
+                        equity=reference_equity,
+                        available_cash=reference_equity,
+                        limit=limit,
+                        stop=stop,
+                        bars=tuple(
+                            bar for bar in bars[decision.symbol] if bar.session <= decision.session
+                        ),
+                        signal_session=decision.session,
+                        cost_profile=costs,
+                        liquidity_profile=liquidity,
+                    )
+                    if sizing.status is DecisionStatus.ABSTAIN:
+                        abstentions.extend(
+                            rule for rule in sizing.evidence if rule.outcome is RuleOutcome.ABSTAIN
+                        )
+                        continue
+                    risk_quantity = sizing.risk_quantity
+                    capacity = sizing.capacity_quantity
+                    quantity = sizing.quantity
+                else:
+                    risk_quantity = size_for_risk(
+                        reference_equity, limit, stop, costs, liquidity
+                    ).quantity
+                    capacity = decision.capacity_quantity or risk_quantity
+                    quantity = min(risk_quantity, capacity)
                 if quantity < 2:
+                    abstentions.append(
+                        RuleEvidence(
+                            "isolated_minimum_quantity",
+                            RuleOutcome.ABSTAIN,
+                            measured=quantity,
+                            threshold=2,
+                            reason=f"{decision.symbol}:{pattern.value} cannot fund two shares",
+                        )
+                    )
                     continue
                 isolated = replace(
                     decision,
@@ -1427,12 +1622,17 @@ def replay_signal_candidates(
                     ),
                     patterns=(pattern,),
                     pattern_decisions=matching,
+                    status=DecisionStatus.QUALIFIED,
+                    entry_limit_raw=limit,
+                    initial_stop_raw=stop,
+                    structural_invalidation_raw=raw_invalidation,
                     risk_quantity=risk_quantity,
+                    capacity_quantity=capacity,
                     quantity=quantity,
                 )
                 instruction = pending_entry_from_setup(isolated)
                 pending[key] = instruction
-                pending_decisions[key] = decision
+                pending_decisions[key] = isolated
                 used_breakouts[key].update(instruction.breakout_event_ids)
 
     return (

@@ -93,7 +93,7 @@ def _allocation(
     decision: SetupDecision,
     quantity: int,
     scale: Decimal,
-    cash: Decimal,
+    equity: Decimal,
     costs: ExactCostProfile,
     liquidity: LiquidityProfile,
 ) -> EntryAllocation:
@@ -113,7 +113,7 @@ def _allocation(
         scale_factor=scale,
         reserved_cash=_reservation(quantity, limit, costs),
         notional_exposure=notional,
-        zero_price_equity_loss=notional / cash,
+        zero_price_equity_loss=notional / equity,
         stop_distance=(limit - stop) / limit,
         cost_to_risk_ratio=cost_risk / price_risk,
     )
@@ -124,11 +124,16 @@ def allocate_entry_batch(
     candidates: Sequence[SetupDecision],
     costs: ExactCostProfile,
     liquidity: LiquidityProfile,
+    *,
+    current_equity: Decimal | None = None,
 ) -> tuple[EntryAllocation, ...]:
     """Allocate one simultaneous batch with a common iterative risk scale."""
 
     if not cash.is_finite() or cash <= 0:
         raise PortfolioInvariantError("allocatable cash must be finite and positive")
+    equity = cash if current_equity is None else current_equity
+    if not equity.is_finite() or equity < cash:
+        raise PortfolioInvariantError("current equity must include allocatable cash")
     ordered = _validated_candidates(candidates)
     if not ordered:
         return ()
@@ -141,7 +146,8 @@ def allocate_entry_batch(
     )
     if desired_reservation <= cash:
         return tuple(
-            _allocation(item, item.quantity, Decimal(1), cash, costs, liquidity) for item in ordered
+            _allocation(item, item.quantity, Decimal(1), equity, costs, liquidity)
+            for item in ordered
         )
 
     scale = cash / desired_reservation
@@ -162,7 +168,7 @@ def allocate_entry_batch(
             quantity = min(item.quantity, scaled.quantity)
             if quantity < 2:
                 continue
-            funded.append(_allocation(item, quantity, scale, cash, costs, liquidity))
+            funded.append(_allocation(item, quantity, scale, equity, costs, liquidity))
         if not funded:
             return ()
         total = sum((item.reserved_cash for item in funded), Decimal(0))
@@ -228,6 +234,7 @@ def mark_to_market(
     state: PortfolioState,
     session: date,
     closing_prices: Mapping[str, Decimal],
+    stale_marks: tuple[tuple[str, Decimal], ...] = (),
 ) -> ReplayEquityPoint:
     """Mark open quantities at exact raw closes without changing cash."""
 
@@ -244,4 +251,5 @@ def mark_to_market(
         state.cash,
         position_value,
         state.dividend_receivables,
+        stale_marks,
     )

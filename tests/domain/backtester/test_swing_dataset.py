@@ -636,6 +636,34 @@ def test_typed_split_dividend_and_suspension_events_use_exact_facts(tmp_path: Pa
     assert any(isinstance(event, SuspensionEvent) for event in dataset.corporate_actions)
 
 
+def test_index_member_can_have_no_bar_during_documented_suspension(tmp_path: Path) -> None:
+    def mutate(root: Path) -> None:
+        def members(rows: list[dict[str, str]]) -> None:
+            rows.append({"session": "2020-01-03", "symbol": "OLD.AX", "is_member": "true"})
+
+        def events(rows: list[dict[str, str]]) -> None:
+            rows[0]["kind"] = "suspension"
+            rows[0]["terminal_price"] = ""
+
+        _edit_csv(root, "membership.csv", members)
+        _edit_csv(root, "corporate_actions.csv", events)
+
+    dataset = load_swing_dataset(_fixture(tmp_path, mutate))
+    assert dataset.members(date(2020, 1, 3)) == frozenset({"OLD.AX", "NEW.AX"})
+    assert dataset.bars["OLD.AX"][-1].session == date(2020, 1, 2)
+
+
+def test_index_member_missing_bar_without_halt_is_integrity_failure(tmp_path: Path) -> None:
+    def mutate(root: Path) -> None:
+        def members(rows: list[dict[str, str]]) -> None:
+            rows.append({"session": "2020-01-03", "symbol": "OLD.AX", "is_member": "true"})
+
+        _edit_csv(root, "membership.csv", members)
+
+    with pytest.raises(DatasetIntegrityError, match="lacks member bars"):
+        load_swing_dataset(_fixture(tmp_path, mutate))
+
+
 def test_bad_corporate_ratio_and_currency_are_integrity_errors(tmp_path: Path) -> None:
     def bad_ratio(root: Path) -> None:
         _edit_csv(

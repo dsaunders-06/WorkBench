@@ -110,7 +110,7 @@ def resolve_entry_open(
         return ()
     if bar.open is None or bar.volume <= 0:
         return ()
-    if bar.open > pending.submitted_limit or bar.open <= pending.initial_stop:
+    if bar.open > pending.submitted_limit or bar.open <= pending.structural_invalidation_raw:
         return ()
     price = min(pending.submitted_limit, _slipped_buy(bar.open, liquidity))
     return (

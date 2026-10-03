@@ -49,6 +49,19 @@ def _floor_raw_order_price(price: Decimal) -> Decimal:
     return previous_raw_order_tick(price, "ASX")
 
 
+def raw_order_terms(
+    analytical_limit: Decimal,
+    analytical_invalidation: Decimal,
+    factor: SplitFactor,
+) -> tuple[Decimal, Decimal, Decimal]:
+    """Derive one pattern's exact raw limit, protective stop, and invalidation."""
+
+    raw_limit = _floor_raw_order_price(to_raw_price(analytical_limit, factor))
+    raw_invalidation = to_raw_price(analytical_invalidation, factor)
+    raw_stop = previous_raw_order_tick(raw_invalidation, "ASX")
+    return raw_limit, raw_stop, raw_invalidation
+
+
 def _resistance_rule(result: ResistanceDecision) -> RuleEvidence:
     outcome = {
         DecisionStatus.QUALIFIED: RuleOutcome.PASS,
@@ -69,7 +82,7 @@ def _resistance_rule(result: ResistanceDecision) -> RuleEvidence:
     )
 
 
-def _raw_resistance_rule(
+def raw_resistance_rule(
     entry: Decimal,
     stop: Decimal,
     zones: Sequence[ResistanceZone],
@@ -296,9 +309,9 @@ class AuthoritativeSwingEngine:
 
         factor = prefix.daily[-1].raw_to_adjusted_price_factor
         try:
-            raw_limit = _floor_raw_order_price(to_raw_price(analytical_limit, factor))
-            raw_invalidation = to_raw_price(analytical_stop, factor)
-            raw_stop = previous_raw_order_tick(raw_invalidation, "ASX")
+            raw_limit, raw_stop, raw_invalidation = raw_order_terms(
+                analytical_limit, analytical_stop, factor
+            )
         except ValueError as error:
             setup_rules.append(RuleEvidence("raw_conversion", RuleOutcome.FAIL, reason=str(error)))
             return self._empty_decision(
@@ -312,7 +325,7 @@ class AuthoritativeSwingEngine:
                 constituents,
             )
 
-        raw_resistance = _raw_resistance_rule(raw_limit, raw_stop, resistance.zones, factor)
+        raw_resistance = raw_resistance_rule(raw_limit, raw_stop, resistance.zones, factor)
         setup_rules.append(raw_resistance)
         if raw_resistance.outcome is not RuleOutcome.PASS:
             return self._empty_decision(
@@ -356,6 +369,7 @@ class AuthoritativeSwingEngine:
             input_digests=input_digests,
             analysis_regime=analysis_regime,
             setup_rules=tuple(setup_rules),
+            structural_invalidation_raw=raw_invalidation,
         )
         return _with_decision_id(setup_decision)
 

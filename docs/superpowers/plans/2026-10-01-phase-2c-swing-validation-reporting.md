@@ -407,13 +407,14 @@ def test_tail_cannot_create_entries_or_clusters() -> None:
     assert result.entry_month_clusters == signal_window_months()
 
 def test_temporary_halt_resolves_inside_tail() -> None:
-    trade = replay_halt(resume_session=boundaries.t40)
+    trade = replay_halt_with_time_stop_due(resume_session=boundaries.t40)
     assert trade.exit_session == boundaries.t40
     assert trade.terminal_valued is False
 
-def test_unresolved_position_is_zero_at_onset_and_closed_at_t64() -> None:
+def test_unresolved_position_carries_stale_mark_until_t64() -> None:
     trade, equity = replay_unresolved_halt(onset=boundaries.t8)
-    assert equity.at(boundaries.t8).position_value == 0
+    assert equity.at(boundaries.t8).position_value == last_traded_position_value()
+    assert equity.at(boundaries.t8).stale_marks
     assert trade.exit_session == boundaries.t64
     assert trade.terminal_value == 0
     assert trade.loss_recognition_count == 1
@@ -445,11 +446,16 @@ ownership follows entry fill. Tail and interstitial rows may resolve positions
 or warm indicators only; they cannot emit instructions, add entries, count
 toward signal duration, or create frequency clusters.
 
-Keep every eligible trade in the denominator. Resolve a halt at its first
-tradable opportunity through `T64`; otherwise apply documented irrevocable
-consideration or zero. Mark equity to zero at onset, keep cash unavailable, and
-avoid duplicate loss at terminal close. Missing data needed to apply the rule
-invalidates the run. Do not implement `BOUNDARY_CENSORED` exclusion.
+Keep every eligible trade in the denominator. A halt does not force an exit;
+execute only a stop or already due exit at the first resumed opportunity through
+`T64`. During a halt, mark the position at its last traded
+close with stale-mark evidence and keep cash unavailable. Count official holding
+sessions even without symbol bars. On resumption, normal stop and due-exit
+rules apply at the first executable open. Only positions still untradeable at
+`T64` take documented irrevocable consideration or zero. The baseline never
+zero-marks a mere halt at onset; reserve that assumption for the structural
+stress sweep. Missing data needed to apply the rule invalidates the run. Do
+not implement `BOUNDARY_CENSORED` exclusion.
 
 All boundary advancement uses `SwingDataset.official_sessions`. The
 sequence is the validated tradable projection of the complete signed calendar
@@ -952,9 +958,10 @@ dividend receivable and later cash settlement, and point-in-time regime
 metadata. The strict static-cache fixture may contain zero trades but must
 produce the exact provenance abstentions. Mechanical static mode must be
 structurally incapable of promotion.
-The synthetic fixture also pins `T0/T1/T10/T11/T64/T65`, a temporary halt resolving
-inside the tail, an unresolved halt valued at zero on onset, terminal close
-without duplicate loss, and a tail signal that cannot enter.
+The synthetic fixture also pins `T0/T1/T10/T11/T64/T65`, a temporary halt with
+a due time stop resolving inside the tail, an unresolved halt valued at the last
+traded close until `T64`, terminal close without duplicate loss, and a tail
+signal that cannot enter.
 
 The real static replay asserts the baseline inventory exactly: 95 files, 500
 sessions per file, 26 August 2024 through 14 August 2026. Strict mode reports

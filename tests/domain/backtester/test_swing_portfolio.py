@@ -100,6 +100,17 @@ def test_allocation_records_structural_concentration_metrics() -> None:
     assert allocation.cost_to_risk_ratio == D("0")
 
 
+def test_zero_price_loss_uses_total_equity_when_other_positions_are_open() -> None:
+    allocation = allocate_entry_batch(
+        D("3000"),
+        (_candidate("AAA.AX"),),
+        COSTS,
+        LIQUIDITY,
+        current_equity=D("10000"),
+    )[0]
+    assert allocation.zero_price_equity_loss == D("2000") / D("10000")
+
+
 def test_commission_floor_is_reserved_after_scaling() -> None:
     floor_costs = replace(COSTS, min_commission=D("6.60"))
     allocations = allocate_entry_batch(

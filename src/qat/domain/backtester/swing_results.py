@@ -134,6 +134,7 @@ class ReplayEquityPoint:
     cash: Decimal
     position_value: Decimal
     dividend_receivables: Decimal
+    stale_marks: tuple[tuple[str, Decimal], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

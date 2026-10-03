@@ -228,6 +228,7 @@ def test_raw_conversion_and_tick_rounding_govern_emitted_prices() -> None:
 
     assert decision.entry_limit_raw == D("10")
     assert decision.initial_stop_raw == D("8.99")
+    assert decision.structural_invalidation_raw == D("9")
 
 
 def test_future_bar_mutation_leaves_as_of_decision_identical() -> None:

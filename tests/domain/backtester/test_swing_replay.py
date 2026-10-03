@@ -468,6 +468,30 @@ def test_simultaneous_signals_scale_without_symbol_order_bias() -> None:
     ]
 
 
+def test_batch_scaling_records_unfunded_qualified_candidates() -> None:
+    signal = date(2026, 1, 5)
+    entry = date(2026, 1, 6)
+    bars = {
+        symbol: (
+            _bar(symbol, signal, open_="100", high="101", low="99", close="100"),
+            _bar(symbol, entry, open_="100", high="101", low="99", close="100"),
+        )
+        for symbol in ("AAA.AX", "BBB.AX")
+    }
+    decisions = {
+        (symbol, signal): _decision(symbol, signal, limit="100", stop="95", quantity=2)
+        for symbol in bars
+    }
+
+    result = _run(bars=bars, decisions=decisions, first=signal, last=entry, starting_equity="150")
+
+    assert result.status is RunStatus.VALID
+    assert not any(fill.side == "buy" for fill in result.fills)
+    assert {
+        item.measured for item in result.abstentions if item.code == "portfolio_allocation"
+    } == {"AAA.AX", "BBB.AX"}
+
+
 def test_better_fill_preserves_quantity_and_records_both_r_denominators() -> None:
     signal = date(2026, 1, 5)
     entry = date(2026, 1, 6)

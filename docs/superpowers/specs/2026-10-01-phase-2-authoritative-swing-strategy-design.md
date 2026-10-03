@@ -699,13 +699,20 @@ strict mode records typed abstentions rather than producing a trade.
 Promotion data must provide realizable delisting proceeds or another explicit,
 auditable terminal outcome. A silent disappearance is a dataset integrity
 failure. When a position becomes untradeable, keep it through its authorized
-tail. If it remains unresolved after the sixty-third official session following
-its final eligible entry fill, value documented irrevocable proceeds at their
-known amount and every other remaining equity interest at zero. Recognize the
-zero-price loss at event onset for equity and drawdown, keep cash unavailable,
-and close the accounting state at the terminal session without recognizing the
-loss twice. Apply this rule identically to development, validation, and
-holdout; later recovery is a sensitivity only.
+tail. During a halt or suspension, baseline equity uses the last traded close
+and flags that stale mark on every official trading session until trading
+resumes. A point-in-time index member may have no traded bar during a
+documented halt without losing membership. The halt itself neither schedules
+an exit nor stops the official-session holding clock. Any time or close-based
+exit already due waits for the first executable resumed open; normal gap-stop
+priority applies there.
+Close-based invalidation and trailing-stop updates resume with the first
+post-halt completed close. If the position remains untradeable at `T64`, close
+it at documented irrevocable proceeds or, absent such consideration, zero.
+The baseline does not mark a mere halt to zero at onset or infer its eventual
+length at onset. Zero-at-onset belongs only to the separately reported
+structural stress sweep. Apply these rules identically to development,
+validation, and holdout.
 
 Missing, partial, synthetic, conflicting, or unverifiable required data yields
 `ABSTAIN`. A symbol-specific defect may be isolated while replay continues, but

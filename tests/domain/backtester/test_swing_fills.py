@@ -117,6 +117,35 @@ def test_valid_entry_adds_buy_impact_once_and_caps_at_limit() -> None:
     assert fills[0].cost == D("0")
 
 
+def test_open_at_structural_invalidation_cancels_above_protective_stop() -> None:
+    decision = replace(
+        _setup(),
+        initial_stop_raw=D("8.99"),
+        structural_invalidation_raw=D("9"),
+    )
+    pending = pending_entry_from_setup(decision)
+    assert (
+        resolve_entry_open(
+            pending,
+            _bar(open_="9", high="9.5", low="8.9", close="9.2"),
+            COSTS,
+            ZERO_IMPACT,
+        )
+        == ()
+    )
+    assert (
+        len(
+            resolve_entry_open(
+                pending,
+                _bar(open_="9.01", high="9.5", low="9", close="9.2"),
+                COSTS,
+                ZERO_IMPACT,
+            )
+        )
+        == 1
+    )
+
+
 def test_broker_charge_is_separate_from_slippage_embedded_in_price() -> None:
     one_percent_cost = ExactCostProfile(
         "cost-v1", "one-percent", D("100"), D("0"), "AUD", False, D("0")

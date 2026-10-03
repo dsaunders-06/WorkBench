@@ -106,6 +106,7 @@ class PendingEntry:
     used_breakout_event_ids: frozenset[str]
     consumed_pattern_instance_ids: frozenset[str]
     applied_event_ids: frozenset[str]
+    structural_invalidation_raw: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +165,17 @@ def pending_entry_from_setup(decision: SetupDecision) -> PendingEntry:
         raise LifecycleInvariantError("instruction requires a finite limit above a positive stop")
     if decision.quantity < 2:
         raise LifecycleInvariantError("instruction requires at least two shares")
+    structural_invalidation = (
+        decision.structural_invalidation_raw
+        if decision.structural_invalidation_raw is not None
+        else decision.initial_stop_raw
+    )
+    if (
+        not structural_invalidation.is_finite()
+        or structural_invalidation < decision.initial_stop_raw
+        or structural_invalidation >= decision.entry_limit_raw
+    ):
+        raise LifecycleInvariantError("instruction has invalid structural invalidation")
     candidates = tuple(
         item.candidate
         for item in decision.pattern_decisions
@@ -189,6 +201,7 @@ def pending_entry_from_setup(decision: SetupDecision) -> PendingEntry:
         used_breakout_event_ids=breakout_ids,
         consumed_pattern_instance_ids=frozenset(),
         applied_event_ids=frozenset(),
+        structural_invalidation_raw=structural_invalidation,
     )
 
 

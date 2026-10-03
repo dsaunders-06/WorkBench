@@ -147,6 +147,7 @@ def apply_split_to_pending(pending: PendingEntry, event: SplitEvent) -> PendingE
         quantity=_split_quantity(pending.quantity, event),
         submitted_limit=to_raw_price(pending.submitted_limit, factor),
         initial_stop=to_raw_price(pending.initial_stop, factor),
+        structural_invalidation_raw=to_raw_price(pending.structural_invalidation_raw, factor),
         applied_event_ids=pending.applied_event_ids | {event.event_id},
     )
 

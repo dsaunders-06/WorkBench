@@ -540,11 +540,13 @@ without P&L or changing either initial risk denominator; a consolidation
 preserves value; a position held at the close before an ex-date accrues one
 dividend receivable and trade P&L once, a purchase on the ex-date receives
 nothing, and the payment date converts the receivable to cash without more
-P&L; a suspension defers a scheduled open exit; a symbol change preserves
-position identity; a delisting uses its explicit realizable outcome; a
-suspension resolving inside a 63-session tail exits at its first executable
-opportunity; an unresolved position is marked to zero at event onset and closes
-at named terminal session `T64` without recognizing the loss twice; and missing
+P&L; a suspension retains the last traded close as a flagged stale mark and
+does not itself schedule an exit; a due exit waits for the first executable
+resumed open while the official-session time stop keeps counting; a symbol
+change preserves position identity; a delisting uses its explicit realizable
+outcome; an unresolved halt closes at named terminal session `T64` for
+documented consideration or zero, without a baseline zero mark at onset; and
+missing
 identity, quantity, or event data needed for terminal valuation invalidates the
 run. Include a multi-leg trade proving that equal halves at +1R and +2R
 produce +1.5 `R_fill` gross before costs while `R_order` uses total net P&L over
