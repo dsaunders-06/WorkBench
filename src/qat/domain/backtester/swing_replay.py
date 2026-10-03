@@ -8,9 +8,22 @@ from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from decimal import Decimal
 from enum import StrEnum
+from fractions import Fraction
 from typing import Protocol
 
-from qat.domain.backtester.swing_events import SwingMarketEvent
+from qat.domain.backtester.swing_events import (
+    CashDividendEvent,
+    DelistingEvent,
+    DividendReceivable,
+    SplitEvent,
+    SuspensionEvent,
+    SwingMarketEvent,
+    SymbolChangeEvent,
+    apply_split_to_pending,
+    apply_split_to_position,
+    apply_symbol_change_to_pending,
+    apply_symbol_change_to_position,
+)
 from qat.domain.backtester.swing_fills import (
     AmbiguityPolicy,
     TradedDailyBar,
@@ -22,10 +35,12 @@ from qat.domain.backtester.swing_fills import (
 from qat.domain.backtester.swing_portfolio import (
     PortfolioState,
     allocate_entry_batch,
+    apply_dividend_cash,
     apply_fills,
     mark_to_market,
 )
 from qat.domain.backtester.swing_results import (
+    CorporateActionEvidence,
     FillAmbiguity,
     LifecycleActionSeries,
     PostFillResistanceDiagnostic,
@@ -50,6 +65,7 @@ from qat.domain.strategies.authoritative_swing.lifecycle import (
     cancel_pending_entry,
     evaluate_completed_close,
     pending_entry_from_setup,
+    schedule_exit,
 )
 from qat.domain.strategies.authoritative_swing.model import (
     DecisionStatus,
@@ -59,7 +75,7 @@ from qat.domain.strategies.authoritative_swing.model import (
     SetupDecision,
     SwingHistory,
 )
-from qat.domain.strategies.authoritative_swing.numeric import to_raw_price
+from qat.domain.strategies.authoritative_swing.numeric import SplitFactor, to_raw_price
 from qat.domain.strategies.authoritative_swing.resistance import find_resistance_zones
 from qat.domain.strategies.authoritative_swing.sizing import (
     ExactCostProfile,
@@ -114,6 +130,24 @@ class _TradeState:
     lowest_low: Decimal
     observed_triggers: list[str]
     post_fill_resistance: PostFillResistanceDiagnostic
+    eligible_dividends: Decimal = Decimal(0)
+    quantity_ratio: Fraction = Fraction(1, 1)
+
+
+def _entry_basis_price(price: Decimal, state: _TradeState) -> Decimal:
+    ratio = state.quantity_ratio
+    return to_raw_price(price, SplitFactor(ratio.denominator, ratio.numerator))
+
+
+def _event_order(event: SwingMarketEvent) -> tuple[int, str, str]:
+    precedence = {
+        CashDividendEvent: 0,
+        SplitEvent: 1,
+        SymbolChangeEvent: 2,
+        SuspensionEvent: 3,
+        DelistingEvent: 4,
+    }
+    return precedence[type(event)], event.symbol, event.event_id
 
 
 def _confirmed(fill: SimulatedFill) -> ConfirmedFill:
@@ -124,6 +158,71 @@ def _confirmed(fill: SimulatedFill) -> ConfirmedFill:
         fill.quantity,
         fill.price,
         fill.reason,
+    )
+
+
+def _terminal_fill(
+    position: SwingPosition,
+    session: date,
+    price: Decimal,
+    reason: str,
+    source_event_id: str | None = None,
+) -> SimulatedFill:
+    return SimulatedFill(
+        stable_decision_id(
+            {
+                "kind": reason,
+                "position_id": position.position_id,
+                "session": session,
+                "price": price,
+                "source_event_id": source_event_id,
+            }
+        ),
+        position.symbol,
+        session,
+        "sell",
+        position.open_quantity,
+        price,
+        Decimal(0),
+        reason,
+        source_event_id=source_event_id,
+    )
+
+
+def _corporate_action_evidence(
+    event: SplitEvent | SymbolChangeEvent,
+    before: PendingEntry | SwingPosition,
+    after: PendingEntry | SwingPosition,
+) -> CorporateActionEvidence:
+    if isinstance(before, PendingEntry) and isinstance(after, PendingEntry):
+        position_id = before.instruction_id
+        quantity_before, quantity_after = before.quantity, after.quantity
+        entry_before, entry_after = before.submitted_limit, after.submitted_limit
+        stop_before, stop_after = before.initial_stop, after.initial_stop
+        target_before = target_after = None
+    elif isinstance(before, SwingPosition) and isinstance(after, SwingPosition):
+        position_id = before.position_id
+        quantity_before, quantity_after = before.open_quantity, after.open_quantity
+        entry_before, entry_after = before.entry_fill, after.entry_fill
+        stop_before, stop_after = before.current_stop, after.current_stop
+        target_before, target_after = before.target_price, after.target_price
+    else:
+        raise TypeError("corporate-action evidence requires matching lifecycle types")
+    return CorporateActionEvidence(
+        event.event_id,
+        "split" if isinstance(event, SplitEvent) else "symbol_change",
+        position_id,
+        event.effective_session,
+        before.symbol,
+        after.symbol,
+        quantity_before,
+        quantity_after,
+        entry_before,
+        entry_after,
+        stop_before,
+        stop_after,
+        target_before,
+        target_after,
     )
 
 
@@ -187,6 +286,7 @@ class AuthoritativeSwingReplay:
         costs: ExactCostProfile,
         liquidity: LiquidityProfile,
         ambiguity_policy: AmbiguityPolicy = AmbiguityPolicy.CONSERVATIVE,
+        final_entry_session: date | None = None,
     ) -> None:
         self._calendar_rows = tuple(calendar_rows)
         self._bars = {symbol: tuple(items) for symbol, items in bars.items()}
@@ -198,6 +298,7 @@ class AuthoritativeSwingReplay:
         self._costs = costs
         self._liquidity = liquidity
         self._ambiguity_policy = ambiguity_policy
+        self._final_entry_session = final_entry_session
 
     def _validate_inputs(self) -> tuple[str, ...]:
         reasons: list[str] = []
@@ -251,10 +352,46 @@ class AuthoritativeSwingReplay:
                 reasons.append(
                     "benchmark must contain one finalized row for every tradable session"
                 )
-        if self._corporate_actions:
-            reasons.append("corporate-action transformation belongs to Phase 2B Task 6")
+        event_ids = tuple(event.event_id for event in self._corporate_actions)
+        if len(event_ids) != len(set(event_ids)):
+            reasons.append("corporate-action identities are duplicated")
+        for event in self._corporate_actions:
+            row = by_date.get(event.effective_session)
+            if row is None or not row.is_tradable:
+                reasons.append(f"corporate action {event.event_id} lacks a tradable session")
+            if event.symbol not in self._bars:
+                reasons.append(f"corporate action {event.event_id} lacks symbol history")
+            if isinstance(event, SymbolChangeEvent) and event.new_symbol not in self._bars:
+                reasons.append(f"symbol change {event.event_id} lacks new-symbol history")
+            if isinstance(event, SuspensionEvent) and any(
+                bar.session >= event.effective_session
+                and (event.resume_session is None or bar.session < event.resume_session)
+                for bar in self._bars.get(event.symbol, ())
+            ):
+                reasons.append(f"suspension {event.event_id} has contradictory traded bars")
+            if isinstance(event, DelistingEvent) and any(
+                bar.session >= event.effective_session
+                for bar in self._bars.get(event.symbol, ())
+            ):
+                reasons.append(f"delisting {event.event_id} has contradictory traded bars")
         if not self._starting_equity.is_finite() or self._starting_equity <= 0:
             reasons.append("starting equity must be finite and positive")
+        tradable = tuple(
+            row.calendar_date for row in self._calendar_rows if row.is_tradable
+        )
+        if self._final_entry_session is not None:
+            if self._final_entry_session not in tradable:
+                reasons.append("final entry session is absent from the official calendar")
+            elif len(tradable) - tradable.index(self._final_entry_session) - 1 < 63:
+                reasons.append("the authorized 63-session outcome tail is incomplete")
+            elif dates[-1] > tradable[tradable.index(self._final_entry_session) + 63]:
+                reasons.append("calendar includes rows beyond authorized T64")
+        elif any(
+            isinstance(event, DelistingEvent) and event.realizable_price is None
+            or isinstance(event, SuspensionEvent) and event.resume_session is None
+            for event in self._corporate_actions
+        ):
+            reasons.append("unresolved market event requires an authorized 63-session tail")
         return tuple(dict.fromkeys(reasons))
 
     def run(self) -> SwingReplayResult:
@@ -273,6 +410,8 @@ class AuthoritativeSwingReplay:
         position_events: list[LifecycleAction] = []
         fills: list[SimulatedFill] = []
         trades: list[SwingTrade] = []
+        corporate_action_evidence: list[CorporateActionEvidence] = []
+        dividend_entitlements: list[DividendReceivable] = []
         equity = []
         abstentions: list[RuleEvidence] = []
         ambiguities: list[FillAmbiguity] = []
@@ -280,9 +419,30 @@ class AuthoritativeSwingReplay:
         decision_by_id: dict[str, SetupDecision] = {}
         used_breakouts: set[str] = set()
         consumed_patterns: set[str] = set()
+        tradable_sessions = tuple(
+            row.calendar_date for row in self._calendar_rows if row.is_tradable
+        )
+        terminal_session = (
+            tradable_sessions[tradable_sessions.index(self._final_entry_session) + 63]
+            if self._final_entry_session is not None
+            else None
+        )
+        events_by_session: dict[date, list[SwingMarketEvent]] = defaultdict(list)
+        for event in self._corporate_actions:
+            events_by_session[event.effective_session].append(event)
+        receivables: dict[str, DividendReceivable] = {}
+        active_suspensions: dict[str, date | None] = {}
+        suspension_event_ids: dict[str, str] = {}
+        unresolved_delistings: dict[str, str] = {}
 
         for row in self._calendar_rows:
             if not row.is_tradable:
+                for receivable in tuple(receivables.values()):
+                    if receivable.payment_date == row.calendar_date:
+                        portfolio = apply_dividend_cash(
+                            portfolio, receivable.event_id, receivable.face_value
+                        )
+                        receivables.pop(receivable.event_id)
                 continue
             session = row.calendar_date
             session_bars = {
@@ -290,6 +450,148 @@ class AuthoritativeSwingReplay:
                 for symbol, indexed in bars_by_session.items()
                 if session in indexed
             }
+
+            for event in sorted(events_by_session[session], key=_event_order):
+                if isinstance(event, SplitEvent):
+                    affected_quantities = (
+                        (() if event.symbol not in pending else (pending[event.symbol].quantity,))
+                        + tuple(
+                            quantity
+                            for position in portfolio.positions
+                            if position.symbol == event.symbol
+                            for quantity in (
+                                position.total_quantity,
+                                position.banked_quantity,
+                                position.runner_quantity,
+                            )
+                        )
+                    )
+                    if any(
+                        quantity * event.numerator % event.denominator
+                        for quantity in affected_quantities
+                    ):
+                        return _empty_result(
+                            status=RunStatus.INVALID,
+                            invalid_reasons=(
+                                f"split {event.event_id} requires a fractional-share outcome",
+                            ),
+                        )
+                    if event.symbol in pending:
+                        before = pending[event.symbol]
+                        pending[event.symbol] = apply_split_to_pending(before, event)
+                        corporate_action_evidence.append(
+                            _corporate_action_evidence(event, before, pending[event.symbol])
+                        )
+                    transformed: list[SwingPosition] = []
+                    for position in portfolio.positions:
+                        updated = apply_split_to_position(position, event)
+                        if updated is not position:
+                            corporate_action_evidence.append(
+                                _corporate_action_evidence(event, position, updated)
+                            )
+                            state = trade_states[position.position_id]
+                            state.quantity_ratio *= Fraction(
+                                event.numerator, event.denominator
+                            )
+                        transformed.append(updated)
+                    portfolio = replace(portfolio, positions=tuple(transformed))
+                elif isinstance(event, SymbolChangeEvent):
+                    if event.symbol in active_suspensions:
+                        active_suspensions[event.new_symbol] = active_suspensions.pop(
+                            event.symbol
+                        )
+                        suspension_event_ids[event.new_symbol] = suspension_event_ids.pop(
+                            event.symbol
+                        )
+                    if event.symbol in unresolved_delistings:
+                        unresolved_delistings[event.new_symbol] = unresolved_delistings.pop(
+                            event.symbol
+                        )
+                    if event.symbol in pending:
+                        before = pending.pop(event.symbol)
+                        pending[event.new_symbol] = apply_symbol_change_to_pending(before, event)
+                        corporate_action_evidence.append(
+                            _corporate_action_evidence(
+                                event, before, pending[event.new_symbol]
+                            )
+                        )
+                    transformed = []
+                    for position in portfolio.positions:
+                        updated = apply_symbol_change_to_position(position, event)
+                        if updated is not position:
+                            corporate_action_evidence.append(
+                                _corporate_action_evidence(event, position, updated)
+                            )
+                            trade_states[position.position_id].position = updated
+                        transformed.append(updated)
+                    portfolio = replace(
+                        portfolio,
+                        positions=tuple(transformed),
+                        pending_allocations=tuple(
+                            replace(allocation, symbol=event.new_symbol)
+                            if allocation.symbol == event.symbol
+                            else allocation
+                            for allocation in portfolio.pending_allocations
+                        ),
+                    )
+                elif isinstance(event, SuspensionEvent):
+                    active_suspensions[event.symbol] = event.resume_session
+                    suspension_event_ids[event.symbol] = event.event_id
+                    portfolio = replace(
+                        portfolio,
+                        positions=tuple(
+                            schedule_exit(position, ("suspension_exit",))
+                            if position.symbol == event.symbol
+                            else position
+                            for position in portfolio.positions
+                        ),
+                    )
+                elif isinstance(event, DelistingEvent):
+                    if event.realizable_price is None:
+                        unresolved_delistings[event.symbol] = event.event_id
+                    else:
+                        for position in tuple(portfolio.positions):
+                            if position.symbol == event.symbol:
+                                portfolio = self._apply_terminal_exit(
+                                    portfolio,
+                                    position,
+                                    session,
+                                    event.realizable_price,
+                                    "delisting_outcome",
+                                    position_events,
+                                    fills,
+                                    trade_states,
+                                    trades,
+                                    source_event_id=event.event_id,
+                                )
+                elif isinstance(event, CashDividendEvent):
+                    for position in portfolio.positions:
+                        if position.symbol != event.symbol:
+                            continue
+                        face = Decimal(position.open_quantity) * event.amount_per_share
+                        receivable = DividendReceivable(
+                            event.event_id,
+                            position.position_id,
+                            event.symbol,
+                            event.declaration_date,
+                            event.ex_session,
+                            event.record_date,
+                            event.payment_date,
+                            position.open_quantity,
+                            event.amount_per_share,
+                            face,
+                        )
+                        receivables[event.event_id] = receivable
+                        dividend_entitlements.append(receivable)
+                        trade_states[position.position_id].eligible_dividends += face
+                        portfolio = replace(
+                            portfolio,
+                            dividend_receivables=portfolio.dividend_receivables + face,
+                        )
+            for symbol, resume in tuple(active_suspensions.items()):
+                if resume is not None and session >= resume:
+                    active_suspensions.pop(symbol)
+                    suspension_event_ids.pop(symbol)
 
             portfolio, closed = self._resolve_opening_positions(
                 portfolio,
@@ -320,9 +622,37 @@ class AuthoritativeSwingReplay:
                 trades,
                 ambiguities,
             )
+            if session == terminal_session:
+                for position in tuple(portfolio.positions):
+                    if (
+                        position.symbol in unresolved_delistings
+                        or position.symbol in active_suspensions
+                    ):
+                        portfolio = self._apply_terminal_exit(
+                            portfolio,
+                            position,
+                            session,
+                            Decimal(0),
+                            "terminal_zero",
+                            position_events,
+                            fills,
+                            trade_states,
+                            trades,
+                            source_event_id=(
+                                unresolved_delistings.get(position.symbol)
+                                or suspension_event_ids.get(position.symbol)
+                            ),
+                        )
+            for receivable in tuple(receivables.values()):
+                if receivable.payment_date == session:
+                    portfolio = apply_dividend_cash(
+                        portfolio, receivable.event_id, receivable.face_value
+                    )
+                    receivables.pop(receivable.event_id)
 
             open_symbols = {position.symbol for position in portfolio.positions}
-            missing_open = tuple(sorted(open_symbols - session_bars.keys()))
+            zero_marked = active_suspensions.keys() | unresolved_delistings.keys()
+            missing_open = tuple(sorted(open_symbols - session_bars.keys() - zero_marked))
             if missing_open:
                 return _empty_result(
                     status=RunStatus.INVALID,
@@ -331,10 +661,14 @@ class AuthoritativeSwingReplay:
                         for symbol in missing_open
                     ),
                 )
+            closing_prices = {
+                symbol: bar.raw.close for symbol, bar in session_bars.items()
+            }
+            closing_prices.update((symbol, Decimal(0)) for symbol in zero_marked)
             point = mark_to_market(
                 portfolio,
                 session,
-                {symbol: bar.raw.close for symbol, bar in session_bars.items()},
+                closing_prices,
             )
             portfolio = self._evaluate_closes(
                 portfolio,
@@ -347,6 +681,9 @@ class AuthoritativeSwingReplay:
             blocked_symbols = {
                 position.symbol for position in portfolio.positions
             } | set(pending)
+            if self._final_entry_session is not None and session >= self._final_entry_session:
+                equity.append(point)
+                continue
             for symbol in sorted(self._membership.get(session, frozenset())):
                 bar = session_bars.get(symbol)
                 if bar is None:
@@ -426,7 +763,7 @@ class AuthoritativeSwingReplay:
                     self._costs,
                     self._liquidity,
                 )
-                if qualified
+                if qualified and portfolio.available_cash > 0
                 else ()
             )
             for allocation in allocations:
@@ -451,15 +788,28 @@ class AuthoritativeSwingReplay:
             )
             equity.append(point)
 
-        signal_trades, signal_abstentions = replay_signal_candidates(
-            calendar_rows=self._calendar_rows,
-            bars=self._bars,
-            decisions=signal_decisions,
-            reference_equity=self._starting_equity,
-            costs=self._costs,
-            liquidity=self._liquidity,
-            ambiguity_policy=self._ambiguity_policy,
-        )
+        try:
+            (
+                signal_trades,
+                signal_abstentions,
+                signal_action_evidence,
+                signal_dividend_entitlements,
+            ) = replay_signal_candidates(
+                calendar_rows=self._calendar_rows,
+                bars=self._bars,
+                decisions=signal_decisions,
+                reference_equity=self._starting_equity,
+                costs=self._costs,
+                liquidity=self._liquidity,
+                ambiguity_policy=self._ambiguity_policy,
+                corporate_actions=self._corporate_actions,
+                terminal_session=terminal_session,
+            )
+        except ValueError as error:
+            return _empty_result(
+                status=RunStatus.INVALID,
+                invalid_reasons=(f"signal lifecycle event is incomplete: {error}",),
+            )
         abstentions.extend(signal_abstentions)
         return SwingReplayResult(
             RunStatus.VALID,
@@ -473,6 +823,40 @@ class AuthoritativeSwingReplay:
             tuple(abstentions),
             tuple(ambiguities),
             signal_decisions=tuple(signal_decisions),
+            corporate_action_evidence=tuple(corporate_action_evidence),
+            dividend_entitlements=tuple(dividend_entitlements),
+            signal_corporate_action_evidence=signal_action_evidence,
+            signal_dividend_entitlements=signal_dividend_entitlements,
+        )
+
+    def _apply_terminal_exit(
+        self,
+        portfolio: PortfolioState,
+        position: SwingPosition,
+        session: date,
+        price: Decimal,
+        reason: str,
+        actions: list[LifecycleAction],
+        all_fills: list[SimulatedFill],
+        trade_states: dict[str, _TradeState],
+        trades: list[SwingTrade],
+        *,
+        source_event_id: str | None,
+    ) -> PortfolioState:
+        fill = _terminal_fill(position, session, price, reason, source_event_id)
+        updated = apply_exit_fill(position, _confirmed(fill))
+        portfolio = apply_fills(portfolio, (fill,))
+        actions.append(_action(position.state, updated, fill, "sell_fill"))
+        all_fills.append(fill)
+        state = trade_states.pop(position.position_id)
+        state.exits.append(fill)
+        state.observed_triggers.extend(position.scheduled_exit_triggers)
+        trades.append(_trade(state, updated, reason))
+        return replace(
+            portfolio,
+            positions=tuple(
+                item for item in portfolio.positions if item.position_id != position.position_id
+            ),
         )
 
     def _resolve_pending_entries(
@@ -617,8 +1001,12 @@ class AuthoritativeSwingReplay:
                 policy=self._ambiguity_policy,
             )
             state = trade_states[position.position_id]
-            state.highest_high = max(state.highest_high, source.raw.high)
-            state.lowest_low = min(state.lowest_low, source.raw.low)
+            state.highest_high = max(
+                state.highest_high, _entry_basis_price(source.raw.high, state)
+            )
+            state.lowest_low = min(
+                state.lowest_low, _entry_basis_price(source.raw.low, state)
+            )
             updated = position
             for fill in simulated:
                 before = updated.state
@@ -650,7 +1038,10 @@ class AuthoritativeSwingReplay:
     ) -> PortfolioState:
         positions: list[SwingPosition] = []
         for position in portfolio.positions:
-            source = session_bars[position.symbol]
+            source = session_bars.get(position.symbol)
+            if source is None:
+                positions.append(position)
+                continue
             history = tuple(
                 item for item in self._bars[position.symbol] if item.session <= source.session
             )
@@ -734,7 +1125,14 @@ def replay_signal_candidates(
     costs: ExactCostProfile,
     liquidity: LiquidityProfile,
     ambiguity_policy: AmbiguityPolicy = AmbiguityPolicy.CONSERVATIVE,
-) -> tuple[tuple[SwingTrade, ...], tuple[RuleEvidence, ...]]:
+    corporate_actions: Sequence[SwingMarketEvent] = (),
+    terminal_session: date | None = None,
+) -> tuple[
+    tuple[SwingTrade, ...],
+    tuple[RuleEvidence, ...],
+    tuple[CorporateActionEvidence, ...],
+    tuple[DividendReceivable, ...],
+]:
     """Replay per-pattern candidates at one fixed risk-equity reference."""
 
     indexed = {
@@ -747,12 +1145,21 @@ def replay_signal_candidates(
             by_session[decision.session].append(decision)
 
     pending: dict[tuple[str, object], PendingEntry] = {}
+    pending_decisions: dict[tuple[str, object], SetupDecision] = {}
     positions: dict[tuple[str, object], SwingPosition] = {}
     trade_states: dict[tuple[str, object], _TradeState] = {}
     used_breakouts: dict[tuple[str, object], set[str]] = defaultdict(set)
     consumed_patterns: dict[tuple[str, object], set[str]] = defaultdict(set)
     trades: list[SwingTrade] = []
     abstentions: list[RuleEvidence] = []
+    corporate_action_evidence: list[CorporateActionEvidence] = []
+    dividend_entitlements: list[DividendReceivable] = []
+    events_by_session: dict[date, list[SwingMarketEvent]] = defaultdict(list)
+    for event in corporate_actions:
+        events_by_session[event.effective_session].append(event)
+    active_suspensions: dict[str, date | None] = {}
+    suspension_event_ids: dict[str, str] = {}
+    unresolved_delistings: dict[str, str] = {}
 
     for row in calendar_rows:
         if not row.is_tradable:
@@ -763,6 +1170,145 @@ def replay_signal_candidates(
             for symbol, symbol_bars in indexed.items()
             if session in symbol_bars
         }
+        for event in sorted(events_by_session[session], key=_event_order):
+            if isinstance(event, SplitEvent):
+                for key, instruction in tuple(pending.items()):
+                    transformed_pending = apply_split_to_pending(instruction, event)
+                    if transformed_pending is not instruction:
+                        corporate_action_evidence.append(
+                            _corporate_action_evidence(event, instruction, transformed_pending)
+                        )
+                    pending[key] = transformed_pending
+                for key, position in tuple(positions.items()):
+                    transformed_position = apply_split_to_position(position, event)
+                    if transformed_position is not position:
+                        corporate_action_evidence.append(
+                            _corporate_action_evidence(event, position, transformed_position)
+                        )
+                        trade_states[key].quantity_ratio *= Fraction(
+                            event.numerator, event.denominator
+                        )
+                    positions[key] = transformed_position
+            elif isinstance(event, SymbolChangeEvent):
+                if event.symbol in active_suspensions:
+                    active_suspensions[event.new_symbol] = active_suspensions.pop(
+                        event.symbol
+                    )
+                    suspension_event_ids[event.new_symbol] = suspension_event_ids.pop(
+                        event.symbol
+                    )
+                if event.symbol in unresolved_delistings:
+                    unresolved_delistings[event.new_symbol] = unresolved_delistings.pop(
+                        event.symbol
+                    )
+                for identities in (used_breakouts, consumed_patterns):
+                    for old_key in tuple(identities):
+                        if old_key[0] == event.symbol:
+                            new_key = (event.new_symbol, old_key[1])
+                            identities[new_key].update(identities.pop(old_key))
+                for key, instruction in tuple(pending.items()):
+                    if instruction.symbol != event.symbol:
+                        continue
+                    new_key = (event.new_symbol, key[1])
+                    transformed_pending = apply_symbol_change_to_pending(instruction, event)
+                    corporate_action_evidence.append(
+                        _corporate_action_evidence(event, instruction, transformed_pending)
+                    )
+                    pending[new_key] = transformed_pending
+                    pending.pop(key)
+                    pending_decisions[new_key] = pending_decisions.pop(key)
+                for key, position in tuple(positions.items()):
+                    if position.symbol != event.symbol:
+                        continue
+                    new_key = (event.new_symbol, key[1])
+                    transformed_position = apply_symbol_change_to_position(position, event)
+                    corporate_action_evidence.append(
+                        _corporate_action_evidence(event, position, transformed_position)
+                    )
+                    positions[new_key] = transformed_position
+                    positions.pop(key)
+                    state = trade_states.pop(key)
+                    state.position = transformed_position
+                    trade_states[new_key] = state
+            elif isinstance(event, SuspensionEvent):
+                active_suspensions[event.symbol] = event.resume_session
+                suspension_event_ids[event.symbol] = event.event_id
+                for key, position in tuple(positions.items()):
+                    if position.symbol == event.symbol:
+                        positions[key] = schedule_exit(position, ("suspension_exit",))
+            elif isinstance(event, DelistingEvent):
+                if event.realizable_price is None:
+                    unresolved_delistings[event.symbol] = event.event_id
+                else:
+                    for key, position in tuple(positions.items()):
+                        if position.symbol != event.symbol:
+                            continue
+                        fill = _terminal_fill(
+                            position,
+                            session,
+                            event.realizable_price,
+                            "delisting_outcome",
+                            event.event_id,
+                        )
+                        updated = apply_exit_fill(position, _confirmed(fill))
+                        state = trade_states.pop(key)
+                        state.exits.append(fill)
+                        trades.append(_trade(state, updated, fill.reason))
+                        positions.pop(key)
+            elif isinstance(event, CashDividendEvent):
+                for key, position in positions.items():
+                    if position.symbol == event.symbol:
+                        face = Decimal(position.open_quantity) * event.amount_per_share
+                        dividend_entitlements.append(
+                            DividendReceivable(
+                                event.event_id,
+                                position.position_id,
+                                event.symbol,
+                                event.declaration_date,
+                                event.ex_session,
+                                event.record_date,
+                                event.payment_date,
+                                position.open_quantity,
+                                event.amount_per_share,
+                                face,
+                            )
+                        )
+                        trade_states[key].eligible_dividends += face
+        for symbol, resume in tuple(active_suspensions.items()):
+            if resume is not None and session >= resume:
+                active_suspensions.pop(symbol)
+                suspension_event_ids.pop(symbol)
+
+        for position in positions.values():
+            if (
+                position.symbol not in session_bars
+                and position.symbol not in active_suspensions
+                and position.symbol not in unresolved_delistings
+            ):
+                raise ValueError(
+                    f"missing signal position mark for {position.symbol} on {session}"
+                )
+
+        if session == terminal_session:
+            for key, position in tuple(positions.items()):
+                if (
+                    position.symbol not in unresolved_delistings
+                    and position.symbol not in active_suspensions
+                ):
+                    continue
+                fill = _terminal_fill(
+                    position,
+                    session,
+                    Decimal(0),
+                    "terminal_zero",
+                    unresolved_delistings.get(position.symbol)
+                    or suspension_event_ids.get(position.symbol),
+                )
+                updated = apply_exit_fill(position, _confirmed(fill))
+                state = trade_states.pop(key)
+                state.exits.append(fill)
+                trades.append(_trade(state, updated, fill.reason))
+                positions.pop(key)
 
         for key, position in tuple(sorted(positions.items(), key=lambda item: str(item[0]))):
             source = session_bars.get(position.symbol)
@@ -789,11 +1335,7 @@ def replay_signal_candidates(
                 fill = entry_fills[0]
                 position = apply_entry_fill(instruction, _confirmed(fill))
                 positions[key] = position
-                decision = next(
-                    item
-                    for item in by_session[instruction.signal_session]
-                    if item.symbol == instruction.symbol and key[1] in item.patterns
-                )
+                decision = pending_decisions.pop(key)
                 trade_states[key] = _TradeState(
                     decision,
                     fill,
@@ -818,14 +1360,19 @@ def replay_signal_candidates(
                     "next_session_entry_not_filled",
                 )
             pending.pop(key)
+            pending_decisions.pop(key, None)
 
         for key, position in tuple(sorted(positions.items(), key=lambda item: str(item[0]))):
             source = session_bars.get(position.symbol)
             if source is None:
                 continue
             state = trade_states[key]
-            state.highest_high = max(state.highest_high, source.raw.high)
-            state.lowest_low = min(state.lowest_low, source.raw.low)
+            state.highest_high = max(
+                state.highest_high, _entry_basis_price(source.raw.high, state)
+            )
+            state.lowest_low = min(
+                state.lowest_low, _entry_basis_price(source.raw.low, state)
+            )
             intraday = resolve_protective_session(
                 position,
                 _traded(source),
@@ -921,9 +1468,15 @@ def replay_signal_candidates(
                 )
                 instruction = pending_entry_from_setup(isolated)
                 pending[key] = instruction
+                pending_decisions[key] = decision
                 used_breakouts[key].update(instruction.breakout_event_ids)
 
-    return tuple(trades), tuple(abstentions)
+    return (
+        tuple(trades),
+        tuple(abstentions),
+        tuple(corporate_action_evidence),
+        tuple(dividend_entitlements),
+    )
 
 
 def _evaluate_position_close(
@@ -1007,11 +1560,10 @@ def _trade(
     exit_notional = sum(
         (Decimal(fill.quantity) * fill.price for fill in state.exits), Decimal(0)
     )
-    exit_quantity = sum(fill.quantity for fill in state.exits)
-    exit_price = exit_notional / Decimal(exit_quantity)
+    exit_price = exit_notional / Decimal(quantity)
     gross = exit_notional - Decimal(quantity) * state.entry.price
     costs = state.entry.cost + sum((fill.cost for fill in state.exits), Decimal(0))
-    net = gross - costs
+    net = gross + state.eligible_dividends - costs
     order_risk = state.position.order_initial_risk_dollars
     fill_risk = state.position.fill_initial_risk_dollars
     favorable = Decimal(quantity) * (state.highest_high - state.entry.price)
@@ -1033,7 +1585,7 @@ def _trade(
         exit_price,
         state.position.initial_stop,
         gross,
-        Decimal(0),
+        state.eligible_dividends,
         costs,
         net,
         order_risk,

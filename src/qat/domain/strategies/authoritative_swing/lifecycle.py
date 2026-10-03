@@ -46,7 +46,13 @@ class ConfirmedFill:
             raise ValueError("fill side must be buy or sell")
         if self.quantity <= 0:
             raise ValueError("fill quantity must be positive")
-        if not self.price.is_finite() or self.price <= 0:
+        if not self.price.is_finite() or self.price < 0 or (
+            self.price == 0
+            and (
+                self.side != "sell"
+                or self.reason not in {"terminal_zero", "delisting_outcome"}
+            )
+        ):
             raise ValueError("fill price must be finite and positive")
 
 
@@ -132,7 +138,10 @@ class SwingPosition:
     def open_quantity(self) -> int:
         if self.state in {PositionState.CLOSED, PositionState.CANCELLED}:
             return 0
-        if self.state is PositionState.RUNNER:
+        if self.state is PositionState.RUNNER or (
+            self.state is PositionState.EXIT_PENDING
+            and self.target_fill_session is not None
+        ):
             return self.runner_quantity
         return self.total_quantity
 

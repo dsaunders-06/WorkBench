@@ -8,6 +8,7 @@ from datetime import date
 from decimal import Decimal
 from enum import StrEnum
 
+from qat.domain.backtester.swing_events import DividendReceivable
 from qat.domain.strategies.authoritative_swing.lifecycle import LifecycleAction
 from qat.domain.strategies.authoritative_swing.model import (
     Pattern,
@@ -57,16 +58,25 @@ class SimulatedFill:
     cost: Decimal
     reason: str
     ambiguous: bool = False
+    source_event_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.event_id or not self.symbol or not self.reason:
             raise ValueError("simulated fill identity, symbol, and reason are required")
         if self.side not in {"buy", "sell"} or self.quantity <= 0:
             raise ValueError("simulated fill side and quantity are invalid")
-        if not self.price.is_finite() or self.price <= 0:
+        if not self.price.is_finite() or self.price < 0 or (
+            self.price == 0
+            and (
+                self.side != "sell"
+                or self.reason not in {"terminal_zero", "delisting_outcome"}
+            )
+        ):
             raise ValueError("simulated fill price must be finite and positive")
         if not self.cost.is_finite() or self.cost < 0:
             raise ValueError("simulated fill cost must be finite and non-negative")
+        if self.reason in {"terminal_zero", "delisting_outcome"} and not self.source_event_id:
+            raise ValueError("terminal fill requires a source market-event identity")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +136,24 @@ class ReplayEquityPoint:
 
 
 @dataclass(frozen=True, slots=True)
+class CorporateActionEvidence:
+    event_id: str
+    kind: str
+    position_id: str
+    session: date
+    symbol_before: str
+    symbol_after: str
+    quantity_before: int
+    quantity_after: int
+    entry_price_before: Decimal
+    entry_price_after: Decimal
+    stop_before: Decimal
+    stop_after: Decimal
+    target_before: Decimal | None
+    target_after: Decimal | None
+
+
+@dataclass(frozen=True, slots=True)
 class SwingReplayResult:
     status: RunStatus
     arm: ReplayArm
@@ -139,3 +167,7 @@ class SwingReplayResult:
     ambiguities: tuple[FillAmbiguity, ...]
     invalid_reasons: tuple[str, ...] = ()
     signal_decisions: tuple[SetupDecision, ...] = ()
+    corporate_action_evidence: tuple[CorporateActionEvidence, ...] = ()
+    dividend_entitlements: tuple[DividendReceivable, ...] = ()
+    signal_corporate_action_evidence: tuple[CorporateActionEvidence, ...] = ()
+    signal_dividend_entitlements: tuple[DividendReceivable, ...] = ()

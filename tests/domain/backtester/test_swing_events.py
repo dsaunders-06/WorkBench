@@ -45,3 +45,18 @@ def test_invalid_market_event_facts_are_rejected() -> None:
         SplitEvent("bad", "BHP.AX", date(2026, 1, 6), 0, 1)
     with pytest.raises(ValueError):
         DelistingEvent("bad", "BHP.AX", date(2026, 1, 10), Decimal("NaN"))
+
+
+def test_historical_events_reject_binary_float_and_boolean_numbers() -> None:
+    session = date(2026, 1, 6)
+    with pytest.raises(TypeError):
+        SplitEvent("float-ratio", "BHP.AX", session, 1.5, 1)  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        SplitEvent("bool-ratio", "BHP.AX", session, True, 1)
+    with pytest.raises(TypeError):
+        CashDividendEvent(
+            "float-dividend", "BHP.AX", session, session, session, session,
+            session, 0.2  # type: ignore[arg-type]
+        )
+    with pytest.raises(TypeError):
+        DelistingEvent("float-outcome", "BHP.AX", session, 1.5)  # type: ignore[arg-type]

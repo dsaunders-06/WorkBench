@@ -88,6 +88,7 @@ def _transitive_imports() -> set[str]:
 def test_phase2_transitive_import_graph_has_no_execution_dependencies() -> None:
     forbidden = (
         "qat.domain.oms",
+        "qat.domain.corporate_actions",
         "qat.data.broker.adapter",
         "qat.domain.autonomy",
         "qat.presentation",
