@@ -17,7 +17,7 @@ import numpy as np
 
 from qat.domain.backtester.swing_results import ReplayEquityPoint, SwingTrade
 
-STATISTICS_NUMERIC_POLICY = "numpy-binary64-pcg64-wcr-s-v1"
+STATISTICS_NUMERIC_POLICY = "numpy-binary64-pcg64-wcr-s-cv1-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,11 +158,11 @@ def _cluster_frame(months: Sequence[Sequence[Decimal]]) -> _ClusterFrame:
     if nonempty < 2 or total_count <= 1:
         raise ValueError("WCR-S variance needs at least two nonempty clusters")
     mean = float(sums.sum() / total_count)
-    leverage = counts / total_count
-    if np.any(leverage >= 1):
-        raise ValueError("WCR-S has a cluster with unit leverage")
-    transformed = (sums - counts * mean) / (1 - leverage)
-    variance = nonempty / (nonempty - 1) * float(np.sum(transformed**2)) / total_count**2
+    # WCR-S uses CV1 for the observed statistic. The restricted score
+    # transformation changes only the bootstrap DGP (MacKinnon et al., 2023,
+    # Table 1); with one coefficient fixed by the null it reduces to raw scores.
+    scores = sums - counts * mean
+    variance = nonempty / (nonempty - 1) * float(np.sum(scores**2)) / total_count**2
     if not math.isfinite(variance) or variance <= 0:
         raise ValueError("WCR-S variance is undefined or collapsed")
     return _ClusterFrame(sums, counts, total_count, nonempty, mean, math.sqrt(variance))
@@ -193,7 +193,10 @@ def _bootstrap_statistics(
     frame: _ClusterFrame, weights: np.ndarray, null_mean: float
 ) -> np.ndarray:
     leverage = frame.counts / frame.total_count
-    restricted = (frame.sums - frame.counts * null_mean) / (1 - leverage)
+    # Equation (37) of MacKinnon et al. (2023): there are no unrestricted
+    # nuisance regressors in this intercept-only model, so the restricted
+    # transformed score is sum(y_g - null_mean) without a leverage divisor.
+    restricted = frame.sums - frame.counts * null_mean
     weighted = weights * restricted
     numerators = np.sum(weighted, axis=1)
     centered = weighted - numerators[:, None] * leverage
@@ -213,8 +216,7 @@ def _one_sided_p(frame: _ClusterFrame, weights: np.ndarray, null_mean: float) ->
 
 def _lower_bound(frame: _ClusterFrame, weights: np.ndarray) -> Decimal:
     if len(weights) < 39:
-        critical = float(np.quantile(_bootstrap_statistics(frame, weights, 0.0), 0.975))
-        return Decimal(str(frame.mean - critical * frame.standard_error))
+        raise ValueError("WCR-S needs at least 39 draws for 2.5% bound inversion")
     target = Decimal("0.025")
     high = frame.mean
     low = high - 2 * frame.standard_error

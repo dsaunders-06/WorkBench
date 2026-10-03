@@ -22,35 +22,70 @@ from qat.domain.backtester.swing_statistics import (
 from qat.domain.strategies.authoritative_swing.model import Pattern
 
 
-def _reference_t(values: tuple[Decimal, ...]) -> float:
-    """Independent equal-cluster CRV3 intercept reference for a small fixture."""
-    observations = [float(value) for value in values]
-    mean = sum(observations) / len(observations)
-    leverage = 1 / len(observations)
-    transformed = [(value - mean) / (1 - leverage) for value in observations]
-    variance = len(observations) / (len(observations) - 1)
-    variance *= sum(score * score for score in transformed) / len(observations) ** 2
+def _reference_t(months: tuple[tuple[Decimal, ...], ...]) -> float:
+    """Independent intercept-only CV1 reference with unequal month sizes."""
+    sums = [sum(float(value) for value in month) for month in months]
+    counts = [len(month) for month in months]
+    total = sum(counts)
+    mean = sum(sums) / total
+    cluster_scores = [score - count * mean for score, count in zip(sums, counts, strict=True)]
+    nonempty = sum(count > 0 for count in counts)
+    variance = nonempty / (nonempty - 1)
+    variance *= sum(score * score for score in cluster_scores) / total**2
     return mean / variance**0.5
 
 
+def _reference_pvalue(
+    months: tuple[tuple[Decimal, ...], ...], weights: tuple[tuple[int, ...], ...]
+) -> Decimal:
+    sums = [sum(float(value) for value in month) for month in months]
+    counts = [len(month) for month in months]
+    total = sum(counts)
+    nonempty = sum(count > 0 for count in counts)
+    observed = _reference_t(months)
+    exceed = 0
+    for draw in weights:
+        weighted = [weight * score for weight, score in zip(draw, sums, strict=True)]
+        total_score = sum(weighted)
+        centered = [
+            score - count * total_score / total
+            for score, count in zip(weighted, counts, strict=True)
+        ]
+        denominator = (nonempty / (nonempty - 1) * sum(score**2 for score in centered)) ** 0.5
+        exceed += total_score / denominator >= observed
+    return Decimal(1 + exceed) / Decimal(1 + len(weights))
+
+
 def test_wcr_s_intercept_reference_and_common_weights() -> None:
-    values = (Decimal("1"), Decimal("2"), Decimal("-1"), Decimal("3"), Decimal("0"))
-    months = tuple((value,) for value in values)
-    weights = (
-        (1, 1, 1, 1, 1),
-        (-1, 1, -1, 1, -1),
-        (1, -1, -1, 1, 1),
-        (-1, -1, 1, -1, 1),
-        (1, 1, -1, -1, -1),
+    months = (
+        (Decimal("1"), Decimal("2")),
+        (Decimal("-1"),),
+        (Decimal("3"), Decimal("2"), Decimal("1")),
+        (Decimal("0"),),
+        (Decimal("4"), Decimal("3")),
+        (Decimal("-2"),),
+        (Decimal("2"), Decimal("1")),
+    )
+    weights = tuple(
+        tuple(-1 if (draw >> month) & 1 else 1 for month in range(len(months)))
+        for draw in range(1 << len(months))
     )
 
     result = wcr_s_mean_test(months, weights=weights)
 
-    assert result.observed_t == pytest.approx(_reference_t(values), rel=1e-12)
+    assert result.observed_t == pytest.approx(_reference_t(months), rel=1e-12)
+    assert result.p_value == _reference_pvalue(months, weights)
     assert result.bootstrap_count == len(weights)
-    assert result.nonempty_clusters == 5
+    assert result.nonempty_clusters == 7
     assert Decimal(0) <= result.p_value <= Decimal(1)
-    assert result.lower_bound < Decimal("1")
+    assert result.lower_bound < Decimal("2")
+
+
+def test_wcr_s_bound_refuses_weight_grid_too_small_for_2_5_percent_inversion() -> None:
+    months = tuple((Decimal(value),) for value in (1, 2, -1, 3, 0))
+    weights = ((1, 1, 1, 1, 1), (-1, 1, -1, 1, -1))
+    with pytest.raises(ValueError, match="2.5%"):
+        wcr_s_mean_test(months, weights=weights)
 
 
 def test_zero_months_remain_in_common_romano_wolf_frame() -> None:
@@ -81,9 +116,9 @@ def test_wcr_s_refuses_zero_trades_and_collapsed_variance() -> None:
 
 
 def test_pilot_pvalue_uses_same_restricted_test_without_bound_inversion() -> None:
-    months = tuple((Decimal(value),) for value in (1, 2, -1, 3, 0))
+    months = tuple((Decimal(value),) for value in (1, 2, -1, 3, 0, 4, -2))
     weights = tuple(
-        tuple(-1 if (draw >> month) & 1 else 1 for month in range(5)) for draw in range(32)
+        tuple(-1 if (draw >> month) & 1 else 1 for month in range(7)) for draw in range(128)
     )
     assert wcr_s_pvalue(months, weights=weights) == wcr_s_mean_test(months, weights=weights).p_value
 

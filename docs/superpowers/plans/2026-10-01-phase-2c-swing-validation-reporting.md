@@ -588,8 +588,9 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_st
 
 - [ ] **Step 3: Implement the frozen inferential audit**
 
-Implement exact WCR-S for the intercept-only mean using restricted,
-jackknife-transformed cluster scores and 9,999 common month weights. Invert the
+Implement WCR-S for the intercept-only mean using CV1 standard errors and
+restricted scores (the transformed scores equal raw restricted scores when the
+null fixes the only coefficient), with 9,999 common month weights. Invert the
 one-sided test for a 97.5% lower bound. Apply one-sided Romano-Wolf stepdown at
 5% FWER across the three patterns and preserve common weights. Compare with a
 small independent reference that imports no production helper.

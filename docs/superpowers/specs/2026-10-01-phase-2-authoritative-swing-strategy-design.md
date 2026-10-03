@@ -1045,9 +1045,14 @@ unchanged; feasibility and every permit input must be recomputed.
 
 ### 16.5 Method audit, power, and frequency feasibility
 
-The candidate inferential method is the exact restricted wild-cluster
-bootstrap with jackknife-transformed scores (`WCR-S`), specialized to the
-intercept-only mean and using common month weights for Romano-Wolf. The method
+The candidate inferential method is the restricted wild-cluster bootstrap with
+modified restricted scores (`WCR-S`), specialized to the intercept-only mean
+and using common month weights for Romano-Wolf. Under the intercept-only null,
+there are no free nuisance regressors: the restricted score transformation
+reduces to each month's raw sum of observations minus its count times the null
+mean. Both observed and bootstrap statistics use CV1 standard errors, as in
+[MacKinnon, Nielsen, and Webb (2023), Table 1 and Eq. 37](https://doi.org/10.1002/jae.2969).
+The method
 audit uses development/validation residuals recentered to zero, joint 3-, 6-,
 and 12-month blocks, observed and stressed cluster imbalance, empirical skew,
 complete and partial nulls, and a calibrated mandatory terminal-loss envelope.
@@ -1275,7 +1280,7 @@ correction among themselves. All must pass on the post-Phase-4 frozen baseline:
 
 For the confidence gate, group eligible signal-level trades by complete entry
 calendar month so simultaneous and nearby signals remain together. Apply the
-exact restricted wild-cluster bootstrap with jackknife-transformed scores
+restricted wild-cluster bootstrap with modified restricted scores
 (`WCR-S`) frozen by Section 16. Use 9,999 common draws across patterns and invert
 the one-sided test to produce the 97.5% lower confidence bound. Empty
 pattern-months in the common holdout frame carry zero score. Zero trades,
