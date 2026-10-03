@@ -69,6 +69,7 @@ def _transitive_imports() -> set[str]:
         if path.stem != "__init__"
     ]
     pending.append("qat.domain.backtester.swing_replay")
+    pending.append("qat.domain.backtester.swing_dataset")
     seen: set[str] = set()
     all_imports: set[str] = set()
     while pending:
