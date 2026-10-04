@@ -7,7 +7,7 @@ import json
 import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
@@ -22,11 +22,17 @@ from qat.domain.backtester.swing_method_audit import (
     MethodStatus,
 )
 from qat.domain.backtester.swing_reference import IncidenceCalibration, PromotionStatus
-from qat.domain.backtester.swing_results import ReplayEquityPoint
+from qat.domain.backtester.swing_results import (
+    ReplayEquityPoint,
+    RunStatus,
+    SwingReplayResult,
+    SwingTrade,
+)
+from qat.domain.backtester.swing_statistics import romano_wolf_stepdown, wcr_s_mean_test
 
 
 class StructuralStatus(StrEnum):
-    PASS = "PASS"
+    PASS = "PASS"  # nosec B105 # Enum outcome label, not a credential.
     PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE = "PORTFOLIO_RISK_STRUCTURALLY_INFEASIBLE"
 
 
@@ -330,7 +336,7 @@ def all_exposed_trade_session_pairs(
         (position.trade_id, session)
         for position in positions
         for session in sessions
-        if position.entry_session < session < position.exit_session
+        if position.entry_session < session <= position.exit_session
     )
 
 
@@ -675,6 +681,213 @@ def evaluate_structural_risk(
     )
 
 
+def promotion_case_from_replays(
+    case: PromotionCase,
+    replays: Mapping[str, SwingReplayResult],
+    *,
+    doubled_cost_replays: Mapping[str, SwingReplayResult] | None = None,
+    recovery_replays: Mapping[str, SwingReplayResult] | None = None,
+    recovery_doubled_cost_replays: Mapping[str, SwingReplayResult] | None = None,
+    recovery_terminal_tail: TerminalTailResult | None = None,
+    contexts: Mapping[str, PatternEdgeInputs] | None = None,
+    entry_months: Sequence[str] = (),
+    draws: int = 9999,
+    seed: int = 0,
+) -> PromotionCase:
+    """Derive edge and terminal provenance from conservative/recovery replay evidence.
+
+    Recovery is supplied explicitly; no payout is inferred from a stale mark.
+    Frozen protocol inputs remain separate from recomputed economic evidence.
+    """
+    if not replays or (contexts is not None and set(contexts) != set(replays)):
+        raise ValueError("replay patterns require matching frozen contexts")
+    if tuple(sorted(set(entry_months))) != tuple(entry_months):
+        raise ValueError("entry months require a complete ordered common frame")
+
+    def validate_pair(
+        baselines: Mapping[str, SwingReplayResult],
+        variants: Mapping[str, SwingReplayResult],
+        *,
+        terminal_only: bool,
+    ) -> None:
+        if set(baselines) != set(variants):
+            raise ValueError("replay pattern identities differ")
+
+        def signal_identity(trade: SwingTrade) -> tuple[object, ...]:
+            if terminal_only:
+                return (trade.trade_id,)
+            # Cost-driven sizing changes the instruction/trade ID; the signal
+            # and price terms must still identify the same eligible cohort.
+            return (
+                trade.symbol,
+                trade.patterns,
+                trade.entry_session,
+                trade.submitted_limit,
+                trade.initial_stop,
+            )
+
+        for name, replay in baselines.items():
+            baseline = {signal_identity(trade): trade for trade in replay.signal_trades}
+            variant = {signal_identity(trade): trade for trade in variants[name].signal_trades}
+            if (
+                len(baseline) != len(replay.signal_trades)
+                or len(variant) != len(variants[name].signal_trades)
+                or set(baseline) != set(variant)
+            ):
+                raise ValueError("replay trade identities differ or are duplicated")
+            for identity, trade in baseline.items():
+                other = variant[identity]
+                fixed: tuple[str, ...] = (
+                    "symbol",
+                    "patterns",
+                    "entry_session",
+                    "edge_sample_eligible",
+                    "edge_exclusion_reason",
+                )
+                if terminal_only:
+                    fixed += (
+                        "exit_session",
+                        "quantity",
+                        "submitted_limit",
+                        "entry_price",
+                        "initial_stop",
+                        "order_initial_risk_dollars",
+                        "fill_initial_risk_dollars",
+                        "costs",
+                        "eligible_dividends",
+                    )
+                if any(getattr(trade, field) != getattr(other, field) for field in fixed):
+                    raise ValueError("replay changed frozen economic terms or eligibility")
+                if terminal_only and trade.exit_reason != "terminal_zero" and trade != other:
+                    raise ValueError("recovery replay changed a nonterminal outcome")
+
+    if doubled_cost_replays is not None:
+        validate_pair(replays, doubled_cost_replays, terminal_only=False)
+    if recovery_replays is not None:
+        validate_pair(replays, recovery_replays, terminal_only=True)
+    if recovery_doubled_cost_replays is not None:
+        if doubled_cost_replays is None or recovery_replays is None:
+            raise ValueError(
+                "recovery doubled-cost evidence requires both conservative and recovery pairs"
+            )
+        validate_pair(recovery_replays, recovery_doubled_cost_replays, terminal_only=False)
+        validate_pair(doubled_cost_replays, recovery_doubled_cost_replays, terminal_only=True)
+
+    def results_for(
+        rows: Mapping[str, SwingReplayResult], doubled: Mapping[str, SwingReplayResult] | None
+    ) -> tuple[PatternEdgeResult, ...]:
+        samples: dict[str, tuple[tuple[Decimal, ...], ...]] = {}
+        for name, replay in rows.items():
+            groups: dict[str, list[Decimal]] = defaultdict(list)
+            for trade in replay.signal_trades:
+                if trade.edge_sample_eligible:
+                    groups[trade.entry_session.strftime("%Y-%m")].append(trade.order_r_multiple)
+            if any(month not in entry_months for month in groups):
+                raise ValueError("eligible replay entry lies outside the frozen month frame")
+            samples[name] = tuple(tuple(groups[month]) for month in entry_months)
+        adjusted: Mapping[str, Decimal] = {}
+        lowers: dict[str, Decimal] = {}
+        try:
+            adjusted = romano_wolf_stepdown(samples, draws=draws, seed=seed).adjusted_p_values
+            lowers = {
+                name: wcr_s_mean_test(sample, draws=draws, seed=seed).lower_bound
+                for name, sample in samples.items()
+            }
+        except ValueError:
+            # Insufficient clusters/variance cannot become passing inference.
+            pass
+        results = []
+        for name, replay in rows.items():
+            context = (
+                contexts[name]
+                if contexts is not None
+                else PatternEdgeInputs(
+                    name,
+                    (),
+                    100,
+                    36,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    len(entry_months),
+                    False,
+                    False,
+                    False,
+                )
+            )
+            trades = tuple(
+                SignalEdgeTrade(
+                    trade.trade_id,
+                    trade.symbol,
+                    trade.entry_session,
+                    trade.order_r_multiple,
+                    trade.net_pnl,
+                    trade.edge_sample_eligible,
+                )
+                for trade in replay.signal_trades
+            )
+            doubled_trades = (
+                tuple(trade for trade in doubled[name].signal_trades if trade.edge_sample_eligible)
+                if doubled is not None
+                and name in doubled
+                and doubled[name].status is RunStatus.VALID
+                else ()
+            )
+            double_mean = (
+                sum((trade.order_r_multiple for trade in doubled_trades), Decimal(0))
+                / Decimal(len(doubled_trades))
+                if doubled_trades
+                else None
+            )
+            result = evaluate_pattern_edge_gates(
+                replace(
+                    context,
+                    trades=trades,
+                    wcr_lower_bound=lowers.get(name),
+                    romano_wolf_adjusted_p=adjusted.get(name),
+                    doubled_cost_expectancy=double_mean,
+                )
+            )
+            results.append(
+                result if replay.status is RunStatus.VALID else replace(result, passed=False)
+            )
+        return tuple(results)
+
+    conservative = results_for(replays, doubled_cost_replays)
+    edge_pass = all(result.passed for result in conservative)
+    has_terminal = any(
+        trade.exit_reason == "terminal_zero" and trade.edge_sample_eligible
+        for replay in replays.values()
+        for trade in replay.signal_trades
+    )
+    recovery_tail_pass = case.terminal_tail is None or (
+        recovery_terminal_tail is not None
+        and recovery_terminal_tail.analytical_parity_pass
+        and recovery_terminal_tail.fifth_percentile_mean_r > 0
+        and recovery_terminal_tail.drawdown_95 <= Decimal("0.2")
+    )
+    recovery_pass = bool(
+        has_terminal
+        and recovery_replays is not None
+        and case.portfolio_safety_pass is not False
+        and recovery_tail_pass
+        and all(
+            result.passed for result in results_for(recovery_replays, recovery_doubled_cost_replays)
+        )
+    )
+    return replace(
+        case,
+        data_valid=case.data_valid
+        and all(replay.status is RunStatus.VALID for replay in replays.values()),
+        pattern_edges=conservative,
+        all_edge_gates_pass=edge_pass,
+        conservative_terminal_gate_pass=edge_pass if has_terminal else None,
+        recovery_sensitivity_pass=recovery_pass,
+    )
+
+
 def evaluate_promotion(case: PromotionCase) -> PromotionVerdict:
     """Keep Phase 2 evidence non-promotional while retaining gate provenance."""
     feasibility = case.feasibility
@@ -708,6 +921,16 @@ def evaluate_promotion(case: PromotionCase) -> PromotionVerdict:
         ),
         GateResult("edge", edge_pass, "seven frozen gates for every constituent pattern"),
         GateResult("portfolio", case.portfolio_safety_pass, "cash-funded safety"),
+        GateResult(
+            "conservative_terminal",
+            case.conservative_terminal_gate_pass,
+            "all conservative replay edge gates with unresolved terminal zero",
+        ),
+        GateResult(
+            "recovery_sensitivity",
+            case.recovery_sensitivity_pass,
+            "all gates on explicit matching recovery replays; absent evidence cannot pass",
+        ),
         GateResult(
             "terminal_mean_r",
             case.terminal_tail.fifth_percentile_mean_r > 0 if case.terminal_tail else None,
@@ -755,6 +978,13 @@ def evaluate_promotion(case: PromotionCase) -> PromotionVerdict:
             if reason is FeasibilityStatus.DATASET_INSUFFICIENT
             else "do not extend within the declared 120-month horizon"
         )
+    elif (
+        case.conservative_terminal_gate_pass is False
+        and case.recovery_sensitivity_pass
+        and case.portfolio_safety_pass is not False
+    ):
+        status = PromotionStatus.TERMINAL_OUTCOME_SENSITIVE
+        action = "retain the conservative non-promotional terminal result"
     elif edge_pass is False or (
         case.terminal_tail and case.terminal_tail.fifth_percentile_mean_r <= 0
     ):
@@ -766,9 +996,6 @@ def evaluate_promotion(case: PromotionCase) -> PromotionVerdict:
     ):
         status = PromotionStatus.EDGE_PASS_PORTFOLIO_RISK_BLOCKED
         action = "retain edge evidence without shadow authorization"
-    elif case.conservative_terminal_gate_pass is False and case.recovery_sensitivity_pass:
-        status = PromotionStatus.TERMINAL_OUTCOME_SENSITIVE
-        action = "retain the conservative non-promotional terminal result"
     elif case.conservative_terminal_gate_pass is False:
         status = PromotionStatus.FAIL
         action = "retain the conservative terminal failure"

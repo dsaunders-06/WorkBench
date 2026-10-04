@@ -142,6 +142,7 @@ def _decision(
         quantity if status is DecisionStatus.QUALIFIED else 0,
         quantity if status is DecisionStatus.QUALIFIED else 0,
         (f"bar-{symbol}-{session.isoformat()}",),
+        structural_invalidation_raw=D(stop) if status is DecisionStatus.QUALIFIED else None,
     )
 
 
@@ -731,7 +732,16 @@ def test_double_bottom_cancel_recross_and_filled_pair_consumption() -> None:
 def test_post_fill_zone_diagnostic_is_retained_on_baseline_trade() -> None:
     prior_sessions = _business_days(date(2025, 10, 1), 42)
     signal, entry, stopped = _business_days(prior_sessions[-1] + timedelta(days=1), 3)
-    prior: list[FinalBar] = []
+    prior: list[FinalBar] = [
+        _bar(
+            "AAA.AX",
+            signal.replace(year=signal.year - 3),
+            open_="9",
+            high="9.4",
+            low="8.5",
+            close="9",
+        )
+    ]
     for index, session in enumerate(prior_sessions):
         high = "9.5" if index == 5 else "9.55" if index == 30 else "9.4"
         prior.append(_bar("AAA.AX", session, open_="9", high=high, low="8.5", close="9"))
@@ -747,7 +757,7 @@ def test_post_fill_zone_diagnostic_is_retained_on_baseline_trade() -> None:
     result = _run(
         bars=bars,
         decisions={("AAA.AX", signal): _decision("AAA.AX", signal)},
-        first=prior_sessions[0],
+        first=prior[0].session,
         last=stopped,
     )
 
@@ -807,3 +817,79 @@ def test_benchmark_gap_invalidates_before_replay() -> None:
     assert result.status is RunStatus.INVALID
     assert result.equity == ()
     assert any("benchmark" in reason for reason in result.invalid_reasons)
+
+
+@pytest.mark.parametrize("analytical_terms", [False, True])
+def test_single_pattern_signal_refuses_missing_structural_invalidation(
+    analytical_terms: bool,
+) -> None:
+    from qat.domain.backtester.swing_replay import replay_signal_candidates
+
+    signal, entry = _business_days(date(2026, 1, 5), 2)
+    bars = {"AAA.AX": (_bar("AAA.AX", signal), _bar("AAA.AX", entry))}
+    decision = replace(_decision("AAA.AX", signal), structural_invalidation_raw=None)
+    if analytical_terms:
+        decision = replace(
+            decision,
+            pattern_decisions=(
+                replace(
+                    decision.pattern_decisions[0],
+                    rules=(
+                        RuleEvidence("analytical_resistance", RuleOutcome.PASS, threshold=D("10")),
+                    ),
+                ),
+            ),
+        )
+    with pytest.raises(ValueError, match="structural invalidation"):
+        replay_signal_candidates(
+            calendar_rows=_calendar(signal, entry),
+            bars=bars,
+            decisions=(decision,),
+            reference_equity=D("10000"),
+            costs=COSTS,
+            liquidity=LIQUIDITY,
+        )
+
+
+@pytest.mark.parametrize("bad_quality", [False, True])
+def test_post_fill_diagnostic_abstains_for_invalid_resistance_history(bad_quality: bool) -> None:
+    from qat.domain.backtester.swing_replay import _diagnostic_for_decision
+
+    signal = date(2026, 1, 5)
+    history = (
+        _bar("AAA.AX", date(2023, 1, 5)),
+        _bar("AAA.AX", date(2026, 1, 2)),
+        _bar("AAA.AX", signal),
+    )
+    if bad_quality:
+        history = (replace(history[0], quality=DataQuality.UNVERIFIED), *history[1:])
+    else:
+        history = history[1:]
+    assert (
+        _diagnostic_for_decision(_decision("AAA.AX", signal), D("10"), {"AAA.AX": history}).value
+        == "post_fill_resistance_abstain"
+    )
+
+
+def test_post_fill_diagnostic_abstains_when_zone_construction_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import qat.domain.backtester.swing_replay as replay_module
+
+    signal = date(2026, 1, 5)
+    history = (
+        _bar("AAA.AX", date(2023, 1, 5)),
+        _bar("AAA.AX", date(2026, 1, 2)),
+        _bar("AAA.AX", signal),
+    )
+
+    def broken(history):
+        raise ValueError("malformed zones")
+
+    monkeypatch.setattr(replay_module, "find_resistance_zones", broken)
+    assert (
+        replay_module._diagnostic_for_decision(
+            _decision("AAA.AX", signal), D("10"), {"AAA.AX": history}
+        ).value
+        == "post_fill_resistance_abstain"
+    )

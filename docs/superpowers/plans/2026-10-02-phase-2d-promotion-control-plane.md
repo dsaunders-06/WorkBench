@@ -55,6 +55,12 @@ development/validation results under their final fingerprint.
 
 ### Task 1: Declaration Authority and independently timestamped receipts
 
+Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
+
 **Files:**
 - Create: `src/qat/promotion/declarations.py`
 - Create: `src/qat/promotion/rfc3161.py`
@@ -111,6 +117,12 @@ git commit -m "feat: record promotion research declarations"
 ```
 
 ### Task 2: Blinded structural extractor and development release gate
+
+Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 
 **Files:**
 - Create: `src/qat/promotion/structural_extract.py`
@@ -243,6 +255,12 @@ git commit -m "feat: gate blinded structural and development access"
 
 ### Task 3: Reproducible reviewed promotion bundle
 
+Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
+
 **Files:**
 - Create: `scripts/promotion/build_bundle.ps1`
 - Create: `src/qat/promotion/bundle.py`
@@ -261,6 +279,12 @@ artifact budgets, determinism, prefix invariance, reference parity, and failure
 behavior.
 
 ### Task 4: Scoped ledger, sealed-data service, and trusted artifact writer
+
+Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 
 **Files:**
 - Create: `src/qat/promotion/ledger_service.py`
@@ -296,6 +320,12 @@ must prove the engineering research path cannot reach these I/O clients.
 
 ### Task 5: Holdout-scale rehearsal and failure injection
 
+Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
+
 **Files:**
 - Create: `tests/integration/test_phase2d_rehearsal.py`
 - Create: `scripts/promotion/run_rehearsal.ps1`
@@ -315,6 +345,12 @@ fixture, measurements, and rehearsal ledger into a signed receipt. Any change
 expires it.
 
 ### Task 6: Permit, promotion run, and permanent failure semantics
+
+Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 
 **Files:**
 - Create: `src/qat/promotion/permit.py`
@@ -357,6 +393,12 @@ run. The runbook states the expected runtime and permanent consequence before
 the operator requests a permit.
 
 ### Task 7: Independent security and end-to-end verification
+
+Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Run: `.\.venv\Scripts\python.exe -m black --check .`
+
 
 - [ ] Verify declaration lineage and RFC 3161 certificates offline.
 - [ ] Prove agent/development accounts cannot read promotion shards or keys.

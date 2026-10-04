@@ -303,7 +303,8 @@ def evaluate_double_bottom(
         return PatternDecision(Pattern.DOUBLE_BOTTOM, DecisionStatus.REJECTED, rule_tuple)
 
     current_atr = atr_values[-1]
-    assert current_atr is not None
+    if current_atr is None:
+        raise ValueError("qualified pattern requires initialized current_atr")
     signal = bars[-1]
     member_identities = tuple(
         f"{bars[index].session.isoformat()}:{bars[index].digest}" for index in pair.neckline_members

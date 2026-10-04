@@ -118,6 +118,7 @@ def _decision(
         quantity,
         quantity,
         (f"bar-{symbol}-{session}",),
+        structural_invalidation_raw=D(stop),
     )
 
 
@@ -448,6 +449,7 @@ def test_isolated_patterns_keep_own_limit_and_stop(
         ),
         entry_limit_raw=D("9.5"),
         initial_stop_raw=D("8.49"),
+        structural_invalidation_raw=D("8.5"),
     )
     result = _run(
         bars=tuple(

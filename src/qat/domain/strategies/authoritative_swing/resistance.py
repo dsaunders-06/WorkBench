@@ -173,34 +173,31 @@ def _strict_ceiling(barrier: Decimal, stop: Decimal) -> Decimal:
         return floored
 
 
+def resistance_history(signal_session: date, history: Sequence[FinalBar]) -> tuple[FinalBar, ...]:
+    """Return the engine's validated three-calendar-year resistance window."""
+    cutoff = three_year_cutoff(signal_session)
+    ordered = tuple(sorted(history, key=lambda bar: (bar.session, bar.digest)))
+    prior = tuple(bar for bar in ordered if cutoff <= bar.session < signal_session)
+    if (
+        not prior
+        or prior[0].session > cutoff
+        or signal_session - prior[-1].session > timedelta(days=7)
+    ):
+        raise ValueError("fewer than three calendar years of resistance history")
+    if any(not _valid_resistance_bar(bar) for bar in prior):
+        raise ValueError("resistance history is unadjusted, malformed, synthetic, or unverifiable")
+    return prior
+
+
 def analytical_entry_ceiling_for(
     candidate: PatternCandidate, history: Sequence[FinalBar]
 ) -> ResistanceDecision:
     """Apply three-year resistance in analytical basis before raw conversion."""
 
-    cutoff = three_year_cutoff(candidate.signal_session)
-    ordered = tuple(sorted(history, key=lambda bar: (bar.session, bar.digest)))
-    prior = tuple(bar for bar in ordered if cutoff <= bar.session < candidate.signal_session)
-    if (
-        not prior
-        or prior[0].session > cutoff
-        or candidate.signal_session - prior[-1].session > timedelta(days=7)
-    ):
-        return ResistanceDecision(
-            DecisionStatus.ABSTAIN,
-            None,
-            (),
-            None,
-            "fewer than three calendar years of resistance history",
-        )
-    if any(not _valid_resistance_bar(bar) for bar in prior):
-        return ResistanceDecision(
-            DecisionStatus.ABSTAIN,
-            None,
-            (),
-            None,
-            "resistance history is unadjusted, malformed, synthetic, or unverifiable",
-        )
+    try:
+        prior = resistance_history(candidate.signal_session, history)
+    except ValueError as error:
+        return ResistanceDecision(DecisionStatus.ABSTAIN, None, (), None, str(error))
     if candidate.analytical_signal_close <= candidate.analytical_invalidation:
         return ResistanceDecision(
             DecisionStatus.REJECTED,

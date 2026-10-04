@@ -143,6 +143,9 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative
 
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative_swing/lifecycle.py`
 
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
+
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 5: Commit**
@@ -195,6 +198,9 @@ Update highest high and holding-session count, calculate all active triggers, ra
 - [ ] **Step 4: Run focused tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/strategies/authoritative_swing/test_lifecycle.py -q`
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
 
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
@@ -347,6 +353,9 @@ prices while preserving both denominators.
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_fills.py tests/domain/backtester/test_costs.py tests/domain/backtester/test_cost_charge.py -q`
 
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
+
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 5: Commit**
@@ -401,6 +410,9 @@ Start from each Phase 2A desired quantity. If total reservation exceeds cash, mu
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_portfolio.py -q`
 
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/backtester/swing_portfolio.py`
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
 
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
@@ -520,6 +532,9 @@ portfolio arm compounds current equity.
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_replay.py tests/safety/test_phase2_strategy_isolation.py -q`
 
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
+
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 Add a test that monkeypatches every production broker/OMS submission method to raise and proves a complete replay never invokes one.
@@ -597,6 +612,9 @@ Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative
 Run: `.\.venv\Scripts\python.exe -m ruff check src/qat/domain/strategies/authoritative_swing src/qat/domain/backtester/swing_events.py src/qat/domain/backtester/swing_fills.py src/qat/domain/backtester/swing_results.py src/qat/domain/backtester/swing_portfolio.py src/qat/domain/backtester/swing_replay.py tests/domain/strategies/authoritative_swing tests/domain/backtester/test_swing_fills.py tests/domain/backtester/test_swing_portfolio.py tests/domain/backtester/test_swing_replay.py tests/domain/backtester/test_swing_corporate_actions.py tests/safety/test_phase2_strategy_isolation.py`
 
 Run: `.\.venv\Scripts\python.exe -m pytest -q`
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
 
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 

@@ -488,18 +488,26 @@ def _count_frame(
     return patterns, development_frame, validation_frame
 
 
-def _predictive_lower(counts: Sequence[int]) -> Decimal:
-    mean = sum(counts) / len(counts)
-    if len(counts) == 1:
-        return Decimal(str(mean))
-    variance = sum((value - mean) ** 2 for value in counts) / (len(counts) - 1)
-    # Predict one future monthly count, including its observation variance;
-    # variance / n alone would bound the historical mean instead.
-    lower = max(
-        0.0,
-        mean - NormalDist().inv_cdf(0.9) * math.sqrt(variance * (1 + 1 / len(counts))),
-    )
-    return Decimal(str(lower))
+def _predictive_lower(
+    counts: Sequence[int], *, duration: int = 36, simulations: int = 9999, seed: int = 0
+) -> Decimal:
+    """One-sided 90% lower predictive holdout rate under moving-block counts.
+
+    This predicts a holdout-average rate, never a single future observation.
+    The planner uses its joint partition-preserving paths for each horizon.
+    """
+    if not counts or duration <= 0 or simulations <= 0 or any(value < 0 for value in counts):
+        raise ValueError("predictive rate requires nonnegative counts and positive horizon/draws")
+    frame = tuple((value,) for value in counts)
+    rng = random.Random(seed)  # nosec B311 # Reproducible count simulation, not security.
+    lowers = []
+    for block in (3, 6, 12):
+        totals = sorted(
+            sum(row[0] for row in _sample_path(frame, frame, block, rng)[:duration])
+            for _ in range(simulations)
+        )
+        lowers.append(Decimal(totals[math.floor((simulations - 1) * 0.1)]) / Decimal(duration))
+    return min(lowers)
 
 
 def _sample_path(
@@ -548,6 +556,7 @@ def plan_holdout_duration(
     stress_rates: dict[str, Decimal] = {}
     rate_sources: dict[str, str] = {}
     baseline_rates: dict[str, Decimal] = {}
+    historical_rates: dict[str, dict[str, Decimal]] = {}
     for index, name in enumerate(patterns):
         development_counts = [row[index] for row in development_frame]
         validation_counts = [row[index] for row in validation_frame]
@@ -556,71 +565,89 @@ def plan_holdout_duration(
             for start in range(rolling_count)
         )
         validation_rate = Decimal(sum(validation_counts)) / Decimal(len(validation_counts))
-        predictive = _predictive_lower((*development_counts, *validation_counts))
-        options = {
+        historical_rates[name] = {
             "rolling_36_development": rolling,
             "full_validation": validation_rate,
-            "predictive_90_lower": predictive,
         }
-        rate_sources[name], stress_rates[name] = min(
-            options.items(), key=lambda item: (item[1], item[0])
-        )
         baseline_rates[name] = Decimal(sum(development_counts) + sum(validation_counts)) / Decimal(
             len(development_counts) + len(validation_counts)
         )
 
     baseline_paths: dict[int, list[np.ndarray]] = {3: [], 6: [], 12: []}
     baseline_clusters: dict[int, list[np.ndarray]] = {3: [], 6: [], 12: []}
-    stress_paths: dict[int, list[np.ndarray]] = {3: [], 6: [], 12: []}
-    stress_clusters: dict[int, list[np.ndarray]] = {3: [], 6: [], 12: []}
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # nosec B311 # Reproducible count simulation, not security.
     thinning_rng = np.random.Generator(np.random.PCG64(seed))
-    ratios = np.asarray(
-        [
-            (
-                min(1.0, float(stress_rates[name] / baseline_rates[name]))
-                if baseline_rates[name] > 0
-                else 0.0
-            )
-            for name in patterns
-        ]
-    )
     for block_size in (3, 6, 12):
         for _ in range(simulations):
             sampled = np.asarray(
                 _sample_path(development_frame, validation_frame, block_size, rng), dtype=np.int64
             )
-            stressed = thinning_rng.binomial(sampled, ratios)
             baseline_paths[block_size].append(np.cumsum(sampled, axis=0))
             baseline_clusters[block_size].append(np.cumsum(sampled > 0, axis=0))
-            stress_paths[block_size].append(np.cumsum(stressed, axis=0))
-            stress_clusters[block_size].append(np.cumsum(stressed > 0, axis=0))
 
+    baseline_arrays = {block: np.asarray(paths) for block, paths in baseline_paths.items()}
+    cluster_arrays = {block: np.asarray(paths) for block, paths in baseline_clusters.items()}
+    monthly_paths = {
+        block: np.diff(
+            paths, axis=1, prepend=np.zeros((simulations, 1, len(patterns)), dtype=np.int64)
+        )
+        for block, paths in baseline_arrays.items()
+    }
     required: int | None = None
     chosen_probabilities: dict[str, Decimal] = {}
     required_n = np.asarray([requirements[name].n_required for name in patterns])
     required_g = np.asarray([requirements[name].g_required for name in patterns])
     for duration in range(36, 121):
-        probabilities: dict[str, Decimal] = {}
-        for label, paths, clusters in (
-            ("baseline", baseline_paths, baseline_clusters),
-            ("stressed", stress_paths, stress_clusters),
-        ):
-            block_probabilities = []
-            for block_size in (3, 6, 12):
-                successes = sum(
-                    bool(
-                        np.all(path[duration - 1] >= required_n)
-                        and np.all(group[duration - 1] >= required_g)
-                    )
-                    for path, group in zip(paths[block_size], clusters[block_size], strict=True)
+        for index, name in enumerate(patterns):
+            predictive = min(
+                Decimal(int(np.quantile(paths[:, duration - 1, index], 0.1, method="lower")))
+                / Decimal(duration)
+                for paths in baseline_arrays.values()
+            )
+            options = {**historical_rates[name], "predictive_90_lower": predictive}
+            rate_sources[name], stress_rates[name] = min(
+                options.items(), key=lambda item: (item[1], item[0])
+            )
+        ratios = np.asarray(
+            [
+                (
+                    min(1.0, float(stress_rates[name] / baseline_rates[name]))
+                    if baseline_rates[name] > 0
+                    else 0.0
                 )
-                block_probabilities.append(Decimal(successes) / Decimal(simulations))
-            probabilities[label] = min(block_probabilities)
-        chosen_probabilities = probabilities
-        if probabilities["baseline"] >= Decimal("0.9") and probabilities["stressed"] >= Decimal(
-            "0.8"
-        ):
+                for name in patterns
+            ]
+        )
+        baseline_probabilities = []
+        stressed_probabilities = []
+        for block_size in (3, 6, 12):
+            totals = baseline_arrays[block_size][:, duration - 1, :]
+            clusters = cluster_arrays[block_size][:, duration - 1, :]
+            baseline_probabilities.append(
+                Decimal(
+                    int(
+                        np.count_nonzero(
+                            np.all(totals >= required_n, axis=1)
+                            & np.all(clusters >= required_g, axis=1)
+                        )
+                    )
+                )
+                / Decimal(simulations)
+            )
+            stressed = thinning_rng.binomial(monthly_paths[block_size][:, :duration, :], ratios)
+            successes = np.all(np.sum(stressed, axis=1) >= required_n, axis=1) & np.all(
+                np.sum(stressed > 0, axis=1) >= required_g, axis=1
+            )
+            stressed_probabilities.append(
+                Decimal(int(np.count_nonzero(successes))) / Decimal(simulations)
+            )
+        chosen_probabilities = {
+            "baseline": min(baseline_probabilities),
+            "stressed": min(stressed_probabilities),
+        }
+        if chosen_probabilities["baseline"] >= Decimal("0.9") and chosen_probabilities[
+            "stressed"
+        ] >= Decimal("0.8"):
             required = duration
             break
 

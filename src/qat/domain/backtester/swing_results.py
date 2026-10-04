@@ -30,6 +30,7 @@ class ReplayArm(StrEnum):
 
 
 class PostFillResistanceDiagnostic(StrEnum):
+    ABSTAIN = "post_fill_resistance_abstain"
     CLEAR = "post_fill_resistance_clear"
     INSIDE_ZONE = "post_fill_resistance_inside_zone"
     PATH_BLOCKED = "post_fill_resistance_path_blocked"

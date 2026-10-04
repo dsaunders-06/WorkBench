@@ -130,9 +130,9 @@ def test_required_duration_precedes_available_data_check() -> None:
     assert result.forward_acquisition_could_help
 
 
-def test_variable_months_use_next_month_predictive_lower_rate() -> None:
+def test_variable_months_use_holdout_predictive_lower_rate() -> None:
     counts = (0, 4) * 42
-    assert _predictive_lower(counts) == Decimal(0)
+    assert _predictive_lower(counts) > Decimal("1.5")
     result = plan_holdout_duration(
         development={name: counts[:60] for name in ("ema", "flag", "bottom")},
         validation={name: counts[60:] for name in ("ema", "flag", "bottom")},
@@ -141,9 +141,8 @@ def test_variable_months_use_next_month_predictive_lower_rate() -> None:
         simulations=20,
         seed=17,
     )
-    assert result.binding_rate_source == "predictive_90_lower"
-    assert all(rate == 0 for rate in result.stress_rates.values())
-    assert result.status is FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
+    assert all(rate > Decimal("1.5") for rate in result.stress_rates.values())
+    assert result.status is FeasibilityStatus.FEASIBLE
 
 
 def test_no_duration_through_120_is_frequency_inadequate() -> None:
@@ -219,3 +218,20 @@ def test_synthetic_pilot_replays_every_attempt_deterministically() -> None:
     assert not first.promotion_eligible
     with pytest.raises(ValueError, match="frozen"):
         run_synthetic_pilot(scenario, outer_runs=4, inner_draws=31, seed=123)
+
+
+def test_poisson_like_counts_no_longer_bind_on_single_month_variance() -> None:
+    import numpy as np
+
+    counts = tuple(int(value) for value in np.random.default_rng(5).poisson(2, 84))
+    result = plan_holdout_duration(
+        development={name: counts[:60] for name in ("ema", "flag", "bottom")},
+        validation={name: counts[60:] for name in ("ema", "flag", "bottom")},
+        requirements=_requirements(100),
+        available_months=120,
+        simulations=200,
+        seed=17,
+    )
+    assert result.binding_rate_source == "full_validation"
+    assert result.status is FeasibilityStatus.FEASIBLE
+    assert all(rate == Decimal(35) / Decimal(24) for rate in result.stress_rates.values())

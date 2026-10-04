@@ -22,10 +22,12 @@ class PromotionStatus(StrEnum):
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
     METHOD_INADEQUATE = "METHOD_INADEQUATE"
     TERMINAL_OUTCOME_SENSITIVE = "TERMINAL_OUTCOME_SENSITIVE"
-    EDGE_PASS_PORTFOLIO_RISK_BLOCKED = "EDGE_PASS_PORTFOLIO_RISK_BLOCKED"
+    EDGE_PASS_PORTFOLIO_RISK_BLOCKED = (
+        "EDGE_PASS_PORTFOLIO_RISK_BLOCKED"  # nosec B105 # Enum outcome label, not a credential.
+    )
     INVALID = "INVALID"
     FAIL = "FAIL"
-    PASS = "PASS"
+    PASS = "PASS"  # nosec B105 # Enum outcome label, not a credential.
 
 
 @dataclass(frozen=True, slots=True)

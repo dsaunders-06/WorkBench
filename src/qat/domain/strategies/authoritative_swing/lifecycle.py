@@ -165,11 +165,9 @@ def pending_entry_from_setup(decision: SetupDecision) -> PendingEntry:
         raise LifecycleInvariantError("instruction requires a finite limit above a positive stop")
     if decision.quantity < 2:
         raise LifecycleInvariantError("instruction requires at least two shares")
-    structural_invalidation = (
-        decision.structural_invalidation_raw
-        if decision.structural_invalidation_raw is not None
-        else decision.initial_stop_raw
-    )
+    structural_invalidation = decision.structural_invalidation_raw
+    if structural_invalidation is None:
+        raise LifecycleInvariantError("qualified instruction requires structural invalidation")
     if (
         not structural_invalidation.is_finite()
         or structural_invalidation < decision.initial_stop_raw

@@ -371,6 +371,9 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_da
 
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/backtester/swing_dataset.py`
 
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
+
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 5: Commit**
@@ -483,6 +486,9 @@ closure, reclassify a signed row, or fill a calendar gap.
 - [ ] **Step 4: Run focused tests**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_validation.py -q`
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
 
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
@@ -641,6 +647,9 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_st
 
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/backtester/swing_statistics.py src/qat/domain/backtester/swing_method_audit.py`
 
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
+
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 - [ ] **Step 6: Commit**
@@ -709,10 +718,10 @@ def test_zero_price_loss_is_applied_to_every_funded_trade_placement() -> None:
     assert result.placements_tested == len(all_exposed_trade_session_pairs(cash_funded_replay()))
     assert result.max_drawdown == max(p.max_drawdown for p in result.placements)
 
-def test_halted_position_remains_exposed_until_session_before_terminal_exit() -> None:
+def test_halted_position_remains_exposed_through_terminal_exit() -> None:
     pairs = all_exposed_trade_session_pairs(unresolved_halt_ending_at_t64())
     assert (halted_trade_id(), previous_session(boundaries().t64)) in pairs
-    assert (halted_trade_id(), boundaries().t64) not in pairs
+    assert (halted_trade_id(), boundaries().t64) in pairs
 
 def test_incremental_exposure_sweep_matches_brute_force_reference() -> None:
     optimized = evaluate_structural_risk(exposure_parity_fixture())
@@ -774,8 +783,8 @@ Run the Phase 4 design-envelope check before promotion outcomes. After signed
 development and validation release, run the funded-trade structural preflight
 before method, power, or duration planning. For each funded development or
 validation trade, inject onset at every official session on which the position
-is exposed, starting immediately after entry fill and ending before baseline
-exit. Mark it to zero at that onset, retain cash lock through `T64`, recompute
+is exposed, starting immediately after entry fill and including baseline
+exit (operator review amendment F7, 4 October 2026). Mark it to zero at that onset, retain cash lock through `T64`, recompute
 the actual equity path, and take the worst trade/session placement. Repeat the
 identical test on holdout and authorized full-history results only after
 exposure. Require worst placement and the 95th-percentile probabilistic tail
@@ -787,9 +796,9 @@ Build the baseline event-sourced equity ledger once. For each placement, apply
 an exact-decimal sparse delta stream to cached position marks, exit proceeds,
 dividends, cash locks, and the affected equity suffix; never rerun signal
 generation, fill resolution, or allocation. A halt does not end exposure. A
-position exiting on resumption at `T40` accepts onset placements only through
-the prior official session; an unresolved position terminally closed at `T64`
-accepts them through the official session immediately before `T64`, with zero
+position exiting on resumption at `T40` accepts onset placements through
+`T40`; an unresolved position terminally closed at `T64` accepts them through
+`T64` (operator review amendment F7), with zero
 mark and unavailable cash through `T64`. Compare every
 placement with a brute-force reference on frozen fixtures and compare a
 deterministic stratified production sample spanning ordinary exits, dividends,
@@ -831,6 +840,9 @@ synthetic planner result but keeps overall status
 - [ ] **Step 5: Run focused tests and commit**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_reference.py tests/domain/backtester/test_swing_promotion.py -q`
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
 
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
@@ -916,6 +928,9 @@ Write into a sibling temporary directory, calculate all hashes, write `SHA256SUM
 - [ ] **Step 4: Run focused tests and verify a fixture report manually**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_artifacts.py -q`
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
 
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
@@ -1036,6 +1051,9 @@ Run: `.\.venv\Scripts\python.exe scripts/research/run_authoritative_swing.py --c
 
 Run: `.\.venv\Scripts\python.exe scripts/research/run_authoritative_swing.py --catalog static-asx --engineering-mode strict_authoritative --partition development --out data/phase2-engineering-static`
 
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
+
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 
 Expected: both exit 0 with absolute artifact paths and no broker/network/process
@@ -1090,6 +1108,9 @@ Run: `.\.venv\Scripts\python.exe -m ruff check src tests scripts/research/run_au
 Run: `.\.venv\Scripts\python.exe -m mypy src/qat/domain/strategies/authoritative_swing src/qat/domain/backtester/swing_events.py src/qat/domain/backtester/swing_fills.py src/qat/domain/backtester/swing_results.py src/qat/domain/backtester/swing_portfolio.py src/qat/domain/backtester/swing_replay.py src/qat/domain/backtester/swing_dataset.py src/qat/domain/backtester/swing_validation.py src/qat/domain/backtester/swing_reference.py src/qat/domain/backtester/swing_statistics.py src/qat/domain/backtester/swing_method_audit.py src/qat/domain/backtester/swing_promotion.py src/qat/domain/backtester/swing_artifacts.py`
 
 Run: `.\.venv\Scripts\python.exe -m pytest -q`
+
+Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
+Expected: no unaddressed security findings.
 
 Run: `.\.venv\Scripts\python.exe -m black --check .`
 

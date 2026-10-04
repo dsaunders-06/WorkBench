@@ -308,7 +308,8 @@ def evaluate_bull_flag(
         flag = bars[-1 - flag_sessions : -1]
         pole = bars[-1 - flag_sessions - 5 : -1 - flag_sessions]
         current_atr = atr_values[-1]
-        assert current_atr is not None
+        if current_atr is None:
+            raise ValueError("qualified pattern requires initialized current_atr")
         factor = breakout.raw_to_adjusted_price_factor
         pattern_payload = {
             "kind": "pattern_instance",

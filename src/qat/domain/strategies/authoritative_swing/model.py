@@ -38,7 +38,7 @@ class Pattern(StrEnum):
 
 
 class RuleOutcome(StrEnum):
-    PASS = "pass"
+    PASS = "pass"  # nosec B105 # Enum outcome label, not a credential.
     FAIL = "fail"
     ABSTAIN = "abstain"
 

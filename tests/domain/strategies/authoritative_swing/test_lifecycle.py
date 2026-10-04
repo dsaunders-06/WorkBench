@@ -61,6 +61,7 @@ def _setup(*, quantity: int = 5) -> SetupDecision:
         pattern_decisions=(pattern,),
         entry_limit_raw=D("10"),
         initial_stop_raw=D("9"),
+        structural_invalidation_raw=D("9"),
         risk_quantity=quantity,
         capacity_quantity=quantity,
         quantity=quantity,
@@ -344,3 +345,8 @@ def test_deep_atr_trail_candidate_cannot_lower_or_break_the_stop() -> None:
     )
 
     assert result.position.current_stop == runner.current_stop
+
+
+def test_qualified_setup_requires_explicit_structural_invalidation() -> None:
+    with pytest.raises(LifecycleInvariantError, match="structural invalidation"):
+        pending_entry_from_setup(replace(_setup(), structural_invalidation_raw=None))

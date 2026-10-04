@@ -82,6 +82,7 @@ from qat.domain.strategies.authoritative_swing.model import (
 from qat.domain.strategies.authoritative_swing.numeric import SplitFactor, to_raw_price
 from qat.domain.strategies.authoritative_swing.resistance import (
     find_resistance_zones,
+    resistance_history,
     three_year_cutoff,
 )
 from qat.domain.strategies.authoritative_swing.sizing import (
@@ -855,6 +856,16 @@ class AuthoritativeSwingReplay:
                 invalid_reasons=(f"signal lifecycle event is incomplete: {error}",),
             )
         abstentions.extend(signal_abstentions)
+        abstentions.extend(
+            RuleEvidence(
+                "post_fill_resistance",
+                RuleOutcome.ABSTAIN,
+                measured=trade.trade_id,
+                reason="three-year resistance history or zone construction is invalid",
+            )
+            for trade in trades
+            if trade.post_fill_resistance is PostFillResistanceDiagnostic.ABSTAIN
+        )
         return SwingReplayResult(
             RunStatus.VALID,
             ReplayArm.COMBINED,
@@ -1112,30 +1123,7 @@ class AuthoritativeSwingReplay:
     def _post_fill_diagnostic(
         self, decision: SetupDecision, fill: Decimal
     ) -> PostFillResistanceDiagnostic:
-        stop = decision.initial_stop_raw
-        if stop is None:
-            return PostFillResistanceDiagnostic.CLEAR
-        prior = tuple(bar for bar in self._bars[decision.symbol] if bar.session < decision.session)
-        try:
-            analytical_zones = find_resistance_zones(prior)
-        except ValueError:
-            analytical_zones = ()
-        factor = (
-            next(
-                bar.raw_to_adjusted_price_factor
-                for bar in reversed(self._bars[decision.symbol])
-                if bar.session <= decision.session
-            )
-            if prior or self._bars[decision.symbol]
-            else None
-        )
-        if factor is None:
-            return PostFillResistanceDiagnostic.CLEAR
-        raw_zones = tuple(
-            (to_raw_price(zone.lower, factor), to_raw_price(zone.upper, factor))
-            for zone in analytical_zones
-        )
-        return classify_post_fill_resistance(fill, stop, raw_zones)
+        return _diagnostic_for_decision(decision, fill, self._bars)
 
 
 def _traded(bar: FinalBar) -> TradedDailyBar:
@@ -1186,6 +1174,11 @@ def replay_signal_candidates(
     indexed = {symbol: {bar.session: bar for bar in history} for symbol, history in bars.items()}
     by_session: dict[date, list[SetupDecision]] = defaultdict(list)
     for decision in decisions:
+        if (
+            decision.status is DecisionStatus.QUALIFIED
+            and decision.structural_invalidation_raw is None
+        ):
+            raise ValueError("qualified pattern requires structural invalidation")
         if any(
             item.status is DecisionStatus.QUALIFIED and item.candidate is not None
             for item in decision.pattern_decisions
@@ -1402,6 +1395,16 @@ def replay_signal_candidates(
                 position = apply_entry_fill(instruction, _confirmed(fill))
                 positions[key] = position
                 decision = pending_decisions.pop(key)
+                diagnostic = _diagnostic_for_decision(decision, fill.price, bars)
+                if diagnostic is PostFillResistanceDiagnostic.ABSTAIN:
+                    abstentions.append(
+                        RuleEvidence(
+                            "post_fill_resistance",
+                            RuleOutcome.ABSTAIN,
+                            measured=decision.decision_id,
+                            reason="three-year resistance history or zone construction is invalid",
+                        )
+                    )
                 trade_states[key] = _TradeState(
                     decision,
                     fill,
@@ -1410,7 +1413,7 @@ def replay_signal_candidates(
                     fill.price,
                     fill.price,
                     [],
-                    _diagnostic_for_decision(decision, fill.price, bars),
+                    diagnostic,
                 )
                 consumed_patterns[key].update(instruction.pattern_instance_ids)
             else:
@@ -1481,7 +1484,8 @@ def replay_signal_candidates(
                 if not matching:
                     continue
                 candidate = matching[0].candidate
-                assert candidate is not None
+                if candidate is None:
+                    raise ValueError("qualified pattern requires a candidate")
                 if key in pending or key in positions:
                     abstentions.append(
                         RuleEvidence(
@@ -1557,11 +1561,16 @@ def replay_signal_candidates(
                         abstentions.append(raw_resistance)
                         continue
                 elif len(decision.patterns) == 1 and decision.status is DecisionStatus.QUALIFIED:
-                    assert decision.entry_limit_raw is not None
-                    assert decision.initial_stop_raw is not None
+                    if decision.entry_limit_raw is None:
+                        raise ValueError("qualified pattern requires an entry limit")
+                    if decision.initial_stop_raw is None:
+                        raise ValueError("qualified pattern requires an initial stop")
                     limit = decision.entry_limit_raw
                     stop = decision.initial_stop_raw
-                    raw_invalidation = decision.structural_invalidation_raw or stop
+                    single_invalidation = decision.structural_invalidation_raw
+                    if single_invalidation is None:
+                        raise ValueError("qualified pattern requires structural invalidation")
+                    raw_invalidation = single_invalidation
                 else:
                     abstentions.append(
                         RuleEvidence(
@@ -1670,17 +1679,17 @@ def _diagnostic_for_decision(
 ) -> PostFillResistanceDiagnostic:
     stop = decision.initial_stop_raw
     if stop is None:
-        return PostFillResistanceDiagnostic.CLEAR
+        return PostFillResistanceDiagnostic.ABSTAIN
     symbol_bars = tuple(bars[decision.symbol])
-    prior = tuple(bar for bar in symbol_bars if bar.session < decision.session)
     try:
+        prior = resistance_history(decision.session, symbol_bars)
         analytical_zones = find_resistance_zones(prior)
     except ValueError:
-        analytical_zones = ()
-    eligible = tuple(bar for bar in symbol_bars if bar.session <= decision.session)
-    if not eligible:
-        return PostFillResistanceDiagnostic.CLEAR
-    factor = eligible[-1].raw_to_adjusted_price_factor
+        return PostFillResistanceDiagnostic.ABSTAIN
+    eligible = tuple(bar for bar in symbol_bars if bar.session == decision.session)
+    if len(eligible) != 1:
+        return PostFillResistanceDiagnostic.ABSTAIN
+    factor = eligible[0].raw_to_adjusted_price_factor
     raw_zones = tuple(
         (to_raw_price(zone.lower, factor), to_raw_price(zone.upper, factor))
         for zone in analytical_zones

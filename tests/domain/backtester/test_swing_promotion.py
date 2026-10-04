@@ -81,9 +81,9 @@ def test_zero_price_onset_covers_each_exposed_official_session() -> None:
     position = _position(sessions)
     pairs = all_exposed_trade_session_pairs(sessions, (position,))
 
-    assert len(pairs) == 5
+    assert len(pairs) == 6
     assert (position.trade_id, sessions[-2]) in pairs
-    assert (position.trade_id, sessions[-1]) not in pairs
+    assert (position.trade_id, sessions[-1]) in pairs
 
 
 def test_sparse_zero_sweep_matches_independent_full_path_reference() -> None:
@@ -91,7 +91,7 @@ def test_sparse_zero_sweep_matches_independent_full_path_reference() -> None:
     position = _position(sessions)
     result = evaluate_structural_risk(sessions, _equity(sessions), (position,), _policy())
 
-    assert result.placements_tested == 5
+    assert result.placements_tested == 6
     assert result.status is StructuralStatus.PASS
     assert result.max_drawdown == Decimal("0.1")
     for placement in result.placements:
@@ -274,7 +274,7 @@ def test_conservative_terminal_failure_with_recovery_pass_is_non_promotable() ->
     case = PromotionCase(
         evidence_tier="promotion_point_in_time",
         feasibility=_frequency(FeasibilityStatus.FEASIBLE),
-        all_edge_gates_pass=True,
+        all_edge_gates_pass=False,
         portfolio_safety_pass=True,
         conservative_terminal_gate_pass=False,
         recovery_sensitivity_pass=True,
@@ -340,3 +340,194 @@ def test_simultaneous_two_issuer_zero_is_a_separate_sensitivity() -> None:
     result = simultaneous_two_issuer_zero(sessions, _equity(sessions), (first, second))
     assert result.worst_drawdown == Decimal("0.2")
     assert result.placements_tested == 5
+
+
+def test_terminal_zero_only_edge_failure_is_derived_from_replay_results() -> None:
+    from qat.domain.backtester.swing_promotion import promotion_case_from_replays
+    from qat.domain.backtester.swing_results import (
+        LifecycleActionSeries,
+        PostFillResistanceDiagnostic,
+        ReplayArm,
+        RunStatus,
+        SwingReplayResult,
+        SwingTrade,
+    )
+    from qat.domain.strategies.authoritative_swing.model import Pattern
+
+    months = tuple(f"{2010 + month // 12}-{1 + month % 12:02}" for month in range(120))
+    trades = []
+    for ordinal in range(240):
+        month = ordinal // 2
+        value = Decimal("0.4") + Decimal(ordinal % 3) / Decimal(10)
+        terminal = ordinal in (0, 40, 80)
+        pnl = Decimal("-10000") if terminal else value * Decimal(100)
+        trades.append(
+            SwingTrade(
+                trade_id=str(ordinal),
+                symbol=f"S{ordinal % 10}.AX",
+                patterns=(Pattern.EMA_PULLBACK,),
+                entry_session=date(2010 + month // 12, 1 + month % 12, 1),
+                exit_session=date(2020, 1, 1),
+                quantity=1000,
+                submitted_limit=Decimal(10),
+                entry_price=Decimal(10),
+                exit_price=Decimal(0) if terminal else Decimal(10) + value / Decimal(10),
+                initial_stop=Decimal("9.9"),
+                gross_pnl=pnl,
+                eligible_dividends=Decimal(0),
+                costs=Decimal(0),
+                net_pnl=pnl,
+                order_initial_risk_dollars=Decimal(100),
+                fill_initial_risk_dollars=Decimal(100),
+                order_r_multiple=pnl / Decimal(100),
+                fill_r_multiple=pnl / Decimal(100),
+                mfe_order_r=value,
+                mae_order_r=Decimal(0),
+                mfe_fill_r=value,
+                mae_fill_r=Decimal(0),
+                exit_reason="terminal_zero" if terminal else "target",
+                observed_triggers=(),
+                post_fill_resistance=PostFillResistanceDiagnostic.CLEAR,
+                analysis_regime="fixture",
+                edge_sample_eligible=True,
+                edge_exclusion_reason=None,
+            )
+        )
+
+    def replay(rows):
+        return SwingReplayResult(
+            RunStatus.VALID,
+            ReplayArm.EMA_PULLBACK,
+            (),
+            LifecycleActionSeries(),
+            (),
+            tuple(rows),
+            tuple(rows),
+            (),
+            (),
+            (),
+        )
+
+    conservative = replay(trades)
+    recovered = replay(
+        tuple(
+            (
+                replace(
+                    trade,
+                    exit_price=Decimal("10.05"),
+                    gross_pnl=Decimal(50),
+                    net_pnl=Decimal(50),
+                    order_r_multiple=Decimal("0.5"),
+                    fill_r_multiple=Decimal("0.5"),
+                    exit_reason="delisting_outcome",
+                )
+                if trade.exit_reason == "terminal_zero"
+                else trade
+            )
+            for trade in trades
+        )
+    )
+    context = PatternEdgeInputs(
+        "ema_pullback",
+        (),
+        100,
+        36,
+        None,
+        None,
+        None,
+        MethodStatus.METHOD_ADEQUATE,
+        FeasibilityStatus.FEASIBLE,
+        120,
+        True,
+        True,
+        True,
+    )
+    case = promotion_case_from_replays(
+        PromotionCase(
+            evidence_tier="promotion_point_in_time",
+            feasibility=_frequency(FeasibilityStatus.FEASIBLE),
+        ),
+        {"ema_pullback": conservative},
+        doubled_cost_replays={"ema_pullback": conservative},
+        recovery_replays={"ema_pullback": recovered},
+        recovery_doubled_cost_replays={"ema_pullback": recovered},
+        contexts={"ema_pullback": context},
+        entry_months=months,
+        draws=999,
+    )
+    assert case.all_edge_gates_pass is False
+    assert case.conservative_terminal_gate_pass is False
+    assert case.recovery_sensitivity_pass is True
+    assert evaluate_promotion(case).status is PromotionStatus.TERMINAL_OUTCOME_SENSITIVE
+    assert (
+        evaluate_promotion(replace(case, evidence_tier="engineering")).status
+        is PromotionStatus.PORTFOLIO_RISK_DESIGN_PENDING
+    )
+    no_recovery = promotion_case_from_replays(
+        PromotionCase(evidence_tier="engineering"),
+        {"ema_pullback": conservative},
+        contexts={"ema_pullback": context},
+        entry_months=months,
+        draws=99,
+    )
+    assert not no_recovery.recovery_sensitivity_pass
+    bad_doubled = replay(
+        tuple(
+            (
+                replace(trade, net_pnl=Decimal(-100), order_r_multiple=Decimal(-1))
+                if trade.exit_reason != "terminal_zero"
+                else trade
+            )
+            for trade in trades
+        )
+    )
+    with pytest.raises(ValueError, match="nonterminal outcome"):
+        promotion_case_from_replays(
+            PromotionCase(evidence_tier="promotion_point_in_time"),
+            {"ema_pullback": conservative},
+            doubled_cost_replays={"ema_pullback": bad_doubled},
+            recovery_replays={"ema_pullback": recovered},
+            recovery_doubled_cost_replays={"ema_pullback": recovered},
+            contexts={"ema_pullback": context},
+            entry_months=months,
+            draws=99,
+        )
+    with pytest.raises(ValueError, match="identities"):
+        promotion_case_from_replays(
+            PromotionCase(evidence_tier="engineering"),
+            {"ema_pullback": conservative},
+            doubled_cost_replays={"ema_pullback": replay(trades[:-1])},
+            contexts={"ema_pullback": context},
+            entry_months=months,
+            draws=99,
+        )
+    with pytest.raises(ValueError, match="identities"):
+        promotion_case_from_replays(
+            PromotionCase(evidence_tier="engineering"),
+            {"ema_pullback": conservative},
+            recovery_replays={"ema_pullback": replay(trades[:-1])},
+            contexts={"ema_pullback": context},
+            entry_months=months,
+            draws=99,
+        )
+
+
+def test_terminal_sensitivity_cannot_hide_unrelated_portfolio_failure() -> None:
+    case = PromotionCase(
+        evidence_tier="promotion_point_in_time",
+        feasibility=_frequency(FeasibilityStatus.FEASIBLE),
+        all_edge_gates_pass=False,
+        conservative_terminal_gate_pass=False,
+        recovery_sensitivity_pass=True,
+        portfolio_safety_pass=False,
+    )
+    assert evaluate_promotion(case).status is PromotionStatus.FAIL
+
+
+def test_exit_session_onset_removes_proceeds_and_can_bind_worst_drawdown() -> None:
+    sessions = _sessions()
+    position = replace(_position(sessions, Decimal("100")), exit_proceeds=Decimal("1500"))
+    result = evaluate_structural_risk(sessions, _equity(sessions), (position,), _policy())
+    placement = next(row for row in result.placements if row.onset == position.exit_session)
+    assert placement.max_drawdown == Decimal("0.15")
+    assert result.max_drawdown == Decimal("0.15")

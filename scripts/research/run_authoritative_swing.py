@@ -30,7 +30,11 @@ from qat.domain.backtester.swing_events import (
     SwingMarketEvent,
 )
 from qat.domain.backtester.swing_fills import AmbiguityPolicy
-from qat.domain.backtester.swing_promotion import PromotionCase, evaluate_promotion
+from qat.domain.backtester.swing_promotion import (
+    PromotionCase,
+    evaluate_promotion,
+    promotion_case_from_replays,
+)
 from qat.domain.backtester.swing_replay import (
     AuthoritativeSwingReplay,
     ReplayCalendarRow,
@@ -953,6 +957,58 @@ def main(argv: Sequence[str] | None = None) -> int:
         }
         if mechanical is not None:
             metrics["mechanical_diagnostic"] = mechanical
+        doubled_costs = replace(
+            _COSTS,
+            version="phase2-engineering-double-cost-v1",
+            commission_bps=_COSTS.commission_bps * 2,
+            min_commission=_COSTS.min_commission * 2,
+            third_party_bps=_COSTS.third_party_bps * 2,
+        )
+        conservative_replays = replays
+        doubled_replays = None
+        if args.catalog == "synthetic-golden":
+            if ambiguity is not AmbiguityPolicy.CONSERVATIVE:
+                conservative_replays = _run_golden(fixture, AmbiguityPolicy.CONSERVATIVE)
+            doubled_replays = _run_golden(
+                fixture, AmbiguityPolicy.CONSERVATIVE, costs=doubled_costs
+            )
+        elif args.catalog != "static-asx":
+            if ambiguity is not AmbiguityPolicy.CONSERVATIVE:
+                conservative_replays = _run_signed_dataset(
+                    dataset, AmbiguityPolicy.CONSERVATIVE, multiplier
+                )
+            doubled_replays = _run_signed_dataset(
+                dataset, AmbiguityPolicy.CONSERVATIVE, multiplier, costs=doubled_costs
+            )
+        edge_replays = {
+            arm.value: replay
+            for arm, replay in conservative_replays.items()
+            if arm is not ReplayArm.COMBINED
+        }
+        doubled_edge_replays = (
+            {
+                arm.value: replay
+                for arm, replay in doubled_replays.items()
+                if arm is not ReplayArm.COMBINED
+            }
+            if doubled_replays is not None
+            else None
+        )
+        month_frame = tuple(
+            sorted(
+                {
+                    point.session.strftime("%Y-%m")
+                    for replay in edge_replays.values()
+                    for point in replay.equity
+                }
+            )
+        )
+        promotion_case = promotion_case_from_replays(
+            PromotionCase(evidence_tier="engineering"),
+            edge_replays,
+            doubled_cost_replays=doubled_edge_replays,
+            entry_months=month_frame,
+        )
         run = SwingArtifactRun(
             (
                 "synthetic"
@@ -966,7 +1022,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset_manifest,
             replays,
             metrics,
-            evaluate_promotion(PromotionCase(evidence_tier="engineering")),
+            evaluate_promotion(promotion_case),
             {"status": "METHOD_AUDIT_PENDING", "numeric_policy": "wcr-s-cv1-v2"},
             {
                 "status": "DATASET_INSUFFICIENT",

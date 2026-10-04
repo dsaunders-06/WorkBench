@@ -69,6 +69,7 @@ def _setup() -> SetupDecision:
         5,
         5,
         ("bar-1",),
+        structural_invalidation_raw=D("9"),
     )
 
 

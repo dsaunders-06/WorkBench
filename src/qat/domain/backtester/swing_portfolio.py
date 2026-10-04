@@ -99,7 +99,8 @@ def _allocation(
 ) -> EntryAllocation:
     limit = decision.entry_limit_raw
     stop = decision.initial_stop_raw
-    assert limit is not None and stop is not None
+    if limit is None or stop is None:
+        raise PortfolioInvariantError("qualified allocation requires limit and stop")
     shares = Decimal(quantity)
     notional = shares * limit
     price_risk = shares * (limit - stop)
@@ -156,7 +157,8 @@ def allocate_entry_batch(
         for item in ordered:
             limit = item.entry_limit_raw
             stop = item.initial_stop_raw
-            assert limit is not None and stop is not None
+            if limit is None or stop is None:
+                raise PortfolioInvariantError("qualified allocation requires limit and stop")
             original_risk = modeled_total_risk(item.quantity, limit, stop, costs, liquidity)
             scaled = size_for_risk(
                 original_risk * scale * Decimal(100),

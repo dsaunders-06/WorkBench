@@ -177,10 +177,10 @@ def test_golden_lifecycle_covers_overlap_dividend_halts_and_terminal_value() -> 
         and "time_stop" in trade.observed_triggers
         for trade in combined.trades
     )
-    assert {trade.post_fill_resistance for trade in combined.trades} >= {
-        PostFillResistanceDiagnostic.INSIDE_ZONE,
-        PostFillResistanceDiagnostic.PATH_BLOCKED,
+    assert {trade.post_fill_resistance for trade in combined.trades} == {
+        PostFillResistanceDiagnostic.ABSTAIN,
     }
+    assert any(rule.code == "post_fill_resistance" for rule in combined.abstentions)
 
 
 def test_runner_denies_network_and_child_process_access(
@@ -342,3 +342,71 @@ def test_static_asx_strict_bundle_discloses_provenance_and_missing_proxy(tmp_pat
     assert "benchmark proxy has missing sessions" in report
     assert manifest["dataset"]["symbol_count"] == 95
     assert manifest["dataset"]["official_session_count"] == 501
+
+
+def test_runner_records_replay_derived_edge_and_terminal_gate_evidence(tmp_path: Path) -> None:
+    assert main(["--catalog", "synthetic-golden", "--out", str(tmp_path)]) == 0
+    verdict = json.loads((_bundle(tmp_path) / "promotion.json").read_text())
+    gates = {gate["name"]: gate for gate in verdict["gates"]}
+    assert gates["edge"]["passed"] is False
+    assert gates["conservative_terminal"]["passed"] is False
+    assert gates["recovery_sensitivity"]["passed"] is False
+    assert "absent" in gates["recovery_sensitivity"]["evidence"]
+
+
+def test_replay_gate_derivation_allows_legitimate_doubled_cost_sizing_changes() -> None:
+    from qat.domain.backtester.swing_promotion import PromotionCase, promotion_case_from_replays
+
+    fixture = _synthetic_golden(Decimal("1.5"))
+    fixture = replace(
+        fixture,
+        decisions={
+            key: replace(decision, capacity_quantity=1000, risk_quantity=1000, quantity=1000)
+            for key, decision in fixture.decisions.items()
+        },
+    )
+    baseline = _run_golden(fixture, AmbiguityPolicy.CONSERVATIVE)
+    doubled_costs = replace(
+        runner._COSTS,
+        version="doubled-fixture",
+        commission_bps=runner._COSTS.commission_bps * 2,
+        min_commission=runner._COSTS.min_commission * 2,
+        third_party_bps=runner._COSTS.third_party_bps * 2,
+    )
+    doubled = _run_golden(fixture, AmbiguityPolicy.CONSERVATIVE, costs=doubled_costs)
+    ordinary_trade = baseline[ReplayArm.EMA_PULLBACK].signal_trades[0]
+    doubled_trade = doubled[ReplayArm.EMA_PULLBACK].signal_trades[0]
+    assert ordinary_trade.quantity == 86
+    assert doubled_trade.quantity == 74
+    assert ordinary_trade.trade_id != doubled_trade.trade_id
+    rows = {arm.value: replay for arm, replay in baseline.items() if arm is not ReplayArm.COMBINED}
+    doubled_rows = {
+        arm.value: replay for arm, replay in doubled.items() if arm is not ReplayArm.COMBINED
+    }
+    months = tuple(
+        sorted(
+            {point.session.strftime("%Y-%m") for replay in rows.values() for point in replay.equity}
+        )
+    )
+    case = promotion_case_from_replays(
+        PromotionCase(evidence_tier="engineering"),
+        rows,
+        doubled_cost_replays=doubled_rows,
+        entry_months=months,
+        draws=99,
+    )
+    assert case.all_edge_gates_pass is False
+    assert case.recovery_sensitivity_pass is False
+    unrelated = replace(doubled_trade, symbol="UNRELATED.AX")
+    bad_replay = replace(
+        doubled[ReplayArm.EMA_PULLBACK],
+        signal_trades=(unrelated, *doubled[ReplayArm.EMA_PULLBACK].signal_trades[1:]),
+    )
+    with pytest.raises(ValueError, match="identities"):
+        promotion_case_from_replays(
+            PromotionCase(evidence_tier="engineering"),
+            rows,
+            doubled_cost_replays={**doubled_rows, "ema_pullback": bad_replay},
+            entry_months=months,
+            draws=99,
+        )

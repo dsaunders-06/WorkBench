@@ -234,8 +234,10 @@ def evaluate_ema_pullback(
     if any(rule.outcome is RuleOutcome.FAIL for rule in rule_tuple):
         return PatternDecision(Pattern.EMA_PULLBACK, DecisionStatus.REJECTED, rule_tuple)
 
-    assert current_ema20 is not None
-    assert current_atr14 is not None
+    if current_ema20 is None:
+        raise ValueError("qualified pattern requires initialized current_ema20")
+    if current_atr14 is None:
+        raise ValueError("qualified pattern requires initialized current_atr14")
     factor = signal.raw_to_adjusted_price_factor
     candidate = PatternCandidate(
         pattern=Pattern.EMA_PULLBACK,

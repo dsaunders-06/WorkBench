@@ -1319,12 +1319,16 @@ calculation must agree within the frozen numeric tolerance.
 
 For the deterministic portfolio test, inject one zero-price outcome into each
 cash-funded trade in turn at every official session on which that position is
-exposed, beginning immediately after its entry fill and ending before its
-baseline exit. Non-tradability does not end exposure: a halted position remains
+exposed, beginning immediately after its entry fill and including its baseline
+exit session. Non-tradability does not end exposure: a halted position remains
 exposed throughout the unresolved interval. If it resumes at `T40` and exits at
-that session, candidate onsets end at `T39`; if it is terminally closed at
-`T64`, candidate onsets end at the official session immediately before `T64`,
-while the zero mark and unavailable cash remain in force through `T64`.
+that session, candidate onsets include `T40`; if it is terminally closed at
+`T64`, candidate onsets include `T64`. The zero mark and unavailable cash remain
+in force through `T64`.
+
+**Operator review amendment, 4 October 2026 (F7):** inclusion of the exit session
+supersedes the earlier exclusive endpoint; onset at exit removes the scheduled
+proceeds in the same exact-decimal sparse ledger. Entry-session exclusion is unchanged.
 
 Build the baseline decisions, fills, position marks, dividends, exit proceeds,
 cash ledger, and equity path once. Each placement then applies an exact-decimal
