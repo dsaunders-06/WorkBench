@@ -637,11 +637,11 @@ def _run_signed_dataset(
 
 def _replay_summary(replay: SwingReplayResult) -> dict[str, object]:
     eligible = tuple(trade for trade in replay.signal_trades if trade.edge_sample_eligible)
-    entry_equity = {point.session: point.equity for point in replay.equity}
-    single_entry_exposures = tuple(
-        trade.entry_price * Decimal(trade.quantity) / entry_equity[trade.entry_session]
-        for trade in replay.trades
-        if trade.entry_session in entry_equity and entry_equity[trade.entry_session] > 0
+    single_position_exposures = tuple(
+        mark[2] / point.equity
+        for point in replay.equity
+        if point.equity > 0
+        for mark in point.position_marks
     )
     statistics = summarize_swing_statistics(
         signal_trades=replay.signal_trades,
@@ -662,12 +662,12 @@ def _replay_summary(replay: SwingReplayResult) -> dict[str, object]:
         "maximum_drawdown": statistics.maximum_drawdown,
         "maximum_exposure": statistics.maximum_exposure,
         "average_exposure": statistics.average_exposure,
-        "maximum_single_position_entry_notional_exposure": max(
-            single_entry_exposures, default=Decimal(0)
+        "maximum_single_position_notional_exposure": max(
+            single_position_exposures, default=Decimal(0)
         ),
-        "average_single_position_entry_notional_exposure": (
-            sum(single_entry_exposures, Decimal(0)) / Decimal(len(single_entry_exposures))
-            if single_entry_exposures
+        "average_single_position_notional_exposure": (
+            sum(single_position_exposures, Decimal(0)) / Decimal(len(single_position_exposures))
+            if single_position_exposures
             else Decimal(0)
         ),
         "cost_to_risk": statistics.cost_to_risk,

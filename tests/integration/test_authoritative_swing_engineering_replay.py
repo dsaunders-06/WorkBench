@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import socket
 import subprocess
 import urllib.request
 from dataclasses import replace
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -14,7 +17,14 @@ import pytest
 import scripts.research.run_authoritative_swing as runner
 from qat.domain.backtester.swing_dataset import DatasetTier, validate_catalog
 from qat.domain.backtester.swing_fills import AmbiguityPolicy
-from qat.domain.backtester.swing_results import PostFillResistanceDiagnostic, ReplayArm
+from qat.domain.backtester.swing_results import (
+    LifecycleActionSeries,
+    PostFillResistanceDiagnostic,
+    ReplayArm,
+    ReplayEquityPoint,
+    RunStatus,
+    SwingReplayResult,
+)
 from qat.domain.strategies.authoritative_swing.model import DecisionStatus
 from scripts.research.run_authoritative_swing import _run_golden, _synthetic_golden, main
 from tests.domain.backtester.test_swing_dataset import _fixture as signed_engineering_fixture
@@ -61,8 +71,8 @@ def test_synthetic_golden_creates_four_arm_non_promotional_bundle(tmp_path: Path
         "T64:",
         "T65:",
         "Terminal-valued trades:",
-        "Maximum single-position entry notional exposure:",
-        "Average single-position entry notional exposure:",
+        "Maximum single-position notional exposure:",
+        "Average single-position notional exposure:",
         "Cost to risk:",
         "Gap losses beyond planned 1% risk:",
         "Minimum-R stress:",
@@ -72,6 +82,61 @@ def test_synthetic_golden_creates_four_arm_non_promotional_bundle(tmp_path: Path
         "2% sizing",
     ):
         assert label in report
+    with (bundle / "equity.csv").open(newline="", encoding="utf-8") as handle:
+        equity_rows = list(csv.DictReader(handle))
+    assert any(
+        row["arm"] == "combined" and json.loads(row["position_marks"]) for row in equity_rows
+    )
+
+
+def test_single_position_exposure_uses_every_held_session_mark() -> None:
+    replay = SwingReplayResult(
+        RunStatus.VALID,
+        ReplayArm.COMBINED,
+        (),
+        LifecycleActionSeries(),
+        (),
+        (),
+        (),
+        (
+            ReplayEquityPoint(
+                date(2026, 1, 5),
+                Decimal("10000"),
+                Decimal("9000"),
+                Decimal("1000"),
+                Decimal(0),
+                position_marks=(("position-1", "AAA.AX", Decimal("1000")),),
+            ),
+            ReplayEquityPoint(
+                date(2026, 1, 6),
+                Decimal("11000"),
+                Decimal("8800"),
+                Decimal("2200"),
+                Decimal(0),
+                position_marks=(("position-1", "AAA.AX", Decimal("2200")),),
+            ),
+        ),
+        (),
+        (),
+    )
+
+    summary = runner._replay_summary(replay)
+
+    assert summary["maximum_single_position_notional_exposure"] == Decimal("0.2")
+    assert summary["average_single_position_notional_exposure"] == Decimal("0.15")
+
+
+def test_engineering_replay_records_each_open_position_mark() -> None:
+    fixture = _synthetic_golden(Decimal(1))
+    replay = _run_golden(fixture, AmbiguityPolicy.CONSERVATIVE)[ReplayArm.COMBINED]
+
+    held_points = [point for point in replay.equity if point.position_value > 0]
+    assert held_points
+    assert all(point.position_marks for point in held_points)
+    assert all(
+        sum((mark[2] for mark in point.position_marks), Decimal(0)) == point.position_value
+        for point in held_points
+    )
 
 
 def test_golden_lifecycle_covers_overlap_dividend_halts_and_terminal_value() -> None:

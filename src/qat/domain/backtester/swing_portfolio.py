@@ -238,12 +238,17 @@ def mark_to_market(
 ) -> ReplayEquityPoint:
     """Mark open quantities at exact raw closes without changing cash."""
 
-    position_value = Decimal(0)
+    position_marks: list[tuple[str, str, Decimal]] = []
     for position in state.positions:
         price = closing_prices.get(position.symbol)
         if price is None or not price.is_finite() or price < 0:
             raise PortfolioInvariantError(f"missing valid close for {position.symbol}")
-        position_value += Decimal(position.open_quantity) * price
+        if position.open_quantity:
+            position_marks.append(
+                (position.position_id, position.symbol, Decimal(position.open_quantity) * price)
+            )
+    position_marks.sort(key=lambda mark: (mark[0], mark[1]))
+    position_value = sum((mark[2] for mark in position_marks), Decimal(0))
     equity = state.cash + position_value + state.dividend_receivables
     return ReplayEquityPoint(
         session,
@@ -252,4 +257,5 @@ def mark_to_market(
         position_value,
         state.dividend_receivables,
         stale_marks,
+        tuple(position_marks),
     )

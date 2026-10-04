@@ -230,12 +230,12 @@ def _report(run: SwingArtifactRun, run_id: str) -> bytes:
     for label, key in (
         ("Terminal-valued trades", "terminal_valued_trades"),
         (
-            "Maximum single-position entry notional exposure",
-            "maximum_single_position_entry_notional_exposure",
+            "Maximum single-position notional exposure",
+            "maximum_single_position_notional_exposure",
         ),
         (
-            "Average single-position entry notional exposure",
-            "average_single_position_entry_notional_exposure",
+            "Average single-position notional exposure",
+            "average_single_position_notional_exposure",
         ),
         ("Maximum aggregate exposure", "maximum_exposure"),
         ("Average aggregate exposure", "average_exposure"),
@@ -384,6 +384,7 @@ def write_swing_artifacts(run: SwingArtifactRun, output_root: Path) -> Path:
         "position_value",
         "dividend_receivables",
         "stale_marks",
+        "position_marks",
     )
     decision_lines = [
         _json_bytes({"arm": arm.value, "decision": decision})
