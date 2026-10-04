@@ -1,5 +1,7 @@
 # QAT Recovery Handover — Phase 2 Authoritative Strategy
 
+**Historical handover:** This records the state prepared on 2 October 2026. For the completed Phase 2C branch and current review boundary, read [the Phase 2C handover](PHASE_2C_HANDOVER.md).
+
 **Prepared:** 2 October 2026, Australia/Sydney  
 **Repository:** `dsaunders-06/WorkBench` (private GitHub repository)  
 **Current worktree:** `C:\Users\mailm\Documents\Codex\2026-09-21\continue-the-qat-recovery-project-from\work\WorkBench-phase2`  
@@ -426,4 +428,3 @@ For each task, the next chat should report:
 6. the next task and any review/approval boundary; and
 7. confirmation that `master`, production behavior, runtime state, and sealed
    promotion data were not changed.
-
