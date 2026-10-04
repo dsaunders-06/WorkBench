@@ -29,6 +29,7 @@ from qat.domain.backtester.swing_promotion import (
 )
 from qat.domain.backtester.swing_reference import IncidenceCalibration
 from qat.domain.backtester.swing_results import ReplayEquityPoint
+from qat.domain.backtester.swing_statistics import InferenceCandidate
 
 
 def _sessions() -> tuple[date, ...]:
@@ -339,7 +340,50 @@ def test_simultaneous_two_issuer_zero_is_a_separate_sensitivity() -> None:
     second = replace(first, trade_id="funded-2", issuer_id="issuer-2")
     result = simultaneous_two_issuer_zero(sessions, _equity(sessions), (first, second))
     assert result.worst_drawdown == Decimal("0.2")
-    assert result.placements_tested == 5
+    assert result.placements_tested == 6
+
+
+def test_terminal_tail_exit_onset_matches_deterministic_sweep() -> None:
+    sessions = _sessions()[:2]
+    position = replace(
+        _position(sessions, Decimal("100")),
+        exit_proceeds=Decimal("1500"),
+    )
+    equity = _equity(sessions)
+
+    sweep = evaluate_structural_risk(sessions, equity, (position,), _policy())
+    tail = simulate_terminal_tail(
+        sessions,
+        equity,
+        (TerminalScenarioTrade(position, Decimal("1"), Decimal("-9"), Decimal(1)),),
+        simulations=8,
+        seed=31,
+    )
+
+    assert all_exposed_trade_session_pairs(sessions, (position,)) == (
+        (position.trade_id, position.exit_session),
+    )
+    assert sweep.placements_tested == 1
+    assert sweep.placements[0].max_drawdown == Decimal("0.15")
+    assert tail.drawdown_95 == sweep.max_drawdown
+    assert tail.cash_es1 == Decimal("-0.15")
+
+
+def test_two_issuer_exit_onset_removes_both_scheduled_proceeds() -> None:
+    sessions = _sessions()[:2]
+    first = replace(_position(sessions, Decimal("100")), exit_proceeds=Decimal("1500"))
+    second = replace(first, trade_id="funded-2", issuer_id="issuer-2")
+    equity = _equity(sessions)
+
+    sweep = evaluate_structural_risk(sessions, equity, (first, second), _policy())
+    pair = simultaneous_two_issuer_zero(sessions, equity, (first, second))
+
+    assert sweep.placements_tested == 2
+    assert all(row.onset == sessions[1] for row in sweep.placements)
+    assert all(row.max_drawdown == Decimal("0.15") for row in sweep.placements)
+    assert pair.placements_tested == 1
+    assert pair.worst_pair == (first.trade_id, second.trade_id, sessions[1])
+    assert pair.worst_drawdown == Decimal("0.3")
 
 
 def test_terminal_zero_only_edge_failure_is_derived_from_replay_results() -> None:
@@ -459,6 +503,15 @@ def test_terminal_zero_only_edge_failure_is_derived_from_replay_results() -> Non
     assert case.conservative_terminal_gate_pass is False
     assert case.recovery_sensitivity_pass is True
     assert evaluate_promotion(case).status is PromotionStatus.TERMINAL_OUTCOME_SENSITIVE
+    grouped = promotion_case_from_replays(
+        PromotionCase(evidence_tier="engineering"),
+        {"ema_pullback": conservative},
+        contexts={"ema_pullback": context},
+        entry_months=months,
+        draws=99,
+        candidate=InferenceCandidate("aligned_block", 6),
+    )
+    assert grouped.pattern_edges[0].gates[0].passed is False  # 20 aligned clusters < G_required=36
     assert (
         evaluate_promotion(replace(case, evidence_tier="engineering")).status
         is PromotionStatus.PORTFOLIO_RISK_DESIGN_PENDING

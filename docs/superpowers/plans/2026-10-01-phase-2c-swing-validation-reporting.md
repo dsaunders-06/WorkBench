@@ -19,6 +19,32 @@ separate Phase 2D plan.
 
 **Spec:** `docs/superpowers/specs/2026-10-01-phase-2-authoritative-swing-strategy-design.md`
 
+## Operator amendment: F1 Option 1
+
+The operator accepted Phase 2C corrections at `90f2589` and chose Option 1
+for F1: freeze a candidate set and selection rule before development release,
+then evaluate the candidates in the calibrated audit. The three production
+candidates are entry-month WCR-S, WCR-S on fixed consecutive three-month
+clusters, and aligned block-cluster wild bootstrap with one declared block
+length `L`. Every candidate uses the same tie-safe p-value and Romano–Wolf
+path. Enumerate all `2^G` signs when the sign space fits the declared inner
+draw count; otherwise use a declared relative tie tolerance. At least six
+nonempty clusters per pattern are needed to reach both the 2.5% confidence
+and 5% family gates.
+
+The unsigned draft at `docs/METHOD_AUDIT_DECLARED_UNSIGNED_DRAFT.json` records
+the candidate set, eligibility floor, paired-audit selection rule, scenario
+slots, seeds, and caps. The market-regime proxy must use at least ten years of
+strategy-independent ASX 200 or All Ordinaries history. The approved ASX
+end-month source audit in `docs/phase-2-market-regime-proxy.md` supports
+mandatory generic persistence lengths 1, 2, 3 and 4 months; 6 and 12 months
+are disclosed sensitivities. The unsigned draft sets aligned candidate block
+length `L = 4` from the first complete entry month of each partition, matching
+the longest mandatory generic shock. No candidate, block length, or scenario can be
+added
+or removed after development data is released. No declaration is signed,
+submitted, or timestamped by this Phase 2C work.
+
 ## Global Constraints
 
 - Complete Phase 2A and Phase 2B first.
@@ -594,36 +620,55 @@ Run: `.\.venv\Scripts\python.exe -m pytest tests/domain/backtester/test_swing_st
 
 - [ ] **Step 3: Implement the frozen inferential audit**
 
-Implement WCR-S for the intercept-only mean using CV1 standard errors and
-restricted scores (the transformed scores equal raw restricted scores when the
-null fixes the only coefficient), with 9,999 common month weights. Invert the
-one-sided test for a 97.5% lower bound. Apply one-sided Romano-Wolf stepdown at
-5% FWER across the three patterns and preserve common weights. Compare with a
-small independent reference that imports no production helper.
+Implement the three predeclared production candidates for the intercept-only
+mean: entry-month WCR-S, WCR-S on fixed consecutive three-month clusters, and
+aligned block-cluster wild bootstrap at a declared length `L`. They share
+restricted scores, CV1 studentization, one tie-safe p-value computation, and
+one common-weight Romano–Wolf stepdown path. Count exact ties as exceedances.
+Enumerate all `2^G` Rademacher signs when that count does not exceed the
+declared inner draws; otherwise apply the declared relative tolerance. Check
+the attainable floor `1 / 2^G` before audit qualification: `G >= 6` is
+required to reach both nominal gates. Compare with a small independent
+reference that imports no production helper.
 
 The generic pilot accepts only declared synthetic families and retains every
-attempt. `METHOD_AUDIT_DECLARED` later freezes the selected method, pilot hash,
-scenario generators, code, seeds, and caps before development outcomes.
-Mandatory scenarios cover joint 3-, 6-, and 12-month blocks; observed and
-stressed month-size imbalance; empirical skew; complete and every partial null;
-and the calibrated terminal-event envelope. The broader
-`0.2%/0.5%/1% × -20R/-50R` grid is diagnostic unless calibration places a cell
-inside the mandatory envelope. Recenter the entire contaminated distribution
-to true mean zero for size and shift it by `delta_MME` for power.
+attempt. Before development release, the unsigned draft must fix candidate
+identities, one block length, block alignment, the scenario matrix and
+generators, seeds, 9,999 inner draws, and the selection rule. The final
+`METHOD_AUDIT_DECLARED` later binds those fields and the pilot hash.
+Development/validation-calibrated block-resampled scenarios are mandatory,
+along with generic persistence scenarios through the length supported by the
+strategy-independent market-regime proxy. Estimate that support from at least
+ten years of ASX 200 or All Ordinaries monthly index returns, absolute returns
+and realised volatility, reporting lag 1–12 autocorrelation and half-lives.
+If approved local history is absent, request an approved source; do not fetch
+one or finalize `L` and persistence on strategy outcomes. Longer persistence
+is a disclosed sensitivity, including 12 months when unsupported by a
+36-month holdout. Also cover observed and stressed cluster-size imbalance,
+empirical skew, the complete null and every one- and two-null partial
+configuration, and the calibrated terminal-event envelope. The broader
+`0.2%/0.5%/1% × -20R/-50R` grid is diagnostic unless calibration places a
+cell inside the mandatory envelope. Recenter the entire contaminated
+distribution to true mean zero for size and shift it by `delta_MME` for power.
 
-With 9,999 inner draws, start with 20,000 outer simulations. Accept early only
-when the upper 95% Monte Carlo limit is at least 0.25 percentage points below
-3.25% for the confidence gate and 6% for FWER. Reject early when the lower limit
-is at least 0.25 points above. Otherwise extend to 100,000. Every mandatory cell
-must pass. At 100,000, accept a cell only when its upper 95% Monte Carlo limit
-is less than or equal to the applicable 3.25% or 6% cap; a point estimate below
-the cap is insufficient. Every other final result is `METHOD_INADEQUATE`, which
-blocks promotion and cannot be repaired with a trimmed or winsorized estimand.
-
-Recompute `N_required >= 100` and `G_required` under the accepted method using
-the maximum requirement across mandatory power scenarios. `delta_MME` is
-positive, externally declared, and cannot rise to reduce sample requirements.
-A nonpositive development-plus-validation expectancy refuses holdout.
+Evaluate all candidates on identical outer draws and declared base weight
+matrices, aggregated to each candidate's aligned clusters. With 9,999 inner
+draws, start every mandatory null size cell with 20,000 outer simulations.
+Accept early only when the upper 95% Monte Carlo limit is at least 0.25
+percentage points below 3.25% for confidence and 6% for family error. Reject
+early when the lower limit is at least 0.25 points above; otherwise extend to
+100,000. At 100,000 a cell passes only if its upper limit is at or below its
+cap. A candidate qualifies only by passing every mandatory cell under both
+applicable caps. At one declared projection sample size, calculate each qualifying
+candidate's rejection fraction at positive declared `delta_MME` for every
+mandatory power scenario and pattern. Rank candidates by the minimum of
+those fractions; break exact ties by the larger nonempty cluster count at
+that projection size. If none qualifies, return `METHOD_INADEQUATE`.
+Freeze the resulting method and recompute `N_required >= 100` and
+`G_required >= 6` using the maximum requirement across mandatory power
+scenarios. A nonpositive development-plus-validation expectancy refuses
+holdout. No new candidate, block length or scenario may be introduced after
+development release.
 
 - [ ] **Step 4: Implement complete-month frequency planning**
 

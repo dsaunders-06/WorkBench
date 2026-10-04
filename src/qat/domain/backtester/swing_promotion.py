@@ -28,7 +28,14 @@ from qat.domain.backtester.swing_results import (
     SwingReplayResult,
     SwingTrade,
 )
-from qat.domain.backtester.swing_statistics import romano_wolf_stepdown, wcr_s_mean_test
+from qat.domain.backtester.swing_statistics import (
+    ENTRY_MONTH_WCR_S,
+    InferenceCandidate,
+    candidate_cluster_count,
+    candidate_eligible,
+    romano_wolf_stepdown,
+    wcr_s_mean_test,
+)
 
 
 class StructuralStatus(StrEnum):
@@ -192,6 +199,7 @@ class PatternEdgeInputs:
     phase4_policy_frozen: bool
     protocol_frozen: bool
     permit_satisfied: bool
+    inference_clusters: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,11 +259,14 @@ def evaluate_pattern_edge_gates(inputs: PatternEdgeInputs) -> PatternEdgeResult:
         concentration_pass = all(
             value is not None and value > 0 for value in (leave_symbol, leave_year, leave_top)
         )
+    observed_clusters = (
+        inputs.inference_clusters if inputs.inference_clusters is not None else len(months)
+    )
     gates = (
         GateResult(
             "sample_size",
-            len(eligible) >= inputs.n_required and len(months) >= inputs.g_required,
-            f"eligible N={len(eligible)}, nonempty G={len(months)}",
+            len(eligible) >= inputs.n_required and observed_clusters >= inputs.g_required,
+            f"eligible N={len(eligible)}, nonempty G={observed_clusters}",
         ),
         GateResult(
             "expectancy", expectation is not None and expectation > 0, f"mean R_order={expectation}"
@@ -473,14 +484,17 @@ def simulate_terminal_tail(
         trade.position.trade_id: tuple(
             session
             for session in sessions
-            if trade.position.entry_session < session < trade.position.exit_session
+            if trade.position.entry_session < session <= trade.position.exit_session
         )
         for trade in trades
     }
     if any(not values for values in exposure_sessions.values()):
         raise ValueError("terminal simulation needs at least one exposed session per trade")
     for trade in trades:
-        if set(trade.position.marks) != set(exposure_sessions[trade.position.trade_id]):
+        mark_sessions = set(exposure_sessions[trade.position.trade_id]) - {
+            trade.position.exit_session
+        }
+        if set(trade.position.marks) != mark_sessions:
             raise ValueError("terminal position marks must cover every exposed session")
     analytical = sum(
         (
@@ -573,8 +587,8 @@ def simultaneous_two_issuer_zero(
             shared = tuple(
                 session
                 for session in sessions
-                if first.entry_session < session < first.exit_session
-                and second.entry_session < session < second.exit_session
+                if first.entry_session < session <= first.exit_session
+                and second.entry_session < session <= second.exit_session
             )
             for onset in shared:
                 placements += 1
@@ -693,6 +707,7 @@ def promotion_case_from_replays(
     entry_months: Sequence[str] = (),
     draws: int = 9999,
     seed: int = 0,
+    candidate: InferenceCandidate = ENTRY_MONTH_WCR_S,
 ) -> PromotionCase:
     """Derive edge and terminal provenance from conservative/recovery replay evidence.
 
@@ -788,11 +803,16 @@ def promotion_case_from_replays(
         adjusted: Mapping[str, Decimal] = {}
         lowers: dict[str, Decimal] = {}
         try:
-            adjusted = romano_wolf_stepdown(samples, draws=draws, seed=seed).adjusted_p_values
-            lowers = {
-                name: wcr_s_mean_test(sample, draws=draws, seed=seed).lower_bound
-                for name, sample in samples.items()
-            }
+            if all(candidate_eligible(sample, candidate) for sample in samples.values()):
+                adjusted = romano_wolf_stepdown(
+                    samples, draws=draws, seed=seed, candidate=candidate
+                ).adjusted_p_values
+                lowers = {
+                    name: wcr_s_mean_test(
+                        sample, draws=draws, seed=seed, candidate=candidate
+                    ).lower_bound
+                    for name, sample in samples.items()
+                }
         except ValueError:
             # Insufficient clusters/variance cannot become passing inference.
             pass
@@ -848,6 +868,7 @@ def promotion_case_from_replays(
                     wcr_lower_bound=lowers.get(name),
                     romano_wolf_adjusted_p=adjusted.get(name),
                     doubled_cost_expectancy=double_mean,
+                    inference_clusters=candidate_cluster_count(samples[name], candidate),
                 )
             )
             results.append(

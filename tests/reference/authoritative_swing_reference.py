@@ -150,8 +150,21 @@ def wcr_s_pvalue(
     centered = [total - size * mean for total, size in zip(totals, sizes, strict=True)]
     se = math.sqrt(clusters / (clusters - 1) * sum(score * score for score in centered)) / count
     observed = (mean - null) / se
+    active = [index for index, size in enumerate(sizes) if size]
+    exact = 2 ** len(active) <= len(weights)
+    rows = (
+        [
+            tuple(
+                -1 if index in active and draw & (1 << active.index(index)) else 1
+                for index in range(len(sizes))
+            )
+            for draw in range(2 ** len(active))
+        ]
+        if exact
+        else weights
+    )
     boot = []
-    for row in weights:
+    for row in rows:
         scores = [
             (total - size * null) * weight
             for total, size, weight in zip(totals, sizes, row, strict=True)
@@ -162,12 +175,37 @@ def wcr_s_pvalue(
         ]
         denominator = math.sqrt(clusters / (clusters - 1) * sum(item * item for item in residuals))
         boot.append(numerator / denominator)
-    return observed, Decimal(1 + sum(value >= observed for value in boot)) / Decimal(len(boot) + 1)
+    exceeded = sum(
+        value > observed or math.isclose(value, observed, rel_tol=1e-12, abs_tol=0)
+        for value in boot
+    )
+    return observed, (
+        Decimal(exceeded) / Decimal(len(boot))
+        if exact
+        else Decimal(1 + exceeded) / Decimal(len(boot) + 1)
+    )
 
 
 def romano_wolf(
     samples: dict[str, Sequence[Sequence[Decimal]]], weights: Sequence[Sequence[int]]
 ) -> tuple[tuple[str, ...], dict[str, Decimal]]:
+    active = [
+        index
+        for index in range(len(next(iter(samples.values()))))
+        if any(len(months[index]) for months in samples.values())
+    ]
+    exact = 2 ** len(active) <= len(weights)
+    rows = (
+        [
+            tuple(
+                -1 if index in active and draw & (1 << active.index(index)) else 1
+                for index in range(len(next(iter(samples.values()))))
+            )
+            for draw in range(2 ** len(active))
+        ]
+        if exact
+        else weights
+    )
     observed = {name: wcr_s_pvalue(months, weights)[0] for name, months in samples.items()}
     order = tuple(sorted(samples, key=lambda name: (-observed[name], name)))
     bootstrap = {}
@@ -177,7 +215,7 @@ def romano_wolf(
         count = sum(sizes)
         clusters = sum(bool(size) for size in sizes)
         values = []
-        for row in weights:
+        for row in rows:
             scores = [total * weight for total, weight in zip(totals, row, strict=True)]
             numerator = sum(scores)
             residuals = [
@@ -192,10 +230,17 @@ def romano_wolf(
     previous = Decimal(0)
     for index, name in enumerate(order):
         exceeded = sum(
-            max(bootstrap[other][draw] for other in order[index:]) >= observed[name]
-            for draw in range(len(weights))
+            value > observed[name] or math.isclose(value, observed[name], rel_tol=1e-12, abs_tol=0)
+            for value in (
+                max(bootstrap[other][draw] for other in order[index:]) for draw in range(len(rows))
+            )
         )
-        previous = max(previous, Decimal(1 + exceeded) / Decimal(len(weights) + 1))
+        p_value = (
+            Decimal(exceeded) / Decimal(len(rows))
+            if exact
+            else Decimal(1 + exceeded) / Decimal(len(rows) + 1)
+        )
+        previous = max(previous, p_value)
         adjusted[name] = previous
     return order, adjusted
 

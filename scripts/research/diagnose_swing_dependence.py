@@ -54,7 +54,7 @@ def run_cell(arguments: tuple) -> dict:
     original_family = audit.romano_wolf_stepdown
     if persistence == 1:
 
-        def independent_generator(scenario, rng):
+        def independent_generator(scenario, rng, *, calibration=None):
             # Constructor deliberately disallows one-month promotion scenarios.
             from types import SimpleNamespace
 
@@ -62,7 +62,7 @@ def run_cell(arguments: tuple) -> dict:
                 **{field: getattr(scenario, field) for field in scenario.__dataclass_fields__}
             )
             diagnostic_scenario.block_months = 1
-            return original_generator(diagnostic_scenario, rng)
+            return original_generator(diagnostic_scenario, rng, calibration=calibration)
 
         audit._synthetic_months = independent_generator
     block = 1 if method == "month_wcr_s" else (3 if method == "quarter_wcr_s" else persistence)
@@ -78,9 +78,9 @@ def run_cell(arguments: tuple) -> dict:
         signs = [row[::block] for row in weights]
         return groups, signs
 
-    def confidence(months, *, weights):
+    def confidence(months, *, weights, draws=9999, candidate=None):
         grouped, signs = transform(months, weights)
-        value = stats.wcr_s_pvalue(grouped, weights=signs)
+        value = stats.wcr_s_pvalue(grouped, weights=signs, draws=draws)
         if method == "block_wild" and conservative_ties:
             frame = stats._cluster_frame(grouped)
             observed = frame.mean / frame.standard_error
@@ -92,10 +92,10 @@ def run_cell(arguments: tuple) -> dict:
         current[id(months)] = value
         return value
 
-    def family(samples, *, weights):
+    def family(samples, *, weights, draws=9999, candidate=None):
         grouped = {name: transform(months, weights)[0] for name, months in samples.items()}
         signs = [row[::block] for row in weights]
-        result = stats.romano_wolf_stepdown(grouped, weights=signs)
+        result = stats.romano_wolf_stepdown(grouped, weights=signs, draws=draws)
         if method == "block_wild" and conservative_ties:
             frames = {name: stats._cluster_frame(sample) for name, sample in grouped.items()}
             bootstrap = {
@@ -118,7 +118,10 @@ def run_cell(arguments: tuple) -> dict:
                 result.order, adjusted, result.observed_statistics, len(signs)
             )
         pvalues = [
-            str(current.get(id(samples[name])) or confidence(samples[name], weights=weights))
+            str(
+                current.get(id(samples[name]))
+                or confidence(samples[name], weights=weights, draws=draws, candidate=candidate)
+            )
             for name in NAMES
         ]
         rows.append(

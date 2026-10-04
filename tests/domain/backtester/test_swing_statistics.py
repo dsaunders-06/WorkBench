@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 from datetime import date
 from decimal import Decimal
@@ -14,6 +15,11 @@ from qat.domain.backtester.swing_results import (
     SwingTrade,
 )
 from qat.domain.backtester.swing_statistics import (
+    ENTRY_MONTH_WCR_S,
+    QUARTER_WCR_S,
+    InferenceCandidate,
+    candidate_cluster_count,
+    candidate_eligible,
     romano_wolf_stepdown,
     summarize_swing_statistics,
     wcr_s_mean_test,
@@ -52,8 +58,9 @@ def _reference_pvalue(
             for score, count in zip(weighted, counts, strict=True)
         ]
         denominator = (nonempty / (nonempty - 1) * sum(score**2 for score in centered)) ** 0.5
-        exceed += total_score / denominator >= observed
-    return Decimal(1 + exceed) / Decimal(1 + len(weights))
+        statistic = total_score / denominator
+        exceed += statistic > observed or math.isclose(statistic, observed, rel_tol=1e-12)
+    return Decimal(exceed) / Decimal(len(weights))
 
 
 def test_wcr_s_intercept_reference_and_common_weights() -> None:
@@ -121,6 +128,88 @@ def test_pilot_pvalue_uses_same_restricted_test_without_bound_inversion() -> Non
         tuple(-1 if (draw >> month) & 1 else 1 for month in range(7)) for draw in range(128)
     )
     assert wcr_s_pvalue(months, weights=weights) == wcr_s_mean_test(months, weights=weights).p_value
+
+
+def test_all_positive_bootstrap_draw_counts_as_exact_tie() -> None:
+    months = tuple((Decimal(value),) for value in ("0.1", "0.1", "0.4"))
+    assert wcr_s_pvalue(months, weights=((1, 1, 1),), draws=1) == Decimal(1)
+
+
+def test_three_cluster_exact_grid_has_one_eighth_pvalue_floor() -> None:
+    months = tuple((Decimal(value),) for value in ("0.1", "0.2", "0.4"))
+    result = wcr_s_pvalue(months, draws=8, seed=7)
+    assert result == Decimal(1) / Decimal(8)
+
+
+def test_candidate_eligibility_uses_nonempty_aligned_clusters() -> None:
+    months = tuple((Decimal(str(index + 1)),) if index % 3 == 0 else () for index in range(18))
+    assert candidate_cluster_count(months, ENTRY_MONTH_WCR_S) == 6
+    assert candidate_cluster_count(months, QUARTER_WCR_S) == 6
+    assert candidate_cluster_count(months, InferenceCandidate("aligned_block", 6)) == 3
+    assert candidate_eligible(months, ENTRY_MONTH_WCR_S)
+    assert candidate_eligible(months, QUARTER_WCR_S)
+    assert not candidate_eligible(months, InferenceCandidate("aligned_block", 6))
+    assert not candidate_eligible(months[:-3], QUARTER_WCR_S)
+
+
+def test_quarter_candidate_matches_direct_three_month_aggregation() -> None:
+    months = tuple((Decimal(str(index % 7 - 2)),) for index in range(18))
+    quarters = tuple(
+        tuple(value for month in months[start : start + 3] for value in month)
+        for start in range(0, len(months), 3)
+    )
+    assert wcr_s_pvalue(months, candidate=QUARTER_WCR_S, draws=64) == wcr_s_pvalue(
+        quarters, draws=64
+    )
+
+
+def test_quarter_candidate_projects_common_month_weights() -> None:
+    months = tuple((Decimal(str(index % 7 - 2)),) for index in range(21))
+    quarters = tuple(
+        tuple(value for month in months[start : start + 3] for value in month)
+        for start in range(0, len(months), 3)
+    )
+    weights = (
+        tuple(1 if index % 4 else -1 for index in range(21)),
+        tuple(-1 if index % 5 else 1 for index in range(21)),
+    )
+    quarter_weights = tuple(tuple(row[index] for index in range(0, 21, 3)) for row in weights)
+    assert wcr_s_pvalue(months, candidate=QUARTER_WCR_S, weights=weights, draws=2) == (
+        wcr_s_pvalue(quarters, weights=quarter_weights, draws=2)
+    )
+
+
+def test_aligned_block_candidate_shares_romano_wolf_path() -> None:
+    candidate = InferenceCandidate("aligned_block", 6)
+    samples = {
+        "first": tuple((Decimal(str(index % 9 - 2)),) for index in range(36)),
+        "second": tuple((Decimal(str(index % 7 - 3)),) for index in range(36)),
+    }
+    blocks = {
+        name: tuple(
+            tuple(value for month in months[start : start + 6] for value in month)
+            for start in range(0, 36, 6)
+        )
+        for name, months in samples.items()
+    }
+    candidate_result = romano_wolf_stepdown(samples, candidate=candidate, draws=64)
+    direct_result = romano_wolf_stepdown(blocks, draws=64)
+    assert candidate_result.adjusted_p_values == direct_result.adjusted_p_values
+    assert candidate_result.order == direct_result.order
+
+
+def test_romano_wolf_all_positive_draw_counts_as_exact_tie() -> None:
+    months = tuple((Decimal(value),) for value in ("0.1", "0.1", "0.4"))
+    result = romano_wolf_stepdown({"one": months}, weights=((1, 1, 1),), draws=1)
+    assert result.adjusted_p_values["one"] == Decimal(1)
+
+
+def test_six_cluster_exact_floor_reaches_confidence_and_family_gates() -> None:
+    months = tuple((Decimal(value),) for value in ("0.1", "0.2", "0.4", "0.5", "0.7", "1.1"))
+    assert candidate_eligible(months, ENTRY_MONTH_WCR_S)
+    assert wcr_s_pvalue(months, draws=64) == Decimal(1) / Decimal(64)
+    family = romano_wolf_stepdown({"one": months}, draws=64)
+    assert family.adjusted_p_values["one"] == Decimal(1) / Decimal(64)
 
 
 def test_signal_metrics_use_order_r_and_cash_equity_uses_compounding() -> None:

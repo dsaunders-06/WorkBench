@@ -12,12 +12,55 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from types import MappingProxyType
+from typing import Literal
 
 import numpy as np
 
 from qat.domain.backtester.swing_results import ReplayEquityPoint, SwingTrade
 
-STATISTICS_NUMERIC_POLICY = "numpy-binary64-pcg64-wcr-s-cv1-v2"
+STATISTICS_NUMERIC_POLICY = "numpy-binary64-pcg64-wcr-s-cv1-v3"
+BOOTSTRAP_TIE_RELATIVE_TOLERANCE = 1e-12
+MIN_ELIGIBLE_CLUSTERS = 6
+
+
+@dataclass(frozen=True, slots=True)
+class InferenceCandidate:
+    method: Literal["entry_month", "quarter", "aligned_block"]
+    block_months: int = 1
+
+    def __post_init__(self) -> None:
+        expected = {"entry_month": 1, "quarter": 3}
+        if self.method in expected:
+            if self.block_months != expected[self.method]:
+                raise ValueError("entry-month and quarter cluster lengths are fixed")
+        elif self.method != "aligned_block" or self.block_months < 2:
+            raise ValueError("aligned block candidate requires a declared length of at least two")
+
+
+ENTRY_MONTH_WCR_S = InferenceCandidate("entry_month")
+QUARTER_WCR_S = InferenceCandidate("quarter", 3)
+
+
+def _candidate_months(
+    months: Sequence[Sequence[Decimal]], candidate: InferenceCandidate
+) -> tuple[tuple[Decimal, ...], ...]:
+    return tuple(
+        tuple(value for month in months[start : start + candidate.block_months] for value in month)
+        for start in range(0, len(months), candidate.block_months)
+    )
+
+
+def candidate_cluster_count(
+    months: Sequence[Sequence[Decimal]], candidate: InferenceCandidate
+) -> int:
+    """Count observed clusters after grouping complete months from the first month."""
+    return sum(bool(cluster) for cluster in _candidate_months(months, candidate))
+
+
+def candidate_eligible(months: Sequence[Sequence[Decimal]], candidate: InferenceCandidate) -> bool:
+    """Exact attainable floor must reach both the 2.5% and 5% gates."""
+    clusters = candidate_cluster_count(months, candidate)
+    return clusters >= MIN_ELIGIBLE_CLUSTERS
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,23 +213,49 @@ def _cluster_frame(months: Sequence[Sequence[Decimal]]) -> _ClusterFrame:
 
 def _weight_matrix(
     month_count: int,
+    active_months: Sequence[int],
     weights: Sequence[Sequence[int]] | None,
     *,
     draws: int,
     seed: int,
-) -> np.ndarray:
+    source_month_count: int | None = None,
+    source_columns: Sequence[int] | None = None,
+) -> tuple[np.ndarray, bool]:
+    # All candidates accept the same month-width base matrix. Grouped methods
+    # use the first month's sign in each aligned cluster. Exact enumeration
+    # overrides that matrix when its full sign support fits in declared draws.
+    if weights is not None:
+        matrix = np.asarray(weights, dtype=np.int8)
+        if (
+            matrix.ndim != 2
+            or matrix.shape[1] != (source_month_count or month_count)
+            or matrix.shape[0] == 0
+        ):
+            raise ValueError("common weights must cover every entry month")
+        if not np.all((matrix == -1) | (matrix == 1)):
+            raise ValueError("WCR-S supports only Rademacher month weights")
+        if source_columns is not None:
+            matrix = matrix[:, source_columns]
+    else:
+        matrix = None
+    if draws <= 0:
+        raise ValueError("bootstrap draws must be positive")
+    exact_count = 1 << len(active_months)
+    if exact_count <= draws:
+        grid = np.ones((exact_count, month_count), dtype=np.int8)
+        for bit, month in enumerate(active_months):
+            grid[:, month] = np.where(np.arange(exact_count) & (1 << bit), -1, 1)
+        return grid, True
     if weights is None:
-        if draws <= 0:
-            raise ValueError("bootstrap draws must be positive")
-        return np.random.Generator(np.random.PCG64(seed)).choice(
-            np.asarray([-1, 1], dtype=np.int8), size=(draws, month_count)
+        return (
+            np.random.Generator(np.random.PCG64(seed)).choice(
+                np.asarray([-1, 1], dtype=np.int8), size=(draws, month_count)
+            ),
+            False,
         )
-    matrix = np.asarray(weights, dtype=np.int8)
-    if matrix.ndim != 2 or matrix.shape[1] != month_count or matrix.shape[0] == 0:
-        raise ValueError("common weights must cover every entry month")
-    if not np.all((matrix == -1) | (matrix == 1)):
-        raise ValueError("WCR-S supports only Rademacher month weights")
-    return matrix
+    if matrix is None:
+        raise ValueError("common weight matrix is missing")
+    return matrix, False
 
 
 def _bootstrap_statistics(
@@ -208,27 +277,43 @@ def _bootstrap_statistics(
     return np.asarray(numerators / denominators, dtype=np.float64)
 
 
-def _one_sided_p(frame: _ClusterFrame, weights: np.ndarray, null_mean: float) -> Decimal:
+def _exceedance_p(bootstrap: np.ndarray, observed: float, *, exact: bool) -> Decimal:
+    exceedances = int(
+        np.count_nonzero(
+            (bootstrap > observed)
+            | np.isclose(bootstrap, observed, rtol=BOOTSTRAP_TIE_RELATIVE_TOLERANCE, atol=0)
+        )
+    )
+    return (
+        Decimal(exceedances) / Decimal(len(bootstrap))
+        if exact
+        else Decimal(1 + exceedances) / Decimal(len(bootstrap) + 1)
+    )
+
+
+def _one_sided_p(
+    frame: _ClusterFrame, weights: np.ndarray, null_mean: float, *, exact: bool
+) -> Decimal:
     observed = (frame.mean - null_mean) / frame.standard_error
     bootstrap = _bootstrap_statistics(frame, weights, null_mean)
-    return Decimal(1 + int(np.count_nonzero(bootstrap >= observed))) / Decimal(len(bootstrap) + 1)
+    return _exceedance_p(bootstrap, observed, exact=exact)
 
 
-def _lower_bound(frame: _ClusterFrame, weights: np.ndarray) -> Decimal:
+def _lower_bound(frame: _ClusterFrame, weights: np.ndarray, *, exact: bool) -> Decimal:
     if len(weights) < 39:
         raise ValueError("WCR-S needs at least 39 draws for 2.5% bound inversion")
     target = Decimal("0.025")
     high = frame.mean
     low = high - 2 * frame.standard_error
     for _ in range(24):
-        if _one_sided_p(frame, weights, low) <= target:
+        if _one_sided_p(frame, weights, low, exact=exact) <= target:
             break
         low -= 2 * frame.standard_error
     else:
         raise ValueError("WCR-S lower-bound inversion could not be bracketed")
     for _ in range(42):
         midpoint = (low + high) / 2
-        if _one_sided_p(frame, weights, midpoint) <= target:
+        if _one_sided_p(frame, weights, midpoint, exact=exact) <= target:
             low = midpoint
         else:
             high = midpoint
@@ -242,18 +327,27 @@ def wcr_s_mean_test(
     weights: Sequence[Sequence[int]] | None = None,
     draws: int = 9_999,
     seed: int = 0,
+    candidate: InferenceCandidate = ENTRY_MONTH_WCR_S,
 ) -> WCRSResult:
     """Restricted wild-cluster score test and inverted one-sided lower bound."""
-    frame = _cluster_frame(months)
-    matrix = _weight_matrix(len(months), weights, draws=draws, seed=seed)
+    frame = _cluster_frame(_candidate_months(months, candidate))
+    matrix, exact = _weight_matrix(
+        len(frame.counts),
+        tuple(int(index) for index in np.flatnonzero(frame.counts)),
+        weights,
+        draws=draws,
+        seed=seed,
+        source_month_count=len(months),
+        source_columns=tuple(range(0, len(months), candidate.block_months)),
+    )
     if not null_mean.is_finite():
         raise ValueError("null mean must be finite")
     return WCRSResult(
         observed_t=(frame.mean - float(null_mean)) / frame.standard_error,
         bootstrap_count=len(matrix),
         nonempty_clusters=frame.nonempty_clusters,
-        p_value=_one_sided_p(frame, matrix, float(null_mean)),
-        lower_bound=_lower_bound(frame, matrix),
+        p_value=_one_sided_p(frame, matrix, float(null_mean), exact=exact),
+        lower_bound=_lower_bound(frame, matrix, exact=exact),
     )
 
 
@@ -264,13 +358,22 @@ def wcr_s_pvalue(
     weights: Sequence[Sequence[int]] | None = None,
     draws: int = 9_999,
     seed: int = 0,
+    candidate: InferenceCandidate = ENTRY_MONTH_WCR_S,
 ) -> Decimal:
     """Run the same restricted test without repeated lower-bound inversion."""
     if not null_mean.is_finite():
         raise ValueError("null mean must be finite")
-    frame = _cluster_frame(months)
-    matrix = _weight_matrix(len(months), weights, draws=draws, seed=seed)
-    return _one_sided_p(frame, matrix, float(null_mean))
+    frame = _cluster_frame(_candidate_months(months, candidate))
+    matrix, exact = _weight_matrix(
+        len(frame.counts),
+        tuple(int(index) for index in np.flatnonzero(frame.counts)),
+        weights,
+        draws=draws,
+        seed=seed,
+        source_month_count=len(months),
+        source_columns=tuple(range(0, len(months), candidate.block_months)),
+    )
+    return _one_sided_p(frame, matrix, float(null_mean), exact=exact)
 
 
 def romano_wolf_stepdown(
@@ -279,6 +382,7 @@ def romano_wolf_stepdown(
     weights: Sequence[Sequence[int]] | None = None,
     draws: int = 9_999,
     seed: int = 0,
+    candidate: InferenceCandidate = ENTRY_MONTH_WCR_S,
 ) -> RomanoWolfResult:
     """One-sided max-statistic stepdown with one common month-weight matrix."""
     if not samples:
@@ -286,8 +390,26 @@ def romano_wolf_stepdown(
     month_counts = {len(months) for months in samples.values()}
     if len(month_counts) != 1:
         raise ValueError("patterns must share a complete entry-month frame")
-    matrix = _weight_matrix(month_counts.pop(), weights, draws=draws, seed=seed)
-    frames = {name: _cluster_frame(months) for name, months in samples.items()}
+    source_month_count = month_counts.pop()
+    frames = {
+        name: _cluster_frame(_candidate_months(months, candidate))
+        for name, months in samples.items()
+    }
+    active = tuple(
+        int(index)
+        for index in np.flatnonzero(
+            np.logical_or.reduce([frame.counts > 0 for frame in frames.values()])
+        )
+    )
+    matrix, exact = _weight_matrix(
+        len(next(iter(frames.values())).counts),
+        active,
+        weights,
+        draws=draws,
+        seed=seed,
+        source_month_count=source_month_count,
+        source_columns=tuple(range(0, source_month_count, candidate.block_months)),
+    )
     observed = {name: frame.mean / frame.standard_error for name, frame in frames.items()}
     bootstrap = {name: _bootstrap_statistics(frame, matrix, 0.0) for name, frame in frames.items()}
     order = tuple(sorted(observed, key=lambda name: (-observed[name], name)))
@@ -295,9 +417,7 @@ def romano_wolf_stepdown(
     previous = Decimal(0)
     for index, name in enumerate(order):
         maximum = np.maximum.reduce([bootstrap[other] for other in order[index:]])
-        raw = Decimal(1 + int(np.count_nonzero(maximum >= observed[name]))) / Decimal(
-            len(matrix) + 1
-        )
+        raw = _exceedance_p(maximum, observed[name], exact=exact)
         previous = max(previous, raw)
         adjusted[name] = previous
     return RomanoWolfResult(order, adjusted, observed, len(matrix))

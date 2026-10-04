@@ -1045,39 +1045,88 @@ unchanged; feasibility and every permit input must be recomputed.
 
 ### 16.5 Method audit, power, and frequency feasibility
 
-The candidate inferential method is the restricted wild-cluster bootstrap with
-modified restricted scores (`WCR-S`), specialized to the intercept-only mean
-and using common month weights for Romano-Wolf. Under the intercept-only null,
-there are no free nuisance regressors: the restricted score transformation
-reduces to each month's raw sum of observations minus its count times the null
-mean. Both observed and bootstrap statistics use CV1 standard errors, as in
+**Operator amendment, 4 October 2026 (F1, Option 1 — predeclared method candidates):**
+Before any promotion-tier development outcome is released,
+`METHOD_AUDIT_DECLARED` must freeze exactly three production inference
+candidates: (1) entry-month WCR-S; (2) WCR-S on fixed consecutive
+three-month quarter clusters; and (3) an aligned block-cluster wild bootstrap
+with one declared block length `L` in complete calendar months. Block origin,
+partial-block treatment, `L`, seeds, scenario identifiers and generators,
+and the candidate set are declaration fields. No candidate, block length, or
+scenario may be added or removed after development data is released. The
+operator selects a method only by the rule below, never by inspecting holdout
+outcomes. This amendment supersedes the single entry-month method assumption.
+
+All candidates test the intercept-only mean with restricted scores and CV1
+studentization, sharing one tie-safe one-sided p-value computation and the
+same Romano–Wolf stepdown path across patterns. Under this null there are no
+free nuisance regressors: each restricted score is the cluster sum of
+observations minus its count times the null mean, consistent with
 [MacKinnon, Nielsen, and Webb (2023), Table 1 and Eq. 37](https://doi.org/10.1002/jae.2969).
-The method
-audit uses development/validation residuals recentered to zero, joint 3-, 6-,
-and 12-month blocks, observed and stressed cluster imbalance, empirical skew,
-complete and partial nulls, and a calibrated mandatory terminal-loss envelope.
-The broader `0.2%/0.5%/1%` by `-20R/-50R` contamination grid is a tail
-sensitivity unless it lies inside the calibrated envelope. Recentering the
-whole mixture to mean zero is intentional: normal-period gains must not cause a
-false edge claim when rare losses offset them.
+The cluster definition and its aligned Rademacher weight matrix change by
+candidate; each candidate uses common weights across patterns and the paired
+audit uses identical outer draws and declared weight matrices for every
+candidate. A bootstrap statistic equal to the observed statistic counts as an
+exceedance. Enumerate all `2^G` sign vectors exactly when `2^G` does not
+exceed the declared inner-draw count; otherwise apply the declared relative
+tolerance to the comparison. Both confidence inversion and Romano–Wolf use
+this rule. The attainable one-sided p-value floor is `1 / 2^G`. Reaching
+both the 2.5% confidence gate and 5% family gate requires at least six
+nonempty clusters per pattern: five yield `1/32 = 3.125%`, whereas six
+yield `1/64 = 1.5625%`. A candidate below this floor is ineligible before
+size or power comparison.
 
-Every mandatory scenario must pass; averages across scenarios cannot hide a
-failure. With 9,999 inner bootstrap draws, run 20,000 outer null simulations.
-Accept early when the upper 95% Monte Carlo limit is at least 0.25 percentage
-points below its cap; reject early when the lower limit is at least 0.25 points
-above; otherwise extend to 100,000. The one-sided confidence-bound false-positive
-upper limit is 3.25% against nominal 2.5%; the Romano-Wolf family-wise upper
-limit is 6% against nominal 5%. At 100,000 outer simulations a mandatory cell
-passes only when its upper 95% Monte Carlo limit is less than or equal to the
-applicable cap; every other result is a failure. If no method passes the
-calibrated envelope at a feasible sample size, return `METHOD_INADEQUATE`;
-trimmed or winsorized means cannot replace mean `R_order`.
+The mandatory matrix consists of predeclared development/validation-calibrated
+block-resampled scenarios and generic persistence scenarios through the
+maximum length supported by the strategy-independent market-regime proxy.
+That proxy uses at least ten years of ASX 200 or All Ordinaries monthly index
+returns, absolute returns, and realised volatility; it reports lags 1 through
+12, half-lives, and the recommended mandatory persistence set without using
+strategy outcomes, static-cache trade results, or promotion shards. If the
+repository lacks suitable index history, the operator must approve a source
+before this field can be finalized. Longer persistence remains a disclosed
+sensitivity; 12-month persistence cannot be a mandatory pass requirement for
+a 36-month holdout with these candidates. Mandatory cells also cover observed
+and stressed cluster imbalance, empirical skew, complete and every one- and
+two-null configuration, and the calibrated terminal-loss envelope. The broader
+`0.2%/0.5%/1%` by `-20R/-50R` contamination grid remains a tail sensitivity
+unless its cell lies in that envelope. Recenter the entire mixture to true
+mean zero for size, then shift by the declared positive `delta_MME` for power.
 
-The operator declares positive `delta_MME` before outcomes. It cannot be raised
-to reduce sample needs. The accepted method recomputes pattern-specific
-`N_required >= 100`, `G_required`, minimum detectable effect, and at least 80%
-prospective power. A nonpositive development-plus-validation expectancy refuses
-holdout. Thresholds never relax after exposure.
+The operator-approved source audit in
+`docs/phase-2-market-regime-proxy.md` uses ASX published end-month S&P/ASX 200
+values from January 2010 through August 2026, return-level RBA F18 and ^AXJO
+checks, and the explicit discrepancy rule for July 2014 and September 2023.
+It supports mandatory generic persistence lengths of 1, 2, 3 and 4 months;
+6 and 12 months remain sensitivity scenarios. The unsigned draft declaration
+sets the aligned candidate's `L = 4` from the first complete entry month of
+each partition, matching the longest mandatory generic shock. It records this
+set without activating or timestamping `METHOD_AUDIT_DECLARED`.
+
+Every eligible candidate is evaluated on the same outer draws and weight
+matrices in each calibrated cell. With 9,999 declared inner bootstrap draws,
+start each mandatory size cell with 20,000 outer null simulations. Accept
+early only when its upper 95% Monte Carlo limit is at least 0.25 percentage
+points below the applicable cap; reject early only when its lower limit is at
+least 0.25 points above; otherwise extend to 100,000. The confidence false-
+positive upper-limit cap is 3.25% against nominal 2.5%; the Romano–Wolf family
+upper-limit cap is 6% against nominal 5%. At 100,000, a cell passes only when
+its upper 95% limit is no greater than the cap. A candidate qualifies only if
+every mandatory size cell passes both applicable caps. Among qualifying
+candidates, compare projected rejection fractions at `delta_MME` and one
+common declared projection sample size. Rank each candidate by its minimum
+projected fraction across mandatory power scenarios and patterns; choose the
+highest, breaking exact ties by the larger nonempty cluster count at that
+projection size. If none qualifies, return
+`METHOD_INADEQUATE`. Preserve every attempt and result in the hashed audit;
+no trimmed or winsorized estimand may replace mean `R_order`.
+
+The chosen candidate then recomputes pattern-specific `N_required >= 100`,
+`G_required >= 6`, minimum detectable effect, and at least 80% prospective
+power using the maximum requirement across mandatory power scenarios.
+`delta_MME` is declared before outcomes and cannot rise to reduce sample
+needs. A nonpositive development-plus-validation expectancy refuses holdout.
+Thresholds never relax after exposure.
 
 The frequency model contains complete signal-eligible calendar months only,
 including genuine zero-entry months. Tail, warm-up, interstitial, and
@@ -1266,7 +1315,7 @@ correction among themselves. All must pass on the post-Phase-4 frozen baseline:
    `N_required >= 100`, and at least the frozen `G_required` nonempty
    entry-month clusters;
 2. positive net `R_order` expectancy after modeled costs;
-3. the 97.5% one-sided WCR-S entry-month cluster lower bound for mean `R_order`
+3. the 97.5% one-sided lower bound under the selected declared candidate for mean `R_order`
    is above zero and the Romano-Wolf adjusted one-sided p-value is below 0.05;
 4. profit factor is at least 1.20;
 5. expectancy remains positive with doubled slippage and commission
@@ -1278,19 +1327,19 @@ correction among themselves. All must pass on the post-Phase-4 frozen baseline:
    permit, rehearsal, first-exposure ledger receipt, and locked partition
    protocol are satisfied.
 
-For the confidence gate, group eligible signal-level trades by complete entry
-calendar month so simultaneous and nearby signals remain together. Apply the
-restricted wild-cluster bootstrap with modified restricted scores
-(`WCR-S`) frozen by Section 16. Use 9,999 common draws across patterns and invert
-the one-sided test to produce the 97.5% lower confidence bound. Empty
-pattern-months in the common holdout frame carry zero score. Zero trades,
-undefined variance, fewer than `G_required` nonempty clusters, a collapsed
-bootstrap, or any failed mandatory method-audit scenario is
+For the confidence gate, group eligible signal-level trades by the selected
+declared candidate’s aligned entry-month, consecutive three-month, or `L`-month
+block clusters. Apply its Section 16 restricted wild-cluster method with 9,999
+declared inner draws, exact sign enumeration when attainable, and tie-safe
+comparison. Invert the one-sided test for the 97.5% lower confidence bound.
+Empty pattern clusters in the common holdout frame carry zero score. Zero
+trades, undefined variance, fewer than `G_required` nonempty clusters, a
+collapsed bootstrap, or any failed mandatory method-audit scenario is
 `INSUFFICIENT_EVIDENCE` or `METHOD_INADEQUATE`, never a pass.
 
 EMA pullback, bull flag, and double bottom are three separately promotable
 hypotheses. Apply a one-sided Romano-Wolf stepdown test at family-wise error
-rate 5%, using common WCR-S month weights to preserve dependence. Audit the
+rate 5%, using common aligned candidate weights to preserve dependence. Audit the
 complete null and every one- and two-null partial configuration. Order
 hypotheses by descending observed statistic, compare each with the bootstrap
 maximum over the remaining stepdown set, and enforce monotone adjusted
