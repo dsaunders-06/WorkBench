@@ -34,4 +34,4 @@ jobs:
       - name: Tests
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -q
+        run: python -m pytest -q

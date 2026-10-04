@@ -18,7 +18,7 @@ The 24-cell conservative matrix took 55.81 seconds wall time (216.19 summed cell
 
 Full stable-tree run: **4,243 passed, 26 skipped, 1,096 warnings in 379.67 seconds**, process exit 0. Run with `PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring`, `QT_QPA_PLATFORM=offscreen`, and `pytest -q -p no:cacheprovider`. Warnings match the existing broker/modeling dependency warning count.
 
-Repository Ruff passes; `mypy src` passes all 212 source files; Bandit passes without findings; Black 26.5.1 passes with 721 files unchanged. The affected Phase 2 run passed 360 tests; final review repairs passed 55 affected tests, with independent narrow verification. All three independent review findings were reproduced and repaired test-first. GitHub CI is checked after the operator-authorized push; its final result is reported in chat.
+Repository Ruff passes; `mypy src` passes all 212 source files; Bandit passes without findings; Black 26.5.1 passes with 721 files unchanged. The affected Phase 2 run passed 360 tests; final review repairs passed 55 affected tests, with independent narrow verification. All three independent review findings were reproduced and repaired test-first. GitHub CI first reproduced a Windows test-collection import failure because the standalone pytest entry point omitted the repository root from Python's import path. The workflow now invokes `python -m pytest -q`; the final run is reported in chat.
 
 ## Evidence and disposition
 
