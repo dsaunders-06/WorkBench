@@ -132,3 +132,55 @@ def test_candidate_pilots_use_identical_outer_draws_and_month_weight_matrices() 
     assert all(
         len(pilot.attempts) == 2 and not pilot.promotion_eligible for pilot in pilots.values()
     )
+
+
+def test_random_shock_phase_preserves_persistent_blocks_across_month_zero() -> None:
+    class KnownPhaseRng:
+        def integers(self, low, high=None):
+            assert (low, high) == (0, 4)
+            return 2
+
+        def normal(self, size=None):
+            return np.arange(size, dtype=float) if size is not None else 0.0
+
+    scenario = audit.SyntheticScenario(
+        scenario_id="gaussian-L4-000-random",
+        family="gaussian",
+        months=12,
+        observations_per_month=1,
+        block_months=4,
+        null_configuration="000",
+        delta_mme=Decimal("0.2"),
+        shock_phase="random",
+    )
+
+    months = audit._synthetic_months(scenario, KnownPhaseRng())
+
+    expected_shocks = (0,) * 2 + (0.35,) * 4 + (0.7,) * 4 + (1.0499999999999998,) * 2
+    assert tuple(month[0] for month in months["ema_pullback"]) == tuple(
+        Decimal(str(value)) for value in expected_shocks
+    )
+    assert months["bull_flag"] == months["ema_pullback"] == months["double_bottom"]
+
+
+def test_random_phase_candidate_pilots_keep_paired_inputs() -> None:
+    scenario = audit.SyntheticScenario(
+        scenario_id="gaussian-L4-d00-random",
+        family="gaussian",
+        months=36,
+        observations_per_month=2,
+        block_months=4,
+        null_configuration="d00",
+        delta_mme=Decimal("0.2"),
+        shock_phase="random",
+    )
+    pilots = audit.run_candidate_pilots(
+        scenario,
+        candidates=(ENTRY_MONTH_WCR_S, QUARTER_WCR_S, InferenceCandidate("aligned_block", 4)),
+        outer_runs=2,
+        inner_draws=64,
+        seed=17,
+        diagnostic=True,
+    )
+
+    assert len({pilot.shared_inputs_sha256 for pilot in pilots.values()}) == 1

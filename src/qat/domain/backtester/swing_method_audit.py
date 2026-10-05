@@ -111,6 +111,7 @@ class SyntheticScenario:
     imbalance: str = "observed"
     terminal_probability: Decimal = Decimal(0)
     terminal_severity: Decimal = Decimal(0)
+    shock_phase: str = "aligned"
 
     def __post_init__(self) -> None:
         if self.family not in {
@@ -130,6 +131,10 @@ class SyntheticScenario:
             raise ValueError("pilot delta_MME must be positive")
         if not Decimal(0) <= self.terminal_probability <= Decimal(1) or self.terminal_severity > 0:
             raise ValueError("terminal contamination needs probability and nonpositive severity")
+        if self.shock_phase not in {"aligned", "random"}:
+            raise ValueError("synthetic shock phase must be aligned or random")
+        if self.family == "calibrated_block" and self.shock_phase != "aligned":
+            raise ValueError("calibrated blocks retain their source-partition alignment")
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,8 +378,11 @@ def _synthetic_months(
         return MappingProxyType({name: tuple(months) for name, months in sampled.items()})
     if calibration is not None:
         raise ValueError("generic synthetic scenario cannot consume calibration observations")
-    block_count = math.ceil(scenario.months / scenario.block_months)
-    common = np.repeat(rng.normal(size=block_count), scenario.block_months)[: scenario.months]
+    phase = int(rng.integers(0, scenario.block_months)) if scenario.shock_phase == "random" else 0
+    block_count = math.ceil((scenario.months + phase) / scenario.block_months)
+    common = np.repeat(rng.normal(size=block_count), scenario.block_months)[
+        phase : phase + scenario.months
+    ]
     results: dict[str, tuple[tuple[Decimal, ...], ...]] = {}
     for pattern_index, name in enumerate(names):
         months: list[tuple[Decimal, ...]] = []

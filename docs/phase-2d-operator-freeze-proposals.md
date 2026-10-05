@@ -1,0 +1,115 @@
+# Phase 2D operator-freeze proposals (unapproved)
+
+This note gives the operator concrete inputs to consider before a
+`METHOD_AUDIT_DECLARED` release. It does **not** freeze a value, issue a
+declaration, establish prospective power, or authorize promotion access.
+`delta_MME` remains a positive effect and economic rationale to be supplied by
+the operator's `EFFECT_DECLARED`; the diagnostic `0.2` used elsewhere is not a
+substitute. The unsigned draft at
+[`METHOD_AUDIT_DECLARED_UNSIGNED_DRAFT.json`](METHOD_AUDIT_DECLARED_UNSIGNED_DRAFT.json)
+is unchanged.
+
+## Mechanical frequency and projection sample size
+
+The sole frequency input here is
+[`data/phase2-engineering-mechanical/7074778a0563b1f4db06fa96d0adfbf9/metrics.json`](../data/phase2-engineering-mechanical/7074778a0563b1f4db06fa96d0adfbf9/metrics.json),
+SHA-256 `4c25fa933b0e25e677918ad23362aa852671a93d00ba315d8b0ecf7cb19d2042`,
+under `metrics.mechanical_diagnostic`. Its human-readable companion is the
+same bundle's [`report.md`](../data/phase2-engineering-mechanical/7074778a0563b1f4db06fa96d0adfbf9/report.md).
+The recorded exposure is 95 symbols, 13 calendar months (August 2025 through
+August 2026), and 1,235 eligible symbol-months. The counts are pattern geometry
+**before** the three-year resistance check. The direct 95-symbol observed
+frequency is `count / 13` per month. For the requested 200-symbol, 36-month
+planning scale, `rate = count / 1,235` per eligible symbol-month,
+`proxy_monthly = rate × 200`, and `proxy_36m = rate × 200 × 36`.
+
+| Pattern | Pre-resistance count | Per 1,000 eligible symbol-months | Observed 95-symbol count/month | 200-symbol proxy/month | 200-symbol proxy/36 months |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Bull flag | 12 | 9.7166 | 0.9231 | 1.9433 | 69.96 |
+| Double bottom | 93 | 75.3036 | 7.1538 | 15.0607 | 542.19 |
+| EMA pullback | 116 | 93.9271 | 8.9231 | 18.7854 | 676.28 |
+
+**Proposal for operator review:** use **430 trades per pattern** as the common
+power-comparison projection point. The arithmetic pre-resistance total is
+`(12 + 93 + 116) / 1,235 × 200 × 36 = 1,288.4` candidates across three
+patterns, or **429.5 per pattern**; 430 is that mean rounded to a whole trade.
+It is a *comparison point*, not a forecast that each pattern can attain it.
+The pattern-specific proxies above are the more relevant feasibility inputs:
+the bull-flag point rate yields only **69.96 pre-resistance candidates** in
+36 months, below even the protocol's `N_required >= 100` floor. At the fixed
+rate, 100 pre-resistance bull-flag candidates would need
+`100 / (12 / 1,235 × 200) = 51.46` months; 430 would need about **221.3 months**.
+The audit must also show power at feasible pattern-specific counts and must
+not treat a high-power result at 430 as evidence that bull flag passes the
+frequency or duration gate. Resistance,
+point-in-time membership, complete signal eligibility, funding, overlap, and
+other filters can reduce the final count. Thus the 36-month holdout may fail the
+100-trade floor for bull flags even if the later method-power result is
+favourable. Do not back-solve a larger `N` from the abundant EMA or
+double-bottom proxy and present it as feasible for all three patterns.
+
+The report's symbol/month-clustered 90% monthly planning ranges, on the same
+200-symbol scale, are 0.648–3.725 for bull flag, 10.186–20.405 for double
+bottom, and 12.955–25.263 for EMA pullback. Multiplying these endpoints by 36
+would be only a constant-rate illustration, **not** a 36-month prediction
+interval; it would ignore time variation and the missing history. This static
+snapshot is survivorship-biased, vendor-adjusted, only 13 eligible months long,
+and has no verified as-traded prices, point-in-time membership, corporate
+actions, or sufficient resistance history. Its high rates cannot establish
+final trade frequency or power. A low rate is a procurement warning. No fills,
+returns, exits, P&L, or promotion shards were used in this proposal.
+
+At the proposed 430-trade comparison point, each method still needs its actual
+nonempty cluster count checked (`G >= 6`) and paired projected rejection
+fractions across every mandatory pattern/scenario cell. The chosen method must
+then recompute each pattern's `N_required`, `G_required`, minimum detectable
+effect, and at least 80% prospective power at the operator-declared
+`delta_MME`. The genuine frequency and holdout-duration gates use later
+authorized signal-eligible months, including zero-entry months; this
+mechanical rate must not be fed to the holdout planner.
+
+## Proposed random streams and evidence hashes
+
+The currently running **pre-declaration generic pilot** uses base seed
+`20261005`, deriving each cell seed from the first eight bytes of
+`SHA-256("20261005:" + scenario_id)` and replaying that seed for all three
+candidates in the cell. This exploratory stream is distinct from the proposed
+calibrated-audit stream below and does not freeze its seed rule. Its reported
+attempt and shared-input hashes permit paired-cell checks; the operator must
+approve the later audit streams before any declaration.
+
+Retain the unsigned draft's **proposed, unfrozen** base seeds: outer null
+`845317`, inner Rademacher signs `845318`, and power `845319`. Define a
+canonical seed-derivation record containing a version tag, stream name, base
+seed, ordered scenario ID, and replicate index; serialize as UTF-8 JSON with
+sorted keys and compact separators, SHA-256 it, and take the first eight digest
+bytes in big-endian order as an unsigned 64-bit PCG64 seed. Record the exact
+schema and generator/library version in the pilot. Paired candidate methods
+must receive the same outer observations and base-month sign matrix in each
+cell; candidate-specific cluster aggregation must not draw a fresh stream.
+Distinct stream names keep null, signs, and power draws separate. The operator
+must approve these seeds and their exact serialization before release.
+
+When `EFFECT_DECLARED` and the authorized calibration inputs exist, create a
+pilot report that lists all candidate methods, mandatory scenario IDs and
+fixed parameters, 430-trade projection cells, observed nonempty clusters,
+paired size/power fractions, Monte Carlo limits, numerical policy, seeds and
+versions, and any failed/incomplete cells. Preserve every attempted cell. Save
+the immutable report bytes and calculate `SHA-256(report bytes)` into a
+separate manifest (the report must not contain its own hash). For the
+implementation/code hash, require a clean, identified Git commit; enumerate
+the transitive source files actually used by the pilot, including method,
+scenario, RNG, numerical and serialization code, plus the exact dependency
+lock and runtime versions. Sort repository-relative paths bytewise, calculate
+each file's SHA-256 from raw bytes, serialize a versioned manifest as canonical
+UTF-8 JSON (sorted keys, compact separators), and hash those manifest bytes.
+Record the commit ID, file list, per-file digests, manifest digest, command,
+environment, input-hash manifest, and pilot-report digest together. A changed
+source file, dependency lock, scenario instance, seed rule, or report requires
+new hashes and a new operator review; no pilot or code hash is asserted here.
+
+The source-audit [market-regime proxy](phase-2-market-regime-proxy.md) supports
+generic persistence 1–4 months for mandatory scenarios and 6/12 months as
+disclosed sensitivities. Its July 2014 Yahoo substitution sensitivity preserves
+the 1–4 recommendation. The proposed change to that source decision is
+separate from this frequency-based sample-size proposal.

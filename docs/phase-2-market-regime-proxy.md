@@ -33,6 +33,18 @@ For September 2023, RBA F18 Australia is 570.8 in August, 550.8 in September and
 
 For July 2014, the RBA PDF has no monthly row. The [S&P DJI index page](https://www.spglobal.com/spdji/en/indices/equity/sp-asx-200/) did not expose a July 31, 2014 close, and the [ASX cash market report archive](https://www.asx.com.au/markets/trade-our-cash-market/australian-cash-market-report) begins in 2021. No eligible official third July close was accessible. The approved fallback retains ASX 5623.9 and repeats the analysis with Yahoo 5632.8999. The sensitivity does not change the recommended persistence set.
 
+The two discrepant ASX levels also have the shape of digit transpositions at
+one-decimal precision: July 2014 publishes `5623.9` where Yahoo is approximately
+`5632.9` (the `2` and `3` exchange places), and September 2023 publishes
+`7084.6` where Yahoo is approximately `7048.6` (the `8` and `4` exchange
+places). This is a source-audit observation, not proof of how the errors arose.
+**Proposal for a later operator source decision:** substitute Yahoo's
+`5632.8999` for July 2014 as well. The currently approved primary series still
+retains ASX `5623.9` for that month; no frozen input or decision is changed by
+this note. The existing Yahoo-July sensitivity below already shows that the
+mandatory 1–4-month persistence recommendation is unchanged under the proposed
+substitution.
+
 ## Persistence estimate
 
 Monthly return is log(P_m/P_(m-1)); absolute return is its magnitude. Monthly realised volatility is sqrt(252 × mean(daily log return squared)) from Yahoo daily closes, with January 2010 dropped because the previous December close is absent. Each series has 199 monthly observations. The table gives ordinary sample autocorrelation at monthly lags.
