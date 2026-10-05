@@ -55,7 +55,7 @@ development/validation results under their final fingerprint.
 
 ### Task 1: Declaration Authority and independently timestamped receipts
 
-Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+Required verification for this task (Stage A released by operator):
 
 Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
 Run: `.\.venv\Scripts\python.exe -m black --check .`
@@ -72,7 +72,7 @@ Run: `.\.venv\Scripts\python.exe -m black --check .`
   `append_declaration()`, `verify_declaration_chain()`, and
   `verify_timestamp_token()`.
 
-- [ ] **Step 1: Write failing lineage, signature, and time tests**
+- [x] **Step 1: Write failing lineage, signature, and time tests**
 
 ```python
 def test_all_required_declarations_precede_development_release() -> None:
@@ -97,7 +97,7 @@ Also test previous-head, sequence, nonce, operator identity, strategy-spec hash,
 catalog identity, immutable payload, timestamp certificate chain, revoked/expired
 certificate handling, and offline receipt verification.
 
-- [ ] **Step 2: Implement the minimal authority**
+- [x] **Step 2: Implement the minimal authority**
 
 Run it under an operator-controlled non-interactive account. Store a scoped,
 append-only hash chain and return signed receipts. `EFFECT_DECLARED` binds
@@ -107,7 +107,7 @@ data, Phase 4 risk, tail, statistical, feasibility, and promotion threshold.
 complete scenario matrix, generators, seeds, caps, and code hashes. Anchor each
 signed digest with RFC 3161 and bind every later record to the preceding head.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/promotion/test_declarations.py -q`
 
@@ -118,7 +118,7 @@ git commit -m "feat: record promotion research declarations"
 
 ### Task 2: Blinded structural extractor and development release gate
 
-Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+Required verification for this task (Stage A released by operator):
 
 Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
 Run: `.\.venv\Scripts\python.exe -m black --check .`
@@ -136,7 +136,7 @@ Run: `.\.venv\Scripts\python.exe -m black --check .`
   `derive_structural_view()`, `authorize_development()`, and
   `authorize_validation()`.
 
-- [ ] **Step 1: Write failing information-flow tests**
+- [x] **Step 1: Write failing information-flow tests**
 
 ```python
 def test_structural_extract_contains_no_forward_outcome() -> None:
@@ -242,7 +242,7 @@ extract and receipt. Validation remains locked until development
 artifacts and fingerprint are frozen, then follows the same flow with
 `VALIDATION_DATA_RELEASED`.
 
-- [ ] **Step 2: Verify and commit**
+- [x] **Step 2: Verify and commit**
 
 Run: `.\.venv\Scripts\python.exe -m pytest tests/promotion/test_structural_extract.py tests/promotion/test_development_release.py -q`
 
@@ -255,7 +255,7 @@ git commit -m "feat: gate blinded structural and development access"
 
 ### Task 3: Reproducible reviewed promotion bundle
 
-Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+Required verification for this task (Stage B not released):
 
 Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
 Run: `.\.venv\Scripts\python.exe -m black --check .`
@@ -280,7 +280,7 @@ behavior.
 
 ### Task 4: Scoped ledger, sealed-data service, and trusted artifact writer
 
-Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+Required verification for this task (Stage B not released):
 
 Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
 Run: `.\.venv\Scripts\python.exe -m black --check .`
@@ -320,7 +320,7 @@ must prove the engineering research path cannot reach these I/O clients.
 
 ### Task 5: Holdout-scale rehearsal and failure injection
 
-Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+Required verification for this task (Stage B not released):
 
 Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
 Run: `.\.venv\Scripts\python.exe -m black --check .`
@@ -346,7 +346,7 @@ expires it.
 
 ### Task 6: Permit, promotion run, and permanent failure semantics
 
-Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+Required verification for this task (Stage B not released):
 
 Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
 Run: `.\.venv\Scripts\python.exe -m black --check .`
@@ -394,7 +394,7 @@ the operator requests a permit.
 
 ### Task 7: Independent security and end-to-end verification
 
-Required verification for this task (documentation amendment F3; Phase 2D remains unstarted):
+Required verification for this task (Stage B not released):
 
 Run: `.\.venv\Scripts\python.exe -m bandit -r src -q`
 Run: `.\.venv\Scripts\python.exe -m black --check .`

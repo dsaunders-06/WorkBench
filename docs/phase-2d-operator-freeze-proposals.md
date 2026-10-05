@@ -106,7 +106,25 @@ UTF-8 JSON (sorted keys, compact separators), and hash those manifest bytes.
 Record the commit ID, file list, per-file digests, manifest digest, command,
 environment, input-hash manifest, and pilot-report digest together. A changed
 source file, dependency lock, scenario instance, seed rule, or report requires
-new hashes and a new operator review; no pilot or code hash is asserted here.
+new hashes and a new operator review.
+
+For the **exploratory generic pilot only**, the provisional
+[code manifest](phase-2d-generic-pilot-code-manifest.json) has SHA-256
+`54830e9f4c32d8b9062753599dfa568130459dd1ec53795721866833ee37e433`.
+The code manifest hashes the committed bytes of all 217 tracked `src` Python files, the pilot
+runner and `pyproject.toml` (219 files total), plus the published source commit
+`2213aa9e572d8f411b4d16ab81e83cad262c6a27` and the actual pilot runtime
+(Python 3.12.14, NumPy 2.5.3). This all-source set conservatively contains the
+transitive inference code. The repository has no exact dependency lock, and
+the first four hashed checkpoints preceded worker-count and formatting edits
+to the runner, with no statistical-method change. Thus this manifest is a
+reviewable proposed code identity, not a frozen `METHOD_AUDIT_DECLARED` code
+hash. The completed external `report.json` has SHA-256
+`fd999a0a274dce8c6345681f578b78ce900712b2998d7c619c6f4e85ba9d06d4`;
+its committed [scenario summary](phase-2d-generic-pilot-summary.csv) has SHA-256
+`de0d9f9ea272c7930c0f0b1fb0951b33f2540e87f8ebefb165c8bb03967016d1`.
+The declared calibrated audit
+needs one frozen source/runtime/lock manifest for every attempt.
 
 The source-audit [market-regime proxy](phase-2-market-regime-proxy.md) supports
 generic persistence 1–4 months for mandatory scenarios and 6/12 months as
