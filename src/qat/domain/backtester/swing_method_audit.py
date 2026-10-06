@@ -125,6 +125,7 @@ class SyntheticScenario:
             "calibrated_block",
             "ar1_mean",
             "volatility_regime",
+            "volatility_ar1_stress",
         }:
             raise ValueError("pilot accepts only declared synthetic families")
         if not 1 <= self.block_months <= 12 or self.months < 12:
@@ -147,7 +148,9 @@ class SyntheticScenario:
             raise ValueError("synthetic shock phase must be aligned or random")
         if self.family == "calibrated_block" and self.shock_phase != "aligned":
             raise ValueError("calibrated blocks retain their source-partition alignment")
-        if self.family == "ar1_mean":
+        if self.family in {"ar1_mean", "volatility_ar1_stress"}:
+            if self.family == "volatility_ar1_stress" and not self.dependence_stress:
+                raise ValueError("combined volatility/mean scenario is a fixed stress")
             if self.dependence_stress:
                 if self.mean_autocorrelation != 0.25:
                     raise ValueError("AR1 stress is fixed at 0.25")
@@ -155,9 +158,11 @@ class SyntheticScenario:
                 raise ValueError("AR1 mean persistence exceeds monthly return evidence")
         elif self.mean_autocorrelation or self.dependence_stress:
             raise ValueError("mean dependence belongs to AR1 mean scenarios")
-        if self.family == "volatility_regime":
+        if self.family in {"volatility_regime", "volatility_ar1_stress"}:
             if not 0 <= self.volatility_autocorrelation <= 0.4524:
                 raise ValueError("volatility regime persistence exceeds proxy evidence")
+            if self.family == "volatility_ar1_stress" and self.volatility_autocorrelation != 0.4524:
+                raise ValueError("combined stress volatility persistence is fixed at 0.4524")
         elif self.volatility_autocorrelation:
             raise ValueError("volatility dependence belongs to volatility regimes")
 
@@ -257,11 +262,14 @@ def build_audit_scenario_matrix(
     mandatory_generic_families = {
         "ar1_mean",
         "volatility_regime",
+        "volatility_ar1_stress",
         "empirical_skew",
         "terminal_mixture",
     }
     if not diagnostic and not mandatory_generic_families.issubset(generic_families):
         raise ValueError("amended mandatory generic families are incomplete")
+    if not diagnostic and 1 not in generic_persistence_months:
+        raise ValueError("mandatory skew and terminal cells require month-independent shocks")
     mandatory: list[SyntheticScenario] = []
     sensitivity: list[SyntheticScenario] = []
     for family, lengths in (
@@ -269,18 +277,28 @@ def build_audit_scenario_matrix(
         *(
             (
                 name,
-                (1,) if name in {"ar1_mean", "volatility_regime"} else generic_persistence_months,
+                (
+                    (1,)
+                    if name in {"ar1_mean", "volatility_regime", "volatility_ar1_stress"}
+                    else generic_persistence_months
+                ),
             )
             for name in generic_families
         ),
     ):
         for length in lengths:
             for imbalance in imbalance_modes:
+                if family == "volatility_ar1_stress" and imbalance != "observed":
+                    continue
                 for null in null_configurations:
                     variants = (
                         ((-0.0874, False), (0.25, True))
                         if family == "ar1_mean"
-                        else ((0.0, False),)
+                        else (
+                            ((0.25, True),)
+                            if family == "volatility_ar1_stress"
+                            else ((0.0, False),)
+                        )
                     )
                     for mean_phi, stress in variants:
                         label = "calibrated" if family == "calibrated_block" else family
@@ -303,11 +321,19 @@ def build_audit_scenario_matrix(
                             ),
                             mean_autocorrelation=mean_phi,
                             volatility_autocorrelation=(
-                                0.4524 if family == "volatility_regime" else 0.0
+                                0.4524
+                                if family in {"volatility_regime", "volatility_ar1_stress"}
+                                else 0.0
                             ),
                             dependence_stress=stress,
                         )
                         if family == "gaussian" and not diagnostic:
+                            sensitivity.append(scenario)
+                        elif (
+                            family in {"empirical_skew", "terminal_mixture"}
+                            and length > 1
+                            and not diagnostic
+                        ):
                             sensitivity.append(scenario)
                         elif family == "calibrated_block" or length <= mandatory_generic_max_months:
                             mandatory.append(scenario)
@@ -455,7 +481,7 @@ def _synthetic_months(
         return MappingProxyType({name: tuple(months) for name, months in sampled.items()})
     if calibration is not None:
         raise ValueError("generic synthetic scenario cannot consume calibration observations")
-    if scenario.family == "ar1_mean":
+    if scenario.family in {"ar1_mean", "volatility_ar1_stress"}:
         innovations = rng.normal(size=scenario.months)
         common = np.empty(scenario.months)
         common[0] = innovations[0]
@@ -476,7 +502,7 @@ def _synthetic_months(
         ]
     volatility = (
         _volatility_regime_scales(scenario.months, rng, scenario.volatility_autocorrelation)
-        if scenario.family == "volatility_regime"
+        if scenario.family in {"volatility_regime", "volatility_ar1_stress"}
         else np.ones(scenario.months)
     )
     results: dict[str, tuple[tuple[Decimal, ...], ...]] = {}
@@ -492,7 +518,7 @@ def _synthetic_months(
                 count = max(1, count // 2) if month_index % 3 else count * 3
             drawn_values: list[Decimal] = []
             monthly_residuals = None
-            if scenario.family == "ar1_mean":
+            if scenario.family in {"ar1_mean", "volatility_ar1_stress"}:
                 monthly_residuals = rng.normal(size=count)
                 monthly_residuals -= np.mean(monthly_residuals)
                 if count > 1:

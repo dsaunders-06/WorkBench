@@ -64,6 +64,21 @@
     "projection_sample_size_status": "UNFROZEN_CONDITIONAL_PROPOSAL: freeze only if complete candidate rankings by minimum projected power are identical at N=200 and N=430 for effects 0.10, 0.15, 0.20, and 0.30; bull-flag feasibility remains separate"
   },
   "scenario_matrix": {
+    "dependence_amendment": {
+      "primary_joint_dependence_test": "development/validation-calibrated block-resampled audit remains the primary test of real joint dependence; generic cells are a mandatory floor, not a substitute",
+      "binding_mean_requirements": ["AR(1) monthly-average mean stress phi 0.25", "combined volatility regime 0.4524 plus AR(1) monthly-average mean stress phi 0.25"],
+      "observed_return_baseline": "AR(1) phi -0.0874 is an evidence baseline and is not the binding mean-dependence requirement",
+      "mandatory_family_dependence": {
+        "calibrated_block_resampled": "joint development/validation residual blocks within partition; primary real-dependence test",
+        "volatility_regime": "persistent lognormal volatility with observed autocorrelation 0.4524 and month-independent zero-mean shocks",
+        "ar1_mean_baseline": "monthly-average AR(1) phi -0.0874 within observed return evidence; baseline only",
+        "ar1_mean_stress": "monthly-average AR(1) phi 0.25; binding mean stress",
+        "combined_volatility_ar1_stress": "persistent volatility 0.4524 and monthly-average AR(1) mean phi 0.25 in the same scenario; binding combined stress",
+        "empirical_skew": "month-independent monthly shocks with the empirical skew shape",
+        "terminal_mixture": "month-independent monthly shocks with the calibrated terminal-loss mixture",
+        "cluster_imbalance": "observed and stressed month counts cross the applicable mandatory dependence families; the seven-cell combined stress uses observed counts"
+      }
+    },
     "mandatory": [
       {
         "id": "calibrated_block_resampled",
@@ -82,7 +97,16 @@
         "observed_monthly_average_ar1_phi": -0.0874,
         "return_evidence_abs_bound": 0.1427,
         "stress_phi": 0.25,
-        "note": "0.25 is an explicit mandatory stress beyond observed monthly-return persistence"
+        "note": "0.25 is the binding mandatory mean-dependence requirement; -0.0874 is an observed-return baseline, not the binding requirement"
+      },
+      {
+        "id": "combined_volatility_ar1_stress",
+        "generator": "joint pattern zero-mean AR(1) monthly-average shocks at phi 0.25 with within-month centered unit-variance residuals multiplied by the calibrated lognormal volatility-regime scales",
+        "observed_volatility_ar1_phi": 0.4524,
+        "monthly_average_ar1_stress_phi": 0.25,
+        "null_configurations": ["000", "d00", "0d0", "00d", "dd0", "d0d", "0dd"],
+        "mandatory_cells": 7,
+        "note": "operator-added mandatory combined stress; run after the currently executing generic pilot completes"
       },
       {
         "id": "cluster_imbalance",
@@ -95,7 +119,8 @@
         "id": "skew",
         "levels": [
           "empirical"
-        ]
+        ],
+        "mandatory_dependence": "month-independent monthly shocks only; constant-block 2-4-month versions are sensitivities"
       },
       {
         "id": "null_configurations",
@@ -112,7 +137,8 @@
       },
       {
         "id": "terminal_loss",
-        "generator": "calibrated mandatory terminal-loss envelope"
+        "generator": "calibrated mandatory terminal-loss envelope with month-independent monthly shocks",
+        "mandatory_dependence": "month-independent monthly shocks only; constant-block 2-4-month versions are sensitivities"
       }
     ],
     "sensitivity": [
@@ -120,7 +146,7 @@
         "id": "constant_mean_shocks",
         "persistence_months": [1, 2, 3, 4],
         "phase": ["aligned", "random"],
-        "note": "previous generic Gaussian pilot cells are disclosed sensitivity after the dependence-model amendment"
+        "note": "previous generic Gaussian pilot cells and empirical-skew and terminal-mixture constant-block versions at 2-4 months are disclosed sensitivities after the dependence-model amendment"
       },
       {
         "id": "longer_persistence",

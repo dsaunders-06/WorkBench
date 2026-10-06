@@ -62,3 +62,19 @@ def test_amended_pilot_keeps_approved_seed_domains_distinct() -> None:
     assert pilot.INNER_SIGNS_SEED == 845318
     assert pilot.POWER_SEED == 845319
     assert pilot.seed_for(first) != pilot.power_seed_for(first)
+
+
+def test_combined_stress_adds_exactly_seven_mandatory_null_cells() -> None:
+    cells = pilot.build_combined_stress_cells()
+
+    assert len(cells) == 7
+    assert {cell.null_configuration for cell in cells} == set(pilot.NULLS)
+    assert all(
+        cell.family == "volatility_ar1_stress"
+        and cell.block_months == 1
+        and cell.mean_autocorrelation == 0.25
+        and cell.volatility_autocorrelation == 0.4524
+        and cell.dependence_stress
+        for cell in cells
+    )
+    assert len({cell.scenario_id for cell in cells}) == 7

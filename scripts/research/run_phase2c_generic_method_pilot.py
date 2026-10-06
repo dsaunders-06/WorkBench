@@ -78,6 +78,25 @@ def build_amended_cells() -> (
     return mandatory, build_cells()
 
 
+def build_combined_stress_cells() -> tuple[audit.SyntheticScenario, ...]:
+    """The seven operator-added mandatory volatility-plus-mean stress cells."""
+    return tuple(
+        audit.SyntheticScenario(
+            scenario_id=f"generic-combined-vol04524-mean025-{null}-observable-v2",
+            family="volatility_ar1_stress",
+            months=36,
+            observations_per_month=8,
+            block_months=1,
+            null_configuration=null,
+            delta_mme=Decimal("0.2"),
+            mean_autocorrelation=0.25,
+            volatility_autocorrelation=0.4524,
+            dependence_stress=True,
+        )
+        for null in NULLS
+    )
+
+
 def seed_for(scenario: audit.SyntheticScenario) -> int:
     digest = hashlib.sha256(f"{OUTER_NULL_SEED}:{scenario.scenario_id}".encode("ascii")).digest()
     return int.from_bytes(digest[:8], "big")

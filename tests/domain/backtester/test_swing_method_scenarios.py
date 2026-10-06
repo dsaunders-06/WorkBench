@@ -92,6 +92,7 @@ def test_amended_audit_matrix_uses_volatility_and_ar1_mandatory_constant_shocks_
         generic_families=(
             "volatility_regime",
             "ar1_mean",
+            "volatility_ar1_stress",
             "empirical_skew",
             "terminal_mixture",
             "gaussian",
@@ -105,6 +106,7 @@ def test_amended_audit_matrix_uses_volatility_and_ar1_mandatory_constant_shocks_
         "calibrated_block",
         "volatility_regime",
         "ar1_mean",
+        "volatility_ar1_stress",
         "empirical_skew",
         "terminal_mixture",
     }
@@ -114,7 +116,7 @@ def test_amended_audit_matrix_uses_volatility_and_ar1_mandatory_constant_shocks_
     assert {
         cell.volatility_autocorrelation
         for cell in matrix.mandatory
-        if cell.family == "volatility_regime"
+        if cell.family in {"volatility_regime", "volatility_ar1_stress"}
     } == {0.4524}
     assert {cell.block_months for cell in matrix.sensitivity if cell.family == "gaussian"} == {
         1,
@@ -122,6 +124,70 @@ def test_amended_audit_matrix_uses_volatility_and_ar1_mandatory_constant_shocks_
         3,
         4,
     }
+
+
+def test_mandatory_generic_cells_exclude_multimonth_constant_mean_shocks() -> None:
+    matrix = audit.build_audit_scenario_matrix(
+        months=36,
+        observations_per_month=8,
+        delta_mme=Decimal("0.2"),
+        calibrated_block_months=(4,),
+        generic_persistence_months=(1, 2, 3, 4),
+        mandatory_generic_max_months=4,
+        null_configurations=("000", "d00", "0d0", "00d", "dd0", "d0d", "0dd"),
+        generic_families=(
+            "volatility_regime",
+            "ar1_mean",
+            "volatility_ar1_stress",
+            "empirical_skew",
+            "terminal_mixture",
+            "gaussian",
+        ),
+        imbalance_modes=("observed",),
+        terminal_probability=Decimal("0.05"),
+        terminal_severity=Decimal("-2"),
+    )
+
+    constant_block = {"gaussian", "empirical_skew", "terminal_mixture"}
+    assert not [
+        cell for cell in matrix.mandatory if cell.family in constant_block and cell.block_months > 1
+    ]
+    assert {
+        (cell.family, cell.block_months, cell.null_configuration)
+        for cell in matrix.mandatory
+        if cell.family == "volatility_ar1_stress"
+    } == {
+        ("volatility_ar1_stress", 1, null)
+        for null in ("000", "d00", "0d0", "00d", "dd0", "d0d", "0dd")
+    }
+    assert {
+        cell.block_months
+        for cell in matrix.sensitivity
+        if cell.family in {"empirical_skew", "terminal_mixture"}
+    } == {2, 3, 4}
+
+
+def test_production_matrix_requires_month_independent_skew_and_terminal_cells() -> None:
+    with pytest.raises(ValueError, match="month-independent"):
+        audit.build_audit_scenario_matrix(
+            months=36,
+            observations_per_month=8,
+            delta_mme=Decimal("0.2"),
+            calibrated_block_months=(4,),
+            generic_persistence_months=(2, 3, 4),
+            mandatory_generic_max_months=4,
+            null_configurations=("000",),
+            generic_families=(
+                "volatility_regime",
+                "ar1_mean",
+                "volatility_ar1_stress",
+                "empirical_skew",
+                "terminal_mixture",
+            ),
+            imbalance_modes=("observed",),
+            terminal_probability=Decimal("0.05"),
+            terminal_severity=Decimal("-2"),
+        )
 
 
 def test_calibrated_blocks_preserve_joint_months_without_crossing_partitions() -> None:
