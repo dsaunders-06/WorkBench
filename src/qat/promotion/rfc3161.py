@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from cryptography import x509
-from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
@@ -233,14 +232,9 @@ def verify_certificate_chain(
             ]:
                 raise TimestampVerificationError("TSA requires exclusive timeStamping usage")
         return leaf
-    except (
-        InvalidSignature,
-        UnsupportedAlgorithm,
-        ValueError,
-        x509.InvalidVersion,
-        x509.ExtensionNotFound,
-        TypeError,
-    ) as exc:
+    except TimestampVerificationError:
+        raise
+    except Exception as exc:
         raise TimestampVerificationError("invalid certificate or revocation evidence") from exc
 
 
@@ -388,16 +382,7 @@ def verify_timestamp_token(
         signed_attrs_der = bytes([0x31]) + attrs.encoded[1:]
         _verify_signature(signer_key, signer[5].value, signed_attrs_der)
         return VerifiedTimestamp(generated_at, serial, policy, hashlib.sha256(leaf_der).hexdigest())
-    except (
-        IndexError,
-        InvalidSignature,
-        UnsupportedAlgorithm,
-        UnicodeDecodeError,
-        ValueError,
-        TypeError,
-        x509.InvalidVersion,
-        x509.ExtensionNotFound,
-    ) as exc:
-        if isinstance(exc, TimestampVerificationError):
-            raise
+    except TimestampVerificationError:
+        raise
+    except Exception as exc:
         raise TimestampVerificationError("malformed or unverifiable RFC 3161 token") from exc

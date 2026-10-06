@@ -56,3 +56,35 @@ Verification on the branch before this security-only commit: Ruff, latest
 Black `--check .` (26.5.1), `mypy src`, and `bandit -q -r src` passed. The full
 suite passed with 4,370 tests and 26 skips using the null keyring backend.
 The RFC 3161 offline differential passed all 18 focused tests.
+
+## Follow-up to the security review at c53a3e1
+
+Production trust loading now checks the owner and every ACL grant on the
+Windows custody boundary (`QAT`, `Custodian`, and the trust file) before it
+reads the file. Only the fixed local `QATCustodian` account, Administrators,
+and SYSTEM may own or receive write/replacement rights there. The drive and
+`ProgramData` ancestors may also be owned by TrustedInstaller; untrusted
+delete-child, delete, or permission-change rights there cause refusal. Any
+reparse point in the path causes refusal. On Linux, all components through `/`
+must be root-owned with no group or other write bit. Synthetic ACL tests cover
+untrusted explicit and inherited grants, CREATOR OWNER, wrong ownership,
+ancestor replacement rights, reparse points and an accepted locked setup.
+The runbook places custody setup before starting any QAT component and requires
+the agent account to be non-admin and non-elevated. Administrators remain
+outside this protection boundary.
+
+With `cryptography` 46.0.6, the recorded token's byte-1032 single-bit change
+was reproduced as an escaping `KeyError` on the pre-fix code. The same token
+now raises `TimestampVerificationError`. Certificate and CMS parsing errors
+are contained without catching process-control exceptions. The dependency is
+narrowed to `cryptography==50.0.2`; the complete every-byte OpenSSL differential
+passed at that exact supported version, retaining the reviewed stricter
+divergence allowlist above.
+
+The [runbook](phase-2d-declaration-runbook.md) now makes independent OpenSSL
+Ed25519 generation and `pkeyutl -sign -rawin` the primary operator path. It
+requires readable payload and canonical-envelope review before signing and
+raw-signature verification afterward. A test signs exact bytes with an
+OpenSSL-generated runtime throwaway key and verifies them independently.
+The Python helper remains optional and is pinned by its reviewed SHA-256.
+No real operator key or signature was generated or used here.

@@ -11,51 +11,108 @@ The operator generates and holds one Ed25519 signing key in a
 passphrase-encrypted file **off this machine or under a separate Windows
 account that the agent cannot access**. No operator private key, passphrase,
 real signature or signing session is available to the agent. The operator
-performs generation and signing, outside the agent's account, after reviewing
-the exact canonical bytes and their SHA-256. The repository's
-[`scripts/operator_signing.py`](../scripts/operator_signing.py) is an offline
-operator script; its tests create clearly labelled throwaway keys in a
-temporary directory. The agent must not run the script with a real key.
+performs generation and signing outside the agent's account. The primary path
+uses OpenSSL directly; the agent must never run these commands with a real key.
 
-From the separate account, the operator chooses key paths outside this
-repository and runs:
+From that separate account, with private-key paths outside the repository,
+the operator uses OpenSSL 3.x to create an encrypted Ed25519 key and public
+key. Set `$operatorDir` to a directory inaccessible to the agent account;
+keep the same path values for later signing:
 
-```text
-python scripts/operator_signing.py generate-key --private-key <operator-only/encrypted-key.pem> --public-key <operator-only/public-key.bin>
+```powershell
+openssl version
+$operatorDir = Read-Host 'Operator-only directory outside this machine or agent account'
+$private = Join-Path $operatorDir 'private.pem'
+$public = Join-Path $operatorDir 'public.pem'
+$publicSpki = Join-Path $operatorDir 'public.spki.der'
+$publicRaw = Join-Path $operatorDir 'public.raw'
+openssl genpkey -algorithm Ed25519 -aes-256-cbc -out $private
+openssl pkey -in $private -pubout -out $public
+openssl pkey -in $private -pubout -outform DER -out $publicSpki
+$spki = [IO.File]::ReadAllBytes($publicSpki)
+if ($spki.Length -ne 44 -or [Convert]::ToHexString($spki[0..11]) -ne '302A300506032B6570032100') { throw 'Unexpected Ed25519 public-key encoding' }
+[IO.File]::WriteAllBytes($publicRaw, [byte[]]$spki[12..43])
+Get-FileHash $publicRaw -Algorithm SHA256
 ```
 
-The script prompts twice for the passphrase, creates an encrypted PKCS#8
-private file and a 32-byte raw public-key file, refuses to overwrite either,
-and prints the SHA-256 fingerprint of the raw public key. The operator sets
-filesystem access so the agent account cannot read the encrypted file or its
-directory. The passphrase is never placed in a command line, repository file,
-or agent-visible environment variable. If key storage is off-machine, the
-operator transfers only the public key and signatures to the custodian.
+OpenSSL prompts for the passphrase. It must not appear in command arguments,
+repository files or agent-visible environment variables. The 32-byte raw
+public key and its SHA-256 fingerprint go to the custodian; the encrypted
+private key and its directory remain inaccessible to the agent account.
 
-For a declaration, the operator exports `DeclarationRecord.canonical_bytes()`
-from the reviewed record. For a release, permit or rerun, the operator exports
-`operator_action_bytes(action, payload)` from the reviewed action and payload.
-The operator compares the exported bytes and SHA-256 with the intended
-declaration or action, then signs the exact byte file:
+For a declaration, the operator independently reviews the readable payload
+JSON, computes its SHA-256 and checks it against the `payload_sha256` in the
+readable canonical declaration envelope. The operator then reviews every
+envelope field, including name, sequence, prior head, identity, nonce and
+declared time. The envelope is exported as the exact bytes from
+`DeclarationRecord.canonical_bytes()`. For a release, permit or rerun, the
+operator reviews the readable action and payload from
+`operator_action_bytes(action, payload)`. The operator displays the exact
+canonical byte file and checks its SHA-256 against the reviewed value **before**
+signing; a hash alone is not a content review:
 
-```text
-python scripts/operator_signing.py sign --private-key <operator-only/encrypted-key.pem> --canonical-file <reviewed-canonical-bytes.bin> --signature-file <new-signature.json> --expected-sha256 <reviewed-64-character-sha256>
+```powershell
+$canonical = Read-Host 'Reviewed canonical byte-file path'
+$signature = Read-Host 'New raw signature output path'
+[Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($canonical))
+Get-FileHash $canonical -Algorithm SHA256
+openssl pkeyutl -sign -rawin -inkey $private -in $canonical -out $signature
+openssl pkeyutl -verify -rawin -pubin -inkey $public -in $canonical -sigfile $signature
 ```
 
-The script refuses a changed digest or existing signature output. Its JSON
-contains the Ed25519 signature, raw public key, public-key fingerprint, and
-payload hash for offline operator review. Production verification obtains the
-raw public key and its matching fingerprint only from custodian configuration;
-the receipt supplies only the signature. Operator IDs and code-level role checks are labels and workflow
-conveniences, **not security controls**. The private-key signature is the
-authorising act.
+The output is a 64-byte raw Ed25519 signature. The operator transfers only
+that signature to the receipt. Production verification obtains the raw public
+key and its matching fingerprint from custodian configuration. Operator IDs
+and code-level role checks are labels and workflow conveniences, **not
+security controls**. The private-key signature is the authorising act.
+
+[`scripts/operator_signing.py`](../scripts/operator_signing.py) is an optional
+convenience after independent review of its source. Its pinned SHA-256 is
+`5d3297938e5f4f35d9bab8ccc92266c10c063af6e17335b04bc5e8509d83d3a3`;
+the operator checks `Get-FileHash scripts/operator_signing.py -Algorithm
+SHA256` in the separate account and refuses a different hash until the script
+is reviewed and re-pinned. Its `generate-key` and `sign` commands prompt for
+the passphrase, refuse overwrites and require the reviewed canonical-file
+hash. Its tests use runtime throwaway keys only.
+
+**Before any QAT component runs**, an administrator pre-creates
+`C:\ProgramData\QAT\Custodian` and its parent `C:\ProgramData\QAT` under
+the separate local `QATCustodian` account or Administrators/SYSTEM ownership.
+The ACL on both directories and the trust file must grant write, append,
+delete, delete-child, change-permissions and take-ownership rights only to
+`QATCustodian`, Administrators and SYSTEM. Remove untrusted explicit and
+inherited grants, including Users, Authenticated Users, Everyone,
+INTERACTIVE and CREATOR OWNER, and inspect `Get-Acl` or `icacls` output on
+each path before placing the file. No symlink, junction or mount point may
+occur anywhere along the path. `C:\` and `C:\ProgramData` must have trusted
+ownership and must not grant an untrusted principal replacement rights over
+the QAT directory. The agent's account must not belong to Administrators and
+must run non-elevated; administrators are outside this protection boundary.
+The gate checks ownership and every explicit/inherited ACL entry before
+loading trust bytes, and refuses an unsafe path.
+
+During custodian setup on the operator's Windows machine, after placing the
+public trust file, run this read-only trust-path check once from the separate
+custodian account:
+
+```powershell
+python scripts/check_custodian_trust_path.py
+```
+
+It prints the owner and every allow entry (SID, rights mask and inheritance
+flag) for each path component, validates the production path, then creates a
+temporary file containing only test text beside the trust file, grants Users
+write access to that file, and confirms the verifier refuses it specifically
+for the write grant. The test file is removed even if the check fails. Save
+the output in the custodian setup record; any failure stops release setup.
 
 The custodian pins the operator raw-public-key SHA-256 and the DER SHA-256 of
 every approved TSA root, along with the root DER, current signed CRLs and
 allowed TSA policies. On Windows the fixed production configuration path is
 `C:\ProgramData\QAT\Custodian\promotion-trust.json`; on Linux it is
-`/etc/qat/promotion-trust.json`. The custodian owns that path and its parent
-directory and sets permissions so the agent account cannot write either.
+`/etc/qat/promotion-trust.json`. On Linux, the file and every parent to `/`
+must be root-owned with no group or other write bit. On Windows, the custody
+and ancestor rules above apply.
 Production verification reads only this fixed path; caller-supplied keys and
 trust stores are rejected. The schema is `qat-promotion-trust-v1` with
 `operator_ed25519_public_key_raw_base64`,
@@ -113,7 +170,7 @@ policy is approved or configured by this proposal. No timestamp request has
 been sent.
 
 The production service and deployment need operator review of account
-separation, trust-file ACLs, atomic ledger persistence and recovery, TSA/CRL
-provenance and real role assignment. One person may fill multiple human roles,
+separation, atomic ledger persistence and recovery, TSA/CRL provenance and
+real role assignment. One person may fill multiple human roles,
 but the accounts and keys remain distinct; the runbook must not claim
 independent human review in that case.

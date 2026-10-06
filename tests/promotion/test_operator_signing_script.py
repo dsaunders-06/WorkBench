@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -63,3 +65,69 @@ def test_signer_refuses_unreviewed_payload_hash(tmp_path: Path) -> None:
             expected_sha256="0" * 64,
         )
     assert not output.exists()
+
+
+def test_openssl_primary_path_signs_exact_bytes_with_throwaway_key(tmp_path: Path) -> None:
+    openssl = shutil.which("openssl") or "C:/Program Files/Git/ucrt64/bin/openssl.exe"
+    if not Path(openssl).is_file():
+        pytest.fail("OpenSSL is required for the operator signing interoperability test")
+    private = tmp_path / "THROWAWAY-TEST-ONLY-private.pem"
+    public_der = tmp_path / "THROWAWAY-TEST-ONLY-public.der"
+    payload = tmp_path / "THROWAWAY-TEST-ONLY-canonical.bin"
+    signature = tmp_path / "THROWAWAY-TEST-ONLY-signature.bin"
+    payload.write_bytes(b'QAT-OPERATOR-ACTION-v1\n{"action":"DEV_DATA_RELEASED","payload":{}}')
+    subprocess.run(
+        [
+            openssl,
+            "genpkey",
+            "-algorithm",
+            "Ed25519",
+            "-aes-256-cbc",
+            "-pass",
+            "pass:THROWAWAY-TEST-ONLY",
+            "-out",
+            str(private),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            openssl,
+            "pkey",
+            "-in",
+            str(private),
+            "-passin",
+            "pass:THROWAWAY-TEST-ONLY",
+            "-pubout",
+            "-outform",
+            "DER",
+            "-out",
+            str(public_der),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            openssl,
+            "pkeyutl",
+            "-sign",
+            "-rawin",
+            "-inkey",
+            str(private),
+            "-passin",
+            "pass:THROWAWAY-TEST-ONLY",
+            "-in",
+            str(payload),
+            "-out",
+            str(signature),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    spki = public_der.read_bytes()
+    assert len(spki) == 44 and spki[:12].hex() == "302a300506032b6570032100"
+    Ed25519PublicKey.from_public_bytes(spki[12:]).verify(
+        signature.read_bytes(), payload.read_bytes()
+    )

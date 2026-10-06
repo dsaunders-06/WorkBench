@@ -132,6 +132,27 @@ def test_recorded_throwaway_token_verifies_offline() -> None:
     assert stamp.generated_at.date() == datetime(2026, 10, 5, tzinfo=UTC).date()
 
 
+def test_certificate_parser_exception_is_contained(monkeypatch: pytest.MonkeyPatch) -> None:
+    """cryptography 46 can raise KeyError while reading a malformed issuer."""
+
+    def broken_certificate(_der: bytes) -> object:
+        raise KeyError("malformed issuer")
+
+    monkeypatch.setattr("qat.promotion.rfc3161.x509.load_der_x509_certificate", broken_certificate)
+    with pytest.raises(TimestampVerificationError):
+        verify_timestamp_token(_token(), DIGEST, trust=_trust(), now=NOW, allowed_policies=POLICY)
+
+
+def test_byte_1032_tamper_cannot_escape_as_cryptography_exception() -> None:
+    """cryptography 46.0.6 raises KeyError for this malformed certificate issuer."""
+    token = bytearray(_token())
+    token[1032] ^= 1 << (1032 % 8)
+    with pytest.raises(TimestampVerificationError):
+        verify_timestamp_token(
+            bytes(token), DIGEST, trust=_trust(), now=NOW, allowed_policies=POLICY
+        )
+
+
 def test_unused_embedded_root_signature_does_not_define_the_pinned_path(tmp_path: Path) -> None:
     """A root carried in CertificateSet is optional path material (RFC 5652, 5.1)."""
     token = bytearray(_token())
