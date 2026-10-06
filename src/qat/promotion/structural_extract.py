@@ -16,6 +16,13 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Protocol, cast
 
+from qat.promotion.operator_signatures import (
+    CustodianTrust,
+    OperatorApproval,
+    resolve_custodian_trust,
+    verify_operator_approval,
+)
+
 
 class ExtractLockedError(PermissionError):
     """A proposed release breaches the information boundary."""
@@ -137,6 +144,9 @@ def authorize_reference_view(
     catalog: ReferenceCatalog,
     release_id: str,
     authority: ReceiptAuthority,
+    operator_approval: OperatorApproval | None = None,
+    test_mode: bool = False,
+    test_trust: CustodianTrust | None = None,
 ) -> ReferenceViewAccess:
     """Release only strategy-independent windows ending before the holdout."""
     if not release_id or not rows or authority is None:
@@ -223,6 +233,13 @@ def authorize_reference_view(
         "source_record_hashes": source_hashes,
         "output_hash": output_hash,
     }
+    try:
+        trust = resolve_custodian_trust(test_mode=test_mode, test_trust=test_trust)
+        if operator_approval is None:
+            raise ExtractLockedError("reference release needs an operator signature")
+        verify_operator_approval(operator_approval, "REFERENCE_VIEW_RELEASED", payload, trust=trust)
+    except Exception as exc:
+        raise ExtractLockedError("reference release lacks pinned operator approval") from exc
     head = _record(authority, "REFERENCE_VIEW_RELEASED", payload)
     receipt = ReferenceViewReleaseReceipt(
         "REFERENCE_VIEW_RELEASED",

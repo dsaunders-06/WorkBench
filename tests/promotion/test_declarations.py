@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import qat.promotion.declarations as declarations
 from qat.promotion.declarations import (
@@ -21,11 +17,11 @@ from qat.promotion.declarations import (
     DeclarationReceipt,
     DeclarationRecord,
     SigningAuthorityError,
-    TrustStore,
     append_declaration,
     verify_declaration_chain,
 )
-from qat.promotion.rfc3161 import VerifiedTimestamp
+from qat.promotion.operator_signatures import CustodianTrust
+from qat.promotion.rfc3161 import TrustStore, VerifiedTimestamp
 
 
 def test_agent_cannot_append_a_research_declaration() -> None:
@@ -161,44 +157,37 @@ def test_unsigned_chain_cannot_authorize_development_release() -> None:
         declared_at=datetime(2026, 10, 5, tzinfo=UTC),
         payload_json=b'{"delta_MME":"0.2","rationale":"economic hurdle"}',
     )
-    receipt = DeclarationReceipt(record, b"", b"", (), b"")
-    empty_trust = TrustStore(roots=(), crls=())
+    receipt = DeclarationReceipt(record, b"", b"")
     with pytest.raises(DeclarationLineageError):
         verify_declaration_chain(
             (receipt,),
-            operator_trust=empty_trust,
-            tsa_trust=empty_trust,
-            allowed_tsa_policies=frozenset({"1.2.3.4"}),
             now=datetime(2026, 10, 6, tzinfo=UTC),
         )
 
 
-def _throwaway_chain(monkeypatch: pytest.MonkeyPatch) -> tuple[DeclarationReceipt, ...]:
+def _throwaway_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[tuple[DeclarationReceipt, ...], CustodianTrust]:
     """Generate test-only signatures; the RFC 3161 parser has recorded DER tests separately."""
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "THROWAWAY TEST OPERATOR")])
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(subject)
-        .issuer_name(subject)
-        .public_key(key.public_key())
-        .serial_number(1)
-        .not_valid_before(datetime(2020, 1, 1, tzinfo=UTC))
-        .not_valid_after(datetime(2040, 1, 1, tzinfo=UTC))
-        .sign(key, hashes.SHA256())
+    key = Ed25519PrivateKey.generate()
+    public_key_raw = key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
     )
-    cert_der = cert.public_bytes(serialization.Encoding.DER)
-
-    def test_certificate(*_args: object, **_kwargs: object) -> x509.Certificate:
-        return cert
+    root = b"THROWAWAY TEST TSA ROOT"
+    trust = CustodianTrust(
+        public_key_raw,
+        hashlib.sha256(public_key_raw).hexdigest(),
+        (hashlib.sha256(root).hexdigest(),),
+        TrustStore((root,), (b"THROWAWAY TEST TSA CRL",)),
+        frozenset({"1.2.3.4.1"}),
+    )
 
     def test_timestamp(token: bytes, digest: bytes, **_kwargs: object) -> VerifiedTimestamp:
         if token[:32] != digest:
             raise ValueError("throwaway token imprint mismatch")
         instant = datetime.fromisoformat(token[32:].decode("ascii"))
-        return VerifiedTimestamp(instant, 1, "1.2.3.4.1", hashlib.sha256(cert_der).hexdigest())
+        return VerifiedTimestamp(instant, 1, "1.2.3.4.1", hashlib.sha256(root).hexdigest())
 
-    monkeypatch.setattr(declarations, "verify_certificate_chain", test_certificate)
     monkeypatch.setattr(declarations, "verify_timestamp_token", test_timestamp)
     payloads = (
         {"delta_MME": "0.2", "rationale": "throwaway test hurdle"},
@@ -241,95 +230,52 @@ def _throwaway_chain(monkeypatch: pytest.MonkeyPatch) -> tuple[DeclarationReceip
             declared,
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii"),
         )
-        signature = key.sign(record.canonical_bytes(), padding.PKCS1v15(), hashes.SHA256())
+        signature = key.sign(record.canonical_bytes())
         token = hashlib.sha256(signature).digest() + (
             declared + timedelta(seconds=1)
         ).isoformat().encode("ascii")
-        receipt = DeclarationReceipt(record, signature, cert_der, (), token)
+        receipt = DeclarationReceipt(record, signature, token)
         receipts.append(receipt)
         head = receipt.head
-    return tuple(receipts)
+    return tuple(receipts), trust
 
 
-def _verify_test_chain(receipts: tuple[DeclarationReceipt, ...]):
-    trust = TrustStore(roots=(b"throwaway-test",), crls=(b"throwaway-test",))
+def _verify_test_chain(receipts: tuple[DeclarationReceipt, ...], trust: CustodianTrust):
     return verify_declaration_chain(
         receipts,
-        operator_trust=trust,
-        tsa_trust=trust,
-        allowed_tsa_policies=frozenset({"1.2.3.4.1"}),
         now=datetime(2026, 10, 6, tzinfo=UTC),
+        test_mode=True,
+        test_trust=trust,
     )
 
 
-def test_recorded_throwaway_chain_verifies_end_to_end_offline() -> None:
-    fixture = (
-        Path(__file__).parent
-        / "fixtures"
-        / "rfc3161-throwaway-test-only"
-        / "declaration-chain.json"
-    )
-    data = json.loads(fixture.read_text(encoding="utf-8"))
-    assert data["status"] == "THROWAWAY TEST FIXTURE ONLY"
-    decode = base64.b64decode
-    receipts = []
-    for item in data["receipts"]:
-        raw = item["record"]
-        record = DeclarationRecord(
-            raw["name"],
-            raw["sequence"],
-            raw["previous_head"],
-            raw["operator_id"],
-            raw["strategy_spec_sha256"],
-            raw["catalog_id"],
-            raw["ledger_id"],
-            raw["nonce"],
-            datetime.fromisoformat(raw["declared_at"]),
-            raw["payload_json"].encode("ascii"),
-        )
-        receipt = DeclarationReceipt(
-            record,
-            decode(item["signature_b64"]),
-            decode(item["signer_certificate_der_b64"]),
-            (),
-            decode(item["rfc3161_token_b64"]),
-        )
-        assert receipt.head == item["head"]
-        receipts.append(receipt)
-    trust = TrustStore(
-        (decode(data["operator_root_der_b64"]),), (decode(data["operator_crl_der_b64"]),)
-    )
-    tsa_trust = TrustStore((decode(data["tsa_root_der_b64"]),), (decode(data["tsa_crl_der_b64"]),))
-    chain = verify_declaration_chain(
-        receipts,
-        operator_trust=trust,
-        tsa_trust=tsa_trust,
-        allowed_tsa_policies=frozenset(data["allowed_tsa_policies"]),
-        now=datetime(2026, 10, 6, tzinfo=UTC),
-    )
+def test_throwaway_ed25519_chain_verifies_end_to_end_offline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    receipts, trust = _throwaway_chain(monkeypatch)
+    chain = _verify_test_chain(receipts, trust)
     assert chain.head == receipts[-1].head
-    assert chain.names == (
-        "EFFECT_DECLARED",
-        "PROMOTION_PROTOCOL_DECLARED",
-        "METHOD_AUDIT_DECLARED",
-    )
     changed = list(receipts)
     changed[1] = replace(changed[1], signature=b"tampered")
     with pytest.raises(DeclarationLineageError):
+        _verify_test_chain(tuple(changed), trust)
+
+
+def test_production_chain_rejects_caller_supplied_trust(monkeypatch: pytest.MonkeyPatch) -> None:
+    receipts, trust = _throwaway_chain(monkeypatch)
+    with pytest.raises(DeclarationLineageError):
         verify_declaration_chain(
-            changed,
-            operator_trust=trust,
-            tsa_trust=tsa_trust,
-            allowed_tsa_policies=frozenset(data["allowed_tsa_policies"]),
+            receipts,
             now=datetime(2026, 10, 6, tzinfo=UTC),
+            test_trust=trust,
         )
 
 
 def test_three_signed_timestamped_declarations_have_one_lineage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    receipts = _throwaway_chain(monkeypatch)
-    chain = _verify_test_chain(receipts)
+    receipts, trust = _throwaway_chain(monkeypatch)
+    chain = _verify_test_chain(receipts, trust)
     assert chain.names == (
         "EFFECT_DECLARED",
         "PROMOTION_PROTOCOL_DECLARED",
@@ -340,28 +286,14 @@ def test_three_signed_timestamped_declarations_have_one_lineage(
 
 
 def test_append_extends_only_the_expected_head(monkeypatch: pytest.MonkeyPatch) -> None:
-    expected = _throwaway_chain(monkeypatch)
+    expected, trust = _throwaway_chain(monkeypatch)
 
     class ThrowawayTestAuthority:
-        operator_trust = TrustStore((b"throwaway",), (b"throwaway",))
-        tsa_trust = operator_trust
-        allowed_tsa_policies = frozenset({"1.2.3.4.1"})
-
         def __init__(self) -> None:
             self.receipts: list[DeclarationReceipt] = []
 
         def read_receipts(self) -> tuple[DeclarationReceipt, ...]:
             return tuple(self.receipts)
-
-        def sign(self, content: bytes) -> tuple[bytes, bytes, tuple[bytes, ...]]:
-            selected = expected[len(self.receipts)]
-            assert content == selected.record.canonical_bytes()
-            return selected.signature, selected.signer_certificate_der, ()
-
-        def timestamp(self, signed_digest: bytes) -> bytes:
-            selected = expected[len(self.receipts)]
-            assert signed_digest == hashlib.sha256(selected.signature).digest()
-            return selected.rfc3161_token
 
         def append_if_head(self, expected_head: str, receipt: DeclarationReceipt) -> None:
             current = self.receipts[-1].head if self.receipts else "0" * 64
@@ -372,12 +304,22 @@ def test_append_extends_only_the_expected_head(monkeypatch: pytest.MonkeyPatch) 
     authority = ThrowawayTestAuthority()
     for expected_receipt in expected:
         receipt = append_declaration(
-            authority, expected_receipt.record, now=datetime(2026, 10, 6, tzinfo=UTC)
+            authority,
+            expected_receipt,
+            now=datetime(2026, 10, 6, tzinfo=UTC),
+            test_mode=True,
+            test_trust=trust,
         )
         assert receipt.head == expected_receipt.head
     assert len(authority.read_receipts()) == 3
     with pytest.raises(DeclarationLineageError):
-        append_declaration(authority, expected[-1].record, now=datetime(2026, 10, 6, tzinfo=UTC))
+        append_declaration(
+            authority,
+            expected[-1],
+            now=datetime(2026, 10, 6, tzinfo=UTC),
+            test_mode=True,
+            test_trust=trust,
+        )
 
 
 @pytest.mark.parametrize(
@@ -395,7 +337,8 @@ def test_append_extends_only_the_expected_head(monkeypatch: pytest.MonkeyPatch) 
 def test_declaration_lineage_refuses_tampering(
     monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    receipts = list(_throwaway_chain(monkeypatch))
+    original, trust = _throwaway_chain(monkeypatch)
+    receipts = list(original)
     if failure == "missing":
         receipts.pop()
     elif failure == "reordered":
@@ -419,4 +362,4 @@ def test_declaration_lineage_refuses_tampering(
     else:
         receipts[1] = replace(receipts[1], signature=b"not-a-signature")
     with pytest.raises(DeclarationLineageError):
-        _verify_test_chain(tuple(receipts))
+        _verify_test_chain(tuple(receipts), trust)

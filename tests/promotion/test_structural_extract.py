@@ -8,7 +8,16 @@ from datetime import date
 from hashlib import sha256
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+import qat.promotion.structural_extract as structural_extract
+from qat.promotion.operator_signatures import (
+    CustodianTrust,
+    OperatorApproval,
+    operator_action_bytes,
+)
+from qat.promotion.rfc3161 import TrustStore
 from qat.promotion.structural_extract import (
     ExtractLockedError,
     ReferenceCatalog,
@@ -93,13 +102,52 @@ def _reference_rows() -> tuple[dict[str, object], ...]:
     )
 
 
+def _reference_approval() -> tuple[OperatorApproval, CustodianTrust]:
+    key = Ed25519PrivateKey.generate()  # throwaway test key only
+    public = key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    root = b"THROWAWAY TEST TSA ROOT"
+    trust = CustodianTrust(
+        public,
+        sha256(public).hexdigest(),
+        (sha256(root).hexdigest(),),
+        TrustStore((root,), (b"THROWAWAY TEST TSA CRL",)),
+        frozenset({"1.2.3.4.1"}),
+    )
+    rows = _reference_rows()
+    payload: dict[str, object] = {
+        "catalog_id": _catalog().catalog_id,
+        "source_shard_hash": _catalog().source_shard_hash,
+        "official_calendar_hash": structural_extract._digest(_catalog().official_sessions),
+        "holdout_start": _catalog().holdout_start.isoformat(),
+        "release_id": "synthetic-reference-1",
+        "schema": list(structural_extract._REFERENCE_OUTPUT),
+        "row_count": len(rows),
+        "issuer_count": len({row["issuer_id"] for row in rows}),
+        "maximum_session": max(row["window_end"] for row in rows).isoformat(),
+        "source_record_hashes": [structural_extract._digest(row) for row in rows],
+        "output_hash": structural_extract._digest(
+            [{key: value for key, value in row.items() if key != "issuer_id"} for row in rows]
+        ),
+    }
+    return (
+        OperatorApproval(key.sign(operator_action_bytes("REFERENCE_VIEW_RELEASED", payload))),
+        trust,
+    )
+
+
 def test_reference_receipt_precedes_field_limited_view() -> None:
     authority = RecordingAuthority()
+    approval, trust = _reference_approval()
     access = authorize_reference_view(
         _reference_rows(),
         catalog=_catalog(),
         release_id="synthetic-reference-1",
         authority=authority,
+        operator_approval=approval,
+        test_mode=True,
+        test_trust=trust,
     )
     assert [event[0] for event in authority.events] == ["REFERENCE_VIEW_RELEASED"]
     assert access.latest_receipt.state == "REFERENCE_VIEW_RELEASED"
@@ -126,6 +174,36 @@ def test_reference_receipt_precedes_field_limited_view() -> None:
     assert len(access.latest_receipt.source_record_hashes) == 2
     assert len(access.latest_receipt.official_calendar_hash) == 64
     assert len(access.latest_receipt.output_hash) == 64
+
+
+def _throwaway_trust() -> CustodianTrust:
+    key = Ed25519PrivateKey.generate()  # throwaway test key only
+    public = key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    root = b"THROWAWAY TEST TSA ROOT"
+    return CustodianTrust(
+        public,
+        sha256(public).hexdigest(),
+        (sha256(root).hexdigest(),),
+        TrustStore((root,), (b"THROWAWAY TEST TSA CRL",)),
+        frozenset({"1.2.3.4.1"}),
+    )
+
+
+def test_reference_release_requires_operator_signature() -> None:
+    authority = RecordingAuthority()
+    with pytest.raises(ExtractLockedError):
+        authorize_reference_view(
+            _reference_rows(),
+            catalog=_catalog(),
+            release_id="synthetic-reference-1",
+            authority=authority,
+            operator_approval=OperatorApproval(b"0" * 64),
+            test_mode=True,
+            test_trust=_throwaway_trust(),
+        )
+    assert authority.events == []
 
 
 @pytest.mark.parametrize(

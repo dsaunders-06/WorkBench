@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from cryptography import x509
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, ExtensionOID
@@ -107,6 +107,39 @@ def _integer(node: _Node) -> int:
     return int.from_bytes(node.value, "big")
 
 
+def _algorithm_oid(node: _Node) -> str:
+    if node.tag != 0x30:
+        raise TimestampVerificationError("algorithm identifier must be a sequence")
+    fields = node.children()
+    if len(fields) not in (1, 2) or (len(fields) == 2 and fields[1].encoded != b"\x05\x00"):
+        raise TimestampVerificationError("invalid algorithm identifier parameters")
+    return _oid(fields[0])
+
+
+def _validate_x509_subject(node: _Node) -> None:
+    """Require a valid X.509 Name in each embedded certificate choice."""
+    certificate = node.children()
+    tbs = certificate[0].children()
+    subject = tbs[5 if tbs[0].tag == 0xA0 else 4]
+    if subject.tag != 0x30:
+        raise TimestampVerificationError("invalid embedded certificate subject")
+    for rdn in subject.children():
+        if rdn.tag != 0x31:
+            raise TimestampVerificationError("invalid embedded certificate subject")
+        for attribute in rdn.children():
+            if attribute.tag != 0x30:
+                raise TimestampVerificationError("invalid embedded certificate subject")
+            fields = attribute.children()
+            if len(fields) != 2:
+                raise TimestampVerificationError("invalid embedded certificate subject")
+            _oid(fields[0])
+            value = fields[1]
+            if value.tag == 0x0C:
+                value.value.decode("utf-8")
+            elif value.tag not in (0x13, 0x14, 0x1C, 0x1E):
+                raise TimestampVerificationError("invalid embedded certificate subject string")
+
+
 def _verify_signature(public_key: object, signature: bytes, data: bytes) -> None:
     if isinstance(public_key, rsa.RSAPublicKey):
         public_key.verify(signature, data, padding.PKCS1v15(), hashes.SHA256())
@@ -200,7 +233,14 @@ def verify_certificate_chain(
             ]:
                 raise TimestampVerificationError("TSA requires exclusive timeStamping usage")
         return leaf
-    except (InvalidSignature, ValueError, x509.ExtensionNotFound, TypeError) as exc:
+    except (
+        InvalidSignature,
+        UnsupportedAlgorithm,
+        ValueError,
+        x509.InvalidVersion,
+        x509.ExtensionNotFound,
+        TypeError,
+    ) as exc:
         raise TimestampVerificationError("invalid certificate or revocation evidence") from exc
 
 
@@ -227,13 +267,22 @@ def verify_timestamp_token(
         if len(signed_digest) != 32 or not allowed_policies:
             raise TimestampVerificationError("SHA-256 digest and allowed policy required")
         content = _one(token_der, 0x30).children()
-        if len(content) != 2 or _oid(content[0]) != "1.2.840.113549.1.7.2":
+        if (
+            len(content) != 2
+            or _oid(content[0]) != "1.2.840.113549.1.7.2"
+            or content[1].tag != 0xA0
+        ):
             raise TimestampVerificationError("token is not CMS SignedData")
         signed = _one(content[1].value, 0x30).children()
-        if len(signed) < 5 or _integer(signed[0]) != 3:
+        if len(signed) < 5 or _integer(signed[0]) != 3 or signed[1].tag != 0x31:
             raise TimestampVerificationError("invalid CMS SignedData")
+        digest_algorithms = {_algorithm_oid(algorithm) for algorithm in signed[1].children()}
+        if not digest_algorithms or digest_algorithms != {"2.16.840.1.101.3.4.2.1"}:
+            raise TimestampVerificationError("unsupported CMS digest algorithm list")
+        if signed[2].tag != 0x30:
+            raise TimestampVerificationError("invalid encapsulated content wrapper")
         encap = signed[2].children()
-        if len(encap) != 2 or _oid(encap[0]) != "1.2.840.113549.1.9.16.1.4":
+        if len(encap) != 2 or _oid(encap[0]) != "1.2.840.113549.1.9.16.1.4" or encap[1].tag != 0xA0:
             raise TimestampVerificationError("missing TSTInfo content type")
         tst_bytes = _one(encap[1].value, 0x04).value
         tst = _one(tst_bytes, 0x30).children()
@@ -258,34 +307,59 @@ def verify_timestamp_token(
         cert_field = signed[3]
         if cert_field.tag != 0xA0:
             raise TimestampVerificationError("CMS certificates required")
-        certs = tuple(x.encoded for x in cert_field.children() if x.tag == 0x30)
+        cert_nodes = cert_field.children()
+        if not cert_nodes or any(node.tag != 0x30 for node in cert_nodes):
+            raise TimestampVerificationError("unsupported CMS CertificateChoices")
+        for node in cert_nodes:
+            _validate_x509_subject(node)
+        certs = tuple(node.encoded for node in cert_nodes)
+        parsed_certs = tuple(x509.load_der_x509_certificate(cert) for cert in certs)
         signer_set = signed[4]
         if signer_set.tag != 0x31 or len(signer_set.children()) != 1:
             raise TimestampVerificationError("exactly one TSA signer required")
-        signer = signer_set.children()[0].children()
+        signer_node = signer_set.children()[0]
+        if signer_node.tag != 0x30:
+            raise TimestampVerificationError("SignerInfo must be a sequence")
+        signer = signer_node.children()
         if len(signer) != 6 or _integer(signer[0]) != 1:
             raise TimestampVerificationError("unsupported SignerInfo")
+        if signer[1].tag != 0x30:
+            raise TimestampVerificationError("issuer-and-serial signer required")
         sid = signer[1].children()
         if len(sid) != 2:
             raise TimestampVerificationError("issuer-and-serial signer required")
         signer_certs = [
-            x
-            for x in certs
-            if (cert := x509.load_der_x509_certificate(x)).issuer.public_bytes() == sid[0].encoded
+            (encoded, cert)
+            for encoded, cert in zip(certs, parsed_certs, strict=True)
+            if cert.issuer.public_bytes() == sid[0].encoded
             and cert.serial_number == _integer(sid[1])
         ]
         if len(signer_certs) != 1:
             raise TimestampVerificationError("TSA signer certificate missing or ambiguous")
-        leaf_der = signer_certs[0]
+        leaf_der, leaf = signer_certs[0]
+        roots = tuple(x509.load_der_x509_certificate(root) for root in trust.roots)
+        intermediates: list[bytes] = []
+        current = leaf
+        while not any(root.subject == current.issuer for root in roots):
+            issuers = [
+                (encoded, cert)
+                for encoded, cert in zip(certs, parsed_certs, strict=True)
+                if encoded != leaf_der and cert.subject == current.issuer
+            ]
+            if len(issuers) != 1 or issuers[0][0] in intermediates:
+                raise TimestampVerificationError("certificate chain lacks pinned issuer")
+            encoded, current = issuers[0]
+            intermediates.append(encoded)
         leaf = verify_certificate_chain(
             leaf_der,
-            tuple(x for x in certs if x != leaf_der),
+            tuple(intermediates),
             trust,
             at=generated_at,
             now=now,
             tsa=True,
         )
-        if _oid(signer[2].children()[0]) != "2.16.840.1.101.3.4.2.1":
+        signer_digest = _algorithm_oid(signer[2])
+        if signer_digest != "2.16.840.1.101.3.4.2.1" or signer_digest not in digest_algorithms:
             raise TimestampVerificationError("CMS digest must use SHA-256")
         attrs = signer[3]
         if attrs.tag != 0xA0:
@@ -300,23 +374,28 @@ def verify_timestamp_token(
         ess_cert = ess.children()[0].children()[0].children()[0]
         if ess_cert.tag != 0x04 or ess_cert.value != hashlib.sha256(leaf_der).digest():
             raise TimestampVerificationError("ESS signer certificate hash mismatch")
-        if _oid(signer[4].children()[0]) not in (
-            "1.2.840.113549.1.1.1",
-            "1.2.840.113549.1.1.11",
-            "1.2.840.10045.4.3.2",
+        signature_algorithm = _algorithm_oid(signer[4])
+        signer_key = leaf.public_key()
+        if not (
+            isinstance(signer_key, rsa.RSAPublicKey)
+            and signature_algorithm in ("1.2.840.113549.1.1.1", "1.2.840.113549.1.1.11")
+            or isinstance(signer_key, ec.EllipticCurvePublicKey)
+            and signature_algorithm == "1.2.840.10045.4.3.2"
         ):
             raise TimestampVerificationError("unsupported CMS signature algorithm")
         if signer[5].tag != 0x04:
             raise TimestampVerificationError("CMS signature missing")
         signed_attrs_der = bytes([0x31]) + attrs.encoded[1:]
-        _verify_signature(leaf.public_key(), signer[5].value, signed_attrs_der)
+        _verify_signature(signer_key, signer[5].value, signed_attrs_der)
         return VerifiedTimestamp(generated_at, serial, policy, hashlib.sha256(leaf_der).hexdigest())
     except (
         IndexError,
         InvalidSignature,
+        UnsupportedAlgorithm,
         UnicodeDecodeError,
         ValueError,
         TypeError,
+        x509.InvalidVersion,
         x509.ExtensionNotFound,
     ) as exc:
         if isinstance(exc, TimestampVerificationError):

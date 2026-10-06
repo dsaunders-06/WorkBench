@@ -14,7 +14,12 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 
 from qat.promotion.declarations import DeclarationReceipt, verify_declaration_chain
-from qat.promotion.rfc3161 import TrustStore
+from qat.promotion.operator_signatures import (
+    CustodianTrust,
+    OperatorApproval,
+    resolve_custodian_trust,
+    verify_operator_approval,
+)
 from qat.promotion.structural_extract import ReceiptAuthority, _record
 
 
@@ -110,9 +115,7 @@ def _release[HandleT](
     declared_shard_id: str,
     declared_bundle_hash: str,
     declared_scope: str,
-    operator_trust: TrustStore,
-    tsa_trust: TrustStore,
-    allowed_tsa_policies: frozenset[str],
+    operator_approval: OperatorApproval,
     now: datetime,
     authority: ReceiptAuthority,
     shard_opener: Callable[[str], HandleT],
@@ -121,6 +124,8 @@ def _release[HandleT](
     development_fingerprint: str | None = None,
     frozen_artifacts_hash: str | None = None,
     rerun_authorization: RerunAuthorization | None = None,
+    test_mode: bool = False,
+    test_trust: CustodianTrust | None = None,
 ) -> DevelopmentAccess[HandleT]:
     if (
         len(receipts) != 3
@@ -146,12 +151,12 @@ def _release[HandleT](
     ):
         raise DevelopmentLockedError("validation requires frozen development evidence")
     try:
+        trust = resolve_custodian_trust(test_mode=test_mode, test_trust=test_trust)
         chain = verify_declaration_chain(
             receipts,
-            operator_trust=operator_trust,
-            tsa_trust=tsa_trust,
-            allowed_tsa_policies=allowed_tsa_policies,
             now=now,
+            test_mode=test_mode,
+            test_trust=test_trust,
         )
     except Exception as exc:
         raise DevelopmentLockedError(
@@ -173,6 +178,25 @@ def _release[HandleT](
     if authority.head != request.expected_ledger_head:
         raise DevelopmentLockedError("release authority head changed after review")
     if request.bundle_hash != declared_bundle_hash:
+        if rerun_authorization is not None:
+            try:
+                approval_payload = dict(rerun_authorization.payload)
+                signature_hash = approval_payload.pop("operator_signature_sha256")
+                if (
+                    signature_hash
+                    != hashlib.sha256(rerun_authorization.operator_approval.signature).hexdigest()
+                ):
+                    raise DevelopmentLockedError("rerun signature hash differs from receipt")
+                verify_operator_approval(
+                    rerun_authorization.operator_approval,
+                    "DEV_RERUN_AUTHORIZED",
+                    approval_payload,
+                    trust=trust,
+                )
+            except Exception as exc:
+                raise DevelopmentLockedError(
+                    "replacement bundle lacks operator rerun approval"
+                ) from exc
         if (
             rerun_authorization is None
             or rerun_authorization.prior_bundle_hash != declared_bundle_hash
@@ -201,6 +225,10 @@ def _release[HandleT](
         payload["development_fingerprint"] = development_fingerprint
         payload["frozen_artifacts_hash"] = frozen_artifacts_hash
     try:
+        verify_operator_approval(operator_approval, release_state, payload, trust=trust)
+    except Exception as exc:
+        raise DevelopmentLockedError("operator release approval is absent or invalid") from exc
+    try:
         head = _record(authority, release_state, payload)
     except Exception as exc:
         raise DevelopmentLockedError("release receipt was not appended") from exc
@@ -225,13 +253,13 @@ def authorize_development[HandleT](
     declared_shard_id: str,
     declared_bundle_hash: str,
     declared_scope: str,
-    operator_trust: TrustStore,
-    tsa_trust: TrustStore,
-    allowed_tsa_policies: frozenset[str],
+    operator_approval: OperatorApproval,
     now: datetime,
     authority: ReceiptAuthority,
     shard_opener: Callable[[str], HandleT],
     rerun_authorization: RerunAuthorization | None = None,
+    test_mode: bool = False,
+    test_trust: CustodianTrust | None = None,
 ) -> DevelopmentAccess[HandleT]:
     """Verify declarations and commit DEV_DATA_RELEASED before returning access."""
     return _release(
@@ -241,15 +269,15 @@ def authorize_development[HandleT](
         declared_shard_id=declared_shard_id,
         declared_bundle_hash=declared_bundle_hash,
         declared_scope=declared_scope,
-        operator_trust=operator_trust,
-        tsa_trust=tsa_trust,
-        allowed_tsa_policies=allowed_tsa_policies,
+        operator_approval=operator_approval,
         now=now,
         authority=authority,
         shard_opener=shard_opener,
         release_state="DEV_DATA_RELEASED",
         opened_state="DEV_DATA_OPENED",
         rerun_authorization=rerun_authorization,
+        test_mode=test_mode,
+        test_trust=test_trust,
     )
 
 
@@ -261,15 +289,15 @@ def authorize_validation[HandleT](
     declared_shard_id: str,
     declared_bundle_hash: str,
     declared_scope: str,
-    operator_trust: TrustStore,
-    tsa_trust: TrustStore,
-    allowed_tsa_policies: frozenset[str],
+    operator_approval: OperatorApproval,
     now: datetime,
     authority: ReceiptAuthority,
     shard_opener: Callable[[str], HandleT],
     development_fingerprint: str | None,
     frozen_artifacts_hash: str | None,
     rerun_authorization: RerunAuthorization | None = None,
+    test_mode: bool = False,
+    test_trust: CustodianTrust | None = None,
 ) -> DevelopmentAccess[HandleT]:
     """Release validation only with frozen development artifacts/fingerprint."""
     return _release(
@@ -279,9 +307,7 @@ def authorize_validation[HandleT](
         declared_shard_id=declared_shard_id,
         declared_bundle_hash=declared_bundle_hash,
         declared_scope=declared_scope,
-        operator_trust=operator_trust,
-        tsa_trust=tsa_trust,
-        allowed_tsa_policies=allowed_tsa_policies,
+        operator_approval=operator_approval,
         now=now,
         authority=authority,
         shard_opener=shard_opener,
@@ -290,6 +316,8 @@ def authorize_validation[HandleT](
         development_fingerprint=development_fingerprint,
         frozen_artifacts_hash=frozen_artifacts_hash,
         rerun_authorization=rerun_authorization,
+        test_mode=test_mode,
+        test_trust=test_trust,
     )
 
 
@@ -346,6 +374,29 @@ class RerunAuthorization:
     replacement_bundle_hash: str
     payload: dict[str, object]
     receipt: object
+    operator_approval: OperatorApproval
+
+
+def rerun_approval_payload(
+    dossier: DefectDossier, prior_release: DevelopmentReleaseReceipt
+) -> dict[str, object]:
+    """Exact, domain-separated operator approval payload for a development rerun."""
+    dossier_hash = hashlib.sha256(dossier.canonical_bytes()).hexdigest()
+    return {
+        "dossier_sha256": dossier_hash,
+        "failed_run_hash": dossier.failed_run_hash,
+        "exact_diff_hash": dossier.exact_diff_hash,
+        "prior_bundle_hash": dossier.prior_bundle_hash,
+        "replacement_bundle_hash": dossier.replacement_bundle_hash,
+        "unchanged_spec_hash": dossier.unchanged_spec_hash,
+        "permitted_changed_artifacts": list(dossier.permitted_changed_artifacts),
+        "unchanged_artifact_digest": dossier.unchanged_artifact_digest,
+        "changed_artifact_digest": dossier.changed_artifact_digest,
+        "oracle_artifact_digest": dossier.oracle_artifact_digest,
+        "outcome_triggered": dossier.outcome_triggered,
+        "visible_outcome_artifacts": list(dossier.visible_outcome_artifacts),
+        "prior_head": prior_release.head,
+    }
 
 
 def authorize_development_rerun(
@@ -354,8 +405,9 @@ def authorize_development_rerun(
     prior_release: DevelopmentReleaseReceipt,
     frozen_spec_sha256: str,
     authority: ReceiptAuthority,
-    review_signature: bytes,
-    review_verifier: Callable[[bytes, bytes], bool],
+    operator_approval: OperatorApproval,
+    test_mode: bool = False,
+    test_trust: CustodianTrust | None = None,
 ) -> RerunAuthorization:
     """Log a reviewed repair only when independent evidence proves contract parity."""
     hashes = (
@@ -392,32 +444,16 @@ def authorize_development_rerun(
         or (dossier.outcome_triggered and not dossier.independent_oracle_hash)
     ):
         raise NewDeclarationLineageRequired("defect proof is incomplete or semantics changed")
-    if authority.head != prior_release.head or not review_signature:
+    if authority.head != prior_release.head:
         raise DevelopmentLockedError("reviewed prior release head or signature is absent")
-    dossier_bytes = dossier.canonical_bytes()
+    payload = rerun_approval_payload(dossier, prior_release)
     try:
-        reviewed = review_verifier(dossier_bytes, review_signature)
+        trust = resolve_custodian_trust(test_mode=test_mode, test_trust=test_trust)
+        verify_operator_approval(operator_approval, "DEV_RERUN_AUTHORIZED", payload, trust=trust)
     except Exception as exc:
         raise DevelopmentLockedError("operator defect review could not be verified") from exc
-    if not reviewed:
-        raise DevelopmentLockedError("operator defect review signature is invalid")
-    dossier_hash = hashlib.sha256(dossier_bytes).hexdigest()
-    payload: dict[str, object] = {
-        "dossier_sha256": dossier_hash,
-        "failed_run_hash": dossier.failed_run_hash,
-        "exact_diff_hash": dossier.exact_diff_hash,
-        "prior_bundle_hash": dossier.prior_bundle_hash,
-        "replacement_bundle_hash": dossier.replacement_bundle_hash,
-        "unchanged_spec_hash": dossier.unchanged_spec_hash,
-        "permitted_changed_artifacts": list(dossier.permitted_changed_artifacts),
-        "unchanged_artifact_digest": dossier.unchanged_artifact_digest,
-        "changed_artifact_digest": dossier.changed_artifact_digest,
-        "oracle_artifact_digest": dossier.oracle_artifact_digest,
-        "review_signature_sha256": hashlib.sha256(review_signature).hexdigest(),
-        "outcome_triggered": dossier.outcome_triggered,
-        "visible_outcome_artifacts": list(dossier.visible_outcome_artifacts),
-        "prior_head": prior_release.head,
-    }
+    dossier_hash = str(payload["dossier_sha256"])
+    payload["operator_signature_sha256"] = hashlib.sha256(operator_approval.signature).hexdigest()
     try:
         receipt = authority.append(
             "DEV_RERUN_AUTHORIZED", payload, expected_head=prior_release.head
@@ -443,4 +479,5 @@ def authorize_development_rerun(
         dossier.replacement_bundle_hash,
         payload,
         receipt,
+        operator_approval,
     )

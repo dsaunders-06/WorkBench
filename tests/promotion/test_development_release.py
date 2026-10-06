@@ -2,26 +2,64 @@
 
 from __future__ import annotations
 
-import base64
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import qat.promotion.development_release as release
-from qat.promotion.declarations import (
-    DeclarationReceipt,
-    DeclarationRecord,
-    VerifiedDeclarationChain,
+from qat.promotion.declarations import VerifiedDeclarationChain
+from qat.promotion.operator_signatures import (
+    CustodianTrust,
+    OperatorApproval,
+    operator_action_bytes,
 )
 from qat.promotion.rfc3161 import TrustStore
 
 H = "a" * 64
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
+
+
+def _throwaway_approval(
+    action: str, payload: dict[str, object], *, key: Ed25519PrivateKey | None = None
+) -> tuple[OperatorApproval, CustodianTrust]:
+    key = key or Ed25519PrivateKey.generate()  # throwaway test key only
+    public = key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    root = b"THROWAWAY TEST TSA ROOT"
+    trust = CustodianTrust(
+        public,
+        sha256(public).hexdigest(),
+        (sha256(root).hexdigest(),),
+        TrustStore((root,), (b"THROWAWAY TEST TSA CRL",)),
+        frozenset({"1.2.3.4.1"}),
+    )
+    return OperatorApproval(key.sign(operator_action_bytes(action, payload))), trust
+
+
+def _release_payload(
+    request: release.ReleaseRequest, *, validation: bool = False
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "catalog_id": request.catalog_id,
+        "shard_id": request.shard_id,
+        "bundle_hash": request.bundle_hash,
+        "strategy_spec_sha256": request.strategy_spec_sha256,
+        "ledger_id": request.ledger_id,
+        "scope": request.scope,
+        "declaration_head": "c" * 64,
+        "expected_ledger_head": request.expected_ledger_head,
+    }
+    if validation:
+        payload["development_fingerprint"] = "d" * 64
+        payload["frozen_artifacts_hash"] = "e" * 64
+    return payload
 
 
 class RecordingAuthority:
@@ -83,17 +121,18 @@ def _authorize(
         monkeypatch.setattr(
             release, "verify_declaration_chain", lambda *args, **kwargs: _verified_chain()
         )
-    trust = TrustStore((b"throwaway-test-root",), (b"throwaway-test-crl",))
+    request = request or _request()
+    approval, trust = _throwaway_approval("DEV_DATA_RELEASED", _release_payload(request))
     return release.authorize_development(
         receipts=receipts,
-        request=request or _request(),
+        request=request,
         declared_catalog_id="synthetic-catalog",
         declared_shard_id="synthetic-development",
         declared_bundle_hash="b" * 64,
         declared_scope="synthetic-development-only",
-        operator_trust=trust,
-        tsa_trust=trust,
-        allowed_tsa_policies=frozenset({"1.2.3.4.1"}),
+        operator_approval=approval,
+        test_mode=True,
+        test_trust=trust,
         now=NOW,
         authority=authority,
         shard_opener=opener or (lambda shard: type("TestHandle", (), {"shard_id": shard})()),
@@ -133,67 +172,52 @@ def test_stale_release_head_cannot_open_synthetic_shard(monkeypatch: pytest.Monk
     assert opened == []
 
 
-def test_real_recorded_throwaway_chain_unlocks_only_declared_synthetic_shard() -> None:
-    fixture = (
-        Path(__file__).parent
-        / "fixtures"
-        / "rfc3161-throwaway-test-only"
-        / "declaration-chain.json"
-    )
-    data = json.loads(fixture.read_text(encoding="utf-8"))
-    decode = base64.b64decode
-    receipts = []
-    for item in data["receipts"]:
-        raw = item["record"]
-        receipts.append(
-            DeclarationReceipt(
-                DeclarationRecord(
-                    raw["name"],
-                    raw["sequence"],
-                    raw["previous_head"],
-                    raw["operator_id"],
-                    raw["strategy_spec_sha256"],
-                    raw["catalog_id"],
-                    raw["ledger_id"],
-                    raw["nonce"],
-                    datetime.fromisoformat(raw["declared_at"]),
-                    raw["payload_json"].encode("ascii"),
-                ),
-                decode(item["signature_b64"]),
-                decode(item["signer_certificate_der_b64"]),
-                (),
-                decode(item["rfc3161_token_b64"]),
-            )
-        )
+def test_unsigned_release_approval_never_appends(monkeypatch: pytest.MonkeyPatch) -> None:
     authority = RecordingAuthority()
-    request = replace(
-        _request(),
-        catalog_id="test-catalog",
-        ledger_id="test-ledger",
-        shard_id="THROWAWAY TEST DEVELOPMENT SHARD",
-        scope="throwaway-test-development",
+    approval, trust = _throwaway_approval("DEV_DATA_RELEASED", _release_payload(_request()))
+    wrong = replace(approval, signature=b"0" * 64)
+    monkeypatch.setattr(
+        release, "verify_declaration_chain", lambda *args, **kwargs: _verified_chain()
     )
-    access = release.authorize_development(
-        receipts=receipts,
-        request=request,
-        declared_catalog_id=request.catalog_id,
-        declared_shard_id=request.shard_id,
-        declared_bundle_hash=request.bundle_hash,
-        declared_scope=request.scope,
-        operator_trust=TrustStore(
-            (decode(data["operator_root_der_b64"]),), (decode(data["operator_crl_der_b64"]),)
-        ),
-        tsa_trust=TrustStore(
-            (decode(data["tsa_root_der_b64"]),), (decode(data["tsa_crl_der_b64"]),)
-        ),
-        allowed_tsa_policies=frozenset(data["allowed_tsa_policies"]),
-        now=NOW,
-        authority=authority,
-        shard_opener=lambda shard: type("TestHandle", (), {"shard_id": shard})(),
+    with pytest.raises(release.DevelopmentLockedError):
+        release.authorize_development(
+            receipts=(object(), object(), object()),
+            request=_request(),
+            declared_catalog_id="synthetic-catalog",
+            declared_shard_id="synthetic-development",
+            declared_bundle_hash="b" * 64,
+            declared_scope="synthetic-development-only",
+            operator_approval=wrong,
+            now=NOW,
+            authority=authority,
+            shard_opener=lambda shard: type("TestHandle", (), {"shard_id": shard})(),
+            test_mode=True,
+            test_trust=trust,
+        )
+    assert authority.states == []
+
+
+def test_production_release_rejects_caller_trust(monkeypatch: pytest.MonkeyPatch) -> None:
+    authority = RecordingAuthority()
+    approval, trust = _throwaway_approval("DEV_DATA_RELEASED", _release_payload(_request()))
+    monkeypatch.setattr(
+        release, "verify_declaration_chain", lambda *args, **kwargs: _verified_chain()
     )
-    assert authority.states == ["DEV_DATA_RELEASED"]
-    assert access.open().shard_id == request.shard_id
-    assert authority.states == ["DEV_DATA_RELEASED", "DEV_DATA_OPENED"]
+    with pytest.raises(release.DevelopmentLockedError):
+        release.authorize_development(
+            receipts=(object(), object(), object()),
+            request=_request(),
+            declared_catalog_id="synthetic-catalog",
+            declared_shard_id="synthetic-development",
+            declared_bundle_hash="b" * 64,
+            declared_scope="synthetic-development-only",
+            operator_approval=approval,
+            now=NOW,
+            authority=authority,
+            shard_opener=lambda shard: type("TestHandle", (), {"shard_id": shard})(),
+            test_trust=trust,
+        )
+    assert authority.states == []
 
 
 def test_raw_development_requires_three_timestamped_declarations(
@@ -228,7 +252,10 @@ def test_validation_requires_frozen_development_fingerprint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     authority = RecordingAuthority()
-    trust = TrustStore((b"throwaway-test-root",), (b"throwaway-test-crl",))
+    approval, trust = _throwaway_approval(
+        "VALIDATION_DATA_RELEASED",
+        _release_payload(_request("synthetic-validation"), validation=True),
+    )
     monkeypatch.setattr(
         release, "verify_declaration_chain", lambda *args, **kwargs: _verified_chain()
     )
@@ -239,9 +266,9 @@ def test_validation_requires_frozen_development_fingerprint(
         declared_shard_id="synthetic-validation",
         declared_bundle_hash="b" * 64,
         declared_scope="synthetic-development-only",
-        operator_trust=trust,
-        tsa_trust=trust,
-        allowed_tsa_policies=frozenset({"1.2.3.4.1"}),
+        operator_approval=approval,
+        test_mode=True,
+        test_trust=trust,
         now=NOW,
         authority=authority,
         shard_opener=lambda shard: type("TestHandle", (), {"shard_id": shard})(),
@@ -306,15 +333,17 @@ def test_reviewed_semantics_preserving_rerun_binds_dossier_and_head() -> None:
         "0" * 64,
         H,
     )
+    dossier = _dossier()
+    payload = release.rerun_approval_payload(dossier, prior)
+    approval, trust = _throwaway_approval("DEV_RERUN_AUTHORIZED", payload)
     accepted = release.authorize_development_rerun(
-        dossier=_dossier(),
+        dossier=dossier,
         prior_release=prior,
         authority=authority,
         frozen_spec_sha256=H,
-        review_signature=b"THROWAWAY TEST REVIEW SIGNATURE",
-        review_verifier=lambda dossier_bytes, signature: signature
-        == b"THROWAWAY TEST REVIEW SIGNATURE"
-        and bool(dossier_bytes),
+        operator_approval=approval,
+        test_mode=True,
+        test_trust=trust,
     )
     assert authority.states == ["DEV_RERUN_AUTHORIZED"]
     assert accepted.state == "DEV_RERUN_AUTHORIZED"
@@ -336,13 +365,19 @@ def test_replacement_bundle_requires_verified_rerun_receipt(
         "0" * 64,
         H,
     )
+    dossier = _dossier()
+    key = Ed25519PrivateKey.generate()  # throwaway test key only
+    approval, trust = _throwaway_approval(
+        "DEV_RERUN_AUTHORIZED", release.rerun_approval_payload(dossier, prior), key=key
+    )
     approved = release.authorize_development_rerun(
-        dossier=_dossier(),
+        dossier=dossier,
         prior_release=prior,
         frozen_spec_sha256=H,
         authority=authority,
-        review_signature=b"THROWAWAY TEST REVIEW SIGNATURE",
-        review_verifier=lambda dossier_bytes, signature: bool(dossier_bytes) and bool(signature),
+        operator_approval=approval,
+        test_mode=True,
+        test_trust=trust,
     )
     replacement = replace(_request(), bundle_hash="c" * 64, expected_ledger_head=approved.head)
     with pytest.raises(release.DevelopmentLockedError):
@@ -350,7 +385,29 @@ def test_replacement_bundle_requires_verified_rerun_receipt(
     assert authority.states == ["DEV_RERUN_AUTHORIZED"]
     chain = _verified_chain()
     monkeypatch.setattr(release, "verify_declaration_chain", lambda *args, **kwargs: chain)
-    trust = TrustStore((b"throwaway-test-root",), (b"throwaway-test-crl",))
+    release_approval, release_trust = _throwaway_approval(
+        "DEV_DATA_RELEASED", _release_payload(replacement), key=key
+    )
+    with pytest.raises(release.DevelopmentLockedError):
+        release.authorize_development(
+            receipts=(object(), object(), object()),
+            request=replacement,
+            declared_catalog_id="synthetic-catalog",
+            declared_shard_id="synthetic-development",
+            declared_bundle_hash="b" * 64,
+            declared_scope="synthetic-development-only",
+            operator_approval=release_approval,
+            test_mode=True,
+            test_trust=release_trust,
+            now=NOW,
+            authority=authority,
+            shard_opener=lambda shard: type("TestHandle", (), {"shard_id": shard})(),
+            rerun_authorization=replace(
+                approved,
+                operator_approval=replace(approval, signature=b"0" * 64),
+            ),
+        )
+    assert authority.states == ["DEV_RERUN_AUTHORIZED"]
     access = release.authorize_development(
         receipts=(object(), object(), object()),
         request=replacement,
@@ -358,9 +415,9 @@ def test_replacement_bundle_requires_verified_rerun_receipt(
         declared_shard_id="synthetic-development",
         declared_bundle_hash="b" * 64,
         declared_scope="synthetic-development-only",
-        operator_trust=trust,
-        tsa_trust=trust,
-        allowed_tsa_policies=frozenset({"1.2.3.4.1"}),
+        operator_approval=release_approval,
+        test_mode=True,
+        test_trust=release_trust,
         now=NOW,
         authority=authority,
         shard_opener=lambda shard: type("TestHandle", (), {"shard_id": shard})(),
@@ -401,7 +458,6 @@ def test_unproven_or_semantics_changing_rerun_requires_new_lineage(
             prior_release=prior,
             authority=authority,
             frozen_spec_sha256=H,
-            review_signature=b"THROWAWAY TEST REVIEW SIGNATURE",
-            review_verifier=lambda dossier_bytes, signature: True,
+            operator_approval=OperatorApproval(b"0" * 64),
         )
     assert authority.states == []

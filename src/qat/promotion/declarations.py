@@ -11,15 +11,12 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
-from cryptography.x509.oid import NameOID
-
-from qat.promotion.rfc3161 import (
-    TrustStore,
-    verify_certificate_chain,
-    verify_timestamp_token,
+from qat.promotion.operator_signatures import (
+    CustodianTrust,
+    resolve_custodian_trust,
+    verify_operator_signature,
 )
+from qat.promotion.rfc3161 import verify_timestamp_token
 
 
 class SigningAuthorityError(PermissionError):
@@ -144,7 +141,7 @@ class DeclarationRecord:
                     raise ValueError("method audit requires SHA-256 code and pilot hashes")
 
     def canonical_bytes(self) -> bytes:
-        """The exact bytes signed by the operator certificate."""
+        """The exact bytes signed by the operator Ed25519 key."""
         envelope = {
             "name": self.name,
             "sequence": self.sequence,
@@ -164,8 +161,6 @@ class DeclarationRecord:
 class DeclarationReceipt:
     record: DeclarationRecord
     signature: bytes
-    signer_certificate_der: bytes
-    intermediates_der: tuple[bytes, ...]
     rfc3161_token: bytes
 
     @property
@@ -174,8 +169,6 @@ class DeclarationReceipt:
         for part in (
             self.record.canonical_bytes(),
             self.signature,
-            self.signer_certificate_der,
-            *self.intermediates_der,
             self.rfc3161_token,
         ):
             digest.update(len(part).to_bytes(8, "big"))
@@ -196,23 +189,38 @@ class VerifiedDeclarationChain:
 def verify_declaration_chain(
     receipts: Sequence[DeclarationReceipt],
     *,
-    operator_trust: TrustStore,
-    tsa_trust: TrustStore,
-    allowed_tsa_policies: frozenset[str],
     now: datetime,
+    test_mode: bool = False,
+    test_trust: CustodianTrust | None = None,
 ) -> VerifiedDeclarationChain:
-    """Verify all three declarations, signatures, revocation, and timestamps offline."""
+    """Verify all three declarations with pinned Ed25519 and offline TSA trust."""
     if now.tzinfo is None or len(receipts) != len(_NAMES):
         raise DeclarationLineageError("three declarations and aware verification time required")
+    try:
+        trust = resolve_custodian_trust(test_mode=test_mode, test_trust=test_trust)
+    except Exception as exc:
+        raise DeclarationLineageError("custodian trust is unavailable") from exc
+    _verify_receipts(receipts, trust=trust, now=now)
+    return VerifiedDeclarationChain(
+        tuple(receipts), _NAMES, receipts[-1].head, receipts[0].record.ledger_id
+    )
+
+
+def _verify_receipts(
+    receipts: Sequence[DeclarationReceipt], *, trust: CustodianTrust, now: datetime
+) -> None:
+    """Verify a complete chain or a prefix before append."""
+    if not receipts or len(receipts) > len(_NAMES) or now.tzinfo is None:
+        raise DeclarationLineageError("invalid declaration prefix")
     expected_head = "0" * 64
     seen_nonces: set[str] = set()
     first = receipts[0].record
     prior_time: datetime | None = None
     prior_stamp: datetime | None = None
-    for sequence, (receipt, required_name) in enumerate(zip(receipts, _NAMES, strict=True), 1):
+    for sequence, receipt in enumerate(receipts, 1):
         record = receipt.record
         if (
-            record.name != required_name
+            record.name != _NAMES[sequence - 1]
             or record.sequence != sequence
             or record.previous_head != expected_head
             or record.nonce in seen_nonces
@@ -228,35 +236,20 @@ def verify_declaration_chain(
             or record.declared_at > now
         ):
             raise DeclarationLineageError("declaration order, identity, nonce, or time invalid")
-        if not receipt.signature or not receipt.signer_certificate_der or not receipt.rfc3161_token:
+        if not receipt.signature or not receipt.rfc3161_token:
             raise DeclarationLineageError("declaration lacks signed timestamped receipt")
         try:
-            cert = verify_certificate_chain(
-                receipt.signer_certificate_der,
-                receipt.intermediates_der,
-                operator_trust,
-                at=record.declared_at,
-                now=now,
-                tsa=False,
+            verify_operator_signature(
+                record.canonical_bytes(),
+                receipt.signature,
+                trust=trust,
             )
-            common_names = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
-            if len(common_names) != 1 or common_names[0].value != record.operator_id:
-                raise DeclarationLineageError("operator identity differs from signing certificate")
-            key = cert.public_key()
-            if isinstance(key, rsa.RSAPublicKey):
-                key.verify(
-                    receipt.signature, record.canonical_bytes(), padding.PKCS1v15(), hashes.SHA256()
-                )
-            elif isinstance(key, ec.EllipticCurvePublicKey):
-                key.verify(receipt.signature, record.canonical_bytes(), ec.ECDSA(hashes.SHA256()))
-            else:
-                raise DeclarationLineageError("unsupported operator signature key")
             stamp = verify_timestamp_token(
                 receipt.rfc3161_token,
                 hashlib.sha256(receipt.signature).digest(),
-                trust=tsa_trust,
+                trust=trust.tsa_trust,
                 now=now,
-                allowed_policies=allowed_tsa_policies,
+                allowed_policies=trust.allowed_tsa_policies,
             )
         except Exception as exc:
             raise DeclarationLineageError(
@@ -270,135 +263,40 @@ def verify_declaration_chain(
         seen_nonces.add(record.nonce)
         prior_time = record.declared_at
         prior_stamp = stamp.generated_at
-    return VerifiedDeclarationChain(tuple(receipts), _NAMES, expected_head, first.ledger_id)
 
 
 class DeclarationAuthority(Protocol):
-    """Port implemented only in the operator service with external key custody."""
-
-    operator_trust: TrustStore
-    tsa_trust: TrustStore
-    allowed_tsa_policies: frozenset[str]
+    """Append-only ledger port; it has no signing or timestamp capability."""
 
     def read_receipts(self) -> tuple[DeclarationReceipt, ...]: ...
-
-    def sign(self, content: bytes) -> tuple[bytes, bytes, tuple[bytes, ...]]: ...
-
-    def timestamp(self, signed_digest: bytes) -> bytes: ...
 
     def append_if_head(self, expected_head: str, receipt: DeclarationReceipt) -> None: ...
 
 
 def append_declaration(
-    authority: DeclarationAuthority | None, record: DeclarationRecord, *, now: datetime
+    authority: DeclarationAuthority | None,
+    receipt: DeclarationReceipt,
+    *,
+    now: datetime,
+    test_mode: bool = False,
+    test_trust: CustodianTrust | None = None,
 ) -> DeclarationReceipt:
-    """Ask the externally privileged service to atomically append one receipt."""
+    """Append a separately signed and timestamped receipt after verification."""
     if authority is None or not all(
-        hasattr(authority, key)
-        for key in (
-            "read_receipts",
-            "sign",
-            "timestamp",
-            "append_if_head",
-            "operator_trust",
-            "tsa_trust",
-            "allowed_tsa_policies",
-        )
+        hasattr(authority, key) for key in ("read_receipts", "append_if_head")
     ):
         raise SigningAuthorityError("operator declaration authority is unavailable")
     existing = authority.read_receipts()
     expected_head = existing[-1].head if existing else "0" * 64
+    record = receipt.record
     if record.sequence != len(existing) + 1 or record.previous_head != expected_head:
         raise DeclarationLineageError("append does not extend the current ledger head")
-    signature, certificate, intermediates = authority.sign(record.canonical_bytes())
-    token = authority.timestamp(hashlib.sha256(signature).digest())
-    receipt = DeclarationReceipt(record, signature, certificate, intermediates, token)
-    (
-        verify_declaration_chain(
-            (*existing, receipt),
-            operator_trust=authority.operator_trust,
-            tsa_trust=authority.tsa_trust,
-            allowed_tsa_policies=authority.allowed_tsa_policies,
-            now=now,
-        )
-        if record.sequence == 3
-        else _verify_partial_chain(
-            (*existing, receipt),
-            authority=authority,
-            now=now,
-        )
-    )
+    if len(existing) == 3:
+        raise DeclarationLineageError("declaration ledger is complete")
+    try:
+        trust = resolve_custodian_trust(test_mode=test_mode, test_trust=test_trust)
+    except Exception as exc:
+        raise DeclarationLineageError("custodian trust is unavailable") from exc
+    _verify_receipts((*existing, receipt), trust=trust, now=now)
     authority.append_if_head(expected_head, receipt)
     return receipt
-
-
-def _verify_partial_chain(
-    receipts: tuple[DeclarationReceipt, ...], *, authority: DeclarationAuthority, now: datetime
-) -> None:
-    """Check partial append by completing only the existing prefix rules."""
-    if len(receipts) > 3:
-        raise DeclarationLineageError("declaration ledger is complete")
-    expected_head = "0" * 64
-    first = receipts[0].record
-    prior_time: datetime | None = None
-    prior_stamp: datetime | None = None
-    seen_nonces: set[str] = set()
-    for index, receipt in enumerate(receipts, 1):
-        record = receipt.record
-        if (
-            record.name != _NAMES[index - 1]
-            or record.sequence != index
-            or record.previous_head != expected_head
-            or record.nonce in seen_nonces
-            or (
-                record.operator_id,
-                record.strategy_spec_sha256,
-                record.catalog_id,
-                record.ledger_id,
-            )
-            != (
-                first.operator_id,
-                first.strategy_spec_sha256,
-                first.catalog_id,
-                first.ledger_id,
-            )
-            or (prior_time is not None and record.declared_at <= prior_time)
-            or (prior_stamp is not None and record.declared_at < prior_stamp)
-            or record.declared_at > now
-        ):
-            raise DeclarationLineageError("declaration prefix lineage invalid")
-        cert = verify_certificate_chain(
-            receipt.signer_certificate_der,
-            receipt.intermediates_der,
-            authority.operator_trust,
-            at=record.declared_at,
-            now=now,
-            tsa=False,
-        )
-        common_names = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
-        if len(common_names) != 1 or common_names[0].value != record.operator_id:
-            raise DeclarationLineageError("operator identity differs from signing certificate")
-        key = cert.public_key()
-        if isinstance(key, rsa.RSAPublicKey):
-            key.verify(
-                receipt.signature, record.canonical_bytes(), padding.PKCS1v15(), hashes.SHA256()
-            )
-        elif isinstance(key, ec.EllipticCurvePublicKey):
-            key.verify(receipt.signature, record.canonical_bytes(), ec.ECDSA(hashes.SHA256()))
-        else:
-            raise DeclarationLineageError("unsupported operator signature key")
-        stamp = verify_timestamp_token(
-            receipt.rfc3161_token,
-            hashlib.sha256(receipt.signature).digest(),
-            trust=authority.tsa_trust,
-            now=now,
-            allowed_policies=authority.allowed_tsa_policies,
-        )
-        if stamp.generated_at < record.declared_at or (
-            prior_stamp is not None and stamp.generated_at <= prior_stamp
-        ):
-            raise DeclarationLineageError("declaration prefix timestamp invalid")
-        expected_head = receipt.head
-        prior_time = record.declared_at
-        prior_stamp = stamp.generated_at
-        seen_nonces.add(record.nonce)
