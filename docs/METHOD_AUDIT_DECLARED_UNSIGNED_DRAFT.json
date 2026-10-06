@@ -7,7 +7,7 @@
     "positive delta_MME from EFFECT_DECLARED",
     "development/validation calibration inputs and resulting fixed-parameter scenario instances",
     "pilot report hash and frozen implementation/code hash",
-    "operator freeze of common projection sample size"
+    "conditional ranking check before any common 430-trade projection sample-size freeze"
   ],
   "candidates": [
     {
@@ -56,11 +56,12 @@
     "same_base_month_weight_matrices": true,
     "candidate_weight_mapping": "use the first base-month sign in each aligned candidate cluster under a fixed mapping",
     "mandatory_size_qualification": "every mandatory null scenario must pass confidence and family limits",
-    "selection": "among qualifying candidates, maximize the minimum projected rejection fraction at delta_MME across mandatory power scenarios and patterns at one common declared projection sample size; break exact ties by larger nonempty cluster count at that size",
+    "selection": "among qualifying candidates, maximize the minimum projected fraction jointly rejecting WCR-S confidence at 2.5% and Romano-Wolf family at 5% at delta_MME across mandatory power scenarios and patterns at one common declared projection sample size; break exact ties by larger nonempty cluster count at that size",
     "if_none": "METHOD_INADEQUATE",
     "after_selection": "recompute pattern-specific N_required >= 100 and G_required >= 6 and minimum detectable effect under chosen method; require >=80% prospective power",
-    "projection_sample_size": 100,
-    "projection_sample_size_status": "PROPOSED_PLACEHOLDER_REQUIRES_OPERATOR_FREEZE_BEFORE_RELEASE"
+    "projection_sample_size": null,
+    "projection_sample_size_proposal": 430,
+    "projection_sample_size_status": "UNFROZEN_CONDITIONAL_PROPOSAL: freeze only if complete candidate rankings by minimum projected power are identical at N=200 and N=430 for effects 0.10, 0.15, 0.20, and 0.30; bull-flag feasibility remains separate"
   },
   "scenario_matrix": {
     "mandatory": [
@@ -70,10 +71,18 @@
         "parameters": "fixed by predeclared calibration recipe; concrete values unresolved until authorized source is available"
       },
       {
-        "id": "generic_persistence",
-        "generator": "joint pattern persistent shocks",
-        "persistence_months": [1, 2, 3, 4],
-        "note": "the strategy-independent market proxy supports one through four months; longer persistence is a disclosed sensitivity"
+        "id": "volatility_regime",
+        "generator": "joint pattern zero-mean heteroskedastic shocks with monthly lognormal volatility; Gaussian log-volatility AR(1) latent phi is log(1 + target_observed_phi * (exp(0.6^2) - 1)) / 0.6^2, approximately 0.4972628264",
+        "observed_volatility_ar1_phi": 0.4524,
+        "evidence": "approved July-2014-corrected market proxy realised-volatility lag-one correlation"
+      },
+      {
+        "id": "ar1_mean",
+        "generator": "joint pattern zero-mean AR(1) monthly-average shocks; center iid Gaussian trade residuals within each month, scale by sqrt(n/(n-1)) for n > 1 to retain unit residual variance, and add 0.35 times the common AR(1) state; generate the exact month-specific trade count before centering",
+        "observed_monthly_average_ar1_phi": -0.0874,
+        "return_evidence_abs_bound": 0.1427,
+        "stress_phi": 0.25,
+        "note": "0.25 is an explicit mandatory stress beyond observed monthly-return persistence"
       },
       {
         "id": "cluster_imbalance",
@@ -108,6 +117,12 @@
     ],
     "sensitivity": [
       {
+        "id": "constant_mean_shocks",
+        "persistence_months": [1, 2, 3, 4],
+        "phase": ["aligned", "random"],
+        "note": "previous generic Gaussian pilot cells are disclosed sensitivity after the dependence-model amendment"
+      },
+      {
         "id": "longer_persistence",
         "persistence_months": [6, 12],
         "includes_twelve_month_when_unsupported": true
@@ -130,7 +145,7 @@
     "power_shift": "positive delta_MME from EFFECT_DECLARED"
   },
   "market_regime_proxy": {
-    "source_status": "ASX_MONTHLY_PRIMARY_WITH_OPERATOR_DISCREPANCY_RULE_APPLIED",
+    "source_status": "ASX_MONTHLY_WITH_OPERATOR_APPROVED_JULY_2014_AND_SEPTEMBER_2023_YAHOO_CORRECTIONS",
     "minimum_history_years": 10,
     "allowed_indices": [
       "ASX 200",
@@ -165,10 +180,11 @@
       "static-cache trade results",
       "promotion shards"
     ],
-    "mandatory_persistence_months": [1, 2, 3, 4],
+    "constant_mean_shock_sensitivity_months": [1, 2, 3, 4],
     "block_length_L_months": 4,
     "source_audit_report": "docs/phase-2-market-regime-proxy.md",
-    "july_2014_source_sensitivity": "same mandatory persistence recommendation with Yahoo substitute",
+    "july_2014_primary": "5632.9, Yahoo 5632.8999 rounded to ASX one-decimal precision by operator decision; ASX original 5623.9 retained as discrepancy evidence and sensitivity",
+    "july_2014_source_sensitivity": "same persistence recommendation with original ASX 5623.9 substitute",
     "approved_sources": [
       "ASX published end-of-month S&P/ASX 200 price index (archive and current) as primary",
       "RBA F18 monthly overlap as return-level cross-check and September 2023 adjudicator",
@@ -176,11 +192,13 @@
     ]
   },
   "seeds": {
-    "status": "PROPOSED_PLACEHOLDER_REQUIRES_OPERATOR_FREEZE_BEFORE_RELEASE",
+    "status": "OPERATOR_APPROVED_FOR_UNSIGNED_DRAFT; NO_DECLARATION_RELEASED",
+    "exploratory": 20261005,
     "outer_null": 845317,
     "inner_signs": 845318,
     "power": 845319,
-    "scenario_derivation": "SHA-256 of base seed, ordered scenario id and replicate index; use first 64 bits as unsigned integer"
+    "generic_size_derivation": "SHA-256 of base seed and ordered scenario id; use first 64 bits as unsigned PCG64 seed and advance a separate outer or inner stream across replicates",
+    "power_projection_derivation": "SHA-256 of base seed, ordered scenario id and replicate index; use first 64 bits as unsigned PCG64 seed for that replicate's outer draw or inner sign matrix"
   },
   "caps": {
     "outer_runs_initial": 20000,

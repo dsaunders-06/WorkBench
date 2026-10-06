@@ -128,6 +128,12 @@ def test_required_duration_precedes_available_data_check() -> None:
     assert result.required_months == 111
     assert result.status is FeasibilityStatus.DATASET_INSUFFICIENT
     assert result.forward_acquisition_could_help
+    assert all(
+        plan.status is FeasibilityStatus.DATASET_INSUFFICIENT
+        and plan.required_months == 111
+        and plan.shortfall_months == 75
+        for plan in result.pattern_plans.values()
+    )
 
 
 def test_variable_months_use_holdout_predictive_lower_rate() -> None:
@@ -157,6 +163,42 @@ def test_no_duration_through_120_is_frequency_inadequate() -> None:
     assert result.status is FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
     assert result.required_months is None
     assert not result.forward_acquisition_could_help
+
+
+def test_bull_flag_shortfall_cannot_be_hidden_by_abundant_other_patterns() -> None:
+    development = {
+        "ema_pullback": (20,) * 60,
+        "bull_flag": (0, 1, 0, 0) * 15,
+        "double_bottom": (15,) * 60,
+    }
+    validation = {
+        "ema_pullback": (20,) * 24,
+        "bull_flag": (0, 1, 0, 0) * 6,
+        "double_bottom": (15,) * 24,
+    }
+    requirements = {
+        name: PowerRequirement(name, 100, 6, Decimal("0.2"), Decimal("0.8")) for name in development
+    }
+
+    result = plan_holdout_duration(
+        development=development,
+        validation=validation,
+        requirements=requirements,
+        available_months=120,
+        simulations=50,
+        seed=17,
+    )
+
+    assert result.status is FeasibilityStatus.FEASIBLE
+    assert result.pattern_plans["ema_pullback"].status is FeasibilityStatus.FEASIBLE
+    assert result.pattern_plans["double_bottom"].status is FeasibilityStatus.FEASIBLE
+    assert (
+        result.pattern_plans["bull_flag"].status
+        is FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
+    )
+    assert result.required_months == 36
+    assert result.shortfall_months == 0
+    assert result.binding_pattern in {"ema_pullback", "double_bottom"}
 
 
 def test_nonpositive_development_validation_expectancy_refuses_holdout_plan() -> None:

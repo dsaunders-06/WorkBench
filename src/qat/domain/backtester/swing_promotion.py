@@ -334,6 +334,7 @@ class PromotionVerdict:
     recommended_holdout_months: int | None
     recommended_operator_action: str
     forward_acquisition_could_help: bool
+    expected_insufficient_evidence_patterns: tuple[str, ...] = ()
 
 
 def all_exposed_trade_session_pairs(
@@ -716,6 +717,12 @@ def promotion_case_from_replays(
     """
     if not replays or (contexts is not None and set(contexts) != set(replays)):
         raise ValueError("replay patterns require matching frozen contexts")
+    if (
+        case.feasibility is not None
+        and case.feasibility.pattern_plans
+        and set(case.feasibility.pattern_plans) != set(replays)
+    ):
+        raise ValueError("replay and feasibility pattern identities differ")
     if tuple(sorted(set(entry_months))) != tuple(entry_months):
         raise ValueError("entry months require a complete ordered common frame")
 
@@ -837,6 +844,11 @@ def promotion_case_from_replays(
                     False,
                 )
             )
+            if case.feasibility is not None and name in case.feasibility.pattern_plans:
+                context = replace(
+                    context,
+                    feasibility_status=case.feasibility.pattern_plans[name].status,
+                )
             trades = tuple(
                 SignalEdgeTrade(
                     trade.trade_id,
@@ -877,10 +889,19 @@ def promotion_case_from_replays(
         return tuple(results)
 
     conservative = results_for(replays, doubled_cost_replays)
-    edge_pass = all(result.passed for result in conservative)
+    expected_insufficient = {
+        name
+        for name, plan in (case.feasibility.pattern_plans.items() if case.feasibility else ())
+        if plan.status is not FeasibilityStatus.FEASIBLE
+    }
+    feasible_results = tuple(
+        result for result in conservative if result.pattern not in expected_insufficient
+    )
+    edge_pass = bool(feasible_results) and all(result.passed for result in feasible_results)
     has_terminal = any(
         trade.exit_reason == "terminal_zero" and trade.edge_sample_eligible
-        for replay in replays.values()
+        for name, replay in replays.items()
+        if name not in expected_insufficient
         for trade in replay.signal_trades
     )
     recovery_tail_pass = case.terminal_tail is None or (
@@ -895,7 +916,9 @@ def promotion_case_from_replays(
         and case.portfolio_safety_pass is not False
         and recovery_tail_pass
         and all(
-            result.passed for result in results_for(recovery_replays, recovery_doubled_cost_replays)
+            result.passed
+            for result in results_for(recovery_replays, recovery_doubled_cost_replays)
+            if result.pattern not in expected_insufficient
         )
     )
     return replace(
@@ -918,9 +941,19 @@ def evaluate_promotion(case: PromotionCase) -> PromotionVerdict:
     binding = feasibility.binding_pattern if feasibility is not None else None
     rate_source = feasibility.binding_rate_source if feasibility is not None else None
     forward = bool(feasibility and feasibility.forward_acquisition_could_help)
+    expected_insufficient = tuple(
+        sorted(
+            name
+            for name, plan in (feasibility.pattern_plans.items() if feasibility else ())
+            if plan.status is not FeasibilityStatus.FEASIBLE
+        )
+    )
     edge_pass = case.all_edge_gates_pass
     if case.pattern_edges:
-        constituent_pass = all(result.passed for result in case.pattern_edges)
+        feasible_edges = tuple(
+            result for result in case.pattern_edges if result.pattern not in expected_insufficient
+        )
+        constituent_pass = bool(feasible_edges) and all(result.passed for result in feasible_edges)
         edge_pass = constituent_pass if edge_pass is None else edge_pass and constituent_pass
     recommended = required if reason is FeasibilityStatus.DATASET_INSUFFICIENT and forward else None
     gates = (
@@ -940,7 +973,11 @@ def evaluate_promotion(case: PromotionCase) -> PromotionVerdict:
             case.method_status is MethodStatus.METHOD_ADEQUATE if case.method_status else None,
             "declared method size",
         ),
-        GateResult("edge", edge_pass, "seven frozen gates for every constituent pattern"),
+        GateResult(
+            "edge",
+            edge_pass,
+            "seven frozen gates for each feasible pattern; expected shortfalls reported separately",
+        ),
         GateResult("portfolio", case.portfolio_safety_pass, "cash-funded safety"),
         GateResult(
             "conservative_terminal",
@@ -1034,4 +1071,5 @@ def evaluate_promotion(case: PromotionCase) -> PromotionVerdict:
         recommended,
         action,
         forward,
+        expected_insufficient,
     )

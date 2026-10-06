@@ -178,6 +178,54 @@ def test_feasibility_mapping_never_treats_feasible_as_promotion_pass() -> None:
     assert result.recommended_holdout_months is None
 
 
+def test_expected_bull_flag_insufficiency_does_not_block_feasible_pattern() -> None:
+    """All three patterns remain reported, but an expected shortfall is per-pattern."""
+    from types import SimpleNamespace
+
+    plan = replace(
+        _frequency(FeasibilityStatus.FEASIBLE),
+        pattern_plans={
+            "ema_pullback": SimpleNamespace(status=FeasibilityStatus.FEASIBLE),
+            "bull_flag": SimpleNamespace(
+                status=FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
+            ),
+        },
+    )
+    case = PromotionCase(
+        evidence_tier="promotion_point_in_time",
+        feasibility=plan,
+        pattern_edges=(
+            PatternEdgeResult("ema_pullback", (), True),
+            PatternEdgeResult("bull_flag", (), False),
+        ),
+    )
+    verdict = evaluate_promotion(case)
+    assert verdict.status is PromotionStatus.INSUFFICIENT_EVIDENCE
+    assert verdict.expected_insufficient_evidence_patterns == ("bull_flag",)
+    assert next(gate for gate in verdict.gates if gate.name == "edge").passed is True
+
+
+def test_replay_mapping_cannot_omit_expected_insufficient_pattern() -> None:
+    """Every tested family member remains in the replay, even if frequency is short."""
+    from types import SimpleNamespace
+
+    from qat.domain.backtester.swing_promotion import promotion_case_from_replays
+
+    plan = replace(
+        _frequency(FeasibilityStatus.FEASIBLE),
+        pattern_plans={
+            "ema_pullback": SimpleNamespace(status=FeasibilityStatus.FEASIBLE),
+            "bull_flag": SimpleNamespace(
+                status=FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
+            ),
+        },
+    )
+    case = PromotionCase(evidence_tier="promotion_point_in_time", feasibility=plan)
+
+    with pytest.raises(ValueError, match="feasibility pattern identities"):
+        promotion_case_from_replays(case, {"ema_pullback": object()})  # type: ignore[arg-type]
+
+
 def test_method_and_structural_failures_precede_duration() -> None:
     case = PromotionCase(
         evidence_tier="promotion_point_in_time",

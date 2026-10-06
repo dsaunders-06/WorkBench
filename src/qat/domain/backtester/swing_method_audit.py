@@ -8,7 +8,7 @@ import math
 import random
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 from statistics import NormalDist
@@ -108,10 +108,14 @@ class SyntheticScenario:
     block_months: int
     null_configuration: str
     delta_mme: Decimal
+    observation_counts: tuple[int, ...] | None = None
     imbalance: str = "observed"
     terminal_probability: Decimal = Decimal(0)
     terminal_severity: Decimal = Decimal(0)
     shock_phase: str = "aligned"
+    mean_autocorrelation: float = 0.0
+    volatility_autocorrelation: float = 0.0
+    dependence_stress: bool = False
 
     def __post_init__(self) -> None:
         if self.family not in {
@@ -119,12 +123,20 @@ class SyntheticScenario:
             "empirical_skew",
             "terminal_mixture",
             "calibrated_block",
+            "ar1_mean",
+            "volatility_regime",
         }:
             raise ValueError("pilot accepts only declared synthetic families")
         if not 1 <= self.block_months <= 12 or self.months < 12:
             raise ValueError("pilot requires a declared 1–12-month block design")
         if self.observations_per_month <= 0 or self.imbalance not in {"observed", "stressed"}:
             raise ValueError("pilot month-size design is invalid")
+        if self.observation_counts is not None and (
+            len(self.observation_counts) != self.months
+            or any(count < 1 for count in self.observation_counts)
+            or self.imbalance != "observed"
+        ):
+            raise ValueError("explicit month counts must cover every observed month")
         if self.null_configuration not in {"000", "d00", "0d0", "00d", "dd0", "d0d", "0dd"}:
             raise ValueError("pilot requires a complete or partial null")
         if not self.delta_mme.is_finite() or self.delta_mme <= 0:
@@ -135,6 +147,19 @@ class SyntheticScenario:
             raise ValueError("synthetic shock phase must be aligned or random")
         if self.family == "calibrated_block" and self.shock_phase != "aligned":
             raise ValueError("calibrated blocks retain their source-partition alignment")
+        if self.family == "ar1_mean":
+            if self.dependence_stress:
+                if self.mean_autocorrelation != 0.25:
+                    raise ValueError("AR1 stress is fixed at 0.25")
+            elif not -0.1427 <= self.mean_autocorrelation <= 0.0827:
+                raise ValueError("AR1 mean persistence exceeds monthly return evidence")
+        elif self.mean_autocorrelation or self.dependence_stress:
+            raise ValueError("mean dependence belongs to AR1 mean scenarios")
+        if self.family == "volatility_regime":
+            if not 0 <= self.volatility_autocorrelation <= 0.4524:
+                raise ValueError("volatility regime persistence exceeds proxy evidence")
+        elif self.volatility_autocorrelation:
+            raise ValueError("volatility dependence belongs to volatility regimes")
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,8 +224,9 @@ def build_audit_scenario_matrix(
     imbalance_modes: Sequence[str],
     terminal_probability: Decimal = Decimal(0),
     terminal_severity: Decimal = Decimal(0),
+    diagnostic: bool = False,
 ) -> AuditScenarioMatrix:
-    """Build the frozen matrix; longer generic persistence remains sensitivity."""
+    """Build the amended matrix; legacy generic layouts require diagnostic=True."""
     if (
         not calibrated_block_months
         or not generic_persistence_months
@@ -228,37 +254,65 @@ def build_audit_scenario_matrix(
         terminal_probability <= 0 or terminal_severity >= 0
     ):
         raise ValueError("terminal mixture needs a calibrated nonzero envelope")
+    mandatory_generic_families = {
+        "ar1_mean",
+        "volatility_regime",
+        "empirical_skew",
+        "terminal_mixture",
+    }
+    if not diagnostic and not mandatory_generic_families.issubset(generic_families):
+        raise ValueError("amended mandatory generic families are incomplete")
     mandatory: list[SyntheticScenario] = []
     sensitivity: list[SyntheticScenario] = []
     for family, lengths in (
         ("calibrated_block", calibrated_block_months),
-        *((name, generic_persistence_months) for name in generic_families),
+        *(
+            (
+                name,
+                (1,) if name in {"ar1_mean", "volatility_regime"} else generic_persistence_months,
+            )
+            for name in generic_families
+        ),
     ):
         for length in lengths:
             for imbalance in imbalance_modes:
                 for null in null_configurations:
-                    label = "calibrated" if family == "calibrated_block" else family
-                    suffix = "" if imbalance == "observed" else f"-{imbalance}"
-                    scenario = SyntheticScenario(
-                        scenario_id=f"{label}-L{length}-{null}{suffix}",
-                        family=family,
-                        months=months,
-                        observations_per_month=observations_per_month,
-                        block_months=length,
-                        null_configuration=null,
-                        delta_mme=delta_mme,
-                        imbalance=imbalance,
-                        terminal_probability=(
-                            terminal_probability if family == "terminal_mixture" else Decimal(0)
-                        ),
-                        terminal_severity=(
-                            terminal_severity if family == "terminal_mixture" else Decimal(0)
-                        ),
+                    variants = (
+                        ((-0.0874, False), (0.25, True))
+                        if family == "ar1_mean"
+                        else ((0.0, False),)
                     )
-                    if family == "calibrated_block" or length <= mandatory_generic_max_months:
-                        mandatory.append(scenario)
-                    else:
-                        sensitivity.append(scenario)
+                    for mean_phi, stress in variants:
+                        label = "calibrated" if family == "calibrated_block" else family
+                        suffix = "" if imbalance == "observed" else f"-{imbalance}"
+                        stress_suffix = "-stress025" if stress else ""
+                        scenario = SyntheticScenario(
+                            scenario_id=f"{label}-L{length}-{null}{suffix}{stress_suffix}",
+                            family=family,
+                            months=months,
+                            observations_per_month=observations_per_month,
+                            block_months=length,
+                            null_configuration=null,
+                            delta_mme=delta_mme,
+                            imbalance=imbalance,
+                            terminal_probability=(
+                                terminal_probability if family == "terminal_mixture" else Decimal(0)
+                            ),
+                            terminal_severity=(
+                                terminal_severity if family == "terminal_mixture" else Decimal(0)
+                            ),
+                            mean_autocorrelation=mean_phi,
+                            volatility_autocorrelation=(
+                                0.4524 if family == "volatility_regime" else 0.0
+                            ),
+                            dependence_stress=stress,
+                        )
+                        if family == "gaussian" and not diagnostic:
+                            sensitivity.append(scenario)
+                        elif family == "calibrated_block" or length <= mandatory_generic_max_months:
+                            mandatory.append(scenario)
+                        else:
+                            sensitivity.append(scenario)
     encoded = json.dumps(
         [
             (
@@ -272,6 +326,9 @@ def build_audit_scenario_matrix(
                 scenario.imbalance,
                 str(scenario.terminal_probability),
                 str(scenario.terminal_severity),
+                scenario.mean_autocorrelation,
+                scenario.volatility_autocorrelation,
+                scenario.dependence_stress,
                 role,
             )
             for role, scenarios in (("mandatory", mandatory), ("sensitivity", sensitivity))
@@ -329,6 +386,26 @@ class SyntheticPilotResult:
         )
 
 
+def _volatility_regime_scales(
+    months: int, rng: np.random.Generator, target_autocorrelation: float
+) -> np.ndarray:
+    """Map observed lognormal volatility persistence to latent Gaussian AR(1)."""
+    log_sigma_scale = 0.6
+    variance = log_sigma_scale**2
+    latent_phi = math.log1p(target_autocorrelation * math.expm1(variance)) / variance
+    innovations = rng.normal(size=months)
+    state = innovations[0]
+    scales = np.empty(months)
+    for month_index in range(months):
+        if month_index:
+            state = (
+                latent_phi * state
+                + math.sqrt(1 - latent_phi * latent_phi) * innovations[month_index]
+            )
+        scales[month_index] = math.exp(log_sigma_scale * state - variance / 2)
+    return scales
+
+
 def _synthetic_months(
     scenario: SyntheticScenario,
     rng: np.random.Generator,
@@ -378,21 +455,55 @@ def _synthetic_months(
         return MappingProxyType({name: tuple(months) for name, months in sampled.items()})
     if calibration is not None:
         raise ValueError("generic synthetic scenario cannot consume calibration observations")
-    phase = int(rng.integers(0, scenario.block_months)) if scenario.shock_phase == "random" else 0
-    block_count = math.ceil((scenario.months + phase) / scenario.block_months)
-    common = np.repeat(rng.normal(size=block_count), scenario.block_months)[
-        phase : phase + scenario.months
-    ]
+    if scenario.family == "ar1_mean":
+        innovations = rng.normal(size=scenario.months)
+        common = np.empty(scenario.months)
+        common[0] = innovations[0]
+        phi = scenario.mean_autocorrelation
+        for month_index in range(1, scenario.months):
+            common[month_index] = (
+                phi * common[month_index - 1] + math.sqrt(1 - phi * phi) * innovations[month_index]
+            )
+    elif scenario.family == "volatility_regime":
+        common = np.zeros(scenario.months)
+    else:
+        phase = (
+            int(rng.integers(0, scenario.block_months)) if scenario.shock_phase == "random" else 0
+        )
+        block_count = math.ceil((scenario.months + phase) / scenario.block_months)
+        common = np.repeat(rng.normal(size=block_count), scenario.block_months)[
+            phase : phase + scenario.months
+        ]
+    volatility = (
+        _volatility_regime_scales(scenario.months, rng, scenario.volatility_autocorrelation)
+        if scenario.family == "volatility_regime"
+        else np.ones(scenario.months)
+    )
     results: dict[str, tuple[tuple[Decimal, ...], ...]] = {}
     for pattern_index, name in enumerate(names):
         months: list[tuple[Decimal, ...]] = []
         for month_index in range(scenario.months):
-            count = scenario.observations_per_month
+            count = (
+                scenario.observation_counts[month_index]
+                if scenario.observation_counts is not None
+                else scenario.observations_per_month
+            )
             if scenario.imbalance == "stressed":
                 count = max(1, count // 2) if month_index % 3 else count * 3
             drawn_values: list[Decimal] = []
-            for _ in range(count):
-                value = 0.35 * common[month_index] + rng.normal()
+            monthly_residuals = None
+            if scenario.family == "ar1_mean":
+                monthly_residuals = rng.normal(size=count)
+                monthly_residuals -= np.mean(monthly_residuals)
+                if count > 1:
+                    monthly_residuals *= math.sqrt(count / (count - 1))
+            for observation_index in range(count):
+                residual = (
+                    monthly_residuals[observation_index]
+                    if monthly_residuals is not None
+                    else rng.normal()
+                )
+                value = 0.35 * common[month_index] + volatility[month_index] * residual
                 if scenario.family == "empirical_skew":
                     value += rng.exponential() - 1.0
                 if scenario.family == "terminal_mixture":
@@ -418,6 +529,7 @@ def run_synthetic_pilot(
     diagnostic: bool = False,
     calibration: CalibratedResidualFrame | None = None,
     candidate: InferenceCandidate = ENTRY_MONTH_WCR_S,
+    inner_seed: int | None = None,
 ) -> SyntheticPilotResult:
     """Retain every generic synthetic attempt; short diagnostics cannot promote."""
     if outer_runs <= 0 or inner_draws <= 0:
@@ -425,6 +537,7 @@ def run_synthetic_pilot(
     if not diagnostic and (outer_runs not in {20_000, 100_000} or inner_draws != 9_999):
         raise ValueError("promotion pilot counts are frozen at 20k/100k outer and 9999 inner")
     rng = np.random.Generator(np.random.PCG64(seed))
+    weight_rng = rng if inner_seed is None else np.random.Generator(np.random.PCG64(inner_seed))
     names = ("ema_pullback", "bull_flag", "double_bottom")
     null_names = tuple(
         name for index, name in enumerate(names) if scenario.null_configuration[index] == "0"
@@ -440,7 +553,7 @@ def run_synthetic_pilot(
             ).encode("ascii")
         )
         weight_array = np.where(
-            rng.integers(0, 2, size=(inner_draws, scenario.months)) == 0, -1, 1
+            weight_rng.integers(0, 2, size=(inner_draws, scenario.months)) == 0, -1, 1
         ).astype(np.int8)
         input_digest.update(weight_array.tobytes())
         weights = weight_array.tolist()
@@ -579,6 +692,76 @@ class MethodSelectionResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ProjectionRankingAudit:
+    rankings: Mapping[tuple[int, Decimal], tuple[InferenceCandidate, ...]]
+    freeze_430: bool
+
+
+def rank_projection_sensitivity(
+    evidence: Mapping[
+        tuple[int, Decimal],
+        Mapping[InferenceCandidate, Mapping[tuple[str, str], Decimal]],
+    ],
+    *,
+    clusters: Mapping[InferenceCandidate, int],
+) -> ProjectionRankingAudit:
+    """Check complete worst-cell rankings before proposing a 430-trade freeze."""
+    expected_points = {
+        (sample_size, effect)
+        for sample_size in (200, 430)
+        for effect in (Decimal("0.10"), Decimal("0.15"), Decimal("0.20"), Decimal("0.30"))
+    }
+    if set(evidence) != expected_points or not clusters:
+        raise ValueError("projection ranking needs every 200/430 and effect point")
+    rankings: dict[tuple[int, Decimal], tuple[InferenceCandidate, ...]] = {}
+    reference_keys: set[tuple[str, str]] | None = None
+    for point in sorted(expected_points):
+        candidates = evidence[point]
+        if set(candidates) != set(clusters):
+            raise ValueError("projection ranking needs the same candidates at every point")
+        minima: dict[InferenceCandidate, Decimal] = {}
+        for candidate, cells in candidates.items():
+            keys = set(cells)
+            if {pattern for _, pattern in keys} != {"ema_pullback", "bull_flag", "double_bottom"}:
+                raise ValueError("projection ranking needs all three strategy patterns")
+            if reference_keys is None:
+                reference_keys = keys
+            elif keys != reference_keys:
+                raise ValueError("projection ranking needs identical mandatory cells")
+            if any(not value.is_finite() or not 0 <= value <= 1 for value in cells.values()):
+                raise ValueError("projected power fractions must be finite probabilities")
+            minima[candidate] = min(cells.values())
+        rankings[point] = tuple(
+            sorted(
+                candidates,
+                key=lambda candidate: (minima[candidate], clusters[candidate]),
+                reverse=True,
+            )
+        )
+    return ProjectionRankingAudit(MappingProxyType(rankings), len(set(rankings.values())) == 1)
+
+
+@dataclass(frozen=True, slots=True)
+class PatternFrequencyPlan:
+    pattern: str
+    status: FeasibilityStatus
+    required_months: int | None
+    available_months: int
+    shortfall_months: int | None
+    binding_rate_source: str
+    predictive_probabilities: Mapping[str, Decimal]
+    expected_count: Decimal
+    percentile_count: tuple[int, int, int]
+    stress_rate: Decimal
+    forward_acquisition_could_help: bool
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "predictive_probabilities", MappingProxyType(dict(self.predictive_probabilities))
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FrequencyPlan:
     status: FeasibilityStatus
     required_months: int | None
@@ -594,6 +777,7 @@ class FrequencyPlan:
     rolling_window_overlap: int
     forward_acquisition_could_help: bool
     edge_precondition_satisfied: bool
+    pattern_plans: Mapping[str, PatternFrequencyPlan] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in (
@@ -601,6 +785,7 @@ class FrequencyPlan:
             "expected_counts",
             "percentile_counts",
             "stress_rates",
+            "pattern_plans",
         ):
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
@@ -1017,6 +1202,10 @@ def plan_holdout_duration(
     }
     required: int | None = None
     chosen_probabilities: dict[str, Decimal] = {}
+    pattern_required: dict[str, int | None] = {name: None for name in patterns}
+    pattern_probabilities: dict[str, dict[str, Decimal]] = {name: {} for name in patterns}
+    pattern_rate_sources: dict[str, str] = {}
+    pattern_stress_rates: dict[str, Decimal] = {}
     required_n = np.asarray([requirements[name].n_required for name in patterns])
     required_g = np.asarray([requirements[name].g_required for name in patterns])
     for duration in range(36, 121):
@@ -1042,38 +1231,105 @@ def plan_holdout_duration(
         )
         baseline_probabilities = []
         stressed_probabilities = []
+        pattern_baseline_probabilities: dict[str, list[Decimal]] = {name: [] for name in patterns}
+        pattern_stressed_probabilities: dict[str, list[Decimal]] = {name: [] for name in patterns}
         for block_size in (3, 6, 12):
             totals = baseline_arrays[block_size][:, duration - 1, :]
             clusters = cluster_arrays[block_size][:, duration - 1, :]
+            baseline_successes = (totals >= required_n) & (clusters >= required_g)
             baseline_probabilities.append(
-                Decimal(
-                    int(
-                        np.count_nonzero(
-                            np.all(totals >= required_n, axis=1)
-                            & np.all(clusters >= required_g, axis=1)
-                        )
-                    )
-                )
+                Decimal(int(np.count_nonzero(np.all(baseline_successes, axis=1))))
                 / Decimal(simulations)
             )
             stressed = thinning_rng.binomial(monthly_paths[block_size][:, :duration, :], ratios)
-            successes = np.all(np.sum(stressed, axis=1) >= required_n, axis=1) & np.all(
-                _grouped_cluster_count(stressed, selected_candidate.block_months) >= required_g,
-                axis=1,
+            stressed_successes = (np.sum(stressed, axis=1) >= required_n) & (
+                _grouped_cluster_count(stressed, selected_candidate.block_months) >= required_g
             )
             stressed_probabilities.append(
-                Decimal(int(np.count_nonzero(successes))) / Decimal(simulations)
+                Decimal(int(np.count_nonzero(np.all(stressed_successes, axis=1))))
+                / Decimal(simulations)
             )
+            for index, name in enumerate(patterns):
+                pattern_baseline_probabilities[name].append(
+                    Decimal(int(np.count_nonzero(baseline_successes[:, index])))
+                    / Decimal(simulations)
+                )
+                pattern_stressed_probabilities[name].append(
+                    Decimal(int(np.count_nonzero(stressed_successes[:, index])))
+                    / Decimal(simulations)
+                )
         chosen_probabilities = {
             "baseline": min(baseline_probabilities),
             "stressed": min(stressed_probabilities),
         }
+        for name in patterns:
+            probability = {
+                "baseline": min(pattern_baseline_probabilities[name]),
+                "stressed": min(pattern_stressed_probabilities[name]),
+            }
+            if pattern_required[name] is None:
+                pattern_probabilities[name] = probability
+                pattern_rate_sources[name] = rate_sources[name]
+                pattern_stress_rates[name] = stress_rates[name]
+                if probability["baseline"] >= Decimal("0.9") and probability["stressed"] >= Decimal(
+                    "0.8"
+                ):
+                    pattern_required[name] = duration
         if chosen_probabilities["baseline"] >= Decimal("0.9") and chosen_probabilities[
             "stressed"
         ] >= Decimal("0.8"):
             required = duration
             break
 
+    feasible_durations = tuple(
+        months
+        for months in pattern_required.values()
+        if months is not None and months <= available_months
+    )
+    if feasible_durations:
+        required = max(feasible_durations)
+    elif all(months is not None for months in pattern_required.values()):
+        required = max(months for months in pattern_required.values() if months is not None)
+    else:
+        required = None
+    pattern_plans: dict[str, PatternFrequencyPlan] = {}
+    for index, name in enumerate(patterns):
+        pattern_months = pattern_required[name]
+        pattern_horizon = pattern_months or 120
+        pattern_counts = np.asarray(
+            [
+                path[pattern_horizon - 1][index]
+                for paths in baseline_paths.values()
+                for path in paths
+            ],
+            dtype=np.int64,
+        )
+        pattern_status = (
+            FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
+            if pattern_months is None
+            else (
+                FeasibilityStatus.DATASET_INSUFFICIENT
+                if pattern_months > available_months
+                else FeasibilityStatus.FEASIBLE
+            )
+        )
+        pattern_plans[name] = PatternFrequencyPlan(
+            name,
+            pattern_status,
+            pattern_months,
+            available_months,
+            max(0, pattern_months - available_months) if pattern_months is not None else None,
+            pattern_rate_sources[name],
+            pattern_probabilities[name],
+            Decimal(str(float(np.mean(pattern_counts)))),
+            (
+                int(np.percentile(pattern_counts, 10, method="lower")),
+                int(np.percentile(pattern_counts, 5, method="lower")),
+                int(np.percentile(pattern_counts, 1, method="lower")),
+            ),
+            pattern_stress_rates[name],
+            pattern_status is FeasibilityStatus.DATASET_INSUFFICIENT,
+        )
     horizon = required or 120
     counts = np.asarray(
         [path[horizon - 1] for paths in baseline_paths.values() for path in paths], dtype=np.int64
@@ -1087,21 +1343,26 @@ def plan_holdout_duration(
         )
         for i, name in enumerate(patterns)
     }
+    binding_options = (
+        tuple(name for name in patterns if pattern_plans[name].status is FeasibilityStatus.FEASIBLE)
+        or patterns
+    )
     binding_pattern = max(
-        patterns,
+        binding_options,
         key=lambda name: (
             Decimal(requirements[name].n_required) / stress_rates[name]
             if stress_rates[name] > 0
             else Decimal("Infinity")
         ),
     )
+    statuses = {plan.status for plan in pattern_plans.values()}
     status = (
-        FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
-        if required is None
+        FeasibilityStatus.FEASIBLE
+        if FeasibilityStatus.FEASIBLE in statuses
         else (
             FeasibilityStatus.DATASET_INSUFFICIENT
-            if required > available_months
-            else FeasibilityStatus.FEASIBLE
+            if FeasibilityStatus.DATASET_INSUFFICIENT in statuses
+            else FeasibilityStatus.FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON
         )
     )
     return FrequencyPlan(
@@ -1110,7 +1371,7 @@ def plan_holdout_duration(
         available_months,
         max(0, required - available_months) if required is not None else None,
         binding_pattern,
-        rate_sources[binding_pattern],
+        pattern_rate_sources[binding_pattern],
         chosen_probabilities,
         expected,
         percentiles,
@@ -1119,4 +1380,5 @@ def plan_holdout_duration(
         35,
         status is FeasibilityStatus.DATASET_INSUFFICIENT,
         development_validation_expectancy is not None,
+        pattern_plans,
     )

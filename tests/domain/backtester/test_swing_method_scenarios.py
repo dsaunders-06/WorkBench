@@ -26,6 +26,7 @@ def test_scenario_matrix_keeps_supported_persistence_mandatory_and_longer_sensit
         null_configurations=("000", "d00"),
         generic_families=("gaussian",),
         imbalance_modes=("observed",),
+        diagnostic=True,
     )
 
     assert {scenario.scenario_id for scenario in matrix.mandatory} == {
@@ -52,6 +53,7 @@ def test_regime_supported_two_and_four_month_shocks_are_mandatory() -> None:
         null_configurations=("000",),
         generic_families=("gaussian",),
         imbalance_modes=("observed",),
+        diagnostic=True,
     )
 
     assert {cell.block_months for cell in matrix.mandatory if cell.family == "gaussian"} == {
@@ -61,6 +63,65 @@ def test_regime_supported_two_and_four_month_shocks_are_mandatory() -> None:
         4,
     }
     assert {cell.block_months for cell in matrix.sensitivity} == {6, 12}
+
+
+def test_production_matrix_rejects_incomplete_amended_generic_families() -> None:
+    with pytest.raises(ValueError, match="amended mandatory generic families"):
+        audit.build_audit_scenario_matrix(
+            months=36,
+            observations_per_month=8,
+            delta_mme=Decimal("0.2"),
+            calibrated_block_months=(4,),
+            generic_persistence_months=(1, 2, 3, 4),
+            mandatory_generic_max_months=4,
+            null_configurations=("000",),
+            generic_families=("gaussian",),
+            imbalance_modes=("observed",),
+        )
+
+
+def test_amended_audit_matrix_uses_volatility_and_ar1_mandatory_constant_shocks_sensitive() -> None:
+    matrix = audit.build_audit_scenario_matrix(
+        months=36,
+        observations_per_month=8,
+        delta_mme=Decimal("0.2"),
+        calibrated_block_months=(4,),
+        generic_persistence_months=(1, 2, 3, 4),
+        mandatory_generic_max_months=4,
+        null_configurations=("000",),
+        generic_families=(
+            "volatility_regime",
+            "ar1_mean",
+            "empirical_skew",
+            "terminal_mixture",
+            "gaussian",
+        ),
+        imbalance_modes=("observed",),
+        terminal_probability=Decimal("0.05"),
+        terminal_severity=Decimal("-2"),
+    )
+
+    assert {cell.family for cell in matrix.mandatory} == {
+        "calibrated_block",
+        "volatility_regime",
+        "ar1_mean",
+        "empirical_skew",
+        "terminal_mixture",
+    }
+    assert {
+        cell.mean_autocorrelation for cell in matrix.mandatory if cell.family == "ar1_mean"
+    } == {-0.0874, 0.25}
+    assert {
+        cell.volatility_autocorrelation
+        for cell in matrix.mandatory
+        if cell.family == "volatility_regime"
+    } == {0.4524}
+    assert {cell.block_months for cell in matrix.sensitivity if cell.family == "gaussian"} == {
+        1,
+        2,
+        3,
+        4,
+    }
 
 
 def test_calibrated_blocks_preserve_joint_months_without_crossing_partitions() -> None:
@@ -184,3 +245,118 @@ def test_random_phase_candidate_pilots_keep_paired_inputs() -> None:
     )
 
     assert len({pilot.shared_inputs_sha256 for pilot in pilots.values()}) == 1
+
+
+def test_ar1_mean_shocks_have_return_bounded_persistence_and_zero_null_mean() -> None:
+    scenario = audit.SyntheticScenario(
+        scenario_id="ar1-return-000",
+        family="ar1_mean",
+        months=4000,
+        observations_per_month=1,
+        block_months=1,
+        null_configuration="000",
+        delta_mme=Decimal("0.2"),
+        mean_autocorrelation=-0.0874,
+    )
+    monthly = audit._synthetic_months(scenario, np.random.default_rng(17))
+    values = np.asarray([float(month[0]) for month in monthly["ema_pullback"]])
+
+    assert abs(float(np.mean(values))) < 0.06
+    assert -0.15 < float(np.corrcoef(values[:-1], values[1:])[0, 1]) < 0.01
+    with pytest.raises(ValueError, match="return evidence"):
+        audit.SyntheticScenario(
+            scenario_id="ar1-too-persistent",
+            family="ar1_mean",
+            months=36,
+            observations_per_month=1,
+            block_months=1,
+            null_configuration="000",
+            delta_mme=Decimal("0.2"),
+            mean_autocorrelation=0.25,
+        )
+
+
+def test_volatility_regime_has_persistent_variance_without_mean_shift() -> None:
+    scenario = audit.SyntheticScenario(
+        scenario_id="volatility-regime-000",
+        family="volatility_regime",
+        months=4000,
+        observations_per_month=1,
+        block_months=1,
+        null_configuration="000",
+        delta_mme=Decimal("0.2"),
+        volatility_autocorrelation=0.4524,
+    )
+    monthly = audit._synthetic_months(scenario, np.random.default_rng(17))
+    values = np.asarray([float(month[0]) for month in monthly["ema_pullback"]])
+
+    assert abs(float(np.mean(values))) < 0.06
+    assert float(np.corrcoef(np.abs(values[:-1]), np.abs(values[1:]))[0, 1]) > 0.01
+
+
+def test_volatility_regime_matches_observable_proxy_autocorrelation() -> None:
+    scales = audit._volatility_regime_scales(50_000, np.random.default_rng(17), 0.4524)
+
+    assert abs(float(np.corrcoef(scales[:-1], scales[1:])[0, 1]) - 0.4524) < 0.015
+
+
+def test_ar1_stress_targets_monthly_average_outcome_persistence() -> None:
+    scenario = audit.SyntheticScenario(
+        scenario_id="ar1-average-stress-000",
+        family="ar1_mean",
+        months=6000,
+        observations_per_month=8,
+        block_months=1,
+        null_configuration="000",
+        delta_mme=Decimal("0.2"),
+        mean_autocorrelation=0.25,
+        dependence_stress=True,
+    )
+    months = audit._synthetic_months(scenario, np.random.default_rng(17))
+    averages = np.asarray([float(sum(month) / len(month)) for month in months["ema_pullback"]])
+
+    assert abs(float(np.corrcoef(averages[:-1], averages[1:])[0, 1]) - 0.25) < 0.04
+
+
+def test_ar1_centering_preserves_unit_trade_residual_variance() -> None:
+    scenario = audit.SyntheticScenario(
+        scenario_id="ar1-residual-scale-000",
+        family="ar1_mean",
+        months=4000,
+        observations_per_month=8,
+        block_months=1,
+        null_configuration="000",
+        delta_mme=Decimal("0.2"),
+        mean_autocorrelation=0.0,
+    )
+    months = audit._synthetic_months(scenario, np.random.default_rng(17))
+    residuals = np.asarray(
+        [
+            float(value - sum(month) / len(month))
+            for month in months["ema_pullback"]
+            for value in month
+        ]
+    )
+
+    assert abs(float(np.var(residuals)) - 1.0) < 0.03
+
+
+def test_ar1_monthly_mean_target_survives_varying_projection_month_counts() -> None:
+    counts = (5, 6) * 3000
+    scenario = audit.SyntheticScenario(
+        scenario_id="ar1-variable-count-stress",
+        family="ar1_mean",
+        months=len(counts),
+        observations_per_month=6,
+        observation_counts=counts,
+        block_months=1,
+        null_configuration="000",
+        delta_mme=Decimal("0.2"),
+        mean_autocorrelation=0.25,
+        dependence_stress=True,
+    )
+    months = audit._synthetic_months(scenario, np.random.default_rng(72))["ema_pullback"]
+    averages = np.asarray([float(np.mean(month)) for month in months])
+
+    assert tuple(map(len, months)) == counts
+    assert abs(float(np.corrcoef(averages[:-1], averages[1:])[0, 1]) - 0.25) < 0.04

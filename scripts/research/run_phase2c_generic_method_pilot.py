@@ -28,6 +28,9 @@ INNER_DRAWS = 9_999
 INITIAL_OUTER = 20_000
 MAXIMUM_OUTER = 100_000
 BASE_SEED = 20261005
+OUTER_NULL_SEED = 845317
+INNER_SIGNS_SEED = 845318
+POWER_SEED = 845319
 
 
 def build_cells() -> tuple[audit.SyntheticScenario, ...]:
@@ -48,8 +51,45 @@ def build_cells() -> tuple[audit.SyntheticScenario, ...]:
     )
 
 
+def build_amended_cells() -> (
+    tuple[tuple[audit.SyntheticScenario, ...], tuple[audit.SyntheticScenario, ...]]
+):
+    """Market-return-bounded mean dependence and calibrated volatility are mandatory."""
+    mandatory = tuple(
+        audit.SyntheticScenario(
+            scenario_id=f"generic-{family}-{label}-{null}-observable-v2",
+            family=family,
+            months=36,
+            observations_per_month=8,
+            block_months=1,
+            null_configuration=null,
+            delta_mme=Decimal("0.2"),
+            mean_autocorrelation=mean_phi,
+            volatility_autocorrelation=vol_phi,
+            dependence_stress=stress,
+        )
+        for family, label, mean_phi, vol_phi, stress in (
+            ("volatility_regime", "proxy-phi04524", 0.0, 0.4524, False),
+            ("ar1_mean", "return-phi-negative00874", -0.0874, 0.0, False),
+            ("ar1_mean", "stress-phi025", 0.25, 0.0, True),
+        )
+        for null in NULLS
+    )
+    return mandatory, build_cells()
+
+
 def seed_for(scenario: audit.SyntheticScenario) -> int:
-    digest = hashlib.sha256(f"{BASE_SEED}:{scenario.scenario_id}".encode("ascii")).digest()
+    digest = hashlib.sha256(f"{OUTER_NULL_SEED}:{scenario.scenario_id}".encode("ascii")).digest()
+    return int.from_bytes(digest[:8], "big")
+
+
+def inner_seed_for(scenario: audit.SyntheticScenario) -> int:
+    digest = hashlib.sha256(f"{INNER_SIGNS_SEED}:{scenario.scenario_id}".encode("ascii")).digest()
+    return int.from_bytes(digest[:8], "big")
+
+
+def power_seed_for(scenario: audit.SyntheticScenario) -> int:
+    digest = hashlib.sha256(f"{POWER_SEED}:{scenario.scenario_id}".encode("ascii")).digest()
     return int.from_bytes(digest[:8], "big")
 
 
@@ -78,6 +118,7 @@ def _read_or_run(
 ) -> dict:
     path = directory / f"{scenario.scenario_id}--{_candidate_name(candidate)}--{outer_runs}.json"
     seed = seed_for(scenario)
+    inner_seed = inner_seed_for(scenario)
     if path.exists():
         payload = json.loads(path.read_text(encoding="utf-8"))
         if (
@@ -86,6 +127,7 @@ def _read_or_run(
             or payload["outer_runs"] != outer_runs
             or payload["inner_draws"] != INNER_DRAWS
             or payload["seed"] != seed
+            or payload["inner_seed"] != inner_seed
             or len(payload["attempts"]) != outer_runs
         ):
             raise ValueError(f"checkpoint metadata mismatch: {path}")
@@ -101,12 +143,14 @@ def _read_or_run(
         outer_runs=outer_runs,
         inner_draws=INNER_DRAWS,
         seed=seed,
+        inner_seed=inner_seed,
         candidate=candidate,
     )
     payload = {
         "scenario_id": scenario.scenario_id,
         "candidate": _candidate_name(candidate),
         "seed": seed,
+        "inner_seed": inner_seed,
         "outer_runs": outer_runs,
         "inner_draws": INNER_DRAWS,
         "seconds": time.perf_counter() - started,
@@ -156,7 +200,7 @@ def _decisions(scenario: audit.SyntheticScenario, payload: dict) -> list[dict]:
     ]
 
 
-def run_cell(scenario: audit.SyntheticScenario, output_dir: Path) -> dict:
+def run_cell(scenario: audit.SyntheticScenario, output_dir: Path, role: str) -> dict:
     initial = {
         candidate: _read_or_run(scenario, candidate, INITIAL_OUTER, output_dir)
         for candidate in CANDIDATES
@@ -191,6 +235,8 @@ def run_cell(scenario: audit.SyntheticScenario, output_dir: Path) -> dict:
         )
     summary = {
         "scenario_id": scenario.scenario_id,
+        "role": role,
+        "family": scenario.family,
         "persistence_months": scenario.block_months,
         "null_configuration": scenario.null_configuration,
         "shock_phase": scenario.shock_phase,
@@ -210,12 +256,13 @@ def _write_report(directory: Path, cells: tuple[audit.SyntheticScenario, ...]) -
     status = {}
     for candidate in CANDIDATES:
         name = _candidate_name(candidate)
-        if len(summaries) != len(cells):
+        mandatory = [summary for summary in summaries if summary["role"] == "mandatory"]
+        if len(mandatory) != 21:
             status[name] = "INCOMPLETE"
         elif all(
             next(item for item in summary["candidates"] if item["candidate"] == name)["status"]
             == audit.MethodStatus.METHOD_ADEQUATE.value
-            for summary in summaries
+            for summary in mandatory
         ):
             status[name] = audit.MethodStatus.METHOD_ADEQUATE.value
         else:
@@ -223,10 +270,18 @@ def _write_report(directory: Path, cells: tuple[audit.SyntheticScenario, ...]) -
     report = {
         "phase": "pre-declaration generic pilot",
         "matrix_cells": len(cells),
+        "mandatory_cells": 21,
+        "sensitivity_cells": len(cells) - 21,
         "completed_cells": len(summaries),
         "inner_draws": INNER_DRAWS,
         "initial_outer_runs": INITIAL_OUTER,
         "maximum_outer_runs": MAXIMUM_OUTER,
+        "seeds": {
+            "exploratory": BASE_SEED,
+            "outer_null": OUTER_NULL_SEED,
+            "inner_signs": INNER_SIGNS_SEED,
+            "power": POWER_SEED,
+        },
         "candidates": status,
         "cells": summaries,
     }
@@ -245,10 +300,19 @@ def main() -> None:
     if not 1 <= args.workers <= 12:
         parser.error("workers must be between 1 and 12")
     output_dir.mkdir(parents=True, exist_ok=True)
-    cells = build_cells()
+    mandatory, sensitivity = build_amended_cells()
+    cells = (*mandatory, *sensitivity)
     started = time.perf_counter()
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(run_cell, scenario, output_dir): scenario for scenario in cells}
+        futures = {
+            executor.submit(
+                run_cell,
+                scenario,
+                output_dir,
+                "mandatory" if scenario in mandatory else "sensitivity",
+            ): scenario
+            for scenario in cells
+        }
         for future in as_completed(futures):
             summary = future.result()
             report = _write_report(output_dir, cells)

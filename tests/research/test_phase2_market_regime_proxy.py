@@ -6,7 +6,9 @@ from scripts.research.phase2_market_regime_proxy import (
     last_asx_session,
     resolve_discrepancy,
     return_discrepancies,
+    select_operator_levels,
     validate_monthly_spine,
+    validate_selected_returns,
 )
 
 
@@ -70,3 +72,30 @@ def test_discrepancy_resolution_without_third_keeps_asx_and_requires_sensitivity
 def test_disputed_months_end_on_repository_asx_sessions() -> None:
     assert last_asx_session("2014-07") == "2014-07-31"
     assert last_asx_session("2023-09") == "2023-09-29"
+
+
+def test_operator_approved_july_primary_uses_one_decimal_yahoo_close() -> None:
+    primary, sensitivity = select_operator_levels(
+        {"2014-07": 5623.9, "2023-09": 7084.6},
+        {"2014-07": 5632.8999, "2023-09": 7048.6001},
+    )
+
+    assert primary == {"2014-07": 5632.9, "2023-09": 7048.6001}
+    assert sensitivity == {"2014-07": 5623.9, "2023-09": 7048.6001}
+
+
+def test_approved_primary_has_no_return_gate_breach_against_selected_sources() -> None:
+    asx = {
+        "2014-06": 5400.0,
+        "2014-07": 5623.9,
+        "2014-08": 5625.9,
+        "2023-08": 7300.0,
+        "2023-09": 7084.6,
+        "2023-10": 6780.7,
+    }
+    yahoo = {**asx, "2014-07": 5632.8999, "2023-09": 7048.6001}
+    primary, _ = select_operator_levels(asx, yahoo)
+
+    validate_selected_returns(
+        primary, yahoo, {"2023-08": 570.8, "2023-09": 550.8, "2023-10": 529.8}
+    )

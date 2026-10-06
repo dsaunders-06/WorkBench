@@ -1077,8 +1077,21 @@ yield `1/64 = 1.5625%`. A candidate below this floor is ineligible before
 size or power comparison.
 
 The mandatory matrix consists of predeclared development/validation-calibrated
-block-resampled scenarios and generic persistence scenarios through the
-maximum length supported by the strategy-independent market-regime proxy.
+block-resampled scenarios, zero-mean volatility-regime scenarios calibrated to
+the market proxy's monthly realised-volatility persistence, and joint-pattern
+AR(1) monthly mean shocks bounded by observed index-return dependence. Include
+the explicit positive AR(1) coefficient 0.25 as a mandatory stress outside
+that observed return bound. Constant mean shocks lasting one through four
+months are sensitivities, not mandatory dependence evidence.
+Calibrate persistence on the observable quantity. For lognormal volatility
+`exp(0.6 Z - 0.6²/2)`, convert the observed volatility lag-one target 0.4524
+to the latent Gaussian AR(1) coefficient
+`log(1 + 0.4524 × (exp(0.6²) - 1)) / 0.6²` (about 0.497263). For AR(1)
+monthly-average outcomes, center iid trade residuals within each month and
+multiply by `sqrt(n/(n-1))` when `n > 1` before adding `0.35` times the common
+AR(1) state. This preserves unit trade-residual variance while making the
+monthly average's lag-one target −0.0874 or the explicit +0.25 stress.
+Generate the exact month-specific trade count before centering.
 That proxy uses at least ten years of ASX 200 or All Ordinaries monthly index
 returns, absolute returns, and realised volatility; it reports lags 1 through
 12, half-lives, and the recommended mandatory persistence set without using
@@ -1097,11 +1110,17 @@ The operator-approved source audit in
 `docs/phase-2-market-regime-proxy.md` uses ASX published end-month S&P/ASX 200
 values from January 2010 through August 2026, return-level RBA F18 and ^AXJO
 checks, and the explicit discrepancy rule for July 2014 and September 2023.
-It supports mandatory generic persistence lengths of 1, 2, 3 and 4 months;
-6 and 12 months remain sensitivity scenarios. The unsigned draft declaration
-sets the aligned candidate's `L = 4` from the first complete entry month of
-each partition, matching the longest mandatory generic shock. It records this
-set without activating or timestamping `METHOD_AUDIT_DECLARED`.
+The operator approved Yahoo's July 2014 close at one-decimal precision,
+5632.9, as the primary value; the ASX 5623.9 is retained as discrepancy
+evidence and sensitivity. The same source audit gives realised-volatility
+lag-one correlation 0.4524 and monthly-return lag-one correlation −0.0874;
+the 0.25 positive mean AR(1) coefficient is a separate stress. It supports
+constant one-through-four-month mean-shock sensitivities; 6 and 12 months
+remain longer-persistence sensitivities. The unsigned draft fixes `L = 4`
+as a predeclared short-block candidate spanning the upper end of those
+supported sensitivity durations, aligned from the first complete entry
+month of each partition. It records this candidate without activating or
+timestamping `METHOD_AUDIT_DECLARED`.
 
 Every eligible candidate is evaluated on the same outer draws and weight
 matrices in each calibrated cell. With 9,999 declared inner bootstrap draws,
@@ -1113,13 +1132,25 @@ positive upper-limit cap is 3.25% against nominal 2.5%; the Romano–Wolf family
 upper-limit cap is 6% against nominal 5%. At 100,000, a cell passes only when
 its upper 95% limit is no greater than the cap. A candidate qualifies only if
 every mandatory size cell passes both applicable caps. Among qualifying
-candidates, compare projected rejection fractions at `delta_MME` and one
+candidates, compare projected fractions for the joint event of one-sided
+WCR-S confidence `p < 0.025` and Romano–Wolf adjusted `p < 0.05` at `delta_MME` and one
 common declared projection sample size. Rank each candidate by its minimum
 projected fraction across mandatory power scenarios and patterns; choose the
 highest, breaking exact ties by the larger nonempty cluster count at that
 projection size. If none qualifies, return
 `METHOD_INADEQUATE`. Preserve every attempt and result in the hashed audit;
 no trimmed or winsorized estimand may replace mean `R_order`.
+
+The common 430-trade projection point is conditional: before freezing it,
+compare each candidate's rank by minimum projected power across all mandatory
+scenario and pattern cells at `N = 200` and `N = 430`, for effects 0.10,
+0.15, 0.20 and 0.30. Freeze 430 only when the complete rankings are identical
+at all eight points. Report rankings in the review summary and keep raw power
+values outside Git. The bull-flag incidence proxy is about 70 pre-resistance
+candidates in 36 months, so a 430-trade comparison cannot establish its
+pattern-specific frequency feasibility. The generic grid alone cannot freeze
+430 while development/validation-calibrated mandatory power cells remain
+unresolved.
 
 The chosen candidate then recomputes pattern-specific `N_required >= 100`,
 `G_required >= 6`, minimum detectable effect, and at least 80% prospective
@@ -1136,24 +1167,28 @@ low-frequency rate for each pattern as the minimum of its lowest rolling
 36-month development rate, full validation-window rate, and one-sided 90%
 lower predictive rate. Publish which source binds.
 
-Scan 36 through 120 eligible holdout months. Select the first duration with at
-least 90% baseline joint probability and 80% low-frequency-stress probability
-of every pattern satisfying both `N_required` and `G_required`. Publish expected
-and 10th/5th/1st percentile counts. If none passes through 120 months, return
-`FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON`. Otherwise compare the required
-duration with untouched data and return `DATASET_INSUFFICIENT` when required
-exceeds available. Extension is forward-only with unseen observations and a
-complete new tail.
+Scan 36 through 120 eligible holdout months separately for each pattern while
+resampling the joint count vectors. For each pattern, select its first duration
+with at least 90% baseline probability and 80% low-frequency-stress probability
+of satisfying both `N_required` and `G_required`. Publish that pattern's expected
+and 10th/5th/1st percentile counts. A pattern with no passing duration through
+120 months receives `FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON`; one whose required
+duration exceeds untouched available data receives `DATASET_INSUFFICIENT`.
+Other patterns may remain feasible and continue independently. Extension is
+forward-only with unseen observations and a complete new tail.
 
 The feasibility planner and promotion verdict use separate types but one frozen
-mapping. `FEASIBLE` continues to the remaining gates and is never itself a
-promotion pass. `DATASET_INSUFFICIENT` and
+mapping. Each pattern's `FEASIBLE` status continues to its remaining gates and
+is never itself a promotion pass. `DATASET_INSUFFICIENT` and
 `FREQUENCY_INADEQUATE_WITHIN_MAX_HORIZON` both map to
 `INSUFFICIENT_EVIDENCE`; the report retains the exact feasibility reason,
-required and available months, binding pattern/rate source, and whether a
+required and available months, that pattern's binding rate source, and whether a
 forward extension can help. A method failure maps to `METHOD_INADEQUATE`, and
 unsupported incidence maps to `INCIDENCE_DATA_INSUFFICIENT`, before feasibility
-is evaluated. No permit is issued for any non-feasible result. Engineering-tier
+is evaluated. At least one pattern must be feasible for a permit. A permit may
+include only patterns individually feasible and
+passing every other gate; a non-feasible pattern cannot borrow another
+pattern's frequency evidence. Engineering-tier
 runs still return `PORTFOLIO_RISK_DESIGN_PENDING` as their overall promotion
 status while reporting the synthetic feasibility result separately.
 

@@ -7,7 +7,7 @@ declaration, establish prospective power, or authorize promotion access.
 the operator's `EFFECT_DECLARED`; the diagnostic `0.2` used elsewhere is not a
 substitute. The unsigned draft at
 [`METHOD_AUDIT_DECLARED_UNSIGNED_DRAFT.json`](METHOD_AUDIT_DECLARED_UNSIGNED_DRAFT.json)
-is unchanged.
+records the amended provisional recipe and remains unsigned.
 
 ## Mechanical frequency and projection sample size
 
@@ -29,8 +29,14 @@ planning scale, `rate = count / 1,235` per eligible symbol-month,
 | Double bottom | 93 | 75.3036 | 7.1538 | 15.0607 | 542.19 |
 | EMA pullback | 116 | 93.9271 | 8.9231 | 18.7854 | 676.28 |
 
-**Proposal for operator review:** use **430 trades per pattern** as the common
-power-comparison projection point. The arithmetic pre-resistance total is
+**Conditional proposal for operator review:** use **430 trades per pattern**
+as the common power-comparison projection point only if the complete candidate
+rankings are identical at `N = 200` and `N = 430` across effects `0.10`,
+`0.15`, `0.20`, and `0.30`. Rank by minimum projected joint rejection fraction
+across mandatory scenarios and all three patterns; the joint event requires
+one-sided WCR-S `p < 0.025` and Romano–Wolf adjusted `p < 0.05`. The generic
+grid cannot complete this check alone while calibrated mandatory power
+scenarios remain unresolved. The arithmetic pre-resistance total is
 `(12 + 93 + 116) / 1,235 × 200 × 36 = 1,288.4` candidates across three
 patterns, or **429.5 per pattern**; 430 is that mean rounded to a whole trade.
 It is a *comparison point*, not a forecast that each pattern can attain it.
@@ -70,29 +76,23 @@ mechanical rate must not be fed to the holdout planner.
 
 ## Proposed random streams and evidence hashes
 
-The currently running **pre-declaration generic pilot** uses base seed
-`20261005`, deriving each cell seed from the first eight bytes of
-`SHA-256("20261005:" + scenario_id)` and replaying that seed for all three
-candidates in the cell. This exploratory stream is distinct from the proposed
-calibrated-audit stream below and does not freeze its seed rule. Its reported
-attempt and shared-input hashes permit paired-cell checks; the operator must
-approve the later audit streams before any declaration.
-
-Retain the unsigned draft's **proposed, unfrozen** base seeds: outer null
-`845317`, inner Rademacher signs `845318`, and power `845319`. Define a
-canonical seed-derivation record containing a version tag, stream name, base
-seed, ordered scenario ID, and replicate index; serialize as UTF-8 JSON with
-sorted keys and compact separators, SHA-256 it, and take the first eight digest
-bytes in big-endian order as an unsigned 64-bit PCG64 seed. Record the exact
-schema and generator/library version in the pilot. Paired candidate methods
-must receive the same outer observations and base-month sign matrix in each
-cell; candidate-specific cluster aggregation must not draw a fresh stream.
-Distinct stream names keep null, signs, and power draws separate. The operator
-must approve these seeds and their exact serialization before release.
+The historical 56-cell exploratory generic pilot used base seed `20261005`
+and `SHA-256("20261005:" + scenario_id)` to seed one PCG64 stream per cell.
+It is provenance, not the amended audit seed. The operator subsequently
+approved the unsigned draft's separate base seeds: outer null `845317`, inner
+Rademacher signs `845318`, and power `845319`. In the amended size runner,
+hash the ASCII text `base_seed:scenario_id`, take the first eight digest bytes
+in big-endian order as an unsigned 64-bit PCG64 seed, and advance distinct
+outer and inner streams across replicates. In the power grid, hash
+`base_seed:scenario_id:replicate_index` to separate 64-bit PCG64 seeds for
+each replicate's outer observations and inner signs. All candidates within a
+cell receive the same observations and base-month sign matrix. Record exact
+library versions and code bytes in an outside-Git run manifest.
 
 When `EFFECT_DECLARED` and the authorized calibration inputs exist, create a
 pilot report that lists all candidate methods, mandatory scenario IDs and
-fixed parameters, 430-trade projection cells, observed nonempty clusters,
+fixed parameters, projection cells at the subsequently approved common sample
+size, observed nonempty clusters,
 paired size/power fractions, Monte Carlo limits, numerical policy, seeds and
 versions, and any failed/incomplete cells. Preserve every attempted cell. Save
 the immutable report bytes and calculate `SHA-256(report bytes)` into a
@@ -126,8 +126,13 @@ its committed [scenario summary](phase-2d-generic-pilot-summary.csv) has SHA-256
 The declared calibrated audit
 needs one frozen source/runtime/lock manifest for every attempt.
 
-The source-audit [market-regime proxy](phase-2-market-regime-proxy.md) supports
-generic persistence 1–4 months for mandatory scenarios and 6/12 months as
-disclosed sensitivities. Its July 2014 Yahoo substitution sensitivity preserves
-the 1–4 recommendation. The proposed change to that source decision is
-separate from this frequency-based sample-size proposal.
+The approved-primary [market-regime proxy](phase-2-market-regime-proxy.md)
+calibrates mandatory observable volatility persistence to lag-one `0.4524`
+and mandatory monthly-average AR(1) mean shocks to lag-one `−0.0874`, with
+explicit `+0.25` stress. The old constant one-to-four-month Gaussian mean
+shocks are disclosed sensitivities, alongside longer six- and twelve-month
+persistence. For lognormal volatility with log scale `0.6`, the latent AR(1)
+coefficient is about `0.497263`; AR(1) trade residuals are centered and
+variance-corrected within each month before adding the common state. The
+operator-approved July 2014 primary is `5632.9`; the original ASX `5623.9`
+remains discrepancy evidence and sensitivity.

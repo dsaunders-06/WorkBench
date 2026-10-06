@@ -245,6 +245,36 @@ def _metrics(
     return metrics
 
 
+def select_operator_levels(
+    asx: dict[str, float], yahoo: dict[str, float]
+) -> tuple[dict[str, float], dict[str, float]]:
+    """Apply the approved July substitution and retain ASX as sensitivity."""
+    primary = asx.copy()
+    primary["2014-07"] = round(yahoo["2014-07"], 1)
+    primary["2023-09"] = yahoo["2023-09"]
+    sensitivity = primary.copy()
+    sensitivity["2014-07"] = asx["2014-07"]
+    return primary, sensitivity
+
+
+def validate_selected_returns(
+    selected: dict[str, float], yahoo: dict[str, float], rba: dict[str, float]
+) -> None:
+    """Refuse a post-amendment primary that still breaches either return check."""
+    shared_yahoo = set(selected) & set(yahoo)
+    shared_rba = set(selected) & set(rba)
+    yahoo_gaps = return_discrepancies(
+        sorted((month, selected[month]) for month in shared_yahoo),
+        sorted((month, yahoo[month]) for month in shared_yahoo),
+    )
+    rba_gaps = return_discrepancies(
+        sorted((month, selected[month]) for month in shared_rba),
+        sorted((month, rba[month]) for month in shared_rba),
+    )
+    if yahoo_gaps or rba_gaps:
+        raise ValueError("operator-selected primary still breaches the return gate")
+
+
 def analyze(raw_dir: Path) -> dict[str, object]:
     _verify_snapshots(raw_dir)
     asx = _asx_rows(raw_dir)
@@ -275,13 +305,17 @@ def analyze(raw_dir: Path) -> dict[str, object]:
     september = resolve_discrepancy(
         dates_match=september_yahoo_date == september_session, third_supports="yahoo"
     )
-    july = resolve_discrepancy(dates_match=july_yahoo_date == july_session, third_supports=None)
-    if september.choice != "yahoo" or july.choice != "asx" or not july.requires_sensitivity:
+    pre_amendment_july_fallback = resolve_discrepancy(
+        dates_match=july_yahoo_date == july_session, third_supports=None
+    )
+    if (
+        september.choice != "yahoo"
+        or pre_amendment_july_fallback.choice != "asx"
+        or not pre_amendment_july_fallback.requires_sensitivity
+    ):
         raise ValueError("Operator resolution rule failed")
-    selected = asx_map.copy()
-    selected["2023-09"] = yahoo_map["2023-09"]
-    sensitivity = selected.copy()
-    sensitivity["2014-07"] = yahoo_map["2014-07"]
+    selected, sensitivity = select_operator_levels(asx_map, yahoo_map)
+    validate_selected_returns(selected, yahoo_map, dict(rba))
     return {
         "asx_months": len(asx),
         "asx_range": [asx[0][0], asx[-1][0]],
@@ -290,7 +324,7 @@ def analyze(raw_dir: Path) -> dict[str, object]:
         "return_discrepancies_asx_yahoo": [gap.__dict__ for gap in gaps],
         "return_discrepancies_asx_rba": [gap.__dict__ for gap in rba_asx],
         "selected": _metrics(sorted(selected.items()), daily),
-        "july_yahoo_sensitivity": _metrics(sorted(sensitivity.items()), daily),
+        "july_asx_sensitivity": _metrics(sorted(sensitivity.items()), daily),
     }
 
 

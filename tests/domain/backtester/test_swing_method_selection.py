@@ -195,3 +195,49 @@ def test_ineligible_candidate_does_not_delay_an_eligible_candidate() -> None:
 
     assert result.status is audit.MethodStatus.METHOD_ADEQUATE
     assert result.selected_candidate == ENTRY_MONTH_WCR_S
+
+
+def test_430_projection_freeze_requires_identical_complete_rankings_at_every_effect_and_size() -> (
+    None
+):
+    effects = (Decimal("0.10"), Decimal("0.15"), Decimal("0.20"), Decimal("0.30"))
+    points = {(n, effect) for n in (200, 430) for effect in effects}
+    evidence = {
+        point: {
+            ENTRY_MONTH_WCR_S: {
+                ("regime", name): Decimal("0.6")
+                for name in ("ema_pullback", "bull_flag", "double_bottom")
+            },
+            QUARTER_WCR_S: {
+                ("regime", name): Decimal("0.7")
+                for name in ("ema_pullback", "bull_flag", "double_bottom")
+            },
+        }
+        for point in points
+    }
+
+    stable = audit.rank_projection_sensitivity(
+        evidence, clusters={ENTRY_MONTH_WCR_S: 36, QUARTER_WCR_S: 12}
+    )
+    assert stable.freeze_430
+    assert all(
+        ranking == (QUARTER_WCR_S, ENTRY_MONTH_WCR_S) for ranking in stable.rankings.values()
+    )
+
+    for key in evidence[(430, Decimal("0.30"))][ENTRY_MONTH_WCR_S]:
+        evidence[(430, Decimal("0.30"))][ENTRY_MONTH_WCR_S][key] = Decimal("0.8")
+    unstable = audit.rank_projection_sensitivity(
+        evidence, clusters={ENTRY_MONTH_WCR_S: 36, QUARTER_WCR_S: 12}
+    )
+    assert not unstable.freeze_430
+    assert unstable.rankings[(430, Decimal("0.30"))] == (ENTRY_MONTH_WCR_S, QUARTER_WCR_S)
+
+
+def test_projection_ranking_refuses_missing_bull_flag_cell() -> None:
+    evidence = {
+        (n, effect): {ENTRY_MONTH_WCR_S: {("regime", "ema_pullback"): Decimal("0.6")}}
+        for n in (200, 430)
+        for effect in (Decimal("0.10"), Decimal("0.15"), Decimal("0.20"), Decimal("0.30"))
+    }
+    with pytest.raises(ValueError, match="all three strategy patterns"):
+        audit.rank_projection_sensitivity(evidence, clusters={ENTRY_MONTH_WCR_S: 36})
