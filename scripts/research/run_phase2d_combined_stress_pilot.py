@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
 from qat.domain.backtester.swing_method_audit import MethodStatus  # noqa: E402
 from scripts.research import run_phase2c_generic_method_pilot as pilot  # noqa: E402
