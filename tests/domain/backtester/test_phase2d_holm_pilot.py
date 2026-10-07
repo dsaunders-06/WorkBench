@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import importlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -64,3 +66,17 @@ def test_holm_runner_refuses_resume_with_changed_source_manifest(tmp_path: Path)
 
     with pytest.raises(ValueError, match="manifest"):
         runner.ensure_manifest(tmp_path, {**original, "source_sha256": "changed"})
+
+
+def test_holm_runner_script_resolves_its_own_checkout() -> None:
+    root = Path(__file__).resolve().parents[3]
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/research/run_phase2d_holm_pilot.py"), "--help"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--prior-report" in result.stdout
