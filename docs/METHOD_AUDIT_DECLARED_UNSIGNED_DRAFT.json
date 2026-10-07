@@ -1,41 +1,47 @@
 {
-  "status": "UNSIGNED_DRAFT_UNRESOLVED",
+  "status": "UNSIGNED_DRAFT_METHOD_INADEQUATE_DO_NOT_DECLARE",
   "declaration_type": "METHOD_AUDIT_DECLARED",
   "operator_amendment": "F1 Option 1, followed by the operator's 7 October 2026 pre-result final Holm candidate and binding stopping rule",
   "pre_result_final_candidate_amendment": {
-    "status": "PENDING_28_CELL_PILOT; NO_METHOD_SELECTED",
+    "status": "METHOD_INADEQUATE; NO_METHOD_SELECTED",
     "reason": "the initial entry-month, quarter and aligned-block L=4 Romano-Wolf candidates were METHOD_INADEQUATE in the completed generic mandatory pilot; the aligned-block confidence gate passed but its Romano-Wolf family gate failed under mean and combined dependence stress",
     "candidate": "aligned_block_holm-L4",
     "mandatory_families": ["volatility_regime", "ar1_mean_return_baseline", "ar1_mean_phi_0.25", "combined_volatility_0.4524_mean_0.25"],
     "null_configurations_per_family": 7,
     "paired_inputs": "reuse the existing aligned-block L=4 scenario IDs, seeds, outer draws and base-month weight matrices",
     "stopping_rule": "if and only if all 28 mandatory cells pass both upper 95% Monte Carlo caps, aligned_block_holm-L4 is the sole qualifying candidate; otherwise METHOD_INADEQUATE, with no further candidate, threshold or dependence change",
-    "power": "no new grid for a sole qualifying candidate; power remains blinded until EFFECT_DECLARED"
+    "power": "no new grid was run; power remains blinded until EFFECT_DECLARED",
+    "observed_result": "all 28 confidence cells passed, but six partial-null family cells exceeded the 6% upper 95% Monte Carlo cap after 100,000 runs; the binding stopping rule returns METHOD_INADEQUATE",
+    "pilot_report_sha256": "6b7f310d6e00307d0531ade78632f4f83e9de6ee022d5f5f645d0784dd14d348",
+    "pilot_manifest_sha256": "76cd8fc00d765853393cb03e6b5652cc630f6100fe5a4e923d1cf53a4f8814a8",
+    "pilot_code_commit": "a7fbac0"
   },
   "not_declaration": true,
   "unresolved_before_declaration": [
     "positive delta_MME from EFFECT_DECLARED",
-    "final aligned_block_holm-L4 mandatory size pilot result and stopping-rule outcome",
+    "no qualifying method under the binding final-candidate stopping rule",
     "development/validation calibration inputs and resulting fixed-parameter scenario instances",
-    "pilot report hash and frozen implementation/code hash",
     "post-EFFECT_DECLARED power and projection-size determination for any qualifying method"
   ],
   "candidates": [
     {
       "id": "entry_month",
       "cluster": "nonempty complete entry calendar months",
-      "block_length_months": 1
+      "block_length_months": 1,
+      "status": "METHOD_INADEQUATE"
     },
     {
       "id": "quarter",
       "cluster": "fixed consecutive three-month clusters aligned to declared origin",
-      "block_length_months": 3
+      "block_length_months": 3,
+      "status": "METHOD_INADEQUATE"
     },
     {
       "id": "aligned_block",
       "cluster": "fixed aligned nonoverlapping blocks of L complete calendar months",
       "block_length_months": 4,
-      "block_origin": "first complete entry month of each partition"
+      "block_origin": "first complete entry month of each partition",
+      "status": "METHOD_INADEQUATE"
     },
     {
       "id": "aligned_block_holm",
@@ -43,7 +49,7 @@
       "block_length_months": 4,
       "block_origin": "first complete entry month of each partition",
       "family_procedure": "one-sided Holm stepdown over the three marginal tie-safe WCR-S p-values at 5% family-wise error",
-      "status": "PRE_RESULT_FINAL_CANDIDATE"
+      "status": "METHOD_INADEQUATE"
     }
   ],
   "common_inference": {
@@ -75,7 +81,7 @@
     "same_base_month_weight_matrices": true,
     "candidate_weight_mapping": "use the first base-month sign in each aligned candidate cluster under a fixed mapping",
     "mandatory_size_qualification": "every mandatory null scenario must pass confidence and family limits",
-    "selection": "the initial three-candidate power-ranking rule was tested but none qualified on generic mandatory size; the final Holm candidate is selected only by the pre-result 28-cell stopping rule, with no additional power grid before EFFECT_DECLARED",
+    "selection": "the initial three-candidate power-ranking rule was tested but none qualified on generic mandatory size; the final Holm candidate failed six of its 28 mandatory cells under the pre-result stopping rule, so no method is selected",
     "if_none": "METHOD_INADEQUATE",
     "after_selection": "recompute pattern-specific N_required >= 100 and G_required >= 6 and minimum detectable effect under chosen method; require >=80% prospective power",
     "projection_sample_size": null,
