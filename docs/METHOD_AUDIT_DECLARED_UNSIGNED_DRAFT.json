@@ -1,13 +1,24 @@
 {
   "status": "UNSIGNED_DRAFT_UNRESOLVED",
   "declaration_type": "METHOD_AUDIT_DECLARED",
-  "operator_amendment": "F1 Option 1: predeclare candidates and selection rule before development release",
+  "operator_amendment": "F1 Option 1, followed by the operator's 7 October 2026 pre-result final Holm candidate and binding stopping rule",
+  "pre_result_final_candidate_amendment": {
+    "status": "PENDING_28_CELL_PILOT; NO_METHOD_SELECTED",
+    "reason": "the initial entry-month, quarter and aligned-block L=4 Romano-Wolf candidates were METHOD_INADEQUATE in the completed generic mandatory pilot; the aligned-block confidence gate passed but its Romano-Wolf family gate failed under mean and combined dependence stress",
+    "candidate": "aligned_block_holm-L4",
+    "mandatory_families": ["volatility_regime", "ar1_mean_return_baseline", "ar1_mean_phi_0.25", "combined_volatility_0.4524_mean_0.25"],
+    "null_configurations_per_family": 7,
+    "paired_inputs": "reuse the existing aligned-block L=4 scenario IDs, seeds, outer draws and base-month weight matrices",
+    "stopping_rule": "if and only if all 28 mandatory cells pass both upper 95% Monte Carlo caps, aligned_block_holm-L4 is the sole qualifying candidate; otherwise METHOD_INADEQUATE, with no further candidate, threshold or dependence change",
+    "power": "no new grid for a sole qualifying candidate; power remains blinded until EFFECT_DECLARED"
+  },
   "not_declaration": true,
   "unresolved_before_declaration": [
     "positive delta_MME from EFFECT_DECLARED",
+    "final aligned_block_holm-L4 mandatory size pilot result and stopping-rule outcome",
     "development/validation calibration inputs and resulting fixed-parameter scenario instances",
     "pilot report hash and frozen implementation/code hash",
-    "conditional ranking check before any common 430-trade projection sample-size freeze"
+    "post-EFFECT_DECLARED power and projection-size determination for any qualifying method"
   ],
   "candidates": [
     {
@@ -25,13 +36,21 @@
       "cluster": "fixed aligned nonoverlapping blocks of L complete calendar months",
       "block_length_months": 4,
       "block_origin": "first complete entry month of each partition"
+    },
+    {
+      "id": "aligned_block_holm",
+      "cluster": "the same fixed aligned nonoverlapping four-month blocks and WCR-S per-pattern test as aligned_block",
+      "block_length_months": 4,
+      "block_origin": "first complete entry month of each partition",
+      "family_procedure": "one-sided Holm stepdown over the three marginal tie-safe WCR-S p-values at 5% family-wise error",
+      "status": "PRE_RESULT_FINAL_CANDIDATE"
     }
   ],
   "common_inference": {
     "null": "intercept-only restricted mean",
     "score": "cluster sum of observations minus count times null mean",
     "studentization": "CV1",
-    "family": "one-sided Romano-Wolf stepdown over EMA pullback, bull flag, double bottom, common candidate-aligned weights",
+    "family": "the initial three candidates use one-sided Romano-Wolf stepdown; aligned_block_holm-L4 uses one-sided Holm stepdown over the three patterns' own WCR-S p-values",
     "inner_draws": 9999,
     "tie_rule": {
       "exact_enumeration_when": "2^G <= inner_draws",
@@ -56,12 +75,12 @@
     "same_base_month_weight_matrices": true,
     "candidate_weight_mapping": "use the first base-month sign in each aligned candidate cluster under a fixed mapping",
     "mandatory_size_qualification": "every mandatory null scenario must pass confidence and family limits",
-    "selection": "among qualifying candidates, maximize the minimum projected fraction jointly rejecting WCR-S confidence at 2.5% and Romano-Wolf family at 5% at delta_MME across mandatory power scenarios and patterns at one common declared projection sample size; break exact ties by larger nonempty cluster count at that size",
+    "selection": "the initial three-candidate power-ranking rule was tested but none qualified on generic mandatory size; the final Holm candidate is selected only by the pre-result 28-cell stopping rule, with no additional power grid before EFFECT_DECLARED",
     "if_none": "METHOD_INADEQUATE",
     "after_selection": "recompute pattern-specific N_required >= 100 and G_required >= 6 and minimum detectable effect under chosen method; require >=80% prospective power",
     "projection_sample_size": null,
     "projection_sample_size_proposal": 430,
-    "projection_sample_size_status": "UNFROZEN_CONDITIONAL_PROPOSAL: freeze only if complete candidate rankings by minimum projected power are identical at N=200 and N=430 for effects 0.10, 0.15, 0.20, and 0.30; bull-flag feasibility remains separate"
+    "projection_sample_size_status": "UNFROZEN_LEGACY_PROPOSAL: the initial three-candidate ranking condition was met in its original generic grid, but none passed mandatory size; the final Holm candidate has no new ranking grid, and power remains blinded until EFFECT_DECLARED"
   },
   "scenario_matrix": {
     "dependence_amendment": {
@@ -106,7 +125,7 @@
         "monthly_average_ar1_stress_phi": 0.25,
         "null_configurations": ["000", "d00", "0d0", "00d", "dd0", "d0d", "0dd"],
         "mandatory_cells": 7,
-        "note": "operator-added mandatory combined stress; run after the currently executing generic pilot completes"
+        "note": "operator-added mandatory combined stress; its prior seven-cell Romano-Wolf pilot completed before the final Holm candidate was authorized"
       },
       {
         "id": "cluster_imbalance",

@@ -20,6 +20,7 @@ from qat.domain.backtester.swing_results import SwingTrade
 from qat.domain.backtester.swing_statistics import (
     ENTRY_MONTH_WCR_S,
     InferenceCandidate,
+    holm_stepdown,
     romano_wolf_stepdown,
     wcr_s_pvalue,
 )
@@ -583,16 +584,32 @@ def run_synthetic_pilot(
         ).astype(np.int8)
         input_digest.update(weight_array.tobytes())
         weights = weight_array.tolist()
-        confidence_rejections = tuple(
-            scenario.null_configuration[pattern_index] == "0"
-            and wcr_s_pvalue(months[name], weights=weights, draws=inner_draws, candidate=candidate)
-            < Decimal("0.025")
-            for pattern_index, name in enumerate(names)
-        )
-        family = romano_wolf_stepdown(
-            months, weights=weights, draws=inner_draws, candidate=candidate
-        )
-        family_false = any(family.adjusted_p_values[name] < Decimal("0.05") for name in null_names)
+        if candidate.family_method == "holm":
+            marginal_p = {
+                name: wcr_s_pvalue(
+                    months[name], weights=weights, draws=inner_draws, candidate=candidate
+                )
+                for name in names
+            }
+            confidence_rejections = tuple(
+                scenario.null_configuration[pattern_index] == "0"
+                and marginal_p[name] < Decimal("0.025")
+                for pattern_index, name in enumerate(names)
+            )
+            family_adjusted = holm_stepdown(marginal_p).adjusted_p_values
+        else:
+            confidence_rejections = tuple(
+                scenario.null_configuration[pattern_index] == "0"
+                and wcr_s_pvalue(
+                    months[name], weights=weights, draws=inner_draws, candidate=candidate
+                )
+                < Decimal("0.025")
+                for pattern_index, name in enumerate(names)
+            )
+            family_adjusted = romano_wolf_stepdown(
+                months, weights=weights, draws=inner_draws, candidate=candidate
+            ).adjusted_p_values
+        family_false = any(family_adjusted[name] < Decimal("0.05") for name in null_names)
         attempts.append(
             SyntheticPilotAttempt(
                 index,

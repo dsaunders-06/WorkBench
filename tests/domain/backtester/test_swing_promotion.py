@@ -291,7 +291,7 @@ def test_concentration_gate_uses_symbol_year_and_top_five_percent_leave_outs() -
         n_required=100,
         g_required=36,
         wcr_lower_bound=Decimal("0.1"),
-        romano_wolf_adjusted_p=Decimal("0.01"),
+        family_adjusted_p=Decimal("0.01"),
         doubled_cost_expectancy=Decimal("0.2"),
         method_status=MethodStatus.METHOD_ADEQUATE,
         feasibility_status=FeasibilityStatus.FEASIBLE,
@@ -304,6 +304,9 @@ def test_concentration_gate_uses_symbol_year_and_top_five_percent_leave_outs() -
     assert len(result.gates) == 7
     assert not result.gates[5].passed
     assert not result.gates[6].passed
+    holm = evaluate_pattern_edge_gates(replace(inputs, family_method="holm"))
+    assert holm.gates[2].passed
+    assert "Holm" in holm.gates[2].evidence
 
 
 def test_failed_constituent_pattern_overrides_claimed_combined_edge() -> None:

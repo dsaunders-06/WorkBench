@@ -7,8 +7,11 @@ from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
+import numpy as np
 import pytest
 
+from qat.domain.backtester import swing_method_audit as audit
+from qat.domain.backtester import swing_statistics as stats
 from qat.domain.backtester.swing_results import (
     PostFillResistanceDiagnostic,
     ReplayEquityPoint,
@@ -210,6 +213,67 @@ def test_six_cluster_exact_floor_reaches_confidence_and_family_gates() -> None:
     assert wcr_s_pvalue(months, draws=64) == Decimal(1) / Decimal(64)
     family = romano_wolf_stepdown({"one": months}, draws=64)
     assert family.adjusted_p_values["one"] == Decimal(1) / Decimal(64)
+
+
+def test_holm_stepdown_orders_pvalues_and_matches_hand_calculation() -> None:
+    result = stats.holm_stepdown(
+        {"third": Decimal("0.20"), "first": Decimal("0.01"), "second": Decimal("0.04")}
+    )
+
+    assert result.order == ("first", "second", "third")
+    assert result.adjusted_p_values == {
+        "first": Decimal("0.03"),
+        "second": Decimal("0.08"),
+        "third": Decimal("0.20"),
+    }
+
+
+def test_holm_stepdown_ties_are_stable_and_adjustment_is_monotone() -> None:
+    result = stats.holm_stepdown({"z": Decimal(1), "b": Decimal("0.02"), "a": Decimal("0.02")})
+
+    assert result.order == ("a", "b", "z")
+    assert result.adjusted_p_values == {
+        "a": Decimal("0.06"),
+        "b": Decimal("0.06"),
+        "z": Decimal(1),
+    }
+
+
+def test_holm_candidate_uses_unchanged_exact_wcr_pvalues() -> None:
+    candidate = InferenceCandidate("aligned_block", 4, "holm")
+    samples = {
+        "ema_pullback": tuple((Decimal(str(index % 9 - 2)),) for index in range(36)),
+        "bull_flag": tuple((Decimal(str(index % 7 - 3)),) for index in range(36)),
+        "double_bottom": tuple((Decimal(str(index % 5 - 2)),) for index in range(36)),
+    }
+
+    result = stats.holm_wcr_stepdown(samples, candidate=candidate, draws=9_999)
+
+    assert result.bootstrap_counts == {name: 512 for name in samples}
+    assert result.raw_p_values == {
+        name: wcr_s_pvalue(months, candidate=candidate, draws=9_999)
+        for name, months in samples.items()
+    }
+    assert all(
+        value >= result.raw_p_values[name] for name, value in result.adjusted_p_values.items()
+    )
+
+
+def test_family_dispatch_uses_holm_only_for_declared_candidate() -> None:
+    scenario = audit.SyntheticScenario("holm-dispatch", "gaussian", 36, 8, 1, "000", Decimal("0.2"))
+    rng = np.random.Generator(np.random.PCG64(91))
+    samples = audit._synthetic_months(scenario, rng)
+    weights = np.where(rng.integers(0, 2, size=(31, 36)) == 0, -1, 1).tolist()
+
+    holm = stats.family_adjusted_pvalues(
+        samples, weights=weights, draws=31, candidate=InferenceCandidate("aligned_block", 4, "holm")
+    )
+    romano = stats.family_adjusted_pvalues(
+        samples, weights=weights, draws=31, candidate=InferenceCandidate("aligned_block", 4)
+    )
+
+    assert set(holm.values()) == {Decimal("0.09375")}
+    assert set(romano.values()) == {Decimal("0.03125")}
 
 
 def test_signal_metrics_use_order_r_and_cash_equity_uses_compounding() -> None:

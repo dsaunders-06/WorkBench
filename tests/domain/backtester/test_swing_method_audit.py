@@ -23,6 +23,7 @@ from qat.domain.backtester.swing_method_audit import (
     plan_holdout_duration,
     run_synthetic_pilot,
 )
+from qat.domain.backtester.swing_statistics import InferenceCandidate
 from qat.domain.strategies.authoritative_swing.model import Pattern
 
 
@@ -260,6 +261,38 @@ def test_synthetic_pilot_replays_every_attempt_deterministically() -> None:
     assert not first.promotion_eligible
     with pytest.raises(ValueError, match="frozen"):
         run_synthetic_pilot(scenario, outer_runs=4, inner_draws=31, seed=123)
+
+
+def test_holm_pilot_uses_marginal_stepdown_on_identical_outer_draw() -> None:
+    scenario = SyntheticScenario(
+        scenario_id="holm-routing-complete-null",
+        family="gaussian",
+        months=36,
+        observations_per_month=8,
+        block_months=1,
+        null_configuration="000",
+        delta_mme=Decimal("0.2"),
+    )
+    romano = run_synthetic_pilot(
+        scenario,
+        outer_runs=1,
+        inner_draws=31,
+        seed=91,
+        diagnostic=True,
+        candidate=InferenceCandidate("aligned_block", 4),
+    )
+    holm = run_synthetic_pilot(
+        scenario,
+        outer_runs=1,
+        inner_draws=31,
+        seed=91,
+        diagnostic=True,
+        candidate=InferenceCandidate("aligned_block", 4, "holm"),
+    )
+
+    assert romano.shared_inputs_sha256 == holm.shared_inputs_sha256
+    assert romano.attempts[0].family_false_positive
+    assert not holm.attempts[0].family_false_positive
 
 
 def test_poisson_like_counts_no_longer_bind_on_single_month_variance() -> None:

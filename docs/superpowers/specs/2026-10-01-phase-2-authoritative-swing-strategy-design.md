@@ -1047,7 +1047,7 @@ unchanged; feasibility and every permit input must be recomputed.
 
 **Operator amendment, 4 October 2026 (F1, Option 1 — predeclared method candidates):**
 Before any promotion-tier development outcome is released,
-`METHOD_AUDIT_DECLARED` must freeze exactly three production inference
+`METHOD_AUDIT_DECLARED` initially proposed three production inference
 candidates: (1) entry-month WCR-S; (2) WCR-S on fixed consecutive
 three-month quarter clusters; and (3) an aligned block-cluster wild bootstrap
 with one declared block length `L` in complete calendar months. Block origin,
@@ -1057,7 +1057,7 @@ scenario may be added or removed after development data is released. The
 operator selects a method only by the rule below, never by inspecting holdout
 outcomes. This amendment supersedes the single entry-month method assumption.
 
-All candidates test the intercept-only mean with restricted scores and CV1
+The initial three candidates test the intercept-only mean with restricted scores and CV1
 studentization, sharing one tie-safe one-sided p-value computation and the
 same Romano–Wolf stepdown path across patterns. Under this null there are no
 free nuisance regressors: each restricted score is the cluster sum of
@@ -1075,6 +1075,36 @@ both the 2.5% confidence gate and 5% family gate requires at least six
 nonempty clusters per pattern: five yield `1/32 = 3.125%`, whereas six
 yield `1/64 = 1.5625%`. A candidate below this floor is ineligible before
 size or power comparison.
+
+**Operator amendment, 7 October 2026 (final pre-declaration Holm candidate):**
+The completed generic pilot found the initial three candidates inadequate.
+Aligned block `L = 4` passed the confidence-size cap in all 28 generic
+mandatory cells but exceeded the family-size cap under mean and combined
+dependence stress. Before any further result, the operator added exactly one
+final candidate: the same aligned four-month WCR-S test and 97.5% lower
+confidence bound, with one-sided Holm stepdown at 5% family-wise error instead
+of Romano–Wolf. Apply Holm to the three patterns' own tie-safe WCR-S p-values,
+sorted ascending with deterministic name ordering for ties; multiply each
+ordered p-value by its remaining hypothesis count, cap at one, and take the
+running maximum. The WCR-S cluster frame, CV1 statistic, weights, exact sign
+enumeration, and p-value calculation do not change. With a 36-month frame,
+nine aligned clusters enumerate all 512 sign vectors.
+
+Run this candidate on the same seeds, outer draws and weight matrices as the
+existing `L = 4` candidate in all 28 generic mandatory cells: volatility
+regime, return-baseline AR(1), AR(1) mean stress 0.25, and combined volatility
+0.4524 plus mean stress 0.25, each with the seven null configurations. Retain
+the 20,000/100,000 sequential rule and 3.25% confidence and 6% family upper
+95% Monte Carlo caps. If every cell passes both gates, this is the only
+qualifying candidate; update the unsigned method draft accordingly. If any
+cell fails, status is `METHOD_INADEQUATE`; make no further candidate,
+threshold, or dependence change and hold for operator closure of Phase 2
+promotion work under the current evidence standard. No new power-ranking grid
+is run for one candidate; power remains blinded until `EFFECT_DECLARED`.
+Passing this size audit would validate a holdout test, not predict its success.
+Nine clusters imply a duration-planner requirement likely beyond 36 months.
+This amendment supersedes the initial three-candidate limit and the common
+Romano–Wolf requirement only for the added candidate.
 
 The mandatory matrix consists of predeclared development/validation-calibrated
 block-resampled scenarios, zero-mean volatility-regime scenarios calibrated to
@@ -1351,7 +1381,7 @@ correction among themselves. All must pass on the post-Phase-4 frozen baseline:
    entry-month clusters;
 2. positive net `R_order` expectancy after modeled costs;
 3. the 97.5% one-sided lower bound under the selected declared candidate for mean `R_order`
-   is above zero and the Romano-Wolf adjusted one-sided p-value is below 0.05;
+   is above zero and the selected method's adjusted one-sided family p-value is below 0.05;
 4. profit factor is at least 1.20;
 5. expectancy remains positive with doubled slippage and commission
    assumptions;
@@ -1373,12 +1403,14 @@ collapsed bootstrap, or any failed mandatory method-audit scenario is
 `INSUFFICIENT_EVIDENCE` or `METHOD_INADEQUATE`, never a pass.
 
 EMA pullback, bull flag, and double bottom are three separately promotable
-hypotheses. Apply a one-sided Romano-Wolf stepdown test at family-wise error
-rate 5%, using common aligned candidate weights to preserve dependence. Audit the
+hypotheses. Apply one-sided Romano-Wolf stepdown for the initial three
+candidates, or one-sided Holm stepdown for the final aligned-block `L = 4`
+candidate, at family-wise error rate 5%. Audit the
 complete null and every one- and two-null partial configuration. Order
-hypotheses by descending observed statistic, compare each with the bootstrap
-maximum over the remaining stepdown set, and enforce monotone adjusted
-p-values. The combined portfolio is secondary and cannot pass when any
+hypotheses by descending observed statistic for Romano-Wolf, compare each
+with the bootstrap maximum over the remaining stepdown set, and enforce
+monotone adjusted p-values. Holm orders the three marginal p-values ascending
+and enforces the same monotonicity. The combined portfolio is secondary and cannot pass when any
 included constituent pattern fails. Sensitivity runs cannot promote.
 
 The concentration gate passes only when net expectancy remains above zero in

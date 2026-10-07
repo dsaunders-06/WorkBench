@@ -33,7 +33,7 @@ from qat.domain.backtester.swing_statistics import (
     InferenceCandidate,
     candidate_cluster_count,
     candidate_eligible,
-    romano_wolf_stepdown,
+    family_adjusted_pvalues,
     wcr_s_mean_test,
 )
 
@@ -191,7 +191,7 @@ class PatternEdgeInputs:
     n_required: int
     g_required: int
     wcr_lower_bound: Decimal | None
-    romano_wolf_adjusted_p: Decimal | None
+    family_adjusted_p: Decimal | None
     doubled_cost_expectancy: Decimal | None
     method_status: MethodStatus | None
     feasibility_status: FeasibilityStatus | None
@@ -200,6 +200,7 @@ class PatternEdgeInputs:
     protocol_frozen: bool
     permit_satisfied: bool
     inference_clusters: int | None = None
+    family_method: str = "romano_wolf"
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,9 +276,11 @@ def evaluate_pattern_edge_gates(inputs: PatternEdgeInputs) -> PatternEdgeResult:
             "cluster_inference",
             inputs.wcr_lower_bound is not None
             and inputs.wcr_lower_bound > 0
-            and inputs.romano_wolf_adjusted_p is not None
-            and inputs.romano_wolf_adjusted_p < Decimal("0.05"),
-            "97.5% WCR-S lower bound and 5% Romano-Wolf stepdown",
+            and inputs.family_adjusted_p is not None
+            and inputs.family_adjusted_p < Decimal("0.05"),
+            "97.5% WCR-S lower bound and 5% "
+            + ("Holm" if inputs.family_method == "holm" else "Romano-Wolf")
+            + " stepdown",
         ),
         GateResult("profit_factor", profit_factor_pass, "net P&L profit factor >= 1.20"),
         GateResult(
@@ -811,9 +814,9 @@ def promotion_case_from_replays(
         lowers: dict[str, Decimal] = {}
         try:
             if all(candidate_eligible(sample, candidate) for sample in samples.values()):
-                adjusted = romano_wolf_stepdown(
+                adjusted = family_adjusted_pvalues(
                     samples, draws=draws, seed=seed, candidate=candidate
-                ).adjusted_p_values
+                )
                 lowers = {
                     name: wcr_s_mean_test(
                         sample, draws=draws, seed=seed, candidate=candidate
@@ -878,9 +881,10 @@ def promotion_case_from_replays(
                     context,
                     trades=trades,
                     wcr_lower_bound=lowers.get(name),
-                    romano_wolf_adjusted_p=adjusted.get(name),
+                    family_adjusted_p=adjusted.get(name),
                     doubled_cost_expectancy=double_mean,
                     inference_clusters=candidate_cluster_count(samples[name], candidate),
+                    family_method=candidate.family_method,
                 )
             )
             results.append(

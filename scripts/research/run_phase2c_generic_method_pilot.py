@@ -113,7 +113,8 @@ def power_seed_for(scenario: audit.SyntheticScenario) -> int:
 
 
 def _candidate_name(candidate: InferenceCandidate) -> str:
-    return f"{candidate.method}-L{candidate.block_months}"
+    family = "_holm" if candidate.family_method == "holm" else ""
+    return f"{candidate.method}{family}-L{candidate.block_months}"
 
 
 def _atomic_json(path: Path, payload: dict) -> None:
@@ -181,7 +182,9 @@ def _read_or_run(
     return payload
 
 
-def _decisions(scenario: audit.SyntheticScenario, payload: dict) -> list[dict]:
+def _decisions(
+    scenario: audit.SyntheticScenario, payload: dict, candidate: InferenceCandidate
+) -> list[dict]:
     null_indices = [index for index, flag in enumerate(scenario.null_configuration) if flag == "0"]
     rows = payload["attempts"]
     size = (
@@ -202,7 +205,7 @@ def _decisions(scenario: audit.SyntheticScenario, payload: dict) -> list[dict]:
     )
     protocol = audit.MethodAuditProtocol(
         mandatory_scenarios=tuple(item.scenario_id for item in size),
-        candidate_methods=CANDIDATES,
+        candidate_methods=(candidate,),
     )
     result = audit.audit_method_size(protocol, size)
     return [
@@ -229,13 +232,13 @@ def run_cell(scenario: audit.SyntheticScenario, output_dir: Path, role: str) -> 
     summaries = []
     for candidate in CANDIDATES:
         payload = initial[candidate]
-        decisions = _decisions(scenario, payload)
+        decisions = _decisions(scenario, payload, candidate)
         if any(item["status"] == audit.MethodStatus.METHOD_AUDIT_PENDING for item in decisions):
             extended = _read_or_run(scenario, candidate, MAXIMUM_OUTER, output_dir)
             if extended["attempts"][:INITIAL_OUTER] != payload["attempts"]:
                 raise ValueError(f"100k run changed the 20k prefix for {scenario.scenario_id}")
             payload = extended
-            decisions = _decisions(scenario, payload)
+            decisions = _decisions(scenario, payload, candidate)
         summaries.append(
             {
                 "candidate": _candidate_name(candidate),

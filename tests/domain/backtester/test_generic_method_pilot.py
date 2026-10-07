@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from qat.domain.backtester.swing_statistics import InferenceCandidate
 from scripts.research import run_phase2c_generic_method_pilot as pilot
 
 
@@ -78,3 +79,9 @@ def test_combined_stress_adds_exactly_seven_mandatory_null_cells() -> None:
         for cell in cells
     )
     assert len({cell.scenario_id for cell in cells}) == 7
+
+
+def test_holm_candidate_has_distinct_checkpoint_identity() -> None:
+    assert pilot._candidate_name(InferenceCandidate("aligned_block", 4, "holm")) == (
+        "aligned_block_holm-L4"
+    )

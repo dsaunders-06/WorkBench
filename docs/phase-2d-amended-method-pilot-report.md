@@ -186,9 +186,13 @@ SHA-256 hashes are:
 | Artifact | SHA-256 |
 | --- | --- |
 | 77-cell `report.json` | `f76ac5c56578c9a849c19ce73b7a8bf12d565592361a3284ed0b617d3861ae50` |
-| Seven-cell `combined-report.json` | `45a2cb43efd8d9e65cf4910be5954080ab5bdf0f10a0b323dd11fdd55851` |
+| Seven-cell `combined-report.json` | `45a2cb43efd8d9e65cf4910be5954080ab5bd63dbf0f10a0b323dd11fdd55851` |
 | Paired `power-report.json` | `709a7f43a2fb35fb44ffb1e8eea8fd6407f17d8d4c365a85bc6174fc15ecc2a6` |
 | Committed size summary CSV | `f396bd5ca261f864147445c1b391886a8e78b7d9cc1d08d5cd7616611ac0b81d` |
+
+The combined-report hash above corrects a transcription error in the
+preceding report revision; the outside-Git file and its contents were not
+changed.
 
 The combined report pins the prior report hash. Independent checks confirmed
 all seven null configurations, identical candidate inputs at each common

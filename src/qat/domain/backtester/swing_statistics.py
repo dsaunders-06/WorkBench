@@ -27,6 +27,7 @@ MIN_ELIGIBLE_CLUSTERS = 6
 class InferenceCandidate:
     method: Literal["entry_month", "quarter", "aligned_block"]
     block_months: int = 1
+    family_method: Literal["romano_wolf", "holm"] = "romano_wolf"
 
     def __post_init__(self) -> None:
         expected = {"entry_month": 1, "quarter": 3}
@@ -35,6 +36,13 @@ class InferenceCandidate:
                 raise ValueError("entry-month and quarter cluster lengths are fixed")
         elif self.method != "aligned_block" or self.block_months < 2:
             raise ValueError("aligned block candidate requires a declared length of at least two")
+        if self.family_method not in {"romano_wolf", "holm"}:
+            raise ValueError("unknown family inference method")
+        if self.family_method == "holm" and (self.method, self.block_months) != (
+            "aligned_block",
+            4,
+        ):
+            raise ValueError("Holm is declared only for aligned four-month clusters")
 
 
 ENTRY_MONTH_WCR_S = InferenceCandidate("entry_month")
@@ -87,6 +95,18 @@ class RomanoWolfResult:
         object.__setattr__(
             self, "observed_statistics", MappingProxyType(dict(self.observed_statistics))
         )
+
+
+@dataclass(frozen=True, slots=True)
+class HolmResult:
+    order: tuple[str, ...]
+    raw_p_values: Mapping[str, Decimal]
+    adjusted_p_values: Mapping[str, Decimal]
+    bootstrap_counts: Mapping[str, int]
+
+    def __post_init__(self) -> None:
+        for name in ("raw_p_values", "adjusted_p_values", "bootstrap_counts"):
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,3 +441,63 @@ def romano_wolf_stepdown(
         previous = max(previous, raw)
         adjusted[name] = previous
     return RomanoWolfResult(order, adjusted, observed, len(matrix))
+
+
+def holm_stepdown(p_values: Mapping[str, Decimal]) -> HolmResult:
+    """One-sided Holm family adjustment from marginal WCR-S p-values."""
+    if not p_values:
+        raise ValueError("Holm requires pattern p-values")
+    if any(not p.is_finite() or p < 0 or p > 1 for p in p_values.values()):
+        raise ValueError("Holm p-values must be finite probabilities")
+    order = tuple(sorted(p_values, key=lambda name: (p_values[name], name)))
+    adjusted: dict[str, Decimal] = {}
+    previous = Decimal(0)
+    for index, name in enumerate(order):
+        previous = max(previous, min(Decimal(1), Decimal(len(order) - index) * p_values[name]))
+        adjusted[name] = previous
+    return HolmResult(order, p_values, adjusted, {})
+
+
+def holm_wcr_stepdown(
+    samples: Mapping[str, Sequence[Sequence[Decimal]]],
+    *,
+    weights: Sequence[Sequence[int]] | None = None,
+    draws: int = 9_999,
+    seed: int = 0,
+    candidate: InferenceCandidate,
+) -> HolmResult:
+    """Apply Holm to each pattern's unchanged tie-safe WCR-S p-value."""
+    if candidate.family_method != "holm":
+        raise ValueError("Holm WCR-S needs the declared Holm candidate")
+    if len({len(months) for months in samples.values()}) > 1:
+        raise ValueError("patterns must share a complete entry-month frame")
+    raw = {
+        name: wcr_s_pvalue(months, weights=weights, draws=draws, seed=seed, candidate=candidate)
+        for name, months in samples.items()
+    }
+    result = holm_stepdown(raw)
+    counts = {}
+    for name, months in samples.items():
+        exact_count = 1 << candidate_cluster_count(months, candidate)
+        counts[name] = (
+            exact_count if exact_count <= draws else len(weights) if weights is not None else draws
+        )
+    return HolmResult(result.order, result.raw_p_values, result.adjusted_p_values, counts)
+
+
+def family_adjusted_pvalues(
+    samples: Mapping[str, Sequence[Sequence[Decimal]]],
+    *,
+    weights: Sequence[Sequence[int]] | None = None,
+    draws: int = 9_999,
+    seed: int = 0,
+    candidate: InferenceCandidate = ENTRY_MONTH_WCR_S,
+) -> Mapping[str, Decimal]:
+    """Dispatch only the declared Holm candidate to marginal family inference."""
+    if candidate.family_method == "holm":
+        return holm_wcr_stepdown(
+            samples, weights=weights, draws=draws, seed=seed, candidate=candidate
+        ).adjusted_p_values
+    return romano_wolf_stepdown(
+        samples, weights=weights, draws=draws, seed=seed, candidate=candidate
+    ).adjusted_p_values
