@@ -1,0 +1,195 @@
+{
+  "status": "UNSIGNED_DRAFT_UNRESOLVED",
+  "declaration_type": "METHOD_AUDIT_DECLARED",
+  "operator_amendment": "F1 Option 1: predeclare candidates and selection rule before development release",
+  "not_declaration": true,
+  "unresolved_before_declaration": [
+    "positive delta_MME from EFFECT_DECLARED",
+    "development/validation calibration inputs and resulting fixed-parameter scenario instances",
+    "pilot report hash and frozen implementation/code hash",
+    "operator freeze of common projection sample size"
+  ],
+  "candidates": [
+    {
+      "id": "entry_month",
+      "cluster": "nonempty complete entry calendar months",
+      "block_length_months": 1
+    },
+    {
+      "id": "quarter",
+      "cluster": "fixed consecutive three-month clusters aligned to declared origin",
+      "block_length_months": 3
+    },
+    {
+      "id": "aligned_block",
+      "cluster": "fixed aligned nonoverlapping blocks of L complete calendar months",
+      "block_length_months": 4,
+      "block_origin": "first complete entry month of each partition"
+    }
+  ],
+  "common_inference": {
+    "null": "intercept-only restricted mean",
+    "score": "cluster sum of observations minus count times null mean",
+    "studentization": "CV1",
+    "family": "one-sided Romano-Wolf stepdown over EMA pullback, bull flag, double bottom, common candidate-aligned weights",
+    "inner_draws": 9999,
+    "tie_rule": {
+      "exact_enumeration_when": "2^G <= inner_draws",
+      "enumeration": "all Rademacher sign vectors, fixed lexicographic order",
+      "exceedance": "bootstrap statistic >= observed statistic, including equality",
+      "otherwise_relative_tolerance": "1e-12",
+      "absolute_tolerance": "0"
+    },
+    "numeric_policy": "v3"
+  },
+  "eligibility": {
+    "confidence_nominal": "0.025",
+    "family_nominal": "0.05",
+    "attainable_floor": "1 / 2^G",
+    "minimum_nonempty_clusters_per_pattern": 6,
+    "at_five": "0.03125",
+    "at_six": "0.015625",
+    "decision": "ineligible if floor cannot reach both nominal gates"
+  },
+  "paired_audit": {
+    "same_outer_draws": true,
+    "same_base_month_weight_matrices": true,
+    "candidate_weight_mapping": "use the first base-month sign in each aligned candidate cluster under a fixed mapping",
+    "mandatory_size_qualification": "every mandatory null scenario must pass confidence and family limits",
+    "selection": "among qualifying candidates, maximize the minimum projected rejection fraction at delta_MME across mandatory power scenarios and patterns at one common declared projection sample size; break exact ties by larger nonempty cluster count at that size",
+    "if_none": "METHOD_INADEQUATE",
+    "after_selection": "recompute pattern-specific N_required >= 100 and G_required >= 6 and minimum detectable effect under chosen method; require >=80% prospective power",
+    "projection_sample_size": 100,
+    "projection_sample_size_status": "PROPOSED_PLACEHOLDER_REQUIRES_OPERATOR_FREEZE_BEFORE_RELEASE"
+  },
+  "scenario_matrix": {
+    "mandatory": [
+      {
+        "id": "calibrated_block_resampled",
+        "generator": "development/validation calibrated joint pattern block resampling",
+        "parameters": "fixed by predeclared calibration recipe; concrete values unresolved until authorized source is available"
+      },
+      {
+        "id": "generic_persistence",
+        "generator": "joint pattern persistent shocks",
+        "persistence_months": [1, 2, 3, 4],
+        "note": "the strategy-independent market proxy supports one through four months; longer persistence is a disclosed sensitivity"
+      },
+      {
+        "id": "cluster_imbalance",
+        "levels": [
+          "observed",
+          "stressed"
+        ]
+      },
+      {
+        "id": "skew",
+        "levels": [
+          "empirical"
+        ]
+      },
+      {
+        "id": "null_configurations",
+        "levels": [
+          "000",
+          "d00",
+          "0d0",
+          "00d",
+          "dd0",
+          "d0d",
+          "0dd"
+        ],
+        "note": "0 denotes true null and d denotes the declared positive delta_MME alternative; complete and all one- and two-null partial configurations"
+      },
+      {
+        "id": "terminal_loss",
+        "generator": "calibrated mandatory terminal-loss envelope"
+      }
+    ],
+    "sensitivity": [
+      {
+        "id": "longer_persistence",
+        "persistence_months": [6, 12],
+        "includes_twelve_month_when_unsupported": true
+      },
+      {
+        "id": "terminal_contamination_grid",
+        "event_probabilities": [
+          "0.2%",
+          "0.5%",
+          "1%"
+        ],
+        "losses_R": [
+          "-20",
+          "-50"
+        ],
+        "mandatory_only_if_inside_calibrated_envelope": true
+      }
+    ],
+    "size_recentring": "entire mixture recentered to true mean zero",
+    "power_shift": "positive delta_MME from EFFECT_DECLARED"
+  },
+  "market_regime_proxy": {
+    "source_status": "ASX_MONTHLY_PRIMARY_WITH_OPERATOR_DISCREPANCY_RULE_APPLIED",
+    "minimum_history_years": 10,
+    "allowed_indices": [
+      "ASX 200",
+      "All Ordinaries"
+    ],
+    "series": [
+      "monthly index returns",
+      "monthly absolute returns",
+      "monthly realised volatility"
+    ],
+    "autocorrelation_lags": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12
+    ],
+    "report": [
+      "autocorrelation by series and lag",
+      "half-life by series",
+      "recommended mandatory persistence set"
+    ],
+    "excluded_inputs": [
+      "strategy outcomes",
+      "static-cache trade results",
+      "promotion shards"
+    ],
+    "mandatory_persistence_months": [1, 2, 3, 4],
+    "block_length_L_months": 4,
+    "source_audit_report": "docs/phase-2-market-regime-proxy.md",
+    "july_2014_source_sensitivity": "same mandatory persistence recommendation with Yahoo substitute",
+    "approved_sources": [
+      "ASX published end-of-month S&P/ASX 200 price index (archive and current) as primary",
+      "RBA F18 monthly overlap as return-level cross-check and September 2023 adjudicator",
+      "daily ^AXJO via yfinance for realised volatility, return-level cross-check, and operator-approved source adjudication"
+    ]
+  },
+  "seeds": {
+    "status": "PROPOSED_PLACEHOLDER_REQUIRES_OPERATOR_FREEZE_BEFORE_RELEASE",
+    "outer_null": 845317,
+    "inner_signs": 845318,
+    "power": 845319,
+    "scenario_derivation": "SHA-256 of base seed, ordered scenario id and replicate index; use first 64 bits as unsigned integer"
+  },
+  "caps": {
+    "outer_runs_initial": 20000,
+    "outer_runs_maximum": 100000,
+    "confidence_upper_95_limit": "0.0325",
+    "family_upper_95_limit": "0.06",
+    "early_accept_margin_percentage_points": "0.25",
+    "early_reject_margin_percentage_points": "0.25",
+    "final_decision": "upper 95% Monte Carlo limit <= cap for every mandatory size cell",
+    "prospective_power_minimum": "0.80"
+  }
+}

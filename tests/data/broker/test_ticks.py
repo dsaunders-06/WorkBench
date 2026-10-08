@@ -6,7 +6,13 @@ from decimal import Decimal
 
 import pytest
 
-from qat.data.broker.ticks import is_on_tick, round_to_tick, tick_size
+from qat.data.broker.ticks import (
+    ASX_ORDINARY_EQUITY_TICK_PROFILE,
+    is_on_tick,
+    previous_raw_order_tick,
+    round_to_tick,
+    tick_size,
+)
 
 
 @pytest.mark.parametrize(
@@ -23,6 +29,34 @@ from qat.data.broker.ticks import is_on_tick, round_to_tick, tick_size
 )
 def test_the_asx_bands_are_what_the_operating_rules_say(price, expected) -> None:
     assert tick_size(price, "ASX") == Decimal(expected)
+
+
+@pytest.mark.parametrize(
+    ("price", "expected"),
+    [("0.10", "0.099"), ("2.00", "1.995"), ("0.011", "0.010")],
+)
+def test_previous_tick_crosses_asx_bands_without_float_drift(price, expected) -> None:
+    assert previous_raw_order_tick(Decimal(price), "ASX") == Decimal(expected)
+
+
+def test_asx_band_edges_use_the_upper_band() -> None:
+    assert tick_size(Decimal("0.10"), "ASX") == Decimal("0.005")
+    assert tick_size(Decimal("2.00"), "ASX") == Decimal("0.01")
+
+
+def test_asx_tick_profile_carries_auditable_source_metadata() -> None:
+    profile = ASX_ORDINARY_EQUITY_TICK_PROFILE
+
+    assert profile.version == "asx-ordinary-equity-price-steps-2026-10-02"
+    assert profile.source_url.startswith("https://www.asx.com.au/")
+    assert profile.retrieved_on.isoformat() == "2026-10-02"
+    assert len(profile.content_sha256) == 64
+    assert profile.effective_from is not None
+
+
+def test_previous_tick_refuses_a_price_without_a_positive_predecessor() -> None:
+    with pytest.raises(ValueError, match="predecessor"):
+        previous_raw_order_tick(Decimal("0.0005"), "ASX")
 
 
 def test_the_us_tick_is_a_cent_everywhere_this_system_trades() -> None:

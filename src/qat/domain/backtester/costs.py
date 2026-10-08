@@ -176,40 +176,71 @@ class MarketCostProfile:
         return self.min_commission / (self.commission_bps / 10_000.0)
 
 
+@dataclass(frozen=True, slots=True)
+class MarketCostParameterText:
+    """Canonical source text shared by float and exact-decimal adapters."""
+
+    label: str
+    commission_bps: str
+    min_commission: str
+    currency: str
+    third_party_fees_passed_through: bool
+    third_party_bps: str = "0"
+    note: str = ""
+
+
+_FIXED_NOTE = ""
+_TIERED_NOTE = (
+    "Tier I matches Fixed on rate (0.088%) with a lower floor (AUD 5.50), but "
+    "passes exchange and clearing fees through on top. Tiered is cheaper only "
+    "below about AUD 7,130 a trade, and by at most ~AUD 1.10; above that Fixed "
+    "wins and its advantage grows with size."
+)
+
+MARKET_COST_PARAMETER_TEXT: dict[tuple[str, str], MarketCostParameterText] = {
+    ("ASX", "fixed"): MarketCostParameterText(
+        label="IBKR Australia - Fixed (inc GST)",
+        commission_bps="8.8",
+        min_commission="6.60",
+        currency="AUD",
+        third_party_fees_passed_through=False,
+        note=_FIXED_NOTE,
+    ),
+    ("ASX", "tiered"): MarketCostParameterText(
+        label="IBKR Australia - Tiered Tier I (inc GST)",
+        commission_bps="8.8",
+        min_commission="5.50",
+        currency="AUD",
+        third_party_fees_passed_through=True,
+        third_party_bps="0.45375",
+        note=_TIERED_NOTE,
+    ),
+}
+
+
+def _float_profile(parameters: MarketCostParameterText) -> MarketCostProfile:
+    return MarketCostProfile(
+        label=parameters.label,
+        commission_bps=float(parameters.commission_bps),
+        min_commission=float(parameters.min_commission),
+        currency=parameters.currency,
+        third_party_fees_passed_through=parameters.third_party_fees_passed_through,
+        third_party_bps=float(parameters.third_party_bps),
+        note=parameters.note,
+    )
+
+
 # Interactive Brokers Australia, verified against the vendor's own worked
 # example on the APAC stocks pricing page: 400 shares at AUD 50 is a trade
 # value of AUD 20,000, and 0.088% of that is AUD 17.60 inclusive of GST
 # (AUD 16.00 at the 0.08% exclusive rate). Both figures reproduce exactly.
-_ASX_FIXED = MarketCostProfile(
-    label="IBKR Australia - Fixed (inc GST)",
-    commission_bps=8.8,  # 0.088% of trade value
-    min_commission=6.60,
-    currency="AUD",
-    third_party_fees_passed_through=False,  # Fixed lists third party fees as None
-)
+_ASX_FIXED = _float_profile(MARKET_COST_PARAMETER_TEXT[("ASX", "fixed")])
 
 # Tier I applies up to AUD 3,000,000 of monthly trade value. Same rate as
 # Fixed with a lower floor, but exchange and clearing fees are passed through
 # on top and are NOT modelled here - so this profile understates the true cost
 # by whatever those come to.
-_ASX_TIERED_1 = MarketCostProfile(
-    label="IBKR Australia - Tiered Tier I (inc GST)",
-    commission_bps=8.8,
-    min_commission=5.50,
-    currency="AUD",
-    third_party_fees_passed_through=True,
-    # ASX stocks, inclusive of GST: exchange 0.00001815 + clearing 0.000027225
-    # = 0.000045375 of trade value. Auction trades carry a higher exchange fee
-    # (0.00003388) and are not separately modelled, so an auction-heavy
-    # strategy is understated by roughly 0.16bps a side.
-    third_party_bps=0.45375,
-    note=(
-        "Tier I matches Fixed on rate (0.088%) with a lower floor (AUD 5.50), but "
-        "passes exchange and clearing fees through on top. Tiered is cheaper only "
-        "below about AUD 7,130 a trade, and by at most ~AUD 1.10; above that Fixed "
-        "wins and its advantage grows with size."
-    ),
-)
+_ASX_TIERED_1 = _float_profile(MARKET_COST_PARAMETER_TEXT[("ASX", "tiered")])
 
 MARKET_COST_PROFILES: dict[tuple[str, str], MarketCostProfile] = {
     ("ASX", "fixed"): _ASX_FIXED,

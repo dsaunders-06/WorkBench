@@ -15,6 +15,7 @@ dependencies = [
     "numpy>=1.26",
     "pyarrow>=16",
     "requests>=2.32",
+    "cryptography>=45,<51",
     "tzdata>=2024.1",
     "hmmlearn>=0.3",
     "scikit-learn>=1.4",

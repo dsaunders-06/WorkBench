@@ -12,13 +12,17 @@ and the arithmetic are all right together.
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from qat.config import Settings
 from qat.domain.backtester.costs import (
+    MARKET_COST_PARAMETER_TEXT,
     MARKET_COST_PROFILES,
     CostModel,
 )
+from qat.domain.strategies.authoritative_swing.sizing import exact_cost_profile
 
 
 def _model(pricing_model: str = "fixed") -> CostModel:
@@ -123,3 +127,29 @@ def test_us_trading_does_not_inherit_australian_pricing() -> None:
 
     us = CostModel.from_settings(Settings(_env_file=None, market="US"))
     assert us.third_party_bps == 0.0
+
+
+@pytest.mark.parametrize("pricing_model", ["fixed", "tiered"])
+def test_float_and_exact_adapters_share_one_canonical_fee_source(pricing_model: str) -> None:
+    text = MARKET_COST_PARAMETER_TEXT[("ASX", pricing_model)]
+    float_profile = MARKET_COST_PROFILES[("ASX", pricing_model)]
+    exact = exact_cost_profile("ASX", pricing_model)
+
+    assert str(float_profile.commission_bps) == str(float(text.commission_bps))
+    assert str(float_profile.min_commission) == str(float(text.min_commission))
+    assert str(float_profile.third_party_bps) == str(float(text.third_party_bps))
+    assert exact.commission_bps == Decimal(text.commission_bps)
+    assert exact.min_commission == Decimal(text.min_commission)
+    assert exact.third_party_bps == Decimal(text.third_party_bps)
+    assert exact.currency == float_profile.currency == text.currency
+    assert (
+        exact.third_party_fees_passed_through
+        is float_profile.third_party_fees_passed_through
+        is text.third_party_fees_passed_through
+    )
+
+
+def test_exact_fixed_profile_reproduces_vendor_worked_example() -> None:
+    exact = exact_cost_profile("ASX", "fixed")
+
+    assert exact.broker_charge(Decimal("20000")) == Decimal("17.60")
