@@ -1,3 +1,18 @@
+# Current handoff — 8 October 2026
+
+Phase 2 promotion is closed as `METHOD_INADEQUATE` under the pre-result
+stopping rule; the authoritative strategy remains unvalidated. Phase 2
+engineering merged into `master` through PR #4 at merge commit `fa084947`.
+Stage A remains dormant under the
+[phase-2d-stage-a-dormant tag](https://github.com/dsaunders-06/WorkBench/tree/phase-2d-stage-a-dormant).
+Phase 3 recommend-mode integration is **planning only** on
+`recovery/phase-3-recommend-mode`; implementation steps 2–6 are not authorized.
+See the [Phase 2 closure](phase-2-closure.md), [frozen Phase 3 operational
+contract](phase-3-recommend-mode-integration-spec.md) and
+[implementation plan](phase-3-recommend-mode-integration-plan.md). No live
+trading or autonomous orders are authorized. The dated handoff below is
+historical, not a current launch instruction.
+
 # Handoff — 16 September 2026 (morning; the audit finalised 15 Sep): DESIGN AUDIT FINALISED (R1–R24, Part I, Annexes A–C, one compiled report; classification RED); CHECKPOINT B next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was
