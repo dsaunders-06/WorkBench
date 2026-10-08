@@ -659,52 +659,39 @@ class HistoryStore:
                 )
         return tuple(result)
 
+    def read_view(self, session: date) -> tuple[tuple[BarRecord, ...], tuple[str, ...]]:
+        """Freeze accepted histories and audit events in a single read transaction."""
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            rows = conn.execute(
+                "SELECT * FROM bars WHERE session<=? ORDER BY symbol,session,version",
+                (session.isoformat(),),
+            ).fetchall()
+            events = tuple(row[0] for row in conn.execute("SELECT payload FROM audit ORDER BY id"))
+        selected: dict[tuple[str, date], BarRecord] = {}
+        previous: dict[tuple[str, date], BarRecord] = {}
+        for row in rows:
+            record = self._decode(row)
+            key = (record.bar.symbol, record.bar.session)
+            prior = previous.get(key)
+            if record.version != (prior.version + 1 if prior else 1) or record.previous_hash != (
+                prior.content_hash if prior else ""
+            ):
+                raise ValueError("broken operational version chain")
+            previous[key] = record
+            if record.accepted:
+                selected[key] = record
+        return tuple(selected.values()), events
+
     def check(
         self, symbol: str, session: date, calendar: CalendarLedger, membership: Membership
     ) -> QualityResult:
-        reasons: set[str] = set()
-        start = _three_year_start(session)
-        current = (
-            membership.effective_from <= session <= membership.effective_to
-            and symbol in membership.symbols
-        )
-        managed = symbol in membership.managed_symbols
-        if not current and not managed:
-            reasons.add("not_member_or_managed")
-        if not membership.effective_from <= session <= membership.effective_to:
-            reasons.add("membership_stale")
-        if calendar.coverage_start > start or calendar.coverage_end < session:
-            reasons.add("calendar_coverage")
-        if calendar.conflicts(start, session):
-            reasons.add("calendar_conflict")
         records = self.decision_bars(symbol, session)
-        dates = {r.bar.session for r in records}
-        expected = {s.session for s in calendar.sessions if start <= s.session <= session}
-        if not records or not expected or records[0].bar.session > min(expected):
-            reasons.add("three_year_history")
-        if not records or records[-1].bar.session != session:
-            reasons.add("stale_last_session")
-        if expected - dates:
-            reasons.add("gaps")
-        if dates - {s.session for s in calendar.sessions}:
-            reasons.add("unexpected_session")
-        for record in records:
-            reasons.update(_bar_reasons(record.bar))
-        for left, right in zip(records, records[1:], strict=False):
-            a, b = left.bar, right.bar
-            # Raw-to-common-basis factors must change only by the declared
-            # ex-session split ratio. Dividends never alter these factors.
-            if (
-                a.factor.numerator * b.factor.denominator * b.split_ratio.denominator
-                != b.factor.numerator * a.factor.denominator * b.split_ratio.numerator
-            ):
-                reasons.add("split_continuity")
         with self._connect() as conn:
-            events = [json.loads(row[0]) for row in conn.execute("SELECT payload FROM audit")]
-        for event in events:
-            if event.get("kind") == "ingest_block" and event.get("symbol") == symbol:
-                reasons.update(event["reasons"])
-        result = QualityResult(symbol, session, not reasons, current, tuple(sorted(reasons)))
+            events = [
+                _object(json.loads(row[0])) for row in conn.execute("SELECT payload FROM audit")
+            ]
+        result = assess_history(symbol, session, calendar, membership, records, events)
         self.log(
             {
                 "kind": "quality",
@@ -714,6 +701,58 @@ class HistoryStore:
             }
         )
         return result
+
+
+def assess_history(
+    symbol: str,
+    session: date,
+    calendar: CalendarLedger,
+    membership: Membership,
+    records: tuple[BarRecord, ...],
+    events: Sequence[Mapping[str, object]],
+) -> QualityResult:
+    """Pure quality assessment, shared by the live store and frozen read view."""
+    reasons: set[str] = set()
+    start = _three_year_start(session)
+    current = (
+        membership.effective_from <= session <= membership.effective_to
+        and symbol in membership.symbols
+    )
+    managed = symbol in membership.managed_symbols
+    if not current and not managed:
+        reasons.add("not_member_or_managed")
+    if not membership.effective_from <= session <= membership.effective_to:
+        reasons.add("membership_stale")
+    if calendar.coverage_start > start or calendar.coverage_end < session:
+        reasons.add("calendar_coverage")
+    if calendar.conflicts(start, session):
+        reasons.add("calendar_conflict")
+    dates = {r.bar.session for r in records}
+    expected = {s.session for s in calendar.sessions if start <= s.session <= session}
+    if not records or not expected or records[0].bar.session > min(expected):
+        reasons.add("three_year_history")
+    if not records or records[-1].bar.session != session:
+        reasons.add("stale_last_session")
+    if expected - dates:
+        reasons.add("gaps")
+    if dates - {s.session for s in calendar.sessions}:
+        reasons.add("unexpected_session")
+    for record in records:
+        reasons.update(_bar_reasons(record.bar))
+    for left, right in zip(records, records[1:], strict=False):
+        a, b = left.bar, right.bar
+        # Raw-to-common-basis factors must change only by the declared
+        # ex-session split ratio. Dividends never alter these factors.
+        if (
+            a.factor.numerator * b.factor.denominator * b.split_ratio.denominator
+            != b.factor.numerator * a.factor.denominator * b.split_ratio.numerator
+        ):
+            reasons.add("split_continuity")
+    for event in events:
+        if event.get("kind") == "ingest_block" and event.get("symbol") == symbol:
+            reasons.update(_text(r) for r in _list(event["reasons"]))
+    result = QualityResult(symbol, session, not reasons, current, tuple(sorted(reasons)))
+    return result
 
 
 class IBKRBarSource(Protocol):
@@ -752,6 +791,8 @@ def ingest_session(
     received_at: datetime,
 ) -> IngestResult:
     try:
+        if not symbols or len(set(symbols)) != len(symbols):
+            raise ValueError("required symbols must be unique and nonempty")
         bars = source.fetch(session, symbols)
         if (
             len(bars) != len(symbols)
@@ -762,7 +803,15 @@ def ingest_session(
         store.ingest(bars, calendar, received_at=received_at)
     except Exception as error:
         result = IngestResult(True, (f"ibkr_source_failure:{error}",))
-        store.log({"kind": "source_failure", "session": session, "result": result})
+        store.log(
+            {
+                "kind": "source_failure",
+                "session": session,
+                "result": result,
+                "received_at": received_at,
+                "symbols": symbols,
+            }
+        )
         return result
     if cross_check is not None:
         try:
@@ -770,5 +819,12 @@ def ingest_session(
         except Exception as error:
             notes = (f"yahoo_cross_check_failure:{error}",)
         store.log({"kind": "yahoo_cross_check", "session": session, "notes": notes})
-    store.log({"kind": "source_success", "session": session})
+    store.log(
+        {
+            "kind": "source_success",
+            "session": session,
+            "received_at": received_at,
+            "symbols": symbols,
+        }
+    )
     return IngestResult(False, ())
