@@ -1,5 +1,10 @@
 # Phase 2 authoritative swing checkpoint
 
+**Current disposition (8 October 2026):** Phase 2 promotion is closed as
+`METHOD_INADEQUATE`. The engineering checkpoint below is historical evidence,
+not an edge claim or a launch instruction. See [the closure note](phase-2-closure.md)
+and the document-only [Phase 3 recommendation proposal](phase-3-recommend-mode-integration-spec.md).
+
 **Date:** 4 October 2026 (Australia/Sydney)
 
 **Branch:** `recovery/phase-2-authoritative-strategy`

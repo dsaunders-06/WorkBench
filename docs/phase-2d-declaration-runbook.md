@@ -1,5 +1,10 @@
 # Phase 2D Stage A declaration authority (implementation only)
 
+**Dormant after the 8 October 2026 closure.** Do not execute the signing,
+timestamp, declaration or release steps below. No inference method qualified;
+see [the closure note](phase-2-closure.md). This runbook remains historical
+Stage A engineering documentation.
+
 **Status: unsigned, unsubmitted, unconfigured.** No declaration, data release,
 permit or rerun approval has been signed, timestamped or written to a
 production ledger. Stage A supplies offline verification and synthetic tests;

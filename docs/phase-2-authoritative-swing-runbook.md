@@ -1,5 +1,9 @@
 # Phase 2 authoritative swing engineering runbook
 
+**Historical engineering procedure.** Phase 2 promotion was closed on
+8 October 2026 as `METHOD_INADEQUATE`; this runbook is not a current run or
+release instruction. See [the closure note](phase-2-closure.md).
+
 Phase 2C is an offline engineering replay. It does not authorize a strategy, open a promotion-tier observation, change deployed settings, contact a broker, or access the running application. The governing design is [the Phase 2 authoritative swing specification](superpowers/specs/2026-10-01-phase-2-authoritative-swing-strategy-design.md), with the approved [Phase 2C implementation plan](superpowers/plans/2026-10-01-phase-2c-swing-validation-reporting.md).
 
 ## Run the frozen engineering inputs

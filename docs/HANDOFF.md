@@ -1,3 +1,19 @@
+# Current handoff — 8 October 2026
+
+Phase 2 promotion is closed as `METHOD_INADEQUATE` under the pre-result
+stopping rule. The authoritative strategy is unvalidated; Stage A is dormant,
+Stage B and the single-pattern protocol are parked. No promotion data was
+released, no declaration was signed, and no Phase 2 engine is wired into QAT.
+The accepted Phase 2 engineering is proposed for operator review in
+[draft PR #4](https://github.com/dsaunders-06/WorkBench/pull/4); it has not
+been merged.
+The only authorized future use is supervised recommend mode with a human
+sign-off on every order and the label “unvalidated strategy, no demonstrated
+edge”. See [the closure note](phase-2-closure.md), the document-only
+[Phase 3 specification](phase-3-recommend-mode-integration-spec.md) and
+[plan](phase-3-recommend-mode-integration-plan.md). The dated handoff below is
+historical and does not authorize launch or promotion work.
+
 # Handoff — 16 September 2026 (morning; the audit finalised 15 Sep): DESIGN AUDIT FINALISED (R1–R24, Part I, Annexes A–C, one compiled report; classification RED); CHECKPOINT B next; progress kept ONLY in `00-progress-tracker.md` (brief numbering); development FROZEN; TRADING SUSPENDED; CE-017 open; JHX stop that did not fill HELD until after the audit
 
 The previous version is `docs/archive/HANDOFF-2026-08-20-superseded.md`. It was

@@ -1,5 +1,9 @@
 # QAT recovery handover after Phase 2C
 
+**Historical checkpoint.** Phase 2 promotion was closed on 8 October 2026 as
+`METHOD_INADEQUATE`. Follow [the closure note](phase-2-closure.md) for current
+status; this handover does not authorize Phase 2D or data release.
+
 **Prepared:** 4 October 2026, Australia/Sydney
 
 **Repository:** `dsaunders-06/WorkBench`

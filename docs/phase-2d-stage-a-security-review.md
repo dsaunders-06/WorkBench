@@ -1,5 +1,9 @@
 # Phase 2D Stage A security corrections for operator review
 
+**Current disposition (8 October 2026):** this groundwork is dormant under
+[the Phase 2 closure](phase-2-closure.md). Its verification code remains, but
+no declaration, release, permit or signing workflow is authorized.
+
 **Scope:** Part 1 only. No real operator key was generated, read or used. No
 declaration, data release, permit or rerun was signed, submitted or timestamped.
 All cryptographic signing in tests used runtime-generated throwaway Ed25519

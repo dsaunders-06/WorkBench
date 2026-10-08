@@ -1,5 +1,10 @@
 # Phase 2D Stage A review report
 
+**Current disposition (8 October 2026):** Stage A is dormant after the final
+`METHOD_INADEQUATE` pilot result. No declaration or data release is authorized.
+This report records its earlier implementation review; see
+[the closure note](phase-2-closure.md) for the controlling status.
+
 **Status:** Stage A implementation submitted on `recovery/phase-2d-stage-a` for
 operator review. No declaration has been signed, submitted, or timestamped;
 no promotion shard was opened, and no operator key was generated, stored, or

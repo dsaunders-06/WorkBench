@@ -1,5 +1,10 @@
 # Phase 2D operator-freeze proposals (unapproved)
 
+**Historical proposals, not a pending freeze.** The binding final method
+pilot returned `METHOD_INADEQUATE` and Phase 2 promotion was closed on
+8 October 2026. See [the closure note](phase-2-closure.md). No declaration
+may be frozen from these proposals.
+
 This note gives the operator concrete inputs to consider before a
 `METHOD_AUDIT_DECLARED` release. It does **not** freeze a value, issue a
 declaration, establish prospective power, or authorize promotion access.
