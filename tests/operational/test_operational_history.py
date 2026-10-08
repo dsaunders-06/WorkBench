@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
+HALT_FIXTURE = FIXTURES / "halts.jsonl"
 
 
 def api():
@@ -96,11 +97,15 @@ def test_append_correction_deadline_and_restart(tmp_path):
 def test_complete_history_and_managed_departed_symbol(tmp_path):
     store, cal, members = make_store(tmp_path)
     populate(store, cal)
-    assert store.check("BHP.AX", date(2026, 1, 6), cal, members).eligible
+    assert store.check(
+        "BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE)
+    ).eligible
     populate(store, cal, symbol="OLD.AX")
-    result = store.check("OLD.AX", date(2026, 1, 6), cal, members)
+    result = store.check("OLD.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE))
     assert result.eligible and not result.new_cards_allowed
-    assert not store.check("UNKNOWN", date(2026, 1, 6), cal, members).eligible
+    assert not store.check(
+        "UNKNOWN", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE)
+    ).eligible
 
 
 @pytest.mark.parametrize(
@@ -117,7 +122,7 @@ def test_integrity_blocks_bad_symbol(tmp_path, mutation, reason):
     store, cal, members = make_store(tmp_path)
     populate(store, cal)
     ingest(store, (bar(**mutation),), cal)
-    result = store.check("BHP.AX", date(2026, 1, 6), cal, members)
+    result = store.check("BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE))
     assert not result.eligible and reason in result.reasons
     assert reason in store.audit_bytes().decode()
 
@@ -125,12 +130,22 @@ def test_integrity_blocks_bad_symbol(tmp_path, mutation, reason):
 def test_gap_stale_and_insufficient_history(tmp_path):
     store, cal, members = make_store(tmp_path)
     populate(store, cal, omit=date(2025, 12, 30))
-    result = store.check("BHP.AX", date(2026, 1, 6), cal, members)
+    result = store.check("BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE))
     assert "gaps" in result.reasons
-    assert "stale_last_session" in store.check("BHP.AX", date(2026, 1, 7), cal, members).reasons
+    assert (
+        "stale_last_session"
+        in store.check(
+            "BHP.AX", date(2026, 1, 7), cal, members, api().load_halts(HALT_FIXTURE)
+        ).reasons
+    )
     other, _, _ = make_store(tmp_path / "short")
     ingest(other, (bar(),), cal)
-    assert "three_year_history" in other.check("BHP.AX", date(2026, 1, 6), cal, members).reasons
+    assert (
+        "three_year_history"
+        in other.check(
+            "BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE)
+        ).reasons
+    )
 
 
 def test_bad_prices_tick_and_split_dividend_continuity(tmp_path):
@@ -144,11 +159,21 @@ def test_bad_prices_tick_and_split_dividend_continuity(tmp_path):
         populate(store, cal)
         bad = replace(bar(), raw=replace(bar().raw, close=Decimal(price)))
         ingest(store, (bad,), cal)
-        assert reason in store.check("BHP.AX", date(2026, 1, 6), cal, members).reasons
+        assert (
+            reason
+            in store.check(
+                "BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE)
+            ).reasons
+        )
     store, cal, members = make_store(tmp_path / "split")
     populate(store, cal)
     ingest(store, (replace(bar(), factor=h.SplitFactor(1, 2)),), cal)
-    assert "split_price_mismatch" in store.check("BHP.AX", date(2026, 1, 6), cal, members).reasons
+    assert (
+        "split_price_mismatch"
+        in store.check(
+            "BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE)
+        ).reasons
+    )
     # Dividend-adjusted analytical prices must fail, even if the raw close is valid.
     ingest(
         store,
@@ -161,23 +186,43 @@ def test_bad_prices_tick_and_split_dividend_continuity(tmp_path):
         ),
         cal,
     )
-    assert "split_price_mismatch" in store.check("BHP.AX", date(2026, 1, 6), cal, members).reasons
+    assert (
+        "split_price_mismatch"
+        in store.check(
+            "BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE)
+        ).reasons
+    )
 
 
 def test_duplicate_order_and_calendar_conflict_block(tmp_path):
     store, cal, members = make_store(tmp_path)
     populate(store, cal)
     ingest(store, (bar(), bar()), cal)
-    assert "duplicates" in store.check("BHP.AX", date(2026, 1, 6), cal, members).reasons
+    assert (
+        "duplicates"
+        in store.check(
+            "BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE)
+        ).reasons
+    )
     store2, _, _ = make_store(tmp_path / "order")
     ingest(store2, (bar(), bar(date(2026, 1, 5))), cal)
-    assert "ordering" in store2.check("BHP.AX", date(2026, 1, 6), cal, members).reasons
+    assert (
+        "ordering"
+        in store2.check(
+            "BHP.AX", date(2026, 1, 6), cal, members, api().load_halts(HALT_FIXTURE)
+        ).reasons
+    )
     store3, _, _ = make_store(tmp_path / "calendar")
     populate(store3, cal)
     changed = replace(
         cal, sessions=tuple(s for s in cal.sessions if s.session != date(2025, 12, 30))
     )
-    assert "calendar_conflict" in store3.check("BHP.AX", date(2026, 1, 6), changed, members).reasons
+    assert (
+        "calendar_conflict"
+        in store3.check(
+            "BHP.AX", date(2026, 1, 6), changed, members, api().load_halts(HALT_FIXTURE)
+        ).reasons
+    )
 
 
 def test_namespace_refuses_repo_research_promotion_and_foreign_store(tmp_path):
@@ -306,7 +351,12 @@ def test_recorded_split_is_consistent_and_no_float_is_admitted(tmp_path):
     )
     ingest(store, records, cal)
     # 2.375 is a bad raw ASX tick above $2, independently of split continuity.
-    assert "split_continuity" not in store.check("BHP.AX", original.session, cal, members).reasons
+    assert (
+        "split_continuity"
+        not in store.check(
+            "BHP.AX", original.session, cal, members, api().load_halts(HALT_FIXTURE)
+        ).reasons
+    )
     with pytest.raises(ValueError):
         replace(original, raw=replace(original.raw, close=4.75))
 
@@ -317,7 +367,11 @@ def test_authority_missing_coverage_and_stale_membership(tmp_path):
     assert (
         "membership_stale"
         in store.check(
-            "BHP.AX", date(2026, 1, 6), cal, replace(members, effective_to=date(2026, 1, 5))
+            "BHP.AX",
+            date(2026, 1, 6),
+            cal,
+            replace(members, effective_to=date(2026, 1, 5)),
+            api().load_halts(HALT_FIXTURE),
         ).reasons
     )
     assert (
@@ -331,11 +385,12 @@ def test_authority_missing_coverage_and_stale_membership(tmp_path):
                 sessions=tuple(s for s in cal.sessions if s.session >= date(2023, 1, 7)),
             ),
             members,
+            api().load_halts(HALT_FIXTURE),
         ).reasons
     )
 
 
-def test_missing_source_bars_abstain_even_when_history_exists(tmp_path):
+def test_missing_source_bars_record_symbol_reason_even_when_history_exists(tmp_path):
     h = api()
     store, cal, _ = make_store(tmp_path)
     populate(store, cal)
@@ -347,7 +402,8 @@ def test_missing_source_bars_abstain_even_when_history_exists(tmp_path):
         h.FakeIBKRSource(()),
         received_at=bar().retrieved_at,
     )
-    assert result.abstained
+    assert not result.abstained
+    assert result.reasons == ("BHP.AX:missing",)
 
 
 def test_complete_three_year_window_when_anniversary_is_weekend(tmp_path):
@@ -356,7 +412,9 @@ def test_complete_three_year_window_when_anniversary_is_weekend(tmp_path):
         bar(s.session) for s in cal.sessions if date(2023, 1, 9) <= s.session <= date(2026, 1, 7)
     )
     ingest(store, values, cal)
-    assert store.check("BHP.AX", date(2026, 1, 7), cal, members).eligible
+    assert store.check(
+        "BHP.AX", date(2026, 1, 7), cal, members, api().load_halts(HALT_FIXTURE)
+    ).eligible
 
 
 def test_calendar_rejects_non_asx_authority(tmp_path):
@@ -392,3 +450,93 @@ def test_correction_uses_receipt_time_not_vendor_retrieval_time(tmp_path):
     )[0]
     assert not late.accepted
     assert store.decision_bars("BHP.AX", original.session)[-1].bar.finalised
+
+
+def test_halt_authority_appends_without_rewriting_and_rejects_tampering(tmp_path):
+    h = api()
+    path = tmp_path / "halts.jsonl"
+    path.write_bytes(HALT_FIXTURE.read_bytes())
+    original = path.read_bytes()
+    first = h.append_halt(
+        path,
+        "OLD.AX",
+        date(2025, 12, 30),
+        date(2025, 12, 30),
+        "asx_notice",
+        "https://www.asx.com.au/fixture/halt-123",
+    )
+    assert path.read_bytes().startswith(original)
+    assert first.entries[0].symbol == "OLD.AX"
+    second = h.append_halt(
+        path,
+        "BHP.AX",
+        date(2026, 1, 6),
+        date(2026, 1, 6),
+        "broker_record",
+        "IBKR:fixture-record-42",
+        interruption_type="suspension",
+    )
+    assert second.entries[1].interruption_type == "suspension"
+    assert second.entries[1].previous_hash == first.entries[0].content_hash
+    with pytest.raises(ValueError):
+        h.append_halt(
+            path,
+            "OLD.AX",
+            date(2025, 12, 30),
+            date(2025, 12, 30),
+            "asx_notice",
+            "https://www.asx.com.au/fixture/duplicate",
+        )
+    altered = path.read_text().replace("fixture-record-42", "fixture-record-43")
+    path.write_text(altered)
+    with pytest.raises(ValueError):
+        h.load_halts(path)
+    path.write_text(
+        altered.replace("fixture-record-43", "fixture-record-42").replace(
+            '"published_on":"2026-01-06"', '"published_on":"2026-01-07"'
+        )
+    )
+    with pytest.raises(ValueError):
+        h.load_halts(path)
+
+
+def test_documented_history_halt_is_not_gap_even_for_managed_symbol(tmp_path):
+    h = api()
+    store, cal, members = make_store(tmp_path)
+    gap = date(2025, 12, 30)
+    populate(store, cal, symbol="OLD.AX", omit=gap)
+    path = tmp_path / "halts.jsonl"
+    path.write_bytes(HALT_FIXTURE.read_bytes())
+    ledger = h.append_halt(
+        path,
+        "OLD.AX",
+        gap,
+        gap,
+        "broker_record",
+        "IBKR:fixture-halt-19",
+    )
+    result = store.check("OLD.AX", date(2026, 1, 6), cal, members, ledger)
+    assert result.eligible and not result.new_cards_allowed
+    assert "gaps" not in result.reasons
+    assert "stale_last_session" not in result.reasons
+    without_notice = store.check(
+        "OLD.AX", date(2026, 1, 6), cal, members, h.load_halts(HALT_FIXTURE)
+    )
+    assert "gaps" in without_notice.reasons
+
+
+def test_partial_ibkr_fetch_records_symbol_gap_not_session_failure(tmp_path):
+    h = api()
+    store, cal, _ = make_store(tmp_path)
+    populate(store, cal, symbol="BHP.AX")
+    result = h.ingest_session(
+        store,
+        cal,
+        date(2026, 1, 6),
+        ("BHP.AX", "NEW.AX"),
+        h.FakeIBKRSource((bar(),)),
+        received_at=bar().retrieved_at,
+    )
+    assert not result.abstained
+    assert b'"status":"partial"' in store.audit_bytes()
+    assert b'"kind":"source_failure"' not in store.audit_bytes()

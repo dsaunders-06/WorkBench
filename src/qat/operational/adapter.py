@@ -33,11 +33,16 @@ from qat.operational.history import (
     SYDNEY,
     BarRecord,
     CalendarLedger,
+    HaltLedger,
     HistoryStore,
+    IBKRBarSource,
+    IngestResult,
     Membership,
     QualityResult,
+    YahooCrossCheck,
     assess_history,
     digest,
+    ingest_session,
 )
 
 LABEL = "unvalidated strategy, no demonstrated edge"
@@ -91,6 +96,7 @@ class FrozenSnapshot:
     session: date
     calendar: CalendarLedger
     membership: Membership
+    halts: HaltLedger
     parameters: EvaluationParameters
     symbols: tuple[SymbolInput, ...]
     source_failed: bool
@@ -153,11 +159,36 @@ class AdapterResult:
 
 class OperationalAdapter:
     def __init__(
-        self, store: HistoryStore, calendar: CalendarLedger, membership: Membership
+        self,
+        store: HistoryStore,
+        calendar: CalendarLedger,
+        membership: Membership,
+        halts: HaltLedger,
     ) -> None:
         self._store = store
         self._calendar = calendar
         self._membership = membership
+        self._halts = halts
+
+    def attempt_primary(
+        self,
+        session: date,
+        symbols: tuple[str, ...],
+        source: IBKRBarSource,
+        cross_check: YahooCrossCheck | None = None,
+        *,
+        received_at: datetime,
+    ) -> IngestResult:
+        """Record one primary-source attempt; the caller schedules any retry."""
+        return ingest_session(
+            self._store,
+            self._calendar,
+            session,
+            symbols,
+            source,
+            cross_check,
+            received_at=received_at,
+        )
 
     def freeze(self, session: date, parameters: EvaluationParameters) -> FrozenSnapshot:
         reasons = []
@@ -169,20 +200,58 @@ class OperationalAdapter:
             reasons.append("calendar_session_or_next_open_missing")
         try:
             records, encoded_events = self._store.read_view(session)
-            events = [json.loads(e) for e in encoded_events]
+            events = []
+            for encoded in encoded_events:
+                event = json.loads(encoded)
+                if not isinstance(event, dict) or any(not isinstance(key, str) for key in event):
+                    raise ValueError("invalid operational audit record")
+                events.append(event)
+            unresolved: set[tuple[str, ...]] = set()
+            terminal_failure = False
+            retry_deadline = datetime.combine(session, time(20), SYDNEY)
             for event in events:
                 if event.get("session") == session.isoformat():
                     if event.get("kind") == "source_failure":
-                        source_failed = True
-                    # Any primary-source failure blocks this entire session.
-                    # An unrelated success cannot erase the recorded failure.
+                        terminal_failure = True
+                    if event.get("kind") == "source_attempt":
+                        requested = event["symbols"]
+                        if not isinstance(requested, list) or any(
+                            not isinstance(symbol, str) for symbol in requested
+                        ):
+                            raise ValueError("invalid source attempt scope")
+                        scope = tuple(sorted(requested))
+                        status = event["status"]
+                        if status == "deadline":
+                            # The refused attempt cannot clear a prior failure;
+                            # it also cannot revoke a successful earlier fetch.
+                            continue
+                        elif status == "failure":
+                            unresolved.add(scope)
+                        elif status in ("success", "partial"):
+                            stamp = event["received_at"]
+                            if not isinstance(stamp, str):
+                                raise ValueError("invalid source attempt timestamp")
+                            attempted_at = datetime.fromisoformat(stamp)
+                            if attempted_at.tzinfo is None or attempted_at.utcoffset() is None:
+                                raise ValueError("naive source attempt timestamp")
+                            if attempted_at < retry_deadline:
+                                unresolved.discard(scope)
+                        else:
+                            raise ValueError("unknown source attempt status")
+            source_failed = bool(unresolved) or terminal_failure
             for symbol in sorted(set(self._membership.symbols + self._membership.managed_symbols)):
                 history = tuple(r for r in records if r.bar.symbol == symbol)
                 with localcontext(
                     Context(prec=NUMERIC_POLICY.precision, rounding=NUMERIC_POLICY.rounding)
                 ):
                     quality = assess_history(
-                        symbol, session, self._calendar, self._membership, history, events
+                        symbol,
+                        session,
+                        self._calendar,
+                        self._membership,
+                        self._halts,
+                        history,
+                        events,
                     )
                 symbols.append(SymbolInput(symbol, history, quality))
         except (ValueError, OSError, sqlite3.Error, KeyError, TypeError):
@@ -192,6 +261,7 @@ class OperationalAdapter:
             session,
             self._calendar,
             self._membership,
+            self._halts,
             parameters,
             tuple(symbols),
             source_failed,
@@ -236,34 +306,20 @@ class OperationalAdapter:
             return global_abstention(("engine_version_changed",))
         if snapshot.source_failed:
             return global_abstention(("ibkr_source_failure",))
-        unfinished = tuple(
-            s
-            for s in snapshot.symbols
-            if not s.records
-            or s.records[-1].bar.session != snapshot.session
-            or any(not r.bar.finalised for r in s.records)
-        )
-        if unfinished:
-            records = (
-                Abstention(
-                    None, snapshot.session, snapshot.content_hash, ("required_bars_not_final",)
-                ),
-            ) + tuple(
-                Abstention(
-                    s.symbol,
-                    snapshot.session,
-                    snapshot.content_hash,
-                    tuple(sorted({"required_bars_not_final", *s.quality.reasons})),
-                )
-                for s in unfinished
-            )
-            return self._result((), records)
-        if any(r.received_at > now for s in snapshot.symbols for r in s.records):
-            return global_abstention(("snapshot_from_future",))
         engine = AuthoritativeSwingEngine(tuple(s.session for s in snapshot.calendar.sessions))
         cards = []
         abstentions = []
         for symbol in snapshot.symbols:
+            if any(r.received_at > now for r in symbol.records):
+                abstentions.append(
+                    Abstention(
+                        symbol.symbol,
+                        snapshot.session,
+                        snapshot.content_hash,
+                        ("snapshot_from_future",),
+                    )
+                )
+                continue
             if not symbol.quality.eligible:
                 abstentions.append(
                     Abstention(
@@ -271,6 +327,13 @@ class OperationalAdapter:
                         snapshot.session,
                         snapshot.content_hash,
                         symbol.quality.reasons,
+                    )
+                )
+                continue
+            if snapshot.halts.covers(symbol.symbol, snapshot.session):
+                abstentions.append(
+                    Abstention(
+                        symbol.symbol, snapshot.session, snapshot.content_hash, ("documented_halt",)
                     )
                 )
                 continue

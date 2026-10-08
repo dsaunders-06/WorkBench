@@ -48,6 +48,12 @@ def _text(value: object) -> str:
     return value
 
 
+def _string(value: object) -> str:
+    if not isinstance(value, str):
+        raise ValueError("expected string")
+    return value
+
+
 def _integer(value: object) -> int:
     if type(value) is not int:
         raise ValueError("expected integer")
@@ -233,6 +239,205 @@ def load_membership(path: Path) -> Membership:
         tuple(_text(s) for s in _list(obj["symbols"])),
         tuple(_text(s) for s in _list(obj["managed_symbols"])),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class HaltEntry:
+    sequence: int
+    symbol: str
+    first_session: date
+    last_session: date
+    interruption_type: str
+    evidence_kind: str
+    evidence_reference: str
+    previous_hash: str
+    content_hash: str
+
+
+@dataclass(frozen=True, slots=True)
+class HaltLedger:
+    schema: str
+    version: int
+    published_on: date
+    fixture: bool
+    entries: tuple[HaltEntry, ...]
+
+    def __post_init__(self) -> None:
+        if self.schema != "asx-halts-v1" or self.version < 1:
+            raise ValueError("invalid halt authority header")
+        previous_hash = digest(
+            {
+                "schema": self.schema,
+                "version": self.version,
+                "published_on": self.published_on,
+                "fixture": self.fixture,
+            }
+        )
+        previous_entries: list[HaltEntry] = []
+        for index, entry in enumerate(self.entries, start=1):
+            identity = {
+                "sequence": entry.sequence,
+                "symbol": entry.symbol,
+                "first_session": entry.first_session,
+                "last_session": entry.last_session,
+                "interruption_type": entry.interruption_type,
+                "evidence_kind": entry.evidence_kind,
+                "evidence_reference": entry.evidence_reference,
+                "previous_hash": entry.previous_hash,
+            }
+            if (
+                entry.sequence != index
+                or not entry.symbol.endswith(".AX")
+                or entry.first_session > entry.last_session
+                or entry.interruption_type not in ("halt", "suspension")
+                or entry.previous_hash != previous_hash
+                or digest(identity) != entry.content_hash
+                or entry.evidence_kind not in ("asx_notice", "broker_record")
+                or (
+                    entry.evidence_kind == "asx_notice"
+                    and not entry.evidence_reference.startswith("https://www.asx.com.au/")
+                )
+                or (
+                    entry.evidence_kind == "broker_record"
+                    and not entry.evidence_reference.startswith("IBKR:")
+                )
+            ):
+                raise ValueError("invalid halt entry or broken append chain")
+            if any(
+                prior.symbol == entry.symbol
+                and prior.first_session <= entry.last_session
+                and entry.first_session <= prior.last_session
+                for prior in previous_entries
+            ):
+                raise ValueError("overlapping halt entry")
+            previous_entries.append(entry)
+            previous_hash = entry.content_hash
+
+    @property
+    def content_hash(self) -> str:
+        return digest(self)
+
+    def covers(self, symbol: str, session: date) -> bool:
+        return any(
+            e.symbol == symbol and e.first_session <= session <= e.last_session
+            for e in self.entries
+        )
+
+
+def load_halts(path: Path) -> HaltLedger:
+    def line(value: str) -> dict[str, object]:
+        def unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
+            result: dict[str, object] = {}
+            for key, item in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON key")
+                result[key] = item
+            return result
+
+        obj = _object(json.loads(value, object_pairs_hook=unique))
+        if canonical_payload(obj).decode() != value:
+            raise ValueError("halt ledger requires canonical JSON lines")
+        return obj
+
+    raw = path.read_text(encoding="utf-8")
+    if not raw.endswith("\n") or not raw.strip():
+        raise ValueError("halt ledger requires complete newline-terminated records")
+    lines = raw.splitlines()
+    header = line(lines[0])
+    if set(header) != {"schema", "version", "published_on", "fixture"}:
+        raise ValueError("invalid halt ledger header fields")
+    entries = []
+    for value in lines[1:]:
+        obj = line(value)
+        if set(obj) != {
+            "sequence",
+            "symbol",
+            "first_session",
+            "last_session",
+            "interruption_type",
+            "evidence_kind",
+            "evidence_reference",
+            "previous_hash",
+            "content_hash",
+        }:
+            raise ValueError("invalid halt entry fields")
+        entries.append(
+            HaltEntry(
+                _integer(obj["sequence"]),
+                _text(obj["symbol"]),
+                date.fromisoformat(_text(obj["first_session"])),
+                date.fromisoformat(_text(obj["last_session"])),
+                _text(obj["interruption_type"]),
+                _text(obj["evidence_kind"]),
+                _text(obj["evidence_reference"]),
+                _string(obj["previous_hash"]),
+                _text(obj["content_hash"]),
+            )
+        )
+    return HaltLedger(
+        _text(header["schema"]),
+        _integer(header["version"]),
+        date.fromisoformat(_text(header["published_on"])),
+        _boolean(header["fixture"]),
+        tuple(entries),
+    )
+
+
+def append_halt(
+    path: Path,
+    symbol: str,
+    first_session: date,
+    last_session: date,
+    evidence_kind: str,
+    evidence_reference: str,
+    *,
+    interruption_type: str = "halt",
+) -> HaltLedger:
+    """Append one hash-chained authority entry without rewriting prior lines."""
+    ledger = load_halts(path)
+    previous_hash = (
+        ledger.entries[-1].content_hash
+        if ledger.entries
+        else digest(
+            {
+                "schema": ledger.schema,
+                "version": ledger.version,
+                "published_on": ledger.published_on,
+                "fixture": ledger.fixture,
+            }
+        )
+    )
+    identity = {
+        "sequence": len(ledger.entries) + 1,
+        "symbol": symbol,
+        "first_session": first_session,
+        "last_session": last_session,
+        "interruption_type": interruption_type,
+        "evidence_kind": evidence_kind,
+        "evidence_reference": evidence_reference,
+        "previous_hash": previous_hash,
+    }
+    entry = HaltEntry(
+        len(ledger.entries) + 1,
+        symbol,
+        first_session,
+        last_session,
+        interruption_type,
+        evidence_kind,
+        evidence_reference,
+        previous_hash,
+        digest(identity),
+    )
+    result = HaltLedger(
+        ledger.schema,
+        ledger.version,
+        ledger.published_on,
+        ledger.fixture,
+        (*ledger.entries, entry),
+    )
+    with path.open("ab") as file:
+        file.write(canonical_payload({**identity, "content_hash": entry.content_hash}) + b"\n")
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -684,20 +889,26 @@ class HistoryStore:
         return tuple(selected.values()), events
 
     def check(
-        self, symbol: str, session: date, calendar: CalendarLedger, membership: Membership
+        self,
+        symbol: str,
+        session: date,
+        calendar: CalendarLedger,
+        membership: Membership,
+        halts: HaltLedger,
     ) -> QualityResult:
         records = self.decision_bars(symbol, session)
         with self._connect() as conn:
             events = [
                 _object(json.loads(row[0])) for row in conn.execute("SELECT payload FROM audit")
             ]
-        result = assess_history(symbol, session, calendar, membership, records, events)
+        result = assess_history(symbol, session, calendar, membership, halts, records, events)
         self.log(
             {
                 "kind": "quality",
                 "result": result,
                 "calendar_hash": calendar.content_hash,
                 "membership_hash": membership.content_hash,
+                "halts_hash": halts.content_hash,
             }
         )
         return result
@@ -708,6 +919,7 @@ def assess_history(
     session: date,
     calendar: CalendarLedger,
     membership: Membership,
+    halts: HaltLedger,
     records: tuple[BarRecord, ...],
     events: Sequence[Mapping[str, object]],
 ) -> QualityResult:
@@ -727,15 +939,31 @@ def assess_history(
         reasons.add("calendar_coverage")
     if calendar.conflicts(start, session):
         reasons.add("calendar_conflict")
+    calendar_sessions = {s.session for s in calendar.sessions}
+    if any(
+        e.symbol == symbol
+        and e.first_session <= session
+        and (e.first_session not in calendar_sessions or e.last_session not in calendar_sessions)
+        for e in halts.entries
+    ):
+        reasons.add("halt_authority_session_invalid")
     dates = {r.bar.session for r in records}
-    expected = {s.session for s in calendar.sessions if start <= s.session <= session}
+    expected = {
+        s.session
+        for s in calendar.sessions
+        if start <= s.session <= session and not halts.covers(symbol, s.session)
+    }
     if not records or not expected or records[0].bar.session > min(expected):
         reasons.add("three_year_history")
-    if not records or records[-1].bar.session != session:
+    if (
+        not records
+        or (expected and records[-1].bar.session < max(expected))
+        or (not halts.covers(symbol, session) and records[-1].bar.session != session)
+    ):
         reasons.add("stale_last_session")
     if expected - dates:
         reasons.add("gaps")
-    if dates - {s.session for s in calendar.sessions}:
+    if dates - calendar_sessions:
         reasons.add("unexpected_session")
     for record in records:
         reasons.update(_bar_reasons(record.bar))
@@ -751,7 +979,27 @@ def assess_history(
     for event in events:
         if event.get("kind") == "ingest_block" and event.get("symbol") == symbol:
             reasons.update(_text(r) for r in _list(event["reasons"]))
-    result = QualityResult(symbol, session, not reasons, current, tuple(sorted(reasons)))
+    attempts = [
+        event
+        for event in events
+        if event.get("kind") == "source_attempt"
+        and event.get("session") == session.isoformat()
+        and symbol in _list(event["symbols"])
+        and event.get("status") in ("success", "partial")
+    ]
+    if attempts and not halts.covers(symbol, session):
+        latest = attempts[-1]
+        if symbol in _list(latest["missing"]):
+            reasons.add("source_bar_missing")
+        if symbol in _list(latest["unfinished"]):
+            reasons.add("not_final")
+    result = QualityResult(
+        symbol,
+        session,
+        not reasons,
+        current and not halts.covers(symbol, session),
+        tuple(sorted(reasons)),
+    )
     return result
 
 
@@ -790,26 +1038,38 @@ def ingest_session(
     *,
     received_at: datetime,
 ) -> IngestResult:
+    deadline = datetime.combine(session, datetime.min.time().replace(hour=20), SYDNEY)
+    status = "failure"
+    missing: tuple[str, ...] = ()
+    unfinished: tuple[str, ...] = ()
     try:
         if not symbols or len(set(symbols)) != len(symbols):
             raise ValueError("required symbols must be unique and nonempty")
+        if received_at.tzinfo is None or received_at.utcoffset() is None:
+            raise ValueError("source attempt timestamp must be timezone-aware")
+        if received_at >= deadline:
+            status = "deadline"
+            raise ValueError("20:00 Sydney source retry deadline expired")
         bars = source.fetch(session, symbols)
-        if (
-            len(bars) != len(symbols)
-            or {b.symbol for b in bars} != set(symbols)
-            or any(b.session != session or b.source != "IBKR" or not b.finalised for b in bars)
+        if len({b.symbol for b in bars}) != len(bars) or any(
+            b.symbol not in symbols or b.session != session or b.source != "IBKR" for b in bars
         ):
-            raise ValueError("missing, wrong-source, or unfinished required bars")
+            raise ValueError("unexpected, duplicate, wrong-session, or non-IBKR source bar")
         store.ingest(bars, calendar, received_at=received_at)
+        received = {b.symbol: b for b in bars}
+        missing = tuple(sorted(set(symbols) - set(received)))
+        unfinished = tuple(sorted(b.symbol for b in bars if not b.finalised))
+        status = "partial" if missing or unfinished else "success"
     except Exception as error:
         result = IngestResult(True, (f"ibkr_source_failure:{error}",))
         store.log(
             {
-                "kind": "source_failure",
+                "kind": "source_attempt",
                 "session": session,
-                "result": result,
                 "received_at": received_at,
                 "symbols": symbols,
+                "status": status,
+                "error": str(error),
             }
         )
         return result
@@ -821,10 +1081,15 @@ def ingest_session(
         store.log({"kind": "yahoo_cross_check", "session": session, "notes": notes})
     store.log(
         {
-            "kind": "source_success",
+            "kind": "source_attempt",
             "session": session,
             "received_at": received_at,
             "symbols": symbols,
+            "status": status,
+            "missing": missing,
+            "unfinished": unfinished,
         }
     )
-    return IngestResult(False, ())
+    return IngestResult(
+        False, tuple(f"{s}:missing" for s in missing) + tuple(f"{s}:not_final" for s in unfinished)
+    )

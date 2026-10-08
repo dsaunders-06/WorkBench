@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, localcontext
 
 import pytest
-from test_operational_history import bar, ingest, make_store, populate
+from test_operational_history import HALT_FIXTURE, bar, ingest, make_store, populate
 
 SESSION = date(2026, 1, 6)
 NOW = datetime.fromisoformat("2026-01-06T17:30:00+11:00")
@@ -56,7 +56,7 @@ def prepared(tmp_path, *, qualified=False, managed=True):
         "fixture-v1", "fixture zero costs", Decimal(0), Decimal(0), "AUD", False, Decimal(0)
     )
     liquidity = a.LiquidityProfile("fixture-v1", Decimal(".1"), Decimal(0), Decimal(0))
-    adapter = a.OperationalAdapter(store, cal, members)
+    adapter = a.OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE))
     parameters = a.EvaluationParameters(Decimal("100000"), Decimal("100000"), costs, liquidity)
     snapshot = adapter.freeze(SESSION, parameters)
     return adapter, snapshot, store, cal, members, parameters
@@ -81,18 +81,14 @@ def test_before_1730_sydney_refuses_engine(tmp_path, now, monkeypatch):
     assert result.abstentions[0].reasons == ("before_1730_sydney",)
 
 
-def test_all_required_bars_must_be_final(tmp_path, monkeypatch):
+def test_unfinished_managed_bar_abstains_only_that_symbol(tmp_path):
     a, snapshot, store, cal, members, params = prepared(tmp_path, qualified=True)
     ingest(store, (bar(finalised=False, symbol="OLD.AX"),), cal)
     snapshot = a.freeze(SESSION, params)
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("engine called with unfinished required bar")
-
-    monkeypatch.setattr(api().AuthoritativeSwingEngine, "evaluate", forbidden)
     result = a.run(snapshot, now=NOW)
-    assert not result.candidates
-    assert any("required_bars_not_final" in r.reasons for r in result.abstentions)
+    assert [card.symbol for card in result.candidates] == ["BHP.AX"]
+    assert any(r.symbol == "OLD.AX" and "not_final" in r.reasons for r in result.abstentions)
+    assert all(r.symbol is not None for r in result.abstentions)
 
 
 def test_qualified_real_engine_candidate_has_evidence_expiry_and_label(tmp_path):
@@ -192,11 +188,23 @@ def test_hash_corrupt_store_abstains(tmp_path):
     assert not result.candidates and result.abstentions[0].reasons == ("store_integrity_failure",)
 
 
+def test_malformed_source_audit_abstains_instead_of_crashing(tmp_path):
+    a, _, store, cal, members, params = prepared(tmp_path, qualified=True, managed=False)
+    import sqlite3
+
+    with sqlite3.connect(store.database) as conn:
+        conn.execute("INSERT INTO audit(payload) VALUES('[]')")
+    result = a.run(a.freeze(SESSION, params), now=NOW)
+    assert not result.candidates
+    assert result.abstentions[0].reasons == ("store_integrity_failure",)
+
+
 def test_required_history_gap_blocks_only_affected_symbol_after_finality(tmp_path):
     a, snapshot, store, cal, members, params = prepared(tmp_path, qualified=True, managed=False)
     members = replace(members, symbols=("BHP.AX", "NEW.AX"))
     populate(store, cal, symbol="NEW.AX", omit=date(2025, 12, 30))
-    a = api().OperationalAdapter(store, cal, members)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    a = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE))
     result = a.run(a.freeze(SESSION, params), now=NOW)
     assert [c.symbol for c in result.candidates] == ["BHP.AX"]
     assert result.abstentions[0].symbol == "NEW.AX" and "gaps" in result.abstentions[0].reasons
@@ -258,8 +266,146 @@ def test_unfinished_required_symbol_has_its_own_recorded_reason(tmp_path):
     a, snapshot, store, cal, members, params = prepared(tmp_path, qualified=True)
     ingest(store, (bar(symbol="OLD.AX", finalised=False),), cal)
     result = a.run(a.freeze(SESSION, params), now=NOW)
-    assert not result.candidates
+    assert [card.symbol for card in result.candidates] == ["BHP.AX"]
     assert any(r.symbol == "OLD.AX" and "not_final" in r.reasons for r in result.abstentions)
+
+
+def test_missing_current_bar_abstains_only_affected_symbol(tmp_path):
+    a, _, store, cal, members, params = prepared(tmp_path, qualified=True, managed=False)
+    members = replace(members, symbols=("BHP.AX", "NEW.AX"))
+    populate(store, cal, symbol="NEW.AX", omit=SESSION)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    a = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE))
+    result = a.run(a.freeze(SESSION, params), now=NOW)
+    assert [card.symbol for card in result.candidates] == ["BHP.AX"]
+    assert any(r.symbol == "NEW.AX" and "gaps" in r.reasons for r in result.abstentions)
+
+
+def test_documented_one_symbol_halt_preserves_other_candidate(tmp_path):
+    a, _, store, cal, members, params = prepared(tmp_path, qualified=True, managed=False)
+    members = replace(members, symbols=("BHP.AX", "HALT.AX"))
+    populate(store, cal, symbol="HALT.AX", omit=SESSION)
+    ledger_path = tmp_path / "halts.jsonl"
+    ledger_path.write_bytes(HALT_FIXTURE.read_bytes())
+    h = __import__("qat.operational.history", fromlist=["history"])
+    h.append_halt(
+        ledger_path,
+        "HALT.AX",
+        SESSION,
+        SESSION,
+        "asx_notice",
+        "https://www.asx.com.au/fixture/halt-123",
+    )
+    a = api().OperationalAdapter(store, cal, members, h.load_halts(ledger_path))
+    snapshot = a.freeze(SESSION, params)
+    assert next(s for s in snapshot.symbols if s.symbol == "HALT.AX").quality.eligible
+    result = a.run(snapshot, now=NOW)
+    assert [card.symbol for card in result.candidates] == ["BHP.AX"]
+    assert any(r.symbol == "HALT.AX" and "documented_halt" in r.reasons for r in result.abstentions)
+
+
+def test_halted_managed_position_keeps_complete_history(tmp_path):
+    _, _, store, cal, members, params = prepared(tmp_path, qualified=True)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    path = tmp_path / "halts.jsonl"
+    path.write_bytes(HALT_FIXTURE.read_bytes())
+    ledger = h.append_halt(
+        path,
+        "OLD.AX",
+        SESSION,
+        SESSION,
+        "broker_record",
+        "IBKR:fixture-managed-halt",
+    )
+    a = api().OperationalAdapter(store, cal, members, ledger)
+    snapshot = a.freeze(SESSION, params)
+    managed = next(s for s in snapshot.symbols if s.symbol == "OLD.AX")
+    assert managed.quality.eligible
+    assert not managed.quality.new_cards_allowed
+    result = a.run(snapshot, now=NOW)
+    assert [card.symbol for card in result.candidates] == ["BHP.AX"]
+    assert any(r.symbol == "OLD.AX" and "documented_halt" in r.reasons for r in result.abstentions)
+
+
+def test_partial_primary_fetch_blocks_only_missing_symbol_even_with_old_bar(tmp_path):
+    _, _, store, cal, members, params = prepared(tmp_path, qualified=True, managed=False)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    members = replace(members, symbols=("BHP.AX", "NEW.AX"))
+    populate(store, cal, symbol="NEW.AX")
+    a = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE))
+    current = store.decision_bars("BHP.AX", SESSION)[-1].bar
+    attempt = a.attempt_primary(
+        SESSION,
+        ("BHP.AX", "NEW.AX"),
+        h.FakeIBKRSource((current,)),
+        received_at=NOW,
+    )
+    assert not attempt.abstained
+    result = a.run(a.freeze(SESSION, params), now=NOW)
+    assert [card.symbol for card in result.candidates] == ["BHP.AX"]
+    assert any(
+        r.symbol == "NEW.AX" and "source_bar_missing" in r.reasons for r in result.abstentions
+    )
+
+
+def test_recovered_ibkr_retry_before_2000_produces_card(tmp_path):
+    a, _, store, cal, members, params = prepared(tmp_path, qualified=True, managed=False)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    first = a.attempt_primary(
+        SESSION,
+        ("BHP.AX",),
+        h.FakeIBKRSource((), failure="offline"),
+        received_at=NOW + timedelta(minutes=5),
+    )
+    assert first.abstained
+    current = store.decision_bars("BHP.AX", SESSION)[-1].bar
+    recovered = a.attempt_primary(
+        SESSION,
+        ("BHP.AX",),
+        h.FakeIBKRSource((current,)),
+        received_at=NOW + timedelta(minutes=15),
+    )
+    assert not recovered.abstained
+    result = a.run(a.freeze(SESSION, params), now=NOW + timedelta(minutes=16))
+    assert [card.symbol for card in result.candidates] == ["BHP.AX"]
+    assert store.audit_bytes().count(b'"kind":"source_attempt"') == 2
+
+
+def test_ibkr_failure_at_2000_abstains_and_late_success_cannot_clear(tmp_path):
+    a, _, store, cal, members, params = prepared(tmp_path, qualified=True, managed=False)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    deadline = datetime.fromisoformat("2026-01-06T20:00:00+11:00")
+    assert a.attempt_primary(
+        SESSION,
+        ("BHP.AX",),
+        h.FakeIBKRSource((), failure="offline"),
+        received_at=deadline - timedelta(minutes=1),
+    ).abstained
+    assert a.attempt_primary(
+        SESSION,
+        ("BHP.AX",),
+        h.FakeIBKRSource((bar(),)),
+        received_at=deadline,
+    ).abstained
+    result = a.run(a.freeze(SESSION, params), now=deadline)
+    assert not result.candidates
+    assert result.abstentions[0].reasons == ("ibkr_source_failure",)
+    assert store.audit_bytes().count(b'"kind":"source_attempt"') == 2
+
+
+def test_redundant_attempt_at_deadline_does_not_undo_earlier_success(tmp_path):
+    a, _, store, cal, members, params = prepared(tmp_path, qualified=True, managed=False)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    current = store.decision_bars("BHP.AX", SESSION)[-1].bar
+    assert not a.attempt_primary(
+        SESSION, ("BHP.AX",), h.FakeIBKRSource((current,)), received_at=NOW
+    ).abstained
+    deadline = datetime.fromisoformat("2026-01-06T20:00:00+11:00")
+    assert a.attempt_primary(
+        SESSION, ("BHP.AX",), h.FakeIBKRSource((current,)), received_at=deadline
+    ).abstained
+    result = a.run(a.freeze(SESSION, params), now=deadline)
+    assert [card.symbol for card in result.candidates] == ["BHP.AX"]
 
 
 @pytest.mark.parametrize("recovery_symbols", [("OLD.AX",), ()])
