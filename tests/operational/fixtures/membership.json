@@ -1,0 +1,15 @@
+{
+  "schema": "asx200-membership-v1",
+  "version": 1,
+  "published_on": "2025-12-01",
+  "effective_from": "2025-12-22",
+  "effective_to": "2026-03-19",
+  "source": "https://www.spglobal.com/spdji/fixture-rebalance",
+  "fixture": true,
+  "symbols": [
+    "BHP.AX"
+  ],
+  "managed_symbols": [
+    "OLD.AX"
+  ]
+}

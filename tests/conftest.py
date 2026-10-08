@@ -64,3 +64,43 @@ def isolate_data_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]
                 os.environ.pop(key, None)
             else:
                 os.environ[key] = value
+
+
+@pytest.fixture(autouse=True)
+def deny_test_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    """All tests are offline; vendor doubles must intercept above the socket."""
+    import asyncio
+    import socket
+    import types
+
+    # Windows implements socketpair using a private loopback handshake.
+    # Preserve ONLY that stdlib IPC constructor; application sockets remain
+    # denied. Asyncio needs it for its internal wake-up pipe, even offline.
+    if hasattr(socket.socketpair, "__code__"):
+        original_connect = socket.socket.connect
+
+        class IPCSocket(socket.socket):
+            connect = original_connect
+
+        pair_globals = dict(socket.socketpair.__globals__)
+        pair_globals["socket"] = IPCSocket
+        offline_pair = types.FunctionType(
+            socket.socketpair.__code__,
+            pair_globals,
+            argdefs=socket.socketpair.__defaults__,
+            closure=socket.socketpair.__closure__,
+        )
+        monkeypatch.setattr(socket, "socketpair", offline_pair)
+
+    def denied(*args: object, **kwargs: object) -> None:
+        raise AssertionError("network access is forbidden in tests")
+
+    for name in ("connect", "connect_ex", "sendto"):
+        monkeypatch.setattr(socket.socket, name, denied)
+    monkeypatch.setattr(socket, "create_connection", denied)
+    monkeypatch.setattr(socket, "getaddrinfo", denied)
+    for cls in (asyncio.BaseEventLoop, asyncio.SelectorEventLoop):
+        for name in ("create_connection", "create_datagram_endpoint", "sock_connect"):
+            monkeypatch.setattr(cls, name, denied)
+    if hasattr(asyncio, "ProactorEventLoop"):
+        monkeypatch.setattr(asyncio.ProactorEventLoop, "sock_connect", denied)
