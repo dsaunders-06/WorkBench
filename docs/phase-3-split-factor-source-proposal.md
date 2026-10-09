@@ -9,3 +9,7 @@ For old sessions before a split, the operational history helper derives candidat
 Managed symbols retain their history during the card embargo. A pure adapter helper calculates split-adjusted quantity and basis from the authority's ratio and a caller-provided last-adjusted session; it does not mutate a position or call the OMS. A nonintegral share quantity or a nonterminating exact basis cannot be represented by this helper and needs an operator policy before step 4. The frozen Phase 2 engine is unchanged. The separate Phase 2 limitation note records that its research replays used raw share volume and could see an artificial surge across a split.
 
 All current authority and bar inputs are synthetic fixtures. Actual IBKR and ASX source integration, any real backfill, and OMS adjustment remain outside the authorized steps 2–3 build.
+
+## Future real-client binary price capture (operator ruling, 9 October 2026)
+
+When a real IBKR client is separately authorized, convert each reported binary floating-point OHLC value through its shortest decimal representation that round-trips to the same float. Preserve the original float alongside that decimal for audit. A current-session as-traded price must then lie exactly on the ASX tick grid; an off-grid value makes the symbol abstain. Volume must be an integer. This is a capture rule for future source work only: no client, market-data request, vendor connection, or backfill is implemented by this documentation change.
