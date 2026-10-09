@@ -50,7 +50,10 @@ class Order:
     # carrying one (M31d). Without the distinction a sell with a stop_price is
     # indistinguishable from a market sell, and submitting it as one would
     # liquidate the position it was meant to protect.
-    order_type: Literal["market", "stop"] = "market"
+    order_type: Literal["market", "stop", "opening_auction_limit"] = "market"
+    # Phase 3 intent: the next ASX opening auction only. A broker translator
+    # must prove this restriction or refuse; an ordinary limit is not enough.
+    auction_open: datetime | None = None
     # The next scheduled earnings announcement as it was known when this order
     # was sized (M41). Diagnostics, never mechanism - the event-risk rail works
     # off a distance and has already done its work by the time this is carried.

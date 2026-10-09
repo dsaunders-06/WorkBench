@@ -126,6 +126,14 @@ def to_ib_order(order: Order) -> IBOrder:
     """
     action = "BUY" if order.side == "buy" else "SELL"
 
+    if order.order_type == "opening_auction_limit":
+        # The Gateway's GTC preset can override a TIF, and this adapter has
+        # no verified auction-only instruction. Do not turn the intent into
+        # an ordinary GTC/DAY limit until paper capability is reviewed.
+        raise UnrepresentableOrderError(
+            "opening auction limit is not verified against the Gateway GTC preset"
+        )
+
     if order.order_type == "stop":
         if order.stop_price is None:
             raise UnrepresentableOrderError(f"stop order for {order.symbol} has no stop price")
@@ -199,6 +207,10 @@ def to_ib_parent(order: Order) -> IBOrder:
     parent transmitted would release the entry ahead of its protection, which
     is a naked position for as long as the next two calls take.
     """
+    if order.order_type == "opening_auction_limit":
+        raise UnrepresentableOrderError(
+            "opening auction limit is not verified against the Gateway GTC preset"
+        )
     action = "BUY" if order.side == "buy" else "SELL"
     # GTC explicitly, matching AlpacaAdapter's rule that anything CARRYING
     # protective legs is GTC (M31b) - and because leaving it unset does not

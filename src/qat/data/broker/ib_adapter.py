@@ -884,6 +884,8 @@ class IBAdapter:
                 setattr(order, attr, rounded)
 
     async def place_order(self, order: Order) -> Order:
+        if order.order_type == "opening_auction_limit":
+            raise ValueError("opening auction limit is not verified against the Gateway GTC preset")
         self._check_not_read_only()
         self._round_prices_onto_ticks(order)
         contract = to_ib_contract(order.symbol, self.settings.market)

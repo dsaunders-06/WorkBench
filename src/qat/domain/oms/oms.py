@@ -999,18 +999,29 @@ class OMS:
         stop_price: float | None = None,
         take_profit_price: float | None = None,
         earnings_date: date | None = None,
+        *,
+        order_id: str | None = None,
+        order_type: Literal["market", "stop", "opening_auction_limit"] = "market",
+        limit_price: float | None = None,
+        auction_open: datetime | None = None,
     ) -> Order:
+        identity = order_id or new_order_id()
+        if identity in self._orders:
+            raise ValueError(f"order ID {identity} already exists")
         order = Order(
             symbol=symbol,
             side=side,
             quantity=quantity,
-            order_id=new_order_id(),
+            order_id=identity,
             status="pending_signoff",
             reference_price=reference_price,
             strategy=strategy,
             stop_price=stop_price,
             take_profit_price=take_profit_price,
             earnings_date=earnings_date,
+            order_type=order_type,
+            limit_price=limit_price,
+            auction_open=auction_open,
         )
         self._orders[order.order_id] = order
         self._record(order, "proposed", "awaiting sign-off")
@@ -1031,6 +1042,14 @@ class OMS:
         order = self._orders[order_id]
         if order.status != "pending_signoff":
             raise ValueError(f"Order {order_id} is not pending sign-off (status={order.status})")
+
+        if order.order_type == "opening_auction_limit":
+            # The card path is advisory-only. The broker translator currently
+            # refuses this intent because the Gateway GTC preset can destroy
+            # auction-only semantics. No generic broker can bypass that here.
+            order.status = "rejected"
+            self._record(order, "rejected", "opening auction capability not verified", operator)
+            return order
 
         # ⚠️ INDEPENDENT OF STATUS, and that is the whole point (24 August 2026).
         #

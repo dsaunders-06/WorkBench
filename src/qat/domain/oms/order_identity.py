@@ -36,6 +36,8 @@ class OrderIdentityStore:
         for app_order_id, data in (raw.get("orders") or {}).items():
             order_data = dict(data["order"])
             order_data["created_at"] = datetime.fromisoformat(order_data["created_at"])
+            if order_data.get("auction_open") is not None:
+                order_data["auction_open"] = datetime.fromisoformat(order_data["auction_open"])
             if order_data.get("earnings_date") is not None:
                 order_data["earnings_date"] = date.fromisoformat(order_data["earnings_date"])
             order = Order(**order_data)
@@ -62,6 +64,9 @@ class OrderIdentityStore:
         for app_order_id, record in records.items():
             order = asdict(record.order)
             order["created_at"] = record.order.created_at.isoformat()
+            order["auction_open"] = (
+                record.order.auction_open.isoformat() if record.order.auction_open else None
+            )
             order["earnings_date"] = (
                 record.order.earnings_date.isoformat()
                 if record.order.earnings_date is not None

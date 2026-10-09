@@ -524,6 +524,8 @@ class AlpacaAdapter:
     # --- orders -------------------------------------------------------------
 
     async def place_order(self, order: Order) -> Order:
+        if order.order_type == "opening_auction_limit":
+            raise ValueError("opening auction limit is unsupported by this broker adapter")
         from alpaca.trading.enums import OrderClass, OrderSide, TimeInForce
         from alpaca.trading.requests import (
             LimitOrderRequest,
