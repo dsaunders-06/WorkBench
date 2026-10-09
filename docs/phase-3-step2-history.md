@@ -83,10 +83,27 @@ identifier), `previous_hash`, and `content_hash`. The first entry is chained to
 the header hash; later entries chain to the preceding entry. The loader rejects
 noncanonical lines, duplicate keys, broken hashes, sequence breaks and
 overlapping entries for one symbol. Quality checks reject a symbol's entries
-whose boundary dates are absent from the calendar. An operator must retain
-earlier file versions or their hashes externally to detect removal of a
-complete suffix. The repository includes an empty synthetic fixture; the
-operator supplies real entries and their evidence.
+whose boundary dates are absent from the calendar. The operational store
+durably records each accepted sequence, chain hash and complete ledger hash in
+an append-only table. It refuses a lower sequence, a changed accepted prefix,
+or a different ledger at the same sequence, including after a store restart.
+The repository includes an empty synthetic fixture; the operator supplies
+real entries and their evidence.
+
+Corporate actions (`asx-corporate-actions-v1`): UTF-8 JSON with `schema`,
+positive integer `version`, `published_on`, inclusive `coverage_start` and
+`coverage_end`, HTTPS ASX `source`, boolean `fixture`, and sorted unique
+`events`. Each event has `.AX` `symbol`, `ex_session`, reduced rational
+`split_ratio` (raw-to-analytical price ratio), exact nonnegative `dividend`,
+and an HTTPS ASX `evidence_reference`. A real authority must cover the full
+three-year decision window and match the stored factor, `DERIVED`/`AS_TRADED`
+provenance, ex-session split ratio and dividend. Only IBKR `TRADES` bars are
+valid. Earlier pre-split raw prices and share volume are derived by exact
+rational inverse, labelled `DERIVED`, and used for validity checks; raw tick
+checks apply only to `AS_TRADED` values. Nonterminating Decimal prices and
+nonintegral inverse share volumes block the symbol. The fixture authority is
+synthetic and permits the pre-existing qualified engine test series; real
+authority checks are exercised separately with a complete split fixture.
 
 ## Verification boundary
 

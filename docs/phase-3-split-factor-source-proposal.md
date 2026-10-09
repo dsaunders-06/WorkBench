@@ -1,60 +1,11 @@
-# Phase 3 source basis decision for operator review
+# Phase 3 split-factor source ruling
 
-This is a design finding, not authorization to connect to IBKR, ASX or another
-data service. No real source or backfill was built in the steps 2–3 fix.
+The operator approved the source basis on 9 October 2026. This record replaces the earlier proposal's independent raw-evidence requirement. It does not authorize a live IBKR connection, ASX/vendor access, or backfill.
 
-## What IBKR publishes
+[IBKR historical-bar documentation](https://interactivebrokers.github.io/tws-api/historical_bars.html) describes `TRADES` history as split-adjusted but not dividend-adjusted. The operational record names the `TRADES` series explicitly; `ADJUSTED_LAST` fails quality checks. An operator-supplied, dated [ASX corporate-action extract](https://www.asx.com.au/connectivity-and-data/information-services/reference-data) or cited ASX notices supplies exact split price ratios, ex-sessions, dividends and evidence references. The authority file declares coverage and version, and a real (non-fixture) file must agree with every bar's factor, provenance and ex-date action values.
 
-IBKR's [historical bar documentation](https://interactivebrokers.github.io/tws-api/historical_bars.html)
-states that `TRADES` history is adjusted for splits but not dividends, while
-`ADJUSTED_LAST` is adjusted for both. An
-[IBKR Campus example](https://www.interactivebrokers.com/campus/contributors/retrieving-historical-data-from-ibkr/)
-repeats that distinction. Consequently, an old `TRADES` bar retrieved after a
-split cannot be labelled raw as-traded merely because its source is IBKR.
-`ADJUSTED_LAST` cannot be the split-only analytical input because it also
-adjusts for dividends.
+For old sessions before a split, the operational history helper derives candidate raw OHLC and volume from the IBKR `TRADES` analytical bar using the exact rational inverse. The record is labelled `DERIVED`. Every inverse must have a terminating exact Decimal price and integral share volume; otherwise the symbol abstains. Derived prices are checked for OHLC and factor consistency but are exempt from as-traded tick-validity checks. Derived raw values are only validity evidence: no new card is emitted until 21 ASX sessions have elapsed after the latest split ex-date and the last 21 recorded bars are all post-split `AS_TRADED` bars. This keeps both the engine's 21-bar volume confirmation and its preceding 20-session sizing medians off a split boundary.
 
-IBKR's [bar type reference](https://interactivebrokers.github.io/tws-api/classIBApi_1_1Bar.html)
-describes OHLC as double-precision values. Its published information does not
-establish that inverting an adjusted historical OHLC bar always recreates each
-original exchange tick exactly, nor does the split-adjustment statement specify
-whether historical share volume can be recovered as raw traded volume. Those
-properties require a separate evidence check for each affected symbol.
+Managed symbols retain their history during the card embargo. A pure adapter helper calculates split-adjusted quantity and basis from the authority's ratio and a caller-provided last-adjusted session; it does not mutate a position or call the OMS. A nonintegral share quantity or a nonterminating exact basis cannot be represented by this helper and needs an operator policy before step 4. The frozen Phase 2 engine is unchanged. The separate Phase 2 limitation note records that its research replays used raw share volume and could see an artificial surge across a split.
 
-## Proposed authority and calculation
-
-1. The operator supplies a dated, versioned ASX corporate-action extract or
-   cited ASX notices for each security. ASX describes its
-   [ReferencePoint corporate-action data](https://www.asx.com.au/connectivity-and-data/information-services/reference-data)
-   as covering splits, dividends and other major actions. The extract records
-   security identity, action type, ex-session, exact rational share ratio,
-   dividend amount/currency where relevant, publication version and source
-   reference. The operator confirms rights and coverage before use. IBKR's
-   [Wall Street Horizon event fields](https://www.interactivebrokers.com/campus/wp-content/uploads/sites/2/2023/09/WSHEclassesandfieldsforIBAPI2022-12-23.pdf)
-   include split ex-date and new-to-original share ratio, but that service
-   would be corroboration only if separately approved and available.
-2. Use IBKR `TRADES` final daily bars as the primary split-only price series.
-   Convert the approved share ratio to the exact ex-session *price* ratio
-   (original shares / new shares). Apply the cumulative rational price factors
-   to raw as-traded OHLC, keeping dividends separate and never adjusting
-   analytical prices for them. Preserve original IBKR response, action
-   references, retrieval time and all calculation versions.
-3. For a historical session before any later split, reverse the cumulative
-   factor from `TRADES` only as a candidate raw OHLC. Accept it only if all
-   four recovered prices are exact ASX ticks and independent as-traded evidence
-   confirms them. An archived pre-split IBKR response is suitable evidence;
-   exchange trade records supplied by the operator can verify the inverse but
-   do not replace IBKR as the primary bar source. Verify raw volume separately.
-   ASX's published Daily Official List description mentions close and volume,
-   not a full OHLC set, so that product alone is insufficient to verify all
-   four prices.
-4. If an action is missing or ambiguous, an inverse fails tick or OHLCV checks,
-   independent raw evidence is unavailable, or raw volume cannot be
-   established, that symbol abstains. No forward fill, dividend-adjusted input,
-   Yahoo replacement, rounded reconstruction or guessed factor is permitted.
-
-The operator decision requested is whether to approve ASX action evidence as
-the split-factor authority and what independently retained raw-price/volume
-evidence may be used for split-affected historical sessions. Any pilot with
-real IBKR or ASX records, subscription change, or backfill needs separate
-authorization. The conservative default is to abstain for affected symbols.
+All current authority and bar inputs are synthetic fixtures. Actual IBKR and ASX source integration, any real backfill, and OMS adjustment remain outside the authorized steps 2–3 build.

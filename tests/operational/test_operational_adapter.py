@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal, localcontext
 
 import pytest
-from test_operational_history import HALT_FIXTURE, bar, ingest, make_store, populate
+from test_operational_history import ACTION_FIXTURE, HALT_FIXTURE, bar, ingest, make_store, populate
 
 SESSION = date(2026, 1, 6)
 NOW = datetime.fromisoformat("2026-01-06T17:30:00+11:00")
@@ -56,7 +56,9 @@ def prepared(tmp_path, *, qualified=False, managed=True):
         "fixture-v1", "fixture zero costs", Decimal(0), Decimal(0), "AUD", False, Decimal(0)
     )
     liquidity = a.LiquidityProfile("fixture-v1", Decimal(".1"), Decimal(0), Decimal(0))
-    adapter = a.OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE))
+    adapter = a.OperationalAdapter(
+        store, cal, members, h.load_halts(HALT_FIXTURE), h.load_actions(ACTION_FIXTURE)
+    )
     parameters = a.EvaluationParameters(Decimal("100000"), Decimal("100000"), costs, liquidity)
     snapshot = adapter.freeze(SESSION, parameters)
     return adapter, snapshot, store, cal, members, parameters
@@ -89,6 +91,80 @@ def test_unfinished_managed_bar_abstains_only_that_symbol(tmp_path):
     assert [card.symbol for card in result.candidates] == ["BHP.AX"]
     assert any(r.symbol == "OLD.AX" and "not_final" in r.reasons for r in result.abstentions)
     assert all(r.symbol is not None for r in result.abstentions)
+
+
+def test_split_embargo_twenty_sessions_then_eligible_at_twenty_one(tmp_path):
+    a, _, store, cal, members, params = prepared(tmp_path, qualified=True)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    sessions = [s.session for s in cal.sessions if s.session <= SESSION]
+    base = h.load_actions(ACTION_FIXTURE)
+    for ex_session, eligible in ((sessions[-21], False), (sessions[-22], True)):
+        event = h.CorporateAction(
+            "BHP.AX",
+            ex_session,
+            h.SplitFactor(1, 2),
+            Decimal(0),
+            "https://www.asx.com.au/markets/trade-our-cash-market/announcements",
+        )
+        actions = replace(base, events=(event,))
+        adapter = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE), actions)
+        result = adapter.run(adapter.freeze(SESSION, params), now=NOW)
+        assert (any(c.symbol == "BHP.AX" for c in result.candidates)) is eligible
+        if not eligible:
+            assert any(
+                r.symbol == "BHP.AX" and "post_split_21_session_embargo" in r.reasons
+                for r in result.abstentions
+            )
+
+
+def test_managed_position_split_adjustment_is_available_during_card_embargo(tmp_path):
+    _, _, store, cal, members, params = prepared(tmp_path, qualified=True)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    sessions = [s.session for s in cal.sessions if s.session <= SESSION]
+    event = h.CorporateAction(
+        "OLD.AX",
+        sessions[-21],
+        h.SplitFactor(1, 2),
+        Decimal(0),
+        "https://www.asx.com.au/markets/trade-our-cash-market/announcements",
+    )
+    actions = replace(h.load_actions(ACTION_FIXTURE), events=(event,))
+    adapter = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE), actions)
+    snapshot = adapter.freeze(SESSION, params)
+    result = adapter.run(snapshot, now=NOW)
+    assert not any(c.symbol == "OLD.AX" for c in result.candidates)
+    assert adapter.managed_split_adjustments(
+        snapshot, "OLD.AX", 100, Decimal("20"), last_adjusted_session=sessions[-22]
+    ) == ((200, Decimal("10")),)
+    assert (
+        adapter.managed_split_adjustments(
+            snapshot, "OLD.AX", 200, Decimal("10"), last_adjusted_session=event.ex_session
+        )
+        == ()
+    )
+
+
+def test_adapter_refuses_truncated_halt_authority_after_acceptance(tmp_path):
+    adapter, _, store, cal, members, params = prepared(tmp_path, qualified=True)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    path = tmp_path / "halts.jsonl"
+    path.write_bytes(HALT_FIXTURE.read_bytes())
+    h.append_halt(
+        path,
+        "OLD.AX",
+        date(2025, 12, 1),
+        date(2025, 12, 1),
+        "asx_notice",
+        "https://www.asx.com.au/markets/trade-our-cash-market/announcements",
+    )
+    advanced = api().OperationalAdapter(
+        store, cal, members, h.load_halts(path), h.load_actions(ACTION_FIXTURE)
+    )
+    advanced.freeze(SESSION, params)
+    snapshot = adapter.freeze(SESSION, params)
+    result = adapter.run(snapshot, now=NOW)
+    assert not result.candidates
+    assert result.abstentions[0].reasons == ("store_integrity_failure",)
 
 
 def test_qualified_real_engine_candidate_has_evidence_expiry_and_label(tmp_path):
@@ -204,7 +280,9 @@ def test_required_history_gap_blocks_only_affected_symbol_after_finality(tmp_pat
     members = replace(members, symbols=("BHP.AX", "NEW.AX"))
     populate(store, cal, symbol="NEW.AX", omit=date(2025, 12, 30))
     h = __import__("qat.operational.history", fromlist=["history"])
-    a = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE))
+    a = api().OperationalAdapter(
+        store, cal, members, h.load_halts(HALT_FIXTURE), h.load_actions(ACTION_FIXTURE)
+    )
     result = a.run(a.freeze(SESSION, params), now=NOW)
     assert [c.symbol for c in result.candidates] == ["BHP.AX"]
     assert result.abstentions[0].symbol == "NEW.AX" and "gaps" in result.abstentions[0].reasons
@@ -275,7 +353,9 @@ def test_missing_current_bar_abstains_only_affected_symbol(tmp_path):
     members = replace(members, symbols=("BHP.AX", "NEW.AX"))
     populate(store, cal, symbol="NEW.AX", omit=SESSION)
     h = __import__("qat.operational.history", fromlist=["history"])
-    a = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE))
+    a = api().OperationalAdapter(
+        store, cal, members, h.load_halts(HALT_FIXTURE), h.load_actions(ACTION_FIXTURE)
+    )
     result = a.run(a.freeze(SESSION, params), now=NOW)
     assert [card.symbol for card in result.candidates] == ["BHP.AX"]
     assert any(r.symbol == "NEW.AX" and "gaps" in r.reasons for r in result.abstentions)
@@ -296,7 +376,9 @@ def test_documented_one_symbol_halt_preserves_other_candidate(tmp_path):
         "asx_notice",
         "https://www.asx.com.au/fixture/halt-123",
     )
-    a = api().OperationalAdapter(store, cal, members, h.load_halts(ledger_path))
+    a = api().OperationalAdapter(
+        store, cal, members, h.load_halts(ledger_path), h.load_actions(ACTION_FIXTURE)
+    )
     snapshot = a.freeze(SESSION, params)
     assert next(s for s in snapshot.symbols if s.symbol == "HALT.AX").quality.eligible
     result = a.run(snapshot, now=NOW)
@@ -317,7 +399,7 @@ def test_halted_managed_position_keeps_complete_history(tmp_path):
         "broker_record",
         "IBKR:fixture-managed-halt",
     )
-    a = api().OperationalAdapter(store, cal, members, ledger)
+    a = api().OperationalAdapter(store, cal, members, ledger, h.load_actions(ACTION_FIXTURE))
     snapshot = a.freeze(SESSION, params)
     managed = next(s for s in snapshot.symbols if s.symbol == "OLD.AX")
     assert managed.quality.eligible
@@ -332,7 +414,9 @@ def test_partial_primary_fetch_blocks_only_missing_symbol_even_with_old_bar(tmp_
     h = __import__("qat.operational.history", fromlist=["history"])
     members = replace(members, symbols=("BHP.AX", "NEW.AX"))
     populate(store, cal, symbol="NEW.AX")
-    a = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE))
+    a = api().OperationalAdapter(
+        store, cal, members, h.load_halts(HALT_FIXTURE), h.load_actions(ACTION_FIXTURE)
+    )
     current = store.decision_bars("BHP.AX", SESSION)[-1].bar
     attempt = a.attempt_primary(
         SESSION,

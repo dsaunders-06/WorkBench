@@ -11,9 +11,10 @@ import json
 import sqlite3
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from fractions import Fraction
 from pathlib import Path
 from typing import Protocol
 from zoneinfo import ZoneInfo
@@ -317,11 +318,123 @@ class HaltLedger:
     def content_hash(self) -> str:
         return digest(self)
 
+    def chain_hash_at(self, sequence: int) -> str:
+        if sequence < 0 or sequence > len(self.entries):
+            raise ValueError("halt ledger rollback: missing accepted sequence")
+        if sequence:
+            return self.entries[sequence - 1].content_hash
+        return digest(
+            {
+                "schema": self.schema,
+                "version": self.version,
+                "published_on": self.published_on,
+                "fixture": self.fixture,
+            }
+        )
+
     def covers(self, symbol: str, session: date) -> bool:
         return any(
             e.symbol == symbol and e.first_session <= session <= e.last_session
             for e in self.entries
         )
+
+
+@dataclass(frozen=True, slots=True)
+class CorporateAction:
+    symbol: str
+    ex_session: date
+    split_ratio: SplitFactor  # Raw-to-analytical price ratio; its inverse is the share ratio.
+    dividend: Decimal
+    evidence_reference: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.symbol.endswith(".AX")
+            or not self.evidence_reference.startswith("https://www.asx.com.au/")
+            or not isinstance(self.dividend, Decimal)
+            or not self.dividend.is_finite()
+            or self.dividend < 0
+        ):
+            raise ValueError("invalid ASX corporate action")
+
+
+@dataclass(frozen=True, slots=True)
+class ActionLedger:
+    schema: str
+    version: int
+    published_on: date
+    coverage_start: date
+    coverage_end: date
+    source: str
+    fixture: bool
+    events: tuple[CorporateAction, ...]
+
+    def __post_init__(self) -> None:
+        keys = tuple((e.symbol, e.ex_session) for e in self.events)
+        if (
+            self.schema != "asx-corporate-actions-v1"
+            or self.version < 1
+            or self.coverage_start > self.coverage_end
+            or not self.source.startswith("https://www.asx.com.au/")
+            or keys != tuple(sorted(set(keys)))
+            or any(
+                not self.coverage_start <= e.ex_session <= self.coverage_end for e in self.events
+            )
+        ):
+            raise ValueError("invalid ASX corporate-action authority")
+
+    @property
+    def content_hash(self) -> str:
+        return digest(self)
+
+    def split_events(self, symbol: str, session: date) -> tuple[CorporateAction, ...]:
+        return tuple(
+            e
+            for e in self.events
+            if e.symbol == symbol and e.ex_session <= session and e.split_ratio != SplitFactor(1, 1)
+        )
+
+
+def load_actions(path: Path) -> ActionLedger:
+    obj = _read(path)
+    if set(obj) != {
+        "schema",
+        "version",
+        "published_on",
+        "coverage_start",
+        "coverage_end",
+        "source",
+        "fixture",
+        "events",
+    }:
+        raise ValueError("invalid corporate-action authority fields")
+    events = []
+    for value in _list(obj["events"]):
+        item = _object(value)
+        if set(item) != {"symbol", "ex_session", "split_ratio", "dividend", "evidence_reference"}:
+            raise ValueError("invalid corporate-action event fields")
+        ratio = _list(item["split_ratio"])
+        if len(ratio) != 2:
+            raise ValueError("invalid split ratio")
+        events.append(
+            CorporateAction(
+                _text(item["symbol"]),
+                date.fromisoformat(_text(item["ex_session"])),
+                SplitFactor(_integer(ratio[0]), _integer(ratio[1])),
+                _decimal(item["dividend"]),
+                _text(item["evidence_reference"]),
+            )
+        )
+    return ActionLedger(
+        _text(obj["schema"]),
+        _integer(obj["version"]),
+        date.fromisoformat(_text(obj["published_on"])),
+        date.fromisoformat(_text(obj["coverage_start"])),
+        date.fromisoformat(_text(obj["coverage_end"])),
+        _text(obj["source"]),
+        _boolean(obj["fixture"]),
+        tuple(events),
+    )
 
 
 def load_halts(path: Path) -> HaltLedger:
@@ -456,6 +569,8 @@ class OperationalBar:
     finalised: bool
     exchange: str = "ASX"
     currency: str = "AUD"
+    raw_provenance: str = "AS_TRADED"
+    series: str = "TRADES"
 
     def __post_init__(self) -> None:
         if (
@@ -477,6 +592,56 @@ class OperationalBar:
             raise ValueError("dividend must be finite Decimal")
         for flag in (self.actions_verified, self.finalised):
             _boolean(flag)
+        if self.raw_provenance not in ("AS_TRADED", "DERIVED"):
+            raise ValueError("unknown raw provenance")
+        _text(self.series)
+
+
+def exact_decimal(value: Fraction) -> Decimal:
+    """Convert a rational to Decimal only when its decimal expansion terminates."""
+    denominator = value.denominator
+    twos = fives = 0
+    while denominator % 2 == 0:
+        denominator //= 2
+        twos += 1
+    while denominator % 5 == 0:
+        denominator //= 5
+        fives += 1
+    if denominator != 1:
+        raise ValueError("inverse_non_exact")
+    scale = max(twos, fives)
+    coefficient = value.numerator * 2 ** (scale - twos) * 5 ** (scale - fives)
+    digits = tuple(int(digit) for digit in str(abs(coefficient)))
+    return Decimal((int(coefficient < 0), digits, -scale))
+
+
+def _derived_raw(analytical: Ohlcv, factor: SplitFactor) -> Ohlcv:
+    price_factor = Fraction(factor.numerator, factor.denominator)
+    volume = Fraction(analytical.volume) * price_factor
+    if volume.denominator != 1:
+        raise ValueError("inverse_non_exact")
+    return Ohlcv(
+        exact_decimal(Fraction(analytical.open) / price_factor),
+        exact_decimal(Fraction(analytical.high) / price_factor),
+        exact_decimal(Fraction(analytical.low) / price_factor),
+        exact_decimal(Fraction(analytical.close) / price_factor),
+        volume.numerator,
+    )
+
+
+def derive_pre_split_bar(
+    template: OperationalBar, analytical: Ohlcv, factor: SplitFactor
+) -> OperationalBar:
+    """Build a labelled validation record from split-adjusted IBKR TRADES bars."""
+    if factor == SplitFactor(1, 1):
+        raise ValueError("DERIVED requires a split ratio")
+    return replace(
+        template,
+        raw=_derived_raw(analytical, factor),
+        analytical=analytical,
+        factor=factor,
+        raw_provenance="DERIVED",
+    )
 
 
 def parse_bar(obj: Mapping[str, object]) -> OperationalBar:
@@ -511,6 +676,8 @@ def parse_bar(obj: Mapping[str, object]) -> OperationalBar:
         _boolean(obj["finalised"]),
         _text(obj["exchange"]),
         _text(obj["currency"]),
+        _text(obj.get("raw_provenance", "AS_TRADED")),
+        _text(obj.get("series", "TRADES")),
     )
 
 
@@ -533,6 +700,8 @@ def _bar_payload(bar: OperationalBar) -> bytes:
             "finalised": bar.finalised,
             "exchange": bar.exchange,
             "currency": bar.currency,
+            "raw_provenance": bar.raw_provenance,
+            "series": bar.series,
         }
     )
 
@@ -569,6 +738,8 @@ def _bar_reasons(bar: OperationalBar) -> set[str]:
     reasons: set[str] = set()
     if bar.source != "IBKR":
         reasons.add("source_not_ibkr")
+    if bar.series != "TRADES":
+        reasons.add("series_not_trades")
     if not bar.finalised:
         reasons.add("not_final")
     if (bar.exchange, bar.currency) != ("ASX", "AUD"):
@@ -586,9 +757,16 @@ def _bar_reasons(bar: OperationalBar) -> set[str]:
             or prices.high < prices.low
         ):
             reasons.add("ohlcv_invalid")
-    for value in (bar.raw.open, bar.raw.high, bar.raw.low, bar.raw.close):
-        if value <= 0 or value % tick_size(value, "ASX") != 0:
-            reasons.add("raw_tick_invalid")
+    if bar.raw_provenance == "AS_TRADED":
+        for value in (bar.raw.open, bar.raw.high, bar.raw.low, bar.raw.close):
+            if value <= 0 or value % tick_size(value, "ASX") != 0:
+                reasons.add("raw_tick_invalid")
+    else:
+        try:
+            if bar.raw != _derived_raw(bar.analytical, bar.factor):
+                reasons.add("derived_raw_mismatch")
+        except ValueError:
+            reasons.add("inverse_non_exact")
     for raw, analytical in zip(
         (bar.raw.open, bar.raw.high, bar.raw.low, bar.raw.close),
         (bar.analytical.open, bar.analytical.high, bar.analytical.low, bar.analytical.close),
@@ -596,8 +774,8 @@ def _bar_reasons(bar: OperationalBar) -> set[str]:
     ):
         if raw > 0 and to_analytical_price(raw, bar.factor) != analytical:
             reasons.add("split_price_mismatch")
-    # Share volume is raw, never dividend-adjusted or reconstructed.
-    if bar.raw.volume != bar.analytical.volume:
+    # As-traded share volume is untouched; DERIVED historic volume is validation-only.
+    if bar.raw_provenance == "AS_TRADED" and bar.raw.volume != bar.analytical.volume:
         reasons.add("volume_adjustment")
     if bar.retrieved_at.astimezone(SYDNEY).date() < bar.session:
         reasons.add("retrieval_before_session")
@@ -612,6 +790,9 @@ CREATE TABLE IF NOT EXISTS bars (
  label TEXT NOT NULL CHECK(label='OPERATIONAL'),
  PRIMARY KEY(symbol,session,version));
 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, payload TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS halt_acceptance (
+ sequence INTEGER PRIMARY KEY, chain_hash TEXT NOT NULL,
+ ledger_hash TEXT NOT NULL, label TEXT NOT NULL CHECK(label='OPERATIONAL'));
 CREATE TRIGGER IF NOT EXISTS bars_no_update BEFORE UPDATE ON bars BEGIN
  SELECT RAISE(ABORT,'append only'); END;
 CREATE TRIGGER IF NOT EXISTS bars_no_delete BEFORE DELETE ON bars BEGIN
@@ -619,6 +800,10 @@ CREATE TRIGGER IF NOT EXISTS bars_no_delete BEFORE DELETE ON bars BEGIN
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN
  SELECT RAISE(ABORT,'append only'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN
+ SELECT RAISE(ABORT,'append only'); END;
+CREATE TRIGGER IF NOT EXISTS halt_acceptance_no_update BEFORE UPDATE ON halt_acceptance BEGIN
+ SELECT RAISE(ABORT,'append only'); END;
+CREATE TRIGGER IF NOT EXISTS halt_acceptance_no_delete BEFORE DELETE ON halt_acceptance BEGIN
  SELECT RAISE(ABORT,'append only'); END;
 """
 
@@ -659,6 +844,30 @@ class HistoryStore:
     @property
     def database(self) -> Path:
         return self._database
+
+    def accept_halts(self, ledger: HaltLedger) -> None:
+        """Advance the durable halt authority watermark only along its accepted chain."""
+        sequence = len(ledger.entries)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            previous = conn.execute(
+                "SELECT sequence,chain_hash,ledger_hash FROM halt_acceptance "
+                "ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+            if previous is not None:
+                prior_sequence, prior_hash, prior_ledger_hash = previous
+                if (
+                    sequence < prior_sequence
+                    or ledger.chain_hash_at(prior_sequence) != prior_hash
+                    or (sequence == prior_sequence and ledger.content_hash != prior_ledger_hash)
+                ):
+                    raise ValueError("halt ledger rollback or divergent chain")
+                if sequence == prior_sequence:
+                    return
+            conn.execute(
+                "INSERT INTO halt_acceptance VALUES(?,?,?,?)",
+                (sequence, ledger.chain_hash_at(sequence), ledger.content_hash, OPERATIONAL),
+            )
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -895,13 +1104,17 @@ class HistoryStore:
         calendar: CalendarLedger,
         membership: Membership,
         halts: HaltLedger,
+        actions: ActionLedger | None = None,
     ) -> QualityResult:
+        self.accept_halts(halts)
         records = self.decision_bars(symbol, session)
         with self._connect() as conn:
             events = [
                 _object(json.loads(row[0])) for row in conn.execute("SELECT payload FROM audit")
             ]
-        result = assess_history(symbol, session, calendar, membership, halts, records, events)
+        result = assess_history(
+            symbol, session, calendar, membership, halts, records, events, actions
+        )
         self.log(
             {
                 "kind": "quality",
@@ -909,6 +1122,7 @@ class HistoryStore:
                 "calendar_hash": calendar.content_hash,
                 "membership_hash": membership.content_hash,
                 "halts_hash": halts.content_hash,
+                "actions_hash": actions.content_hash if actions else None,
             }
         )
         return result
@@ -922,6 +1136,7 @@ def assess_history(
     halts: HaltLedger,
     records: tuple[BarRecord, ...],
     events: Sequence[Mapping[str, object]],
+    actions: ActionLedger | None = None,
 ) -> QualityResult:
     """Pure quality assessment, shared by the live store and frozen read view."""
     reasons: set[str] = set()
@@ -967,6 +1182,30 @@ def assess_history(
         reasons.add("unexpected_session")
     for record in records:
         reasons.update(_bar_reasons(record.bar))
+    if actions is not None and not actions.fixture:
+        if actions.coverage_start > start or actions.coverage_end < session:
+            reasons.add("corporate_action_coverage")
+        action_days = {
+            e.ex_session: e
+            for e in actions.events
+            if e.symbol == symbol and e.ex_session <= session
+        }
+        one = SplitFactor(1, 1)
+        for record in records:
+            bar = record.bar
+            factor = Fraction(1)
+            for action in actions.events:
+                if action.symbol == symbol and bar.session < action.ex_session <= session:
+                    factor *= Fraction(action.split_ratio.numerator, action.split_ratio.denominator)
+            if bar.factor != SplitFactor(factor.numerator, factor.denominator):
+                reasons.add("corporate_action_factor_mismatch")
+            if (bar.raw_provenance == "DERIVED") != (factor != 1):
+                reasons.add("corporate_action_provenance_mismatch")
+            ex_action = action_days.get(bar.session)
+            if bar.split_ratio != (ex_action.split_ratio if ex_action else one) or bar.dividend != (
+                ex_action.dividend if ex_action else Decimal(0)
+            ):
+                reasons.add("corporate_action_ex_date_mismatch")
     for left, right in zip(records, records[1:], strict=False):
         a, b = left.bar, right.bar
         # Raw-to-common-basis factors must change only by the declared
@@ -1052,7 +1291,11 @@ def ingest_session(
             raise ValueError("20:00 Sydney source retry deadline expired")
         bars = source.fetch(session, symbols)
         if len({b.symbol for b in bars}) != len(bars) or any(
-            b.symbol not in symbols or b.session != session or b.source != "IBKR" for b in bars
+            b.symbol not in symbols
+            or b.session != session
+            or b.source != "IBKR"
+            or b.series != "TRADES"
+            for b in bars
         ):
             raise ValueError("unexpected, duplicate, wrong-session, or non-IBKR source bar")
         store.ingest(bars, calendar, received_at=received_at)

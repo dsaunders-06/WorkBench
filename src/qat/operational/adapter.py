@@ -13,6 +13,7 @@ import sqlite3
 from dataclasses import dataclass, fields, replace
 from datetime import date, datetime, time
 from decimal import Context, Decimal, localcontext
+from fractions import Fraction
 from pathlib import Path
 
 from qat.domain.strategies.authoritative_swing.engine import AuthoritativeSwingEngine
@@ -31,6 +32,7 @@ from qat.domain.strategies.authoritative_swing.sizing import ExactCostProfile, L
 from qat.operational.history import (
     OPERATIONAL,
     SYDNEY,
+    ActionLedger,
     BarRecord,
     CalendarLedger,
     HaltLedger,
@@ -42,6 +44,7 @@ from qat.operational.history import (
     YahooCrossCheck,
     assess_history,
     digest,
+    exact_decimal,
     ingest_session,
 )
 
@@ -97,6 +100,7 @@ class FrozenSnapshot:
     calendar: CalendarLedger
     membership: Membership
     halts: HaltLedger
+    actions: ActionLedger
     parameters: EvaluationParameters
     symbols: tuple[SymbolInput, ...]
     source_failed: bool
@@ -164,11 +168,13 @@ class OperationalAdapter:
         calendar: CalendarLedger,
         membership: Membership,
         halts: HaltLedger,
+        actions: ActionLedger,
     ) -> None:
         self._store = store
         self._calendar = calendar
         self._membership = membership
         self._halts = halts
+        self._actions = actions
 
     def attempt_primary(
         self,
@@ -198,7 +204,13 @@ class OperationalAdapter:
             self._calendar.next_open(session)
         except ValueError:
             reasons.append("calendar_session_or_next_open_missing")
+        if any(
+            e.ex_session not in {s.session for s in self._calendar.sessions}
+            for e in self._actions.events
+        ):
+            reasons.append("corporate_action_session_invalid")
         try:
+            self._store.accept_halts(self._halts)
             records, encoded_events = self._store.read_view(session)
             events = []
             for encoded in encoded_events:
@@ -252,6 +264,7 @@ class OperationalAdapter:
                         self._halts,
                         history,
                         events,
+                        self._actions,
                     )
                 symbols.append(SymbolInput(symbol, history, quality))
         except (ValueError, OSError, sqlite3.Error, KeyError, TypeError):
@@ -262,6 +275,7 @@ class OperationalAdapter:
             self._calendar,
             self._membership,
             self._halts,
+            self._actions,
             parameters,
             tuple(symbols),
             source_failed,
@@ -270,6 +284,41 @@ class OperationalAdapter:
             "",
         )
         return replace(snapshot, content_hash=digest(snapshot.identity()))
+
+    def managed_split_adjustments(
+        self,
+        snapshot: FrozenSnapshot,
+        symbol: str,
+        quantity: int,
+        basis: Decimal,
+        *,
+        last_adjusted_session: date,
+    ) -> tuple[tuple[int, Decimal], ...]:
+        """Pure split calculations for managed positions; no position store is touched."""
+        if (
+            digest(snapshot.identity()) != snapshot.content_hash
+            or symbol not in snapshot.membership.managed_symbols
+            or type(quantity) is not int
+            or quantity <= 0
+            or not isinstance(basis, Decimal)
+            or not basis.is_finite()
+            or basis <= 0
+        ):
+            raise ValueError("managed position and positive exact inputs required")
+        adjusted = []
+        for event in snapshot.actions.split_events(symbol, snapshot.session):
+            if event.ex_session <= last_adjusted_session:
+                continue
+            shares = quantity * event.split_ratio.denominator
+            if shares % event.split_ratio.numerator:
+                raise ValueError("nonintegral managed split quantity")
+            quantity = shares // event.split_ratio.numerator
+            basis = exact_decimal(
+                Fraction(basis)
+                * Fraction(event.split_ratio.numerator, event.split_ratio.denominator)
+            )
+            adjusted.append((quantity, basis))
+        return tuple(adjusted)
 
     def _result(
         self, candidates: tuple[CardCandidate, ...], abstentions: tuple[Abstention, ...]
@@ -347,6 +396,32 @@ class OperationalAdapter:
                     )
                 )
                 continue
+            recent_splits = snapshot.actions.split_events(symbol.symbol, snapshot.session)
+            if recent_splits:
+                last_split = recent_splits[-1]
+                post_split = sum(
+                    last_split.ex_session < day.session <= snapshot.session
+                    for day in snapshot.calendar.sessions
+                )
+                recent_bars = symbol.records[-21:]
+                if (
+                    post_split < 21
+                    or len(recent_bars) < 21
+                    or any(
+                        r.bar.session <= last_split.ex_session
+                        or r.bar.raw_provenance != "AS_TRADED"
+                        for r in recent_bars
+                    )
+                ):
+                    abstentions.append(
+                        Abstention(
+                            symbol.symbol,
+                            snapshot.session,
+                            snapshot.content_hash,
+                            ("post_split_21_session_embargo",),
+                        )
+                    )
+                    continue
             history = SwingHistory(
                 symbol.symbol,
                 tuple(

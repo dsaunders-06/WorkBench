@@ -77,3 +77,5 @@ were not inspected or reported. The completed Phase 2 pilot monitors were
 removed, and no pilot runner remains active.
 
 Post-closure update (8 October 2026): the [dormant Stage A tag](https://github.com/dsaunders-06/WorkBench/tree/phase-2d-stage-a-dormant) preserves this closure snapshot and its linked evidence; PR #4 subsequently merged into master as fa084947.
+
+Post-closure limitation (9 October 2026): the unchanged Phase 2 engine's volume confirmation and sizing rules use raw share volume. A split inside either lookback window can appear as a volume surge. This also affected Phase 2 research replays; their conclusions are not revised here. Any future protocol must explicitly address this limitation before relying on split-window volume evidence.

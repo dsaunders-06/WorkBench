@@ -1,0 +1,10 @@
+{
+  "schema": "asx-corporate-actions-v1",
+  "version": 1,
+  "published_on": "2026-01-06",
+  "coverage_start": "2023-01-01",
+  "coverage_end": "2026-01-07",
+  "source": "https://www.asx.com.au/connectivity-and-data/information-services/reference-data",
+  "fixture": true,
+  "events": []
+}

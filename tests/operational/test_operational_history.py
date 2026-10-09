@@ -11,6 +11,7 @@ import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
 HALT_FIXTURE = FIXTURES / "halts.jsonl"
+ACTION_FIXTURE = FIXTURES / "actions.json"
 
 
 def api():
@@ -500,6 +501,159 @@ def test_halt_authority_appends_without_rewriting_and_rejects_tampering(tmp_path
         h.load_halts(path)
 
 
+def test_store_rejects_halt_ledger_truncation_and_fork_across_restart(tmp_path):
+    h = api()
+    store, cal, members = make_store(tmp_path)
+    path = tmp_path / "halts.jsonl"
+    path.write_bytes(HALT_FIXTURE.read_bytes())
+    empty = h.load_halts(path)
+    store.accept_halts(empty)
+    first = h.append_halt(
+        path,
+        "OLD.AX",
+        date(2025, 12, 30),
+        date(2025, 12, 30),
+        "asx_notice",
+        "https://www.asx.com.au/fixture/halt-123",
+    )
+    store.accept_halts(first)
+    restarted = h.HistoryStore(
+        store.database.parent,
+        repository_root=Path(__file__).resolve().parents[2],
+        protected_roots=(tmp_path / "research", tmp_path / "promotion"),
+    )
+    with pytest.raises(ValueError, match="halt ledger rollback"):
+        restarted.accept_halts(empty)
+    fork_path = tmp_path / "fork.jsonl"
+    fork_path.write_bytes(HALT_FIXTURE.read_bytes())
+    fork = h.append_halt(
+        fork_path,
+        "OLD.AX",
+        date(2025, 12, 30),
+        date(2025, 12, 30),
+        "broker_record",
+        "IBKR:different-record",
+    )
+    with pytest.raises(ValueError, match="halt ledger rollback"):
+        restarted.accept_halts(fork)
+    extension = h.append_halt(
+        path,
+        "BHP.AX",
+        date(2026, 1, 6),
+        date(2026, 1, 6),
+        "broker_record",
+        "IBKR:fixture-record-42",
+    )
+    restarted.accept_halts(extension)
+    with sqlite3.connect(store.database) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM halt_acceptance").fetchone()[0] == 3
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute("DELETE FROM halt_acceptance")
+
+
+def test_asx_action_authority_and_exact_derived_raw(tmp_path):
+    h = api()
+    actions = h.load_actions(ACTION_FIXTURE)
+    assert actions.schema == "asx-corporate-actions-v1"
+    assert actions.events == ()
+    analytical = h.Ohlcv(Decimal("2.3765"), Decimal("2.5"), Decimal("2.25"), Decimal("2.4"), 100000)
+    derived = h.derive_pre_split_bar(bar(date(2025, 12, 1)), analytical, h.SplitFactor(1, 2))
+    assert derived.raw_provenance == "DERIVED"
+    assert derived.raw.open == Decimal("4.753")
+    assert derived.raw.volume == 50000
+    assert derived.raw.open % h.tick_size(derived.raw.open, "ASX") != 0
+    assert "raw_tick_invalid" not in h._bar_reasons(derived)
+    assert "inverse_non_exact" not in h._bar_reasons(derived)
+    with pytest.raises(ValueError, match="inverse_non_exact"):
+        h.derive_pre_split_bar(
+            bar(date(2025, 12, 1)), replace(analytical, volume=100001), h.SplitFactor(1, 2)
+        )
+
+
+def test_derived_bar_with_inexact_inverse_blocks_symbol(tmp_path):
+    h = api()
+    store, cal, members = make_store(tmp_path)
+    populate(store, cal)
+    bad = replace(
+        bar(date(2025, 12, 1)),
+        analytical=h.Ohlcv(
+            Decimal("2.375"), Decimal("2.5"), Decimal("2.25"), Decimal("2.4"), 100001
+        ),
+        raw=h.Ohlcv(Decimal("4.75"), Decimal("5"), Decimal("4.5"), Decimal("4.8"), 50000),
+        factor=h.SplitFactor(1, 2),
+        raw_provenance="DERIVED",
+    )
+    ingest(store, (bad,), cal)
+    result = store.check("BHP.AX", date(2026, 1, 6), cal, members, h.load_halts(HALT_FIXTURE))
+    assert not result.eligible and "inverse_non_exact" in result.reasons
+
+
+def test_real_action_authority_requires_derived_pre_split_bars_and_exact_ex_date(tmp_path):
+    h = api()
+    store, cal, members = make_store(tmp_path)
+    populate(store, cal)
+    sessions = [s.session for s in cal.sessions if s.session <= date(2026, 1, 6)]
+    event = h.CorporateAction(
+        "BHP.AX",
+        sessions[-22],
+        h.SplitFactor(1, 2),
+        Decimal("0.25"),
+        "https://www.asx.com.au/markets/trade-our-cash-market/announcements",
+    )
+    authority = replace(h.load_actions(ACTION_FIXTURE), fixture=False, events=(event,))
+    result = store.check(
+        "BHP.AX", date(2026, 1, 6), cal, members, h.load_halts(HALT_FIXTURE), authority
+    )
+    assert not result.eligible
+    assert "corporate_action_factor_mismatch" in result.reasons
+    assert "corporate_action_ex_date_mismatch" in result.reasons
+    short = replace(authority, coverage_start=date(2024, 1, 1))
+    assert (
+        "corporate_action_coverage"
+        in store.check(
+            "BHP.AX", date(2026, 1, 6), cal, members, h.load_halts(HALT_FIXTURE), short
+        ).reasons
+    )
+
+
+def test_real_action_authority_accepts_complete_exact_split_history(tmp_path):
+    h = api()
+    store, cal, members = make_store(tmp_path)
+    sessions = [s.session for s in cal.sessions if s.session <= date(2026, 1, 6)]
+    ex_session = sessions[-22]
+    ratio = h.SplitFactor(1, 2)
+    event = h.CorporateAction(
+        "BHP.AX",
+        ex_session,
+        ratio,
+        Decimal("0.25"),
+        "https://www.asx.com.au/markets/trade-our-cash-market/announcements",
+    )
+    authority = replace(h.load_actions(ACTION_FIXTURE), fixture=False, events=(event,))
+    values = []
+    for session in sessions:
+        value = bar(session)
+        if session < ex_session:
+            value = h.derive_pre_split_bar(value, value.analytical, ratio)
+        elif session == ex_session:
+            value = replace(value, split_ratio=ratio, dividend=Decimal("0.25"))
+        values.append(value)
+    ingest(store, tuple(values), cal)
+    result = store.check(
+        "BHP.AX", date(2026, 1, 6), cal, members, h.load_halts(HALT_FIXTURE), authority
+    )
+    assert result.eligible and result.reasons == ()
+
+
+def test_only_ibkr_trades_series_is_valid(tmp_path):
+    h = api()
+    store, cal, members = make_store(tmp_path)
+    populate(store, cal)
+    ingest(store, (replace(bar(), series="ADJUSTED_LAST"),), cal)
+    result = store.check("BHP.AX", date(2026, 1, 6), cal, members, h.load_halts(HALT_FIXTURE))
+    assert "series_not_trades" in result.reasons
+
+
 def test_documented_history_halt_is_not_gap_even_for_managed_symbol(tmp_path):
     h = api()
     store, cal, members = make_store(tmp_path)
@@ -519,7 +673,9 @@ def test_documented_history_halt_is_not_gap_even_for_managed_symbol(tmp_path):
     assert result.eligible and not result.new_cards_allowed
     assert "gaps" not in result.reasons
     assert "stale_last_session" not in result.reasons
-    without_notice = store.check(
+    separate_store, _, _ = make_store(tmp_path / "undocumented")
+    populate(separate_store, cal, symbol="OLD.AX", omit=gap)
+    without_notice = separate_store.check(
         "OLD.AX", date(2026, 1, 6), cal, members, h.load_halts(HALT_FIXTURE)
     )
     assert "gaps" in without_notice.reasons

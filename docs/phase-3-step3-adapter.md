@@ -37,6 +37,17 @@ receipt similarly blocks only its symbol. A changed engine fingerprint, an
 expired session, unresolved source failure, or corrupt storage produces no
 candidates.
 
+The frozen snapshot also includes the dated ASX corporate-action authority.
+After a split ex-session, a symbol emits no new card for the next 20 ASX
+sessions. On the 21st post-split session it can proceed only if its last 21
+recorded bars are all later than the split and labelled `AS_TRADED`, keeping
+the unchanged engine's raw-volume windows clear of derived pre-split data.
+Documented halts may lengthen the practical embargo if fewer than 21
+post-split bars exist. A pure helper calculates managed-position split quantity
+and basis from the authority ratio and a caller-provided last-adjusted date;
+it touches no OMS or position store and never makes a managed symbol eligible
+for a new card solely because of an adjustment.
+
 After finality, other integrity failures block only affected symbols. Departed
 managed symbols retain history sufficiency checks but receive no new candidates;
 position management execution remains outside this stage.
