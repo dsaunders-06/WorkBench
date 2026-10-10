@@ -115,6 +115,8 @@ async def _open_bhp_orders(client: Any) -> list[Any]:
 
 def _order_view(trade: Any) -> dict[str, str]:
     return {
+        "broker_order_id": str(trade.order.orderId),
+        "broker_perm_id": str(trade.order.permId),
         "order_ref": str(trade.order.orderRef),
         "order_type": str(trade.order.orderType),
         "tif": str(trade.order.tif),
@@ -123,7 +125,49 @@ def _order_view(trade: Any) -> dict[str, str]:
         "stop_price": str(trade.order.auxPrice),
         "status": str(trade.orderStatus.status),
         "filled": str(trade.orderStatus.filled),
+        "average_fill_price": str(trade.orderStatus.avgFillPrice),
     }
+
+
+def _record_trade(client: Any, ref: str, event: str, events: list[dict[str, Any]]) -> None:
+    """Snapshot cached IBKR trade status, IDs and executions after each step."""
+    matches = [trade for trade in client.trades() if str(trade.order.orderRef) == ref]
+    trade = matches[-1] if matches else None
+    events.append(
+        {
+            "at_utc": datetime.now(UTC).isoformat(),
+            "event": event,
+            "order_ref": ref,
+            "broker_order": _order_view(trade) if trade is not None else None,
+            "fills": (
+                [
+                    {
+                        "time": str(fill.time),
+                        "execution_time": str(fill.execution.time),
+                        "price": str(fill.execution.price),
+                        "shares": str(fill.execution.shares),
+                        "execution_id": str(fill.execution.execId),
+                    }
+                    for fill in trade.fills
+                ]
+                if trade is not None
+                else []
+            ),
+            "status_log": (
+                [
+                    {
+                        "time": str(entry.time),
+                        "status": str(entry.status),
+                        "message": str(entry.message),
+                        "error_code": str(entry.errorCode),
+                    }
+                    for entry in trade.log
+                ]
+                if trade is not None
+                else []
+            ),
+        }
+    )
 
 
 async def _wait_for_position(client: Any, positive: bool, seconds: int = 90) -> float:
@@ -156,7 +200,7 @@ async def _wait_for_stop(client: Any, ref: str, price: Decimal | None, seconds: 
 
 
 async def _cancel_ref(
-    client: Any, adapter: IBAdapter, ref: str, events: list[dict[str, str]]
+    client: Any, adapter: IBAdapter, ref: str, events: list[dict[str, Any]]
 ) -> None:
     matches = [
         trade for trade in await _open_bhp_orders(client) if str(trade.order.orderRef) == ref
@@ -184,7 +228,7 @@ async def _cleanup(
     buy_ref: str,
     stop_ref: str,
     sell_ref: str,
-    events: list[dict[str, str]],
+    events: list[dict[str, Any]],
 ) -> None:
     """Cancel pending exposure; never sell while a protective stop may rest."""
     for ref in (buy_ref, sell_ref):
@@ -232,7 +276,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
     _paper_target(settings)
     client = _GuardedGateway(IB())
     adapter = IBAdapter(client, EventBus(), settings=settings, read_only=False)
-    events: list[dict[str, str]] = []
+    events: list[dict[str, Any]] = []
 
     def record_api_error(*values: object) -> None:
         events.append(
@@ -283,7 +327,9 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
         events.append(
             {"at_utc": datetime.now(UTC).isoformat(), "event": "buy returned", "raw": repr(buy)}
         )
+        _record_trade(client, buy_ref, "buy submitted", events)
         held = await _wait_for_position(client, positive=True)
+        _record_trade(client, buy_ref, "buy holding confirmed", events)
         if held != int(held) or held > quantity:
             raise RuntimeError(f"unexpected broker holding after buy: {held}")
         _checked_account(client)
@@ -305,16 +351,19 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
                 "raw": repr(stop),
             }
         )
+        _record_trade(client, stop_ref, "GTC stop broker state", events)
         _checked_account(client)
         await adapter.modify_order(stop_ref, stop_price=float(raised_stop))
         await _wait_for_stop(client, stop_ref, raised_stop)
         events.append({"at_utc": datetime.now(UTC).isoformat(), "event": "raised stop confirmed"})
+        _record_trade(client, stop_ref, "raised stop broker state", events)
         _checked_account(client)
         await adapter.cancel_order(stop_ref)
         await _wait_for_stop(client, stop_ref, None)
         events.append(
             {"at_utc": datetime.now(UTC).isoformat(), "event": "stop cancellation confirmed"}
         )
+        _record_trade(client, stop_ref, "cancelled stop broker state", events)
         held = await _positions(client)
         if held:
             if held != int(held) or held > quantity:
@@ -330,7 +379,9 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
                     "raw": repr(sell),
                 }
             )
+            _record_trade(client, sell_ref, "market exit submitted", events)
             await _wait_for_position(client, positive=False)
+            _record_trade(client, sell_ref, "market exit flat confirmed", events)
         if await _positions(client) != 0 or await _open_bhp_orders(client):
             raise RuntimeError("paper probe ended with a holding or working BHP order")
         events.append(

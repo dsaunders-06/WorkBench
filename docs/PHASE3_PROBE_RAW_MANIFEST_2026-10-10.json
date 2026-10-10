@@ -763,5 +763,18 @@
     "retrieved_sydney": "2026-10-10T14:05:28.705135+11:00",
     "retrieved_utc": "2026-10-10T03:05:44.240723+00:00",
     "sha256": "4517f3391ec2f005a03b93e23f8402822a3ad0bd8c8646526837399711afd3ec"
+  },
+  {
+    "filename": "phase3-sun-derivation-20261010.json",
+    "probe": "sun_derivation",
+    "request_parameters": [
+      {
+        "raw_file": "phase3-history-20261010T030720947067Z.json",
+        "raw_sha256": "2916760b6ec64ec6e6e2b0ea120e5aecd36f7a4ca28fb412b4c6100f56e52811"
+      }
+    ],
+    "retrieved_sydney": null,
+    "retrieved_utc": null,
+    "sha256": "579d4c2b31d879fca294c5179901f8765e60d3b030a498e8139b43ac2e95bbaf"
   }
 ]

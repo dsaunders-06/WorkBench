@@ -10,14 +10,42 @@ from typing import Any
 
 
 def _request_summary(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if "raw_file" in payload and "raw_sha256" in payload:
+        return [{"raw_file": payload["raw_file"], "raw_sha256": payload["raw_sha256"]}]
     if "requests" in payload:
-        return [
+        requests = [
             {
                 key: request.get(key)
-                for key in ("symbol", "series", "end", "duration", "use_rth", "started_utc")
+                for key in (
+                    "symbol",
+                    "series",
+                    "end",
+                    "duration",
+                    "use_rth",
+                    "bar_size",
+                    "started_utc",
+                )
+                if key != "bar_size" or key in request
             }
             for request in payload["requests"]
         ]
+        requests.extend(
+            {
+                key: request.get(key)
+                for key in (
+                    "symbol",
+                    "start_requested",
+                    "desired_start_sydney",
+                    "end_requested_sydney",
+                    "number_of_ticks",
+                    "what_to_show",
+                    "use_rth",
+                    "started_utc",
+                )
+            }
+            for request in payload.get("tick_requests", [])
+        )
+        return requests
     if "responses" in payload:
         return [
             {key: response.get(key) for key in ("symbol", "start", "end")}

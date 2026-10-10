@@ -23,7 +23,9 @@ from phase3_auction_whatif_probe import _run as run_whatif
 from phase3_daily_history_probe import (  # noqa: E402
     _months_earlier,
     _paper_target,
+    _request,
     _safe_output_dir,
+    _tick_request,
     _write_raw,
 )
 from phase3_daily_history_probe import (
@@ -33,6 +35,7 @@ from phase3_paper_stop_lifecycle_probe import (  # noqa: E402
     _cleanup,
     _GuardedGateway,
     _parcel,
+    _record_trade,
     _stop_prices,
 )
 from phase3_paper_stop_lifecycle_probe import _run as run_paper_stop
@@ -94,6 +97,41 @@ def test_paper_stop_probe_uses_minimum_parcel_and_upward_stop_move() -> None:
     assert raised == Decimal("54.96")
 
 
+def test_paper_trade_record_includes_broker_id_status_fill_and_time() -> None:
+    trade = SimpleNamespace(
+        order=SimpleNamespace(
+            orderId=42,
+            permId=99,
+            orderRef="probe-buy",
+            orderType="MKT",
+            tif="DAY",
+            action="BUY",
+            totalQuantity=9,
+            auxPrice=0,
+        ),
+        orderStatus=SimpleNamespace(status="Filled", filled=9, avgFillPrice=61.0),
+        fills=[
+            SimpleNamespace(
+                time="2026-10-12 10:10:00+11:00",
+                execution=SimpleNamespace(
+                    time="2026-10-12 10:10:00+11:00", price=61.0, shares=9, execId="paper-1"
+                ),
+            )
+        ],
+        log=[
+            SimpleNamespace(
+                time="2026-10-12 10:10:00+11:00", status="Filled", message="", errorCode=0
+            )
+        ],
+    )
+    client = SimpleNamespace(trades=lambda: [trade])
+    events: list[dict[str, object]] = []
+    _record_trade(client, "probe-buy", "buy holding confirmed", events)
+    assert events[0]["broker_order"]["broker_order_id"] == "42"  # type: ignore[index]
+    assert events[0]["broker_order"]["status"] == "Filled"  # type: ignore[index]
+    assert events[0]["fills"][0]["shares"] == "9"  # type: ignore[index]
+
+
 @pytest.mark.asyncio
 async def test_paper_order_probe_requires_execute_even_before_connection(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="--execute"):
@@ -103,6 +141,63 @@ async def test_paper_order_probe_requires_execute_even_before_connection(tmp_pat
 def test_history_window_handles_month_ends() -> None:
     assert _months_earlier(date(2024, 3, 31), 1) == date(2024, 2, 29)
     assert _months_earlier(date(2025, 3, 31), 1) == date(2025, 2, 28)
+
+
+@pytest.mark.asyncio
+async def test_minute_request_preserves_rth_and_rechecks_du() -> None:
+    class Client:
+        account = "DU123456"
+        qualified = False
+        requested: dict[str, object] | None = None
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return [self.account]
+
+        async def qualifyContractsAsync(self, contract: object) -> list[object]:  # noqa: N802
+            self.qualified = True
+            return [contract]
+
+        async def reqHistoricalDataAsync(  # noqa: N802
+            self, contract: object, **kwargs: object
+        ) -> list[object]:
+            self.requested = kwargs
+            return [SimpleNamespace(date="2026-10-12 16:00:00", close=61.0, volume=9)]
+
+    client = Client()
+    result = await _request(client, "BHP.AX", "TRADES", None, "1 D", 1.0, False, "1 min")
+    assert client.qualified
+    assert client.requested is not None
+    assert client.requested["barSizeSetting"] == "1 min"
+    assert client.requested["useRTH"] is False
+    assert result["bar_size"] == "1 min"
+    client.account = "U123456"
+    with pytest.raises(LivePortInPaperModeError, match="LIVE session"):
+        await _request(client, "BHP.AX", "TRADES", None, "1 D", 1.0, True, "1 min")
+
+
+@pytest.mark.asyncio
+async def test_tick_request_rechecks_du_after_qualification() -> None:
+    class Client:
+        account = "DU123456"
+        tick_requested = False
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return [self.account]
+
+        async def qualifyContractsAsync(self, contract: object) -> list[object]:  # noqa: N802
+            self.account = "U123456"
+            return [contract]
+
+        async def reqHistoricalTicksAsync(
+            self, *args: object, **kwargs: object
+        ) -> list[object]:  # noqa: N802
+            self.tick_requested = True
+            return []
+
+    client = Client()
+    with pytest.raises(LivePortInPaperModeError, match="LIVE session"):
+        await _tick_request(client, "SUN.AX", date(2026, 10, 12), 1.0)
+    assert not client.tick_requested
 
 
 class _LiveAccountClient:
@@ -138,6 +233,20 @@ async def test_live_account_stops_both_probes_before_requests(
     with pytest.raises(LivePortInPaperModeError):
         await run_history(
             "history", tmp_path, ("BHP.AX",), ("TRADES",), 1.0, "2 D", 12, None, False, True
+        )
+    with pytest.raises(LivePortInPaperModeError):
+        await run_history(
+            "close_window",
+            tmp_path,
+            ("BHP.AX",),
+            ("TRADES",),
+            1.0,
+            "2 D",
+            12,
+            None,
+            False,
+            True,
+            date(2026, 10, 12),
         )
     with pytest.raises(LivePortInPaperModeError):
         await run_whatif("BHP.AX", Decimal("61.06"), Decimal("61.06"), "ASX", tmp_path)
