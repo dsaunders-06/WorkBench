@@ -44,6 +44,7 @@ from qat.domain.display_dates import format_display_date, format_session_time
 from qat.domain.evaluation import refusals
 from qat.presentation import theme
 from qat.presentation.runtime import Runtime
+from qat.presentation.signoff import confirm_order_action
 from qat.presentation.ui_level import UiLevel
 
 logger = logging.getLogger(__name__)
@@ -418,13 +419,7 @@ class BlotterScreen(QWidget):
         QMessageBox.warning(self, "Order action failed", message)
 
     def _confirm(self, message: str) -> bool:
-        result = QMessageBox.question(
-            self,
-            "Confirm order action",
-            message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        return result == QMessageBox.StandardButton.Yes
+        return confirm_order_action(self, message)
 
     @staticmethod
     def _describe(orders: list[Order]) -> str:

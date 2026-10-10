@@ -808,6 +808,24 @@ CREATE TRIGGER IF NOT EXISTS halt_acceptance_no_delete BEFORE DELETE ON halt_acc
 """
 
 
+def require_operational_file(path: Path) -> None:
+    """Reject an operational sidecar in research, promotion or a repository."""
+    root = path.parent.resolve()
+    ancestors = (path, path.parent, *path.parent.parents)
+    marker = root / "namespace.json"
+    if (
+        root.name != OPERATIONAL
+        or any("research" in part.lower() or "promotion" in part.lower() for part in root.parts)
+        or any((parent / ".git").exists() for parent in root.parents)
+        or any(item.is_symlink() or item.is_junction() for item in ancestors)
+        or not marker.is_file()
+        or marker.is_symlink()
+        or marker.read_bytes() != canonical_payload({"namespace": OPERATIONAL, "schema": 1})
+        or (path.exists() and path.stat().st_nlink != 1)
+    ):
+        raise ValueError("sidecar requires an isolated OPERATIONAL namespace")
+
+
 class HistoryStore:
     def __init__(
         self, root: Path, *, repository_root: Path, protected_roots: Sequence[Path]

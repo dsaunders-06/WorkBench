@@ -23,6 +23,7 @@ from qat.domain.events import KillSwitchEvent, MarketDataFeedEvent, RegimeHealth
 from qat.presentation import theme
 from qat.presentation.ai_advisor import AiAdvisorScreen
 from qat.presentation.blotter import BlotterScreen
+from qat.presentation.cards_panel import RecommendationCardsPanel
 from qat.presentation.dashboard import DashboardScreen
 from qat.presentation.performance import PerformanceScreen
 from qat.presentation.regime_monitor import RegimeMonitorScreen
@@ -93,6 +94,10 @@ class MainWindow(QMainWindow):
         tabs.addTab(RiskConsoleScreen(runtime), "Risk Console")
         tabs.addTab(AiAdvisorScreen(runtime), "AI Advisor")
         tabs.addTab(BlotterScreen(runtime), "Order Blotter")
+        tabs.addTab(
+            RecommendationCardsPanel(getattr(runtime, "recommendation_service", None)),
+            "Recommendation Cards",
+        )
         tabs.addTab(ScreenerScreen(runtime), "Screener")
         tabs.addTab(PerformanceScreen(runtime), "Performance")
         self.settings_screen = SettingsScreen(runtime)

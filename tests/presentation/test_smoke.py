@@ -25,6 +25,7 @@ _EXPECTED_TABS = [
     "Risk Console",
     "AI Advisor",
     "Order Blotter",
+    "Recommendation Cards",
     "Screener",
     "Performance",
     "Settings",

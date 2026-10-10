@@ -244,3 +244,45 @@ if TYPE_CHECKING:
     from qat.data.broker.ib_adapter import IBAdapter
 """
     assert "qat.data.broker.ib_adapter" in violations(engine, {engine: source})
+
+
+def test_handoff_imports_no_presentation_or_broker_execution_paths():
+    for name in (
+        "qat.operational.cards",
+        "qat.operational.consolidations",
+        "qat.operational.exit_alerts",
+    ):
+        imports = imported_modules(ast.parse(module_path(name).read_text()), name)
+        assert not any(
+            imported == "qat.presentation"
+            or imported.startswith("qat.presentation.")
+            or imported in {"PySide6", "qasync"}
+            or imported.startswith("qat.data.broker.ib_adapter")
+            or imported.startswith("qat.data.broker.alpaca_adapter")
+            for imported in imports
+        )
+
+
+async def _run_offline_handoff(tmp_path, monkeypatch):
+    from test_operational_adapter import NOW
+    from test_recommendation_cards import rig
+
+    cards, result, broker, *_ = rig(tmp_path)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("card path called OMS or broker submission")
+
+    monkeypatch.setattr(cards.oms, "sign_off", forbidden)
+    monkeypatch.setattr(cards.oms, "submit_order", forbidden, raising=False)
+    monkeypatch.setattr(broker, "place_order", forbidden)
+    shown = await cards.publish(result, now=NOW)
+    assert len(shown) == 1
+    instruction = await cards.approve(shown[0].card_id, "operator", now=NOW)
+    assert instruction.quantity >= 2
+    assert broker.transmissions == 0
+
+
+def test_runtime_handoff_never_calls_oms_or_broker_submission(tmp_path, monkeypatch):
+    import asyncio
+
+    asyncio.run(_run_offline_handoff(tmp_path, monkeypatch))

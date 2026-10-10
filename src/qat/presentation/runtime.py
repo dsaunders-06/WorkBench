@@ -96,6 +96,7 @@ from qat.domain.strategies.trend_following import TrendFollowingStrategy
 from qat.domain.strategies.value import ValueStrategy
 from qat.domain.strategies.volatility import VolatilityStrategy
 from qat.domain.warm_start import WarmStart
+from qat.operational.cards import CardService
 from qat.security import get_secret
 
 logger = logging.getLogger(__name__)
@@ -543,6 +544,9 @@ class Runtime:
     # direction, so the matrix asks the source directly. Optional for the same
     # reason `closer` is: every existing construction of Runtime stays working.
     macro_source: MacroDataSource | None = None
+    # Set only when a frozen OPERATIONAL snapshot and paper fake-broker hand-off
+    # have been explicitly supplied. No operational vendor is auto-connected.
+    recommendation_service: CardService | None = None
 
     def opened_position_symbols(self) -> set[str]:
         """Symbols this app opened itself, from its own entry record (M33e).
