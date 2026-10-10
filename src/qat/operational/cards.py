@@ -35,7 +35,13 @@ from qat.domain.strategies.authoritative_swing.model import (
 from qat.domain.strategies.authoritative_swing.sizing import modeled_total_risk, size_instruction
 from qat.operational.adapter import AdapterResult, CardCandidate, FrozenSnapshot, OperationalAdapter
 from qat.operational.consolidations import ConsolidationLedger
-from qat.operational.history import OPERATIONAL, HistoryStore, digest, require_operational_file
+from qat.operational.history import (
+    OPERATIONAL,
+    HistoryStore,
+    digest,
+    require_operational_file,
+    to_engine_adjusted,
+)
 
 SIZING_BASIS = "fixed 1% risk to stop, no edge assumed"
 # Explicit capability flag. This build contains no path that can enable it:
@@ -265,7 +271,7 @@ class CardService:
                 bar.bar.symbol,
                 bar.bar.session,
                 bar.bar.raw,
-                bar.bar.analytical,
+                to_engine_adjusted(bar.bar),
                 bar.bar.source,
                 DataQuality.VERIFIED,
                 AdjustmentStatus.SPLIT_NORMALIZED,

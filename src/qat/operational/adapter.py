@@ -46,6 +46,7 @@ from qat.operational.history import (
     digest,
     exact_decimal,
     ingest_session,
+    to_engine_adjusted,
 )
 
 LABEL = "unvalidated strategy, no demonstrated edge"
@@ -429,7 +430,7 @@ class OperationalAdapter:
                         r.bar.symbol,
                         r.bar.session,
                         r.bar.raw,
-                        r.bar.analytical,
+                        to_engine_adjusted(r.bar),
                         r.bar.source,
                         DataQuality.VERIFIED,
                         AdjustmentStatus.SPLIT_NORMALIZED,

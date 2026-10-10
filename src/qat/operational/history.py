@@ -13,7 +13,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
 from fractions import Fraction
 from pathlib import Path
 from typing import Protocol
@@ -554,11 +554,22 @@ def append_halt(
 
 
 @dataclass(frozen=True, slots=True)
+class OperationalAnalyticalOhlcv:
+    """Operational analytical values may retain a fractional derived share volume."""
+
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal
+
+
+@dataclass(frozen=True, slots=True)
 class OperationalBar:
     symbol: str
     session: date
     raw: Ohlcv
-    analytical: Ohlcv
+    analytical: Ohlcv | OperationalAnalyticalOhlcv
     factor: SplitFactor
     split_ratio: SplitFactor
     dividend: Decimal
@@ -587,7 +598,26 @@ class OperationalBar:
             for value in (prices.open, prices.high, prices.low, prices.close):
                 if not isinstance(value, Decimal) or not value.is_finite():
                     raise ValueError("OHLC must be finite Decimal")
-            _integer(prices.volume)
+        _integer(self.raw.volume)
+        if self.raw_provenance == "DERIVED" and isinstance(self.analytical.volume, Decimal):
+            if not self.analytical.volume.is_finite() or self.analytical.volume <= 0:
+                raise ValueError("derived analytical volume must be finite and positive")
+            if isinstance(self.analytical, Ohlcv):
+                object.__setattr__(
+                    self,
+                    "analytical",
+                    OperationalAnalyticalOhlcv(
+                        self.analytical.open,
+                        self.analytical.high,
+                        self.analytical.low,
+                        self.analytical.close,
+                        self.analytical.volume,
+                    ),
+                )
+        else:
+            _integer(self.analytical.volume)
+        if self.raw_provenance == "AS_TRADED" and not isinstance(self.analytical, Ohlcv):
+            raise ValueError("AS_TRADED analytical bar must have integer volume")
         if not isinstance(self.dividend, Decimal) or not self.dividend.is_finite():
             raise ValueError("dividend must be finite Decimal")
         for flag in (self.actions_verified, self.finalised):
@@ -615,7 +645,7 @@ def exact_decimal(value: Fraction) -> Decimal:
     return Decimal((int(coefficient < 0), digits, -scale))
 
 
-def _derived_raw(analytical: Ohlcv, factor: SplitFactor) -> Ohlcv:
+def _derived_raw(analytical: Ohlcv | OperationalAnalyticalOhlcv, factor: SplitFactor) -> Ohlcv:
     price_factor = Fraction(factor.numerator, factor.denominator)
     volume = Fraction(analytical.volume) * price_factor
     if volume.denominator != 1:
@@ -630,7 +660,7 @@ def _derived_raw(analytical: Ohlcv, factor: SplitFactor) -> Ohlcv:
 
 
 def derive_pre_split_bar(
-    template: OperationalBar, analytical: Ohlcv, factor: SplitFactor
+    template: OperationalBar, analytical: Ohlcv | OperationalAnalyticalOhlcv, factor: SplitFactor
 ) -> OperationalBar:
     """Build a labelled validation record from split-adjusted IBKR TRADES bars."""
     if factor == SplitFactor(1, 1):
@@ -642,6 +672,22 @@ def derive_pre_split_bar(
         factor=factor,
         raw_provenance="DERIVED",
     )
+
+
+def to_engine_adjusted(bar: OperationalBar) -> Ohlcv:
+    """Project exact operational volume onto Phase 2's integer-only adjusted field."""
+    if bar.raw_provenance == "AS_TRADED":
+        if not isinstance(bar.analytical, Ohlcv):
+            raise ValueError("AS_TRADED analytical bar must have integer volume")
+        return bar.analytical
+    analytical = bar.analytical
+    volume = analytical.volume
+    rounded = (
+        int(volume.to_integral_value(rounding=ROUND_HALF_EVEN))
+        if isinstance(volume, Decimal)
+        else volume
+    )
+    return Ohlcv(analytical.open, analytical.high, analytical.low, analytical.close, rounded)
 
 
 def parse_bar(obj: Mapping[str, object]) -> OperationalBar:
@@ -661,11 +707,28 @@ def parse_bar(obj: Mapping[str, object]) -> OperationalBar:
             raise ValueError("factor requires numerator and denominator")
         return SplitFactor(_integer(f[0]), _integer(f[1]))
 
+    provenance = _text(obj.get("raw_provenance", "AS_TRADED"))
+    analytical_obj = _object(obj["analytical"])
+    analytical: Ohlcv | OperationalAnalyticalOhlcv
+    if provenance == "DERIVED" and type(analytical_obj["volume"]) is not int:
+        volume = _decimal(analytical_obj["volume"])
+        if volume <= 0:
+            raise ValueError("derived analytical volume must be positive")
+        analytical = OperationalAnalyticalOhlcv(
+            _decimal(analytical_obj["open"]),
+            _decimal(analytical_obj["high"]),
+            _decimal(analytical_obj["low"]),
+            _decimal(analytical_obj["close"]),
+            volume,
+        )
+    else:
+        analytical = prices(analytical_obj)
+
     return OperationalBar(
         _text(obj["symbol"]),
         date.fromisoformat(_text(obj["session"])),
         prices(obj["raw"]),
-        prices(obj["analytical"]),
+        analytical,
         factor(obj["factor"]),
         factor(obj["split_ratio"]),
         _decimal(obj["dividend"]),
@@ -676,7 +739,7 @@ def parse_bar(obj: Mapping[str, object]) -> OperationalBar:
         _boolean(obj["finalised"]),
         _text(obj["exchange"]),
         _text(obj["currency"]),
-        _text(obj.get("raw_provenance", "AS_TRADED")),
+        provenance,
         _text(obj.get("series", "TRADES")),
     )
 

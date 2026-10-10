@@ -82,6 +82,37 @@ async def test_card_is_fixed_fractional_and_never_calls_edge_sizer(tmp_path, mon
 
 
 @pytest.mark.asyncio
+async def test_adjusted_volume_one_share_shifts_do_not_change_engine_or_card(
+    tmp_path, monkeypatch
+) -> None:
+    from qat.operational import adapter as adapter_module
+    from qat.operational import cards as cards_module
+    from qat.operational.history import to_engine_adjusted
+
+    outcomes = []
+
+    def shifted(kind, delta, counter):
+        def project(bar):
+            counter[kind] += 1
+            value = to_engine_adjusted(bar)
+            return replace(value, volume=value.volume + delta)
+
+        return project
+
+    for shift in (0, 1, -1):
+        calls = {"adapter": 0, "cards": 0}
+        monkeypatch.setattr(adapter_module, "to_engine_adjusted", shifted("adapter", shift, calls))
+        monkeypatch.setattr(cards_module, "to_engine_adjusted", shifted("cards", shift, calls))
+        service, _, _, _, _, _, _, _ = rig(tmp_path / str(shift))
+        result = service.adapter.run(service.snapshot, now=NOW)
+        cards = await service.publish(result, now=NOW)
+        assert len(result.candidates) == len(cards) == 1
+        assert calls["adapter"] > 0 and calls["cards"] > 0
+        outcomes.append((result.candidates[0], cards[0]))
+    assert outcomes[0] == outcomes[1] == outcomes[2]
+
+
+@pytest.mark.asyncio
 async def test_approval_recomputes_equity_and_requires_reconfirmation(tmp_path) -> None:
     service, result, broker, _, _, _, _, events = rig(tmp_path)
     card = (await service.publish(result, now=NOW))[0]

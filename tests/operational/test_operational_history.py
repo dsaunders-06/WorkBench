@@ -1,5 +1,6 @@
 """Offline tests for the operational history boundary."""
 
+import hashlib
 import json
 import sqlite3
 from dataclasses import replace
@@ -568,6 +569,106 @@ def test_asx_action_authority_and_exact_derived_raw(tmp_path):
         h.derive_pre_split_bar(
             bar(date(2025, 12, 1)), replace(analytical, volume=100001), h.SplitFactor(1, 2)
         )
+
+
+def test_sun_fractional_analytical_volume_is_exact_and_round_trips(tmp_path):
+    h = api()
+    analytical = h.Ohlcv(
+        Decimal("23.393"),
+        Decimal("23.722"),
+        Decimal("23.276"),
+        Decimal("23.452"),
+        Decimal("2658069.5589"),
+    )
+    derived = h.derive_pre_split_bar(
+        bar(date(2025, 2, 14), symbol="SUN.AX"), analytical, h.SplitFactor(10000, 8511)
+    )
+    assert derived.raw_provenance == "DERIVED"
+    assert derived.raw.volume == 3123099
+    assert derived.analytical.volume == Decimal("2658069.5589")
+    engine_adjusted = h.to_engine_adjusted(derived)
+    assert engine_adjusted.volume == 2658070
+    assert type(engine_adjusted.volume) is int
+    assert derived.raw.volume == 3123099
+    assert derived.analytical.volume == Decimal("2658069.5589")
+    assert "inverse_non_exact" not in h._bar_reasons(derived)
+    assert "raw_tick_invalid" not in h._bar_reasons(derived)
+    assert json.loads(h._bar_payload(derived))["analytical"]["volume"] == "2658069.5589"
+
+    store, cal, _ = make_store(tmp_path)
+    saved = ingest(store, (derived,), cal)[0]
+    loaded = store.versions("SUN.AX", date(2025, 2, 14))[0]
+    assert loaded.content_hash == saved.content_hash
+    assert loaded.bar.analytical.volume == Decimal("2658069.5589")
+    assert h._bar_payload(loaded.bar) == h._bar_payload(derived)
+
+    with pytest.raises(ValueError, match="inverse_non_exact"):
+        h.derive_pre_split_bar(
+            bar(date(2025, 2, 14), symbol="SUN.AX"),
+            replace(analytical, volume=2658070),
+            h.SplitFactor(10000, 8511),
+        )
+    with pytest.raises(ValueError, match="inverse_non_exact"):
+        h.derive_pre_split_bar(
+            bar(date(2025, 2, 14), symbol="SUN.AX"),
+            replace(analytical, volume=Decimal("1.5")),
+            h.SplitFactor(10000, 8511),
+        )
+
+
+def test_fractional_volume_rejected_for_as_traded_and_binary_float():
+    h = api()
+    value = bar()
+    with pytest.raises(ValueError):
+        replace(value, analytical=replace(value.analytical, volume=Decimal("2.5")))
+    with pytest.raises(ValueError):
+        replace(value, analytical=replace(value.analytical, volume=2.5))
+    fixture = json.loads((FIXTURES / "bar.json").read_text())
+    fixture["analytical"]["volume"] = "2.5"
+    with pytest.raises(ValueError):
+        h.parse_bar(fixture)
+    fixture["raw_provenance"] = "DERIVED"
+    parsed = h.parse_bar(fixture)
+    assert parsed.analytical.volume == Decimal("2.5")
+    fixture["analytical"]["volume"] = 2.5
+    with pytest.raises(ValueError):
+        h.parse_bar(fixture)
+
+
+def test_existing_as_traded_payload_hash_is_unchanged():
+    h = api()
+    fixture = json.loads((FIXTURES / "bar.json").read_text())
+    payload = h._bar_payload(h.parse_bar(fixture))
+    assert hashlib.sha256(payload).hexdigest() == (
+        "f3a9f81a37204f311e3142bb7ea611d8ada594c2ef786b8902d2974a0c44059d"
+    )
+
+
+@pytest.mark.parametrize(
+    ("volume", "factor", "expected"),
+    [
+        ("2.5", (2, 5), 2),
+        ("3.5", (2, 7), 4),
+    ],
+)
+def test_engine_adjusted_volume_uses_half_even_at_ties(volume, factor, expected):
+    h = api()
+    analytical = h.Ohlcv(
+        Decimal("2.4"), Decimal("2.5"), Decimal("2.25"), Decimal("2.4"), Decimal(volume)
+    )
+    derived = h.derive_pre_split_bar(bar(), analytical, h.SplitFactor(*factor))
+    assert derived.raw.volume == 1
+    assert h.to_engine_adjusted(derived).volume == expected
+
+
+@pytest.mark.parametrize("volume", ["NaN", "Infinity", "0", "-1"])
+def test_fractional_derived_volume_must_be_finite_and_positive(volume):
+    h = api()
+    fixture = json.loads((FIXTURES / "bar.json").read_text())
+    fixture["raw_provenance"] = "DERIVED"
+    fixture["analytical"]["volume"] = volume
+    with pytest.raises((ValueError, TypeError)):
+        h.parse_bar(fixture)
 
 
 def test_derived_bar_with_inexact_inverse_blocks_symbol(tmp_path):
