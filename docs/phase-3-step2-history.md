@@ -105,6 +105,30 @@ nonintegral inverse share volumes block the symbol. The fixture authority is
 synthetic and permits the pre-existing qualified engine test series; real
 authority checks are exercised separately with a complete split fixture.
 
+DS rulings, 11 October 2026: a `DERIVED` bar retains its exact, finite,
+positive analytical share volume as a `Decimal` in the operational record and
+its hash. Its rational inverse must still yield a whole-share raw volume;
+otherwise the symbol fails `inverse_non_exact`. `AS_TRADED` raw and analytical
+volumes remain integers. The single `to_engine_adjusted` projection rounds a
+`DERIVED` analytical volume half-even to whole shares only for the Phase 2
+engine's adjusted copy; the operational snapshot and card evidence retain the
+exact volume. Both the adapter and card path use this projection. The engine's
+volume rules read `FinalBar.raw.volume`, which is passed unchanged: the
+double-bottom and bull-flag confirmations and sizing's prior-volume medians
+all use raw volume. The guard test
+`test_adjusted_volume_one_share_shifts_do_not_change_engine_or_card` verifies
+that shifting every engine adjusted volume by +1 or -1 share leaves a
+qualifying history's rule evidence, card and sizing unchanged.
+
+The offline SUN derivation script reads saved IBKR `TRADES` response
+`phase3-history-20261010T030720947067Z.json` outside Git (SHA-256
+`2916760b6ec64ec6e6e2b0ea120e5aecd36f7a4ca28fb412b4c6100f56e52811`).
+All **341/341** pre-event SUN bars build through `derive_pre_split_bar` and
+`to_engine_adjusted`, with zero failures. On 14 February 2025, exact adjusted
+volume `2658069.5589` with factor `10000/8511` derives `3,123,099` raw
+shares; the engine receives `2,658,070` adjusted shares and the unchanged raw
+volume. This is offline evidence from the saved response, not a real backfill.
+
 ## Verification boundary
 
 The entire test suite denies socket connection, DNS resolution, datagram sends
