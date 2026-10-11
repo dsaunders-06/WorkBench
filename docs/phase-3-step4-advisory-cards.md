@@ -7,6 +7,11 @@ service; normal application startup does not create one until the operator
 supplies the operational authorities and source in a separately authorised
 stage.
 
+Advisory mode and manual TWS entry are a temporary deviation from I-1 in the
+[intent register](INTENT.md). The intended outcome is QAT placement and
+management of the DS-approved trade through the paper IBKR Gateway, after
+the entry capability is verified and separately authorised.
+
 ## Sizing and sign-off
 
 The sizing basis shown on each card is **fixed 1% risk to stop, no edge

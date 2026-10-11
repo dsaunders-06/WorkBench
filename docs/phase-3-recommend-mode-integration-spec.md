@@ -17,15 +17,25 @@ It expires at the next ASX session's open, matching the strategy's next-open
 entry. Abstentions and missing data produce no executable card.
 
 The engine cannot import the UI, OMS, broker, scheduler or network. The new
-adapter is the sole translation boundary. It may hand a reviewed card to the
-existing Phase 1 OMS risk pipeline, which recalculates current quantity and
-risk before any order is queued. Only the existing per-order `OMS.sign_off`
-path may transmit, after explicit human confirmation in `recommend` mode.
-Any changed price, stop, quantity, risk, bar version or stale session revokes
-the card and requires a fresh one and fresh approval. The default account is
-paper. No autonomous submission is allowed; real-money use is blocked until
-the operator separately decides the
-Phase 4 limits below and approves an operational release.
+adapter translates operational snapshots into pure engine inputs; the separate
+hand-off layer recalculates current quantity and risk under the Phase 1
+safeguards. In the current build, the existing per-order `OMS.sign_off` path is
+the only transmission path and requires explicit DS confirmation in
+`recommend` mode; opening-auction
+transmission remains disabled, so approval records an advisory decision and
+exact manual-entry details, not a broker order. An accepted correction to card
+inputs appends a revocation and requires a fresh card and approval before the
+next open. Changed quantity or risk at approval requires DS to reconfirm both
+the original and current values. Expired cards cannot be approved. The default
+account is paper. No order is submitted without DS's approval. Autonomous
+trading without that approval is I-2, deferred to a separate DS decision.
+Entry sign-off approves the card's whole exit plan: the protective stop, +1R
+partial target, breakeven move, upward-only trailing, and next-open exits for
+close invalidation and the time stop. QAT is intended to transmit and manage that
+approved plan without a further dialog once a reviewed Phase 1 change permits
+it. Anything that adds exposure or loosens protection needs fresh sign-off.
+Real-money use is blocked until DS separately decides the Phase 4 limits below
+and approves an operational release. See the [intent register](INTENT.md).
 
 ## Operational bars and separation from research
 
@@ -100,7 +110,9 @@ paper-default and recommend-only; real money needs a separate operator
 decision and release.
 
 Isolation acceptance requires static transitive-import checks and runtime
-tests proving that the pure engine has no path to UI, OMS, broker, network or
-order submission; only the adapter can call outward. A second set proves that
-no card, rejected card, stale card or global auto-mode setting can transmit
-without the Phase 1 OMS risk check and explicit per-order human sign-off.
+tests proving that the pure engine has no path to UI, OMS, broker adapter,
+network or order submission. The operational adapter cannot import UI, OMS or
+execution paths; the separate hand-off layer may import the adapter and Phase 1
+OMS interfaces. A second set proves that, in the current build, no card,
+rejected card, stale card or global auto-mode setting can transmit without the
+Phase 1 OMS risk check and explicit per-order human sign-off.
