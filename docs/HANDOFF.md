@@ -1,5 +1,8 @@
 # Current handoff — 8 October 2026
 
+The current [QAT intent register](INTENT.md) records DS's binding intent and
+the temporary advisory-only deviation. Read it alongside this dated handoff.
+
 Phase 2 promotion is closed as `METHOD_INADEQUATE` under the pre-result
 stopping rule; the authoritative strategy remains unvalidated. Phase 2
 engineering merged into `master` through PR #4 at merge commit `fa084947`.
