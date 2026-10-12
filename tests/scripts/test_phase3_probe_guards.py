@@ -35,6 +35,7 @@ from phase3_paper_stop_lifecycle_probe import (  # noqa: E402
     _cleanup,
     _GuardedGateway,
     _parcel,
+    _positions,
     _record_trade,
     _stop_prices,
 )
@@ -95,6 +96,71 @@ def test_paper_stop_probe_uses_minimum_parcel_and_upward_stop_move() -> None:
     first, raised = _stop_prices(Decimal("61.06"))
     assert first == Decimal("54.95")
     assert raised == Decimal("54.96")
+
+
+@pytest.mark.asyncio
+async def test_position_read_deduplicates_callbacks_for_one_du_contract() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.rows: list[SimpleNamespace] = []
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123456"]
+
+        async def reqPositionsAsync(self) -> list[SimpleNamespace]:  # noqa: N802
+            row = SimpleNamespace(
+                account="DU123456",
+                contract=SimpleNamespace(symbol="BHP", conId=4036812, primaryExchange="ASX"),
+                position=9.0,
+            )
+            self.rows.extend((row, row))
+            return self.rows
+
+        def positions(self) -> list[SimpleNamespace]:
+            return [self.rows[-1]]
+
+    client = Client()
+    events: list[dict[str, object]] = []
+    assert await _positions(client, 4036812, events) == 9.0
+    assert sum(row.position for row in client.rows) == 18.0  # former callback-list result
+    assert len(events) == 1
+    assert events[0]["event"] == "position rows"
+    assert len(events[0]["request_rows"]) == 2  # type: ignore[arg-type]
+    assert len(events[0]["cache_rows"]) == 1  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_position_read_ignores_same_symbol_on_another_contract() -> None:
+    class Client:
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123456"]
+
+        async def reqPositionsAsync(self) -> list[SimpleNamespace]:  # noqa: N802
+            return []
+
+        def positions(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(
+                    account="DU123456",
+                    contract=SimpleNamespace(symbol="BHP", conId=4036812, primaryExchange="ASX"),
+                    position=9.0,
+                ),
+                SimpleNamespace(
+                    account="DU123456",
+                    contract=SimpleNamespace(symbol="BHP", conId=999, primaryExchange="NYSE"),
+                    position=20.0,
+                ),
+                SimpleNamespace(
+                    account="DU999999",
+                    contract=SimpleNamespace(symbol="BHP", conId=4036812, primaryExchange="ASX"),
+                    position=30.0,
+                ),
+            ]
+
+    events: list[dict[str, object]] = []
+    assert await _positions(Client(), 4036812, events) == 9.0
+    assert len(events[0]["cache_rows"]) == 3  # type: ignore[arg-type]
+    assert len(events[0]["matched_rows"]) == 1  # type: ignore[arg-type]
 
 
 def test_paper_trade_record_includes_broker_id_status_fill_and_time() -> None:
@@ -290,10 +356,26 @@ async def test_existing_paper_holding_is_never_cleaned_up_as_probe_exposure(
         def managedAccounts(self) -> list[str]:  # noqa: N802
             return ["DU123456"]
 
+        async def qualifyContractsAsync(self, contract: object) -> list[object]:  # noqa: N802
+            return [
+                SimpleNamespace(conId=4036812, symbol="BHP", primaryExchange="ASX", currency="AUD")
+            ]
+
         async def reqPositionsAsync(self) -> list[object]:  # noqa: N802
             return [
                 SimpleNamespace(
-                    account="DU123456", contract=SimpleNamespace(symbol="BHP"), position=9.0
+                    account="DU123456",
+                    contract=SimpleNamespace(symbol="BHP", conId=4036812),
+                    position=9.0,
+                )
+            ]
+
+        def positions(self) -> list[object]:
+            return [
+                SimpleNamespace(
+                    account="DU123456",
+                    contract=SimpleNamespace(symbol="BHP", conId=4036812),
+                    position=9.0,
                 )
             ]
 
@@ -338,7 +420,18 @@ async def test_cleanup_never_sells_against_a_resting_stop() -> None:
         async def reqPositionsAsync(self) -> list[object]:  # noqa: N802
             return [
                 SimpleNamespace(
-                    account="DU123", contract=SimpleNamespace(symbol="BHP"), position=9.0
+                    account="DU123",
+                    contract=SimpleNamespace(symbol="BHP", conId=4036812),
+                    position=9.0,
+                )
+            ]
+
+        def positions(self) -> list[object]:
+            return [
+                SimpleNamespace(
+                    account="DU123",
+                    contract=SimpleNamespace(symbol="BHP", conId=4036812),
+                    position=9.0,
                 )
             ]
 
@@ -349,8 +442,9 @@ async def test_cleanup_never_sells_against_a_resting_stop() -> None:
         async def place_order(self, order: object) -> None:
             raise AssertionError(f"cleanup tried to sell against a live stop: {order}")
 
-    events: list[dict[str, str]] = []
-    await _cleanup(Client(), Adapter(), "buy-ref", "stop-ref", "sell-ref", events)  # type: ignore[arg-type]
-    assert events == [
+    events: list[dict[str, object]] = []
+    await _cleanup(Client(), Adapter(), 4036812, "buy-ref", "stop-ref", "sell-ref", events)  # type: ignore[arg-type]
+    assert events[-1:] == [
         {"event": "protected paper position remains; manual close required", "quantity": "9.0"}
     ]
+    assert events[0]["event"] == "position rows"

@@ -33,6 +33,7 @@ from phase3_daily_history_probe import (  # noqa: E402
 from qat.config import Settings  # noqa: E402
 from qat.data.broker.adapter import Order  # noqa: E402
 from qat.data.broker.ib_adapter import IBAdapter  # noqa: E402
+from qat.data.broker.ib_translate import to_ib_contract  # noqa: E402
 from qat.data.broker.ticks import tick_size  # noqa: E402
 from qat.domain.bus import EventBus  # noqa: E402
 
@@ -89,16 +90,58 @@ def _stop_prices(reference: Decimal) -> tuple[Decimal, Decimal]:
     return first, first + tick
 
 
-async def _positions(client: Any) -> float:
+async def _qualified_bhp_con_id(client: Any) -> int:
     _checked_account(client)
-    rows = await client.reqPositionsAsync()
-    if rows is None:
+    contracts = await client.qualifyContractsAsync(to_ib_contract(SYMBOL, "ASX"))
+    if len(contracts) != 1:
+        raise RuntimeError("BHP ASX contract could not be uniquely qualified")
+    contract = contracts[0]
+    con_id = int(contract.conId)
+    if (
+        con_id <= 0
+        or contract.symbol != BROKER_SYMBOL
+        or contract.primaryExchange != "ASX"
+        or contract.currency != "AUD"
+    ):
+        raise RuntimeError("qualified BHP contract is not the expected ASX stock")
+    return con_id
+
+
+def _position_row(row: Any) -> dict[str, str]:
+    return {
+        "account": str(row.account),
+        "con_id": str(row.contract.conId),
+        "symbol": str(row.contract.symbol),
+        "exchange": str(getattr(row.contract, "exchange", "")),
+        "primary_exchange": str(getattr(row.contract, "primaryExchange", "")),
+        "quantity": str(row.position),
+    }
+
+
+async def _positions(client: Any, con_id: int, events: list[dict[str, Any]]) -> float:
+    _checked_account(client)
+    request_rows = await client.reqPositionsAsync()
+    if request_rows is None:
         raise RuntimeError("broker positions query failed")
-    return sum(
-        float(row.position)
-        for row in rows
-        if row.contract.symbol == BROKER_SYMBOL and row.account.upper().startswith("DU")
+    _checked_account(client)
+    account = client.managedAccounts()[0]
+    cache_rows = list(client.positions())
+    matched = [
+        row for row in cache_rows if row.account == account and int(row.contract.conId) == con_id
+    ]
+    events.append(
+        {
+            "at_utc": datetime.now(UTC).isoformat(),
+            "event": "position rows",
+            "qualified_con_id": str(con_id),
+            "request_rows": [_position_row(row) for row in request_rows],
+            "cache_rows": [_position_row(row) for row in cache_rows],
+            "matched_rows": [_position_row(row) for row in matched],
+        }
     )
+    if len(matched) > 1:
+        raise RuntimeError("keyed broker position cache returned duplicate BHP contract rows")
+    return float(matched[0].position) if matched else 0.0
 
 
 async def _open_bhp_orders(client: Any) -> list[Any]:
@@ -170,9 +213,11 @@ def _record_trade(client: Any, ref: str, event: str, events: list[dict[str, Any]
     )
 
 
-async def _wait_for_position(client: Any, positive: bool, seconds: int = 90) -> float:
+async def _wait_for_position(
+    client: Any, con_id: int, events: list[dict[str, Any]], positive: bool, seconds: int = 90
+) -> float:
     for _ in range(seconds):
-        quantity = await _positions(client)
+        quantity = await _positions(client, con_id, events)
         if (quantity > 0) == positive:
             return quantity
         await asyncio.sleep(1)
@@ -225,6 +270,7 @@ async def _cancel_ref(
 async def _cleanup(
     client: Any,
     adapter: IBAdapter,
+    con_id: int,
     buy_ref: str,
     stop_ref: str,
     sell_ref: str,
@@ -233,7 +279,7 @@ async def _cleanup(
     """Cancel pending exposure; never sell while a protective stop may rest."""
     for ref in (buy_ref, sell_ref):
         await _cancel_ref(client, adapter, ref, events)
-    held = await _positions(client)
+    held = await _positions(client, con_id, events)
     stop_working = any(
         str(trade.order.orderRef) == stop_ref for trade in await _open_bhp_orders(client)
     )
@@ -256,7 +302,7 @@ async def _cleanup(
         Order(symbol=SYMBOL, side="sell", quantity=int(held), order_id=rescue_ref)
     )
     events.append({"event": "emergency market exit returned", "raw": repr(result)})
-    await _wait_for_position(client, positive=False)
+    await _wait_for_position(client, con_id, events, positive=False)
 
 
 async def _run(session: date, out_dir: Path, execute: bool) -> int:
@@ -296,13 +342,15 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
     connected = False
     paper_verified = False
     probe_exposure_started = False
+    con_id: int | None = None
     try:
         await adapter.connect()
         connected = True
         _checked_account(client)
         paper_verified = True
         events.append({"at_utc": datetime.now(UTC).isoformat(), "event": "DU account verified"})
-        if await _positions(client) != 0 or await _open_bhp_orders(client):
+        con_id = await _qualified_bhp_con_id(client)
+        if await _positions(client, con_id, events) != 0 or await _open_bhp_orders(client):
             raise ValueError("BHP already has a holding or working order; refusing probe")
         _checked_account(client)
         quote = await adapter.get_market_data(SYMBOL)
@@ -328,7 +376,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
             {"at_utc": datetime.now(UTC).isoformat(), "event": "buy returned", "raw": repr(buy)}
         )
         _record_trade(client, buy_ref, "buy submitted", events)
-        held = await _wait_for_position(client, positive=True)
+        held = await _wait_for_position(client, con_id, events, positive=True)
         _record_trade(client, buy_ref, "buy holding confirmed", events)
         if held != int(held) or held > quantity:
             raise RuntimeError(f"unexpected broker holding after buy: {held}")
@@ -364,7 +412,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
             {"at_utc": datetime.now(UTC).isoformat(), "event": "stop cancellation confirmed"}
         )
         _record_trade(client, stop_ref, "cancelled stop broker state", events)
-        held = await _positions(client)
+        held = await _positions(client, con_id, events)
         if held:
             if held != int(held) or held > quantity:
                 raise RuntimeError(f"unexpected broker holding before exit: {held}")
@@ -380,9 +428,9 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
                 }
             )
             _record_trade(client, sell_ref, "market exit submitted", events)
-            await _wait_for_position(client, positive=False)
+            await _wait_for_position(client, con_id, events, positive=False)
             _record_trade(client, sell_ref, "market exit flat confirmed", events)
-        if await _positions(client) != 0 or await _open_bhp_orders(client):
+        if await _positions(client, con_id, events) != 0 or await _open_bhp_orders(client):
             raise RuntimeError("paper probe ended with a holding or working BHP order")
         events.append(
             {"at_utc": datetime.now(UTC).isoformat(), "event": "flat and no open BHP order"}
@@ -392,9 +440,9 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
         events.append(
             {"at_utc": datetime.now(UTC).isoformat(), "event": "probe failed", "error": error}
         )
-        if connected and paper_verified and probe_exposure_started:
+        if connected and paper_verified and probe_exposure_started and con_id is not None:
             try:
-                await _cleanup(client, adapter, buy_ref, stop_ref, sell_ref, events)
+                await _cleanup(client, adapter, con_id, buy_ref, stop_ref, sell_ref, events)
             except Exception as cleanup_exc:  # noqa: BLE001 - preserve both failure reports
                 events.append(
                     {
@@ -405,11 +453,13 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
     finally:
         if connected:
             try:
+                if con_id is None:
+                    raise RuntimeError("BHP ASX contract was not qualified")
                 events.append(
                     {
                         "at_utc": datetime.now(UTC).isoformat(),
                         "event": "final broker state",
-                        "position": str(await _positions(client)),
+                        "position": str(await _positions(client, con_id, events)),
                         "open_bhp_orders": repr(
                             [_order_view(t) for t in await _open_bhp_orders(client)]
                         ),
