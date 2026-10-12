@@ -39,15 +39,11 @@
     "probe": "paper_bhp_stream_observation",
     "request_parameters": [
       {
-        "gateway": "local DU paper port 4002",
-        "request": "IBAdapter.get_market_data / reqMktData streaming",
-        "symbol": "BHP.AX",
-        "requested_market_data_type": 3
+        "symbol": "BHP.AX"
       }
     ],
     "retrieved_sydney": "2026-10-12T16:15:13.369562+11:00",
     "retrieved_utc": "2026-10-12T05:15:16.757670+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "374f151dfc7edffe8fffc929271ab3f4e72a9139548e41fd0d07296ce41af483"
   },
   {
@@ -133,149 +129,148 @@
     "probe": "close_window",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
         "bar_size": "1 min",
+        "duration": "1 D",
         "end": null,
-        "started_utc": "2026-10-12T05:18:36.707632+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:18:36.707632+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       },
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
         "bar_size": "1 min",
+        "duration": "1 D",
         "end": null,
-        "started_utc": "2026-10-12T05:18:52.297978+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:18:52.297978+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:19:07.806198+00:00",
         "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T05:19:07.806198+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:19:23.312702+00:00",
         "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T05:19:23.312702+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:19:38.820699+00:00",
         "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T05:19:38.820699+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:19:54.328095+00:00",
         "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T05:19:54.328095+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:20:09.834687+00:00",
         "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T05:20:09.834687+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:20:25.354106+00:00",
         "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T05:20:25.354106+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:20:40.856512+00:00",
         "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T05:20:40.856512+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:20:56.351673+00:00",
         "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T05:20:56.351673+00:00"
+        "use_rth": true
       },
       {
-        "symbol": "SUN.AX",
-        "use_rth": false,
-        "started_utc": "2026-10-12T05:21:11.849660+00:00",
-        "start_requested": "",
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
         "end_requested_sydney": "2026-10-12T16:21:11.849660+11:00",
-        "what_to_show": "TRADES",
         "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "start_requested": "",
+        "started_utc": "2026-10-12T05:21:11.849660+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false,
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:21:27.395664+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T05:21:27.395664+00:00",
         "symbol": "MFG.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T05:21:27.395664+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:21:27.395664+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:21:42.912653+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T05:21:42.912653+00:00",
         "symbol": "BHP.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T05:21:42.912653+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:21:42.912653+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:21:58.444648+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T05:21:58.444648+00:00",
         "symbol": "CBA.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T05:21:58.444648+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:21:58.444648+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:22:13.972634+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T05:22:13.972634+00:00",
         "symbol": "WGX.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T05:22:13.972634+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:22:13.972634+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       }
     ],
     "retrieved_sydney": "2026-10-12T16:18:36.707632+11:00",
     "retrieved_utc": "2026-10-12T05:22:29.494667+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "12912369c68e8b134ebfd689de08b10d53565a1c1b145062d58eba806e5a8037"
   },
   {
@@ -283,149 +278,148 @@
     "probe": "close_window",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
         "bar_size": "1 min",
+        "duration": "1 D",
         "end": null,
-        "started_utc": "2026-10-12T06:03:25.809545+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:03:25.809545+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       },
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
         "bar_size": "1 min",
+        "duration": "1 D",
         "end": null,
-        "started_utc": "2026-10-12T06:03:41.320651+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:03:41.320651+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:03:56.813634+00:00",
         "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:03:56.813634+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:04:12.312104+00:00",
         "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:04:12.312104+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:04:27.817627+00:00",
         "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:04:27.817627+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:04:43.320625+00:00",
         "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:04:43.320625+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:04:58.812610+00:00",
         "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:04:58.812610+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:05:14.303604+00:00",
         "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:05:14.303604+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:05:29.815601+00:00",
         "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:05:29.815601+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:05:45.315591+00:00",
         "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:05:45.315591+00:00"
+        "use_rth": true
       },
       {
-        "symbol": "SUN.AX",
-        "use_rth": false,
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
         "started_utc": "2026-10-12T06:06:00.801588+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "symbol": "SUN.AX",
+        "use_rth": false,
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T06:06:16.340579+00:00",
         "symbol": "MFG.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T06:06:16.340579+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T06:06:31.874613+00:00",
         "symbol": "BHP.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T06:06:31.874613+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T06:06:47.397576+00:00",
         "symbol": "CBA.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T06:06:47.397576+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T06:07:02.914957+00:00",
         "symbol": "WGX.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T06:07:02.914957+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       }
     ],
     "retrieved_sydney": "2026-10-12T17:03:25.809545+11:00",
     "retrieved_utc": "2026-10-12T06:07:18.437563+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "a379ecac8ad3f6d7e89abc42748527bfca87985014fa5c7160300d7610b1430b"
   },
   {
@@ -433,149 +427,148 @@
     "probe": "close_window",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
         "bar_size": "1 min",
+        "duration": "1 D",
         "end": null,
-        "started_utc": "2026-10-12T06:33:34.535810+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:33:34.535810+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       },
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
         "bar_size": "1 min",
+        "duration": "1 D",
         "end": null,
-        "started_utc": "2026-10-12T06:33:50.035914+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:33:50.035914+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:34:05.525914+00:00",
         "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:34:05.525914+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:34:21.017909+00:00",
         "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:34:21.017909+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:34:36.521907+00:00",
         "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:34:36.521907+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:34:52.015893+00:00",
         "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:34:52.015893+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:35:07.509115+00:00",
         "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:35:07.509115+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:35:21.356095+00:00",
         "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:35:21.356095+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:35:36.859733+00:00",
         "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:35:36.859733+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:35:52.347969+00:00",
         "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T06:35:52.347969+00:00"
+        "use_rth": true
       },
       {
-        "symbol": "SUN.AX",
-        "use_rth": false,
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
         "started_utc": "2026-10-12T06:36:07.831710+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "symbol": "SUN.AX",
+        "use_rth": false,
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T06:36:23.377245+00:00",
         "symbol": "MFG.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T06:36:23.377245+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T06:36:38.899709+00:00",
         "symbol": "BHP.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T06:36:38.899709+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T06:36:54.413919+00:00",
         "symbol": "CBA.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T06:36:54.413919+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T06:37:09.929692+00:00",
         "symbol": "WGX.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T06:37:09.929692+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       }
     ],
     "retrieved_sydney": "2026-10-12T17:33:34.535810+11:00",
     "retrieved_utc": "2026-10-12T06:37:25.448689+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "20f8ac92bd0c9573b0ad6339879fa7162f2c0f8b88d644742a52b25c8721ed85"
   },
   {
@@ -583,149 +576,148 @@
     "probe": "close_window",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
         "bar_size": "1 min",
+        "duration": "1 D",
         "end": null,
-        "started_utc": "2026-10-12T07:03:21.497675+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:03:21.497675+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       },
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
         "bar_size": "1 min",
+        "duration": "1 D",
         "end": null,
-        "started_utc": "2026-10-12T07:03:36.999059+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:03:36.999059+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:03:52.484613+00:00",
         "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T07:03:52.484613+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:04:07.974725+00:00",
         "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T07:04:07.974725+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:04:23.475036+00:00",
         "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T07:04:23.475036+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:04:38.974302+00:00",
         "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T07:04:38.974302+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:04:54.471829+00:00",
         "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T07:04:54.471829+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:05:09.957775+00:00",
         "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T07:05:09.957775+00:00"
+        "use_rth": true
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:05:25.444011+00:00",
         "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T07:05:25.444011+00:00"
+        "use_rth": false
       },
       {
+        "bar_size": "1 min",
+        "duration": "1 D",
+        "end": null,
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:05:40.935010+00:00",
         "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "1 D",
-        "bar_size": "1 min",
-        "end": null,
-        "started_utc": "2026-10-12T07:05:40.935010+00:00"
+        "use_rth": true
       },
       {
-        "symbol": "SUN.AX",
-        "use_rth": false,
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
         "started_utc": "2026-10-12T07:05:56.426097+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "symbol": "SUN.AX",
+        "use_rth": false,
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T07:06:11.989744+00:00",
         "symbol": "MFG.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T07:06:11.989744+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T07:06:27.507238+00:00",
         "symbol": "BHP.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T07:06:27.507238+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T07:06:43.031539+00:00",
         "symbol": "CBA.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T07:06:43.031539+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       },
       {
+        "desired_start_sydney": "2026-10-12T15:50:00+11:00",
+        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
+        "number_of_ticks": 1000,
+        "start_requested": "",
+        "started_utc": "2026-10-12T07:06:58.554298+00:00",
         "symbol": "WGX.AX",
         "use_rth": false,
-        "started_utc": "2026-10-12T07:06:58.554298+00:00",
-        "start_requested": "",
-        "end_requested_sydney": "2026-10-12T16:30:00+11:00",
-        "what_to_show": "TRADES",
-        "number_of_ticks": 1000,
-        "desired_start_sydney": "2026-10-12T15:50:00+11:00"
+        "what_to_show": "TRADES"
       }
     ],
     "retrieved_sydney": "2026-10-12T18:03:21.497675+11:00",
     "retrieved_utc": "2026-10-12T07:07:14.088412+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "ce3a936e42beacd98085d000e6262eecfb67de770b621985d0fccac23cb8cdfa"
   },
   {
@@ -871,15 +863,10 @@
     "filename": "phase3-executions-recheck-20261011T232620739287Z.json",
     "probe": "paper_bhp_executions_recheck",
     "request_parameters": [
-      {
-        "gateway": "local DU paper port 4002",
-        "request": "reqExecutionsAsync",
-        "symbol": "BHP.AX"
-      }
+      {}
     ],
     "retrieved_sydney": null,
     "retrieved_utc": "2026-10-11T23:26:20.738284+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "026fc41ff902f7b04198e954dd4733b7e49e9bcb8b543b1155f5c9a67323f069"
   },
   {
@@ -887,27 +874,26 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:15:15.131738+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:15:15.131738+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       },
       {
-        "symbol": "SUN.AX",
-        "series": "ADJUSTED_LAST",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:15:35.760583+00:00"
+        "series": "ADJUSTED_LAST",
+        "started_utc": "2026-10-12T05:15:35.760583+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T16:15:15.131738+11:00",
     "retrieved_utc": "2026-10-12T05:15:51.240571+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "2e86e80e001196db5ad7b56fafb7bf10e5cce2b480b9663effbd36fd9da1e597"
   },
   {
@@ -915,27 +901,26 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:15:52.054625+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:15:52.054625+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       },
       {
-        "symbol": "SUN.AX",
-        "series": "ADJUSTED_LAST",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:16:07.538336+00:00"
+        "series": "ADJUSTED_LAST",
+        "started_utc": "2026-10-12T05:16:07.538336+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T16:15:52.054625+11:00",
     "retrieved_utc": "2026-10-12T05:16:23.021784+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "aa63756ac8192de2cf98c596bd2e7a82e6afcd40127f78787e7d237b7306dd71"
   },
   {
@@ -943,18 +928,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:16:23.834300+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:16:23.834300+00:00",
+        "symbol": "MFG.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T16:16:23.834300+11:00",
     "retrieved_utc": "2026-10-12T05:16:39.933770+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "5b85b831c79881e88fc87f34691560e16bc26f8b42b7863c2bc99e14d3a8fd1e"
   },
   {
@@ -962,18 +946,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:16:40.755101+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:16:40.755101+00:00",
+        "symbol": "MFG.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T16:16:40.755101+11:00",
     "retrieved_utc": "2026-10-12T05:16:56.231049+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "795da7b26584ce57445f32debf0539f81b9335c87789158ad5bf516d49b310d9"
   },
   {
@@ -981,18 +964,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:16:57.042360+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:16:57.042360+00:00",
+        "symbol": "BHP.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T16:16:57.042360+11:00",
     "retrieved_utc": "2026-10-12T05:17:12.896525+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "cae14802919835b7fce265dd5294b84c1a6df0cf3c56e75c0d52392c8c6298e1"
   },
   {
@@ -1000,18 +982,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:17:13.772563+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:17:13.772563+00:00",
+        "symbol": "BHP.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T16:17:13.772563+11:00",
     "retrieved_utc": "2026-10-12T05:17:29.243776+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "6d3ad4a3fbf899952f633635d44ee3aa35ec39163114762bb68dc39f2e7695e2"
   },
   {
@@ -1019,18 +1000,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:17:30.159499+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:17:30.159499+00:00",
+        "symbol": "CBA.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T16:17:30.159499+11:00",
     "retrieved_utc": "2026-10-12T05:17:46.322650+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "5a9c206a5899bd1c227b661175b24014becf09182f0ff031316b2f0ad8728b48"
   },
   {
@@ -1038,18 +1018,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:17:47.193234+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:17:47.193234+00:00",
+        "symbol": "CBA.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T16:17:47.193234+11:00",
     "retrieved_utc": "2026-10-12T05:18:02.665742+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "456fa1e141d86668f536eccffbcf23d7e0e1dc31cfcd76d9d7f2dc1824073ff8"
   },
   {
@@ -1057,18 +1036,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:18:03.493908+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:18:03.493908+00:00",
+        "symbol": "WGX.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T16:18:03.493908+11:00",
     "retrieved_utc": "2026-10-12T05:18:19.588737+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "7285c93e673ee8c5784fa55b153e2c07001b38c3695d95a2cfb2983383b51d2b"
   },
   {
@@ -1076,18 +1054,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T05:18:20.411920+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T05:18:20.411920+00:00",
+        "symbol": "WGX.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T16:18:20.411920+11:00",
     "retrieved_utc": "2026-10-12T05:18:35.893721+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "07b0a506b3582e74e20f932e18992f2196ccca1de9488e192503cc4a28c1970e"
   },
   {
@@ -1095,27 +1072,26 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:00:12.381372+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:00:12.381372+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       },
       {
-        "symbol": "SUN.AX",
-        "series": "ADJUSTED_LAST",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:00:27.866880+00:00"
+        "series": "ADJUSTED_LAST",
+        "started_utc": "2026-10-12T06:00:27.866880+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:00:12.381372+11:00",
     "retrieved_utc": "2026-10-12T06:00:43.345710+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "3a8d81f4565ab53d79f9b86047d12868b120f62026983ce0cc6ef540026625ff"
   },
   {
@@ -1123,27 +1099,26 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:00:44.068170+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:00:44.068170+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       },
       {
-        "symbol": "SUN.AX",
-        "series": "ADJUSTED_LAST",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:00:59.535703+00:00"
+        "series": "ADJUSTED_LAST",
+        "started_utc": "2026-10-12T06:00:59.535703+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:00:44.068170+11:00",
     "retrieved_utc": "2026-10-12T06:01:15.001703+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "a1ab736b5950abfc33ca37235384dd8260ec2078a83c819f1e0650b9714592ba"
   },
   {
@@ -1151,18 +1126,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:01:15.813313+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:01:15.813313+00:00",
+        "symbol": "MFG.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:01:15.813313+11:00",
     "retrieved_utc": "2026-10-12T06:01:31.289692+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "5c34fb499399d2b987b31fb3a65d671205d9d861ad9c624e70c71f2da81690f1"
   },
   {
@@ -1170,18 +1144,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:01:32.007110+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:01:32.007110+00:00",
+        "symbol": "MFG.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:01:32.007110+11:00",
     "retrieved_utc": "2026-10-12T06:01:47.474684+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "177f0558bdfcc4fe196552a817356a103efb7972d1ee7d7288579455b0110db3"
   },
   {
@@ -1189,18 +1162,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:01:48.292357+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:01:48.292357+00:00",
+        "symbol": "BHP.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:01:48.292357+11:00",
     "retrieved_utc": "2026-10-12T06:02:03.762689+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "43910390db14eba57e2028296c796e169f209d64290d5b3c6e13d0cf67c5a15f"
   },
   {
@@ -1208,18 +1180,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:02:04.475477+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:02:04.475477+00:00",
+        "symbol": "BHP.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:02:04.475477+11:00",
     "retrieved_utc": "2026-10-12T06:02:19.949672+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "012b410ddded5b7b3bad2e5e13909c5fddd7a3b4cc4c963108ef106c40299ea9"
   },
   {
@@ -1227,18 +1198,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:02:20.765560+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:02:20.765560+00:00",
+        "symbol": "CBA.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:02:20.765560+11:00",
     "retrieved_utc": "2026-10-12T06:02:36.242675+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "e7b3652d37372ec8d45b7246ef73d5c15917f95513276c4a991e8e676db4ba03"
   },
   {
@@ -1246,18 +1216,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:02:37.056711+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:02:37.056711+00:00",
+        "symbol": "CBA.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:02:37.056711+11:00",
     "retrieved_utc": "2026-10-12T06:02:52.529664+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "70d3140a1d10d949dc557b4cc4095c20afc94cf9eac29e4ef1613d7eab552c75"
   },
   {
@@ -1265,18 +1234,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:02:53.237584+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:02:53.237584+00:00",
+        "symbol": "WGX.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:02:53.237584+11:00",
     "retrieved_utc": "2026-10-12T06:03:08.710664+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "9c44547d253f1436e58607751aa774dad236e0aaba7f2dfd3b6567d9b5da2139"
   },
   {
@@ -1284,18 +1252,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:03:09.525440+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:03:09.525440+00:00",
+        "symbol": "WGX.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:03:09.525440+11:00",
     "retrieved_utc": "2026-10-12T06:03:24.997568+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "7923a3eca0aac8a970096e0da85183b7e67d9a30ccd4fed289dba6584dbb053e"
   },
   {
@@ -1303,27 +1270,26 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:30:20.821295+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:30:20.821295+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       },
       {
-        "symbol": "SUN.AX",
-        "series": "ADJUSTED_LAST",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:30:36.398749+00:00"
+        "series": "ADJUSTED_LAST",
+        "started_utc": "2026-10-12T06:30:36.398749+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:30:20.821295+11:00",
     "retrieved_utc": "2026-10-12T06:30:51.865997+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "3f86e568f2310687c8a9ec13ba07b65be44321376b4070559b0fdd9267aeec6d"
   },
   {
@@ -1331,27 +1297,26 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:30:52.692016+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:30:52.692016+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       },
       {
-        "symbol": "SUN.AX",
-        "series": "ADJUSTED_LAST",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:31:08.166875+00:00"
+        "series": "ADJUSTED_LAST",
+        "started_utc": "2026-10-12T06:31:08.166875+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:30:52.692016+11:00",
     "retrieved_utc": "2026-10-12T06:31:23.631980+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "4096c47dccc97cb01eb97f17b5fa6eee332411af5da354f4ff2309ac75a77793"
   },
   {
@@ -1359,18 +1324,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:31:24.369745+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:31:24.369745+00:00",
+        "symbol": "MFG.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:31:24.369745+11:00",
     "retrieved_utc": "2026-10-12T06:31:39.839330+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "3fe6d1aa54affcce0138cb33c2c15f14130b7add878302b80062b0be010f091b"
   },
   {
@@ -1378,18 +1342,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:31:40.552174+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:31:40.552174+00:00",
+        "symbol": "MFG.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:31:40.552174+11:00",
     "retrieved_utc": "2026-10-12T06:31:56.031319+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "1b7f44e1846585b3a5ba26766aec04c3ea1726afa2181b0086c24932d565c041"
   },
   {
@@ -1397,18 +1360,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:31:56.845587+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:31:56.845587+00:00",
+        "symbol": "BHP.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:31:56.845587+11:00",
     "retrieved_utc": "2026-10-12T06:32:12.321957+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "e4e8193fde402c907db9f59b52c61f99e69c9e0bc960c71537d2d2af281742c7"
   },
   {
@@ -1416,18 +1378,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:32:13.135986+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:32:13.135986+00:00",
+        "symbol": "BHP.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:32:13.135986+11:00",
     "retrieved_utc": "2026-10-12T06:32:28.614032+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "95d14a5d1f2fa545c8f14cf92975027445a203b7d7741a115be6d94e00977067"
   },
   {
@@ -1435,18 +1396,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:32:29.459907+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:32:29.459907+00:00",
+        "symbol": "CBA.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:32:29.459907+11:00",
     "retrieved_utc": "2026-10-12T06:32:44.939118+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "42b04a824f8c284f46162d8923dfc7de76bdc284ea9142523611ade8f787effe"
   },
   {
@@ -1454,18 +1414,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:32:45.683145+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:32:45.683145+00:00",
+        "symbol": "CBA.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:32:45.683145+11:00",
     "retrieved_utc": "2026-10-12T06:33:01.146945+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "5e9fc32ce58ce1bdf6d8ce7d8a731af3dcaebae3051a2c7b631f13541ae7c9f5"
   },
   {
@@ -1473,18 +1432,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:33:01.965617+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:33:01.965617+00:00",
+        "symbol": "WGX.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T17:33:01.965617+11:00",
     "retrieved_utc": "2026-10-12T06:33:17.446933+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "e59f45b510f7222f064b516afc13866aa5b2872e488ac973a6e155e4a9632fea"
   },
   {
@@ -1492,18 +1450,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T06:33:18.255560+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T06:33:18.255560+00:00",
+        "symbol": "WGX.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T17:33:18.255560+11:00",
     "retrieved_utc": "2026-10-12T06:33:33.723932+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "d1b3f6977a8f879d0ee6edd75a6273029efd553baccba1df82576dcf60fb3ed0"
   },
   {
@@ -1511,27 +1468,26 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:00:07.856468+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:00:07.856468+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       },
       {
-        "symbol": "SUN.AX",
-        "series": "ADJUSTED_LAST",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:00:23.333134+00:00"
+        "series": "ADJUSTED_LAST",
+        "started_utc": "2026-10-12T07:00:23.333134+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T18:00:07.856468+11:00",
     "retrieved_utc": "2026-10-12T07:00:38.810124+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "c7e07a64209c79cfd753e9f4f8ea276962482619e0e051440272d871358c02b2"
   },
   {
@@ -1539,27 +1495,26 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "SUN.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:00:39.449418+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:00:39.449418+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       },
       {
-        "symbol": "SUN.AX",
-        "series": "ADJUSTED_LAST",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:00:54.965127+00:00"
+        "series": "ADJUSTED_LAST",
+        "started_utc": "2026-10-12T07:00:54.965127+00:00",
+        "symbol": "SUN.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T18:00:39.449418+11:00",
     "retrieved_utc": "2026-10-12T07:01:10.430113+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "3dd892ce8cb6ac9e00f82d8456d3311f789c2af5acf6b6808a6a9114c35ff4f9"
   },
   {
@@ -1567,18 +1522,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:01:11.239655+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:01:11.239655+00:00",
+        "symbol": "MFG.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T18:01:11.239655+11:00",
     "retrieved_utc": "2026-10-12T07:01:26.721108+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "ac9049ef506a0342b4924545e06a63082d64ff1507d54e4c80a66a00ceb82d24"
   },
   {
@@ -1586,18 +1540,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "MFG.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:01:27.525485+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:01:27.525485+00:00",
+        "symbol": "MFG.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T18:01:27.525485+11:00",
     "retrieved_utc": "2026-10-12T07:01:43.007106+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "a5cdc01dd4e60b079d05735b3c0d20d794f711c429e2af17e19b6e9fff1592d8"
   },
   {
@@ -1605,18 +1558,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:01:43.823032+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:01:43.823032+00:00",
+        "symbol": "BHP.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T18:01:43.823032+11:00",
     "retrieved_utc": "2026-10-12T07:01:59.293095+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "b1dab8e353044f652a8c450930ac915e56be78d42bcdc74a69950948060e0c27"
   },
   {
@@ -1624,18 +1576,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "BHP.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:02:00.101676+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:02:00.101676+00:00",
+        "symbol": "BHP.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T18:02:00.101676+11:00",
     "retrieved_utc": "2026-10-12T07:02:15.569093+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "1e49aa5fbfe3ccc1b406b08767a7fffeb3cd042252e023514cf00b72d5fe4c15"
   },
   {
@@ -1643,18 +1594,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:02:16.376673+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:02:16.376673+00:00",
+        "symbol": "CBA.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T18:02:16.376673+11:00",
     "retrieved_utc": "2026-10-12T07:02:31.850083+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "36f3a3e47b1cdf37cd7aad74d68a3ad6274590c227dcd1f23d6d4e67cc54131b"
   },
   {
@@ -1662,18 +1612,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "CBA.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:02:32.660288+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:02:32.660288+00:00",
+        "symbol": "CBA.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T18:02:32.660288+11:00",
     "retrieved_utc": "2026-10-12T07:02:48.140077+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "869deeac6e9663eb6c618d11948896ab166583f4853647a8ab74f2faa1333936"
   },
   {
@@ -1681,18 +1630,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": false,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:02:48.947760+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:02:48.947760+00:00",
+        "symbol": "WGX.AX",
+        "use_rth": false
       }
     ],
     "retrieved_sydney": "2026-10-12T18:02:48.947760+11:00",
     "retrieved_utc": "2026-10-12T07:03:04.417268+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "98ba4495d16f882782d2d3a40d93d1985273ac1fc32ca0316ab723859537dd4f"
   },
   {
@@ -1700,18 +1648,17 @@
     "probe": "finality",
     "request_parameters": [
       {
-        "symbol": "WGX.AX",
-        "series": "TRADES",
-        "use_rth": true,
-        "duration": "2 D",
         "bar_size": "1 day",
+        "duration": "2 D",
         "end": null,
-        "started_utc": "2026-10-12T07:03:05.226965+00:00"
+        "series": "TRADES",
+        "started_utc": "2026-10-12T07:03:05.226965+00:00",
+        "symbol": "WGX.AX",
+        "use_rth": true
       }
     ],
     "retrieved_sydney": "2026-10-12T18:03:05.226965+11:00",
     "retrieved_utc": "2026-10-12T07:03:20.691064+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "3b825dbbdce7b2efb4484e8d5e72f5949fba6940e8b0c88696087cc1b382893f"
   },
   {
@@ -2079,17 +2026,21 @@
     "probe": "paper_stop_lifecycle",
     "request_parameters": [
       {
+        "first_stop": null,
+        "gateway": "localhost:4002 DU paper",
+        "order_sequence": "BUY MKT, SELL STP GTC, raise stop, cancel stop, SELL MKT",
+        "quantity": null,
+        "raised_stop": null,
+        "reference_age_seconds": null,
+        "reference_market_data_type": null,
+        "reference_price": null,
+        "reference_source_timestamp": null,
         "session": "2026-10-12",
-        "symbol": "BHP.AX",
-        "gateway": "local DU paper port 4002",
-        "market_data_request": "IBAdapter.get_market_data streaming BHP.AX",
-        "plan": null,
-        "orders_sent": []
+        "symbol": "BHP.AX"
       }
     ],
     "retrieved_sydney": null,
-    "retrieved_utc": "2026-10-11T23:05:18.629660+00:00",
-    "timestamp_basis": "file_mtime_utc",
+    "retrieved_utc": "2026-10-11T23:05:18.520083+00:00",
     "sha256": "34319d8afc000d56de6d82134f78515de85df28eed7b2f04dd60fe10499d5693"
   },
   {
@@ -2097,17 +2048,21 @@
     "probe": "paper_stop_lifecycle",
     "request_parameters": [
       {
+        "first_stop": null,
+        "gateway": "localhost:4002 DU paper",
+        "order_sequence": "BUY MKT, SELL STP GTC, raise stop, cancel stop, SELL MKT",
+        "quantity": null,
+        "raised_stop": null,
+        "reference_age_seconds": null,
+        "reference_market_data_type": null,
+        "reference_price": null,
+        "reference_source_timestamp": null,
         "session": "2026-10-12",
-        "symbol": "BHP.AX",
-        "gateway": "local DU paper port 4002",
-        "market_data_request": "IBAdapter.get_market_data streaming BHP.AX",
-        "plan": null,
-        "orders_sent": []
+        "symbol": "BHP.AX"
       }
     ],
     "retrieved_sydney": null,
-    "retrieved_utc": "2026-10-11T23:16:19.007221+00:00",
-    "timestamp_basis": "file_mtime_utc",
+    "retrieved_utc": "2026-10-11T23:16:18.901929+00:00",
     "sha256": "f0b2ce251dada92a0d0073146093a62821c04bd932daea8c5b94998af02d09f6"
   },
   {
@@ -2115,55 +2070,53 @@
     "probe": "paper_stop_lifecycle",
     "request_parameters": [
       {
+        "first_stop": "55.67",
+        "gateway": "localhost:4002 DU paper",
+        "order_sequence": "BUY MKT, SELL STP GTC, raise stop, cancel stop, SELL MKT",
+        "quantity": "9",
+        "raised_stop": "55.68",
+        "reference_age_seconds": null,
+        "reference_market_data_type": null,
+        "reference_price": "61.86",
+        "reference_source_timestamp": null,
         "session": "2026-10-12",
-        "symbol": "BHP.AX",
-        "gateway": "local DU paper port 4002",
-        "market_data_request": "IBAdapter.get_market_data streaming BHP.AX",
-        "plan": {
-          "reference": "61.86",
-          "quantity": "9",
-          "first_stop": "55.67",
-          "raised_stop": "55.68"
-        },
-        "orders_sent": [
-          {
-            "average_fill_price": "0.0",
-            "broker_order_id": "506",
-            "broker_perm_id": "1967383843",
-            "filled": "0.0",
-            "order_ref": "phase3-paper-buy-20261011T232515389035Z",
-            "order_type": "MKT",
-            "quantity": "9.0",
-            "side": "BUY",
-            "status": "Submitted",
-            "stop_price": "0.0",
-            "tif": "GTC"
-          },
-          "SELL MKT 9 emergency"
-        ]
+        "symbol": "BHP.AX"
       }
     ],
     "retrieved_sydney": null,
-    "retrieved_utc": "2026-10-11T23:25:18.618537+00:00",
-    "timestamp_basis": "file_mtime_utc",
+    "retrieved_utc": "2026-10-11T23:25:18.612465+00:00",
     "sha256": "4fa95270e469fd0fd4bf89ce05eb6ad92aedca84e90576883f9b098f9cf02b83"
+  },
+  {
+    "filename": "phase3-paper-stop-lifecycle-20261012T233756065750Z.json",
+    "probe": "paper_stop_lifecycle",
+    "request_parameters": [
+      {
+        "first_stop": "55.47",
+        "gateway": "localhost:4002 DU paper",
+        "order_sequence": "BUY MKT, SELL STP GTC, raise stop, cancel stop, SELL MKT",
+        "quantity": "9",
+        "raised_stop": "55.48",
+        "reference_age_seconds": 1207,
+        "reference_market_data_type": 3,
+        "reference_price": "61.64",
+        "reference_source_timestamp": "2026-10-12T23:17:35+00:00",
+        "session": "2026-10-13",
+        "symbol": "BHP.AX"
+      }
+    ],
+    "retrieved_sydney": null,
+    "retrieved_utc": "2026-10-12T23:37:56.060729+00:00",
+    "sha256": "5fd91005d351fa7660d05acc02a423cebf6e1f395829611257807c215e21ed50"
   },
   {
     "filename": "phase3-position-recheck-20261011T232545392706Z.json",
     "probe": "paper_position_recheck",
     "request_parameters": [
-      {
-        "gateway": "local DU paper port 4002",
-        "requests": [
-          "reqPositionsAsync",
-          "reqAllOpenOrdersAsync"
-        ],
-        "symbol": "BHP.AX"
-      }
+      {}
     ],
     "retrieved_sydney": null,
     "retrieved_utc": "2026-10-11T23:25:45.391565+00:00",
-    "timestamp_basis": "raw_retrieved_utc",
     "sha256": "a313c97ca1b01d96fd57f4e8bd285895efa428258382496be6ad607588e00841"
   },
   {
@@ -2331,5 +2284,28 @@
     "retrieved_sydney": null,
     "retrieved_utc": null,
     "sha256": "579d4c2b31d879fca294c5179901f8765e60d3b030a498e8139b43ac2e95bbaf"
+  },
+  {
+    "filename": "phase3-tuesday-quote-preflight-20261012T233732915382Z.json",
+    "probe": "BHP.AX delayed streaming quote preflight",
+    "request_parameters": [
+      {
+        "gateway": "localhost:4002 DU paper",
+        "quantity": 9,
+        "quote": {
+          "age_seconds": "1204",
+          "market_data_type": "3",
+          "observed_timestamp": "2026-10-12T23:37:32.914311+00:00",
+          "price": "61.65",
+          "source_timestamp": "2026-10-12T23:17:28+00:00"
+        },
+        "reference_notional_aud": "554.85",
+        "request": "BHP.AX delayed streaming quote preflight",
+        "symbol": "BHP.AX"
+      }
+    ],
+    "retrieved_sydney": null,
+    "retrieved_utc": "2026-10-12T23:37:32.914311+00:00",
+    "sha256": "7fed2280002d29ad76ca17614652ed4b409631bdd855c636f9ba75334463481d"
   }
 ]

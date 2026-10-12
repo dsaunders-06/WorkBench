@@ -10,6 +10,41 @@ from typing import Any
 
 
 def _request_summary(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    if payload.get("probe") == "paper_stop_lifecycle":
+        plan = next(
+            (
+                event
+                for event in payload.get("events", [])
+                if event.get("event") == "bounded order plan"
+            ),
+            {},
+        )
+        return [
+            {
+                "symbol": "BHP.AX",
+                "session": payload.get("session"),
+                "gateway": "localhost:4002 DU paper",
+                "order_sequence": "BUY MKT, SELL STP GTC, raise stop, cancel stop, SELL MKT",
+                "reference_price": plan.get("reference"),
+                "reference_market_data_type": plan.get("reference_market_data_type"),
+                "reference_source_timestamp": plan.get("reference_source_timestamp"),
+                "reference_age_seconds": plan.get("reference_age_seconds"),
+                "quantity": plan.get("quantity"),
+                "first_stop": plan.get("first_stop"),
+                "raised_stop": plan.get("raised_stop"),
+            }
+        ]
+    if payload.get("request") == "BHP.AX delayed streaming quote preflight":
+        return [
+            {
+                "symbol": "BHP.AX",
+                "gateway": "localhost:4002 DU paper",
+                "request": payload["request"],
+                "quote": payload.get("quote"),
+                "quantity": payload.get("minimum_parcel_shares"),
+                "reference_notional_aud": payload.get("reference_notional_aud"),
+            }
+        ]
     if "raw_file" in payload and "raw_sha256" in payload:
         return [{"raw_file": payload["raw_file"], "raw_sha256": payload["raw_sha256"]}]
     if "requests" in payload:
@@ -98,9 +133,11 @@ def create_manifest(raw_dir: Path, destination: Path) -> int:
             {
                 "filename": path.name,
                 "sha256": digest,
-                "retrieved_utc": payload.get("retrieved_utc"),
+                "retrieved_utc": payload.get("retrieved_utc")
+                or payload.get("at_utc")
+                or (payload.get("events") or [{}])[-1].get("at_utc"),
                 "retrieved_sydney": payload.get("retrieved_sydney"),
-                "probe": payload.get("probe"),
+                "probe": payload.get("probe") or payload.get("request"),
                 "request_parameters": _request_summary(payload),
             }
         )
