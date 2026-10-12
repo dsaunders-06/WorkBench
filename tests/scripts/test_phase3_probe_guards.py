@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import sys
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -98,6 +98,84 @@ def test_paper_stop_probe_uses_minimum_parcel_and_upward_stop_move() -> None:
     assert raised == Decimal("54.96")
 
 
+def test_tuesday_window_starts_after_1030(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 10, 13, 10, 29, tzinfo=paper_probe.SYDNEY)
+
+    monkeypatch.setattr(paper_probe, "datetime", Clock)
+    with pytest.raises(ValueError, match="10:30"):
+        paper_probe._session_window(date(2026, 10, 13))
+
+
+def test_tuesday_probe_rejects_other_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return datetime(2026, 10, 14, 10, 40, tzinfo=paper_probe.SYDNEY)
+
+    monkeypatch.setattr(paper_probe, "datetime", Clock)
+    with pytest.raises(ValueError, match="13 October"):
+        paper_probe._session_window(date(2026, 10, 14))
+
+
+def test_partial_buy_is_unexpected_broker_state() -> None:
+    with pytest.raises(RuntimeError, match="unexpected broker holding"):
+        paper_probe._require_full_holding(4, 9, "after buy")
+    paper_probe._require_full_holding(9, 9, "after buy")
+
+
+def test_emergency_exit_never_exceeds_probe_parcel() -> None:
+    assert paper_probe._rescue_quantity(18, 9, 4) == 4
+    assert paper_probe._rescue_quantity(4, 9, 9) == 4
+    with pytest.raises(RuntimeError, match="fractional"):
+        paper_probe._rescue_quantity(4.5, 9, 9)
+
+
+@pytest.mark.asyncio
+async def test_delayed_reference_requires_type_and_source_age() -> None:
+    now = datetime(2026, 10, 13, 10, 40, tzinfo=UTC)
+
+    class Client:
+        def __init__(self, market_data_type: int, timestamp: datetime | None) -> None:
+            self.ticker = SimpleNamespace(
+                last=62.43,
+                marketDataType=market_data_type,
+                delayedLastTimestamp=timestamp,
+            )
+            self.cancelled = False
+            self.account_checks = 0
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            self.account_checks += 1
+            return ["DU123456"]
+
+        def reqMktData(self, contract: object, *args: object) -> SimpleNamespace:  # noqa: N802
+            return self.ticker
+
+        def cancelMktData(self, contract: object) -> None:  # noqa: N802
+            self.cancelled = True
+
+    fresh = Client(3, now - timedelta(minutes=30))
+    result = await paper_probe._reference_quote(fresh, object(), now=now, wait_seconds=0)
+    assert result["price"] == Decimal("62.43")
+    assert result["market_data_type"] == 3
+    assert result["source_timestamp"] == (now - timedelta(minutes=30)).isoformat()
+    assert result["age_seconds"] == 1800
+    assert fresh.cancelled and fresh.account_checks >= 2
+
+    for data_type, timestamp in (
+        (1, now - timedelta(minutes=20)),
+        (3, None),
+        (3, now - timedelta(minutes=30, seconds=1)),
+    ):
+        client = Client(data_type, timestamp)
+        with pytest.raises(ValueError, match="type|timestamp|age"):
+            await paper_probe._reference_quote(client, object(), now=now, wait_seconds=0)
+        assert client.cancelled
+
+
 @pytest.mark.asyncio
 async def test_position_read_deduplicates_callbacks_for_one_du_contract() -> None:
     class Client:
@@ -175,13 +253,16 @@ def test_paper_trade_record_includes_broker_id_status_fill_and_time() -> None:
             totalQuantity=9,
             auxPrice=0,
         ),
-        orderStatus=SimpleNamespace(status="Filled", filled=9, avgFillPrice=61.0),
+        orderStatus=SimpleNamespace(
+            status="Filled", filled=9, avgFillPrice=61.0, whyHeld="IB simulated"
+        ),
         fills=[
             SimpleNamespace(
                 time="2026-10-12 10:10:00+11:00",
                 execution=SimpleNamespace(
                     time="2026-10-12 10:10:00+11:00", price=61.0, shares=9, execId="paper-1"
                 ),
+                commissionReport=SimpleNamespace(commission=1.25, currency="AUD"),
             )
         ],
         log=[
@@ -195,7 +276,9 @@ def test_paper_trade_record_includes_broker_id_status_fill_and_time() -> None:
     _record_trade(client, "probe-buy", "buy holding confirmed", events)
     assert events[0]["broker_order"]["broker_order_id"] == "42"  # type: ignore[index]
     assert events[0]["broker_order"]["status"] == "Filled"  # type: ignore[index]
+    assert events[0]["broker_order"]["why_held"] == "IB simulated"  # type: ignore[index]
     assert events[0]["fills"][0]["shares"] == "9"  # type: ignore[index]
+    assert events[0]["fills"][0]["commission"] == "1.25"  # type: ignore[index]
 
 
 @pytest.mark.asyncio
@@ -443,7 +526,7 @@ async def test_cleanup_never_sells_against_a_resting_stop() -> None:
             raise AssertionError(f"cleanup tried to sell against a live stop: {order}")
 
     events: list[dict[str, object]] = []
-    await _cleanup(Client(), Adapter(), 4036812, "buy-ref", "stop-ref", "sell-ref", events)  # type: ignore[arg-type]
+    await _cleanup(Client(), Adapter(), 4036812, "buy-ref", "stop-ref", "sell-ref", 9, events)  # type: ignore[arg-type]
     assert events[-1:] == [
         {"event": "protected paper position remains; manual close required", "quantity": "9.0"}
     ]
