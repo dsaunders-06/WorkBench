@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ib_async import ExecutionFilter
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from phase3_daily_history_probe import (  # noqa: E402
@@ -290,6 +292,109 @@ def _record_trade(client: Any, ref: str, event: str, events: list[dict[str, Any]
     )
 
 
+def _record_connection_timezones(client: Any, events: list[dict[str, Any]]) -> None:
+    """Keep the timezone settings as they appeared on the connected IB instance."""
+    tws_timezone = client.TimezoneTWS
+    wrapper_timezone = client.wrapper.defaultTimezone
+    events.append(
+        {
+            "at_utc": datetime.now(UTC).isoformat(),
+            "event": "connection timezones",
+            "client_TimezoneTWS_repr": repr(tws_timezone),
+            "client_TimezoneTWS_type": type(tws_timezone).__name__,
+            "wrapper_defaultTimezone_repr": repr(wrapper_timezone),
+            "wrapper_defaultTimezone_type": type(wrapper_timezone).__name__,
+        }
+    )
+
+
+def _execution_time_view(value: Any) -> dict[str, str]:
+    return {
+        "repr": repr(value),
+        "type": type(value).__name__,
+        "tzinfo": str(getattr(value, "tzinfo", None)),
+    }
+
+
+async def _record_execution_recheck(
+    client: Any, con_id: int, refs: tuple[str, ...], events: list[dict[str, Any]]
+) -> None:
+    """Pair one DU-filtered execution request with cached live fills by execId."""
+    _checked_account(client)
+    account = client.managedAccounts()[0]
+    streamed: dict[str, Any] = {}
+    for trade in client.trades():
+        if str(trade.order.orderRef) not in refs:
+            continue
+        for fill in trade.fills:
+            execution = fill.execution
+            if (
+                execution.acctNumber == account
+                and int(fill.contract.conId) == con_id
+                and fill.contract.symbol == BROKER_SYMBOL
+            ):
+                exec_id = str(execution.execId)
+                if exec_id in streamed:
+                    raise RuntimeError(f"duplicate streamed BHP execution ID: {exec_id}")
+                streamed[exec_id] = execution.time
+    if not streamed:
+        raise RuntimeError("no streamed probe BHP executions available for time comparison")
+    request_filter = ExecutionFilter(acctCode=account, symbol=BROKER_SYMBOL, secType="STK")
+    _checked_account(client)
+    requested_fills = await client.reqExecutionsAsync(request_filter)
+    requested: dict[str, Any] = {}
+    for fill in requested_fills:
+        execution = fill.execution
+        if (
+            execution.acctNumber == account
+            and int(fill.contract.conId) == con_id
+            and fill.contract.symbol == BROKER_SYMBOL
+            and str(execution.execId) in streamed
+        ):
+            exec_id = str(execution.execId)
+            if exec_id in requested:
+                raise RuntimeError(f"duplicate requested BHP execution ID: {exec_id}")
+            requested[exec_id] = execution.time
+    pairs: list[dict[str, Any]] = []
+    for exec_id in sorted(streamed):
+        live_time = streamed[exec_id]
+        recheck_time = requested.get(exec_id)
+        difference: str | None = None
+        if (
+            isinstance(live_time, datetime)
+            and isinstance(recheck_time, datetime)
+            and live_time.tzinfo is not None
+            and recheck_time.tzinfo is not None
+        ):
+            difference = str(
+                (recheck_time.astimezone(UTC) - live_time.astimezone(UTC)).total_seconds()
+            )
+        pairs.append(
+            {
+                "exec_id": exec_id,
+                "streamed": _execution_time_view(live_time),
+                "requested": (_execution_time_view(recheck_time) if exec_id in requested else None),
+                "difference_seconds": difference,
+            }
+        )
+    events.append(
+        {
+            "at_utc": datetime.now(UTC).isoformat(),
+            "event": "execution time recheck",
+            "request_filter": {
+                "acctCode": request_filter.acctCode,
+                "symbol": request_filter.symbol,
+                "secType": request_filter.secType,
+            },
+            "qualified_con_id": str(con_id),
+            "paired_fills": pairs,
+            "missing_requested_exec_ids": sorted(set(streamed) - set(requested)),
+        }
+    )
+    if set(requested) != set(streamed):
+        raise RuntimeError("reqExecutions omitted a streamed probe BHP fill")
+
+
 async def _watch_perm_id(
     client: Any, ref: str, seconds: int = 30, started_at: float | None = None
 ) -> dict[str, str]:
@@ -519,6 +624,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
         _checked_account(client)
         paper_verified = True
         events.append({"at_utc": datetime.now(UTC).isoformat(), "event": "DU account verified"})
+        _record_connection_timezones(client, events)
         contract = await _qualified_bhp_contract(client)
         con_id = int(contract.conId)
         if await _positions(client, con_id, events) != 0 or await _open_bhp_orders(client):
@@ -638,6 +744,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
         events.append(
             {"at_utc": datetime.now(UTC).isoformat(), "event": "flat and no open BHP order"}
         )
+        await _record_execution_recheck(client, con_id, (buy_ref, stop_ref, sell_ref), events)
     except Exception as exc:  # noqa: BLE001 - preserve failure as raw probe evidence
         error = f"{type(exc).__name__}: {exc}"
         events.append(

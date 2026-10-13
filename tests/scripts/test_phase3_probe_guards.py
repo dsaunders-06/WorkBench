@@ -414,6 +414,123 @@ def test_paper_trade_record_includes_broker_id_status_fill_and_time() -> None:
     assert events[0]["fills"][0]["receipt_time"] == str(receipt_time)  # type: ignore[index]
 
 
+def test_connection_records_both_ib_async_timezones() -> None:
+    client = SimpleNamespace(
+        TimezoneTWS="Australia/Sydney",
+        wrapper=SimpleNamespace(defaultTimezone=UTC),
+    )
+    events: list[dict[str, object]] = []
+    paper_probe._record_connection_timezones(client, events)
+    assert events[0]["event"] == "connection timezones"
+    assert events[0]["client_TimezoneTWS_repr"] == "'Australia/Sydney'"
+    assert events[0]["wrapper_defaultTimezone_repr"] == "datetime.timezone.utc"
+
+
+@pytest.mark.asyncio
+async def test_execution_recheck_pairs_streamed_and_requested_times_by_exec_id() -> None:
+    streamed = datetime(2026, 10, 13, 12, 40, tzinfo=UTC)
+    requested = datetime(2026, 10, 14, 10, 40, tzinfo=paper_probe.SYDNEY)
+
+    def fill(exec_id: str, when: datetime, con_id: int = 4036812) -> SimpleNamespace:
+        return SimpleNamespace(
+            contract=SimpleNamespace(symbol="BHP", conId=con_id),
+            execution=SimpleNamespace(execId=exec_id, time=when, acctNumber="DU123456"),
+        )
+
+    streamed_buy = fill("buy-exec", streamed)
+    streamed_sell = fill("sell-exec", streamed)
+    requested_buy = fill("buy-exec", requested)
+    requested_sell = fill("sell-exec", requested)
+
+    class Client:
+        account = "DU123456"
+        calls = 0
+        filter: object = None
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return [self.account]
+
+        def trades(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(order=SimpleNamespace(orderRef="buy-ref"), fills=[streamed_buy]),
+                SimpleNamespace(order=SimpleNamespace(orderRef="sell-ref"), fills=[streamed_sell]),
+            ]
+
+        async def reqExecutionsAsync(
+            self, execFilter: object
+        ) -> list[SimpleNamespace]:  # noqa: N802
+            self.calls += 1
+            self.filter = execFilter
+            return [requested_sell, fill("other-contract", requested, 999), requested_buy]
+
+    raw = Client()
+    events: list[dict[str, object]] = []
+    await paper_probe._record_execution_recheck(
+        _GuardedGateway(raw), 4036812, ("buy-ref", "stop-ref", "sell-ref"), events
+    )
+    assert raw.calls == 1
+    assert raw.filter.acctCode == "DU123456"  # type: ignore[attr-defined]
+    assert raw.filter.symbol == "BHP"  # type: ignore[attr-defined]
+    assert raw.filter.secType == "STK"  # type: ignore[attr-defined]
+    rows = events[0]["paired_fills"]  # type: ignore[assignment]
+    assert [row["exec_id"] for row in rows] == ["buy-exec", "sell-exec"]  # type: ignore[index]
+    assert rows[0]["streamed"]["repr"] == repr(streamed)  # type: ignore[index]
+    assert rows[0]["requested"]["repr"] == repr(requested)  # type: ignore[index]
+    assert rows[0]["streamed"]["type"] == "datetime"  # type: ignore[index]
+    assert rows[0]["requested"]["tzinfo"] == "Australia/Sydney"  # type: ignore[index]
+    assert rows[0]["difference_seconds"] == "39600.0"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_execution_recheck_records_missing_pair_without_retry() -> None:
+    fill = SimpleNamespace(
+        contract=SimpleNamespace(symbol="BHP", conId=4036812),
+        execution=SimpleNamespace(
+            execId="buy-exec", time=datetime(2026, 10, 14, tzinfo=UTC), acctNumber="DU123"
+        ),
+    )
+
+    class Client:
+        requests = 0
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123"]
+
+        def trades(self) -> list[SimpleNamespace]:
+            return [SimpleNamespace(order=SimpleNamespace(orderRef="buy-ref"), fills=[fill])]
+
+        async def reqExecutionsAsync(self, execFilter: object) -> list[object]:  # noqa: N802
+            self.requests += 1
+            return []
+
+    client = Client()
+    events: list[dict[str, object]] = []
+    with pytest.raises(RuntimeError, match="omitted"):
+        await paper_probe._record_execution_recheck(
+            _GuardedGateway(client), 4036812, ("buy-ref",), events
+        )
+    assert client.requests == 1
+    assert events[0]["missing_requested_exec_ids"] == ["buy-exec"]
+
+
+@pytest.mark.asyncio
+async def test_execution_recheck_refuses_non_du_before_request() -> None:
+    class Client:
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["U123456"]
+
+        def trades(self) -> list[object]:
+            return []
+
+        async def reqExecutionsAsync(self, execFilter: object) -> list[object]:  # noqa: N802
+            raise AssertionError("live account reached reqExecutions")
+
+    with pytest.raises(LivePortInPaperModeError):
+        await paper_probe._record_execution_recheck(
+            _GuardedGateway(Client()), 4036812, ("buy-ref", "sell-ref"), []
+        )
+
+
 @pytest.mark.asyncio
 async def test_exit_perm_id_arrival_is_measured_from_submission() -> None:
     trade = SimpleNamespace(order=SimpleNamespace(orderRef="exit-ref", permId=0))
