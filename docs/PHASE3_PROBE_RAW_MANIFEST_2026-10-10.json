@@ -2110,6 +2110,35 @@
     "sha256": "5fd91005d351fa7660d05acc02a423cebf6e1f395829611257807c215e21ed50"
   },
   {
+    "filename": "phase3-paper-stop-lifecycle-20261013T233151814708Z.json",
+    "probe": "paper_stop_lifecycle",
+    "request_parameters": [
+      {
+        "first_stop": "55.03",
+        "gateway": "localhost:4002 DU paper",
+        "order_sequence": "BUY MKT, SELL STP GTC, raise twice with acknowledgement, cancel and confirm, SELL MKT, confirm flat",
+        "post_flat_reqExecutions_count": 1,
+        "post_flat_reqExecutions_filter": {
+          "acctCode": "verified DU paper account (identifier retained in hashed raw file)",
+          "secType": "STK",
+          "symbol": "BHP"
+        },
+        "quantity": "9",
+        "raised_stop": "55.04",
+        "reference_age_seconds": 1209,
+        "reference_market_data_type": 3,
+        "reference_price": "61.15",
+        "reference_source_timestamp": "2026-10-13T23:11:38+00:00",
+        "second_stop": "55.05",
+        "session": "2026-10-14",
+        "symbol": "BHP.AX"
+      }
+    ],
+    "retrieved_sydney": "2026-10-14T10:31:51.809600+11:00",
+    "retrieved_utc": "2026-10-13T23:31:51.809600+00:00",
+    "sha256": "144fb34b10ec2acc4ca0a25046b632d9fc66b7f27d02120536d3c52f086beb6b"
+  },
+  {
     "filename": "phase3-position-recheck-20261011T232545392706Z.json",
     "probe": "paper_position_recheck",
     "request_parameters": [
@@ -2307,5 +2336,32 @@
     "retrieved_sydney": null,
     "retrieved_utc": "2026-10-12T23:37:32.914311+00:00",
     "sha256": "7fed2280002d29ad76ca17614652ed4b409631bdd855c636f9ba75334463481d"
+  },
+  {
+    "filename": "phase3-wednesday-preflight-20261013T233131216069Z.json",
+    "probe": "wednesday_bhp_quote_preflight",
+    "request_parameters": [
+      {
+        "contract_con_id": 4036812,
+        "gateway": "localhost:4002 DU paper",
+        "market_data_type": "3",
+        "minimum_whole_share_parcel": 9,
+        "observed_timestamp": "2026-10-13T23:31:31.214639+00:00",
+        "reference_notional": "549.945",
+        "reference_price": "61.105",
+        "request": "qualified ASX BHP delayed last streaming quote",
+        "scripted_stops": [
+          "54.99",
+          "55.00",
+          "55.01"
+        ],
+        "session": "2026-10-14",
+        "source_timestamp": "2026-10-13T23:11:27+00:00",
+        "symbol": "BHP.AX"
+      }
+    ],
+    "retrieved_sydney": "2026-10-14T10:31:31.214639+11:00",
+    "retrieved_utc": "2026-10-13T23:31:31.214639+00:00",
+    "sha256": "10095924e4a6e71a52edc623b4bf6723a9db73b1a348dd00950d8eb434f93171"
   }
 ]
