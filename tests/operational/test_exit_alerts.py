@@ -13,6 +13,7 @@ from test_recommendation_cards import rig
 
 from qat.data.broker.adapter import Position
 from qat.domain.strategies.authoritative_swing.lifecycle import ConfirmedFill
+from qat.operational.cards import round_up_target
 from qat.operational.exit_alerts import ExitAlertService
 from qat.operational.history import SYDNEY, Session, append_halt, digest
 
@@ -28,6 +29,22 @@ def extend_calendar(cards, *, through_ninth=False) -> None:
     )
     snapshot = replace(cards.snapshot, calendar=extended, content_hash="")
     cards.snapshot = replace(snapshot, content_hash=digest(snapshot.identity()))
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("0.098", "0.098"),
+        ("0.0981", "0.099"),
+        ("0.100", "0.100"),
+        ("0.1001", "0.105"),
+        ("2.00", "2.00"),
+        ("2.001", "2.01"),
+        ("1.999", "2.00"),
+    ],
+)
+def test_partial_target_rounds_up_to_full_asx_order_tick(raw: str, expected: str) -> None:
+    assert round_up_target(Decimal(raw)) == Decimal(expected)
 
 
 @pytest.mark.asyncio
@@ -63,7 +80,17 @@ async def test_entry_fill_emits_exact_protection_and_partial_target_alerts(tmp_p
     assert banked_stop.oca_group == target.oca_group
     assert runner_stop.oca_group is None
     assert target.quantity == (instruction.quantity + 1) // 2
-    assert target.price == fill.price + (fill.price - instruction.structural_stop)
+    raw_target = fill.price + (fill.price - instruction.structural_stop)
+    assert target.price == exits.positions[card.card_id].target_price == round_up_target(raw_target)
+    assert target.price >= raw_target
+    assert any(
+        event.kind == "position_state"
+        and Decimal(str(event.detail["target_price"])) == target.price
+        for event in events.events
+    )
+    assert any(
+        "round up" in step.lower() and "ASX order tick" in step for step in instruction.exit_plan
+    )
     assert all(alert.side == "sell" and alert.manual_tws_only for alert in alerts)
     assert events.status(card.card_id) == "approved"
     assert broker.transmissions == 0

@@ -7,6 +7,15 @@ The Phase 2 engine and tick utility have not changed.
 
 ## Frozen input
 
+DS's 13 October 2026 bar ruling defines a Phase 3 operational daily bar as
+IBKR `TRADES` with `useRTH=0`, including the ASX closing auction. A future
+operational IBKR history client must set `whatToShow="TRADES"` and
+`useRTH=False` when it calls `reqHistoricalDataAsync` for daily bars. No such
+production operational client exists in this stage. The generic
+`IBAdapter.get_historical` currently requests `useRTH=True`; it is outside
+the operational history path and is not changed here. The adapter consumes
+stored finalised bars and never makes the history request itself.
+
 `HistoryStore.read_view` copies accepted bar versions and source/quality audit
 events in one SQLite read transaction. `OperationalAdapter.freeze` assesses
 that immutable view against the supplied calendar and membership authorities,

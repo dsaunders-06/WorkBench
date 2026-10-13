@@ -24,7 +24,7 @@ from qat.domain.strategies.authoritative_swing.lifecycle import (
     pending_entry_from_setup,
 )
 from qat.domain.strategies.authoritative_swing.model import Pattern
-from qat.operational.cards import CardService
+from qat.operational.cards import CardService, round_up_target
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +180,7 @@ class ExitAlertService:
             raise ValueError("entry already confirmed")
         setup = replace(card.candidate.evidence, quantity=quantity)
         position = apply_entry_fill(pending_entry_from_setup(setup), fill)
+        position = replace(position, target_price=round_up_target(position.target_price))
         self.positions[card_id] = position
         self._save_position(card_id, position)
         oca_group = f"QAT-{position.position_id[:16]}-BANKED"

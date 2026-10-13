@@ -48,6 +48,12 @@ it does not submit these orders. Manual changes, greater exposure or looser
 protection require fresh operator sign-off. A manual-management switch is
 recorded while alerts continue.
 
+DS's 13 October 2026 price ruling rounds the +1R partial sell target upward
+to the next full ASX order tick after the entry fill. The operational position
+state persists that rounded target, and the alert uses the identical price;
+the Phase 2 lifecycle remains unchanged. The approved card plan states the
+rounding rule because its exact target cannot be known before the entry fill.
+
 The ASX corporate-action authority predicts post-consolidation whole shares.
 The broker holding is authoritative. A mismatch freezes the symbol pending
 operator reconciliation, with no automated changes or new cards. On a match,

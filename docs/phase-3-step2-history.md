@@ -41,6 +41,11 @@ OHLCV/volume, off-tick raw prices, unverified actions, negative dividends,
 split-only price mismatches and split-factor discontinuity. `split_ratio`
 means the ex-session raw-price ratio (for a two-for-one split, 1/2), not the
 share-count ratio. Dividends never enter analytical prices or split factors.
+Under DS's 13 October 2026 ruling, the `AS_TRADED` raw OHLC check accepts
+exact multiples of half the applicable ASX order tick in each price band;
+quarter-step and other off-grid values still block the symbol. This is a
+daily-bar validity grid, not permission to submit orders at half ticks.
+`DERIVED` prices remain exempt from raw tick checks.
 No forward fill or source substitution exists. Ingestion structural faults
 remain blocked pending review; this stage provides no unblock operation.
 Three calendar years of complete, finalized history are required, excluding

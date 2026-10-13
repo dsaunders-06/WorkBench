@@ -14,7 +14,7 @@ import os
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime
-from decimal import ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Literal
 
@@ -22,6 +22,7 @@ import pandas as pd
 
 from qat.config import Settings
 from qat.data.broker.adapter import Order
+from qat.data.broker.ticks import tick_size
 from qat.data.sectors import SECTOR_BY_SYMBOL
 from qat.domain.oms.card_orders import CardOrderStore, card_order_id
 from qat.domain.oms.oms import OMS
@@ -44,6 +45,16 @@ from qat.operational.history import (
 )
 
 SIZING_BASIS = "fixed 1% risk to stop, no edge assumed"
+
+
+def round_up_target(raw_target: Decimal) -> Decimal:
+    """Keep a partial sell at or above 1R on the full ASX order grid."""
+    if not raw_target.is_finite() or raw_target <= 0:
+        raise ValueError("partial target must be a finite positive price")
+    tick = tick_size(raw_target, "ASX")
+    return (raw_target / tick).to_integral_value(rounding=ROUND_CEILING) * tick
+
+
 # Explicit capability flag. This build contains no path that can enable it:
 # OMS and both real broker adapters independently refuse the auction intent.
 OPENING_AUCTION_TRANSMISSION_ENABLED = False
@@ -523,7 +534,8 @@ class CardService:
             risk,
             (
                 "At the entry fill: place the structural protective stop for all held shares.",
-                "At fill +1R: rest a sell limit for the rounded-up half; "
+                "At fill +1R: round up to the next full ASX order tick and rest "
+                "a sell limit for the rounded-up half; "
                 "after fill move the runner stop to breakeven.",
                 "Thereafter trail the runner stop upward only, using the Phase 2 2x ATR rule.",
                 "Close invalidation or ten completed sessions: present one exit "

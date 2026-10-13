@@ -822,7 +822,7 @@ def _bar_reasons(bar: OperationalBar) -> set[str]:
             reasons.add("ohlcv_invalid")
     if bar.raw_provenance == "AS_TRADED":
         for value in (bar.raw.open, bar.raw.high, bar.raw.low, bar.raw.close):
-            if value <= 0 or value % tick_size(value, "ASX") != 0:
+            if value <= 0 or value % (tick_size(value, "ASX") / 2) != 0:
                 reasons.add("raw_tick_invalid")
     else:
         try:

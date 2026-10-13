@@ -5,8 +5,7 @@ the implementation plan are not yet authorized, and no trading is authorized.
 The authoritative strategy is unvalidated; Phase 2 promotion remains closed
 under [the closure decision](phase-2-closure.md).
 
-At about 17:30 `Australia/Sydney` after each ASX closing auction, and only
-after all required daily bars are finalized, a new operational adapter takes
+At about 17:30 `Australia/Sydney` after each ASX closing auction, a new operational adapter takes
 a versioned input snapshot from the operational
 history store and calls the pure authoritative engine. A `QUALIFIED` setup
 becomes a QAT recommendation card containing pattern identity and evidence,
@@ -14,7 +13,9 @@ bar/session and source version, proposed raw entry limit, structural stop,
 Phase 1-sized whole-share quantity, account risk and applicable risk warnings.
 The card always displays **“unvalidated strategy, no demonstrated edge”**.
 It expires at the next ASX session's open, matching the strategy's next-open
-entry. Abstentions and missing data produce no executable card.
+entry. A missing or unfinished bar blocks only its symbol; session-wide calendar,
+time and unresolved IBKR-source failures block the whole session. Abstentions
+and missing data produce no executable card.
 
 The engine cannot import the UI, OMS, broker, scheduler or network. The new
 adapter translates operational snapshots into pure engine inputs; the separate
@@ -57,6 +58,23 @@ reconciliation, without retroactively changing a prior card. The adapter
 uses raw as-traded prices for orders and a documented split-only analytical
 view for indicators. If a
 source cannot establish those representations, the strategy abstains.
+
+DS rulings of 13 October 2026 fix the operational daily bar to IBKR `TRADES`
+with `useRTH=0` (all-hours); its close includes the ASX closing auction. The
+future operational IBKR history client must set `whatToShow="TRADES"` and
+`useRTH=False` on its daily-history request. No production operational-history
+client exists yet. The existing generic `IBAdapter.get_historical` uses
+`useRTH=True` and is not the operational source; this stage does not change it.
+
+Policy B for the future real client: convert each IBKR price float through its
+shortest round-trip decimal (`Decimal(repr(value))`), retain the original float
+for audit, and require integer volume. An `AS_TRADED` daily OHLC price is valid
+on half the applicable ASX order-price step (AUD 0.005 at and above AUD 2);
+anything off that half-step grid blocks the symbol. `DERIVED` bars retain the
+approved tick exemption and exact-inverse volume rule. Order prices remain on
+the full ASX tick. The +1R partial sell target is rounded **up** to the next
+full ASX order tick, so the resting limit cannot sell below 1R; the persisted
+position plan and exit alert carry that same price.
 
 The operational path relaxes research-only requirements for signed,
 physically partitioned shards, a frozen catalog, predeclared signal/tail

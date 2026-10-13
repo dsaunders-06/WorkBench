@@ -150,6 +150,24 @@ def test_gap_stale_and_insufficient_history(tmp_path):
     )
 
 
+@pytest.mark.parametrize("price", ["0.0985", "0.1025", "2.005"])
+def test_as_traded_half_asx_step_is_valid_in_each_price_band(price):
+    h = api()
+    value = Decimal(price)
+    prices = h.Ohlcv(value, value, value, value, 1000)
+    candidate = replace(bar(), raw=prices, analytical=prices)
+    assert "raw_tick_invalid" not in h._bar_reasons(candidate)
+
+
+@pytest.mark.parametrize("price", ["0.09825", "0.10125", "2.0025", "5.001"])
+def test_as_traded_quarter_step_and_other_off_grid_prices_block(price):
+    h = api()
+    value = Decimal(price)
+    prices = h.Ohlcv(value, value, value, value, 1000)
+    candidate = replace(bar(), raw=prices, analytical=prices)
+    assert "raw_tick_invalid" in h._bar_reasons(candidate)
+
+
 def test_bad_prices_tick_and_split_dividend_continuity(tmp_path):
     h = api()
     for price, reason in [
