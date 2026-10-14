@@ -293,3 +293,48 @@ Stop at the first unexpected broker state. Use only the separately approved
 emergency exit for this probe's own shares; never retry a transmission on a
 missing permId. The diagnostic market buy does not prove an opening-auction
 entry. That and any stop-trigger test remain separate DS decisions.
+
+## 7. Read-only DU observation — 14 October 2026
+
+After the batch CI passed, the paper Gateway on localhost:4002 was opened
+read-only for one check. Exactly one managed account, `DUQ200898`, was
+confirmed before each of the 13 logged data requests. The adapter's guarded
+client denied order methods. The raw response remains outside Git; its filename,
+request parameters and SHA-256 are in
+`docs/PHASE1_EXIT_READINESS_DU_MANIFEST_2026-10-14.json`.
+The `accountSummaryAsync` call that produced the balance snapshot was not
+guarded or logged in this capture. It ran on the same single-DU read-only
+connection, but the capture does not prove a fresh DU check immediately
+before that call. The script and its offline test now cover this method.
+
+The account snapshot reported AUD 991,122.01 net liquidation, AUD 681,431.68
+cash and buying power, and AUD 308,776.41 gross position value. The keyed
+position cache held five rows, each classified as a QAT holding after its
+qualified ASX conId matched. The callback response also included a zero-share
+BHP row, which did not become a held position.
+
+| Symbol | Account | conId | secType | Exchange | Currency | Shares | Classification |
+| --- | --- | ---: | --- | --- | --- | ---: | --- |
+| BOQ.AX | DUQ200898 | 11470910 | STK | ASX | AUD | 13,586 | QAT |
+| ANZ.AX | DUQ200898 | 4109645 | STK | ASX | AUD | 640 | QAT |
+| SUN.AX | DUQ200898 | 12101107 | STK | ASX | AUD | 3,192 | QAT |
+| ASX.AX | DUQ200898 | 4354508 | STK | ASX | AUD | 1,314 | QAT |
+| TAH.AX | DUQ200898 | 4506346 | STK | ASX | AUD | 64,229 | QAT |
+
+The five requested contract qualifications returned SUN 12101107, MFG
+44202878, BHP 4036812, CBA 4036818 and WGX 257776024. The single
+account-filtered `reqExecutions` query returned the two 13 October BHP
+paper-probe fills. Their requested execution times arrived as aware UTC
+`datetime` values at 2026-10-13 23:31:47 and 23:31:51 UTC; the new
+normalisation retained those exact instants. Both probes' textual
+`orderRef` values produced no UUID application alias, as expected.
+
+**Quote check incomplete.** The script connected directly rather than through
+`IBAdapter.connect`, so it omitted the adapter's `reqMarketDataType(3)` setup.
+The one BHP stream consequently reported market-data type 1, a NaN last, no
+source timestamp, and an `Error 354` saying delayed data was available. The
+observation correctly refused that quote. The script now requests type 3
+before its stream, with an offline order-of-operations test. The approved
+one-stream check has already been used; a fresh read-only BHP observation
+requires DS approval. This result does not establish whether a type-3 quote
+would have a usable source timestamp at the time of request.

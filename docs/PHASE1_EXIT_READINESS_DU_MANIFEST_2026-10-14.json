@@ -1,0 +1,37 @@
+{
+  "probe": "phase1-exit-readiness-du",
+  "branch": "recovery/phase-1-exit-readiness",
+  "code_commit": "ef9c88f9df971495e53e6f88a8e2bbac3021cf2c",
+  "started_utc": "2026-10-14T12:01:05.695843+00:00",
+  "finished_utc": "2026-10-14T12:01:11.749169+00:00",
+  "connection": {
+    "host": "127.0.0.1",
+    "port": 4002,
+    "read_only": true,
+    "paper_account": "DUQ200898",
+    "account_rechecked_before_each_logged_request": true,
+    "account_summary_request_rechecked_in_this_capture": false
+  },
+  "requests": [
+    "reqPositionsAsync once, followed by the keyed local positions cache",
+    "qualifyContractsAsync on SMART with ASX primary exchange for SUN, MFG, BHP, CBA, WGX, BOQ, ANZ, ASX and TAH",
+    "accountSummaryAsync via the adapter account snapshot; not guarded or logged in this capture",
+    "reqMktData one BHP quote stream; market-data tier was left at default 1 in this run",
+    "cancelMktData for that BHP stream",
+    "reqExecutionsAsync once with ExecutionFilter(acctCode=DUQ200898, clientId=0)"
+  ],
+  "raw_files_outside_git": [
+    {
+      "filename": "phase3-exit-readiness-du-20261014T120111749169Z.json",
+      "sha256": "cf17584646e24909167d14d627b4a0768472e458559e923b77f85c5db9844158",
+      "sidecar_filename": "phase3-exit-readiness-du-20261014T120111749169Z.sha256",
+      "sidecar_sha256": "5e80f90caf1b1572610d2605387c34a2e90ff27349722e75f63ceebb1a2c22a3"
+    }
+  ],
+  "storage_note": "Raw JSON and SHA sidecar are in C:\\Users\\mailm\\Documents\\Codex\\phase3-probe-raw-20261010, outside Git. The raw JSON contains each request's exact arguments and UTC check time.",
+  "limitations": [
+    "The BHP stream returned type 1, NaN last and no source timestamp because the script skipped the adapter's delayed-tier request. Its result is an abstention, not quote-fitness evidence.",
+    "The accountSummaryAsync request was not rechecked or logged immediately before it; the result came from the same single-DU read-only connection.",
+    "The script was corrected and tested offline after this capture; no second Gateway stream was sent."
+  ]
+}

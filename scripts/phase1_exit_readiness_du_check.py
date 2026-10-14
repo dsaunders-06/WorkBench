@@ -48,7 +48,9 @@ class GuardedReadOnlyClient:
             raise RuntimeError("read-only DU check cannot submit or cancel orders")
         attribute = getattr(self.client, name)
         if not callable(attribute) or not (
-            name.startswith("req") or name.startswith("qualify") or name == "cancelMktData"
+            name.startswith("req")
+            or name.startswith("qualify")
+            or name in {"cancelMktData", "accountSummaryAsync"}
         ):
             return attribute
 
@@ -80,6 +82,12 @@ def _position_row(row: Any) -> dict[str, Any]:
         "currency": str(getattr(contract, "currency", "")),
         "quantity": repr(getattr(row, "position", None)),
     }
+
+
+async def _delayed_observation(guarded: GuardedReadOnlyClient, adapter: Any) -> Any:
+    """Mirror the adapter's connection setup before its delayed BHP stream."""
+    guarded.reqMarketDataType(3)
+    return await adapter.price_observation("BHP.AX")
 
 
 async def _capture(
@@ -119,7 +127,7 @@ async def _capture(
     ]
     payload["account_snapshot"] = asdict(await adapter.account())
 
-    observation = await adapter.price_observation("BHP.AX")
+    observation = await _delayed_observation(guarded, adapter)
     payload["bhp_price_observation"] = {
         "value": repr(observation.value),
         "field": observation.field,
