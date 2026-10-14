@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import sys
 from datetime import UTC, date, datetime, timedelta
@@ -38,6 +39,7 @@ from phase3_paper_stop_lifecycle_probe import (  # noqa: E402
     _positions,
     _record_trade,
     _stop_prices,
+    _wait_for_stop,
 )
 from phase3_paper_stop_lifecycle_probe import _run as run_paper_stop
 
@@ -93,31 +95,156 @@ def test_bounded_auction_preview_size() -> None:
 
 def test_paper_stop_probe_uses_minimum_parcel_and_upward_stop_move() -> None:
     assert _parcel(Decimal("61.06")) == 9
-    first, raised = _stop_prices(Decimal("61.06"))
+    first, raised, second = _stop_prices(Decimal("61.06"))
     assert first == Decimal("54.95")
     assert raised == Decimal("54.96")
+    assert second == Decimal("54.97")
 
 
-def test_tuesday_window_starts_after_1030(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wednesday_window_starts_after_1030(monkeypatch: pytest.MonkeyPatch) -> None:
     class Clock(datetime):
         @classmethod
         def now(cls, tz: object = None) -> datetime:
-            return datetime(2026, 10, 13, 10, 29, tzinfo=paper_probe.SYDNEY)
+            return datetime(2026, 10, 14, 10, 29, tzinfo=paper_probe.SYDNEY)
 
     monkeypatch.setattr(paper_probe, "datetime", Clock)
     with pytest.raises(ValueError, match="10:30"):
-        paper_probe._session_window(date(2026, 10, 13))
+        paper_probe._session_window(date(2026, 10, 14))
 
 
-def test_tuesday_probe_rejects_other_session(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_wednesday_probe_rejects_other_session(monkeypatch: pytest.MonkeyPatch) -> None:
     class Clock(datetime):
         @classmethod
         def now(cls, tz: object = None) -> datetime:
             return datetime(2026, 10, 14, 10, 40, tzinfo=paper_probe.SYDNEY)
 
     monkeypatch.setattr(paper_probe, "datetime", Clock)
-    with pytest.raises(ValueError, match="13 October"):
+    with pytest.raises(ValueError, match="14 October"):
+        paper_probe._session_window(date(2026, 10, 13))
+
+
+def test_wednesday_window_accepts_only_14_october_after_1030(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Clock(datetime):
+        observed = datetime(2026, 10, 14, 10, 30, tzinfo=paper_probe.SYDNEY)
+
+        @classmethod
+        def now(cls, tz: object = None) -> datetime:
+            return cls.observed
+
+    monkeypatch.setattr(paper_probe, "datetime", Clock)
+    paper_probe._session_window(date(2026, 10, 14))
+    Clock.observed = datetime(2026, 10, 14, 10, 29, tzinfo=paper_probe.SYDNEY)
+    with pytest.raises(ValueError, match="10:30"):
         paper_probe._session_window(date(2026, 10, 14))
+    Clock.observed = datetime(2026, 10, 14, 15, 1, tzinfo=paper_probe.SYDNEY)
+    with pytest.raises(ValueError, match="10:30"):
+        paper_probe._session_window(date(2026, 10, 14))
+    Clock.observed = datetime(2026, 10, 14, 10, 40, tzinfo=paper_probe.SYDNEY)
+    with pytest.raises(ValueError, match="14 October"):
+        paper_probe._session_window(date(2026, 10, 13))
+
+
+@pytest.mark.asyncio
+async def test_stop_ack_wait_ignores_pending_submit_even_with_new_aux_price() -> None:
+    class Client:
+        calls = 0
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123"]
+
+        async def reqAllOpenOrdersAsync(self) -> list[object]:  # noqa: N802
+            self.calls += 1
+            status = "PendingSubmit" if self.calls == 1 else "PreSubmitted"
+            return [
+                SimpleNamespace(
+                    contract=SimpleNamespace(symbol="BHP"),
+                    order=SimpleNamespace(
+                        orderRef="stop-ref",
+                        orderType="STP",
+                        action="SELL",
+                        tif="GTC",
+                        auxPrice=55.48,
+                    ),
+                    orderStatus=SimpleNamespace(status=status),
+                )
+            ]
+
+    client = Client()
+    await _wait_for_stop(client, "stop-ref", Decimal("55.48"), seconds=3)
+    assert client.calls >= 2
+
+
+@pytest.mark.asyncio
+async def test_stop_ack_wait_times_out_on_pending_submit() -> None:
+    class Client:
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123"]
+
+        async def reqAllOpenOrdersAsync(self) -> list[object]:  # noqa: N802
+            return [
+                SimpleNamespace(
+                    contract=SimpleNamespace(symbol="BHP"),
+                    order=SimpleNamespace(
+                        orderRef="stop-ref",
+                        orderType="STP",
+                        action="SELL",
+                        tif="GTC",
+                        auxPrice=55.48,
+                    ),
+                    orderStatus=SimpleNamespace(status="PendingSubmit"),
+                )
+            ]
+
+    with pytest.raises(TimeoutError, match="acknowledged"):
+        await _wait_for_stop(Client(), "stop-ref", Decimal("55.48"), seconds=1)
+
+
+@pytest.mark.asyncio
+async def test_cancel_wait_requires_cancelled_status_as_well_as_absence() -> None:
+    class Client:
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123"]
+
+        async def reqAllOpenOrdersAsync(self) -> list[object]:  # noqa: N802
+            return []
+
+        def trades(self) -> list[object]:
+            return [
+                SimpleNamespace(
+                    order=SimpleNamespace(orderRef="stop-ref"),
+                    orderStatus=SimpleNamespace(status="PendingCancel"),
+                )
+            ]
+
+    with pytest.raises(TimeoutError, match="cancellation"):
+        await _wait_for_stop(Client(), "stop-ref", None, seconds=1)
+
+
+@pytest.mark.asyncio
+async def test_stop_ack_requires_status_after_modification() -> None:
+    changed_at = datetime(2026, 10, 14, 0, 30, tzinfo=UTC)
+    trade = SimpleNamespace(
+        contract=SimpleNamespace(symbol="BHP"),
+        order=SimpleNamespace(
+            orderRef="stop-ref", orderType="STP", action="SELL", tif="GTC", auxPrice=55.48
+        ),
+        orderStatus=SimpleNamespace(status="PreSubmitted"),
+        log=[SimpleNamespace(time=changed_at - timedelta(seconds=1), status="PreSubmitted")],
+    )
+
+    class Client:
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123"]
+
+        async def reqAllOpenOrdersAsync(self) -> list[object]:  # noqa: N802
+            return [trade]
+
+    with pytest.raises(TimeoutError, match="acknowledged"):
+        await _wait_for_stop(Client(), "stop-ref", Decimal("55.48"), seconds=1, since=changed_at)
+    trade.log.append(SimpleNamespace(time=changed_at + timedelta(seconds=1), status="PreSubmitted"))
+    await _wait_for_stop(Client(), "stop-ref", Decimal("55.48"), seconds=1, since=changed_at)
 
 
 def test_partial_buy_is_unexpected_broker_state() -> None:
@@ -242,6 +369,8 @@ async def test_position_read_ignores_same_symbol_on_another_contract() -> None:
 
 
 def test_paper_trade_record_includes_broker_id_status_fill_and_time() -> None:
+    execution_time = datetime(2026, 10, 14, 0, 40, tzinfo=UTC)
+    receipt_time = datetime(2026, 10, 14, 11, 40, tzinfo=paper_probe.SYDNEY)
     trade = SimpleNamespace(
         order=SimpleNamespace(
             orderId=42,
@@ -258,9 +387,9 @@ def test_paper_trade_record_includes_broker_id_status_fill_and_time() -> None:
         ),
         fills=[
             SimpleNamespace(
-                time="2026-10-12 10:10:00+11:00",
+                time=receipt_time,
                 execution=SimpleNamespace(
-                    time="2026-10-12 10:10:00+11:00", price=61.0, shares=9, execId="paper-1"
+                    time=execution_time, price=61.0, shares=9, execId="paper-1"
                 ),
                 commissionReport=SimpleNamespace(commission=1.25, currency="AUD"),
             )
@@ -279,6 +408,140 @@ def test_paper_trade_record_includes_broker_id_status_fill_and_time() -> None:
     assert events[0]["broker_order"]["why_held"] == "IB simulated"  # type: ignore[index]
     assert events[0]["fills"][0]["shares"] == "9"  # type: ignore[index]
     assert events[0]["fills"][0]["commission"] == "1.25"  # type: ignore[index]
+    assert events[0]["fills"][0]["execution_time_repr"] == repr(execution_time)  # type: ignore[index]
+    assert events[0]["fills"][0]["execution_time_type"] == "datetime"  # type: ignore[index]
+    assert events[0]["fills"][0]["execution_time_tzinfo"] == "UTC"  # type: ignore[index]
+    assert events[0]["fills"][0]["receipt_time"] == str(receipt_time)  # type: ignore[index]
+
+
+def test_connection_records_both_ib_async_timezones() -> None:
+    client = SimpleNamespace(
+        TimezoneTWS="Australia/Sydney",
+        wrapper=SimpleNamespace(defaultTimezone=UTC),
+    )
+    events: list[dict[str, object]] = []
+    paper_probe._record_connection_timezones(client, events)
+    assert events[0]["event"] == "connection timezones"
+    assert events[0]["client_TimezoneTWS_repr"] == "'Australia/Sydney'"
+    assert events[0]["wrapper_defaultTimezone_repr"] == "datetime.timezone.utc"
+
+
+@pytest.mark.asyncio
+async def test_execution_recheck_pairs_streamed_and_requested_times_by_exec_id() -> None:
+    streamed = datetime(2026, 10, 13, 12, 40, tzinfo=UTC)
+    requested = datetime(2026, 10, 14, 10, 40, tzinfo=paper_probe.SYDNEY)
+
+    def fill(exec_id: str, when: datetime, con_id: int = 4036812) -> SimpleNamespace:
+        return SimpleNamespace(
+            contract=SimpleNamespace(symbol="BHP", conId=con_id),
+            execution=SimpleNamespace(execId=exec_id, time=when, acctNumber="DU123456"),
+        )
+
+    streamed_buy = fill("buy-exec", streamed)
+    streamed_sell = fill("sell-exec", streamed)
+    requested_buy = fill("buy-exec", requested)
+    requested_sell = fill("sell-exec", requested)
+
+    class Client:
+        account = "DU123456"
+        calls = 0
+        filter: object = None
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return [self.account]
+
+        def trades(self) -> list[SimpleNamespace]:
+            return [
+                SimpleNamespace(order=SimpleNamespace(orderRef="buy-ref"), fills=[streamed_buy]),
+                SimpleNamespace(order=SimpleNamespace(orderRef="sell-ref"), fills=[streamed_sell]),
+            ]
+
+        async def reqExecutionsAsync(
+            self, execFilter: object
+        ) -> list[SimpleNamespace]:  # noqa: N802
+            self.calls += 1
+            self.filter = execFilter
+            return [requested_sell, fill("other-contract", requested, 999), requested_buy]
+
+    raw = Client()
+    events: list[dict[str, object]] = []
+    await paper_probe._record_execution_recheck(
+        _GuardedGateway(raw), 4036812, ("buy-ref", "stop-ref", "sell-ref"), events
+    )
+    assert raw.calls == 1
+    assert raw.filter.acctCode == "DU123456"  # type: ignore[attr-defined]
+    assert raw.filter.symbol == "BHP"  # type: ignore[attr-defined]
+    assert raw.filter.secType == "STK"  # type: ignore[attr-defined]
+    rows = events[0]["paired_fills"]  # type: ignore[assignment]
+    assert [row["exec_id"] for row in rows] == ["buy-exec", "sell-exec"]  # type: ignore[index]
+    assert rows[0]["streamed"]["repr"] == repr(streamed)  # type: ignore[index]
+    assert rows[0]["requested"]["repr"] == repr(requested)  # type: ignore[index]
+    assert rows[0]["streamed"]["type"] == "datetime"  # type: ignore[index]
+    assert rows[0]["requested"]["tzinfo"] == "Australia/Sydney"  # type: ignore[index]
+    assert rows[0]["difference_seconds"] == "39600.0"  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_execution_recheck_records_missing_pair_without_retry() -> None:
+    fill = SimpleNamespace(
+        contract=SimpleNamespace(symbol="BHP", conId=4036812),
+        execution=SimpleNamespace(
+            execId="buy-exec", time=datetime(2026, 10, 14, tzinfo=UTC), acctNumber="DU123"
+        ),
+    )
+
+    class Client:
+        requests = 0
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123"]
+
+        def trades(self) -> list[SimpleNamespace]:
+            return [SimpleNamespace(order=SimpleNamespace(orderRef="buy-ref"), fills=[fill])]
+
+        async def reqExecutionsAsync(self, execFilter: object) -> list[object]:  # noqa: N802
+            self.requests += 1
+            return []
+
+    client = Client()
+    events: list[dict[str, object]] = []
+    with pytest.raises(RuntimeError, match="omitted"):
+        await paper_probe._record_execution_recheck(
+            _GuardedGateway(client), 4036812, ("buy-ref",), events
+        )
+    assert client.requests == 1
+    assert events[0]["missing_requested_exec_ids"] == ["buy-exec"]
+
+
+@pytest.mark.asyncio
+async def test_execution_recheck_refuses_non_du_before_request() -> None:
+    class Client:
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["U123456"]
+
+        def trades(self) -> list[object]:
+            return []
+
+        async def reqExecutionsAsync(self, execFilter: object) -> list[object]:  # noqa: N802
+            raise AssertionError("live account reached reqExecutions")
+
+    with pytest.raises(LivePortInPaperModeError):
+        await paper_probe._record_execution_recheck(
+            _GuardedGateway(Client()), 4036812, ("buy-ref", "sell-ref"), []
+        )
+
+
+@pytest.mark.asyncio
+async def test_exit_perm_id_arrival_is_measured_from_submission() -> None:
+    trade = SimpleNamespace(order=SimpleNamespace(orderRef="exit-ref", permId=0))
+    client = SimpleNamespace(trades=lambda: [trade])
+    task = asyncio.create_task(paper_probe._watch_perm_id(client, "exit-ref", seconds=2))
+    await asyncio.sleep(0.1)
+    trade.order.permId = 1234
+    result = await task
+    assert result["perm_id"] == "1234"
+    assert float(result["elapsed_seconds"]) >= 0.1
+    assert result["at_utc"]
 
 
 @pytest.mark.asyncio
@@ -531,3 +794,107 @@ async def test_cleanup_never_sells_against_a_resting_stop() -> None:
         {"event": "protected paper position remains; manual close required", "quantity": "9.0"}
     ]
     assert events[0]["event"] == "position rows"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_cancels_ack_timed_out_stop_before_one_emergency_exit() -> None:
+    stop = SimpleNamespace(
+        contract=SimpleNamespace(symbol="BHP"),
+        order=SimpleNamespace(orderRef="stop-ref"),
+        orderStatus=SimpleNamespace(status="PendingSubmit", filled=0),
+    )
+
+    class Client:
+        held = 9.0
+        stop_open = True
+
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123"]
+
+        async def reqPositionsAsync(self) -> list[object]:  # noqa: N802
+            return []
+
+        def positions(self) -> list[object]:
+            return (
+                [
+                    SimpleNamespace(
+                        account="DU123",
+                        contract=SimpleNamespace(conId=4036812, symbol="BHP"),
+                        position=self.held,
+                    )
+                ]
+                if self.held
+                else []
+            )
+
+        async def reqAllOpenOrdersAsync(self) -> list[object]:  # noqa: N802
+            return [stop] if self.stop_open else []
+
+        def trades(self) -> list[object]:
+            return [
+                SimpleNamespace(
+                    order=SimpleNamespace(orderRef="buy-ref"), orderStatus=SimpleNamespace(filled=9)
+                ),
+                stop,
+            ]
+
+    client = Client()
+    placed: list[object] = []
+
+    class Adapter:
+        async def cancel_order(self, ref: str) -> None:
+            assert ref == "stop-ref"
+            stop.orderStatus.status = "Cancelled"
+            client.stop_open = False
+
+        async def place_order(self, order: object) -> None:
+            placed.append(order)
+            client.held = 0
+
+    events: list[dict[str, object]] = []
+    await _cleanup(client, Adapter(), 4036812, "buy-ref", "stop-ref", "sell-ref", 9, events)  # type: ignore[arg-type]
+    assert len(placed) == 1
+    assert placed[0].quantity == 9  # type: ignore[attr-defined]
+    assert any(event["event"] == "adapter cancellation requested" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_does_not_resell_when_exit_fill_precedes_position_refresh() -> None:
+    class Client:
+        def managedAccounts(self) -> list[str]:  # noqa: N802
+            return ["DU123"]
+
+        async def reqPositionsAsync(self) -> list[object]:  # noqa: N802
+            return []
+
+        def positions(self) -> list[object]:
+            return [
+                SimpleNamespace(
+                    account="DU123",
+                    contract=SimpleNamespace(conId=4036812, symbol="BHP"),
+                    position=9.0,
+                )
+            ]
+
+        async def reqAllOpenOrdersAsync(self) -> list[object]:  # noqa: N802
+            return []
+
+        def trades(self) -> list[object]:
+            return [
+                SimpleNamespace(
+                    order=SimpleNamespace(orderRef="buy-ref"),
+                    orderStatus=SimpleNamespace(filled=9),
+                ),
+                SimpleNamespace(
+                    order=SimpleNamespace(orderRef="sell-ref"),
+                    orderStatus=SimpleNamespace(filled=9, status="Filled"),
+                ),
+            ]
+
+    class Adapter:
+        async def place_order(self, order: object) -> None:
+            raise AssertionError(f"duplicate emergency sale: {order}")
+
+    events: list[dict[str, object]] = []
+    await _cleanup(Client(), Adapter(), 4036812, "buy-ref", "stop-ref", "sell-ref", 9, events)  # type: ignore[arg-type]
+    assert any(event["event"] == "sale fill precedes position reconciliation" for event in events)

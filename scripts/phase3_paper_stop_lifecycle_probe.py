@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ib_async import ExecutionFilter
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from phase3_daily_history_probe import (  # noqa: E402
@@ -71,8 +73,8 @@ class _GuardedGateway:
 
 def _session_window(session: date) -> None:
     now = datetime.now(SYDNEY)
-    if session != date(2026, 10, 13):
-        raise ValueError("paper order probe is authorised only for 13 October 2026")
+    if session != date(2026, 10, 14):
+        raise ValueError("paper order probe is authorised only for 14 October 2026")
     if now.date() != session or now.weekday() >= 5 or not time(10, 30) <= now.time() <= time(15, 0):
         raise ValueError("paper order probe requires the nominated ASX session, 10:30–15:00 Sydney")
 
@@ -86,10 +88,10 @@ def _parcel(reference: Decimal) -> int:
     return quantity
 
 
-def _stop_prices(reference: Decimal) -> tuple[Decimal, Decimal]:
+def _stop_prices(reference: Decimal) -> tuple[Decimal, Decimal, Decimal]:
     tick = tick_size(reference, "ASX")
     first = ((reference * Decimal("0.90")) / tick).to_integral_value(rounding=ROUND_DOWN) * tick
-    return first, first + tick
+    return first, first + tick, first + 2 * tick
 
 
 def _require_full_holding(held: float, quantity: int, stage: str) -> None:
@@ -248,6 +250,12 @@ def _record_trade(client: Any, ref: str, event: str, events: list[dict[str, Any]
                     {
                         "time": str(fill.time),
                         "execution_time": str(fill.execution.time),
+                        "execution_time_repr": repr(fill.execution.time),
+                        "execution_time_type": type(fill.execution.time).__name__,
+                        "execution_time_tzinfo": str(getattr(fill.execution.time, "tzinfo", None)),
+                        "receipt_time": str(fill.time),
+                        "receipt_time_type": type(fill.time).__name__,
+                        "receipt_time_tzinfo": str(getattr(fill.time, "tzinfo", None)),
                         "price": str(fill.execution.price),
                         "shares": str(fill.execution.shares),
                         "execution_id": str(fill.execution.execId),
@@ -284,6 +292,134 @@ def _record_trade(client: Any, ref: str, event: str, events: list[dict[str, Any]
     )
 
 
+def _record_connection_timezones(client: Any, events: list[dict[str, Any]]) -> None:
+    """Keep the timezone settings as they appeared on the connected IB instance."""
+    tws_timezone = client.TimezoneTWS
+    wrapper_timezone = client.wrapper.defaultTimezone
+    events.append(
+        {
+            "at_utc": datetime.now(UTC).isoformat(),
+            "event": "connection timezones",
+            "client_TimezoneTWS_repr": repr(tws_timezone),
+            "client_TimezoneTWS_type": type(tws_timezone).__name__,
+            "wrapper_defaultTimezone_repr": repr(wrapper_timezone),
+            "wrapper_defaultTimezone_type": type(wrapper_timezone).__name__,
+        }
+    )
+
+
+def _execution_time_view(value: Any) -> dict[str, str]:
+    return {
+        "repr": repr(value),
+        "type": type(value).__name__,
+        "tzinfo": str(getattr(value, "tzinfo", None)),
+    }
+
+
+async def _record_execution_recheck(
+    client: Any, con_id: int, refs: tuple[str, ...], events: list[dict[str, Any]]
+) -> None:
+    """Pair one DU-filtered execution request with cached live fills by execId."""
+    _checked_account(client)
+    account = client.managedAccounts()[0]
+    streamed: dict[str, Any] = {}
+    for trade in client.trades():
+        if str(trade.order.orderRef) not in refs:
+            continue
+        for fill in trade.fills:
+            execution = fill.execution
+            if (
+                execution.acctNumber == account
+                and int(fill.contract.conId) == con_id
+                and fill.contract.symbol == BROKER_SYMBOL
+            ):
+                exec_id = str(execution.execId)
+                if exec_id in streamed:
+                    raise RuntimeError(f"duplicate streamed BHP execution ID: {exec_id}")
+                streamed[exec_id] = execution.time
+    if not streamed:
+        raise RuntimeError("no streamed probe BHP executions available for time comparison")
+    request_filter = ExecutionFilter(acctCode=account, symbol=BROKER_SYMBOL, secType="STK")
+    _checked_account(client)
+    requested_fills = await client.reqExecutionsAsync(request_filter)
+    requested: dict[str, Any] = {}
+    for fill in requested_fills:
+        execution = fill.execution
+        if (
+            execution.acctNumber == account
+            and int(fill.contract.conId) == con_id
+            and fill.contract.symbol == BROKER_SYMBOL
+            and str(execution.execId) in streamed
+        ):
+            exec_id = str(execution.execId)
+            if exec_id in requested:
+                raise RuntimeError(f"duplicate requested BHP execution ID: {exec_id}")
+            requested[exec_id] = execution.time
+    pairs: list[dict[str, Any]] = []
+    for exec_id in sorted(streamed):
+        live_time = streamed[exec_id]
+        recheck_time = requested.get(exec_id)
+        difference: str | None = None
+        if (
+            isinstance(live_time, datetime)
+            and isinstance(recheck_time, datetime)
+            and live_time.tzinfo is not None
+            and recheck_time.tzinfo is not None
+        ):
+            difference = str(
+                (recheck_time.astimezone(UTC) - live_time.astimezone(UTC)).total_seconds()
+            )
+        pairs.append(
+            {
+                "exec_id": exec_id,
+                "streamed": _execution_time_view(live_time),
+                "requested": (_execution_time_view(recheck_time) if exec_id in requested else None),
+                "difference_seconds": difference,
+            }
+        )
+    events.append(
+        {
+            "at_utc": datetime.now(UTC).isoformat(),
+            "event": "execution time recheck",
+            "request_filter": {
+                "acctCode": request_filter.acctCode,
+                "symbol": request_filter.symbol,
+                "secType": request_filter.secType,
+            },
+            "qualified_con_id": str(con_id),
+            "paired_fills": pairs,
+            "missing_requested_exec_ids": sorted(set(streamed) - set(requested)),
+        }
+    )
+    if set(requested) != set(streamed):
+        raise RuntimeError("reqExecutions omitted a streamed probe BHP fill")
+
+
+async def _watch_perm_id(
+    client: Any, ref: str, seconds: int = 30, started_at: float | None = None
+) -> dict[str, str]:
+    """Observe the cached broker identity without making another Gateway request."""
+    loop = asyncio.get_running_loop()
+    start = loop.time() if started_at is None else started_at
+    deadline = start + seconds
+    while True:
+        matches = [trade for trade in client.trades() if str(trade.order.orderRef) == ref]
+        if len(matches) == 1 and int(matches[0].order.permId) > 0:
+            return {
+                "perm_id": str(matches[0].order.permId),
+                "at_utc": datetime.now(UTC).isoformat(),
+                "elapsed_seconds": str(loop.time() - start),
+            }
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return {
+                "perm_id": "not observed",
+                "at_utc": datetime.now(UTC).isoformat(),
+                "elapsed_seconds": str(loop.time() - start),
+            }
+        await asyncio.sleep(min(0.05, remaining))
+
+
 async def _wait_for_position(
     client: Any, con_id: int, events: list[dict[str, Any]], positive: bool, seconds: int = 90
 ) -> float:
@@ -295,24 +431,50 @@ async def _wait_for_position(
     raise TimeoutError("paper position did not reach the expected state in 90 seconds")
 
 
-async def _wait_for_stop(client: Any, ref: str, price: Decimal | None, seconds: int = 20) -> None:
-    for _ in range(seconds):
+async def _wait_for_stop(
+    client: Any,
+    ref: str,
+    price: Decimal | None,
+    seconds: int = 30,
+    since: datetime | None = None,
+) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    while True:
         matches = [
             trade for trade in await _open_bhp_orders(client) if str(trade.order.orderRef) == ref
         ]
         if price is None and not matches:
-            return
+            cached = [trade for trade in client.trades() if str(trade.order.orderRef) == ref]
+            if len(cached) == 1 and cached[0].orderStatus.status in {"Cancelled", "ApiCancelled"}:
+                return
         if price is not None and len(matches) == 1:
-            order = matches[0].order
+            trade = matches[0]
+            order = trade.order
             if (
                 order.orderType == "STP"
                 and order.action == "SELL"
                 and order.tif == "GTC"
                 and Decimal(str(order.auxPrice)) == price
+                and trade.orderStatus.status in {"PreSubmitted", "Submitted"}
+                and (
+                    since is None
+                    or any(
+                        entry.status in {"PreSubmitted", "Submitted"}
+                        and isinstance(entry.time, datetime)
+                        and entry.time.tzinfo is not None
+                        and entry.time >= since
+                        for entry in trade.log
+                    )
+                )
             ):
                 return
-        await asyncio.sleep(1)
-    raise TimeoutError("paper protective stop state was not confirmed at the broker")
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            if price is None:
+                raise TimeoutError("paper protective stop cancellation was not confirmed")
+            raise TimeoutError("paper protective stop price was not acknowledged by IBKR")
+        await asyncio.sleep(min(1, remaining))
 
 
 async def _cancel_ref(
@@ -359,10 +521,35 @@ async def _cleanup(
         await _cancel_ref(client, adapter, stop_ref, events)
         return
     if stop_working:
+        try:
+            await _cancel_ref(client, adapter, stop_ref, events)
+        except Exception as exc:  # noqa: BLE001 - do not sell against uncertain protection
+            events.append({"event": "stop cancellation unconfirmed", "error": repr(exc)})
+            events.append(
+                {
+                    "event": "protected paper position remains; manual close required",
+                    "quantity": str(held),
+                }
+            )
+            return
+        if any(str(trade.order.orderRef) == stop_ref for trade in await _open_bhp_orders(client)):
+            raise RuntimeError("stop remains working after cancellation confirmation")
+        held = await _positions(client, con_id, events)
+        if not held:
+            return
+    exit_trades = [
+        trade for trade in client.trades() if str(trade.order.orderRef) in {stop_ref, sell_ref}
+    ]
+    if any(
+        float(trade.orderStatus.filled) > 0
+        or trade.orderStatus.status not in {"Cancelled", "ApiCancelled", "Inactive"}
+        for trade in exit_trades
+    ):
         events.append(
             {
-                "event": "protected paper position remains; manual close required",
+                "event": "sale fill precedes position reconciliation",
                 "quantity": str(held),
+                "exit_order_refs": [str(trade.order.orderRef) for trade in exit_trades],
             }
         )
         return
@@ -386,8 +573,10 @@ async def _cleanup(
             "raw": repr(result),
         }
     )
+    _record_trade(client, rescue_ref, "emergency exit submitted", events)
     if held == rescue_quantity:
         await _wait_for_position(client, con_id, events, positive=False)
+        _record_trade(client, rescue_ref, "emergency exit flat confirmed", events)
 
 
 async def _run(session: date, out_dir: Path, execute: bool) -> int:
@@ -435,6 +624,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
         _checked_account(client)
         paper_verified = True
         events.append({"at_utc": datetime.now(UTC).isoformat(), "event": "DU account verified"})
+        _record_connection_timezones(client, events)
         contract = await _qualified_bhp_contract(client)
         con_id = int(contract.conId)
         if await _positions(client, con_id, events) != 0 or await _open_bhp_orders(client):
@@ -444,7 +634,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
         assert isinstance(reference, Decimal)
         quantity = _parcel(reference)
         planned_quantity = quantity
-        first_stop, raised_stop = _stop_prices(reference)
+        first_stop, raised_stop, second_stop = _stop_prices(reference)
         events.append(
             {
                 "at_utc": datetime.now(UTC).isoformat(),
@@ -457,6 +647,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
                 "quantity": str(quantity),
                 "first_stop": str(first_stop),
                 "raised_stop": str(raised_stop),
+                "second_stop": str(second_stop),
             }
         )
         probe_exposure_started = True
@@ -493,11 +684,21 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
             }
         )
         _record_trade(client, stop_ref, "GTC stop broker state", events)
-        _checked_account(client)
-        await adapter.modify_order(stop_ref, stop_price=float(raised_stop))
-        await _wait_for_stop(client, stop_ref, raised_stop)
-        events.append({"at_utc": datetime.now(UTC).isoformat(), "event": "raised stop confirmed"})
-        _record_trade(client, stop_ref, "raised stop broker state", events)
+        for stage, stop_price in (("first", raised_stop), ("second", second_stop)):
+            _checked_account(client)
+            changed_at = datetime.now(UTC)
+            await adapter.modify_order(stop_ref, stop_price=float(stop_price))
+            try:
+                await _wait_for_stop(client, stop_ref, stop_price, seconds=30, since=changed_at)
+            finally:
+                _record_trade(client, stop_ref, f"{stage} modification broker state", events)
+            events.append(
+                {
+                    "at_utc": datetime.now(UTC).isoformat(),
+                    "event": f"{stage} raised stop acknowledged",
+                    "acknowledged_price": str(stop_price),
+                }
+            )
         _checked_account(client)
         await adapter.cancel_order(stop_ref)
         await _wait_for_stop(client, stop_ref, None)
@@ -509,9 +710,25 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
         if held:
             _require_full_holding(held, quantity, "before exit")
             _checked_account(client)
-            sell = await adapter.place_order(
-                Order(symbol=SYMBOL, side="sell", quantity=int(held), order_id=sell_ref)
+            loop = asyncio.get_running_loop()
+            submitted_at = loop.time()
+            perm_id_task = asyncio.create_task(
+                _watch_perm_id(client, sell_ref, started_at=submitted_at)
             )
+            try:
+                sell = await adapter.place_order(
+                    Order(symbol=SYMBOL, side="sell", quantity=int(held), order_id=sell_ref)
+                )
+                events.append(
+                    {
+                        "at_utc": datetime.now(UTC).isoformat(),
+                        "event": "exit permId arrival",
+                        **(await perm_id_task),
+                    }
+                )
+            finally:
+                if not perm_id_task.done():
+                    perm_id_task.cancel()
             events.append(
                 {
                     "at_utc": datetime.now(UTC).isoformat(),
@@ -527,6 +744,7 @@ async def _run(session: date, out_dir: Path, execute: bool) -> int:
         events.append(
             {"at_utc": datetime.now(UTC).isoformat(), "event": "flat and no open BHP order"}
         )
+        await _record_execution_recheck(client, con_id, (buy_ref, stop_ref, sell_ref), events)
     except Exception as exc:  # noqa: BLE001 - preserve failure as raw probe evidence
         error = f"{type(exc).__name__}: {exc}"
         events.append(
