@@ -169,7 +169,11 @@ class ConsolidationReconciler:
         ):
             raise ValueError("cash in lieu must match the fractional share treatment")
         positions = await self.broker.positions()
-        reported = [position.quantity for position in positions if position.symbol == action.symbol]
+        reported = [
+            position.quantity
+            for position in positions
+            if position.qat_holding and position.symbol == action.symbol
+        ]
         broker_quantity = None
         if (
             len(reported) == 1

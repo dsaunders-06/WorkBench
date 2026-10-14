@@ -130,7 +130,7 @@ class ExitAlertService:
         reported = [
             position.quantity
             for position in await self.cards.oms.broker.positions()
-            if position.symbol == symbol
+            if position.qat_holding and position.symbol == symbol
         ]
         return (
             len(reported) == 1

@@ -348,6 +348,14 @@ class CardService:
         if quantity < 2:
             return 0, Decimal(0), (*reasons, "fewer than two whole shares")
         positions = await self.oms.broker.positions()
+        foreign = [position for position in positions if not position.qat_holding]
+        if foreign:
+            identities = ", ".join(
+                f"{position.symbol} account={position.account} conId={position.con_id}"
+                for position in foreign
+            )
+            return 0, Decimal(0), (*reasons, f"foreign holding blocks new exposure: {identities}")
+        positions = [position for position in positions if position.qat_holding]
         pending = self.oms.pending_orders()
         history_by_symbol = {item.symbol: item for item in self.snapshot.symbols}
         for symbol in {pos.symbol for pos in positions} | {

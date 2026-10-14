@@ -29,9 +29,12 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from qat.config import Settings
+from qat.data.broker.adapter import PriceObservation
 from qat.domain.autonomy.executor import AutonomousExecutor
 
 
@@ -41,6 +44,12 @@ class _Broker:
 
     async def get_market_data(self, symbol: str):
         return self._quote
+
+    async def price_observation(self, symbol: str) -> PriceObservation:
+        now = datetime.now(UTC)
+        return PriceObservation(
+            self._quote.get("last"), "last", 3, now - timedelta(minutes=20), now
+        )
 
 
 def _executor(quote) -> AutonomousExecutor:
@@ -52,17 +61,17 @@ def _executor(quote) -> AutonomousExecutor:
     # is no longer the end of the story, and none of the assertions below would
     # be testing the case they are named for.
     ex._fallback_price = None
+    ex.settings = Settings(_env_file=None)
     return ex
 
 
 @pytest.mark.asyncio
-async def test_a_nan_last_falls_through_to_the_ask():
-    """The unreachable fallback. `nan or x` returns nan because nan is truthy,
-    so before this fix a nan `last` never reached `ask`."""
+async def test_a_nan_last_cannot_borrow_an_untimestamped_ask():
+    """A positive ask without its own source timestamp cannot rescue NaN last."""
     price = await _executor({"last": float("nan"), "ask": 44.60, "bid": 44.50})._current_price(
         "RHC.AX"
     )
-    assert price == 44.60, "a nan last must fall through to the ask, not swallow it"
+    assert price is None
 
 
 @pytest.mark.asyncio

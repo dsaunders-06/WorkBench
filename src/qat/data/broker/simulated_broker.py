@@ -33,6 +33,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    PriceObservation,
     RestingOrder,
     RestingStopOrder,
 )
@@ -155,6 +156,23 @@ class SimulatedBroker:
             return {}
         price = float(bar["close"])
         return {"bid": price, "ask": price, "last": price}
+
+    async def price_observation(self, symbol: str) -> PriceObservation:
+        """An explicitly simulated quote at the replay clock, never a live quote.
+
+        This keeps historical replay testable without allowing the production
+        executor to mistake an old bar close for a broker observation. Tier 0
+        and the field name identify the synthetic nature of this input.
+        """
+        bar = self._bar(symbol)
+        stamp = self._now()
+        return PriceObservation(
+            float(bar["close"]) if bar is not None else None,
+            "simulated_bar_close" if bar is not None else None,
+            0,
+            stamp if bar is not None else None,
+            stamp,
+        )
 
     async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
         """Bars up to AND INCLUDING the simulated date, never beyond it."""

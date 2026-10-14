@@ -24,11 +24,13 @@ import logging
 import math
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, Literal, TypeVar
 
 from ib_async import ExecutionFilter
+from ib_async import Position as IBPosition
 
 from qat.config import Settings
 from qat.data.broker.adapter import (
@@ -38,6 +40,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    PriceObservation,
     RestingOrder,
     RestingStopOrder,
     balances_from_summary,
@@ -58,6 +61,7 @@ from qat.data.broker.ib_translate import (
     to_ib_parent,
     to_ib_protective_legs,
 )
+from qat.data.broker.pending_legs import PendingLegStore, leg_order_ref
 from qat.data.broker.ticks import round_to_tick
 from qat.data.symbols import from_ibkr
 from qat.domain.bus import EventBus
@@ -278,15 +282,114 @@ class IBAdapter:
         # existing single-order path is untouched; group operations - cancel,
         # and repricing the right leg - use this.
         self._ib_groups: dict[str, list[object]] = {}
-
+        self._mark_cache: dict[tuple[str, int, str], tuple[float, datetime]] = {}
+        # A configured account activates durable per-leg identity. Without an
+        # account no broker identity can be proved; the OMS holding gate will
+        # refuse exposure additions when it sees unclassified positions.
+        self._pending_legs = (
+            PendingLegStore(Path(settings.data_dir) / "ib_pending_legs.json")
+            if settings.ibkr_account_id
+            else None
+        )
+        self._deferred_leg_intents: dict[str, tuple[Order, str, object]] = {}
         # M175. Where a completed order's commission goes; None until wired.
         self._commission_listener: Callable[[BrokerCommission], None] | None = None
         self._commission_tallies: dict[str, _CommissionTally] = {}
         self._commission_unknown_total: set[str] = set()
-        # M175 fix. reqExecutions runs every ~5 minutes and IBKR re-sends the
-        # day's commission reports, which ib_async re-emits - an order already
-        # settled (reported or skipped as unusable) must never be re-tallied.
+        # A settled commission must never be re-tallied on reqExecutions.
         self._commission_settled: set[str] = set()
+
+    def _begin_leg(self, order: Order, leg: object, role: str, contract: object) -> str:
+        ref = leg_order_ref(order.order_id, role)
+        leg.orderRef = ref  # type: ignore[attr-defined]
+        if self.settings.ibkr_account_id:
+            leg.account = self.settings.ibkr_account_id  # type: ignore[attr-defined]
+        if self._pending_legs is not None:
+            if order.side == "sell":
+                # No disk operation ahead of a protective/exit order. The
+                # existing OMS durable sign-off is the pre-send record.
+                if ref in self._pending_legs.legs:
+                    raise ValueError(f"leg {ref} already handed to broker")
+                self._deferred_leg_intents[ref] = (order, role, contract)
+                return ref
+            self._pending_legs.begin(
+                order.order_id,
+                order.symbol,
+                role,
+                self.settings.ibkr_account_id,
+                int(getattr(contract, "conId", 0) or 0),
+                ref,
+                self.settings.ibkr_client_id,
+            )
+        return ref
+
+    def _observe_leg(self, ref: str, leg: object, trade: object) -> None:
+        if self._pending_legs is None:
+            return
+        status = getattr(trade, "orderStatus", None)
+        try:
+            deferred = self._deferred_leg_intents.pop(ref, None)
+            if deferred is not None:
+                order, role, contract = deferred
+                self._pending_legs.begin(
+                    order.order_id,
+                    order.symbol,
+                    role,
+                    self.settings.ibkr_account_id,
+                    int(getattr(contract, "conId", 0) or 0),
+                    ref,
+                    self.settings.ibkr_client_id,
+                )
+            self._pending_legs.observe(
+                ref,
+                broker_order_id=int(getattr(leg, "orderId", 0) or 0),
+                perm_id=int(getattr(leg, "permId", 0) or getattr(status, "permId", 0) or 0),
+            )
+        except (KeyError, OSError):
+            logger.exception(
+                "Could not persist or update broker leg %s identity after transmission; "
+                "the OMS application order remains durable",
+                ref,
+            )
+
+    async def pending_identity_reason(self, symbol: str) -> str | None:
+        """Bounded broker reconciliation for a pending leg before a new buy.
+
+        Stops and exits never call this method. An unreadable broker leaves the
+        pending state in place and never turns it into permission to resubmit.
+        """
+        store = self._pending_legs
+        if store is None or not store.unresolved(symbol):
+            return None
+        try:
+            trades = await self._all_open_orders()
+            if trades is not None:
+                for trade in trades:
+                    leg = trade.order
+                    store.resolve_match(
+                        str(getattr(leg, "orderRef", "") or ""),
+                        str(getattr(leg, "account", "") or ""),
+                        int(getattr(trade.contract, "conId", 0) or 0),
+                        int(getattr(leg, "clientId", 0) or 0),
+                        perm_id=int(getattr(leg, "permId", 0) or 0),
+                        broker_order_id=int(getattr(leg, "orderId", 0) or 0),
+                    )
+            request = getattr(self.ib_client, "reqExecutionsAsync", None)
+            if callable(request) and store.unresolved(symbol):
+                for fill in await self._call(request(ExecutionFilter()), "reqExecutions"):
+                    execution = fill.execution
+                    store.resolve_match(
+                        str(getattr(execution, "orderRef", "") or ""),
+                        str(getattr(execution, "acctNumber", "") or ""),
+                        int(getattr(fill.contract, "conId", 0) or 0),
+                        int(getattr(execution, "clientId", 0) or 0),
+                        perm_id=int(getattr(execution, "permId", 0) or 0),
+                        broker_order_id=int(getattr(execution, "orderId", 0) or 0),
+                    )
+        except Exception:
+            logger.exception("Could not reconcile pending IBKR leg identity for %s", symbol)
+        refs = store.unresolved(symbol)
+        return f"pending broker identity for {symbol}: {', '.join(refs)}" if refs else None
 
     async def connect(self) -> None:
         """Connect, retrying a refused port for a bounded time (M125).
@@ -308,6 +411,12 @@ class IBAdapter:
         waiting will not fix, and the original exception is raised so the
         operator sees the real reason rather than a timeout.
         """
+        if (
+            self.settings.market == "ASX"
+            and not self.read_only
+            and not self.settings.ibkr_account_id
+        ):
+            raise ValueError("ASX trading requires a configured IBKR account identity")
         last: Exception | None = None
         for attempt in range(1, self.max_connect_attempts + 1):
             try:
@@ -619,6 +728,56 @@ class IBAdapter:
                     # disconnect either way.
                     logger.debug("Could not cancel the quote subscription for %s", symbol)
 
+    async def price_observation(self, symbol: str) -> PriceObservation:
+        """Capture a source-dated last print; never infer source time from receipt."""
+        observed = datetime.now(UTC)
+        unavailable = PriceObservation(None, None, None, None, observed)
+        stream = getattr(self.ib_client, "reqMktData", None)
+        if not callable(stream):
+            return unavailable
+        contract = await self._qualified_contract(symbol)
+        if contract is None:
+            return unavailable
+        try:
+            ticker = stream(contract, "", False, False)
+        except Exception:
+            logger.exception("IBKR quote request failed for %s", symbol)
+            return unavailable
+        try:
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + _QUOTE_WAIT_SECONDS
+            while True:
+                raw = getattr(ticker, "last", None)
+                try:
+                    value = None if raw is None else float(raw)
+                except (TypeError, ValueError):
+                    value = None
+                source = getattr(ticker, "delayedLastTimestamp", None)
+                tier = getattr(ticker, "marketDataType", None)
+                observation = PriceObservation(
+                    value,
+                    "last" if raw is not None else None,
+                    int(tier) if isinstance(tier, int) else None,
+                    source if isinstance(source, datetime) else None,
+                    datetime.now(UTC),
+                )
+                if (
+                    observation.refusal(
+                        max_age=timedelta(seconds=self.settings.current_quote_max_age_seconds)
+                    )
+                    is None
+                    or loop.time() >= deadline
+                ):
+                    return observation
+                await asyncio.sleep(_QUOTE_POLL_SECONDS)
+        finally:
+            cancel = getattr(self.ib_client, "cancelMktData", None)
+            if callable(cancel):
+                try:
+                    cancel(contract)
+                except Exception:
+                    logger.exception("Could not cancel quote subscription for %s", symbol)
+
     async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
         contract = to_ib_contract(symbol, self.settings.market)
         bar_data = await self._call(
@@ -649,11 +808,15 @@ class IBAdapter:
         releases the group.
         """
         parent = to_ib_parent(order)
-        parent.orderRef = order.order_id
+        parent_ref = self._begin_leg(order, parent, "primary", contract)
         parent_trade = self.ib_client.placeOrder(contract, parent)  # type: ignore[arg-type]
+        self._observe_leg(parent_ref, parent, parent_trade)
         group: list[object] = [parent]
         for leg in to_ib_protective_legs(order, parent.orderId):
-            self.ib_client.placeOrder(contract, leg)  # type: ignore[arg-type]
+            role = "stop" if leg.orderType == "STP" else "target"
+            ref = self._begin_leg(order, leg, role, contract)
+            trade = self.ib_client.placeOrder(contract, leg)  # type: ignore[arg-type]
+            self._observe_leg(ref, leg, trade)
             group.append(leg)
 
         app_order_id = order.order_id
@@ -661,7 +824,9 @@ class IBAdapter:
         # The 26 August incident was TWO BRACKETS (item 56) - the parent here
         # carries exactly the same permId=0-at-return shape as the plain path,
         # so it gets exactly the same wait.
-        await self._await_perm_id(parent_trade, app_order_id)
+        if order.side == "buy":
+            await self._await_perm_id(parent_trade, app_order_id)
+            self._observe_leg(parent_ref, parent, parent_trade)
         result = from_ib_trade(parent_trade, order)
         if result.order_id != app_order_id:
             self._register(result, parent, group)
@@ -671,11 +836,15 @@ class IBAdapter:
         """A standalone protective stop and target, mutually exclusive at the
         broker rather than merely both present (M33)."""
         pair = to_ib_oca_pair(order, oca_group=f"qat-{order.order_id}")
+        trades = []
+        refs: dict[int, str] = {}
         for leg in pair:
-            leg.orderRef = order.order_id if leg.orderType == "STP" else f"{order.order_id}:target"
-        trades = [
-            self.ib_client.placeOrder(contract, leg) for leg in pair  # type: ignore[arg-type]
-        ]
+            role = "primary" if leg.orderType == "STP" else "target"
+            ref = self._begin_leg(order, leg, role, contract)
+            trade = self.ib_client.placeOrder(contract, leg)  # type: ignore[arg-type]
+            self._observe_leg(ref, leg, trade)
+            refs[id(leg)] = ref
+            trades.append(trade)
 
         app_order_id = order.order_id
         stop_leg = next(leg for leg in pair if leg.orderType == "STP")
@@ -685,7 +854,7 @@ class IBAdapter:
         stop_trade = trades[pair.index(stop_leg)]
         # Same permId=0-at-return shape as the other two paths (item 56): the
         # wait belongs on the leg whose identity is actually carried forward.
-        await self._await_perm_id(stop_trade, app_order_id)
+        self._observe_leg(refs[id(stop_leg)], stop_leg, stop_trade)
         result = from_ib_trade(stop_trade, order)
         if result.order_id != app_order_id:
             self._register(result, stop_leg, list(pair))
@@ -734,14 +903,86 @@ class IBAdapter:
         request = getattr(self.ib_client, "reqExecutionsAsync", None)
         if not callable(request):
             return []
+        # IB.fills() is a session-scoped local cache of streamed callbacks.
+        # It is NEVER the authoritative fill list or timestamp; it exists here
+        # only to diagnose the 11-hour streamed/requested discrepancy observed
+        # on the DU paper account in October 2026.
+        streamed: dict[str, datetime] = {}
+        cache = getattr(self.ib_client, "fills", None)
+        if callable(cache):
+            try:
+                for row in cache():
+                    execution = getattr(row, "execution", None)
+                    stamp = getattr(execution, "time", None)
+                    exec_id = str(getattr(execution, "execId", "") or "")
+                    if exec_id and isinstance(stamp, datetime) and stamp.tzinfo is not None:
+                        streamed[exec_id] = stamp
+            except Exception:
+                logger.exception("Could not inspect local streamed execution times")
         executions = await self._call(request(ExecutionFilter()), "reqExecutions")
 
         wanted = set(symbols) if symbols else None
         fills: list[BrokerFill] = []
         for execution in executions:
+            raw_execution = getattr(execution, "execution", None)
+            execution_account = str(getattr(raw_execution, "acctNumber", "") or "")
+            if self.settings.ibkr_account_id and execution_account != self.settings.ibkr_account_id:
+                logger.warning(
+                    "Ignoring IBKR execution for another or unidentified account: execId=%s "
+                    "account=%s",
+                    getattr(raw_execution, "execId", ""),
+                    execution_account,
+                )
+                continue
+            exec_id = str(getattr(raw_execution, "execId", "") or "")
+            streamed_time = streamed.get(exec_id)
+            requested_time = getattr(raw_execution, "time", None)
+            if (
+                streamed_time is not None
+                and isinstance(requested_time, datetime)
+                and requested_time.tzinfo is not None
+            ):
+                difference = abs(
+                    (requested_time.astimezone(UTC) - streamed_time.astimezone(UTC)).total_seconds()
+                )
+                if difference > 1:
+                    logger.warning(
+                        "IBKR execution time discrepancy execId=%s streamed=%r "
+                        "requested=%r difference_seconds=%g host_timezone=%s TimezoneTWS=%r",
+                        exec_id,
+                        streamed_time,
+                        requested_time,
+                        difference,
+                        datetime.now().astimezone().tzinfo,
+                        getattr(self.ib_client, "TimezoneTWS", None),
+                    )
+            store = self._pending_legs
+            app_id = None
+            if store is not None:
+                reference = str(getattr(raw_execution, "orderRef", "") or "")
+                app_id = store.application_id_for(reference)
+                if app_id is not None:
+                    matched = store.resolve_match(
+                        reference,
+                        execution_account,
+                        int(getattr(execution.contract, "conId", 0) or 0),
+                        int(getattr(raw_execution, "clientId", 0) or 0),
+                        perm_id=int(getattr(raw_execution, "permId", 0) or 0),
+                        broker_order_id=int(getattr(raw_execution, "orderId", 0) or 0),
+                    )
+                    if not matched:
+                        logger.error(
+                            "Ignoring IBKR execution whose orderRef matches a pending leg but "
+                            "account, conId, clientId or permId does not: execId=%s orderRef=%s",
+                            exec_id,
+                            reference,
+                        )
+                        continue
             fill = from_ib_fill(execution, self.settings.market)
             if fill is None:
                 continue
+            if app_id is not None:
+                fill = replace(fill, app_order_id=app_id)
             if fill.filled_at <= since:
                 continue
             if wanted is not None and fill.symbol not in wanted:
@@ -887,19 +1128,56 @@ class IBAdapter:
         if order.order_type == "opening_auction_limit":
             raise ValueError("opening auction limit is not verified against the Gateway GTC preset")
         self._check_not_read_only()
+        if order.side == "buy":
+            reason = await self.pending_identity_reason(order.symbol)
+            if reason:
+                raise ValueError(reason)
         self._round_prices_onto_ticks(order)
         contract = to_ib_contract(order.symbol, self.settings.market)
+        if self._pending_legs is not None and order.side == "buy":
+            qualified = await self._qualified_contract(order.symbol)
+            if qualified is None or not int(getattr(qualified, "conId", 0) or 0):
+                raise ValueError(
+                    f"cannot establish conId for {order.symbol} before order placement"
+                )
+            contract = qualified  # type: ignore[assignment]
+        elif self._pending_legs is not None:
+            # A sell never waits for qualification: use the already-known
+            # contract, or the local positions cache, without a Gateway call.
+            cached = self._qualified_contracts.get(order.symbol)
+            if cached is not None:
+                contract = cached  # type: ignore[assignment]
+            else:
+                for position in self.ib_client.positions():
+                    held = position.contract
+                    if (
+                        str(getattr(position, "account", "")) == self.settings.ibkr_account_id
+                        and from_ibkr(held.symbol, self.settings.market) == order.symbol
+                        and str(getattr(held, "secType", "")) == "STK"
+                        and str(getattr(held, "currency", "")) == "AUD"
+                        and "ASX"
+                        in {
+                            str(getattr(held, "exchange", "")),
+                            str(getattr(held, "primaryExchange", "")),
+                        }
+                        and int(getattr(held, "conId", 0) or 0) > 0
+                    ):
+                        contract = held
+                        break
         if order.is_bracket:
             return await self._place_bracket(order, contract)
         if order.order_type == "stop" and order.take_profit_price is not None:
             return await self._place_oca(order, contract)
         ib_order = to_ib_order(order)
-        ib_order.orderRef = order.order_id
+        ref = self._begin_leg(order, ib_order, "primary", contract)
         trade = self.ib_client.placeOrder(contract, ib_order)
+        self._observe_leg(ref, ib_order, trade)
         app_order_id = order.order_id
         self._orders[app_order_id] = order
         self._ib_orders[app_order_id] = ib_order
-        await self._await_perm_id(trade, order.order_id)
+        if order.side == "buy":
+            await self._await_perm_id(trade, order.order_id)
+            self._observe_leg(ref, ib_order, trade)
         result = from_ib_trade(trade, order)
         # `from_ib_trade` may have overwritten `order.order_id` with IBKR's
         # permId (see its docstring - the Task 3 identity bridge). Both
@@ -1527,9 +1805,8 @@ class IBAdapter:
             # Yields to the event loop so ib_async can process the ack.
             await asyncio.sleep(0.05)
         logger.warning(
-            "IBKR did not report a permId for order %s within %.1fs, so it keeps the "
-            "app's own id. Its fill will arrive under a permId this process does not "
-            "recognise and WILL be absorbed as foreign, doubling the book (item 56).",
+            "IBKR did not report a permId for order %s within %.1fs; its durable "
+            "orderRef remains pending. No second transmission is permitted.",
             app_order_id,
             deadline,
         )
@@ -1627,18 +1904,69 @@ class IBAdapter:
         disagreed about size must not silently redefine the book.
         """
         marks = self._portfolio_marks()
-        return [
-            from_ib_position(pos, self.settings.market, marks.get(pos.contract.symbol))
-            for pos in self.ib_client.positions()
-        ]
+        unique: dict[tuple[str, int, str], IBPosition] = {}
+        for pos in self.ib_client.positions():
+            key = self._position_key(pos)
+            prior = unique.get(key)
+            if prior is not None:
+                if (prior.position, prior.avgCost) != (pos.position, pos.avgCost):
+                    raise ValueError(f"conflicting IBKR position callbacks for {key}")
+                continue
+            unique[key] = pos
+        holdings: list[Position] = []
+        account = str(getattr(self.settings, "ibkr_account_id", "") or "")
+        for key, pos in unique.items():
+            contract = pos.contract
+            asx_stock = (
+                self.settings.market == "ASX"
+                and account.startswith("DU")
+                and str(getattr(pos, "account", "")) == account
+                and str(getattr(contract, "secType", "")) == "STK"
+                and str(getattr(contract, "currency", "")) == "AUD"
+                and "ASX"
+                in {
+                    str(getattr(contract, "exchange", "")),
+                    str(getattr(contract, "primaryExchange", "")),
+                }
+                and int(getattr(contract, "conId", 0) or 0) > 0
+            )
+            qualified = (
+                await self._qualified_contract(from_ibkr(contract.symbol, self.settings.market))
+                if asx_stock
+                else None
+            )
+            managed = bool(
+                qualified is not None
+                and int(getattr(qualified, "conId", 0) or 0) == int(contract.conId)
+            )
+            mark = marks.get(key)
+            holdings.append(
+                from_ib_position(
+                    pos,
+                    self.settings.market,
+                    mark[0] if mark is not None else None,
+                    qat_holding=managed,
+                    mark_observed_at=mark[1] if mark is not None else None,
+                )
+            )
+        return holdings
 
-    def _portfolio_marks(self) -> dict[str, float]:
-        """Raw-symbol -> broker mark, for whatever the portfolio reports.
+    @staticmethod
+    def _position_key(position: Any) -> tuple[str, int, str]:
+        contract = position.contract
+        account = str(getattr(position, "account", "") or "")
+        con_id = int(getattr(contract, "conId", 0) or 0)
+        # A missing conId cannot establish identity. The symbol fallback only
+        # keeps legacy adapter doubles distinct; such holdings are foreign.
+        return account, con_id, "" if con_id > 0 else str(contract.symbol)
 
-        Keyed on the RAW IBKR symbol because that is what both calls carry;
-        translation happens once, downstream. A client without `portfolio` -
-        an older fake, or an adapter that predates this - yields no marks
-        rather than an error.
+    def _portfolio_marks(self) -> dict[tuple[str, int, str], tuple[float, datetime]]:
+        """Broker marks keyed by account/conId, with conservative observation age.
+
+        `IB.portfolio()` is a cache with no source event timestamp. Re-reading
+        the same cached price cannot make it fresh; retain the first observed
+        time until the value changes. This can overstate staleness when a new
+        event repeats the same price, which is safer than inventing recency.
 
         A mark of zero or less is dropped: IBKR reports 0.0 for an instrument
         it has no data on, and a position marked at zero measures as a total
@@ -1647,11 +1975,20 @@ class IBAdapter:
         portfolio = getattr(self.ib_client, "portfolio", None)
         if not callable(portfolio):
             return {}
-        marks: dict[str, float] = {}
+        marks: dict[tuple[str, int, str], tuple[float, datetime]] = {}
+        prior_marks = getattr(self, "_mark_cache", {})
         for item in portfolio():
             price = float(getattr(item, "marketPrice", 0.0) or 0.0)
-            if price > 0:
-                marks[item.contract.symbol] = price
+            if math.isfinite(price) and price > 0:
+                key = self._position_key(item)
+                previous = prior_marks.get(key)
+                stamp = (
+                    previous[1]
+                    if previous is not None and previous[0] == price
+                    else datetime.now(UTC)
+                )
+                marks[key] = (price, stamp)
+        self._mark_cache = marks
         return marks
 
     async def account(self) -> AccountSummary:

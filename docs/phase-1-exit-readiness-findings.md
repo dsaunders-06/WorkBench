@@ -1,11 +1,10 @@
 # Phase 1 exit readiness — offline findings, 13 October 2026
 
-This is an investigation, not an implementation approval. It uses the current
-source and the hashed Monday/Tuesday DU-paper probe files outside Git. No
-production order path was changed. QAT-managed exits remain conditional on
-separate DS review. The Wednesday paper probe is intended to replace one
-synthetic assumption about stop modification with broker evidence; it does not
-authorize a production exit change or a stop-trigger test.
+The sections below preserve the 13 October investigation as the baseline.
+DS approved the Phase 1 exit-readiness batch on 15 October; the implementation
+record follows the baseline. The Monday, Tuesday and Wednesday DU-paper probes
+provide non-synthetic evidence where stated. This batch does not authorize a
+production exit transmission, a stop-trigger test or an opening-auction entry.
 
 ## 1. Holding identity
 
@@ -208,3 +207,89 @@ restart, a missing orderRef, a stop that remains working, and a duplicate
 sign-off attempt. The Wednesday paper run should measure the market exit's
 actual permId delay and both stop modification acknowledgements; that real
 evidence is needed before a production design is approved.
+
+## 5. Implementation record — DS approval, 15 October 2026
+
+This batch carries IBKR account and contract identity through `Position` and
+its mark. `IBAdapter.positions` deduplicates the keyed cache, checks the
+configured DU account and qualified ASX stock conId, and labels every other
+holding foreign. The OMS, governor, account poller, operational card and exit
+paths exclude foreign shares from QAT quantity and sizing. A foreign holding
+blocks new exposure account-wide; it remains visible with account, conId,
+security type, venue and currency. Protective and exit orders for a QAT
+holding continue. Test brokers lacking IBKR contract identity retain an
+explicit simulation default; the IB adapter classifies real IBKR rows.
+
+`IBAdapter.price_observation` returns value, field, broker market-data type,
+source timestamp and observation timestamp. The bound is the single
+`Settings.current_quote_max_age_seconds` value, fixed at 1800 seconds pending
+another DS decision. The OMS uses a limit as the buy's costing ceiling and
+otherwise requires a fresh source-dated quote for market buys. The deferred
+autonomous executor also requires such an observation before its drift gate;
+it no longer treats a historical bar close as a production current quote or
+silently skips drift. The positions panel labels broker marks and shows their
+observed time. Historical replay has a separately labelled tier-0
+`simulated_bar_close` observation at its simulated clock. It is a synthetic
+replay input, not evidence of live quote freshness or data fitness.
+
+`from_ib_fill` accepts only timezone-aware execution times from
+`reqExecutions` and normalises them to UTC. The IB adapter reads its local
+streamed-fill cache only to compare the two reported times by execId; a
+difference over one second logs both values, the host zone and
+`TimezoneTWS`. It never uses the streamed time as the ledger timestamp.
+No `TimezoneTWS` setting was changed. The 14 October paper probe observed
+two streamed/requested pairs exactly 11 hours apart, with requested times
+matching local receipts. The broker wire string was not captured, so the
+cause remains an inference rather than a verified parser diagnosis.
+
+Each IBKR leg now has a canonical UUID orderRef. A primary leg uses the
+application UUID when canonical; attached stop and target legs use stable
+UUIDv5 references in the fixed namespace in `pending_legs.py`. For a buy,
+the configured-account IB adapter durably writes each leg's account, conId,
+clientId, orderRef and application ID before broker hand-off. For a protective
+or exit sell it transmits first, then writes the additional per-leg record;
+the existing OMS application-order intent is durable before transmission.
+This ordering prevents the additional file from delaying an exposure-reducing
+order. A zero permId remains
+pending, including after a five-second wait. A bounded open-order and
+`reqExecutions` read resolves the matching broker identity. While a leg is
+unresolved, new buys for that symbol are refused; stop and exit placement
+does not wait for a permId. The OMS's existing durable sign-off record still
+prevents duplicate transmission across restart. The per-leg record adds
+identity evidence without replacing that guard.
+
+The program has no production subscription to streamed fill callbacks.
+`IBAdapter.recent_fills` reads `IB.fills()` only as a local diagnostic cache,
+and obtains attributable fills from `reqExecutions`. `OMS.absorb_broker_fills`,
+the signal bridge and trade ledger consume the resulting `BrokerFill`; the
+immediate sign-off announcement uses the OMS clock and is later corrected by
+the requested execution. No streamed callback advances a fill watermark.
+
+## 6. Proposed OMS paper round trip — draft, **not authorised to run**
+
+Use one DU paper account through QAT's own OMS and IB adapter, after 10:30
+Sydney on a session DS specifies. Recheck the DU account before every Gateway
+request. Confirm no BHP.AX holding or working order, no unresolved identity,
+and a type-3 BHP observation with source timestamp at most 30 minutes old.
+Compute the minimum whole-share parcel reaching AUD 500 from that quote and
+abort if the estimated buy exceeds AUD 800. Record source time and age.
+
+1. DS signs off one diagnostic BHP.AX BUY MKT through OMS; this tests the
+   safety and identity path and is **not** a substitute strategy entry rule.
+   Confirm the exact fill and `reqExecutions` alias to its UUID orderRef.
+2. DS signs off one SELL STP GTC for exactly the held shares at the full-tick
+   floor of 90% of the reference price. Confirm the broker's working stop,
+   orderRef, orderId and permId, allowing pending identity until the
+   bounded broker reconciliation resolves it.
+3. Raise that same stop one ASX tick through the OMS/adapter modification
+   path and confirm the acknowledged broker auxPrice. Cancel and confirm
+   cancellation before any market exit.
+4. DS signs off one SELL MKT for exactly the confirmed holding. Confirm the
+   fill through `reqExecutions`, UTC attribution, orderRef alias, a flat BHP
+   position and no working BHP order. Record every status, time, commission,
+   identity transition and the final account state.
+
+Stop at the first unexpected broker state. Use only the separately approved
+emergency exit for this probe's own shares; never retry a transmission on a
+missing permId. The diagnostic market buy does not prove an opening-auction
+entry. That and any stop-trigger test remain separate DS decisions.

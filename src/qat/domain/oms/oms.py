@@ -30,6 +30,8 @@ from qat.data.broker.adapter import (
     BrokerAdapter,
     BrokerFill,
     Order,
+    Position,
+    PriceObservation,
     is_protective_leg,
     spendable_from,
 )
@@ -467,7 +469,7 @@ class OMS:
                 existing_returns,
                 sector_by_symbol,
                 available_cash=account.cash,
-                positions=await self.broker.positions(),
+                positions=await self._qat_positions(),
                 position_stops=self.position_stops(),
                 pending_orders=self.pending_orders(),
             )
@@ -1071,6 +1073,34 @@ class OMS:
                 f"Order {order_id} has already been transmitted to the broker - "
                 "refusing to transmit it a second time"
             )
+
+        if order.side == "buy":
+            pending_identity = getattr(self.broker, "pending_identity_reason", None)
+            if callable(pending_identity):
+                try:
+                    pending_reason = await pending_identity(order.symbol)
+                except Exception:
+                    pending_reason = f"broker identity could not be checked for {order.symbol}"
+                if pending_reason:
+                    order.status = "rejected"
+                    self._record(order, "rejected", pending_reason, operator)
+                    return order
+            try:
+                foreign = [pos for pos in await self.broker.positions() if not pos.qat_holding]
+            except Exception:
+                order.status = "rejected"
+                self._record(order, "rejected", "broker holdings could not be classified", operator)
+                return order
+            if foreign:
+                identities = ", ".join(
+                    f"{pos.symbol} account={pos.account} conId={pos.con_id} "
+                    f"{pos.sec_type}/{pos.currency}"
+                    for pos in foreign
+                )
+                order.status = "rejected"
+                logger.warning("Exposure addition refused: foreign holding(s): %s", identities)
+                self._record(order, "rejected", f"foreign holding(s): {identities}", operator)
+                return order
 
         recovering = order_id in self._recovery_order_ids and order.is_protective_stop
         if self.kill_switch.tripped and not recovering:
@@ -1684,32 +1714,44 @@ class OMS:
         return fill
 
     async def _costing_price(self, order: Order) -> float | None:
-        """Best available price for costing an order, or None if there is none.
-
-        Preference order, most to least current: the order's own price, a live
-        broker quote, then the price the order was sized against at submission.
-        The last of these is what makes this workable for an execution-only
-        adapter (Alpaca) that never serves quotes - it is slightly stale, but a
-        slightly stale price is a real constraint, whereas no price at all is
-        not a constraint of any kind.
-        """
+        """Cost a limit at its limit; a market buy needs a source-dated quote."""
         if order.limit_price:
             return float(order.limit_price)
         if order.filled_price:
             return float(order.filled_price)
-
+        source = getattr(self.broker, "price_observation", None)
+        if not callable(source):
+            logger.warning(
+                "Current quote refused for %s: no typed observation; market_data_type=unknown",
+                order.symbol,
+            )
+            return None
         try:
-            quote = await self.broker.get_market_data(order.symbol)
-        except Exception:  # noqa: BLE001 - an adapter without quotes is expected
-            logger.debug("Broker cannot quote %s; using the submission price", order.symbol)
-        else:
-            live = float(quote.get("ask") or quote.get("last") or 0.0)
-            if live > 0:
-                return live
-
-        if order.reference_price and order.reference_price > 0:
-            return float(order.reference_price)
-        return None
+            observation = await source(order.symbol)
+        except Exception:  # noqa: BLE001 - a failed quote refuses a market buy
+            logger.exception("Current quote request failed for %s", order.symbol)
+            return None
+        if not isinstance(observation, PriceObservation):
+            logger.warning("Current quote refused for %s: untyped broker response", order.symbol)
+            return None
+        reason = observation.refusal(
+            max_age=timedelta(
+                seconds=(self.settings or self.risk_engine.settings).current_quote_max_age_seconds
+            )
+        )
+        logger.warning(
+            "Current quote %s for %s: value=%r field=%s market_data_type=%s "
+            "source_timestamp=%s observed_timestamp=%s reason=%s",
+            "refused" if reason else "used",
+            order.symbol,
+            observation.value,
+            observation.field,
+            observation.market_data_type,
+            observation.source_timestamp,
+            observation.observed_timestamp,
+            reason or "fresh",
+        )
+        return observation.value if reason is None else None
 
     async def reject_order(self, order_id: str, operator: str, reason: str) -> Order:
         order = self._orders[order_id]
@@ -1909,7 +1951,7 @@ class OMS:
         the conservative rule is unchanged. The difference is that it is now
         reached by evidence rather than by assumption.
         """
-        adopted = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
+        adopted = {pos.symbol: pos.quantity for pos in await self._qat_positions()}
         self._report_anomalies_that_moved_again(adopted)
         self._filled_quantities = dict(adopted)
         self._adopted_baseline = dict(adopted)
@@ -2078,7 +2120,7 @@ class OMS:
         if not resting and not self._position_stops:
             return []
 
-        held = {pos.symbol for pos in await self.broker.positions() if abs(pos.quantity) > 0}
+        held = {pos.symbol for pos in await self._qat_positions() if abs(pos.quantity) > 0}
         lost: list[str] = []
         drifted: list[tuple[str, float, float]] = []
         for symbol, believed in list(self._position_stops.items()):
@@ -2193,9 +2235,13 @@ class OMS:
         resting = await self._resting_stops()
         return [
             (pos.symbol, pos.quantity)
-            for pos in await self.broker.positions()
+            for pos in await self._qat_positions()
             if abs(pos.quantity) > 0 and pos.symbol not in resting
         ]
+
+    async def _qat_positions(self) -> list[Position]:
+        """Broker positions proven to belong to QAT; foreign rows stay visible elsewhere."""
+        return [pos for pos in await self.broker.positions() if pos.qat_holding]
 
     async def _broker_quantity(self, symbol: str) -> float | None:
         """What the broker says is held, or None if it cannot be asked.
@@ -2205,7 +2251,7 @@ class OMS:
         exit on a guess is what the quarantine exists to prevent.
         """
         try:
-            positions = await self.broker.positions()
+            positions = await self._qat_positions()
         except Exception:
             logger.exception("Could not read the broker to size an exit on %s", symbol)
             return None
@@ -2539,15 +2585,15 @@ class OMS:
             scan_started = self._now()
             try:
                 positions_before = {
-                    position.symbol: position.quantity for position in await self.broker.positions()
+                    position.symbol: position.quantity for position in await self._qat_positions()
                 }
                 fills_first = _latest_cumulative_fills(await source(floor, symbols))
                 positions_middle = {
-                    position.symbol: position.quantity for position in await self.broker.positions()
+                    position.symbol: position.quantity for position in await self._qat_positions()
                 }
                 fills_second = _latest_cumulative_fills(await source(floor, symbols))
                 positions_after = {
-                    position.symbol: position.quantity for position in await self.broker.positions()
+                    position.symbol: position.quantity for position in await self._qat_positions()
                 }
             except Exception:
                 logger.exception("Could not capture broker state for startup fill replay")
@@ -3051,7 +3097,7 @@ class OMS:
         """
         if observed is None:
             try:
-                positions = await self.broker.positions()
+                positions = await self._qat_positions()
             except Exception:
                 logger.exception("Could not re-read positions after replaying missed executions")
                 return
@@ -3151,7 +3197,7 @@ class OMS:
         # Protection is checked alongside quantity, because they fail in
         # different ways and only one of them was ever being watched.
         await self.verify_position_stops()
-        broker_positions = {pos.symbol: pos.quantity for pos in await self.broker.positions()}
+        broker_positions = {pos.symbol: pos.quantity for pos in await self._qat_positions()}
         # Both sides now describe executed shares. Outstanding BUY quantities
         # must not be subtracted from a difference in confirmed positions.
         symbols = set(self._filled_quantities) | set(broker_positions)

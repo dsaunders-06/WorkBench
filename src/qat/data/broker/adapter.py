@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Literal, Protocol
 
 from qat.domain.corporate_actions.announcements import Announcement
@@ -260,6 +261,53 @@ class Position:
     # held positions: matches SIP 10, matches IEX 0. So it carries none of the
     # IEX range bias the application's own bars do, and costs no extra request.
     current_price: float | None = None
+    account: str = ""
+    con_id: int = 0
+    sec_type: str = ""
+    exchange: str = ""
+    primary_exchange: str = ""
+    currency: str = ""
+    # Non-IB test brokers have no contract identity. IBAdapter always sets this
+    # explicitly after comparing the account and qualified ASX conId.
+    qat_holding: bool = True
+    mark_observed_at: datetime | None = None
+
+    @property
+    def identity(self) -> tuple[str, int]:
+        return self.account, self.con_id
+
+
+@dataclass(frozen=True, slots=True)
+class PriceObservation:
+    """One broker price with its field, data tier and two distinct clocks."""
+
+    value: float | None
+    field: str | None
+    market_data_type: int | None
+    source_timestamp: datetime | None
+    observed_timestamp: datetime
+
+    def refusal(self, *, max_age: timedelta) -> str | None:
+        if self.value is None:
+            return "absent current quote"
+        if math.isnan(self.value):
+            return "NaN current quote"
+        if not math.isfinite(self.value):
+            return "non-finite current quote"
+        if self.value <= 0:
+            return "nonpositive current quote"
+        if self.market_data_type is None:
+            return "market data type missing"
+        if self.source_timestamp is None or self.source_timestamp.tzinfo is None:
+            return "untimestamped current quote"
+        if self.observed_timestamp.tzinfo is None:
+            return "untimestamped observation"
+        age = self.observed_timestamp.astimezone(UTC) - self.source_timestamp.astimezone(UTC)
+        if age < timedelta(0):
+            return "future source timestamp"
+        if age > max_age:
+            return f"stale current quote age={age.total_seconds():.0f}s"
+        return None
 
 
 def spendable_from(cash: float | None, min_cash_reserve: float) -> float | None:

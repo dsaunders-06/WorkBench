@@ -167,6 +167,12 @@ class Settings(BaseSettings):
     ibkr_host: str = "127.0.0.1"
     ibkr_port: int = 4002  # paper Gateway default; 7497 for paper TWS
     ibkr_client_id: int = 1
+    # A holding is managed only when this exact account and the qualified ASX
+    # conId match. Empty refuses new exposure rather than guessing an account.
+    ibkr_account_id: str = ""
+    # DS-approved 12 October 2026. Literal keeps an environment override from
+    # changing the gate without a reviewed code change and DS decision.
+    current_quote_max_age_seconds: Literal[1800] = 1800
 
     # --- Risk limits (paper §6/§18, Table 18.1; overridable per-strategy later) ---
     per_trade_risk_pct: float = Field(default=0.01, gt=0, le=0.02)

@@ -128,7 +128,9 @@ class DeleverSweep:
         Reports the breach whether or not trimming is enabled, so "we are over
         cap and doing nothing about it" is a visible state rather than silence.
         """
-        positions = await self.oms.broker.positions()
+        positions = [
+            position for position in await self.oms.broker.positions() if position.qat_holding
+        ]
         if not positions:
             return []
 

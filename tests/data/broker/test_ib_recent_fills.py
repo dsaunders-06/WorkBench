@@ -226,10 +226,11 @@ async def test_reqexecutions_is_used_rather_than_the_session_scoped_fills() -> N
     in every test and fail only on the restart that mattered."""
     client = FillsIB([_fill()])
 
-    await _adapter(client).recent_fills(SINCE)
+    result = await _adapter(client).recent_fills(SINCE)
 
     assert client.filters, "reqExecutions was never called"
-    assert not client.fills_called, "used the session-scoped IB.fills() instead"
+    assert len(result) == 1, "the empty streamed cache cannot be the fill authority"
+    assert client.fills_called, "the streamed cache is now read only for time diagnostics"
 
 
 async def test_a_us_fill_keeps_its_plain_symbol() -> None:

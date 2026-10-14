@@ -9,11 +9,13 @@ that was not a rare outage path - it was every single buy.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pandas as pd
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import AccountSummary, Order, Position
+from qat.data.broker.adapter import AccountSummary, Order, Position, PriceObservation
 from qat.domain.bus import EventBus
 from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
@@ -105,17 +107,16 @@ async def test_a_quoteless_broker_still_enforces_the_cash_check():
 
 
 @pytest.mark.asyncio
-async def test_an_affordable_buy_still_transmits_without_a_quote():
-    """Failing closed must not mean failing always - a legitimate order still
-    goes through on an execution-only adapter."""
+async def test_an_affordable_market_buy_refuses_without_a_source_dated_quote():
+    """DS's 15 October ruling removes the old reference-price fallback."""
     broker = _QuotelessBroker(cash=100_000.0)
     oms = _oms(broker)
     order = await oms.submit_order(_candidate(price=100.0), 100_000.0, {}, {})
 
     signed = await oms.sign_off(order.order_id, operator="tester")
 
-    assert signed.status == "filled"
-    assert len(broker.placed) == 1
+    assert signed.status == "rejected"
+    assert broker.placed == []
 
 
 @pytest.mark.asyncio
@@ -135,12 +136,12 @@ async def test_an_order_with_no_price_at_all_is_rejected():
 
 @pytest.mark.asyncio
 async def test_a_live_quote_is_preferred_over_the_submission_price():
-    """A broker that can quote should still be asked - the submission price is
-    a fallback, not the primary source."""
+    """The source-dated broker observation, not the submission price, costs a market buy."""
 
     class _FixedQuoteBroker(_QuotelessBroker):
-        async def get_market_data(self, symbol: str) -> dict[str, float]:
-            return {"ask": 250.0, "last": 249.0}
+        async def price_observation(self, symbol: str) -> PriceObservation:
+            observed = datetime.now(UTC)
+            return PriceObservation(250.0, "ask", 3, observed - timedelta(minutes=20), observed)
 
     broker = _FixedQuoteBroker(cash=100_000.0)
     oms = _oms(broker)
@@ -150,6 +151,61 @@ async def test_a_live_quote_is_preferred_over_the_submission_price():
     priced = await oms._costing_price(order)
 
     assert priced == 250.0, "the live ask should win over the stale submission price"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("value", "age_minutes", "reason"),
+    [
+        (61.86, 31, "stale"),
+        (61.86, None, "untimestamped"),
+        (float("nan"), 20, "NaN"),
+    ],
+)
+async def test_market_buy_rejects_stale_untimestamped_and_nan_observations(
+    caplog, value: float, age_minutes: int | None, reason: str
+) -> None:
+    class ObservationBroker(_QuotelessBroker):
+        async def price_observation(self, symbol: str) -> PriceObservation:
+            now = datetime.now(UTC)
+            source = now - timedelta(minutes=age_minutes) if age_minutes is not None else None
+            return PriceObservation(value, "last", 3, source, now)
+
+    broker = ObservationBroker(cash=100_000)
+    oms = _oms(broker)
+    order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
+    signed = await oms.sign_off(order.order_id, operator="DS")
+
+    assert signed.status == "rejected"
+    assert broker.placed == []
+    assert reason.lower() in caplog.text.lower()
+    assert "market_data_type=3" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_limit_buy_costs_at_its_limit_without_quote() -> None:
+    oms = _oms(_QuotelessBroker(cash=100_000))
+    order = Order("AAA", "buy", 9, "limit-test", limit_price=100.0)
+
+    assert await oms._costing_price(order) == 100.0
+
+
+@pytest.mark.asyncio
+async def test_old_broker_mark_does_not_become_a_current_quote() -> None:
+    broker = _QuotelessBroker(cash=100_000)
+    broker.held = [
+        Position(
+            "AAA",
+            9,
+            60,
+            current_price=61.86,
+            mark_observed_at=datetime.now(UTC),
+        )
+    ]
+    oms = _oms(broker)
+    order = Order("AAA", "buy", 9, "mark-test", reference_price=100.0)
+
+    assert await oms._costing_price(order) is None
 
 
 @pytest.mark.asyncio

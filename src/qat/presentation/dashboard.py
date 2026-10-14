@@ -80,7 +80,7 @@ _POSITIONS_COLUMNS = (
     # here is a percentage or a multiple, so an unlabelled price is the one
     # figure a reader has to infer the unit of.
     "Entry ($)",
-    "Last ($)",
+    "Broker mark ($)",
     "P&L",
     "To exit",
     "To stop",
@@ -100,7 +100,7 @@ _POSITIONS_COLUMN_TOOLTIPS = {
     "Symbol": "The traded symbol",
     "Qty": "Quantity currently held",
     "Entry ($)": "This app's own entry price - not the broker's average cost",
-    "Last ($)": "The broker's last reported mark; em dash when it reports none",
+    "Broker mark ($)": "The broker's last reported mark, not a current quote; em dash when absent",
     "P&L": "Unrealised P&L, as a percentage and in R (risk multiples) when the lot has a stop",
     "To exit": "Distance from the strategy's signal-exit condition, as a fraction of its slow EMA",
     "To stop": "Distance from the last price down to the resting stop",
@@ -625,7 +625,17 @@ class DashboardScreen(QWidget):
                 # ellipsis and keep the full text one hover away", and a
                 # narrow Entry or Risk column truncates exactly as easily as
                 # a narrow Reason column does.
-                item.setToolTip(text)
+                if col == 3:
+                    observed = (
+                        view.mark_observed_at.isoformat()
+                        if view.mark_observed_at is not None
+                        else "unknown"
+                    )
+                    item.setToolTip(
+                        f"Broker mark {text}; observed at {observed}; not a current quote"
+                    )
+                else:
+                    item.setToolTip(text)
                 if col in _POSITIONS_NUMERIC_COLUMNS:
                     item.setTextAlignment(
                         Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter

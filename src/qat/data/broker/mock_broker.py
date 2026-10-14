@@ -16,6 +16,7 @@ from qat.data.broker.adapter import (
     BrokerFill,
     Order,
     Position,
+    PriceObservation,
     RestingOrder,
     RestingStopOrder,
 )
@@ -55,6 +56,10 @@ class MockBroker:
     async def get_market_data(self, symbol: str) -> dict[str, float]:
         price = self._synthetic_price(symbol)
         return {"bid": price - 0.01, "ask": price + 0.01, "last": price}
+
+    async def price_observation(self, symbol: str) -> PriceObservation:
+        now = datetime.now(UTC)
+        return PriceObservation(self._synthetic_price(symbol), "last", 0, now, now)
 
     async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
         price = self._synthetic_price(symbol)

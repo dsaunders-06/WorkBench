@@ -126,6 +126,18 @@ def test_entry_price_is_the_apps_record_not_the_broker_avg_price():
     assert views[0].entry_price == 45.59
 
 
+def test_foreign_same_symbol_has_identity_and_no_qat_strategy_evidence():
+    managed = Position("AAA", 9, 60, account="DU1", con_id=1001)
+    foreign = Position("AAA", 18, 60, account="DU1", con_id=2002, qat_holding=False)
+    views = _build(positions=[managed, foreign])
+
+    assert len(views) == 2
+    assert views[0].entry_price == 100.0
+    assert views[1].entry_price is None
+    assert views[1].risk_share is None
+    assert any("DU1" in note and "2002" in note for note in views[1].notes)
+
+
 def test_no_entry_record_makes_entry_price_and_everything_derived_from_it_none():
     """Do not silently fall back to the broker's avg_price - that is a
     different fact and has disagreed with the app's own record before."""

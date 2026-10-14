@@ -18,12 +18,13 @@ fails here rather than in a live session.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import AccountSummary, Order, Position
+from qat.data.broker.adapter import AccountSummary, Order, Position, PriceObservation
 from qat.domain.bus import EventBus
 from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
@@ -56,6 +57,10 @@ class _AlpacaLikeBroker:
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
         return {"last": 100.0, "bid": 99.99, "ask": 100.01}
+
+    async def price_observation(self, symbol: str) -> PriceObservation:
+        now = datetime.now(UTC)
+        return PriceObservation(100.0, "synthetic_last", 0, now, now)
 
 
 def _candidate(price: float = 100.0) -> OrderCandidate:

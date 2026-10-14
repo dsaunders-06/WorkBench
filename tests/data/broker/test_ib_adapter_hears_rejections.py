@@ -235,6 +235,7 @@ async def test_connect_subscribes_the_error_handler(adapter):
     happening: Error 383 was logged by ib_async and reached nothing because
     nothing had subscribed. Deleting the three `errorEvent` lines in
     `connect()` must fail this test."""
+    adapter.settings.ibkr_account_id = "DU123456"
     await adapter.connect()
 
     assert adapter._on_ib_error in adapter.ib_client.errorEvent.listeners  # type: ignore[attr-defined]
@@ -248,6 +249,7 @@ async def test_connect_logs_a_warning_when_the_client_has_no_error_event(adapter
     be the SAME silent-non-delivery shape as the defect this task fixes -
     just one layer earlier."""
     del adapter.ib_client.errorEvent  # type: ignore[attr-defined]
+    adapter.settings.ibkr_account_id = "DU123456"
 
     with caplog.at_level(logging.WARNING):
         await adapter.connect()

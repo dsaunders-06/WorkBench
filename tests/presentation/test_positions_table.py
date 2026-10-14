@@ -79,6 +79,31 @@ async def test_a_position_with_no_entry_record_renders_an_em_dash_not_a_number(q
     assert pnl_item.text() == "—"
 
 
+async def test_broker_mark_shows_observation_time(qtbot, tmp_path):
+    observed = datetime(2026, 10, 14, 0, 10, tzinfo=UTC)
+    runtime = _runtime(
+        tmp_path,
+        [
+            Position(
+                symbol="BHP.AX",
+                quantity=9,
+                avg_price=60,
+                current_price=61.06,
+                mark_observed_at=observed,
+            )
+        ],
+    )
+    screen = DashboardScreen(runtime)
+    qtbot.addWidget(screen)
+
+    await screen._refresh()
+
+    mark = screen.positions_table.item(0, _LAST_COL)
+    assert mark is not None
+    assert "broker mark" in mark.toolTip().lower()
+    assert observed.isoformat() in mark.toolTip()
+
+
 async def test_a_blocked_position_shows_its_blocker_text(qtbot, tmp_path):
     """A symbol with no resting stop must show the alarming blocker in the
     Status column - and be coloured DANGER, since this is the same class of
@@ -148,7 +173,9 @@ async def test_every_cell_carries_a_tooltip_with_its_full_text(qtbot, tmp_path):
     for col in range(screen.positions_table.columnCount()):
         item = screen.positions_table.item(0, col)
         assert item is not None
-        assert item.toolTip() == item.text()
+        assert item.text() in item.toolTip()
+        if col == _LAST_COL:
+            assert "Broker mark" in item.toolTip()
 
 
 async def test_the_r_figure_carries_its_own_sign(qtbot, tmp_path):
@@ -202,7 +229,7 @@ async def test_the_money_columns_name_their_unit(qtbot, tmp_path):
         for c in range(screen.positions_table.columnCount())
     ]
     assert headers[_ENTRY_COL] == "Entry ($)"
-    assert headers[_LAST_COL] == "Last ($)"
+    assert headers[_LAST_COL] == "Broker mark ($)"
     # The header tooltips are keyed by label, so a renamed column silently
     # losing its tooltip is the failure this catches.
     for col in (_ENTRY_COL, _LAST_COL):

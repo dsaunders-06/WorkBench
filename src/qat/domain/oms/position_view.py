@@ -87,6 +87,13 @@ class PositionView:
     wrong name for a field that also carries this). Empty means nothing is
     flagged - distinguishable from every individual field above being
     unable to say anything at all."""
+    account: str = ""
+    con_id: int = 0
+    sec_type: str = ""
+    exchange: str = ""
+    currency: str = ""
+    qat_holding: bool = True
+    mark_observed_at: datetime | None = None
 
 
 def _first_session_that_clears(opened_at: datetime, trading_days: int) -> date:
@@ -222,6 +229,34 @@ def build_position_views(
         if position.quantity == 0:
             continue
         symbol = position.symbol
+        if not position.qat_holding:
+            views.append(
+                PositionView(
+                    symbol=symbol,
+                    quantity=position.quantity,
+                    entry_price=None,
+                    last_price=_last_price(position),
+                    pnl_pct=None,
+                    pnl_r=None,
+                    exit_distance=None,
+                    stop_distance=None,
+                    risk_share=None,
+                    notes=(
+                        f"FOREIGN holding account={position.account or '?'} "
+                        f"conId={position.con_id} {position.sec_type or '?'} "
+                        f"{position.exchange or position.primary_exchange or '?'} "
+                        f"{position.currency or '?'}; new exposure blocked",
+                    ),
+                    account=position.account,
+                    con_id=position.con_id,
+                    sec_type=position.sec_type,
+                    exchange=position.exchange or position.primary_exchange,
+                    currency=position.currency,
+                    qat_holding=False,
+                    mark_observed_at=position.mark_observed_at,
+                )
+            )
+            continue
         entry = entries.get(symbol)
         last_price = _last_price(position)
 
@@ -281,6 +316,13 @@ def build_position_views(
                     settings=settings,
                     now=now,
                 ),
+                account=position.account,
+                con_id=position.con_id,
+                sec_type=position.sec_type,
+                exchange=position.exchange or position.primary_exchange,
+                currency=position.currency,
+                qat_holding=True,
+                mark_observed_at=position.mark_observed_at,
             )
         )
     return tuple(views)

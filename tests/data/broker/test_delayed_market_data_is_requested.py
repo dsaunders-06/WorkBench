@@ -64,7 +64,11 @@ class _ClientWithoutTierSupport(_RecordingClient):
 
 
 def _adapter(client: Any) -> IBAdapter:
-    return IBAdapter(client, _Bus(), settings=Settings(_env_file=None, market="ASX"))
+    return IBAdapter(
+        client,
+        _Bus(),
+        settings=Settings(_env_file=None, market="ASX", ibkr_account_id="DU123456"),
+    )
 
 
 class _Bus:

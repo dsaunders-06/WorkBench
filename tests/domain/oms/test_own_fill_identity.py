@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -138,6 +139,18 @@ class _LateAckIBGateway:
 
     def positions(self, account: str = "") -> list[object]:
         return []
+
+    def reqMktData(self, _contract, _generic, _snapshot, _regulatory):
+        # Identity is the subject here. The market buy gets a fresh type-3
+        # quote rather than bypassing the current-quote gate.
+        return SimpleNamespace(
+            last=213.70,
+            marketDataType=3,
+            delayedLastTimestamp=datetime.now(UTC),
+        )
+
+    def cancelMktData(self, _contract) -> None:
+        return None
 
     def accountSummary(self, account: str = "") -> list[AccountValue]:
         # Enough cash that the buy-side sign-off cost check never refuses -

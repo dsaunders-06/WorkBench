@@ -56,6 +56,14 @@ class AccountSnapshot:
     error: str | None = None
 
     @property
+    def qat_positions(self) -> tuple[Position, ...]:
+        return tuple(position for position in self.positions if position.qat_holding)
+
+    @property
+    def foreign_positions(self) -> tuple[Position, ...]:
+        return tuple(position for position in self.positions if not position.qat_holding)
+
+    @property
     def age_seconds(self) -> float:
         return (datetime.now(UTC) - self.taken_at).total_seconds()
 
@@ -120,7 +128,7 @@ class AccountPoller:
         try:
             summary = await self.broker.account()
             balances = await self._balances(summary)
-            positions = await self.broker.positions()
+            positions = self._deduplicate_positions(await self.broker.positions())
         except Exception as exc:  # noqa: BLE001 - surfaced on the snapshot
             logger.warning("Could not read the account from the broker: %s", exc)
             return self._degrade(str(exc))
@@ -133,6 +141,23 @@ class AccountPoller:
         )
         self._fetched_at = time.monotonic()
         return self._snapshot
+
+    @staticmethod
+    def _deduplicate_positions(positions: list[Position]) -> list[Position]:
+        unique: dict[tuple[str, int, str], Position] = {}
+        for position in positions:
+            key = (
+                position.account,
+                position.con_id,
+                "" if position.con_id > 0 else position.symbol,
+            )
+            prior = unique.get(key)
+            if prior is not None:
+                if prior != position:
+                    raise ValueError(f"conflicting broker position rows for {key}")
+                continue
+            unique[key] = position
+        return list(unique.values())
 
     async def _balances(self, summary: AccountSummary) -> AccountBalances:
         """The richer view when the adapter has one, derived otherwise."""

@@ -117,6 +117,19 @@ async def test_connect_calls_client_connect_and_starts_heartbeat():
     await adapter.disconnect()
 
 
+@pytest.mark.asyncio
+async def test_asx_trading_connection_requires_a_configured_account() -> None:
+    client = FakeIBClient()
+    adapter = IBAdapter(
+        client,
+        EventBus(),
+        settings=Settings(_env_file=None, market="ASX", ibkr_account_id=""),
+    )
+    with pytest.raises(ValueError, match="configured IBKR account"):
+        await adapter.connect()
+    assert client.connect_calls == 0
+
+
 def test_live_trading_without_confirmation_raises():
     client = FakeIBClient()
     bus = EventBus()

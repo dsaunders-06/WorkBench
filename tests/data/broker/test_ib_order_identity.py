@@ -254,7 +254,7 @@ async def test_ibkr_fill_resolves_back_to_the_order_that_produced_it(tmp_path):
     that produced it - not merely to a field that looks right."""
     client = FakeIBClient(perm_ids=[987654321], acknowledge_on_place=True)
     oms = _oms(tmp_path, client)
-    order = oms._new_pending_order("AAPL", "buy", 10, reference_price=100.0)
+    order = oms._new_pending_order("AAPL", "buy", 10, reference_price=100.0, limit_price=100.0)
 
     signed = await oms.sign_off(order.order_id, "operator")
     assert signed.order_id == "987654321"
@@ -268,7 +268,7 @@ async def test_ibkr_fill_resolves_back_to_the_order_that_produced_it(tmp_path):
 async def test_an_unknown_broker_id_resolves_to_nothing(tmp_path):
     client = FakeIBClient(perm_ids=[987654321], acknowledge_on_place=True)
     oms = _oms(tmp_path, client)
-    order = oms._new_pending_order("AAPL", "buy", 10, reference_price=100.0)
+    order = oms._new_pending_order("AAPL", "buy", 10, reference_price=100.0, limit_price=100.0)
     await oms.sign_off(order.order_id, "operator")
 
     assert oms._order_the_broker_calls("some-other-broker-id") is None
@@ -295,7 +295,7 @@ async def test_m70_entry_price_correction_wakes_up_through_the_ibkr_path(tmp_pat
 
     bus.subscribe(EntryPriceCorrectedEvent, _capture)
 
-    order = oms._new_pending_order("AAPL", "buy", 10, reference_price=100.0)
+    order = oms._new_pending_order("AAPL", "buy", 10, reference_price=100.0, limit_price=100.0)
     signed = await oms.sign_off(order.order_id, "operator")
     # IBKR's "Submitted" is not in `_IB_STATUS_MAP` - it maps only terminal
     # states - so nothing here has a fill price yet. That absence is the M70

@@ -77,7 +77,7 @@ class PositionCloser:
         another sell.
         """
         for position in await self.broker.positions():
-            if position.symbol == symbol:
+            if position.qat_holding and position.symbol == symbol:
                 return position.quantity
         return 0.0
 

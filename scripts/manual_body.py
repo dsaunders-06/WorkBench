@@ -2669,6 +2669,18 @@ def _config_reference(doc: Any) -> None:
                 "unattended live trading needs a code change, not a configuration edit.",
             ),
             ("QAT_BROKER", "mock", "mock, alpaca or ibkr."),
+            (
+                "QAT_IBKR_ACCOUNT_ID",
+                "(empty)",
+                "The exact DU paper account whose ASX holdings QAT may manage. ASX order "
+                "connections are refused until this is configured.",
+            ),
+            (
+                "QAT_CURRENT_QUOTE_MAX_AGE_SECONDS",
+                "1800",
+                "Maximum source age for a current quote used by a market buy or price-drift "
+                "check. A quote without its market-data type and source time is refused.",
+            ),
             ("QAT_MIN_CASH_RESERVE", "1.00", "The cash floor a buy may never spend below."),
             ("QAT_MARKET_DATA_SOURCE", "synthetic", "synthetic, yfinance or alpaca."),
             ("QAT_FUNDAMENTALS_SOURCE", "mock", "mock or yfinance (Section 11.5)."),

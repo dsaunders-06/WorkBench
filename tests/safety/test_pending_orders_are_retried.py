@@ -12,14 +12,14 @@ PANW, 10 shares, blocked at 15:39 in the Midday Lull and never revisited.
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import AccountSummary, Order, Position
+from qat.data.broker.adapter import AccountSummary, Order, Position, PriceObservation
 from qat.domain.autonomy.executor import AutonomousExecutor
 from qat.domain.autonomy.gate import AutonomyGate
 from qat.domain.bus import EventBus
@@ -51,6 +51,10 @@ class _Broker:
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
         return {"last": 100.0, "bid": 99.99, "ask": 100.01}
+
+    async def price_observation(self, symbol: str) -> PriceObservation:
+        now = datetime.now(UTC)
+        return PriceObservation(100.0, "synthetic_last", 0, now, now)
 
 
 def _candidate() -> OrderCandidate:

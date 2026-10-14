@@ -19,10 +19,12 @@ files say the adapter tells the truth and the OMS believes it.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import AccountSummary, Order, Position
+from qat.data.broker.adapter import AccountSummary, Order, Position, PriceObservation
 from qat.domain.bus import EventBus
 from qat.domain.events import OrderFilledEvent
 from qat.domain.oms.oms import OMS
@@ -61,6 +63,10 @@ class _PartiallyFillingBroker:
 
     async def get_market_data(self, symbol: str) -> dict[str, float]:
         return {"price": 100.0}
+
+    async def price_observation(self, symbol: str) -> PriceObservation:
+        now = datetime.now(UTC)
+        return PriceObservation(100.0, "synthetic_last", 0, now, now)
 
     async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
         raise NotImplementedError

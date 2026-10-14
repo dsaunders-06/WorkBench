@@ -52,6 +52,7 @@ def _listen(adapter) -> list[BrokerCommission]:
 
 @pytest.mark.asyncio
 async def test_connect_subscribes_the_commission_handler(adapter):
+    adapter.settings.ibkr_account_id = "DU123456"
     await adapter.connect()
     assert adapter._on_ib_commission in adapter.ib_client.commissionReportEvent.listeners
     await adapter.disconnect()

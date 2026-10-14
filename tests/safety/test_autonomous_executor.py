@@ -6,14 +6,14 @@ the broker, and what gets written down about it either way.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
 
 from qat.config import Settings
-from qat.data.broker.adapter import AccountSummary, Order, Position
+from qat.data.broker.adapter import AccountSummary, Order, Position, PriceObservation
 from qat.domain.autonomy.executor import AUTONOMOUS_OPERATOR, AutonomousExecutor
 from qat.domain.autonomy.gate import AutonomyGate
 from qat.domain.bus import EventBus
@@ -39,6 +39,16 @@ class _Broker:
         if self.quote is None:
             raise NotImplementedError("execution only")
         return {"last": self.quote, "ask": self.quote}
+
+    async def price_observation(self, symbol: str) -> PriceObservation:
+        stamp = datetime.now(UTC)
+        return PriceObservation(
+            self.quote,
+            "synthetic_last" if self.quote is not None else None,
+            0,
+            stamp if self.quote is not None else None,
+            stamp,
+        )
 
     async def get_historical(self, symbol: str, bars: int) -> list[dict[str, float]]:
         raise NotImplementedError

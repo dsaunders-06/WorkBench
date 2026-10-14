@@ -25,12 +25,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import math
 from collections.abc import Callable
+from datetime import timedelta
 
 from qat.config import Settings
 from qat.data import instruments
-from qat.data.broker.adapter import Order
+from qat.data.broker.adapter import Order, PriceObservation
 from qat.domain.autonomy.equity_monitor import EquityMonitor
 from qat.domain.autonomy.gate import AccountState, AutonomyGate, GateDecision
 from qat.domain.bus import EventBus
@@ -67,19 +67,8 @@ class AutonomousExecutor:
         self.journal = journal
         self.equity_monitor = equity_monitor
         self.settings = settings or Settings()
-        # ⚠️ THE BROKER IS NOT THE ONLY PLACE A PRICE LIVES, and for three weeks
-        # it was treated as though it were. This account has no ASX market-data
-        # entitlement, so `get_market_data` returns nothing at all - measured
-        # 4 September: marketDataType=3 accepted, snapshotPermissions=0, and not
-        # one price field populated. The drift check was skipped on every order
-        # since 12 August as a result.
-        #
-        # The application already HAS a price for every watched symbol: the
-        # yfinance feed the sizer itself used. Falling back to it makes the
-        # check work without any broker entitlement - and it compares like with
-        # like, because the price the order was SIZED against came from the same
-        # feed. A quote from a second source would measure the gap between two
-        # vendors as well as the drift.
+        # Legacy constructor seam retained for callers, but a bar/feed close
+        # cannot substitute for a source-timestamped current broker quote.
         self._fallback_price = fallback_price
         # Matches the market-data poll: there is no point re-examining an
         # order more often than the prices behind it change.
@@ -183,7 +172,14 @@ class AutonomousExecutor:
             ),
         )
 
-        current_price = await self._current_price(order.symbol)
+        # A quote-dependent drift check is for exposure additions only. An exit
+        # must not wait for market data or inherit its refusal state.
+        current_price = await self._current_price(order.symbol) if order.side == "buy" else None
+        if order.side == "buy" and current_price is None:
+            reason = "fresh source-timestamped broker quote unavailable for drift check"
+            logger.warning("Autonomy blocked order %s: %s", order_id, reason)
+            self._journal(order, "blocked", reason, account, GateDecision(False, reason, 0.0))
+            return
         decision = self.gate.evaluate(order, account, current_price=current_price)
 
         if not decision.allowed:
@@ -222,65 +218,35 @@ class AutonomousExecutor:
         self._journal(signed, decision.outcome, decision.reason, account, decision)
 
     async def _current_price(self, symbol: str) -> float | None:
-        """A live quote for the drift check, or None when the broker has none.
-
-        None means the drift check is skipped rather than failed - an
-        execution-only adapter never quoting is a known configuration, not a
-        signal that anything is wrong. The order still faces every other gate
-        and the fail-closed cash check at sign-off.
-        """
+        """Only a fresh, source-dated broker observation may enter the drift gate."""
+        source = getattr(self.oms.broker, "price_observation", None)
+        if not callable(source):
+            logger.warning("Drift quote refused for %s: no typed broker observation", symbol)
+            return None
         try:
-            quote = await self.oms.broker.get_market_data(symbol)
-        except Exception:  # noqa: BLE001 - adapters without quotes are expected
-            quote = {}
-
-        # Explicit, because the obvious spelling is broken (item 37).
-        # `float(quote.get("last") or quote.get("ask") or 0.0)` looks like a
-        # three-way fallback and is not one: **`nan` is truthy**, so a `nan`
-        # last short-circuits the `or` chain and the ask is UNREACHABLE. It
-        # then fails `> 0` and the whole thing returns None - which silently
-        # skips the drift check on a parked order, the one guard protecting an
-        # order signed 80 minutes after it was sized.
-        price: float | None = None
-        for field in ("last", "ask", "bid"):
-            value = quote.get(field)
-            if value is None:
-                continue
-            candidate = float(value)
-            if math.isfinite(candidate) and candidate > 0:
-                price = candidate
-                break
-
-        if price is None and self._fallback_price is not None:
-            # The broker had nothing. Ask the feed the sizer used.
-            try:
-                fallback = self._fallback_price(symbol)
-            except Exception:  # noqa: BLE001 - a price lookup must not stop an order
-                fallback = None
-            if fallback is not None and math.isfinite(fallback) and fallback > 0:
-                logger.info(
-                    "No broker quote for %s, so the price-drift check uses the "
-                    "application's own feed (%.4f) - the same source the order was "
-                    "sized against.",
-                    symbol,
-                    fallback,
-                )
-                return fallback
-
-        if price is None:
-            # Logged, because a skipped drift check and a passed one were
-            # indistinguishable in every log and on every screen. No
-            # `has drifted` line exists in any log back to 12 August, and this
-            # is why nobody could tell whether that meant "never drifted" or
-            # "never checked".
-            logger.warning(
-                "No usable quote for %s, so the price-drift check is SKIPPED for this "
-                "order - it is not passing that check, it is not taking it. An order "
-                "parked since it was sized can be signed at a price nobody chose "
-                "(item 37).",
-                symbol,
-            )
-        return price
+            observation = await source(symbol)
+        except Exception:  # noqa: BLE001 - failed market data refuses only additions
+            logger.exception("Drift quote request failed for %s", symbol)
+            return None
+        if not isinstance(observation, PriceObservation):
+            logger.warning("Drift quote refused for %s: untyped broker response", symbol)
+            return None
+        reason = observation.refusal(
+            max_age=timedelta(seconds=self.settings.current_quote_max_age_seconds)
+        )
+        (logger.warning if reason else logger.info)(
+            "Drift quote %s for %s: value=%r field=%s market_data_type=%s "
+            "source_timestamp=%s observed_timestamp=%s reason=%s",
+            "refused" if reason else "used",
+            symbol,
+            observation.value,
+            observation.field,
+            observation.market_data_type,
+            observation.source_timestamp,
+            observation.observed_timestamp,
+            reason or "fresh",
+        )
+        return observation.value if reason is None else None
 
     def _journal(
         self,

@@ -8,6 +8,7 @@ objects requiring no network connection.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from uuid import UUID
 
 from ib_async import AccountValue, Contract, Fill, Stock
@@ -436,6 +437,17 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
     reads.
     """
     execution = fill.execution
+    execution_time = getattr(execution, "time", None)
+    if (
+        not isinstance(execution_time, datetime)
+        or execution_time.tzinfo is None
+        or execution_time.utcoffset() is None
+    ):
+        logger.error(
+            "IBKR execution %s has no timezone-aware reqExecutions time; dropping it",
+            getattr(execution, "execId", "?"),
+        )
+        return None
     side = _IB_EXECUTION_SIDE.get(str(execution.side).upper())
     if side is None:
         logger.error(
@@ -462,7 +474,7 @@ def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
         side=side,  # type: ignore[arg-type]
         quantity=float(execution.cumQty),
         price=float(execution.avgPrice),
-        filled_at=execution.time,
+        filled_at=execution_time.astimezone(UTC),
         app_order_id=app_order_id,
     )
 
@@ -584,7 +596,12 @@ def tighter_stop(
 
 
 def from_ib_position(
-    position: IBPosition, market: str = "US", market_price: float | None = None
+    position: IBPosition,
+    market: str = "US",
+    market_price: float | None = None,
+    *,
+    qat_holding: bool = False,
+    mark_observed_at: datetime | None = None,
 ) -> Position:
     """One IBKR position, in the app's own symbol form (M104).
 
@@ -614,6 +631,14 @@ def from_ib_position(
         # which is a DIFFERENT claim from zero: read as zero, every position
         # would measure as risk-free.
         current_price=market_price,
+        account=str(getattr(position, "account", "") or ""),
+        con_id=int(getattr(position.contract, "conId", 0) or 0),
+        sec_type=str(getattr(position.contract, "secType", "") or ""),
+        exchange=str(getattr(position.contract, "exchange", "") or ""),
+        primary_exchange=str(getattr(position.contract, "primaryExchange", "") or ""),
+        currency=str(getattr(position.contract, "currency", "") or ""),
+        qat_holding=qat_holding,
+        mark_observed_at=mark_observed_at,
     )
 
 

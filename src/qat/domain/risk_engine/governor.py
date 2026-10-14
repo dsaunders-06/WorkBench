@@ -107,6 +107,8 @@ class PortfolioGovernor:
         risk_by_symbol: dict[str, float] = {}
 
         for pos in positions:
+            if not pos.qat_holding:
+                continue
             quantity = abs(pos.quantity)
             if quantity <= 0:
                 continue
@@ -293,6 +295,16 @@ class PortfolioGovernor:
 
         def reject(reason: str) -> GovernorDecision:
             return GovernorDecision(False, reason, 0.0, snap)
+
+        foreign = [position for position in positions if not position.qat_holding]
+        if foreign:
+            return reject(
+                "foreign holding blocks new exposure: "
+                + ", ".join(
+                    f"{position.symbol} account={position.account} conId={position.con_id}"
+                    for position in foreign
+                )
+            )
 
         if equity <= 0:
             return reject("equity is not positive")

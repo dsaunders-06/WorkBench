@@ -58,6 +58,20 @@ async def test_market_data_is_the_current_bar_not_the_last_one():
 
 
 @pytest.mark.asyncio
+async def test_replay_quote_is_explicitly_simulated_and_uses_simulated_time():
+    broker = _broker()
+    broker.advance()
+
+    observation = await broker.price_observation("AAA")
+
+    assert observation.value == 101.0
+    assert observation.field == "simulated_bar_close"
+    assert observation.market_data_type == 0
+    assert observation.source_timestamp == broker._now()
+    assert observation.observed_timestamp == broker._now()
+
+
+@pytest.mark.asyncio
 async def test_get_historical_cannot_see_the_future():
     """The guard with no equivalent in a real adapter. A simulator holds the
     whole series in memory, so nothing but this stops the strategy being handed

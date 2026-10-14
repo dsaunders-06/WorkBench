@@ -82,6 +82,7 @@ def _paper(**overrides: Any) -> Settings:
         "trading_mode": "paper",
         "market": "ASX",
         "ibkr_port": 4002,
+        "ibkr_account_id": "DU123456",
     }
     fields.update(overrides)
     return Settings(**fields)
