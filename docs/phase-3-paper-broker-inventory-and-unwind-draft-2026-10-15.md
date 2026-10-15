@@ -202,6 +202,15 @@ Friday instructions. If an OCA leg or holding changes before its turn, stop
 and return revised exact actions to DS. A cancel may cause an OCA sibling to
 change state; the OMS must prove both are gone before selling.
 
+The current OMS has five *conditional* order possibilities after a failed
+close: one `SELL STP GTC` at BOQ 6.07, ANZ 35.25, SUN 17.20, ASX 51.18 or
+TAH 0.80, sized to the then-confirmed remaining broker holding (at most the
+respective 15 October quantities above). A partial fill would make that
+quantity impossible to specify exactly tonight. These are **not approved
+orders**; they identify a mismatch between the existing recovery mechanism
+and the requested exact-order sign-off. No Friday close should start until DS
+resolves it.
+
 After **each** sell, use a fresh DU-checked `reqExecutions` read to pair the
 broker `execId` and delivered time with the OMS fill; confirm the full broker
 quantity is flat, both protective legs are absent, the entry record is
@@ -211,9 +220,16 @@ consider the next row. `SignalToOrderBridge._on_fill` removes a fully closed
 entry; `TradeLedger._on_fill` closes its lot. These outcomes remain to be
 proved with the actual migrated legacy data. At the first unexpected broker
 state, stop the whole unwind, do not retry a submission, and leave all
-remaining holdings and their protection untouched. Any already-cancelled
-protection must be handled by the OMS recovery state and a fresh DS decision;
-the draft does not authorise an improvisation.
+remaining holdings and their protection untouched. A cancel already sent
+cannot be undone by stopping the UI. `OMS._recover_exit_protection_locked`
+can automatically sign and place one replacement stop at the captured price
+under `exit-protection-recovery` if the holding remains and no leg is working;
+it does **not** wait for a new DS dialog. This is a safety restoration rather
+than a retry of the market sell, but these legacy holdings have no DS-approved
+Phase 3 plan. DS must explicitly decide whether that conditional recovery
+order is covered by approval of the proposed unwind before any cancellation.
+If not, the current close path cannot be used for Friday under I-5. The
+draft authorises no alternate or improvised order.
 
 ## Decisions and proof still needed
 
@@ -230,6 +246,10 @@ the draft does not authorise an improvisation.
    fill independently before the planned window.
 4. Whether Friday's trading path must enforce the same per-request DU recheck
    as tonight's probe. The current production adapter does not implement it.
+5. Whether DS's per-holding approval covers the OMS's conditional automatic
+   replacement stop after a failed close. If it does, the exact condition and
+   captured stop price above must be part of the approved action list; if it
+   does not, Friday's QAT close path is blocked under I-5.
 
 The BHP OMS diagnostic round trip and entry transmission remain separate,
 deferred work. No autonomous trading is authorised here.
