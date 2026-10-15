@@ -1,0 +1,25 @@
+{
+  "session_sydney": "2026-10-16",
+  "raw_directory": "C:\\Users\\mailm\\Documents\\Codex\\phase3-broker-inventory-20261016",
+  "raw_responses": [
+    {
+      "filename": "phase3-phase3-broker-inventory-20261015T222732029529Z.json",
+      "sha256": "2ce56c1075c42e0d708eb0ddb7057a5df091f9afff78cfbd181eabd5eb6e5ba1",
+      "bytes": 29988,
+      "started_utc": "2026-10-15T22:27:31.510640+00:00",
+      "finished_utc": "2026-10-15T22:27:32.029529+00:00",
+      "endpoint": "127.0.0.1:4002",
+      "client_id": 99,
+      "account": "DUQ200898",
+      "requests": [
+        {"method": "reqPositionsAsync", "checked_at_utc": "2026-10-15T22:27:31.555472+00:00", "parameters": "none"},
+        {"method": "accountSummaryAsync", "checked_at_utc": "2026-10-15T22:27:31.646221+00:00", "parameters": "account=DUQ200898"},
+        {"method": "reqAllOpenOrdersAsync", "checked_at_utc": "2026-10-15T22:27:31.849699+00:00", "parameters": "none; all clients"},
+        {"method": "reqCompletedOrdersAsync", "checked_at_utc": "2026-10-15T22:27:31.863743+00:00", "parameters": "apiOnly=false"},
+        {"method": "reqExecutionsAsync", "checked_at_utc": "2026-10-15T22:27:32.024320+00:00", "parameters": "ExecutionFilter(acctCode=DUQ200898; other fields empty)"}
+      ],
+      "counts": {"position_callbacks": 5, "keyed_positions": 5, "all_open_orders": 10, "completed_orders": 0, "executions": 0}
+    }
+  ],
+  "raw_files_committed": false
+}
