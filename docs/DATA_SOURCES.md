@@ -1,0 +1,145 @@
+# QAT data-source inventory — 16 October 2026
+
+DS changed [I-6](INTENT.md) on 15 October 2026: IBKR is the single data and
+broker source; Yahoo is a logged cross-check only. A validated source, direct
+or indirect, is added, removed or changed only by DS's explicit decision.
+This inventory describes the **current code and resolved Friday launch
+settings**, not an approval of the deviations below. No code or stored
+settings were changed for this inventory. Friday's launch was
+[halted before Gateway access](https://github.com/dsaunders-06/WorkBench/blob/81ebe6d/docs/phase3-paper-unwind-halt-2026-10-16.md).
+
+The stored `.env` still says `execution_mode=auto`; Friday's approved
+process-only overrides resolved to `recommend`, `paper`, IBKR on port 4002,
+account DUQ200898, autonomy off and delever sweep off. Source values below
+were read with `Settings()` in the normal Windows environment on 16 October.
+The source selectors are the same in the stored file and the intended launch.
+Secret *presence* was checked; values are not recorded here.
+
+## Configured and reachable sources
+
+| Provider and data | Selector, current resolved value | Code path and consumers | Can affect a price, recommendation, sizing or order? | Validation and status |
+| --- | --- | --- | --- | --- |
+| IBKR Gateway: paper account, positions, orders, executions, current quotes | `broker=ibkr`, `trading_mode=paper`, `ibkr_account_id=DUQ200898`, port 4002 | `presentation/runtime.py::resolve_broker` → `data/broker/ib_adapter.py` → OMS, reconciliation, position and quote observations. | **Yes**: broker holding/quote and execution authority. | ASX paper account and quote/order probes in [19 August plan](superpowers/plans/2026-08-19-ibkr-move.md), September [handoff](HANDOFF.md), and October [probe report](PHASE3_REAL_GATEWAY_PROBE_2026-10-10.md). Delayed type-3 observation on 15 October in [exit-readiness findings](phase-1-exit-readiness-findings.md). Friday made no request. |
+| IBKR daily TRADES, all-hours: intended operational history | Phase 3 contract specifies `useRTH=0`; **no application source selector or production IBKR history client exists** | `operational/history.py::IBKRBarSource` is an interface; `operational/adapter.py` can use an injected source, but `qat.app:main` has no production wiring. | Intended to determine cards and order levels; currently **not** the app's primary bar source. | October real-data probe and 13 October [price ruling](phase-3-step2-history.md); not validated as an end-to-end app feed. |
+| Yahoo chart/latest-trade and daily history | `market_data_source=yfinance`; `yfinance_poll_seconds=60`; `market_data_delay_seconds=1200` | `presentation/runtime.py::resolve_market_data_source` → `MarketDataFeed` → feature, regime, strategy and signal bridge. `data/history.py::resolve_history_source` → Yahoo `RealHistorySource` → `WarmStart`/rolling buffers; also screens and research. `bar_macro_series` is empty, but could route Yahoo series into regime if enabled. | **Yes**: primary prices/marks, strategy signals, sizing and possible orders. This is **not** a logged cross-check. Construction failure may select a synthetic source. | 499-session ASX replay cited in the [19 August plan](superpowers/plans/2026-08-19-ibkr-move.md); 20–21 August real ASX observations in [archived handoff](archive/HANDOFF-2026-08-20-superseded.md). Replay evidence does not validate the present I-6 role. |
+| Yahoo company news | `news_source=yfinance`; `news_min_sources=1` | `runtime.py::resolve_news_source` → `data/news.py::YFinanceNewsSource` → `presentation/advisory_inputs.py::news_for`/corroboration → `build_advisory_context` → AI Advisor and Workbench model output. | **Yes**, an AI recommendation can use it. The deterministic symbol verdict does not call the news source; no direct OMS/strategy/sizing call was found. Manual `PositionCloser.close_position` does not fetch it. | Real Yahoo ASX samples on 20 August; rule built 20 August, loosened by DS 21 August; [archived handoff](archive/HANDOFF-2026-08-20-superseded.md), `data/news.py`, `config.py`. Its recommendation role exceeds I-6. |
+| Yahoo company fundamentals, relative strength and earnings dates | `fundamentals_source=yfinance`, cache 7 days; `enforce_earnings_event_risk=True`, size scalar 0.5 | `runtime.py::resolve_fundamentals_source` → Yahoo/cache and `StrategyEngine`; relative strength reads the selected Yahoo history source. `runtime.py::_build_earnings_calendar` → `YFinanceEarningsCalendar` → `signal_bridge.py::_submit_sized` → earnings scalar in `risk_engine/engine.py`. Also Advisor, Workbench and Screener. | **Yes**: deterministic strategy recommendations and entry sizing, plus AI recommendations. Manual close does not fetch these. Resolver failure can select synthetic fundamentals. | Yahoo earnings cache was measured 20 August in [archived handoff](archive/HANDOFF-2026-08-20-superseded.md); the real-fundamentals option predates the freeze. Current I-6 role is unapproved. |
+| FRED: DGS3MO, DGS10, T10Y3M, VIXCLS, BAA10Y | `fred_series` names all five; `regime_vix_series=VIXCLS`; **no FRED_API_KEY present** on 16 October | `runtime.py::resolve_macro_source` selects FRED only with a key, otherwise `MockMacroSource`; `MacroFeed` and `WarmStart` feed regime, features and exposure decisions. | If enabled, **yes**; today its absence selects synthetic macro data that can still affect the regime. | August real FRED polling reported in [archived handoff](archive/HANDOFF-2026-08-20-superseded.md); September regime assessment in [handoff](HANDOFF.md). Present secret absence is a new local observation, not proof of its September state. |
+| Local LM Studio model | `general_request_provider=local`, `sensitive_request_provider=local`; configured base URL `localhost:1234/v1` | `runtime.py::_resolve_engine` → `AIAdvisoryService` → Advisor/Workbench prose and recommendations. | **Yes**, for displayed AI recommendations; no direct trading/OMS edge was found. It is a model provider, not a market-data authority. | Local service/version reported in [handoff](HANDOFF.md) on 11–14 September; availability was **not** retested Friday. |
+
+Other selectable but **not selected** sources remain in code: Alpaca for a US
+broker/feed/history (`broker` and `market_data_source`), Anthropic for AI
+(`general_request_provider`/`sensitive_request_provider`), synthetic market
+data, mock fundamentals and mock macro. They must not be mistaken for approved
+substitutes. `runtime.py::resolve_market_data_source` and
+`resolve_fundamentals_source` can fall back to synthetic sources on
+construction failure; `resolve_macro_source` does so without a FRED key.
+These fallback paths need an explicit DS disposition under I-6.
+
+The Phase 3 ASX calendar, membership, halt and corporate-action authorities
+are operator-supplied files with fixture-backed loaders
+(`src/qat/operational/`). Real authority files have not been supplied or
+validated. They are not vendor connections or a production data feed. The
+separate `YahooCrossCheck` protocol in `operational/history.py` is log-only
+by design, but is not wired into `qat.app:main`. IBKR's optional structured
+corporate-announcement capability remains unavailable in the Phase 1 adapter.
+
+## Position at the 12 September development freeze
+
+This reconstruction uses the repository at `d39debc`, its
+[handoff](HANDOFF.md), the [superseded handoff](archive/HANDOFF-2026-08-20-superseded.md),
+the [19 August IBKR move plan](superpowers/plans/2026-08-19-ibkr-move.md) and the
+[22 August symbol-verdict plan](superpowers/plans/2026-08-22-symbol-verdict.md).
+The archived documents are dated observations; the source code and the
+11 September settings backup (SHA-256
+`74024f4db99d73ff2c918d5404703a9fdd81a07ae11bdbcb494bf3575731e1f3`,
+read from the outside-Git store copy) establish the freeze configuration. The
+`.env` is outside Git, so `d39debc` alone cannot prove its bytes.
+
+* **Before the IBKR move:** Alpaca was a configured US paper broker and
+  market/history option (July commits `52b0e4a`, `bb29cc9`). It was no longer
+  selected for ASX at the freeze; its code was deliberately retained, not
+  silently removed ([handoff](HANDOFF.md), item 13).
+* **19–21 August:** the IBKR move established ASX paper execution and delayed
+  broker quotes. The historical-bar and live strategy feed still resolved to
+  Yahoo, not IBKR. The 19 August plan cited a 499-session Yahoo ASX replay and
+  expressly warned that an IBKR history source and pacing were unwritten.
+  Yahoo earnings dates and fundamentals were available; FRED macro polling
+  was observed in August. The 11 September settings backup selects
+  `market=ASX`, `broker=ibkr`, `market_data_source=yfinance`,
+  `fundamentals_source=yfinance`, local model providers and paper mode.
+  The handoff records `auto` and deployed `swing` at the freeze.
+* **22 August:** the symbol-verdict design kept the deterministic verdict
+  separate from the model opinion. The Advisor and Workbench shared
+  `build_advisory_context`; news and fundamentals were explicit model
+  inputs. The plan caught and corrected prompt text that still claimed two
+  independent outlets after the threshold became one.
+* **4–10 September:** the 21 August claim of zero IBKR ASX headlines was
+  retracted when eight provider codes were discovered. The 10 September
+  positive-control probe then found no API headlines for ASX **or** AAPL/MSFT
+  on the paper Gateway. DS decided not to pursue IBKR news and to keep
+  `news_source=yfinance` and `news_min_sources=1`. Whether live-account API
+  access differs was left untested; Dow Jones headline-storage rights were a
+  separate blocker ([handoff](HANDOFF.md), 10 September section).
+
+### News rule and assessed sources
+
+DS's 20 August rule required **two independent outlets** for a secondary
+story before it reached the model. `data/news.py::corroborate` clusters
+similar, fresh headlines and counts normalised outlet names, not articles;
+an exchange filing marked `primary` bypasses the count **for that story
+only**. The implementation cannot prove that two aggregators did not
+republish the same wire copy. On **21 August DS** lowered
+`news_min_sources` from 2 to 1 after NHF's six Yahoo items came from a
+single outlet. The code and handoff explicitly warn that one planted story
+can then reach the model. This was already the rule at the freeze, not a
+post-freeze loss. `news_source=yfinance` remained selected.
+
+| Source assessed by the freeze | Finding and freeze status |
+| --- | --- |
+| Yahoo | Working ASX headlines, including a 20 August six-symbol sample of 47 items and two stories clearing the then-two-source rule. Cross-listing and stale-result defects were measured and filtered. **Configured** for Advisor/Workbench news by freeze; single-source stories passed after DS's 21 August change. |
+| IBKR: BRFG, BRFUPDN, DJ-N, DJ-RTA, DJ-RTE, DJ-RTG, DJ-RTPRO, DJNL | Eight subscribed channels map to only **Briefing.com and Dow Jones** publishers. 4 September apparent access was not reproducible. 10 September paper API positive control returned zero even for US megacaps; paper-vs-live access remains **uncertain**. `IBKRNewsSource.fetch` is intentionally unwired because of that and unresolved Dow Jones storage terms. |
+| asx.com.au / ASX ComNews | Primary exchange filings; crawling permission did not establish data or redistribution rights. Licensed subscription/permission needed. **Assessed, never configured** as QAT news or structured-action feed. |
+| marketindex.com.au | Aggregator; pairing its republished wire with Yahoo could falsely satisfy two-outlet corroboration. **Assessed, not configured.** |
+| listcorp.com | Bot access refused (HTTP 403 on robots.txt). **Assessed, not configured.** |
+| Other paid IBKR providers: Benzinga BZ, Briefing Trader BRF, Fly on the Wall FLY | US-focused, not subscribed or tested for ASX in the 19 August plan. **Assessed as possibilities only.** |
+| IBKR WSH | 10 September paper API returned Error 10276/no metadata; entitlement unavailable. **Not configured.** |
+
+Current news reaches the **AI Advisor and Workbench recommendations** through
+`advisory_inputs.build_advisory_context`. The deterministic
+`symbol_verdict.build_verdict`, Phase 2 engine and OMS do not import the news
+source. `data/ibkr_news.py` and the handoff say headline storage in the
+decision journal is a licensing blocker, but a trace of the current
+`news_for` → Advisor/Workbench path found no journal write of the fetched
+headlines. Treat that documentation claim as **unverified**, not as licence to
+enable IBKR news; the journal behaviour needs its own targeted check before a
+storage-based decision.
+
+## Freeze-to-current differences requiring DS review
+
+1. **New I-6 versus existing Yahoo paths:** the direct Yahoo live feed,
+   Yahoo warm-start history, Yahoo news in AI recommendations and Yahoo
+   fundamentals/earnings in strategy and sizing were present at the freeze
+   and remain selected. The 15 October I-6 change makes their current roles
+   deviations; no settings-only switch makes Yahoo a logged-only cross-check
+   while IBKR supplies the app's primary feed.
+2. **IBKR operational history is designed, not wired:** October real-data
+   probes and the Phase 3 operational interfaces add evidence and a future
+   contract, but the running app still has no IBKR history selector/client.
+3. **FRED activation is different or uncertain:** the August handoff reports
+   live FRED polling; on 16 October no `FRED_API_KEY` is present, so current
+   runtime construction would choose synthetic macro. The precise
+   12 September key state is not established by Git; do not infer when it
+   disappeared or silently restore it.
+4. **News validation was revised before the freeze:** the two-source rule had
+   already been changed by DS on 21 August, the early IBKR zero-coverage claim
+   was retracted, and 10 September probes left live API access unresolved.
+   No validated ASX news provider was dropped after the freeze: Yahoo remains
+   configured; ASX ComNews, MarketIndex and IBKR news were assessed but not
+   adopted. That historical authorization does **not** override the new I-6.
+5. **Unapproved indirect roles:** Yahoo earnings can halve a buy, and Yahoo
+   fundamentals can change deterministic strategy signals; both exceed a
+   cross-check role. Local model input can turn Yahoo news into displayed
+   advice. The current fallback-to-synthetic behaviour also conflicts with
+   a strict single-source interpretation. DS must decide each path's future
+   role before another full-app launch; nothing has been restored or changed.
