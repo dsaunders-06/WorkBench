@@ -1,0 +1,1236 @@
+{
+  "files": {
+    ".env": {
+      "sha256": "2177bbb7e0e8a8ae9a00b9fc049a79392423a3cf531bd31c2c94044509e12a40",
+      "size": 2012
+    },
+    ".env.bak-20260731": {
+      "sha256": "f9a34aa8ff8167e3508caf7575789ba8c4290a982926e123f8f0a5af9529c950",
+      "size": 851
+    },
+    ".env.bak-20260819-215628": {
+      "sha256": "9b4beb59fb376ef19202911957fa5fff9fffa22dd6ba3e5f15d8a0312a21bc5f",
+      "size": 1709
+    },
+    ".env.bak-20260820-100423": {
+      "sha256": "c2d311a070877b27323586bb32b05fd95f1cba4f6847a909cbd03b1b21733541",
+      "size": 1842
+    },
+    ".env.bak-20260820-101145": {
+      "sha256": "ba21501a4140d73e3e08b9f8163b8695abea2309fefc8aacc6ee8ecd0a88c4b9",
+      "size": 1863
+    },
+    ".env.bak-20260901-174044": {
+      "sha256": "74024f4db99d73ff2c918d5404703a9fdd81a07ae11bdbcb494bf3575731e1f3",
+      "size": 2009
+    },
+    ".env.bak-20260904-133902": {
+      "sha256": "86a032014d897007a7ec8098bc261278df41d65d2f17b3725aed8c69551262c6",
+      "size": 2009
+    },
+    ".env.bak-20260911-095650": {
+      "sha256": "74024f4db99d73ff2c918d5404703a9fdd81a07ae11bdbcb494bf3575731e1f3",
+      "size": 2009
+    },
+    ".env.env.bak-20260821-120942": {
+      "sha256": "ee7ed874ecb361e437bb7050430fa07386896855e9f5b3944d8bda15d434a8b3",
+      "size": 1875
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/absorbed_fills.json": {
+      "sha256": "9b208e776b4dd9186ff0e3c5625f361132af4880535a5458f3fd03080361bcd7",
+      "size": 835
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/daily_reports.md": {
+      "sha256": "d16e0fc2b59121461456e2f5bd41dbab5f896596bdf41d54dda6908a7455f89f",
+      "size": 59481
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/decision_journal.csv": {
+      "sha256": "4b7a79729b560c872913285d987eb4905098b55fc908a6f132fa5953575b1843",
+      "size": 465582
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/earnings_cache.json": {
+      "sha256": "adcb371506ee086be63eab0276ae99bdf2d7aaa951f1e56c9f9bc54fa0789c39",
+      "size": 10803
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/equity_curve.csv": {
+      "sha256": "1b9df1b215474255c8445efe14cfbc9d3819997fb42d03053d412b097c3f93af",
+      "size": 459516
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/equity_state.json": {
+      "sha256": "b66e3f30d4d5dccbf77c6423f4722e08cf22ef91aca31149225f793c391b853a",
+      "size": 94
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/fundamentals_cache.json": {
+      "sha256": "64186e2c630aa89d14bcecc87a7a269cbde604d9f2d32ad01be7f5de827b3b18",
+      "size": 135567
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/logs/qat.log": {
+      "sha256": "bda0a7e929cc8d36c824a5682c9958acf7329f3f1e5d65a630fbd146459a8bad",
+      "size": 3991027
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/open_position_entries.json": {
+      "sha256": "a62969a96554f623f1aac7e764d6465048f9d1fbe0622f1f6eab4b84455cd769",
+      "size": 1886
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/report_state.json": {
+      "sha256": "91b5f8fe690344d81cc3906b2cf39d4544cae2a3c6f76dc9961a6a2acf35cdb8",
+      "size": 66
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/risk_decisions.csv": {
+      "sha256": "c2330e99bd6e719d2b53518948b2aabe71f39e4a5a1b70f4823db9861977c462",
+      "size": 1148453
+    },
+    "data-backup-20260812-091345-PRE-M86-DEPLOY/weekly_reports.md": {
+      "sha256": "fe1d0fbdfe23c48414f657ffd9b43bc94bad58a310ec1810282adb0c528dace8",
+      "size": 11744
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/absorbed_fills.json": {
+      "sha256": "2227790d4f4e1f823c8ea23fb9de88f221c553224979ae68bb556435fb3fcef6",
+      "size": 835
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/daily_reports.md": {
+      "sha256": "d16e0fc2b59121461456e2f5bd41dbab5f896596bdf41d54dda6908a7455f89f",
+      "size": 59481
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/decision_journal.csv": {
+      "sha256": "4b7a79729b560c872913285d987eb4905098b55fc908a6f132fa5953575b1843",
+      "size": 465582
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/earnings_cache.json": {
+      "sha256": "58665fec85b6b6aa2be88400d958ca6ee1becd27d22b1b82ee38d19b081d01b2",
+      "size": 10803
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/equity_curve.csv": {
+      "sha256": "a151e7ee42c972ebd26dfb661075485c87aca5898fae012ccee4f66b468dcaf4",
+      "size": 460202
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/equity_state.json": {
+      "sha256": "b66e3f30d4d5dccbf77c6423f4722e08cf22ef91aca31149225f793c391b853a",
+      "size": 94
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/fundamentals_cache.json": {
+      "sha256": "64186e2c630aa89d14bcecc87a7a269cbde604d9f2d32ad01be7f5de827b3b18",
+      "size": 135567
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/logs/qat.log": {
+      "sha256": "02dd6ec539aa322b13fbcd4a162ae16c7206a68c56a982e2b494bc25a6167a0b",
+      "size": 4000799
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/report_state.json": {
+      "sha256": "91b5f8fe690344d81cc3906b2cf39d4544cae2a3c6f76dc9961a6a2acf35cdb8",
+      "size": 66
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/risk_decisions.csv": {
+      "sha256": "c2330e99bd6e719d2b53518948b2aabe71f39e4a5a1b70f4823db9861977c462",
+      "size": 1148453
+    },
+    "data-backup-20260812-133956-PRE-M39-DEPLOY/weekly_reports.md": {
+      "sha256": "fe1d0fbdfe23c48414f657ffd9b43bc94bad58a310ec1810282adb0c528dace8",
+      "size": 11744
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/absorbed_fills.json": {
+      "sha256": "baa749e964d04df4538504c5b2c54ff1c7fd1ba65004252cedd91d30450bcf6b",
+      "size": 835
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/daily_reports.md": {
+      "sha256": "dee4d4b0db7a15267bafa3b1c292f311bd21c41ceaf6cc5d134b0ae07258d3b6",
+      "size": 62209
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/decision_journal.csv": {
+      "sha256": "d0282ee23e1271e44fd752411508d5bf5f618da3332244003802dde0676f5769",
+      "size": 465735
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/earnings_cache.json": {
+      "sha256": "58665fec85b6b6aa2be88400d958ca6ee1becd27d22b1b82ee38d19b081d01b2",
+      "size": 10803
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/equity_curve.csv": {
+      "sha256": "170ad966431d84a79ac8d40e012fe0b5e98c4addfa107b880acfcb47896e74ef",
+      "size": 484205
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/equity_state.json": {
+      "sha256": "2a08f10803c15ec235365eea0f75146d6633cdb7fe38bd7cbeb1cc72cfd5df44",
+      "size": 93
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/fundamentals_cache.json": {
+      "sha256": "64186e2c630aa89d14bcecc87a7a269cbde604d9f2d32ad01be7f5de827b3b18",
+      "size": 135567
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/logs/qat.log": {
+      "sha256": "dae28a37fa3123b9d90beaaee0bff16ebf2d40e5bdd3698f43bc358c7641383a",
+      "size": 4120599
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/report_state.json": {
+      "sha256": "7406362e0f413e42a24ea7e93ff8fa04c6364c63bb13ffc7557792fe93a8cd85",
+      "size": 66
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/risk_decisions.csv": {
+      "sha256": "1db2abe7c5b7fd4b825adac81a0bfdeb33146555a9b01c0cb44fbabbec9fae9a",
+      "size": 1188535
+    },
+    "data-backup-20260813-065003-PRE-M88-DEPLOY/weekly_reports.md": {
+      "sha256": "fe1d0fbdfe23c48414f657ffd9b43bc94bad58a310ec1810282adb0c528dace8",
+      "size": 11744
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/absorbed_fills.json": {
+      "sha256": "043ea99d0e9ec971cf89e83cab376720fc12bc037c18d148571616721b670ca7",
+      "size": 835
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/daily_reports.md": {
+      "sha256": "12cbb55312f6ef55f990779561eb7c21af3c5f0b70555502c0cf069d97d5e27d",
+      "size": 64576
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/decision_journal.csv": {
+      "sha256": "d4cbd1754fe2d6db098b7931340e1cfa0b9e708efad19f779ff3390e0d544e4e",
+      "size": 466498
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/earnings_cache.json": {
+      "sha256": "9c7105fa369dd1c80e2df9fe1a352dc2c6cd1f184a3684a8a30dcf8302835c33",
+      "size": 10811
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/equity_curve.csv": {
+      "sha256": "0e53bd2cce746cbb0cb20eff47a7f482b02edd143d66e731f610397dc315af34",
+      "size": 514964
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/equity_state.json": {
+      "sha256": "12c1aab918d8563c138746a176d6ac1a0ba50c5ab8f51e7a76d1edf0e40e2a12",
+      "size": 94
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/fundamentals_cache.json": {
+      "sha256": "114d4e99a5b007931672e6de22dc4b058af2d94249b9bd6d44bf605f2efa3ab5",
+      "size": 135575
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/logs/qat.log": {
+      "sha256": "b5003a15214eb7fc27a27b8218fb1057d710b544ff8246ac4b0b268766072d42",
+      "size": 4204673
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/report_state.json": {
+      "sha256": "c85c574f72859dda0a1b4e3b541ef90747027102d668afd0449a78f7119e9b34",
+      "size": 66
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/risk_decisions.csv": {
+      "sha256": "d5b1ce10008232e1d23ff0b281405d04104d17ff5773521aa84042591bd60e66",
+      "size": 1652839
+    },
+    "data-backup-20260814-135829-PRE-M89-DEPLOY/weekly_reports.md": {
+      "sha256": "fe1d0fbdfe23c48414f657ffd9b43bc94bad58a310ec1810282adb0c528dace8",
+      "size": 11744
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/absorbed_fills.json": {
+      "sha256": "ba535948283a536cbf43acfdd8c8263bf2f696b86679085fa261b9efdab77407",
+      "size": 835
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/daily_reports.md": {
+      "sha256": "12cbb55312f6ef55f990779561eb7c21af3c5f0b70555502c0cf069d97d5e27d",
+      "size": 64576
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/decision_journal.csv": {
+      "sha256": "d4cbd1754fe2d6db098b7931340e1cfa0b9e708efad19f779ff3390e0d544e4e",
+      "size": 466498
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/earnings_cache.json": {
+      "sha256": "9c7105fa369dd1c80e2df9fe1a352dc2c6cd1f184a3684a8a30dcf8302835c33",
+      "size": 10811
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/equity_curve.csv": {
+      "sha256": "e2e8b3583b49b119fe8be9228c6f24f4e3bc45d7dead03a9589792ff8d082dc1",
+      "size": 515682
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/equity_state.json": {
+      "sha256": "b75451664a368a92634d5cb8320782df22c0497f527c5a2324f2c0fa484b6e1c",
+      "size": 94
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/fundamentals_cache.json": {
+      "sha256": "114d4e99a5b007931672e6de22dc4b058af2d94249b9bd6d44bf605f2efa3ab5",
+      "size": 135575
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/logs/qat.log": {
+      "sha256": "fbd2a4ed648a60602cf8e2a4244f3ec7580a1c6ad75e0240caa9edd9c351093e",
+      "size": 4236459
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/report_state.json": {
+      "sha256": "c85c574f72859dda0a1b4e3b541ef90747027102d668afd0449a78f7119e9b34",
+      "size": 66
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/risk_decisions.csv": {
+      "sha256": "d5b1ce10008232e1d23ff0b281405d04104d17ff5773521aa84042591bd60e66",
+      "size": 1652839
+    },
+    "data-backup-20260814-142830-PRE-M90-DEPLOY/weekly_reports.md": {
+      "sha256": "fe1d0fbdfe23c48414f657ffd9b43bc94bad58a310ec1810282adb0c528dace8",
+      "size": 11744
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/absorbed_fills.json": {
+      "sha256": "24066a7a478a3b1cb1dc3b5b734932cd8595067a54a53ab9e52bdf44277888e0",
+      "size": 835
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/daily_reports.md": {
+      "sha256": "12cbb55312f6ef55f990779561eb7c21af3c5f0b70555502c0cf069d97d5e27d",
+      "size": 64576
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/decision_journal.csv": {
+      "sha256": "d4cbd1754fe2d6db098b7931340e1cfa0b9e708efad19f779ff3390e0d544e4e",
+      "size": 466498
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/earnings_cache.json": {
+      "sha256": "9c7105fa369dd1c80e2df9fe1a352dc2c6cd1f184a3684a8a30dcf8302835c33",
+      "size": 10811
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/equity_curve.csv": {
+      "sha256": "503a5e1bf98ae5899b611f396ebe3e5e3449c402dbc0c56dcfc99451575e5d8b",
+      "size": 518108
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/equity_state.json": {
+      "sha256": "b75451664a368a92634d5cb8320782df22c0497f527c5a2324f2c0fa484b6e1c",
+      "size": 94
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/fundamentals_cache.json": {
+      "sha256": "114d4e99a5b007931672e6de22dc4b058af2d94249b9bd6d44bf605f2efa3ab5",
+      "size": 135575
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/logs/qat.log": {
+      "sha256": "2762687a6229284ed71d95fbee634f41bfb6e3fa834e9e1ccf9fc00537ca3932",
+      "size": 4300899
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/report_state.json": {
+      "sha256": "c85c574f72859dda0a1b4e3b541ef90747027102d668afd0449a78f7119e9b34",
+      "size": 66
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/risk_decisions.csv": {
+      "sha256": "d5b1ce10008232e1d23ff0b281405d04104d17ff5773521aa84042591bd60e66",
+      "size": 1652839
+    },
+    "data-backup-20260814-231436-PRE-14AUG-SESSION/weekly_reports.md": {
+      "sha256": "fe1d0fbdfe23c48414f657ffd9b43bc94bad58a310ec1810282adb0c528dace8",
+      "size": 11744
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/absorbed_fills.json": {
+      "sha256": "866560c82fd24f6784e43a34602e9239b0c10e91afde0fd26f08d4bfb526a458",
+      "size": 835
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/daily_reports.md": {
+      "sha256": "3a71d9cc3283fb138bd60a9fde9347cb8c71548db5a5082438d1f1ff2fdfcdfe",
+      "size": 66759
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/decision_journal.csv": {
+      "sha256": "8e206ca34af526de4b1f93f8e66d9f6035c0dac9765a6dc200af95c97855840d",
+      "size": 466649
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/earnings_cache.json": {
+      "sha256": "cd60b1458833df994c2804b5d0658f2376b07d7031143a6032ef15a74721f535",
+      "size": 10811
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/equity_curve.csv": {
+      "sha256": "d80c3ff7e7d6fe0eecae79672b888aba767ab3236c193f5d5b4f42691619e72c",
+      "size": 546933
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/equity_state.json": {
+      "sha256": "453f42b5c00f3aa02bd588026659f1dca043fea50cab36bec2c1e45a37e9aa37",
+      "size": 94
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/fundamentals_cache.json": {
+      "sha256": "114d4e99a5b007931672e6de22dc4b058af2d94249b9bd6d44bf605f2efa3ab5",
+      "size": 135575
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/logs/qat.log": {
+      "sha256": "4f5908f62f98b732c9fbdbc387f85cd25fe6d8b3b127320065576fac32468cdf",
+      "size": 4402892
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/report_state.json": {
+      "sha256": "18def042c3518a8a9ed4aa7ddab2836b95bbbaf35ea03c814a9ba769333762b4",
+      "size": 66
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/risk_decisions.csv": {
+      "sha256": "ce246319daa7b4230342b4ae31c77e5b5d217fd1337455a77e442e26dc4fbcc5",
+      "size": 1795840
+    },
+    "data-backup-20260815-142919-PRE-M91-DEPLOY/weekly_reports.md": {
+      "sha256": "a776fa67ea58cbeef5386c6217499525632fd987d2e0df2def0219ebe88a631c",
+      "size": 14818
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/absorbed_fills.json": {
+      "sha256": "5acc85705fda6994a323187fa50d15c1e50fc4ebfdb92385e417ff4936b12052",
+      "size": 835
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/daily_reports.md": {
+      "sha256": "3a71d9cc3283fb138bd60a9fde9347cb8c71548db5a5082438d1f1ff2fdfcdfe",
+      "size": 66759
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/decision_journal.csv": {
+      "sha256": "8e206ca34af526de4b1f93f8e66d9f6035c0dac9765a6dc200af95c97855840d",
+      "size": 466649
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/earnings_cache.json": {
+      "sha256": "cd60b1458833df994c2804b5d0658f2376b07d7031143a6032ef15a74721f535",
+      "size": 10811
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/equity_curve.csv": {
+      "sha256": "7cfdfedfde318ea25063477e0e5f375267d59ae0fe228ae72ae4de44c78d722d",
+      "size": 550083
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/equity_state.json": {
+      "sha256": "453f42b5c00f3aa02bd588026659f1dca043fea50cab36bec2c1e45a37e9aa37",
+      "size": 94
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/fundamentals_cache.json": {
+      "sha256": "114d4e99a5b007931672e6de22dc4b058af2d94249b9bd6d44bf605f2efa3ab5",
+      "size": 135575
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/logs/qat.log": {
+      "sha256": "7b03b454e00b60415b27a6015aebdfd365effcbd55ec5afcf4a34e7ae2e57f70",
+      "size": 4440369
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/report_state.json": {
+      "sha256": "18def042c3518a8a9ed4aa7ddab2836b95bbbaf35ea03c814a9ba769333762b4",
+      "size": 66
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/risk_decisions.csv": {
+      "sha256": "ce246319daa7b4230342b4ae31c77e5b5d217fd1337455a77e442e26dc4fbcc5",
+      "size": 1795840
+    },
+    "data-backup-20260816-214958-PRE-M92-DEPLOY/weekly_reports.md": {
+      "sha256": "a776fa67ea58cbeef5386c6217499525632fd987d2e0df2def0219ebe88a631c",
+      "size": 14818
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/absorbed_fills.json": {
+      "sha256": "430c6c086eee301ab160c3f5c38f07fcb520b36e33e970ba4e7859a9c429688e",
+      "size": 835
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/daily_reports.md": {
+      "sha256": "3a71d9cc3283fb138bd60a9fde9347cb8c71548db5a5082438d1f1ff2fdfcdfe",
+      "size": 66759
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/decision_journal.csv": {
+      "sha256": "8e206ca34af526de4b1f93f8e66d9f6035c0dac9765a6dc200af95c97855840d",
+      "size": 466649
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/earnings_cache.json": {
+      "sha256": "d9c20102f3d2dc2fba42b51166340d2c2db84ac405f634bd64e8c2d822ffb677",
+      "size": 10811
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/equity_curve.csv": {
+      "sha256": "2a86d5c3f7c74547837f86e5e003be7086c8074d7944033b8b9a611b407c8954",
+      "size": 550623
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/equity_state.json": {
+      "sha256": "06a1eb9595eee7a52ec1611a36fd1c42b2f4b8c1766eae649b65b03a0b5dafc3",
+      "size": 94
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/fundamentals_cache.json": {
+      "sha256": "114d4e99a5b007931672e6de22dc4b058af2d94249b9bd6d44bf605f2efa3ab5",
+      "size": 135575
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/logs/qat.log": {
+      "sha256": "224a9fe276157c6642d7992f160f8db48e18577c4d99789093fd160329ae1a2f",
+      "size": 4472526
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/report_state.json": {
+      "sha256": "18def042c3518a8a9ed4aa7ddab2836b95bbbaf35ea03c814a9ba769333762b4",
+      "size": 66
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/risk_decisions.csv": {
+      "sha256": "ce246319daa7b4230342b4ae31c77e5b5d217fd1337455a77e442e26dc4fbcc5",
+      "size": 1795840
+    },
+    "data-backup-20260817-102630-PRE-M93-DEPLOY/weekly_reports.md": {
+      "sha256": "a776fa67ea58cbeef5386c6217499525632fd987d2e0df2def0219ebe88a631c",
+      "size": 14818
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/absorbed_fills.json": {
+      "sha256": "0409eb476cbca0c2f819424334381d70a9cee74590b6ecc4067839e882d4c659",
+      "size": 835
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/daily_reports.md": {
+      "sha256": "e0c9820198c75b864921c1188049238c4b661b5db646cedec393f0b3a271b18d",
+      "size": 71116
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/decision_journal.csv": {
+      "sha256": "126774e7c1aa6598b5c3fe02109266e1c91e8f4437c52a777ec413be896b6b8f",
+      "size": 466954
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/earnings_cache.json": {
+      "sha256": "d9c20102f3d2dc2fba42b51166340d2c2db84ac405f634bd64e8c2d822ffb677",
+      "size": 10811
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/equity_curve.csv": {
+      "sha256": "3b845fee1096585254b0f4a235991b8a86ce6b5cd3b0d5df59df5a93c13b13cb",
+      "size": 663518
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/equity_state.json": {
+      "sha256": "e4395d3c36a0d0564aace31af8347da253b91607ca8f637cb5ae7159252bfbae",
+      "size": 94
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/fundamentals_cache.json": {
+      "sha256": "114d4e99a5b007931672e6de22dc4b058af2d94249b9bd6d44bf605f2efa3ab5",
+      "size": 135575
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/logs/qat.log": {
+      "sha256": "513764008680cf9f12eb621debf1d9fd1b32a6d87cbdeaff2c2d8c84fd63d0e4",
+      "size": 4759049
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/report_state.json": {
+      "sha256": "14a2e062c92c6536b7b108b2b19ab846020fcf01ab573a02f850e89ac1d85ee4",
+      "size": 66
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/risk_decisions.csv": {
+      "sha256": "3f787ded9c0a773949fcb04321856603e3dd554e734121bc189361558841382b",
+      "size": 1834430
+    },
+    "data-backup-20260819-090536-PRE-M94-DEPLOY/weekly_reports.md": {
+      "sha256": "a776fa67ea58cbeef5386c6217499525632fd987d2e0df2def0219ebe88a631c",
+      "size": 14818
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/absorbed_fills.json": {
+      "sha256": "ec4e2b7ba4e8315aed1972bfd81fc4251963d8dfbc818dae1b96122e9042fbed",
+      "size": 835
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/daily_reports.md": {
+      "sha256": "1886d1d073f5eb74dd172e13fe887796df6fd2d3089d3179f20974338c47bed6",
+      "size": 72794
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/decision_journal.csv": {
+      "sha256": "94c71ea16faefd5fa242cfa490c9c6f344daa0f0a16969166d08e475ab6c5ad9",
+      "size": 467950
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/earnings_cache.json": {
+      "sha256": "942ec98c153b9fc6f87173702a38e5f67459443c463e5cabe09c52dcc05af81c",
+      "size": 21511
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/equity_curve.csv": {
+      "sha256": "005210cca94963def790ce4e7045bb4ce17db2fb61d86da98f8245224f372f86",
+      "size": 681816
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/equity_state.json": {
+      "sha256": "b84a7dc2d042169981a18bc50f128108308e2e878c2bc4292437a23949412092",
+      "size": 96
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/fundamentals_cache.json": {
+      "sha256": "03360f81e70782f7194294f5a238c7cbd909fbc6aefe638b4a53fbc9ff57a1e4",
+      "size": 137565
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/logs/qat.log": {
+      "sha256": "b899eb0a18a2b0789747b9865d361e732b889f9d1102b4017cf8c3060eccbb36",
+      "size": 5010114
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/report_state.json": {
+      "sha256": "8b32f381a1619b274feed1700416d5b1cbb26a80bafaa0d6cd726f1fec4460ee",
+      "size": 66
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/risk_decisions.csv": {
+      "sha256": "3f787ded9c0a773949fcb04321856603e3dd554e734121bc189361558841382b",
+      "size": 1834430
+    },
+    "data-backup-20260820-PRE-M109-DEPLOY/weekly_reports.md": {
+      "sha256": "a776fa67ea58cbeef5386c6217499525632fd987d2e0df2def0219ebe88a631c",
+      "size": 14818
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/absorbed_fills.json": {
+      "sha256": "9b9b9f3e705652c96d79553c27f9a0fdc3dd32afb4965d9b52ec81f6ec9b4607",
+      "size": 835
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/corporate_announcements.json": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/daily_reports.md": {
+      "sha256": "1886d1d073f5eb74dd172e13fe887796df6fd2d3089d3179f20974338c47bed6",
+      "size": 72794
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/decision_journal.csv": {
+      "sha256": "94c71ea16faefd5fa242cfa490c9c6f344daa0f0a16969166d08e475ab6c5ad9",
+      "size": 467950
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/earnings_cache.json": {
+      "sha256": "942ec98c153b9fc6f87173702a38e5f67459443c463e5cabe09c52dcc05af81c",
+      "size": 21511
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/equity_curve.csv": {
+      "sha256": "6b5fbde2d437e39b7d476f6c8430dea6212da586a990aac397f66946c2a75161",
+      "size": 682845
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/equity_state.json": {
+      "sha256": "b84a7dc2d042169981a18bc50f128108308e2e878c2bc4292437a23949412092",
+      "size": 96
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/fundamentals_cache.json": {
+      "sha256": "03360f81e70782f7194294f5a238c7cbd909fbc6aefe638b4a53fbc9ff57a1e4",
+      "size": 137565
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/logs/qat.log": {
+      "sha256": "ff0c97715604b7a8c705d7350a38c643ffb79e941d20de8f2b3258bcf317ac2b",
+      "size": 5022550
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/open_position_entries.json": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/report_state.json": {
+      "sha256": "8b32f381a1619b274feed1700416d5b1cbb26a80bafaa0d6cd726f1fec4460ee",
+      "size": 66
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/risk_decisions.csv": {
+      "sha256": "3f787ded9c0a773949fcb04321856603e3dd554e734121bc189361558841382b",
+      "size": 1834430
+    },
+    "data-backup-20260820-PRE-M111-DEPLOY/weekly_reports.md": {
+      "sha256": "a776fa67ea58cbeef5386c6217499525632fd987d2e0df2def0219ebe88a631c",
+      "size": 14818
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/absorbed_fills.json": {
+      "sha256": "9b9b9f3e705652c96d79553c27f9a0fdc3dd32afb4965d9b52ec81f6ec9b4607",
+      "size": 835
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/closed_trades.csv": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/corporate_announcements.json": {
+      "sha256": "aa8aca345812595142e0a37d2084e825377cf1887a6ae95b124688aacbd4341d",
+      "size": 25
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/corporate_announcements.json.bak-20260820-PRE-ALPACA-CLEANUP": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/daily_reports.md": {
+      "sha256": "1886d1d073f5eb74dd172e13fe887796df6fd2d3089d3179f20974338c47bed6",
+      "size": 72794
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/decision_journal.csv": {
+      "sha256": "94c71ea16faefd5fa242cfa490c9c6f344daa0f0a16969166d08e475ab6c5ad9",
+      "size": 467950
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/earnings_cache.json": {
+      "sha256": "942ec98c153b9fc6f87173702a38e5f67459443c463e5cabe09c52dcc05af81c",
+      "size": 21511
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/equity_curve.csv": {
+      "sha256": "6b5fbde2d437e39b7d476f6c8430dea6212da586a990aac397f66946c2a75161",
+      "size": 682845
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/equity_state.json": {
+      "sha256": "b84a7dc2d042169981a18bc50f128108308e2e878c2bc4292437a23949412092",
+      "size": 96
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/fundamentals_cache.json": {
+      "sha256": "03360f81e70782f7194294f5a238c7cbd909fbc6aefe638b4a53fbc9ff57a1e4",
+      "size": 137565
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/logs/qat.log": {
+      "sha256": "ff0c97715604b7a8c705d7350a38c643ffb79e941d20de8f2b3258bcf317ac2b",
+      "size": 5022550
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/open_position_entries.json": {
+      "sha256": "e3566b3a06430868d71e9287dfd6c6c520a3da027aabea01951d407ee131dc2f",
+      "size": 4
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/open_position_entries.json.bak-20260820-PRE-ALPACA-CLEANUP": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/report_state.json": {
+      "sha256": "8b32f381a1619b274feed1700416d5b1cbb26a80bafaa0d6cd726f1fec4460ee",
+      "size": 66
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/risk_decisions.csv": {
+      "sha256": "3f787ded9c0a773949fcb04321856603e3dd554e734121bc189361558841382b",
+      "size": 1834430
+    },
+    "data-backup-20260821-PRE-M118-DEPLOY/weekly_reports.md": {
+      "sha256": "a776fa67ea58cbeef5386c6217499525632fd987d2e0df2def0219ebe88a631c",
+      "size": 14818
+    },
+    "data/absorbed_fills.json": {
+      "sha256": "3437aabf882abe5f38e2920c2b922bcdef0caf904dc9fd859b9d1dfae0e9b0a5",
+      "size": 3695
+    },
+    "data/absorbed_fills.json.bak-20260821-175933": {
+      "sha256": "8f38fef0610aa927b2122e4a5c44cec39247de123afe8be04ed3c663eb9b637e",
+      "size": 835
+    },
+    "data/absorbed_fills.json.bak-20260826-150939-PRE-LOV-REPAIR": {
+      "sha256": "7a6ac5560ea0b35ccb822affad837efe9cca92d4d9b5f522b8a2c4cbc56534f5",
+      "size": 2583
+    },
+    "data/closed_trades.bak-preRowRepair-52596.csv": {
+      "sha256": "55ed5caad31637485c290d6d629f45bd808208d3716f0682e3b152d4ecb225df",
+      "size": 1673
+    },
+    "data/closed_trades.csv": {
+      "sha256": "cd801a345153545d7076a1bc4e4eef538fc78720fe0eb69a19f3c9a84b97863f",
+      "size": 3098
+    },
+    "data/closed_trades.csv.bak-20260806-084823": {
+      "sha256": "9accd53e7a3b1a98f2c63e2dc20ef13f1bee6af2fffa2ca2149b4a1c3101d4bc",
+      "size": 690
+    },
+    "data/closed_trades.csv.bak-20260812-084430-POST-correction": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data/closed_trades.csv.bak-20260821-175452": {
+      "sha256": "c060f7151511bca18acdb44a0f7c88e9ece71dcdb24c6b4719faa3d76ff69b7c",
+      "size": 651
+    },
+    "data/closed_trades.csv.bak-20260824-152809-PRE-IMPOSSIBLE-TRADE-REPAIR": {
+      "sha256": "08c2cb33cfaf57a493fd41a3b5e2d27136165b707429a93618ae3d5600f82bc2",
+      "size": 1943
+    },
+    "data/closed_trades.csv.bak-20260826-150939-PRE-LOV-REPAIR": {
+      "sha256": "e934ffa58b3e5ef0b24f78e915ea0494703ac9ee186734ea0d4805677a2aaa6b",
+      "size": 1162
+    },
+    "data/closed_trades.csv.bak-20260904-134521": {
+      "sha256": "ddfef77e533e45894f04fa7352f1b27c4a77bd8c8939b05f4fb1427ce6a4e5ac",
+      "size": 2316
+    },
+    "data/closed_trades.csv.bak-20260909-132411": {
+      "sha256": "82043d01e75f0d39aebd8f4b10d77cb1d62f8ecf115ffefc5a24f940d036d1eb",
+      "size": 2526
+    },
+    "data/closed_trades.csv.bak-20260910-045239-precision": {
+      "sha256": "cb4703c72da4e7e00fa12a34b9bab2a78f2d0cde5c310827a52974dd429b6a07",
+      "size": 2750
+    },
+    "data/closed_trades.csv.bak-fill-basis-20260912-105253": {
+      "sha256": "88c259859aaa4ff3e936a171d44a53fd20583c2bb6068218584d0f1c5f0107c6",
+      "size": 3007
+    },
+    "data/closed_trades.csv.bak-pre-tne-20260903-58aaae8c02c8": {
+      "sha256": "688b709185cb1f8fef552b6af57fb00fe195c2488003ea95a0c05d70c70c7669",
+      "size": 3094
+    },
+    "data/closed_trades.csv.bak-repair-20260909-071800": {
+      "sha256": "7195e75e7688d4527d0f46502457e05907e404bf52dcfc1140c23afe4466d84a",
+      "size": 2967
+    },
+    "data/closed_trades.csv.correction-tne-20260903-58aaae8c02c8.json": {
+      "sha256": "39609ad11f2130e8448ba0a499cc1561e620aff2ee500929be9964fd8a89f345",
+      "size": 2680
+    },
+    "data/closed_trades.mnst.bak-20260811-081723": {
+      "sha256": "3836f4324adefd62d82f0019ecb36aa05646ccaa9575760dcab4be0d2b8e5fdb",
+      "size": 658
+    },
+    "data/corporate_announcements.json": {
+      "sha256": "aa8aca345812595142e0a37d2084e825377cf1887a6ae95b124688aacbd4341d",
+      "size": 25
+    },
+    "data/corporate_announcements.json.bak-20260820-PRE-ALPACA-CLEANUP": {
+      "sha256": "af2809f6dc9e4b9ee97230af0489b4486c73e680d0329ba7c188edf6cb926fb4",
+      "size": 276
+    },
+    "data/daily_reports.md": {
+      "sha256": "fb8249f9b733d007ee4094a850c86a3fb3158a3195aa4cc8b9fd9d06c801d021",
+      "size": 44006
+    },
+    "data/daily_reports.md.bak-20260821-175933": {
+      "sha256": "047f36534a949dcdce5351bbc768e9cb00d06cf6d74bfd6761f3b744d45bb251",
+      "size": 74518
+    },
+    "data/daily_reports.md.bak-20260910-preregen": {
+      "sha256": "98832147e579dd4614c41087c9a6df1d8391de6d9cb364d82e77849921d48afe",
+      "size": 33525
+    },
+    "data/decision_journal.csv": {
+      "sha256": "fcc60f8163e21d197d3a491200a452999d2c30efd3f0c792b97a2481ae0cd4ba",
+      "size": 83325
+    },
+    "data/decision_journal.csv.bak-20260821-175933": {
+      "sha256": "94c71ea16faefd5fa242cfa490c9c6f344daa0f0a16969166d08e475ab6c5ad9",
+      "size": 467950
+    },
+    "data/earnings_cache.json": {
+      "sha256": "33bc510c040fe62a73e728510b3f75eb359d3edef87ccd79db4c12963d82bb0c",
+      "size": 22402
+    },
+    "data/equity_curve.csv": {
+      "sha256": "a768b21f30ba3045ab9715de93b3fc3b7936f59cb5982944ee85ebeb253d2529",
+      "size": 553257
+    },
+    "data/equity_curve.csv.bak-20260821-175452": {
+      "sha256": "164e37b5ecbe53b7e087a9d792f88d85f2431d135fc704f02a354667c7dd6927",
+      "size": 708733
+    },
+    "data/equity_state.json": {
+      "sha256": "012062531140eefa4be5f0437f324cc0d3c89d943e367f6f9e89f02101854023",
+      "size": 95
+    },
+    "data/fundamentals_cache.json": {
+      "sha256": "8054f41dee1cc0387145e318ca597527022bbbd84e268d5ccc97b65c1fd6d555",
+      "size": 159960
+    },
+    "data/kill_switch.json": {
+      "sha256": "1996f37271d57a50c970d5978abac9f91ae21a54d7add56705f59bf4b7ae283d",
+      "size": 43
+    },
+    "data/logs/qat.log": {
+      "sha256": "ea3452e003ab59760d08a3bc1378c91feb56b53d78011ba80925eb0764432b70",
+      "size": 4652963
+    },
+    "data/logs/qat.log.1": {
+      "sha256": "a3d86300fbf77ece446cc4c488aa86569fe2489fd9c40176834623caea4e87b7",
+      "size": 5239785
+    },
+    "data/logs/qat.log.2": {
+      "sha256": "a536403d53f3ced34a0cc23d8625a53eaa4f730d033e787a0985d53b9d01242d",
+      "size": 5189387
+    },
+    "data/logs/qat.log.3": {
+      "sha256": "cd4d00a5992c7d5259ab39072a66a0ad8988a988e1e3d657ce5a5661e25f1f4a",
+      "size": 5236571
+    },
+    "data/logs/qat.log.4": {
+      "sha256": "1419a301dbeffac5ed540c11e5b9ed9bbf1f0eb72b42a60f708aeae97af2d0b9",
+      "size": 5216959
+    },
+    "data/logs/qat.log.5": {
+      "sha256": "8330b580b42707e741a7c11617f23ce4de6a96d6b5eb77d28244b012c8c1a140",
+      "size": 5234075
+    },
+    "data/logs/qat.log.6": {
+      "sha256": "efe2adbfc4fdb8ce2ef11130dffaf190075d4ae528d95369091245b525b2303d",
+      "size": 5242781
+    },
+    "data/open_position_entries.json": {
+      "sha256": "b389974e6286eaebc871e1610ce0ebab97348634abc77875a546de955b87a0e0",
+      "size": 2217
+    },
+    "data/open_position_entries.json.bak-20260812-090344-PRE-M86-strategy-backfill": {
+      "sha256": "4211e54b494abd27a2d031b7a6cb51a3d85999c78dc1ed59e8be3bae67b3f8e9",
+      "size": 1859
+    },
+    "data/open_position_entries.json.bak-20260820-PRE-ALPACA-CLEANUP": {
+      "sha256": "fcbb6cf7d1d611a0837b472372afef534fd3a0de9f5843e967d4b4ddcb6b8122",
+      "size": 1888
+    },
+    "data/open_position_entries.json.bak-20260903-070900": {
+      "sha256": "39f2234cc7d6ff93b9c7834155b71e089633cce9a4c8d7dd810b0fa2fa1e36d8",
+      "size": 2127
+    },
+    "data/open_position_entries.json.bak-20260904-083130": {
+      "sha256": "97216099d9f7f3a7f44bc0701d9eb7f570f2b3ef93b83505fd6f0f0fad7e8e8f",
+      "size": 2338
+    },
+    "data/open_position_entries.json.bak-fill-basis-20260912-105253": {
+      "sha256": "278f423397ef451ef587bbe3125f60fbb57fdeb65e24b1981ab67274942aa187",
+      "size": 1942
+    },
+    "data/open_position_entries.json.bak-pre-m33b": {
+      "sha256": "157b678955fc095394cb8ba693907261905055c50a78ae9b4a7020b1252229e7",
+      "size": 752
+    },
+    "data/report_state.json": {
+      "sha256": "989fde652d9453fed92c31cac3d2a51c45d57fe3c622a3550408998d0bdb1646",
+      "size": 66
+    },
+    "data/resting_order_anomalies.json": {
+      "sha256": "08b5ff7cea23ce041ed54a6c86f506e0e722c372034cf73ba331b4a38a8e5131",
+      "size": 23
+    },
+    "data/risk_decisions.csv": {
+      "sha256": "41c838a260906b00fb8b359bdd8cc98e1c33dc0ee35d346d5cf12a5a4b429477",
+      "size": 2072000
+    },
+    "data/risk_decisions.csv.bak-20260821-175452": {
+      "sha256": "3f787ded9c0a773949fcb04321856603e3dd554e734121bc189361558841382b",
+      "size": 1834430
+    },
+    "data/weekly_reports.md": {
+      "sha256": "441c7cb5571d01995a245730e90da1e6df10977091f6d7e745d71329cb2e7478",
+      "size": 12134
+    },
+    "data/weekly_reports.md.bak-20260821-175933": {
+      "sha256": "0682806e9aaeaa2427b784b3aac392de7dd4c91a8ab41f33463f80a9c41734fc",
+      "size": 17582
+    }
+  },
+  "finished_utc": "2026-10-15T21:37:17.908377+00:00",
+  "snapshot": "C:\\Users\\mailm\\Documents\\Codex\\phase3-unwind-20261016\\snapshot-20261016T0840-AEDT",
+  "source": "C:\\Users\\mailm\\AppData\\Local\\QuantAdvisoryTerminal",
+  "started_utc": "2026-10-15T21:37:15.775560+00:00"
+}
