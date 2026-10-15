@@ -1,0 +1,44 @@
+{
+  "session": "2026-10-15",
+  "raw_directory": "C:\\Users\\mailm\\Documents\\Codex\\phase3-broker-inventory-20261015\\raw",
+  "local_store_copy": "C:\\Users\\mailm\\Documents\\Codex\\phase3-broker-inventory-20261015\\local-stores",
+  "local_store_copy_created_sydney": "2026-10-15T17:49:11+11:00",
+  "raw_responses": [
+    {
+      "filename": "phase3-phase3-broker-inventory-20261015T065501239760Z.json",
+      "sha256": "e02a19420fb82601f9dc6778e467c78cb541f3be3ad90e2975fa2150bd033967",
+      "bytes": 30338,
+      "started_utc": "2026-10-15T06:55:00.746157+00:00",
+      "finished_utc": "2026-10-15T06:55:01.239760+00:00",
+      "endpoint": "127.0.0.1:4002",
+      "client_id": 99,
+      "account": "DUQ200898",
+      "requests": [
+        {"method": "reqPositionsAsync", "checked_at_utc": "2026-10-15T06:55:00.750671+00:00", "parameters": "none"},
+        {"method": "accountSummaryAsync", "checked_at_utc": "2026-10-15T06:55:00.851670+00:00", "parameters": "account=DUQ200898"},
+        {"method": "reqAllOpenOrdersAsync", "checked_at_utc": "2026-10-15T06:55:01.065295+00:00", "parameters": "none; all clients"},
+        {"method": "reqCompletedOrdersAsync", "checked_at_utc": "2026-10-15T06:55:01.073383+00:00", "parameters": "apiOnly=false"},
+        {"method": "reqExecutionsAsync", "checked_at_utc": "2026-10-15T06:55:01.237676+00:00", "parameters": "ExecutionFilter(acctCode=DUQ200898; other fields empty)"}
+      ],
+      "counts": {"position_callbacks": 6, "keyed_positions": 5, "all_open_orders": 10, "completed_orders": 0, "executions": 0}
+    }
+  ],
+  "copied_current_stores": [
+    {"filename": ".env", "sha256": "2177bbb7e0e8a8ae9a00b9fc049a79392423a3cf531bd31c2c94044509e12a40", "bytes": 2012},
+    {"filename": "data/open_position_entries.json", "sha256": "b389974e6286eaebc871e1610ce0ebab97348634abc77875a546de955b87a0e0", "bytes": 2217},
+    {"filename": "data/decision_journal.csv", "sha256": "fcc60f8163e21d197d3a491200a452999d2c30efd3f0c792b97a2481ae0cd4ba", "bytes": 83325},
+    {"filename": "data/closed_trades.csv", "sha256": "cd801a345153545d7076a1bc4e4eef538fc78720fe0eb69a19f3c9a84b97863f", "bytes": 3098},
+    {"filename": "data/absorbed_fills.json", "sha256": "3437aabf882abe5f38e2920c2b922bcdef0caf904dc9fd859b9d1dfae0e9b0a5", "bytes": 3695},
+    {"filename": "data/kill_switch.json", "sha256": "1996f37271d57a50c970d5978abac9f91ae21a54d7add56705f59bf4b7ae283d", "bytes": 43},
+    {"filename": "data/resting_order_anomalies.json", "sha256": "08b5ff7cea23ce041ed54a6c86f506e0e722c372034cf73ba331b4a38a8e5131", "bytes": 23},
+    {"filename": "data/logs/qat.log", "sha256": "ea3452e003ab59760d08a3bc1378c91feb56b53d78011ba80925eb0764432b70", "bytes": 4652963},
+    {"filename": "data/logs/qat.log.1", "sha256": "a3d86300fbf77ece446cc4c488aa86569fe2489fd9c40176834623caea4e87b7", "bytes": 5239785},
+    {"filename": "data/logs/qat.log.2", "sha256": "a536403d53f3ced34a0cc23d8625a53eaa4f730d033e787a0985d53b9d01242d", "bytes": 5189387},
+    {"filename": "data/logs/qat.log.3", "sha256": "cd4d00a5992c7d5259ab39072a66a0ad8988a988e1e3d657ce5a5661e25f1f4a", "bytes": 5236571},
+    {"filename": "data/logs/qat.log.4", "sha256": "1419a301dbeffac5ed540c11e5b9ed9bbf1f0eb72b42a60f708aeae97af2d0b9", "bytes": 5216959},
+    {"filename": "data/logs/qat.log.5", "sha256": "8330b580b42707e741a7c11617f23ce4de6a96d6b5eb77d28244b012c8c1a140", "bytes": 5234075},
+    {"filename": "data/logs/qat.log.6", "sha256": "efe2adbfc4fdb8ce2ef11130dffaf190075d4ae528d95369091245b525b2303d", "bytes": 5242781}
+  ],
+  "not_present_in_current_store": ["OMS SQLite database", "inflight_orders.json", "ib_pending_legs.json", "exit_recovery.json"],
+  "raw_files_committed": false
+}
