@@ -26,12 +26,47 @@
       "sha256": "cf17584646e24909167d14d627b4a0768472e458559e923b77f85c5db9844158",
       "sidecar_filename": "phase3-exit-readiness-du-20261014T120111749169Z.sha256",
       "sidecar_sha256": "5e80f90caf1b1572610d2605387c34a2e90ff27349722e75f63ceebb1a2c22a3"
+    },
+    {
+      "filename": "phase3-bhp-quote-observation-20261015T000553949652Z.json",
+      "sha256": "5b52dd7cb080d92124ac32fd9e3b37f185bf8e618f45afc261453377fe854eda",
+      "sidecar_filename": "phase3-bhp-quote-observation-20261015T000553949652Z.sha256",
+      "sidecar_sha256": "6b5b9313c86138a87a9f79c8fc56c0a73309286e8a9d0af38726a21d1d49e6e3"
     }
   ],
+  "followup_2026_10_15": {
+    "script": "scripts/phase1_bhp_quote_observation.py",
+    "session": "2026-10-15",
+    "started_utc": "2026-10-15T00:05:51.874267+00:00",
+    "finished_utc": "2026-10-15T00:05:53.949652+00:00",
+    "connection": {
+      "host": "127.0.0.1",
+      "port": 4002,
+      "client_id": 99,
+      "read_only": true,
+      "paper_account": "DUQ200898",
+      "account_rechecked_before_each_logged_request": true
+    },
+    "requests": [
+      "reqMarketDataType(3) at 2026-10-15T00:05:52.219267+00:00",
+      "qualifyContractsAsync(BHP SMART, primaryExchange ASX, AUD) at 2026-10-15T00:05:52.220283+00:00",
+      "reqMktData(BHP conId 4036812, streaming) at 2026-10-15T00:05:52.400101+00:00",
+      "cancelMktData(BHP conId 4036812) at 2026-10-15T00:05:53.949652+00:00"
+    ],
+    "observation": {
+      "value": "58.34",
+      "field": "last",
+      "market_data_type": 3,
+      "source_timestamp": "2026-10-14T23:45:53+00:00",
+      "observed_timestamp": "2026-10-15T00:05:53.949652+00:00",
+      "age_seconds": 1200.949652,
+      "refusal_30_minutes": null
+    }
+  },
   "storage_note": "Raw JSON and SHA sidecar are in C:\\Users\\mailm\\Documents\\Codex\\phase3-probe-raw-20261010, outside Git. The raw JSON contains each request's exact arguments and UTC check time.",
   "limitations": [
     "The BHP stream returned type 1, NaN last and no source timestamp because the script skipped the adapter's delayed-tier request. Its result is an abstention, not quote-fitness evidence.",
     "The accountSummaryAsync request was not rechecked or logged immediately before it; the result came from the same single-DU read-only connection.",
-    "The script was corrected and tested offline after this capture; no second Gateway stream was sent."
+    "The script was corrected and tested offline after the 14 October capture. A separately authorised read-only stream was observed on 15 October and is recorded in followup_2026_10_15."
   ]
 }

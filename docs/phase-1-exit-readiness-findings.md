@@ -335,6 +335,43 @@ The one BHP stream consequently reported market-data type 1, a NaN last, no
 source timestamp, and an `Error 354` saying delayed data was available. The
 observation correctly refused that quote. The script now requests type 3
 before its stream, with an offline order-of-operations test. The approved
-one-stream check has already been used; a fresh read-only BHP observation
-requires DS approval. This result does not establish whether a type-3 quote
-would have a usable source timestamp at the time of request.
+one-stream check had already been used; DS subsequently approved a fresh
+read-only BHP observation for 15 October. The 14 October result did not
+establish whether a type-3 quote would have a usable source timestamp.
+
+## 8. Buy drift when the reference price is absent — 15 October 2026
+
+`presentation/symbol_verdict.py::build_verdict` accepts `last_price=None` and
+passes it through `_gate_check` into a hypothetical buy's `reference_price`.
+That path reaches `AutonomyGate.evaluate`. Previously the gate's drift branch
+ran only when both the current price and the reference price were truthy, so
+an absent or zero reference silently skipped the drift comparison. The gate
+now refuses a buy with a missing, non-finite or nonpositive reference before
+that branch. The executor separately refuses an absent current observation
+before reaching the gate; this fix closes the independent reference-price
+gap. The offline tests cover the direct gate and the real symbol-verdict path.
+
+The five 14 October DU holdings and their pre-freeze provenance are analysed
+in `docs/phase-1-paper-holdings-provenance-2026-10-15.md`. The approved
+one-stream BHP observation through `IBAdapter.connect` is recorded below.
+
+## 9. Approved BHP delayed-quote observation — 15 October 2026
+
+The read-only `IBAdapter.connect` path requested market-data type 3 before
+qualifying BHP.AX and opening one stream. The Gateway exposed exactly one
+managed account, `DUQ200898`. The guard checked it immediately before the
+four logged requests: `reqMarketDataType`, `qualifyContractsAsync`,
+`reqMktData` and `cancelMktData`. The stream was cancelled. No order, QAT
+application, OMS or poller was started.
+
+`PriceObservation(value=58.34, field='last', market_data_type=3,
+source_timestamp=2026-10-15T10:45:53+11:00,
+observed_timestamp=2026-10-15T11:05:53.949652+11:00)` was returned.
+Its source age was 1,200.949652 seconds (20 minutes 0.949652 seconds),
+and `refusal(max_age=30 minutes)` returned `None`. This verifies that this
+paper-account delayed BHP stream can provide a source-dated quote inside the
+approved 30-minute window at this observation time. It does not establish
+continuous availability, a guarantee of future quote age, or fitness for
+other symbols. The raw JSON and SHA-256 sidecar remain outside Git; their
+filenames, hashes, request arguments and UTC request times are in
+`docs/PHASE1_EXIT_READINESS_DU_MANIFEST_2026-10-14.json`.

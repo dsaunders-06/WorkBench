@@ -39,9 +39,11 @@ class GuardedReadOnlyClient:
 
     _DENIED = frozenset({"placeOrder", "cancelOrder", "reqGlobalCancel", "exerciseOptions"})
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, *, expected_account: str | None = None) -> None:
         self.client = client
+        self.expected_account = expected_account
         self.requests: list[dict[str, str]] = []
+        self.market_data_ticker: Any | None = None
 
     def __getattr__(self, name: str) -> Any:
         if name in self._DENIED:
@@ -56,6 +58,11 @@ class GuardedReadOnlyClient:
 
         def checked(*args: Any, **kwargs: Any) -> Any:
             _checked_account(self.client)
+            if (
+                self.expected_account is not None
+                and self.client.managedAccounts()[0] != self.expected_account
+            ):
+                raise ValueError("managed DU account changed during read-only probe")
             self.requests.append(
                 {
                     "method": name,
@@ -64,7 +71,10 @@ class GuardedReadOnlyClient:
                     "kwargs": repr(kwargs),
                 }
             )
-            return attribute(*args, **kwargs)
+            result = attribute(*args, **kwargs)
+            if name == "reqMktData":
+                self.market_data_ticker = result
+            return result
 
         return checked
 

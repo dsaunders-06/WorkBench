@@ -282,6 +282,18 @@ def test_a_small_price_drift_is_tolerated():
     assert decision.allowed is True
 
 
+@pytest.mark.parametrize("reference_price", [None, 0.0, float("nan"), float("inf")])
+def test_a_buy_without_a_valid_reference_price_cannot_skip_drift(reference_price):
+    decision = _gate().evaluate(
+        _order(reference_price=reference_price),
+        _account(),
+        current_price=100.0,
+        now=OPEN_US,
+    )
+    assert decision.allowed is False
+    assert "reference price" in decision.reason
+
+
 def test_drift_is_measured_in_both_directions():
     down = _gate().evaluate(
         _order(reference_price=100.0), _account(), current_price=85.0, now=OPEN_US

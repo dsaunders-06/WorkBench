@@ -22,6 +22,7 @@ that reaches a broker.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -263,7 +264,14 @@ class AutonomyGate:
                 f"{self.settings.autonomous_pause_buys_below_day_pnl_pct:.2%} pause threshold"
             )
 
-        if current_price is not None and order.reference_price:
+        if (
+            order.reference_price is None
+            or not math.isfinite(order.reference_price)
+            or order.reference_price <= 0
+        ):
+            return block("buy has no valid reference price for the price-drift check")
+
+        if current_price is not None:
             drift = abs(current_price - order.reference_price) / order.reference_price
             if drift > self.settings.autonomous_price_drift_limit_pct:
                 return block(

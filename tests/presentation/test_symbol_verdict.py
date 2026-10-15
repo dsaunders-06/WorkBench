@@ -92,6 +92,13 @@ def test_an_unheld_symbol_reports_no_sell_rails():
     assert "time stop" not in names
 
 
+def test_a_buy_verdict_without_a_reference_price_is_refused_by_the_gate():
+    verdict = _verdict(last_price=None)
+    gate_check = _find(verdict.per_strategy[0].checks, "autonomy gate")
+    assert gate_check.passed is False
+    assert "reference price" in gate_check.detail
+
+
 def test_a_held_symbol_reports_sell_rails_not_entry_rails():
     position = Position(symbol="BHP.AX", quantity=300.0, avg_price=40.0)
     view = _StubView(symbol="BHP.AX", pnl_r=-0.21, stop_distance=0.08, notes=("held until 3 Sep",))
