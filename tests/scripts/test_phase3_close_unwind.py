@@ -78,6 +78,131 @@ def test_date_window_defaults_to_refusal() -> None:
         module.require_window("2026-10-19", "10:30", "15:00", now.replace(hour=15))
 
 
+@pytest.mark.asyncio
+async def test_armed_close_can_finish_after_1500() -> None:
+    from qat.data.broker.adapter import Order
+
+    module = _load()
+    now = datetime(2026, 10, 19, 14, 29, tzinfo=ZoneInfo("Australia/Sydney"))
+
+    class Broker:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def cancel_order(self, order_id: str) -> None:
+            self.calls.append(f"cancel:{order_id}")
+
+        async def place_order(self, order: Order) -> Order:
+            self.calls.append(f"place:{order.order_type}:{order.quantity}")
+            return order
+
+    broker = Broker()
+    guard = module.ApprovedBroker(
+        broker,
+        window_check=lambda: module.require_arm_window("2026-10-19", "10:30", "15:00", now),
+    )
+    guard.arm("BOQ.AX")
+    now = now.replace(hour=15, minute=1)
+    await guard.cancel_order("1216552512")
+    await guard.cancel_order("1216552513")
+    await guard.place_order(
+        Order(symbol="BOQ.AX", side="sell", quantity=13586, order_id="close-boq")
+    )
+    assert broker.calls == [
+        "cancel:1216552512",
+        "cancel:1216552513",
+        "place:market:13586",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_arm_at_1431_refuses_without_touching_brackets() -> None:
+    module = _load()
+
+    class Broker:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def cancel_order(self, order_id: str) -> None:
+            self.calls.append(f"cancel:{order_id}")
+
+    broker = Broker()
+    now = datetime(2026, 10, 19, 14, 31, tzinfo=ZoneInfo("Australia/Sydney"))
+    guard = module.ApprovedBroker(
+        broker,
+        window_check=lambda: module.require_arm_window("2026-10-19", "10:30", "15:00", now),
+    )
+    with pytest.raises(ValueError, match="14:30"):
+        guard.arm("BOQ.AX")
+    assert guard.symbol is None
+    assert broker.calls == []
+
+
+@pytest.mark.asyncio
+async def test_armed_recovery_stop_can_be_sent_after_1500() -> None:
+    from types import SimpleNamespace as NS
+
+    from qat.data.broker.adapter import Order
+
+    module = _load()
+    now = datetime(2026, 10, 19, 14, 29, tzinfo=ZoneInfo("Australia/Sydney"))
+
+    class Broker:
+        def __init__(self) -> None:
+            self.sent: list[Order] = []
+
+        async def positions(self) -> list[object]:
+            return [NS(symbol="BOQ.AX", quantity=6793)]
+
+        async def open_orders(self) -> list[object]:
+            return []
+
+        async def place_order(self, order: Order) -> Order:
+            self.sent.append(order)
+            return order
+
+        async def cancel_order(self, order_id: str) -> None:
+            pass
+
+    broker = Broker()
+    guard = module.ApprovedBroker(
+        broker,
+        window_check=lambda: module.require_arm_window("2026-10-19", "10:30", "15:00", now),
+    )
+    guard.arm("BOQ.AX")
+    await guard.cancel_order("1216552512")
+    await guard.cancel_order("1216552513")
+    now = now.replace(hour=15, minute=1)
+    await guard.place_order(
+        Order(
+            symbol="BOQ.AX",
+            side="sell",
+            quantity=6793,
+            order_type="stop",
+            stop_price=6.07,
+            order_id="recovery-boq",
+        )
+    )
+    assert [(order.quantity, order.stop_price) for order in broker.sent] == [(6793, 6.07)]
+
+
+def test_live_close_loop_has_no_clock_gate_after_arming() -> None:
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    runner = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "execute_live"
+    )
+    loops = [node for node in ast.walk(runner) if isinstance(node, (ast.For, ast.While))]
+    for loop in loops:
+        assert not any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"require_window", "require_arm_window"}
+            for node in ast.walk(loop)
+        )
+
+
 def test_order_list_rejects_extra_or_changed_action() -> None:
     module = _load()
     actions = module.monday_draft_actions()

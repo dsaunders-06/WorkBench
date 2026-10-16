@@ -219,8 +219,6 @@ class ApprovedBroker:
         raise ValueError(reason)
 
     async def cancel_order(self, order_id: str) -> Any:
-        if self.window_check is not None:
-            self.window_check()
         row = next((item for item in _HOLDINGS if item[0] == self.symbol), None)
         if row is None or self.cancel_index >= 2:
             self._deny("cancellation outside the approved close")
@@ -233,8 +231,6 @@ class ApprovedBroker:
         return result
 
     async def place_order(self, order: Any) -> Any:
-        if self.window_check is not None:
-            self.window_check()
         row = next((item for item in _HOLDINGS if item[0] == self.symbol), None)
         if row is None or order.symbol != self.symbol or order.side != "sell":
             self._deny("order outside the approved close")
@@ -653,6 +649,15 @@ def require_window(session: str | None, start: str | None, end: str | None, now:
         raise ValueError("outside the approved Sydney window")
 
 
+def require_arm_window(
+    session: str | None, start: str | None, end: str | None, now: datetime
+) -> None:
+    """Start a new holding only inside the window and no later than 14:30."""
+    require_window(session, start, end, now)
+    if now.astimezone(SYDNEY).time().replace(tzinfo=None) > time(14, 30):
+        raise ValueError("no holding may be armed after 14:30 Sydney")
+
+
 def signoff_label(session: str, list_sha256: str) -> str:
     return f"DS-approved instruction {session}, order list {list_sha256}, executed by agent"
 
@@ -772,7 +777,7 @@ async def execute_live(
     adapter = IBAdapter(client, bus, settings=settings, read_only=False)
     guard = ApprovedBroker(
         adapter,
-        window_check=lambda: require_window(session, start, end, datetime.now(SYDNEY)),
+        window_check=lambda: require_arm_window(session, start, end, datetime.now(SYDNEY)),
     )
     report: dict[str, Any] = {
         "status": "halted",
@@ -815,7 +820,6 @@ async def execute_live(
             before_stores, _store_hashes(Path(settings.data_dir))
         )
         for symbol, con_id, quantity, _, _, _, _, _ in _HOLDINGS:
-            require_window(session, start, end, datetime.now(SYDNEY))
             inventory = await capture_live_inventory(client)
             report["snapshots"].append({"stage": f"before_{symbol}", "inventory": inventory})
             require_inventory(inventory, remaining)
@@ -835,7 +839,6 @@ async def execute_live(
             deadline = datetime.now(UTC).timestamp() + 120
             evidence: list[dict[str, Any]] | None = None
             while datetime.now(UTC).timestamp() < deadline:
-                require_window(session, start, end, datetime.now(SYDNEY))
                 inventory = await capture_live_inventory(client)
                 other = {
                     "positions": [

@@ -78,9 +78,14 @@ stores. A paper Gateway run is the necessary non-synthetic check of inherited
 client-1 cancellations, actual fills and timestamps, permId resolution,
 commissions, conditional recovery, and final reconciliation.
 
-## Draft for Monday 19 October 2026 — do not run yet
+## Monday 19 October 2026 order list
 
-The exact proposed input is
+DS approved this exact list and its hash on 16 October 2026, conditional on
+the fresh read-only inventory matching the 16 October account evidence. If
+any quantity, leg, price or status differs, no close is authorised and revised
+actions return to DS.
+
+The exact approved input is
 [`phase3-close-unwind-order-list-2026-10-19.json`](phase3-close-unwind-order-list-2026-10-19.json),
 canonical action-list SHA-256
 `e421d507b728fcd0a919f2577d702c1cdd1f6d161a243628e5cc9224f7101ae2`.
@@ -95,27 +100,30 @@ shares unprotected, and never for more than the remaining broker quantity.
 | ASX.AX | 157 | 158 | 1,314 | 51.18 |
 | TAH.AX | 500 | 501 | 64,229 | 0.80 |
 
-Proposed independent, read-only DU inventory is 10:10–10:25 Sydney. The
-script's proposed connection and close window is 10:30–15:00 Sydney; it
+The independent, read-only DU inventory is scheduled for 10:10–10:25 Sydney.
+The script's connection and close window is 10:30–15:00 Sydney; it
 rechecks the exact account before post-connection Gateway requests and
 rechecks the full position and working-order book before each holding. It
 halts on any divergence and never retries a close. The final independent DU
-inventory and copied-store snapshot would follow before shutdown. Nothing in
-this paragraph authorises that run.
+inventory and copied-store snapshot follow before shutdown.
 
-The proposed launch must set `QAT_MARKET=ASX` alongside the approved
+The window is checked when each holding is armed. A new holding cannot be
+armed after 14:30 Sydney. Once armed, its protective-leg cancellations,
+market sell and approved recovery stop can finish after 15:00 rather than
+being interrupted by the clock. Offline tests cover a 14:29 start finishing
+after 15:00, a refused 14:31 start with untouched brackets, and a recovery
+stop submitted after 15:00 for an armed holding.
+
+The launch must set `QAT_MARKET=ASX` alongside the approved
 recommend, paper, autonomy-off, de-lever-off, DUQ200898, client-1 and paper
 port settings. The script refuses any different market.
 
-DS must decide the exact dated order list and hash, the run window, and the
-truthful instruction date used in each OMS sign-off label. DS should review
-the expected copied-store quantity migration, stale-entry retirement and CSV
-schema backup before authorising a live start. The live gate refuses a change
-to any existing entry field before a real cancellation.
-One timing risk remains for that review: if the 15:00 gate closes after a
-protective leg is cancelled but before the market sell or approved recovery
-stop, the script refuses the next action and could leave that holding
-unprotected. The offline rehearsal cannot establish a safe maximum duration
-for a broker cancellation. Resolve this before approving live use of the
-script; do not start a close near the end of the proposed window.
-Approval of this draft is distinct from approval to transmit Monday's orders.
+The run uses the 19 October session and approval date in each OMS sign-off
+label. The live gate refuses a change to any existing entry field before a
+real cancellation.
+
+The earlier clock-gate risk has been addressed in the script: the clock cannot
+block an armed holding's approved completion or recovery. The offline
+rehearsal still cannot establish the real broker's cancellation, fill or
+recovery behavior; the approved Monday paper run will test those only if the
+fresh account inventory matches.
