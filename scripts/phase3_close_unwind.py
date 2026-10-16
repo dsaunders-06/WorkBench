@@ -634,13 +634,19 @@ def require_settings(settings: Settings) -> None:
         raise ValueError(f"unsafe settings for close-only paper run: {actual}")
 
 
-def require_window(session: str | None, start: str | None, end: str | None, now: datetime) -> None:
-    if session is None or start is None or end is None:
-        raise ValueError("session, start and end must be supplied explicitly")
+def require_session(session: str | None, now: datetime) -> None:
+    if session is None:
+        raise ValueError("session must be supplied explicitly")
     if now.tzinfo is None:
         raise ValueError("clock must be timezone-aware")
     if now.astimezone(SYDNEY).date().isoformat() != session:
         raise ValueError("not the approved Sydney session")
+
+
+def require_window(session: str | None, start: str | None, end: str | None, now: datetime) -> None:
+    if start is None or end is None:
+        raise ValueError("start and end must be supplied explicitly")
+    require_session(session, now)
     first = time.fromisoformat(start)
     last = time.fromisoformat(end)
     if not (time(10, 30) <= first < last <= time(15, 0)):
@@ -766,7 +772,9 @@ async def execute_live(
 
     require_settings(settings)
     digest = require_action_list(actions)
-    require_window(session, start, end, datetime.now(SYDNEY))
+    require_session(session, datetime.now(SYDNEY))
+    if not start or not end:
+        raise ValueError("start and end must be supplied explicitly")
     out_dir = out_dir.resolve()
     _outside_git(out_dir)
     if out_dir.exists():
@@ -1236,7 +1244,9 @@ def main() -> int:
     if arguments.approved_sha256 != digest:
         parser.error("execution refused: approved order-list hash does not match")
     require_settings(Settings())
-    require_window(arguments.session, arguments.start, arguments.end, datetime.now(SYDNEY))
+    require_session(arguments.session, datetime.now(SYDNEY))
+    if not arguments.start or not arguments.end:
+        parser.error("execution refused: start and end must be supplied explicitly")
     if arguments.approval_date is None or arguments.out_dir is None:
         parser.error("execution refused: approval date and outside-Git evidence directory required")
     if date.fromisoformat(arguments.approval_date) > date.fromisoformat(arguments.session):

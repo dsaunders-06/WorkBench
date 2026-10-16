@@ -203,6 +203,22 @@ def test_live_close_loop_has_no_clock_gate_after_arming() -> None:
         )
 
 
+def test_only_arm_checks_current_time_window() -> None:
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    callers = [
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Name)
+            and child.func.id == "require_window"
+            for child in ast.walk(node)
+        )
+    ]
+    assert callers == ["require_arm_window"]
+
+
 def test_order_list_rejects_extra_or_changed_action() -> None:
     module = _load()
     actions = module.monday_draft_actions()
