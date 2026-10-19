@@ -53,3 +53,7 @@ The canonical [19-action JSON list](phase3-revised-order-list-2026-10-19.json) h
 The old 19 October approval hash `e421d507b728fcd0a919f2577d702c1cdd1f6d161a243628e5cc9224f7101ae2` cannot authorise this list. All five positions remained held in the final saved inventory; this draft requires a fresh independent read-only book and new DS approval before any further close. No Gateway request or order was made during this offline investigation.
 
 As an offline consistency check, the revised script's exact position/order inventory gate accepted the untouched final client-99 inventory (`positions_cache` plus `all_open_orders`) with all five holdings and nine working orders. That verifies the draft's starting identities against the saved state; it is not a current broker check.
+
+## Verification and review state
+
+The final `unwind/close-script` head is `0b0853b0354d45e53c92b2bc41512e0730291f4f`. Its full local suite passed with **4,569 passed and 26 skipped**; Ruff, Black, mypy and Bandit passed. The affected focused tests passed (**116 passed**). [CI run 39183849455](https://github.com/dsaunders-06/WorkBench/actions/runs/39183849455) completed successfully for that exact head. The evidence branch is held for review; this addendum and revised draft are local commits and have not been pushed to the public repository.
