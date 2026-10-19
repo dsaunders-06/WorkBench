@@ -1060,7 +1060,10 @@ async def test_a_second_leg_cancel_that_raises_re_protects_the_bare_position(clo
     closer = closer_factory(
         positions={"CBA.AX": 100.0},
         legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
-        legs_after_cancel=[],
+        # The stop must still be visible after the first cancel, otherwise
+        # the OCA-aware path correctly skips the second cancel altogether.
+        legs_after_cancel=[_leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_at_recovery=[],
         cancel_raises_for=("2",),
     )
     result = await closer.close_position("CBA.AX", operator="tester")
