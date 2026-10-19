@@ -71,6 +71,8 @@ _STARTUP_REPLAY_SNAPSHOT_ATTEMPTS = 3
 
 def _same_resting_leg(left: RestingOrder, right: RestingOrder) -> bool:
     """Match either IBKR identity, ignoring completed rows' orderId zero."""
+    if left.symbol != right.symbol:
+        return False
     if left.perm_id and right.perm_id:
         return left.perm_id == right.perm_id
     left_ids = {str(value) for value in (left.order_id, left.broker_order_id, left.perm_id)}
@@ -664,8 +666,25 @@ class OMS:
             return False
         source = getattr(self.broker, "open_orders", None)
         cancel = getattr(self.broker, "cancel_order", None)
+        completed_source = getattr(self.broker, "completed_orders", None)
         if source is None or cancel is None:
             return True
+
+        async def cancellation_state(leg: RestingOrder, observed: list[RestingOrder]) -> str:
+            matching = [o for o in observed if _same_resting_leg(o, leg)]
+            if any(o.status in {"Filled", "Inactive"} for o in matching):
+                return "unsafe"
+            if matching and all(o.status in {"Cancelled", "ApiCancelled"} for o in matching):
+                return "cancelled"
+            if completed_source is None:
+                return "unavailable"
+            completed = [o for o in await completed_source() if _same_resting_leg(o, leg)]
+            if any(o.status in {"Filled", "Inactive"} for o in completed):
+                return "unsafe"
+            if completed and all(o.status in {"Cancelled", "ApiCancelled"} for o in completed):
+                return "cancelled"
+            return "unknown"
+
         try:
             working = [o for o in await source() if o.status not in TERMINAL_STATUSES]
             mine = [o for o in working if o.symbol == symbol]
@@ -711,6 +730,7 @@ class OMS:
             # can return PendingCancel on the first read, then cancel the OCA
             # sibling itself. Do not send a second cancel for an absent leg.
             remaining = working
+            observed = working
             for leg in sorted(mine, key=lambda o: o.stop_price is not None):
                 if self.kill_switch.tripped:
                     return False
@@ -722,6 +742,12 @@ class OMS:
                     if not (leg.oca_group and any(o.oca_group == leg.oca_group for o in preceding)):
                         logger.error(
                             "Protective leg %s disappeared without OCA evidence", leg_identity
+                        )
+                        return False
+                    state = await cancellation_state(leg, observed)
+                    if state not in {"cancelled", "unavailable"}:
+                        logger.error(
+                            "OCA partner %s is absent but not confirmed cancelled", leg_identity
                         )
                         return False
                     acknowledge = getattr(self.broker, "acknowledge_oca_cancelled_leg", None)
@@ -739,7 +765,8 @@ class OMS:
                 await cancel(leg_identity)
                 deadline = asyncio.get_running_loop().time() + 2.0
                 while True:
-                    remaining = [o for o in await source() if o.status not in TERMINAL_STATUSES]
+                    observed = await source()
+                    remaining = [o for o in observed if o.status not in TERMINAL_STATUSES]
                     if not remaining and any(o.symbol != symbol for o in working):
                         self._exit_recovery.stage(symbol, "uncertain")
                         self.kill_switch.trip(
@@ -747,7 +774,14 @@ class OMS:
                         )
                         return False
                     if not any(_same_resting_leg(o, leg) for o in remaining):
-                        break
+                        state = await cancellation_state(leg, observed)
+                        if state == "unsafe":
+                            logger.error(
+                                "Protective leg %s ended without cancellation", leg_identity
+                            )
+                            return False
+                        if state in {"cancelled", "unavailable"}:
+                            break
                     if self.kill_switch.tripped or asyncio.get_running_loop().time() >= deadline:
                         logger.error("Protective cancel %s has not settled", leg_identity)
                         return False

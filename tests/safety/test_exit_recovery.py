@@ -175,7 +175,13 @@ async def test_pending_target_settles_with_oca_partner_before_sell(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_boq_replay_matches_order_id_zero_rows_by_perm_id(tmp_path):
+@pytest.mark.parametrize(
+    ("stop_terminal", "expected_release"),
+    [("Cancelled", True), ("Filled", False)],
+)
+async def test_boq_replay_matches_order_id_zero_rows_by_perm_id(
+    tmp_path, stop_terminal, expected_release
+):
     class BoqReplayBroker(ExitBroker):
         def __init__(self):
             super().__init__()
@@ -196,6 +202,7 @@ async def test_boq_replay_matches_order_id_zero_rows_by_perm_id(tmp_path):
                 ),
             ]
             self.read_after_cancel = 0
+            self.completed_reads = 0
 
         async def cancel_order(self, order_id):
             assert order_id == "1216552512"
@@ -215,13 +222,25 @@ async def test_boq_replay_matches_order_id_zero_rows_by_perm_id(tmp_path):
                     )
                     for leg in self.legs
                 ]
-            return [replace(leg, order_id="0", status="Cancelled") for leg in self.legs]
+            return []
+
+        async def completed_orders(self):
+            self.completed_reads += 1
+            return [
+                replace(
+                    leg,
+                    order_id="0",
+                    status=stop_terminal if leg.perm_id == 1216552513 else "Cancelled",
+                )
+                for leg in self.legs
+            ]
 
     broker = BoqReplayBroker()
     oms = make_oms(broker, tmp_path)
-    assert await oms._release_protective_legs("AAA", 100, "manual_close")
+    assert await oms._release_protective_legs("AAA", 100, "manual_close") is expected_release
     assert broker.cancelled == ["1216552512"]
     assert broker.read_after_cancel == 2
+    assert broker.completed_reads >= 1
 
 
 @pytest.mark.asyncio
