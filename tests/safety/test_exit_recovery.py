@@ -27,9 +27,13 @@ class ExitBroker(MockBroker):
         self.pending_target = False
         self.halt_on_cancel = None
         self.on_cancel = None
+        self.completed = []
 
     async def open_orders(self):
         return list(self.legs)
+
+    async def completed_orders(self):
+        return list(self.completed)
 
     async def cancel_order(self, order_id):
         if self.on_cancel:
@@ -41,6 +45,9 @@ class ExitBroker(MockBroker):
                 for leg in self.legs
             ]
         else:
+            self.completed.extend(
+                replace(leg, status="Cancelled") for leg in self.legs if leg.order_id == order_id
+            )
             self.legs = [leg for leg in self.legs if leg.order_id != order_id]
         if self.halt_on_cancel:
             self.halt_on_cancel.trip("halt during cancellation")
@@ -131,6 +138,7 @@ async def test_oca_partner_disappears_with_target_and_is_not_cancelled_again(tmp
         async def cancel_order(self, order_id):
             result = await super().cancel_order(order_id)
             if order_id == "target":
+                self.completed.extend(replace(leg, status="Cancelled") for leg in self.legs)
                 self.legs = []
             return result
 
@@ -140,6 +148,29 @@ async def test_oca_partner_disappears_with_target_and_is_not_cancelled_again(tmp
     released = await oms._release_protective_legs("AAA", 100.0, "manual_close")
     assert released is True
     assert broker.cancelled == ["target"]
+
+
+@pytest.mark.asyncio
+async def test_oca_partner_without_completed_order_source_halts_close(tmp_path):
+    class OcaBroker(ExitBroker):
+        async def cancel_order(self, order_id):
+            target = next(leg for leg in self.legs if leg.order_id == order_id)
+            result = await super().cancel_order(order_id)
+            if order_id == "target":
+                # The requested leg is explicitly terminal; only the OCA
+                # partner's disappearance lacks a completed-order source.
+                self.legs = [replace(target, status="Cancelled")]
+            return result
+
+    broker = OcaBroker()
+    broker.legs = [replace(leg, oca_group="BOQ-OCA") for leg in broker.legs]
+    broker.completed_orders = None
+    oms = make_oms(broker, tmp_path)
+
+    assert await oms._release_protective_legs("AAA", 100.0, "manual_close") is False
+    assert broker.cancelled == ["target"]
+    assert oms._exit_recovery is not None
+    assert "AAA" in oms._exit_recovery.plans
 
 
 @pytest.mark.asyncio
@@ -162,6 +193,7 @@ async def test_pending_target_settles_with_oca_partner_before_sell(tmp_path):
             if "target" in self.cancelled:
                 self.after_cancel_reads += 1
                 if self.after_cancel_reads >= 2:
+                    self.completed.extend(replace(leg, status="Cancelled") for leg in self.legs)
                     self.legs = []
             return await super().open_orders()
 

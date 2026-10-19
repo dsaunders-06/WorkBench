@@ -781,7 +781,7 @@ class OMS:
                         )
                         return False
                     state = await cancellation_state(leg, observed)
-                    if state not in {"cancelled", "unavailable"}:
+                    if state != "cancelled":
                         logger.error(
                             "OCA partner %s is absent but not confirmed cancelled", leg_identity
                         )
@@ -816,7 +816,14 @@ class OMS:
                                 "Protective leg %s ended without cancellation", leg_identity
                             )
                             return False
-                        if state in {"cancelled", "unavailable"}:
+                        if state == "unavailable":
+                            logger.error(
+                                "Protective cancel %s cannot be confirmed: "
+                                "completed-order source unavailable",
+                                leg_identity,
+                            )
+                            return False
+                        if state == "cancelled":
                             break
                     if self.kill_switch.tripped or asyncio.get_running_loop().time() >= deadline:
                         logger.error("Protective cancel %s has not settled", leg_identity)
