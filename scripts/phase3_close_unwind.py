@@ -882,12 +882,12 @@ def require_boq_recovery_identity(data_dir: Path) -> None:
 
 
 def require_verify_window(session: str | None, now: datetime) -> None:
-    """The approved reconciliation and reset are pre-open Wednesday steps."""
-    if session != "2026-10-21":
-        raise ValueError("verify-only mode is pinned to Wednesday 21 October")
+    """The approved reconciliation and reset are Tuesday steps."""
+    if session != "2026-10-20":
+        raise ValueError("verify-only mode is pinned to Tuesday 20 October")
     require_session(session, now)
-    if not (time(9, 0) <= now.astimezone(SYDNEY).time().replace(tzinfo=None) < time(10, 0)):
-        raise ValueError("verify-only mode requires 09:00–10:00 Sydney before the open")
+    if not (time(10, 0) <= now.astimezone(SYDNEY).time().replace(tzinfo=None) < time(13, 0)):
+        raise ValueError("verify-only mode requires 10:00–13:00 Sydney")
 
 
 async def verify_recovery_plan(

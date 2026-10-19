@@ -522,18 +522,18 @@ async def test_verify_only_rechecks_window_before_clearing_plan(tmp_path: Path) 
 
 
 @pytest.mark.parametrize(
-    "hour,minute,allowed", [(8, 59, False), (9, 0, True), (9, 59, True), (10, 0, False)]
+    "hour,minute,allowed", [(9, 59, False), (10, 0, True), (12, 59, True), (13, 0, False)]
 )
-def test_verify_only_has_explicit_preopen_window(hour: int, minute: int, allowed: bool) -> None:
+def test_verify_only_has_explicit_window(hour: int, minute: int, allowed: bool) -> None:
     module = _load()
-    now = datetime(2026, 10, 21, hour, minute, tzinfo=ZoneInfo("Australia/Sydney"))
+    now = datetime(2026, 10, 20, hour, minute, tzinfo=ZoneInfo("Australia/Sydney"))
     if allowed:
-        module.require_verify_window("2026-10-21", now)
+        module.require_verify_window("2026-10-20", now)
     else:
         with pytest.raises(ValueError):
-            module.require_verify_window("2026-10-21", now)
-    with pytest.raises(ValueError, match="Wednesday"):
-        module.require_verify_window("2026-10-20", now.replace(day=20))
+            module.require_verify_window("2026-10-20", now)
+    with pytest.raises(ValueError, match="Tuesday"):
+        module.require_verify_window("2026-10-21", now.replace(day=21))
 
 
 @pytest.mark.asyncio
