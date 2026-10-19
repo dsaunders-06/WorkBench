@@ -735,11 +735,47 @@ class OMS:
                 if self.kill_switch.tripped:
                     return False
                 leg_identity = str(leg.perm_id or leg.order_id or leg.broker_order_id)
+                preceding = [o for o in mine if o is not leg and o.stop_price is None]
+                same_oca_as_target = bool(
+                    leg.oca_group and any(o.oca_group == leg.oca_group for o in preceding)
+                )
+                partner = next(
+                    (o for o in remaining if o.symbol == symbol and _same_resting_leg(o, leg)),
+                    None,
+                )
+                if same_oca_as_target and partner is not None and partner.status == "PendingCancel":
+                    # IBKR may still show the OCA sibling's pending cancel
+                    # after confirming the requested target. A second cancel
+                    # at this point is a duplicate (10148), not a safeguard.
+                    deadline = asyncio.get_running_loop().time() + 2.0
+                    while partner is not None and partner.status == "PendingCancel":
+                        if (
+                            self.kill_switch.tripped
+                            or asyncio.get_running_loop().time() >= deadline
+                        ):
+                            logger.error("OCA partner %s remains PendingCancel", leg_identity)
+                            return False
+                        await asyncio.sleep(0.05)
+                        observed = await source()
+                        remaining = [o for o in observed if o.status not in TERMINAL_STATUSES]
+                        if not remaining and any(o.symbol != symbol for o in working):
+                            self._exit_recovery.stage(symbol, "uncertain")
+                            self.kill_switch.trip(
+                                "account-wide order book unexpectedly empty during exit"
+                            )
+                            return False
+                        partner = next(
+                            (
+                                o
+                                for o in remaining
+                                if o.symbol == symbol and _same_resting_leg(o, leg)
+                            ),
+                            None,
+                        )
                 if not any(_same_resting_leg(o, leg) for o in remaining if o.symbol == symbol):
                     # Only a previously cancelled member of this very OCA
                     # group can explain a partner's disappearance.
-                    preceding = [o for o in mine if o is not leg and o.stop_price is None]
-                    if not (leg.oca_group and any(o.oca_group == leg.oca_group for o in preceding)):
+                    if not same_oca_as_target:
                         logger.error(
                             "Protective leg %s disappeared without OCA evidence", leg_identity
                         )

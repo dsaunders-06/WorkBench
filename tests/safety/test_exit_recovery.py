@@ -175,6 +175,46 @@ async def test_pending_target_settles_with_oca_partner_before_sell(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_oca_partner_pending_cancel_is_not_cancelled_twice(tmp_path):
+    class PendingPartnerBroker(ExitBroker):
+        def __init__(self):
+            super().__init__()
+            self.legs = [replace(leg, oca_group="OCA-1") for leg in self.legs]
+            self.after_cancel_reads = 0
+
+        async def cancel_order(self, order_id):
+            assert order_id == "target"
+            self.cancelled.append(order_id)
+            self.legs = [
+                replace(leg, status="PendingCancel") for leg in self.legs if leg.order_id == "stop"
+            ]
+            return Order("AAA", "sell", 100, order_id, status="cancelled")
+
+        async def open_orders(self):
+            if self.cancelled:
+                self.after_cancel_reads += 1
+                if self.after_cancel_reads >= 2:
+                    return []
+            return list(self.legs)
+
+        async def completed_orders(self):
+            completed = [
+                RestingOrder("AAA", "target", "sell", "LMT", 100, "Cancelled", oca_group="OCA-1")
+            ]
+            if self.after_cancel_reads >= 2:
+                completed.append(
+                    RestingOrder("AAA", "stop", "sell", "STP", 100, "Cancelled", oca_group="OCA-1")
+                )
+            return completed
+
+    broker = PendingPartnerBroker()
+    oms = make_oms(broker, tmp_path)
+    assert await oms._release_protective_legs("AAA", 100, "manual_close")
+    assert broker.cancelled == ["target"]
+    assert broker.after_cancel_reads >= 2
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stop_terminal", "expected_release"),
     [("Cancelled", True), ("Filled", False)],
