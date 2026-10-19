@@ -35,7 +35,7 @@ Secret *presence* was checked; values are not recorded here.
 | Yahoo company news | `news_source=yfinance`; `news_min_sources=1` | `runtime.py::resolve_news_source` → `data/news.py::YFinanceNewsSource` → `presentation/advisory_inputs.py::news_for`/corroboration → `build_advisory_context` → AI Advisor and Workbench model output. | **Yes**, an AI recommendation can use it. The deterministic symbol verdict does not call the news source; no direct OMS/strategy/sizing call was found. Manual `PositionCloser.close_position` does not fetch it. | Real Yahoo ASX samples on 20 August; rule built 20 August, loosened by DS 21 August; [archived handoff](archive/HANDOFF-2026-08-20-superseded.md), `data/news.py`, `config.py`. Its recommendation role exceeds I-6. **Open for DS** under the 16 October decision; no expanded role is approved. |
 | Yahoo company fundamentals and relative strength | `fundamentals_source=yfinance`, cache 7 days | `runtime.py::resolve_fundamentals_source` → Yahoo/cache and `StrategyEngine`; relative strength reads the selected Yahoo history source. Also Advisor, Workbench and Screener. | **Yes**: deterministic strategy recommendations and AI recommendations. Manual close does not fetch these. Resolver failure can select synthetic fundamentals. | The real-fundamentals option predates the freeze. **Open for DS** after the legacy-signal-path analysis requested 16 October; no new role is approved. Synthetic fallback must fail closed in trading modes, with implementation pending. |
 | Yahoo earnings dates | `fundamentals_source=yfinance`, cache 7 days; `enforce_earnings_event_risk=True`, scalar 0.5 | `runtime.py::_build_earnings_calendar` → `YFinanceEarningsCalendar` → `signal_bridge.py::_submit_sized` → `risk_engine/engine.py::_earnings_scalar` and `evaluate_order`. | **Yes**: can change entry sizing. DS approved this indirect input on 16 October **only when it can reduce size**. | `config.py` restricts the scalar to `(0,1]`, and the risk engine multiplies proposed shares by it. However, the later portfolio expected-shortfall gate can turn a rejected unsized buy into an approved smaller buy. In an offline controlled example, no earnings date yielded 0 shares (5.00% expected shortfall over the 3.00% limit), whereas a date two days away yielded an approved 62.5 shares (2.50% expected shortfall). This can **add exposure relative to no date** and does not meet the literal reduce-only condition. No code changed; DS must decide the disposition. |
-| FRED: DGS3MO, DGS10, T10Y3M, VIXCLS, BAA10Y | `fred_series` names all five; `regime_vix_series=VIXCLS`; **no FRED_API_KEY present** on 16 October | `runtime.py::resolve_macro_source` selects FRED only with a key, otherwise `MockMacroSource`; `MacroFeed` and `WarmStart` feed regime, features and exposure decisions. | If enabled, **yes**; today its absence selects synthetic macro data that can still affect the regime. | August real FRED polling reported in [archived handoff](archive/HANDOFF-2026-08-20-superseded.md); September regime assessment in [handoff](HANDOFF.md). **Open for DS** under the 16 October decision. Mock fallback must fail closed in trading modes, with implementation pending. |
+| FRED: DGS3MO, DGS10, T10Y3M, VIXCLS, BAA10Y | `fred_series` names all five; `regime_vix_series=VIXCLS`; **FRED_API_KEY present in QAT's keyring on 16 October** | `runtime.py::resolve_macro_source` selects FRED with a key, otherwise `MockMacroSource`; `MacroFeed` and `WarmStart` feed regime, features and exposure decisions. | **Yes**: FRED macro can affect the regime, features and exposure decisions when selected. | The [archived handoff](archive/HANDOFF-2026-08-20-superseded.md) and a rotated application log show real FRED polling through at least 23 August. DS restored the original key and reports a live DGS10 fetch on **16 October 2026 Sydney time**: 16,181 observations, latest 14 October. The 16 October response was not independently inspected in this docs-only work. FRED's role in the AI Advisor remains **open for DS**. If a key is absent in a trading mode, the mock fallback must fail closed under DS's 16 October ruling; implementation remains pending. |
 | Local LM Studio model | `general_request_provider=local`, `sensitive_request_provider=local`; configured base URL `localhost:1234/v1` | `runtime.py::_resolve_engine` → `AIAdvisoryService` → Advisor/Workbench prose and recommendations. | **Yes**, for displayed AI recommendations; no direct trading/OMS edge was found. It is a model provider, not a market-data authority. | Local service/version reported in [handoff](HANDOFF.md) on 11–14 September; availability was **not** retested Friday. |
 
 Other selectable but **not selected** sources remain in code: Alpaca for a US
@@ -47,6 +47,26 @@ substitutes. `runtime.py::resolve_market_data_source` and
 construction failure; `resolve_macro_source` does so without a FRED key.
 DS decided on 16 October that these fallback paths fail closed in any mode
 that can trade; implementation remains pending.
+
+### Credential-name presence, 16 October 2026
+
+A static scan of `src/qat/` found four names requested through
+`security.get_secret`; the Alpaca source reuses the broker adapter's two
+names. A presence-only check of QAT's Windows keyring service and the process
+environment gave the following result. No credential value was displayed,
+saved or committed, and this check made no vendor request.
+
+| Requested name | Keyring | Environment | Current relevance |
+| --- | --- | --- | --- |
+| `FRED_API_KEY` | Present | Absent | `resolve_macro_source` can construct the real FRED client; DS reports the 16 October DGS10 fetch above. |
+| `ALPACA_API_KEY` | Absent | Present | Available through `get_secret`'s environment fallback, but Alpaca is not the selected ASX broker or data source. |
+| `ALPACA_SECRET_KEY` | Absent | Present | Same unused Alpaca path. |
+| `ANTHROPIC_API_KEY` | Absent | Absent | **Missing**; current general and sensitive model-provider settings select the local model. |
+
+The original FRED key was absent from QAT's credential store at an unknown
+point before DS restored it on 16 October. The presence checks do not establish
+when it disappeared, how long the mock macro source was selected, or whether
+each historical macro request succeeded.
 
 The Phase 3 ASX calendar, membership, halt and corporate-action authorities
 are operator-supplied files with fixture-backed loaders
@@ -77,7 +97,8 @@ read from the outside-Git store copy) establish the freeze configuration. The
   Yahoo, not IBKR. The 19 August plan cited a 499-session Yahoo ASX replay and
   expressly warned that an IBKR history source and pacing were unwritten.
   Yahoo earnings dates and fundamentals were available; FRED macro polling
-  was observed in August. The 11 September settings backup selects
+  was observed through at least 23 August. The 11 September settings backup
+  selects
   `market=ASX`, `broker=ibkr`, `market_data_source=yfinance`,
   `fundamentals_source=yfinance`, local model providers and paper mode.
   The handoff records `auto` and deployed `swing` at the freeze.
@@ -139,11 +160,17 @@ storage-based decision.
 2. **IBKR operational history is designed, not wired:** October real-data
    probes and the Phase 3 operational interfaces add evidence and a future
    contract, but the running app still has no IBKR history selector/client.
-3. **FRED activation is different or uncertain:** the August handoff reports
-   live FRED polling; on 16 October no `FRED_API_KEY` is present, so current
-   runtime construction would choose synthetic macro. The precise
-   12 September key state is not established by Git; do not infer when it
-   disappeared or silently restore it.
+3. **FRED activation changed at an unknown point:** the rotated application
+   log records real FRED observations on 23 August at 23:34 UTC (24 August
+   09:34 Sydney), including DGS10 with 16,144 observations. That outside-Git
+   log is `C:\Users\mailm\Documents\Codex\phase1-holdings-copy-20261015\data\logs\qat.log.6`,
+   SHA-256 `efe2adbfc4fdb8ce2ef11130dffaf190075d4ae528d95369091245b525b2303d`.
+   The key was missing from QAT's credential store at an unknown later point;
+   Git cannot date its absence. DS restored the original key and reports a
+   live DGS10 fetch on 16 October with 16,181 observations, latest 14 October. Presence was
+   confirmed without reading the value into this document. The FRED role in
+   AI advice remains for DS to decide, and the mock fallback still needs the
+   approved fail-closed change in trading modes.
 4. **News validation was revised before the freeze:** the two-source rule had
    already been changed by DS on 21 August, the early IBKR zero-coverage claim
    was retracted, and 10 September probes left live API access unresolved.
