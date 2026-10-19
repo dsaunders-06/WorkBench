@@ -39,6 +39,7 @@ _REVISED_HOLDINGS = (
     *_HOLDINGS[1:],
 )
 _BOQ_RECOVERY_REF = "24b3e1b783ef4066b6a8329e4d3700c4"
+_APPROVED_REVISED_SHA256 = "acc578fa5df3bf65a6f9372a796d860a8dc500b686a4ceced50423db6a963978"
 _TARGET_PRICES = {
     "BOQ.AX": "7.05",
     "ANZ.AX": "41.24",
@@ -117,7 +118,10 @@ def order_list_sha256(actions: list[dict[str, Any]]) -> str:
 def require_action_list(actions: list[dict[str, Any]]) -> str:
     if actions != revised_draft_actions():
         raise ValueError("order list differs from the post-halt five-holding draft")
-    return order_list_sha256(actions)
+    digest = order_list_sha256(actions)
+    if digest != _APPROVED_REVISED_SHA256:
+        raise ValueError("order list differs from DS's approved SHA-256")
+    return digest
 
 
 def expected_inventory(
@@ -159,14 +163,18 @@ def expected_inventory(
                     "order_id": order_id,
                     "perm_id": perm_id,
                     "client_id": 1,
-                    "order_ref": _BOQ_RECOVERY_REF if revised and symbol == "BOQ.AX" else "",
+                    "order_ref": (
+                        _BOQ_RECOVERY_REF if revised and symbol == _REVISED_HOLDINGS[0][0] else ""
+                    ),
                     "action": "SELL",
                     "order_type": "LMT" if role == "target" else "STP",
                     "quantity": quantity,
                     "aux_price": "0" if role == "target" else price,
                     "limit_price": price if role == "target" else "0",
                     "tif": "GTC",
-                    "oca_group": "" if revised and symbol == "BOQ.AX" else _OCA_GROUPS[symbol],
+                    "oca_group": (
+                        "" if revised and symbol == _REVISED_HOLDINGS[0][0] else _OCA_GROUPS[symbol]
+                    ),
                     "parent_id": 0,
                     "status": status,
                 }
@@ -322,8 +330,10 @@ class GuardedIBClient:
         }
     )
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, *, verify_only: bool = False) -> None:
         self.client = client
+        self.verify_only = verify_only
+        self.violations: list[str] = []
 
     def require_du(self) -> None:
         accounts = list(self.client.managedAccounts())
@@ -334,6 +344,20 @@ class GuardedIBClient:
         target = getattr(self.client, name)
         if not callable(target) or name in {"connectAsync", "disconnect", "managedAccounts"}:
             return target
+        if self.verify_only and name in {
+            "placeOrder",
+            "cancelOrder",
+            "reqGlobalCancel",
+            "placeOrderAsync",
+            "cancelOrderAsync",
+        }:
+
+            def no_write(*args: Any, **kwargs: Any) -> Any:
+                self.require_du()
+                self.violations.append(name)
+                raise ValueError(f"Gateway write forbidden in verify-only mode: {name}")
+
+            return no_write
         if name in self._DENIED or name.startswith(("reqMktData", "reqHistoricalData", "reqTick")):
 
             def denied(*args: Any, **kwargs: Any) -> Any:
@@ -345,6 +369,8 @@ class GuardedIBClient:
             "cancelOrder",
             "qualifyContractsAsync",
             "accountSummaryAsync",
+            "positions",
+            "portfolio",
         }:
 
             def checked(*args: Any, **kwargs: Any) -> Any:
@@ -353,6 +379,50 @@ class GuardedIBClient:
 
             return checked
         return target
+
+
+class VerifyOnlyBroker:
+    """A zero-action OMS broker; every order or cancellation is a halt."""
+
+    def __init__(self, broker: Any) -> None:
+        self.broker = broker
+        self.violations: list[str] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.broker, name)
+
+    async def place_order(self, order: Any) -> Any:
+        self.violations.append("place_order")
+        raise ValueError("order transmission forbidden in verify-only mode")
+
+    async def cancel_order(self, order_id: str) -> Any:
+        self.violations.append("cancel_order")
+        raise ValueError("cancellation forbidden in verify-only mode")
+
+    async def modify_order(self, order_id: str, **changes: object) -> Any:
+        self.violations.append("modify_order")
+        raise ValueError("order modification forbidden in verify-only mode")
+
+    async def open_orders(self) -> list[Any]:
+        orders = await self.broker.open_orders()
+        symbol, _, quantity, _, _, order_id, perm_id, price = _REVISED_HOLDINGS[0]
+        matching = [order for order in orders if order.symbol == symbol]
+        if len(matching) != 1:
+            raise ValueError("recovery holding does not have exactly one protective stop")
+        stop = matching[0]
+        if (
+            stop.broker_order_id != order_id
+            or stop.perm_id != perm_id
+            or stop.order_type != "STP"
+            or stop.side != "sell"
+            or stop.status not in {"Submitted", "PreSubmitted"}
+            or Decimal(str(stop.quantity)) != quantity
+            or Decimal(str(stop.total_quantity)) != quantity
+            or Decimal(str(stop.stop_price)) != Decimal(price)
+            or stop.oca_group
+        ):
+            raise ValueError("protective stop differs from approved recovery")
+        return orders
 
 
 def position_row(position: Any) -> dict[str, Any]:
@@ -791,22 +861,173 @@ def _entry_evidence(data_dir: Path) -> dict[str, Any]:
 
 
 def require_boq_recovery_identity(data_dir: Path) -> None:
-    """Refuse a future close until the durable 727 record has its broker permId."""
+    """Refuse a future close until the approved durable leg has its broker permId."""
+    symbol, con_id, _, _, _, order_id, perm_id, _ = _REVISED_HOLDINGS[0]
     pending = json.loads((data_dir / "ib_pending_legs.json").read_text(encoding="utf-8"))
     matches = [leg for leg in pending["legs"] if leg["order_ref"] == _BOQ_RECOVERY_REF]
     if len(matches) != 1 or any(
         matches[0].get(key) != value
         for key, value in {
-            "symbol": "BOQ.AX",
+            "symbol": symbol,
             "account": ACCOUNT,
-            "con_id": 11470910,
+            "con_id": con_id,
             "client_id": 1,
-            "broker_order_id": 727,
-            "perm_id": 255153930,
+            "broker_order_id": order_id,
+            "perm_id": perm_id,
+            "role": "primary",
             "resolved": True,
         }.items()
     ):
-        raise ValueError("BOQ recovery stop identity did not resolve to permId 255153930")
+        raise ValueError("recovery stop identity did not resolve to the approved permId")
+
+
+def require_verify_window(session: str | None, now: datetime) -> None:
+    """The approved reconciliation and reset are pre-open Wednesday steps."""
+    if session != "2026-10-21":
+        raise ValueError("verify-only mode is pinned to Wednesday 21 October")
+    require_session(session, now)
+    if not (time(9, 0) <= now.astimezone(SYDNEY).time().replace(tzinfo=None) < time(10, 0)):
+        raise ValueError("verify-only mode requires 09:00–10:00 Sydney before the open")
+
+
+async def verify_recovery_plan(
+    adapter: Any,
+    client: GuardedIBClient,
+    settings: Settings,
+    *,
+    window_check: Callable[[], None] | None = None,
+) -> dict[str, Any]:
+    """Resolve only the approved identity and an already protected OMS plan."""
+    from qat.domain.bus import EventBus
+    from qat.domain.oms.exit_recovery import ExitRecoveryStore
+    from qat.domain.oms.oms import OMS
+    from qat.domain.risk_engine.engine import RiskEngine
+    from qat.domain.risk_engine.kill_switch import KillSwitch
+
+    if not adapter.read_only or not client.verify_only:
+        raise ValueError("verify-only requires both read-only IBKR and the no-write client")
+    client.require_du()
+    data_dir = Path(settings.data_dir)
+    symbol = _REVISED_HOLDINGS[0][0]
+    remaining = tuple(row[0] for row in _REVISED_HOLDINGS)
+    before = await capture_live_inventory(client)
+    require_inventory(before, remaining, revised=True)
+    plans = ExitRecoveryStore(data_dir / "exit_recovery.json").plans
+    if set(plans) != {symbol}:
+        raise ValueError("the exit-recovery plan is missing or another plan exists")
+    plan = plans[symbol]
+    if (
+        plan.stage != "working"
+        or Decimal(str(plan.quantity)) != _REVISED_HOLDINGS[0][2]
+        or Decimal(str(plan.stop_price)) != Decimal(_REVISED_HOLDINGS[0][7])
+    ):
+        raise ValueError("exit-recovery plan differs from approved protection")
+    kill_switch = KillSwitch(settings.data_dir)
+    if not kill_switch.tripped:
+        raise ValueError("the recorded kill switch is not tripped; reset state needs review")
+
+    if window_check is not None:
+        window_check()
+    reason = await adapter.pending_identity_reason(symbol)
+    if reason is not None:
+        raise ValueError(reason)
+    require_boq_recovery_identity(data_dir)
+    require_inventory(await capture_live_inventory(client), remaining, revised=True)
+    broker = VerifyOnlyBroker(adapter)
+    bus = EventBus()
+    oms = OMS(
+        broker,
+        RiskEngine(bus, kill_switch, settings=settings),
+        kill_switch,
+        bus=bus,
+        settings=settings,
+    )
+    if not oms.exit_protection_pending(symbol):
+        raise ValueError("exit-recovery plan was lost before verification")
+    if window_check is not None:
+        window_check()
+    await oms.recover_exit_protection()
+    if broker.violations or client.violations:
+        raise ValueError(
+            f"verify-only attempted a broker write: {broker.violations + client.violations}"
+        )
+    if oms.exit_protection_pending(symbol):
+        raise ValueError("exit-recovery plan remains; protection was not confirmed")
+    if not kill_switch.tripped:
+        raise ValueError("verify-only unexpectedly cleared the kill switch")
+    after = await capture_live_inventory(client)
+    require_inventory(after, remaining, revised=True)
+    return {"before_inventory": before, "after_inventory": after, "kill_switch_tripped": True}
+
+
+async def run_verify_only(
+    settings: Settings,
+    actions: list[dict[str, Any]],
+    *,
+    session: str,
+    approval_date: str,
+    out_dir: Path,
+) -> dict[str, Any]:
+    """Pre-open paper verification; the Gateway and OMS have no write permission."""
+    from ib_async import IB
+
+    from qat.data.broker.ib_adapter import IBAdapter
+    from qat.domain.bus import EventBus
+
+    require_settings(settings)
+    digest = require_action_list(actions)
+    if approval_date != "2026-10-19":
+        raise ValueError("verify-only requires the 19 October DS approval")
+    require_verify_window(session, datetime.now(SYDNEY))
+    out_dir = out_dir.resolve()
+    _outside_git(out_dir)
+    if out_dir.exists():
+        raise FileExistsError(f"verify-only evidence directory already exists: {out_dir}")
+    out_dir.mkdir(parents=True)
+    client = GuardedIBClient(IB(), verify_only=True)
+    adapter = IBAdapter(client, EventBus(), settings=settings, read_only=True)
+    data_dir = Path(settings.data_dir)
+    before_hashes = _store_hashes(data_dir)
+    report: dict[str, Any] = {
+        "status": "halted",
+        "session": session,
+        "approval_date": approval_date,
+        "order_list_sha256": digest,
+        "store_hashes_before": before_hashes,
+    }
+    try:
+        await adapter.connect()
+        report.update(
+            await verify_recovery_plan(
+                adapter,
+                client,
+                settings,
+                window_check=lambda: require_verify_window(session, datetime.now(SYDNEY)),
+            )
+        )
+        changes = _changed(before_hashes, _store_hashes(data_dir))
+        if (
+            changes["added"]
+            or changes["removed"]
+            or set(changes["changed"]) - {"ib_pending_legs.json", "exit_recovery.json"}
+        ):
+            raise ValueError(f"verify-only changed an unapproved store: {changes}")
+        report["status"] = "verified"
+    except Exception as exc:
+        report["reason"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        await adapter.disconnect()
+        report["store_hashes_after"] = _store_hashes(data_dir)
+        report["store_diff"] = _changed(before_hashes, report["store_hashes_after"])
+        report["gateway_write_attempts"] = client.violations
+        report["finished_sydney"] = datetime.now(SYDNEY).isoformat()
+        output = out_dir / "verify-only.json"
+        output.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        (out_dir / "verify-only.sha256").write_text(
+            f"{hashlib.sha256(output.read_bytes()).hexdigest()}  verify-only.json\n",
+            encoding="ascii",
+        )
+    return report
 
 
 async def execute_live(
@@ -1261,6 +1482,7 @@ def main() -> int:
     parser.add_argument("--print-draft", action="store_true")
     parser.add_argument("--rehearse", action="store_true")
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--source-snapshot", type=Path)
     parser.add_argument("--broker-fixture", type=Path)
     parser.add_argument("--fixture-sha256")
@@ -1306,20 +1528,34 @@ def main() -> int:
         )
         print(f"Rehearsal {report['status']}: {report.get('reason', 'all five closes checked')}")
         return int(report["status"] != "completed")
-    if not arguments.execute or arguments.order_list is None:
-        parser.error("execution refused: supply --execute and an approved order list")
+    if arguments.execute == arguments.verify_only or arguments.order_list is None:
+        parser.error("supply exactly one of --execute or --verify-only and an approved order list")
     actions = load_actions(arguments.order_list)
     digest = order_list_sha256(actions)
     if arguments.approved_sha256 != digest:
         parser.error("execution refused: approved order-list hash does not match")
     require_settings(Settings())
     require_session(arguments.session, datetime.now(SYDNEY))
-    if not arguments.start or not arguments.end:
+    if arguments.execute and (not arguments.start or not arguments.end):
         parser.error("execution refused: start and end must be supplied explicitly")
+    if arguments.verify_only and (arguments.start or arguments.end):
+        parser.error("verify-only does not accept an execution window")
     if arguments.approval_date is None or arguments.out_dir is None:
         parser.error("execution refused: approval date and outside-Git evidence directory required")
     if date.fromisoformat(arguments.approval_date) > date.fromisoformat(arguments.session):
         parser.error("approval date cannot follow the session")
+    if arguments.verify_only:
+        report = asyncio.run(
+            run_verify_only(
+                Settings(),
+                actions,
+                session=arguments.session,
+                approval_date=arguments.approval_date,
+                out_dir=arguments.out_dir,
+            )
+        )
+        print(f"Verify-only run {report['status']}: {report.get('reason', 'plan confirmed')}")
+        return int(report["status"] != "verified")
     report = asyncio.run(
         execute_live(
             Settings(),

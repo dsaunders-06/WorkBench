@@ -6,6 +6,7 @@ import ast
 import importlib.util
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace as NS
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -267,6 +268,272 @@ def test_boq_pending_leg_must_resolve_to_observed_permanent_identity(tmp_path: P
         module.require_boq_recovery_identity(tmp_path)
     assert store.resolve_match(ref, "DUQ200898", 11470910, 1, perm_id=255153930)
     module.require_boq_recovery_identity(tmp_path)
+
+
+def _verify_only_case(tmp_path: Path):  # type: ignore[no-untyped-def]
+    from qat.config import Settings
+    from qat.data.broker.ib_adapter import IBAdapter
+    from qat.data.broker.pending_legs import PendingLegStore
+    from qat.domain.bus import EventBus
+    from qat.domain.oms.exit_recovery import ExitRecovery, ExitRecoveryStore
+    from qat.domain.risk_engine.kill_switch import KillSwitch
+
+    module = _load()
+    # A synthetic book exercises the live code path without adding account or
+    # order identities from the paper account to a new public commit.
+    module.ACCOUNT = "DU000000"
+    module._REVISED_HOLDINGS = (("TST.AX", 123456, 100, 0, 0, 71, 7001, "10.50"),)
+    module._BOQ_RECOVERY_REF = "00000000000000000000000000000001"
+    module._TARGET_PRICES["TST.AX"] = "11.50"
+    expected = module.expected_inventory(revised=True)
+    settings = Settings(
+        _env_file=None,
+        broker="ibkr",
+        market="ASX",
+        trading_mode="paper",
+        execution_mode="recommend",
+        delever_sweep_enabled=False,
+        ibkr_account_id=module.ACCOUNT,
+        ibkr_client_id=1,
+        ibkr_host="127.0.0.1",
+        ibkr_port=4002,
+        data_dir=str(tmp_path),
+    )
+
+    class Gateway:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self.held = [
+                NS(
+                    account=row["account"],
+                    contract=NS(
+                        symbol=row["symbol"],
+                        conId=row["con_id"],
+                        secType=row["sec_type"],
+                        exchange=row["exchange"],
+                        primaryExchange="ASX",
+                        currency=row["currency"],
+                    ),
+                    position=float(row["quantity"]),
+                    avgCost=1.0,
+                )
+                for row in expected["positions"]
+            ]
+            self.open = []
+            for row in expected["orders"]:
+                contract = NS(
+                    symbol=row["symbol"],
+                    conId=row["con_id"],
+                    secType=row["sec_type"],
+                    exchange=row["exchange"],
+                    currency=row["currency"],
+                )
+                order = NS(
+                    account=row["account"],
+                    orderId=row["order_id"],
+                    permId=row["perm_id"],
+                    clientId=row["client_id"],
+                    orderRef=row["order_ref"],
+                    action=row["action"],
+                    orderType=row["order_type"],
+                    totalQuantity=float(row["quantity"]),
+                    auxPrice=float(row["aux_price"]),
+                    lmtPrice=float(row["limit_price"]),
+                    tif=row["tif"],
+                    ocaGroup=row["oca_group"],
+                    parentId=row["parent_id"],
+                    parentPermId=0,
+                )
+                status = NS(
+                    status=row["status"],
+                    remaining=float(row["quantity"]),
+                    whyHeld="",
+                )
+                self.open.append(NS(contract=contract, order=order, orderStatus=status))
+
+        def managedAccounts(self) -> list[str]:
+            return [module.ACCOUNT]
+
+        async def reqPositionsAsync(self) -> None:
+            return None
+
+        def positions(self) -> list[object]:
+            return self.held
+
+        async def reqAllOpenOrdersAsync(self) -> list[object]:
+            return self.open
+
+        def placeOrder(self, *_args: object) -> None:
+            self.sent.append("place")
+
+        def cancelOrder(self, *_args: object) -> None:
+            self.sent.append("cancel")
+
+    gateway = Gateway()
+    client = module.GuardedIBClient(gateway, verify_only=True)
+    recovery = module._REVISED_HOLDINGS[0]
+    pending = PendingLegStore(tmp_path / "ib_pending_legs.json")
+    pending.begin(
+        module._BOQ_RECOVERY_REF,
+        recovery[0],
+        "primary",
+        module.ACCOUNT,
+        recovery[1],
+        module._BOQ_RECOVERY_REF,
+        1,
+    )
+    pending.observe(module._BOQ_RECOVERY_REF, broker_order_id=recovery[5])
+    ExitRecoveryStore(tmp_path / "exit_recovery.json").put(
+        ExitRecovery(recovery[0], float(recovery[2]), float(recovery[7]), "working", True)
+    )
+    KillSwitch(tmp_path).trip("paper close halted")
+    adapter = IBAdapter(client, EventBus(), settings=settings, read_only=True)
+    for holding, position in zip(module._REVISED_HOLDINGS, gateway.held, strict=True):
+        adapter._qualified_contracts[holding[0]] = position.contract
+    return module, gateway, client, adapter, settings
+
+
+@pytest.mark.asyncio
+async def test_verify_only_resolves_identity_and_clears_only_confirmed_plan(tmp_path: Path) -> None:
+    from qat.data.broker.pending_legs import PendingLegStore
+    from qat.domain.oms.exit_recovery import ExitRecoveryStore
+    from qat.domain.risk_engine.kill_switch import KillSwitch
+
+    module, gateway, client, adapter, settings = _verify_only_case(tmp_path)
+    report = await module.verify_recovery_plan(adapter, client, settings)
+    recovery = module._REVISED_HOLDINGS[0]
+    leg = PendingLegStore(tmp_path / "ib_pending_legs.json").legs[module._BOQ_RECOVERY_REF]
+    assert (leg.broker_order_id, leg.perm_id, leg.resolved) == (recovery[5], recovery[6], True)
+    assert ExitRecoveryStore(tmp_path / "exit_recovery.json").plans == {}
+    assert KillSwitch(tmp_path).tripped
+    assert report["before_inventory"] == report["after_inventory"]
+    assert gateway.sent == [] and client.violations == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "difference", ["absent", "duplicate", "pending_cancel", "quantity", "price"]
+)
+async def test_verify_only_keeps_plan_and_halt_if_stop_differs(
+    tmp_path: Path, difference: str
+) -> None:
+    from qat.data.broker.pending_legs import PendingLegStore
+    from qat.domain.oms.exit_recovery import ExitRecoveryStore
+    from qat.domain.risk_engine.kill_switch import KillSwitch
+
+    module, gateway, client, adapter, settings = _verify_only_case(tmp_path)
+    symbol = module._REVISED_HOLDINGS[0][0]
+    recovery = next(
+        trade for trade in gateway.open if trade.contract.symbol == symbol.removesuffix(".AX")
+    )
+    if difference == "absent":
+        gateway.open.remove(recovery)
+    elif difference == "duplicate":
+        gateway.open.append(recovery)
+    elif difference == "pending_cancel":
+        recovery.orderStatus.status = "PendingCancel"
+    elif difference == "quantity":
+        recovery.order.totalQuantity -= 1
+    else:
+        recovery.order.auxPrice += 0.01
+    with pytest.raises(ValueError):
+        await module.verify_recovery_plan(adapter, client, settings)
+    assert symbol in ExitRecoveryStore(tmp_path / "exit_recovery.json").plans
+    assert KillSwitch(tmp_path).tripped
+    assert (
+        not PendingLegStore(tmp_path / "ib_pending_legs.json")
+        .legs[module._BOQ_RECOVERY_REF]
+        .resolved
+    )
+    assert gateway.sent == [] and client.violations == []
+
+
+@pytest.mark.asyncio
+async def test_verify_only_denies_every_order_and_cancellation(tmp_path: Path) -> None:
+    from qat.data.broker.adapter import Order
+
+    module, gateway, client, adapter, _ = _verify_only_case(tmp_path)
+    guard = module.VerifyOnlyBroker(adapter)
+    with pytest.raises(ValueError, match="forbidden"):
+        await guard.place_order(Order(module._REVISED_HOLDINGS[0][0], "sell", 1, "test"))
+    with pytest.raises(ValueError, match="forbidden"):
+        await guard.cancel_order("test")
+    with pytest.raises(ValueError, match="forbidden"):
+        await guard.modify_order("test", quantity=1)
+    with pytest.raises(ValueError, match="forbidden"):
+        client.placeOrder(None, None)
+    with pytest.raises(ValueError, match="forbidden"):
+        client.cancelOrder(1)
+    assert guard.violations == ["place_order", "cancel_order", "modify_order"]
+    assert client.violations == ["placeOrder", "cancelOrder"]
+    assert gateway.sent == []
+
+
+@pytest.mark.asyncio
+async def test_verify_only_halts_if_stop_disappears_after_first_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from qat.domain.oms.exit_recovery import ExitRecoveryStore
+    from qat.domain.risk_engine.kill_switch import KillSwitch
+
+    module, gateway, client, adapter, settings = _verify_only_case(tmp_path)
+    original = gateway.reqAllOpenOrdersAsync
+    reads = 0
+
+    async def disappearing() -> list[object]:
+        nonlocal reads
+        reads += 1
+        if reads == 4:
+            symbol = module._REVISED_HOLDINGS[0][0].removesuffix(".AX")
+            gateway.open = [row for row in gateway.open if row.contract.symbol != symbol]
+        return await original()
+
+    monkeypatch.setattr(gateway, "reqAllOpenOrdersAsync", disappearing)
+    with pytest.raises(ValueError, match="plan remains"):
+        await module.verify_recovery_plan(adapter, client, settings)
+    assert (
+        module._REVISED_HOLDINGS[0][0] in ExitRecoveryStore(tmp_path / "exit_recovery.json").plans
+    )
+    assert KillSwitch(tmp_path).tripped
+    assert gateway.sent == [] and client.violations == []
+
+
+@pytest.mark.asyncio
+async def test_verify_only_rechecks_window_before_clearing_plan(tmp_path: Path) -> None:
+    from qat.domain.oms.exit_recovery import ExitRecoveryStore
+    from qat.domain.risk_engine.kill_switch import KillSwitch
+
+    module, gateway, client, adapter, settings = _verify_only_case(tmp_path)
+    checks = 0
+
+    def window_check() -> None:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise ValueError("pre-open window closed")
+
+    with pytest.raises(ValueError, match="pre-open window closed"):
+        await module.verify_recovery_plan(adapter, client, settings, window_check=window_check)
+    assert (
+        module._REVISED_HOLDINGS[0][0] in ExitRecoveryStore(tmp_path / "exit_recovery.json").plans
+    )
+    assert KillSwitch(tmp_path).tripped
+    assert gateway.sent == []
+
+
+@pytest.mark.parametrize(
+    "hour,minute,allowed", [(8, 59, False), (9, 0, True), (9, 59, True), (10, 0, False)]
+)
+def test_verify_only_has_explicit_preopen_window(hour: int, minute: int, allowed: bool) -> None:
+    module = _load()
+    now = datetime(2026, 10, 21, hour, minute, tzinfo=ZoneInfo("Australia/Sydney"))
+    if allowed:
+        module.require_verify_window("2026-10-21", now)
+    else:
+        with pytest.raises(ValueError):
+            module.require_verify_window("2026-10-21", now)
+    with pytest.raises(ValueError, match="Wednesday"):
+        module.require_verify_window("2026-10-20", now.replace(day=20))
 
 
 @pytest.mark.asyncio
