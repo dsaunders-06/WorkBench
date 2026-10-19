@@ -126,6 +126,105 @@ async def test_pending_target_cancel_leaves_the_stop_in_place(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_oca_partner_disappears_with_target_and_is_not_cancelled_again(tmp_path):
+    class OcaBroker(ExitBroker):
+        async def cancel_order(self, order_id):
+            result = await super().cancel_order(order_id)
+            if order_id == "target":
+                self.legs = []
+            return result
+
+    broker = OcaBroker()
+    broker.legs = [replace(leg, oca_group="BOQ-OCA") for leg in broker.legs]
+    oms = make_oms(broker, tmp_path)
+    released = await oms._release_protective_legs("AAA", 100.0, "manual_close")
+    assert released is True
+    assert broker.cancelled == ["target"]
+
+
+@pytest.mark.asyncio
+async def test_pending_target_settles_with_oca_partner_before_sell(tmp_path):
+    class DelayedOcaBroker(ExitBroker):
+        def __init__(self):
+            super().__init__()
+            self.after_cancel_reads = 0
+
+        async def cancel_order(self, order_id):
+            result = await super().cancel_order(order_id)
+            if order_id == "target":
+                self.legs = [
+                    replace(leg, status="PendingCancel") if leg.order_id == "target" else leg
+                    for leg in self.legs
+                ]
+            return result
+
+        async def open_orders(self):
+            if "target" in self.cancelled:
+                self.after_cancel_reads += 1
+                if self.after_cancel_reads >= 2:
+                    self.legs = []
+            return await super().open_orders()
+
+    broker = DelayedOcaBroker()
+    broker.pending_target = True
+    broker.legs = [replace(leg, oca_group="BOQ-OCA") for leg in broker.legs]
+    oms = make_oms(broker, tmp_path)
+    released = await oms._release_protective_legs("AAA", 100.0, "manual_close")
+    assert released is True
+    assert broker.cancelled == ["target"]
+
+
+@pytest.mark.asyncio
+async def test_boq_replay_matches_order_id_zero_rows_by_perm_id(tmp_path):
+    class BoqReplayBroker(ExitBroker):
+        def __init__(self):
+            super().__init__()
+            self.legs = [
+                replace(
+                    self.legs[0],
+                    order_id="1216552513",
+                    broker_order_id=153,
+                    perm_id=1216552513,
+                    oca_group="1216552511",
+                ),
+                replace(
+                    self.legs[1],
+                    order_id="1216552512",
+                    broker_order_id=152,
+                    perm_id=1216552512,
+                    oca_group="1216552511",
+                ),
+            ]
+            self.read_after_cancel = 0
+
+        async def cancel_order(self, order_id):
+            assert order_id == "1216552512"
+            self.cancelled.append(order_id)
+            return Order("AAA", "sell", 100, order_id, status="cancelled")
+
+        async def open_orders(self):
+            if not self.cancelled:
+                return list(self.legs)
+            self.read_after_cancel += 1
+            if self.read_after_cancel == 1:
+                return [
+                    (
+                        replace(leg, order_id="0", status="PendingCancel")
+                        if leg.perm_id == 1216552512
+                        else leg
+                    )
+                    for leg in self.legs
+                ]
+            return [replace(leg, order_id="0", status="Cancelled") for leg in self.legs]
+
+    broker = BoqReplayBroker()
+    oms = make_oms(broker, tmp_path)
+    assert await oms._release_protective_legs("AAA", 100, "manual_close")
+    assert broker.cancelled == ["1216552512"]
+    assert broker.read_after_cancel == 2
+
+
+@pytest.mark.asyncio
 async def test_halt_after_cancellation_allows_only_captured_stop_restoration(tmp_path):
     broker = ExitBroker()
     oms = make_oms(broker, tmp_path)

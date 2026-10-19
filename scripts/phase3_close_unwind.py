@@ -32,6 +32,13 @@ _HOLDINGS = (
     ("ASX.AX", 4354508, 1314, 157, 1216552515, 158, 1216552516, "51.18"),
     ("TAH.AX", 4506346, 64229, 500, 579188642, 501, 579188643, "0.80"),
 )
+# The 16 October book above remains the historical offline rehearsal fixture.
+# A future live run must use the post-halt 19 October BOQ stop identity.
+_REVISED_HOLDINGS = (
+    ("BOQ.AX", 11470910, 13586, 0, 0, 727, 255153930, "6.07"),
+    *_HOLDINGS[1:],
+)
+_BOQ_RECOVERY_REF = "24b3e1b783ef4066b6a8329e4d3700c4"
 _TARGET_PRICES = {
     "BOQ.AX": "7.05",
     "ANZ.AX": "41.24",
@@ -50,12 +57,23 @@ _OCA_GROUPS = {
 
 def monday_draft_actions() -> list[dict[str, Any]]:
     """Pinned 16 October evidence, for a fresh 19 October approval decision."""
+    return _draft_actions(_HOLDINGS)
+
+
+def revised_draft_actions() -> list[dict[str, Any]]:
+    """Post-halt draft; no execution until DS approves its exact hash."""
+    return _draft_actions(_REVISED_HOLDINGS)
+
+
+def _draft_actions(holdings: tuple[tuple[Any, ...], ...]) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    for symbol, con_id, quantity, target, target_perm, stop, stop_perm, stop_price in _HOLDINGS:
+    for symbol, con_id, quantity, target, target_perm, stop, stop_perm, stop_price in holdings:
         for role, order_id, perm_id in (
             ("target", target, target_perm),
             ("stop", stop, stop_perm),
         ):
+            if not perm_id:
+                continue
             result.append(
                 {
                     "symbol": symbol,
@@ -97,17 +115,20 @@ def order_list_sha256(actions: list[dict[str, Any]]) -> str:
 
 
 def require_action_list(actions: list[dict[str, Any]]) -> str:
-    if actions != monday_draft_actions():
-        raise ValueError("order list differs from the pinned five-holding draft")
+    if actions != revised_draft_actions():
+        raise ValueError("order list differs from the post-halt five-holding draft")
     return order_list_sha256(actions)
 
 
-def expected_inventory(remaining: tuple[str, ...] | None = None) -> dict[str, list[dict[str, Any]]]:
+def expected_inventory(
+    remaining: tuple[str, ...] | None = None, *, revised: bool = False
+) -> dict[str, list[dict[str, Any]]]:
     """The complete approved account book before the next close."""
-    allowed = {row[0] for row in _HOLDINGS} if remaining is None else set(remaining)
+    holdings = _REVISED_HOLDINGS if revised else _HOLDINGS
+    allowed = {row[0] for row in holdings} if remaining is None else set(remaining)
     positions: list[dict[str, Any]] = []
     orders: list[dict[str, Any]] = []
-    for symbol, con_id, quantity, target, target_perm, stop, stop_perm, stop_price in _HOLDINGS:
+    for symbol, con_id, quantity, target, target_perm, stop, stop_perm, stop_price in holdings:
         if symbol not in allowed:
             continue
         positions.append(
@@ -125,6 +146,8 @@ def expected_inventory(remaining: tuple[str, ...] | None = None) -> dict[str, li
             ("target", target, target_perm, _TARGET_PRICES[symbol], "Submitted"),
             ("stop", stop, stop_perm, stop_price, "PreSubmitted"),
         ):
+            if not perm_id:
+                continue
             orders.append(
                 {
                     "account": ACCOUNT,
@@ -136,14 +159,14 @@ def expected_inventory(remaining: tuple[str, ...] | None = None) -> dict[str, li
                     "order_id": order_id,
                     "perm_id": perm_id,
                     "client_id": 1,
-                    "order_ref": "",
+                    "order_ref": _BOQ_RECOVERY_REF if revised and symbol == "BOQ.AX" else "",
                     "action": "SELL",
                     "order_type": "LMT" if role == "target" else "STP",
                     "quantity": quantity,
                     "aux_price": "0" if role == "target" else price,
                     "limit_price": price if role == "target" else "0",
                     "tif": "GTC",
-                    "oca_group": _OCA_GROUPS[symbol],
+                    "oca_group": "" if revised and symbol == "BOQ.AX" else _OCA_GROUPS[symbol],
                     "parent_id": 0,
                     "status": status,
                 }
@@ -171,8 +194,10 @@ def _row_key(row: dict[str, Any], fields: tuple[str, ...]) -> tuple[Any, ...]:
     return tuple(result)
 
 
-def require_inventory(snapshot: dict[str, Any], remaining: tuple[str, ...]) -> None:
-    expected = expected_inventory(remaining)
+def require_inventory(
+    snapshot: dict[str, Any], remaining: tuple[str, ...], *, revised: bool = False
+) -> None:
+    expected = expected_inventory(remaining, revised=revised)
     try:
         for section, fields in (("positions", _POSITION_FIELDS), ("orders", _ORDER_FIELDS)):
             actual_rows = snapshot[section]
@@ -188,9 +213,12 @@ def require_inventory(snapshot: dict[str, Any], remaining: tuple[str, ...]) -> N
 class ApprovedBroker:
     """Permit only the one approved close currently being reconciled."""
 
-    def __init__(self, broker: Any, window_check: Callable[[], None] | None = None) -> None:
+    def __init__(
+        self, broker: Any, window_check: Callable[[], None] | None = None, *, revised: bool = False
+    ) -> None:
         self.broker = broker
         self.window_check = window_check
+        self.holdings = _REVISED_HOLDINGS if revised else _HOLDINGS
         self.symbol: str | None = None
         self.cancel_index = 0
         self.sell_sent = False
@@ -204,7 +232,7 @@ class ApprovedBroker:
     def arm(self, symbol: str) -> None:
         if self.window_check is not None:
             self.window_check()
-        if self.symbol is not None or symbol not in {row[0] for row in _HOLDINGS}:
+        if self.symbol is not None or symbol not in {row[0] for row in self.holdings}:
             raise ValueError("another close is active or symbol is unapproved")
         self.symbol = symbol
         self.cancel_index = 0
@@ -219,24 +247,33 @@ class ApprovedBroker:
         raise ValueError(reason)
 
     async def cancel_order(self, order_id: str) -> Any:
-        row = next((item for item in _HOLDINGS if item[0] == self.symbol), None)
-        if row is None or self.cancel_index >= 2:
+        row = next((item for item in self.holdings if item[0] == self.symbol), None)
+        if row is None or self.cancel_index >= (2 if row[4] else 1):
             self._deny("cancellation outside the approved close")
         assert row is not None
-        expected = (str(row[4]), str(row[6]))[self.cancel_index]
+        cancel_ids = tuple(str(identity) for identity in (row[4], row[6]) if identity)
+        expected = cancel_ids[self.cancel_index]
         if str(order_id) != expected:
             self._deny(f"unapproved cancellation {order_id}; expected {expected}")
         result = await self.broker.cancel_order(order_id)
         self.cancel_index += 1
         return result
 
+    def acknowledge_oca_cancelled_leg(self, order_id: str) -> None:
+        """Count a verified OCA sibling cancellation without sending a request."""
+        row = next((item for item in self.holdings if item[0] == self.symbol), None)
+        if row is None or not row[4] or self.cancel_index != 1 or str(order_id) != str(row[6]):
+            self._deny("unapproved OCA partner acknowledgement")
+        self.cancel_index += 1
+
     async def place_order(self, order: Any) -> Any:
-        row = next((item for item in _HOLDINGS if item[0] == self.symbol), None)
+        row = next((item for item in self.holdings if item[0] == self.symbol), None)
         if row is None or order.symbol != self.symbol or order.side != "sell":
             self._deny("order outside the approved close")
         assert row is not None
         if order.order_type == "market":
-            if self.cancel_index != 2 or self.sell_sent or order.quantity != row[2]:
+            required_cancels = 2 if row[4] else 1
+            if self.cancel_index != required_cancels or self.sell_sent or order.quantity != row[2]:
                 self._deny("market sell differs from the approved full close")
             self.sell_sent = True
             self.last_market_app_id = str(order.order_id)
@@ -753,6 +790,25 @@ def _entry_evidence(data_dir: Path) -> dict[str, Any]:
     return loaded
 
 
+def require_boq_recovery_identity(data_dir: Path) -> None:
+    """Refuse a future close until the durable 727 record has its broker permId."""
+    pending = json.loads((data_dir / "ib_pending_legs.json").read_text(encoding="utf-8"))
+    matches = [leg for leg in pending["legs"] if leg["order_ref"] == _BOQ_RECOVERY_REF]
+    if len(matches) != 1 or any(
+        matches[0].get(key) != value
+        for key, value in {
+            "symbol": "BOQ.AX",
+            "account": ACCOUNT,
+            "con_id": 11470910,
+            "client_id": 1,
+            "broker_order_id": 727,
+            "perm_id": 255153930,
+            "resolved": True,
+        }.items()
+    ):
+        raise ValueError("BOQ recovery stop identity did not resolve to permId 255153930")
+
+
 async def execute_live(
     settings: Settings,
     actions: list[dict[str, Any]],
@@ -786,6 +842,7 @@ async def execute_live(
     guard = ApprovedBroker(
         adapter,
         window_check=lambda: require_arm_window(session, start, end, datetime.now(SYDNEY)),
+        revised=True,
     )
     report: dict[str, Any] = {
         "status": "halted",
@@ -799,10 +856,17 @@ async def execute_live(
     try:
         await adapter.connect()
         client.require_du()
-        remaining = tuple(row[0] for row in _HOLDINGS)
+        # A restart alone does not resolve the durable 727 record. Reconcile
+        # it against IBKR's orderRef/account/contract/client/permId identity
+        # before adopting or cancelling any order.
+        reason = await adapter.pending_identity_reason("BOQ.AX")
+        if reason is not None:
+            raise ValueError(reason)
+        require_boq_recovery_identity(Path(settings.data_dir))
+        remaining = tuple(row[0] for row in _REVISED_HOLDINGS)
         inventory = await capture_live_inventory(client)
         report["snapshots"].append({"stage": "before_start", "inventory": inventory})
-        require_inventory(inventory, remaining)
+        require_inventory(inventory, remaining, revised=True)
         before_entries = _entry_evidence(Path(settings.data_dir))
         before_stores = _store_hashes(Path(settings.data_dir))
         parts = build_close_components(guard, settings, bus=bus)
@@ -821,16 +885,19 @@ async def execute_live(
             raise ValueError("startup did not retire exactly the four stale entry records")
         if set(parts["reconciliation"].adopted) != set(remaining):
             raise ValueError("startup adoption differs from the approved book")
-        if any(parts["bridge"].position_entries()[row[0]].quantity != row[2] for row in _HOLDINGS):
+        if any(
+            parts["bridge"].position_entries()[row[0]].quantity != row[2]
+            for row in _REVISED_HOLDINGS
+        ):
             raise ValueError("startup legacy quantity migration differs from the approved book")
-        require_inventory(await capture_live_inventory(client), remaining)
+        require_inventory(await capture_live_inventory(client), remaining, revised=True)
         report["startup_store_diff"] = _changed(
             before_stores, _store_hashes(Path(settings.data_dir))
         )
-        for symbol, con_id, quantity, _, _, _, _, _ in _HOLDINGS:
+        for symbol, con_id, quantity, _, _, _, _, _ in _REVISED_HOLDINGS:
             inventory = await capture_live_inventory(client)
             report["snapshots"].append({"stage": f"before_{symbol}", "inventory": inventory})
-            require_inventory(inventory, remaining)
+            require_inventory(inventory, remaining, revised=True)
             if parts["kill_switch"].tripped or guard.violations:
                 raise ValueError(f"safety gate active before {symbol}")
             prior_closed = len(parts["ledger"].closed_trades())
@@ -860,7 +927,9 @@ async def execute_live(
                         if row["symbol"] != symbol.removesuffix(".AX")
                     ],
                 }
-                require_inventory(other, tuple(item for item in remaining if item != symbol))
+                require_inventory(
+                    other, tuple(item for item in remaining if item != symbol), revised=True
+                )
                 current_positions = [
                     row
                     for row in inventory["positions"]
@@ -915,7 +984,7 @@ async def execute_live(
             if len(parts["ledger"].closed_trades()) <= prior_closed:
                 raise ValueError(f"{symbol} has no closed-trade row")
             remaining = tuple(item for item in remaining if item != symbol)
-            require_inventory(inventory, remaining)
+            require_inventory(inventory, remaining, revised=True)
             report["closes"].append(
                 {
                     "symbol": symbol,
@@ -1214,7 +1283,7 @@ def main() -> int:
     parser.add_argument("--approval-date")
     arguments = parser.parse_args()
     if arguments.print_draft:
-        actions = monday_draft_actions()
+        actions = revised_draft_actions()
         print(json.dumps(actions, indent=2))
         print(f"SHA-256: {order_list_sha256(actions)}")
         return 0

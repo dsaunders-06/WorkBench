@@ -243,6 +243,10 @@ class RestingOrder:
     # construct a `RestingOrder` with a real, already-populated `quantity`
     # need not also state a total that means nothing for them.
     total_quantity: float = 0.0
+    # Keep both IBKR identities: completed-order callbacks can report orderId
+    # as zero while permId remains the durable identity of the same leg.
+    broker_order_id: int = 0
+    perm_id: int = 0
 
 
 @dataclass(slots=True)

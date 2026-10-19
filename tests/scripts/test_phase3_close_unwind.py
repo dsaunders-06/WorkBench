@@ -221,14 +221,108 @@ def test_only_arm_checks_current_time_window() -> None:
 
 def test_order_list_rejects_extra_or_changed_action() -> None:
     module = _load()
-    actions = module.monday_draft_actions()
+    actions = module.revised_draft_actions()
     module.require_action_list(actions)
+    assert actions[0] == {
+        "symbol": "BOQ.AX",
+        "con_id": 11470910,
+        "action": "CANCEL",
+        "role": "stop",
+        "order_id": 727,
+        "perm_id": 255153930,
+    }
+    assert len(actions) == 19
+    with pytest.raises(ValueError):
+        module.require_action_list(module.monday_draft_actions())
     with pytest.raises(ValueError):
         module.require_action_list([*actions, {"symbol": "BHP", "action": "BUY"}])
     altered = [dict(item) for item in actions]
     altered[0]["order_id"] = 999
     with pytest.raises(ValueError):
         module.require_action_list(altered)
+
+
+def test_revised_inventory_requires_only_recovery_stop_for_boq() -> None:
+    module = _load()
+    expected = module.expected_inventory(revised=True)
+    boq = [order for order in expected["orders"] if order["symbol"] == "BOQ"]
+    assert len(boq) == 1
+    assert boq[0]["order_id"] == 727
+    assert boq[0]["perm_id"] == 255153930
+    assert boq[0]["oca_group"] == ""
+    module.require_inventory(
+        expected, tuple(row[0] for row in module._REVISED_HOLDINGS), revised=True
+    )
+
+
+def test_boq_pending_leg_must_resolve_to_observed_permanent_identity(tmp_path: Path) -> None:
+    from qat.data.broker.pending_legs import PendingLegStore
+
+    module = _load()
+    store = PendingLegStore(tmp_path / "ib_pending_legs.json")
+    ref = "24b3e1b783ef4066b6a8329e4d3700c4"
+    store.begin(ref, "BOQ.AX", "primary", "DUQ200898", 11470910, ref, 1)
+    store.observe(ref, broker_order_id=727)
+    with pytest.raises(ValueError, match="did not resolve"):
+        module.require_boq_recovery_identity(tmp_path)
+    assert store.resolve_match(ref, "DUQ200898", 11470910, 1, perm_id=255153930)
+    module.require_boq_recovery_identity(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_revised_guard_allows_boq_stop_then_exact_market_sell() -> None:
+    from qat.data.broker.adapter import Order
+
+    module = _load()
+
+    class Broker:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def cancel_order(self, order_id: str) -> None:
+            self.calls.append(f"cancel:{order_id}")
+
+        async def place_order(self, order: Order) -> Order:
+            self.calls.append(f"place:{order.order_type}:{order.quantity}")
+            return order
+
+    broker = Broker()
+    guard = module.ApprovedBroker(broker, revised=True)
+    guard.arm("BOQ.AX")
+    with pytest.raises(ValueError):
+        await guard.cancel_order("1216552512")
+    # Use a fresh guard after the intentionally denied request.
+    guard = module.ApprovedBroker(broker, revised=True)
+    guard.arm("BOQ.AX")
+    await guard.cancel_order("255153930")
+    await guard.place_order(Order("BOQ.AX", "sell", 13586, "close-boq"))
+    assert broker.calls == ["cancel:255153930", "place:market:13586"]
+
+
+@pytest.mark.asyncio
+async def test_revised_guard_accepts_verified_oca_partner_without_second_cancel() -> None:
+    from qat.data.broker.adapter import Order
+
+    module = _load()
+
+    class Broker:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def cancel_order(self, order_id: str) -> None:
+            self.calls.append(f"cancel:{order_id}")
+
+        async def place_order(self, order: Order) -> Order:
+            self.calls.append(f"place:{order.order_type}:{order.quantity}")
+            return order
+
+    broker = Broker()
+    guard = module.ApprovedBroker(broker, revised=True)
+    guard.arm("ANZ.AX")
+    await guard.cancel_order("1216558933")
+    guard.acknowledge_oca_cancelled_leg("1216558934")
+    await guard.place_order(Order("ANZ.AX", "sell", 640, "close-anz"))
+    assert broker.calls == ["cancel:1216558933", "place:market:640"]
 
 
 def test_rehearsal_preserves_recorded_broker_cost_basis() -> None:

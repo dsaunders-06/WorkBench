@@ -32,6 +32,7 @@ from qat.data.broker.adapter import (
     Order,
     Position,
     PriceObservation,
+    RestingOrder,
     is_protective_leg,
     spendable_from,
 )
@@ -66,6 +67,15 @@ logger = logging.getLogger(__name__)
 # The same 1e-6 the reconciliation and cancel paths already use.
 _POSITION_EPSILON = 1e-6
 _STARTUP_REPLAY_SNAPSHOT_ATTEMPTS = 3
+
+
+def _same_resting_leg(left: RestingOrder, right: RestingOrder) -> bool:
+    """Match either IBKR identity, ignoring completed rows' orderId zero."""
+    if left.perm_id and right.perm_id:
+        return left.perm_id == right.perm_id
+    left_ids = {str(value) for value in (left.order_id, left.broker_order_id, left.perm_id)}
+    right_ids = {str(value) for value in (right.order_id, right.broker_order_id, right.perm_id)}
+    return bool((left_ids - {"", "0", "None"}) & (right_ids - {"", "0", "None"}))
 
 
 def _latest_cumulative_fills(fills: Iterable[BrokerFill]) -> list[BrokerFill]:
@@ -697,26 +707,54 @@ class OMS:
                     other_orders_present=any(o.symbol != symbol for o in working),
                 )
             )
-            # Keep the stop until every target cancellation has settled.
+            # Keep the stop until every target cancellation has settled. IBKR
+            # can return PendingCancel on the first read, then cancel the OCA
+            # sibling itself. Do not send a second cancel for an absent leg.
+            remaining = working
             for leg in sorted(mine, key=lambda o: o.stop_price is not None):
                 if self.kill_switch.tripped:
                     return False
+                leg_identity = str(leg.perm_id or leg.order_id or leg.broker_order_id)
+                if not any(_same_resting_leg(o, leg) for o in remaining if o.symbol == symbol):
+                    # Only a previously cancelled member of this very OCA
+                    # group can explain a partner's disappearance.
+                    preceding = [o for o in mine if o is not leg and o.stop_price is None]
+                    if not (leg.oca_group and any(o.oca_group == leg.oca_group for o in preceding)):
+                        logger.error(
+                            "Protective leg %s disappeared without OCA evidence", leg_identity
+                        )
+                        return False
+                    acknowledge = getattr(self.broker, "acknowledge_oca_cancelled_leg", None)
+                    if acknowledge is not None:
+                        acknowledge(leg_identity)
+                    attempt = self._exit_attempts[order_id]
+                    self._exit_attempts[order_id] = replace(
+                        attempt, cancelled=(*attempt.cancelled, leg_identity)
+                    )
+                    continue
                 attempt = self._exit_attempts[order_id]
                 self._exit_attempts[order_id] = replace(
-                    attempt, issued=(*attempt.issued, leg.order_id)
+                    attempt, issued=(*attempt.issued, leg_identity)
                 )
-                await cancel(leg.order_id)
-                remaining = [o for o in await source() if o.status not in TERMINAL_STATUSES]
-                if not remaining and any(o.symbol != symbol for o in working):
-                    self._exit_recovery.stage(symbol, "uncertain")
-                    self.kill_switch.trip("account-wide order book unexpectedly empty during exit")
-                    return False
-                if any(o.order_id == leg.order_id for o in remaining):
-                    logger.error("Protective cancel %s has not settled", leg.order_id)
-                    return False
+                await cancel(leg_identity)
+                deadline = asyncio.get_running_loop().time() + 2.0
+                while True:
+                    remaining = [o for o in await source() if o.status not in TERMINAL_STATUSES]
+                    if not remaining and any(o.symbol != symbol for o in working):
+                        self._exit_recovery.stage(symbol, "uncertain")
+                        self.kill_switch.trip(
+                            "account-wide order book unexpectedly empty during exit"
+                        )
+                        return False
+                    if not any(_same_resting_leg(o, leg) for o in remaining):
+                        break
+                    if self.kill_switch.tripped or asyncio.get_running_loop().time() >= deadline:
+                        logger.error("Protective cancel %s has not settled", leg_identity)
+                        return False
+                    await asyncio.sleep(0.05)
                 attempt = self._exit_attempts[order_id]
                 self._exit_attempts[order_id] = replace(
-                    attempt, cancelled=(*attempt.cancelled, leg.order_id)
+                    attempt, cancelled=(*attempt.cancelled, leg_identity)
                 )
                 if any(o.symbol == symbol and not is_protective_leg(o) for o in remaining):
                     return False

@@ -572,6 +572,8 @@ def from_ib_open_order(trade: Trade, market: str = "US") -> RestingOrder:
         # because `orderStatus` has not landed yet. See `RestingOrder.
         # total_quantity`.
         total_quantity=float(order.totalQuantity),
+        broker_order_id=int(order.orderId or 0),
+        perm_id=int(order.permId or 0),
     )
 
 
