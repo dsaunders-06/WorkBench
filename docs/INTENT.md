@@ -22,6 +22,8 @@ I-5 | DS approves every order; signing and approval authority
 I-6 | IBKR is the single data and broker source. Yahoo is a logged cross-check only, except Yahoo earnings dates, which are approved as an event-risk input that can only reduce position size. | Binding (changed by DS 16 October 2026)
 I-7 | Phase 1 safety controls (kill switch, pre-trade checks,
       protective stops) are never bypassed | Binding
+I-8 | QAT trades ASX equities only. US trading is not part of QAT's
+      functionality. | Binding (decided by DS 16 October 2026)
 ```
 
 The current advisory-only state is a temporary deviation from I-1. Every next step must aim at restoring I-1, not at living with the deviation.
