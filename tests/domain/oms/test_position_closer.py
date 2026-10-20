@@ -110,6 +110,7 @@ class _FakeBroker:
         self._cancel_effect = cancel_effect
         # The book this broker actually keeps, mutated BY the cancel.
         self._book = list(legs)
+        self._completed = []
         # Per-leg, so the SECOND leg's cancel can raise after the first has
         # already gone through - the branch that leaves the position half
         # stripped and is the whole point of the "refusal after cancels" tests.
@@ -143,10 +144,18 @@ class _FakeBroker:
             return list(self._legs_after)
         return list(self._book)
 
+    async def completed_orders(self):
+        return list(self._completed) + [
+            leg for leg in self._book if leg.status in {"Cancelled", "ApiCancelled"}
+        ]
+
     def _apply_cancel(self, order_id):
         """What the BROKER does to its book when a cancel arrives. See
         `_CANCEL_EFFECTS` - three of the four leave the leg visible."""
         if self._cancel_effect == "gone":
+            self._completed.extend(
+                replace(o, status="Cancelled") for o in self._book if o.order_id == order_id
+            )
             self._book = [o for o in self._book if o.order_id != order_id]
             return
         if self._cancel_effect == "rejected":
@@ -521,6 +530,7 @@ async def test_recovery_will_not_re_arm_over_a_leg_in_pending_cancel(closer_fact
         legs_at_recovery=[_leg("CBA.AX", "2", "STP", stop=90.0, status="PendingCancel")],
         sign_off_status="rejected",
     )
+    closer.broker._completed.append(_leg("CBA.AX", "2", "STP", stop=90.0, status="Cancelled"))
     result = await closer.close_position("CBA.AX", operator="tester")
     assert result.outcome is CloseOutcome.REFUSED, result.detail
     assert closer.oms.protective_orders == [], "no bracket over a leg that can still fill"
@@ -1060,7 +1070,10 @@ async def test_a_second_leg_cancel_that_raises_re_protects_the_bare_position(clo
     closer = closer_factory(
         positions={"CBA.AX": 100.0},
         legs=[_leg("CBA.AX", "1", "LMT", limit=110.0), _leg("CBA.AX", "2", "STP", stop=90.0)],
-        legs_after_cancel=[],
+        # The stop must still be visible after the first cancel, otherwise
+        # the OCA-aware path correctly skips the second cancel altogether.
+        legs_after_cancel=[_leg("CBA.AX", "2", "STP", stop=90.0)],
+        legs_at_recovery=[],
         cancel_raises_for=("2",),
     )
     result = await closer.close_position("CBA.AX", operator="tester")

@@ -1018,6 +1018,24 @@ class IBAdapter:
             raise RuntimeError("IBKR could not verify the open-order book")
         return [from_ib_open_order(trade, self.settings.market) for trade in trades]
 
+    async def completed_orders(self) -> list[RestingOrder]:
+        """Broker terminal rows, including legacy rows with orderId zero.
+
+        Cancellation confirmation must use permId as well as orderId: IBKR's
+        completed-order response can report zero for an older orderId while
+        retaining its permanent identity. A failed read is never a clean book.
+        """
+        request = getattr(self.ib_client, "reqCompletedOrdersAsync", None)
+        if not callable(request):
+            raise RuntimeError("IBKR cannot verify completed orders")
+        trades = await self._call(request(False), "reqCompletedOrders")
+        account = str(self.settings.ibkr_account_id or "")
+        return [
+            from_ib_open_order(trade, self.settings.market)
+            for trade in trades
+            if str(getattr(trade.order, "account", "") or "") == account
+        ]
+
     async def resting_stop_orders(self) -> dict[str, RestingStopOrder]:
         """Protective stops actually working at the broker, with enough to
         CHANGE one (M31b/M39, Stage 1 Task 4).
