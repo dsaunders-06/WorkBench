@@ -35,6 +35,8 @@ into resting legs, which is the double-fill this exists to prevent.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from qat.config import Settings
@@ -75,6 +77,7 @@ class _BrokerWithLegs(MockBroker):
         ]
         self._cancel_succeeds = cancel_succeeds
         self.cancelled: list[str] = []
+        self.completed: list[RestingOrder] = []
 
     async def account(self) -> AccountBalances:
         return AccountBalances(equity=1_000_000.0, cash=1_000_000.0)
@@ -87,6 +90,9 @@ class _BrokerWithLegs(MockBroker):
 
     async def open_orders(self) -> list[RestingOrder]:
         return list(self._legs)
+
+    async def completed_orders(self) -> list[RestingOrder]:
+        return list(self.completed)
 
     async def resting_stops(self) -> dict[str, float]:
         """⚠️ DERIVED FROM `_legs`, not a fixed dict, and that is the point.
@@ -107,6 +113,9 @@ class _BrokerWithLegs(MockBroker):
     async def cancel_order(self, order_id: str) -> Order:
         self.cancelled.append(order_id)
         if self._cancel_succeeds:
+            self.completed.extend(
+                replace(leg, status="Cancelled") for leg in self._legs if leg.order_id == order_id
+            )
             self._legs = [leg for leg in self._legs if leg.order_id != order_id]
         return Order(
             order_id=order_id,

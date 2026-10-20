@@ -29,6 +29,7 @@ def _trade(**kw: object) -> SimpleNamespace:
         ocaGroup=kw.get("oca_group", ""),
         parentPermId=kw.get("parent_perm_id", 0),
         clientId=kw.get("client_id", 1),
+        account=kw.get("account", "DUQ200898"),
         auxPrice=kw.get("aux_price", 30.69),
         lmtPrice=kw.get("lmt_price", 0.0),
     )
@@ -57,6 +58,17 @@ def test_a_done_order_is_still_returned() -> None:
     resting = from_ib_open_order(_trade(status="Cancelled"), market="ASX")  # type: ignore[arg-type]
     assert resting is not None
     assert resting.status == "Cancelled"
+
+
+@pytest.mark.asyncio
+async def test_completed_legacy_order_with_zero_order_id_retains_perm_id(monkeypatch) -> None:
+    trade = _trade(order_id=0, perm_id=1216552512, status="Cancelled")
+    adapter = _adapter([trade], monkeypatch)
+    rows = await adapter.completed_orders()
+    assert len(rows) == 1
+    assert rows[0].broker_order_id == 0
+    assert rows[0].perm_id == 1216552512
+    assert rows[0].status == "Cancelled"
 
 
 def test_quantity_is_remaining_not_total() -> None:
@@ -103,6 +115,9 @@ class _FakeIB:
     async def reqAllOpenOrdersAsync(self):  # noqa: N802 - mirrors ib_async
         return self._trades
 
+    async def reqCompletedOrdersAsync(self, _api_only):  # noqa: N802 - mirrors ib_async
+        return self._trades
+
 
 def _settings():
     """A REAL Settings, not a SimpleNamespace stub.
@@ -114,7 +129,7 @@ def _settings():
     """
     from qat.config import Settings
 
-    return Settings(_env_file=None, market="ASX")  # type: ignore[arg-type]
+    return Settings(_env_file=None, market="ASX", ibkr_account_id="DUQ200898")  # type: ignore[arg-type]
 
 
 def _adapter(trades, monkeypatch):

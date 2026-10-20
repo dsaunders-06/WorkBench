@@ -1,0 +1,50 @@
+import sys,asyncio,json,pathlib,hashlib
+from datetime import datetime
+from decimal import Decimal
+sys.path[:0]=['src','scripts']
+import phase3_close_unwind as u
+from qat.config import Settings
+from qat.data.broker.ib_adapter import IBAdapter
+from qat.domain.bus import EventBus
+from ib_async import IB
+out=pathlib.Path(r'C:\Users\mailm\Documents\Codex\phase3-close-unwind-20261019\conditional-recovery.json')
+if out.exists(): raise RuntimeError('recovery already attempted; no retry')
+out.write_text(json.dumps({'status':'started','time':datetime.now(u.SYDNEY).isoformat()}))
+class RecoveryClient(u.GuardedIBClient):
+ def __init__(self,raw): super().__init__(raw); self.sent=False
+ def placeOrder(self,contract,order):
+  self.require_du()
+  if self.sent or int(contract.conId)!=11470910 or contract.symbol!='BOQ' or order.action!='SELL' or order.orderType!='STP' or order.tif!='GTC' or Decimal(str(order.totalQuantity))!=13586 or Decimal(str(order.auxPrice))!=Decimal('6.07') or order.account!='DUQ200898': raise ValueError('unapproved recovery submission')
+  self.sent=True
+  return self.client.placeOrder(contract,order)
+ def cancelOrder(self,*a,**k): raise ValueError('no further cancellation authorised')
+async def main():
+ s=Settings();u.require_settings(s)
+ raw=IB();client=RecoveryClient(raw);bus=EventBus();adapter=IBAdapter(client,bus,settings=s,read_only=False)
+ guard=u.ApprovedBroker(adapter)
+ report={'status':'halted','scope':'single pinned BOQ protection recovery only','started_sydney':datetime.now(u.SYDNEY).isoformat()}
+ try:
+  await adapter.connect();client.require_du()
+  book=await u.capture_live_inventory(client);report['before']=book
+  u.require_inventory({'positions':[p for p in book['positions'] if p['symbol']!='BOQ'],'orders':book['orders']},tuple(x[0] for x in u._HOLDINGS if x[0]!='BOQ.AX'))
+  boq=[p for p in book['positions'] if p['symbol']=='BOQ']
+  if len(boq)!=1 or boq[0]['con_id']!=11470910 or boq[0]['account']!=u.ACCOUNT or Decimal(boq[0]['quantity'])!=13586: raise ValueError('BOQ holding changed')
+  guard.arm('BOQ.AX');guard.cancel_index=1
+  parts=u.build_close_components(guard,s,bus=bus)
+  await parts['oms'].recover_exit_protection()
+  report['recovery_sent']=guard.recovery_sent
+  for _ in range(20):
+   after=await u.capture_live_inventory(client);report['after']=after
+   stops=[o for o in after['orders'] if o['con_id']==11470910]
+   if len(stops)==1 and stops[0]['order_type']=='STP' and stops[0]['status'] in ('PreSubmitted','Submitted') and Decimal(stops[0]['quantity'])==13586 and Decimal(stops[0]['aux_price'])==Decimal('6.07'):
+    report['status']='protection_verified';break
+   await asyncio.sleep(1)
+  report['recovery_pending']=parts['oms'].exit_protection_pending('BOQ.AX')
+  report['kill_switch']={'tripped':parts['kill_switch'].tripped,'reason':parts['kill_switch'].reason}
+ except Exception as exc: report['error']=f'{type(exc).__name__}: {exc}'
+ finally:
+  await adapter.disconnect()
+  report['finished_sydney']=datetime.now(u.SYDNEY).isoformat()
+  out.write_text(json.dumps(report,indent=2,sort_keys=True)+'\n')
+  print(json.dumps({k:v for k,v in report.items() if k not in ('before','after')},indent=2))
+asyncio.run(main())
