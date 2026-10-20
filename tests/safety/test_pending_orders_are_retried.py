@@ -28,9 +28,9 @@ from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
-_NY = ZoneInfo("America/New_York")
-OPENING_VOLATILITY = datetime(2026, 7, 23, 9, 35, tzinfo=_NY)
-MORNING_TREND = datetime(2026, 7, 23, 10, 30, tzinfo=_NY)
+_SYD = ZoneInfo("Australia/Sydney")
+OPENING_VOLATILITY = datetime(2026, 7, 23, 10, 15, tzinfo=_SYD)
+MORNING_TREND = datetime(2026, 7, 23, 11, 0, tzinfo=_SYD)
 
 
 class _Broker:
@@ -60,7 +60,7 @@ class _Broker:
 def _candidate() -> OrderCandidate:
     dates = pd.date_range("2024-01-01", periods=30)
     return OrderCandidate(
-        symbol="PANW",
+        symbol="BHP.AX",
         side="buy",
         price=100.0,
         atr=2.0,
@@ -108,7 +108,7 @@ async def test_an_order_blocked_by_the_phase_is_signed_once_the_phase_turns(tmp_
         await executor.stop()
 
     assert broker.placed, "a reason that expired must be re-examined"
-    assert broker.placed[0].symbol == "PANW"
+    assert broker.placed[0].symbol == "BHP.AX"
 
 
 @pytest.mark.asyncio

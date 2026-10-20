@@ -84,12 +84,11 @@ _IB_STATUS_MAP: dict[str, OrderStatus] = {
 # Literal["US", "ASX"] and which the universe and cost profiles key off too -
 # a third market is added here deliberately, not inferred (M96).
 _MARKET_CONTRACT: dict[str, tuple[str, str]] = {
-    "US": ("USD", ""),
     "ASX": ("AUD", "ASX"),
 }
 
 
-def to_ib_contract(symbol: str, market: str = "US") -> Contract:
+def to_ib_contract(symbol: str, market: str = "ASX") -> Contract:
     """The IBKR contract for one of the app's symbols (M96).
 
     Took `exchange`/`currency` as defaulted arguments that `place_order` never
@@ -398,7 +397,7 @@ def from_ib_trade(trade: Trade, our_order: Order) -> Order:
 _IB_EXECUTION_SIDE: dict[str, str] = {"BOT": "buy", "SLD": "sell"}
 
 
-def from_ib_fill(fill: Fill, market: str = "US") -> BrokerFill | None:
+def from_ib_fill(fill: Fill, market: str = "ASX") -> BrokerFill | None:
     """One IBKR execution as a `BrokerFill`, or None if it cannot be trusted.
 
     **The identity is `permId`**, matching what `from_ib_trade` writes onto
@@ -510,7 +509,7 @@ _IB_STOP_TYPES = frozenset({"STP", "STP LMT"})
 _IB_WORKING_STATUSES = WORKING_STATUSES
 
 
-def from_ib_resting_stop(trade: Trade, market: str = "US") -> RestingStopOrder | None:
+def from_ib_resting_stop(trade: Trade, market: str = "ASX") -> RestingStopOrder | None:
     """One open IBKR order as a resting protective stop, or None if it is not
     one (Task 4).
 
@@ -535,7 +534,7 @@ def from_ib_resting_stop(trade: Trade, market: str = "US") -> RestingStopOrder |
     )
 
 
-def from_ib_open_order(trade: Trade, market: str = "US") -> RestingOrder:
+def from_ib_open_order(trade: Trade, market: str = "ASX") -> RestingOrder:
     """One open IBKR order, translated and unjudged (M141, item 23).
 
     Returns a record for EVERY order, always. Compare `from_ib_resting_stop`,
@@ -599,7 +598,7 @@ def tighter_stop(
 
 def from_ib_position(
     position: IBPosition,
-    market: str = "US",
+    market: str = "ASX",
     market_price: float | None = None,
     *,
     qat_holding: bool = False,

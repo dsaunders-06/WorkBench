@@ -51,10 +51,6 @@ _TICK_TABLES: dict[str, tuple[tuple[Decimal | None, Decimal], ...]] = {
         (Decimal("2.00"), Decimal("0.005")),
         (None, Decimal("0.01")),
     ),
-    "US": (
-        (Decimal("1.00"), Decimal("0.0001")),
-        (None, Decimal("0.01")),
-    ),
 }
 
 

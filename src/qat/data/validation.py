@@ -91,7 +91,7 @@ def detect_and_fill_gaps(
 
 
 def align_timezone(
-    df: pd.DataFrame, ts_col: str = "ts", exchange_tz: str = "America/New_York"
+    df: pd.DataFrame, ts_col: str = "ts", exchange_tz: str = "Australia/Sydney"
 ) -> pd.DataFrame:
     """Localise naive timestamps to the exchange timezone, then convert to UTC."""
     aligned = df.copy()

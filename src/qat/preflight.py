@@ -238,28 +238,6 @@ def settings_checks(settings: Settings) -> list[Check]:
             )
         )
 
-    # --- market vs broker ---------------------------------------------------
-    if settings.broker == "ibkr" and settings.market != "ASX":
-        checks.append(
-            Check(
-                "market",
-                Status.WARN,
-                f"broker=ibkr with market={settings.market}. Supported, but the ASX work "
-                f"(contracts, costs, calendar) is what has been measured.",
-            )
-        )
-    elif settings.broker == "alpaca" and settings.market != "US":
-        checks.append(
-            Check(
-                "market",
-                Status.FAIL,
-                f"broker=alpaca with market={settings.market} - Alpaca trades US equities "
-                f"only, so this watchlist cannot be traded through it.",
-            )
-        )
-    else:
-        checks.append(Check("market", Status.OK, f"{settings.market} through {settings.broker}"))
-
     # --- market data --------------------------------------------------------
     source = settings.market_data_source
     if source == "synthetic":
@@ -269,15 +247,6 @@ def settings_checks(settings: Settings) -> list[Check]:
                 Status.FAIL,
                 "market_data_source=synthetic. These bars are INVENTED, not degraded - a "
                 "session run on them produces expectancy from nothing.",
-            )
-        )
-    elif source == "alpaca" and settings.market != "US":
-        checks.append(
-            Check(
-                "market data",
-                Status.FAIL,
-                f"market_data_source=alpaca with market={settings.market}. Alpaca serves US "
-                f"equities only, so it returns nothing and the feed degrades to SYNTHETIC.",
             )
         )
     else:

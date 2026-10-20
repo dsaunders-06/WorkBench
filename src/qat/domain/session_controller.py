@@ -63,7 +63,7 @@ class SessionController:
         self,
         feed: FeedLike,
         strategy_engine: EmitterLike,
-        market: mc.Market = "US",
+        market: mc.Market = "ASX",
         *,
         enabled: bool = True,
         poll_seconds: float = DEFAULT_POLL_SECONDS,

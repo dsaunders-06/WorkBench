@@ -23,7 +23,7 @@ def _build_screen(qtbot) -> SettingsScreen:
 def test_fields_are_pre_filled_from_current_settings(qtbot):
     screen = _build_screen(qtbot)
 
-    assert screen.market_combo.currentText() == "US"
+    assert screen.market_combo.currentText() == "ASX"
     assert screen.category_combo.currentText() == "curated"
     assert screen.local_base_url_input.text() == "http://localhost:1234/v1"
     assert screen.anthropic_key_input.text() == ""  # write-only, never pre-filled
@@ -39,27 +39,6 @@ def test_sensitive_warning_only_shows_for_anthropic(qtbot):
     assert screen.sensitive_warning.isVisible()
     screen.sensitive_provider.setCurrentText("Local (LM Studio)")
     assert not screen.sensitive_warning.isVisible()
-
-
-def test_alpaca_feed_row_hides_label_and_field_together(qtbot):
-    """Hiding only the combo left a stranded 'Alpaca feed:' label beside empty
-    space, implying a setting that had gone missing rather than one that does
-    not apply to the selected source."""
-    screen = _build_screen(qtbot)
-    screen.show()
-    qtbot.waitExposed(screen)
-    label = screen._data_form.labelForField(screen.alpaca_feed_combo)
-
-    assert not screen.alpaca_feed_combo.isVisible()
-    assert not label.isVisible()
-
-    screen.data_source_combo.setCurrentText("Real market data (Alpaca, US only)")
-    assert screen.alpaca_feed_combo.isVisible()
-    assert label.isVisible()
-
-    screen.data_source_combo.setCurrentText("Real market data (Yahoo, free/delayed)")
-    assert not screen.alpaca_feed_combo.isVisible()
-    assert not label.isVisible()
 
 
 def test_save_writes_expected_non_secret_env_updates(qtbot, monkeypatch):

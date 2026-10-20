@@ -13,15 +13,14 @@ import pytest
 
 from qat.domain.session_controller import SessionController
 
-NY = ZoneInfo("America/New_York")
+SYD = ZoneInfo("Australia/Sydney")
 
-# Wednesday 29 July 2026: an ordinary US trading day.
-MID_SESSION = datetime(2026, 7, 29, 12, 0, tzinfo=NY)
-BEFORE_OPEN = datetime(2026, 7, 29, 7, 0, tzinfo=NY)
-AFTER_CLOSE = datetime(2026, 7, 29, 18, 0, tzinfo=NY)
-SATURDAY = datetime(2026, 7, 25, 12, 0, tzinfo=NY)
-# 4 July 2026 falls on a Saturday, so the holiday is observed on Friday the 3rd.
-HOLIDAY = datetime(2026, 7, 3, 12, 0, tzinfo=NY)
+# Wednesday 29 July 2026: an ordinary ASX trading day.
+MID_SESSION = datetime(2026, 7, 29, 12, 0, tzinfo=SYD)
+BEFORE_OPEN = datetime(2026, 7, 29, 7, 0, tzinfo=SYD)
+AFTER_CLOSE = datetime(2026, 7, 29, 18, 0, tzinfo=SYD)
+SATURDAY = datetime(2026, 7, 25, 12, 0, tzinfo=SYD)
+HOLIDAY = datetime(2026, 1, 26, 12, 0, tzinfo=SYD)  # Australia Day
 
 
 class FakeFeed:
@@ -47,7 +46,7 @@ class FakeEngine:
 def _controller(now: datetime, **kwargs) -> tuple[SessionController, FakeFeed, FakeEngine]:
     feed, engine = FakeFeed(), FakeEngine()
     clock = kwargs.pop("clock", None) or (lambda: now)
-    controller = SessionController(feed, engine, market="US", clock=clock, **kwargs)
+    controller = SessionController(feed, engine, market="ASX", clock=clock, **kwargs)
     return controller, feed, engine
 
 
@@ -140,8 +139,8 @@ async def test_the_override_starts_a_session_against_a_closed_market():
 async def test_a_forced_start_does_not_claim_the_market_is_open(caplog):
     """M52. On 6 August these two lines were logged in the same second:
 
-        Trading session force-started by operator (dashboard) while US is closed
-        Trading session started - US is open
+        Trading session force-started by operator (dashboard) while ASX is closed
+        Trading session started - ASX is open
 
     The second contradicted the first. The watcher surfaced only the second, so
     the operator was told the market was open eight minutes before it was."""
@@ -167,7 +166,7 @@ async def test_a_real_open_still_reads_as_a_plain_start(caplog):
     with caplog.at_level("INFO"):
         await controller.apply_once()
 
-    assert "Trading session started - US is open" in caplog.text
+    assert "Trading session started - ASX is open" in caplog.text
     assert "OPERATOR OVERRIDE" not in caplog.text
 
 

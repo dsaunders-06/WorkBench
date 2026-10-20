@@ -1,4 +1,7 @@
-"""Prose and tables for the user manual; see scripts/build_manual.py.
+"""Historical M37 manual prose and tables; see scripts/build_manual.py.
+
+This source describes the earlier US/Alpaca build. QAT now trades ASX equities
+through IBKR only; the old market and broker examples are historical.
 
 Split out purely for length. The rule for everything here: if a sentence makes
 a claim about behaviour, that behaviour is in the code and the claim names it
@@ -107,7 +110,10 @@ def _toc_field(doc: Any) -> None:
 
 
 def title_page(doc: Any) -> None:
-    for text, size, bold in (("QUANT ADVISORY TERMINAL", 30, True), ("User Manual", 20, False)):
+    for text, size, bold in (
+        ("QUANT ADVISORY TERMINAL", 30, True),
+        ("Historical User Manual", 20, False),
+    ):
         para = doc.add_paragraph()
         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = para.add_run(text)
@@ -125,6 +131,14 @@ def title_page(doc: Any) -> None:
         para.add_run(text).font.size = Pt(11)
 
     doc.add_paragraph()
+    _callout(
+        doc,
+        "HISTORICAL MANUAL",
+        "This M37 manual describes an earlier US/Alpaca build. QAT now supports "
+        "ASX equities through IBKR only. Its Alpaca and US trading instructions "
+        "are retained as historical examples, not current operating guidance.",
+        danger=True,
+    )
     _callout(
         doc,
         "SAFETY NOTICE",

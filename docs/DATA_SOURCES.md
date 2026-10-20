@@ -1,10 +1,24 @@
 # QAT data-source inventory — 16 October 2026
 
+> **Historical snapshot, updated for the ASX-only cleanup.** The detailed
+> inventory below records the code and account configuration observed on
+> 16 October; its references to selectable Alpaca paths describe that date.
+> On this branch, Alpaca code and the US trading option have been removed.
+> QAT supports ASX equities only. IBKR is the approved broker and data
+> authority under [I-6 and I-8](INTENT.md); Yahoo earnings remain an approved
+> reduce-only event-risk input. The Anthropic key remains out of scope.
+
 DS changed [I-6](INTENT.md) on 15 and 16 October 2026: IBKR is the single data and
 broker source; Yahoo is a logged cross-check only, except that Yahoo earnings
 dates are approved as an event-risk input that can only reduce position size.
-A validated source, direct
-or indirect, is added, removed or changed only by DS's explicit decision.
+DS also decided on 16 October 2026 that Alpaca is retired as both broker and
+data source. An Anthropic key is out of scope. [I-8](INTENT.md) limits QAT to
+ASX equities; US trading is not part of its functionality. References below
+to then-present Alpaca code and historical US use describe inventory,
+not an approved source or market.
+
+A validated source, direct or indirect, is added, removed or changed only by
+DS's explicit decision.
 This inventory describes the **current code and resolved Friday launch
 settings**, not an approval of the deviations below. No code or stored
 settings were changed for this inventory. Friday's launch was
@@ -38,7 +52,7 @@ Secret *presence* was checked; values are not recorded here.
 | FRED: DGS3MO, DGS10, T10Y3M, VIXCLS, BAA10Y | `fred_series` names all five; `regime_vix_series=VIXCLS`; **FRED_API_KEY present in QAT's keyring on 16 October** | `runtime.py::resolve_macro_source` selects FRED with a key, otherwise `MockMacroSource`; `MacroFeed` and `WarmStart` feed regime, features and exposure decisions. | **Yes**: FRED macro can affect the regime, features and exposure decisions when selected. | The [archived handoff](archive/HANDOFF-2026-08-20-superseded.md) and a rotated application log show real FRED polling through at least 23 August. DS restored the original key and reports a live DGS10 fetch on **16 October 2026 Sydney time**: 16,181 observations, latest 14 October. The 16 October response was not independently inspected in this docs-only work. FRED's role in the AI Advisor remains **open for DS**. If a key is absent in a trading mode, the mock fallback must fail closed under DS's 16 October ruling; implementation remains pending. |
 | Local LM Studio model | `general_request_provider=local`, `sensitive_request_provider=local`; configured base URL `localhost:1234/v1` | `runtime.py::_resolve_engine` → `AIAdvisoryService` → Advisor/Workbench prose and recommendations. | **Yes**, for displayed AI recommendations; no direct trading/OMS edge was found. It is a model provider, not a market-data authority. | Local service/version reported in [handoff](HANDOFF.md) on 11–14 September; availability was **not** retested Friday. |
 
-Other selectable but **not selected** sources remain in code: Alpaca for a US
+Other selectable but **not selected** sources remain in code: retired Alpaca for a US
 broker/feed/history (`broker` and `market_data_source`), Anthropic for AI
 (`general_request_provider`/`sensitive_request_provider`), synthetic market
 data, mock fundamentals and mock macro. They must not be mistaken for approved
@@ -59,9 +73,9 @@ saved or committed, and this check made no vendor request.
 | Requested name | Keyring | Environment | Current relevance |
 | --- | --- | --- | --- |
 | `FRED_API_KEY` | Present | Absent | `resolve_macro_source` can construct the real FRED client; DS reports the 16 October DGS10 fetch above. |
-| `ALPACA_API_KEY` | Absent | Present | Available through `get_secret`'s environment fallback, but Alpaca is not the selected ASX broker or data source. |
-| `ALPACA_SECRET_KEY` | Absent | Present | Same unused Alpaca path. |
-| `ANTHROPIC_API_KEY` | Absent | Absent | **Missing**; current general and sensitive model-provider settings select the local model. |
+| `ALPACA_API_KEY` | Absent | Present | Retired by DS on 16 October 2026; the still-present code path is pending removal. |
+| `ALPACA_SECRET_KEY` | Absent | Present | Same retired Alpaca path. |
+| `ANTHROPIC_API_KEY` | Absent | Absent | Out of scope; current general and sensitive model-provider settings select the local model. |
 
 The original FRED key was absent from QAT's credential store at an unknown
 point before DS restored it on 16 October. The presence checks do not establish

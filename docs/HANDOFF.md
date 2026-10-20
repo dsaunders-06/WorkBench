@@ -1,5 +1,11 @@
 # Current handoff — 8 October 2026
 
+> **Historical handoff.** This file records dated decisions and observations.
+> QAT is ASX-only and uses IBKR as its broker; Alpaca and US trading are
+> retired. Earlier references to their code, settings, accounts and procedures
+> describe the state at the date shown, not available functionality. See
+> [I-6 and I-8](INTENT.md) and the current [data-source inventory](DATA_SOURCES.md).
+
 The current [QAT intent register](INTENT.md) records DS's binding intent and
 the temporary advisory-only deviation. Read it alongside this dated handoff.
 

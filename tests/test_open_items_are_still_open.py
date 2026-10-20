@@ -26,8 +26,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 import qat
+from qat.config import Settings
 
 _SRC = Path(qat.__file__).parent
 _REPO = _SRC.parent.parent
@@ -95,11 +97,6 @@ def test_item_29_deployed_is_still_maintained_by_hand() -> None:
         # DELETING the helper - the one change that would silently restore the
         # old freedom - fails by item number rather than by import error.
         (20, "tests/support/source_corpus.py", "def source_files"),
-        # Item 13, answered KEEP on 28 August. The answer RESTS on this
-        # refusal: the case for deleting the Alpaca paths was that a US broker
-        # could be pointed at an ASX book, and preflight already refuses that.
-        # If the refusal goes, the answer has to be reopened, not inherited.
-        (13, "preflight.py", 'settings.broker == "alpaca" and settings.market != "US"'),
     ],
 )
 def test_a_closed_item_has_not_quietly_regressed(item: int, relative: str, needle: str) -> None:
@@ -107,3 +104,9 @@ def test_a_closed_item_has_not_quietly_regressed(item: int, relative: str, needl
         f"item {item} is marked FIXED in HANDOFF.md but its evidence is gone from "
         f"{relative} - either it regressed or the claim was never true"
     )
+
+
+def test_retired_alpaca_broker_is_rejected_before_preflight() -> None:
+    """Item 13's former preflight refusal now happens at Settings validation."""
+    with pytest.raises(ValidationError, match="broker"):
+        Settings(_env_file=None, broker="alpaca", market="ASX")

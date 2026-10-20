@@ -21,7 +21,18 @@ from __future__ import annotations
 
 import pytest
 
-from qat.data.symbols import canonical, from_yfinance, to_yfinance
+from qat.data.symbols import canonical, from_ibkr, from_yfinance, to_ibkr, to_yfinance
+
+
+def test_builtin_asx_watchlists_and_side_tables_use_canonical_symbols() -> None:
+    """Preserve the ASX half of the retired Alpaca symbol-pruning guard."""
+    from qat.data import instruments, sectors, universe
+
+    symbols = [symbol for entries in universe._WATCHLISTS_ASX.values() for symbol in entries]
+    assert not [symbol for symbol in symbols if "-" in symbol]
+    assert all(canonical(symbol) == symbol for symbol in symbols)
+    for table in (sectors.SECTOR_BY_SYMBOL, instruments.INSTRUMENT_NAMES):
+        assert not [symbol for symbol in table if symbol.endswith("-AX")]
 
 
 @pytest.mark.parametrize("symbol", ["BHP.AX", "CBA.AX", "STW.AX", "CSL.AX"])
@@ -31,17 +42,9 @@ def test_an_asx_ticker_reaches_yahoo_unchanged(symbol: str):
     assert to_yfinance(symbol) == symbol
 
 
-def test_a_us_class_share_is_still_translated():
-    """The case the module was written for, unchanged."""
-    assert to_yfinance("BRK.B") == "BRK-B"
-
-
-def test_the_round_trip_is_stable_for_both_markets():
-    for symbol in ("BHP.AX", "STW.AX", "AAPL"):
+def test_the_round_trip_is_stable_for_asx():
+    for symbol in ("BHP.AX", "STW.AX"):
         assert from_yfinance(to_yfinance(symbol)) == symbol
-    # BRK.B is the deliberate exception: it goes out hyphenated and comes back
-    # dotted, which is the whole point of having a canonical form.
-    assert from_yfinance(to_yfinance("BRK.B")) == "BRK.B"
 
 
 def test_canonical_does_not_mangle_an_asx_suffix():
@@ -49,3 +52,30 @@ def test_canonical_does_not_mangle_an_asx_suffix():
     hyphen that was never there, nor `BHP-AX` -> `BHP.AX` losing the market."""
     assert canonical("bhp.ax") == "BHP.AX"
     assert canonical("BHP.AX") == "BHP.AX"
+
+
+@pytest.mark.parametrize(
+    "raw,canonical_symbol",
+    [
+        ("BHP-AX", "BHP.AX"),
+        ("cba-ax", "CBA.AX"),
+        ("STW-AX", "STW.AX"),
+        ("TAH-AX", "TAH.AX"),
+    ],
+)
+def test_hyphenated_asx_input_keeps_its_existing_normalisation(raw: str, canonical_symbol: str):
+    assert canonical(raw) == canonical_symbol
+    assert from_yfinance(raw.upper()) == canonical_symbol
+    assert to_yfinance(canonical_symbol) == canonical_symbol
+    assert to_ibkr(canonical(raw)) == canonical_symbol.removesuffix(".AX")
+
+
+def test_ibkr_asx_symbol_conversion_is_idempotent_and_default_is_asx():
+    assert from_ibkr("BHP", market="ASX") == "BHP.AX"
+    assert from_ibkr("BHP.AX", market="ASX") == "BHP.AX"
+    assert from_ibkr("BHP") == "BHP.AX"
+
+
+def test_ibkr_symbol_conversion_refuses_an_unsupported_market():
+    with pytest.raises(ValueError, match="unsupported market"):
+        from_ibkr("AAPL", market="US")

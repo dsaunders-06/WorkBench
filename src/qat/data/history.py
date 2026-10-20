@@ -215,18 +215,6 @@ def _period_for(n_bars: int) -> str:
 
 
 def resolve_history_source(settings: Settings) -> HistoricalBarSource:
-    if settings.market_data_source == "alpaca":
-        try:
-            from qat.data.alpaca_source import AlpacaHistorySource
-
-            return AlpacaHistorySource(feed=settings.alpaca_data_feed)
-        except Exception as exc:  # noqa: BLE001 - degrade, but loudly
-            logger.warning(
-                "Could not build the Alpaca history source (%s) - falling back to SYNTHETIC "
-                "bars. This data is NOT real.",
-                exc,
-            )
-            return SyntheticHistorySource()
     if settings.market_data_source == "yfinance":
         return RealHistorySource()
     return SyntheticHistorySource()

@@ -250,12 +250,6 @@ async def test_two_stops_for_one_symbol_resolve_deterministically() -> None:
     assert (await _adapter(client).resting_stop_orders())["BHP.AX"].stop_price == 58.0
 
 
-async def test_a_us_symbol_keeps_its_plain_form() -> None:
-    client = OpenOrdersIB([_resting(symbol="AAPL")])
-
-    assert set(await _adapter(client, market="US").resting_stop_orders()) == {"AAPL"}
-
-
 async def test_the_tightest_stop_flips_direction_for_a_short() -> None:
     """ "Tightest" is not "highest". A SELL stop protecting a long fires on the
     way DOWN, so the higher one fires first; a BUY stop protecting a short

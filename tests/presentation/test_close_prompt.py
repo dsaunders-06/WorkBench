@@ -100,17 +100,3 @@ def test_save_writes_before_closing(qtbot, monkeypatch):
     window.closeEvent(QCloseEvent())
 
     assert captured["QAT_MAX_CONCURRENT_POSITIONS"] == "19"
-
-
-def test_an_entered_key_is_flagged_without_being_shown(qtbot, monkeypatch):
-    """The Alpaca key sits below the operator's boundary, so losing a typed key
-    silently would be the same failure as losing a risk limit - but the value
-    itself is never ours to put in a dialog."""
-    asked = _answer(monkeypatch, QMessageBox.StandardButton.Discard)
-    window = _window(qtbot)
-    window.settings_screen.alpaca_key_input.setText("PKSUPERSECRET")
-
-    window.closeEvent(QCloseEvent())
-
-    assert asked and "Alpaca API key (entered)" in asked[0]
-    assert "PKSUPERSECRET" not in asked[0]

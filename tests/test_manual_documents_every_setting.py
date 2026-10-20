@@ -35,8 +35,6 @@ _NOT_IN_THE_MANUAL = {
     "truncation behaviour and nothing an operator reasons about.",
     "ai_cost_budget_calls_per_day": "Advisory-layer spend cap. Real, but the AI layer cannot "
     "place an order, so it is not a trading control.",
-    "alpaca_poll_seconds": "Feed cadence. Documented as a concept in the market-data section; "
-    "the number is a vendor rate-limit detail.",
     "anthropic_model": "Provider model id. Changes with the vendor's catalogue, not with how "
     "the application behaves.",
     "bar_interval_seconds": "Aggregation interval. Changing it changes what every indicator "
@@ -79,8 +77,6 @@ _NOT_IN_THE_MANUAL = {
     "the trading record is CSV on disk either way.",
     "watchlist_curated_asx": "The curated list itself, which the universe section describes "
     "by how it is built rather than by enumerating it.",
-    "watchlist_curated_us": "As above: the universe section documents how the list is built "
-    "and filtered, which is what decides whether a symbol can be traded.",
     "watchlist_min_avg_volume": "Inside the universe filter. The manual documents that thin "
     "names are excluded and why, which is the part that affects a decision.",
     "yfinance_poll_seconds": "Vendor request cadence, bounded by that vendor's tolerance "

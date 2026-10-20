@@ -1,5 +1,10 @@
 # The analysis behind the 7–8 August decisions
 
+> **Historical US/Alpaca analysis inventory.** The broker probes and the
+> US-calendar close-date helper listed below were removed in the ASX-only
+> cleanup. The commands and re-run advice below describe the August 2026
+> evidence, not tools available on this branch.
+
 ROADMAP.md records what was decided and why. These are the scripts that produced
 the numbers, kept so that September can **re-run them against real closed trades**
 rather than reconstruct them from prose.

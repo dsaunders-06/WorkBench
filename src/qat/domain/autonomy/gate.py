@@ -35,13 +35,10 @@ from qat.domain.risk_engine.kill_switch import KillSwitch
 
 
 def market_for_symbol(symbol: str) -> mc.Market:
-    """ASX symbols carry the '.AX' suffix; everything else is treated as US.
-
-    The same convention the original app used as its order-routing key. It is a
-    convention, not a lookup - a symbol from a third market would be
-    misclassified, which is a real limit while only two markets are supported.
-    """
-    return "ASX" if symbol.upper().endswith(".AX") else "US"
+    """Accept an explicit ASX suffix; refuse an unknown exchange."""
+    if symbol.upper().endswith(".AX"):
+        return "ASX"
+    raise ValueError(f"ASX symbol required: {symbol}")
 
 
 @dataclass(frozen=True, slots=True)

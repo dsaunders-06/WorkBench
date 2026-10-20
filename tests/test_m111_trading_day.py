@@ -65,15 +65,6 @@ def test_trading_date_is_the_exchange_date_not_the_utc_date() -> None:
     assert OPEN_5_OCT.astimezone(UTC).date().isoformat() == "2026-10-04"
 
 
-def test_trading_date_still_works_for_the_US_market() -> None:
-    """Not an ASX-only helper. A US session at 09:30 ET on 5 October is
-    13:30 UTC the same day, so nothing changes there - which is the point:
-    one helper, right in both markets."""
-    ny = datetime(2026, 10, 5, 9, 30, tzinfo=ZoneInfo("America/New_York"))
-
-    assert trading_date("US", ny).isoformat() == "2026-10-05"
-
-
 class _Broker:
     def __init__(self, equity: float) -> None:
         self.equity = equity
@@ -233,19 +224,6 @@ def test_the_runtime_gives_every_daily_aggregator_the_market_timezone() -> None:
     assert feature_engines, "no engine with a bar buffer was registered"
     for engine in feature_engines:
         assert engine.bars.tz == ASX_TZ, f"{type(engine).__name__} kept the UTC boundary"
-
-
-def test_a_US_runtime_gets_new_york_not_sydney() -> None:
-    """The helper is market-driven, not ASX-hardcoded. A US session does not
-    cross UTC midnight, so this changes nothing there - which is the point."""
-    from qat.domain.market_calendar import US_TZ
-    from qat.presentation.runtime import Runtime
-
-    runtime = Runtime.build_demo(
-        settings=Settings(_env_file=None, market="US", bar_interval_seconds=86_400.0)
-    )
-
-    assert runtime.strategy_engine.bars.tz == US_TZ
 
 
 # --- the part that is wrong TODAY, not in October ----------------------------

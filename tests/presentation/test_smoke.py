@@ -82,7 +82,7 @@ async def test_dashboard_refresh_populates_the_balances_panel(qtbot):
 
     await dashboard._refresh()
 
-    assert dashboard.balances_panel.portfolio_value._value.text().startswith("$")
+    assert dashboard.balances_panel.portfolio_value._value.text().startswith("AUD ")
     assert dashboard.balances_panel.freshness.text()
 
 

@@ -21,6 +21,7 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from pydantic import ValidationError
 
 from qat import preflight
 from qat.config import Settings
@@ -106,12 +107,9 @@ def test_a_live_port_in_paper_mode_fails() -> None:
     assert check.status is Status.FAIL
 
 
-def test_asx_with_a_us_only_data_source_fails() -> None:
-    """Alpaca serves US equities only. Configured for ASX it produces nothing,
-    and the feed degrades to SYNTHETIC - a session trading invented prices."""
-    check = _named(settings_checks(_paper(market_data_source="alpaca")), "market data")
-
-    assert check.status is Status.FAIL
+def test_retired_alpaca_data_source_is_rejected_by_settings() -> None:
+    with pytest.raises(ValidationError, match="market_data_source"):
+        _paper(market_data_source="alpaca")
 
 
 def test_synthetic_data_fails_rather_than_warns() -> None:
@@ -128,12 +126,6 @@ def test_recommend_only_execution_warns_rather_than_fails() -> None:
     saying out loud, because an unattended test configured this way sits and
     waits for a human who is not there."""
     check = _named(settings_checks(_paper(execution_mode="recommend")), "autonomy")
-
-    assert check.status is Status.WARN
-
-
-def test_ibkr_against_a_us_watchlist_warns() -> None:
-    check = _named(settings_checks(_paper(market="US")), "market")
 
     assert check.status is Status.WARN
 
@@ -304,24 +296,6 @@ def test_the_session_check_warns_when_the_market_is_shut() -> None:
     after = datetime(2026, 8, 19, 9, 0, tzinfo=UTC)  # 19:00 Sydney
 
     assert _named(session_checks("ASX", after), "session").status is Status.WARN
-
-
-def test_the_corporate_action_note_is_derived_not_asserted() -> None:
-    """It said "IBKR publishes no corporate-action feed" unconditionally -
-    including with broker=alpaca, where announcements ARE implemented and the
-    ex-date gate works. A sentence that explains and is wrong, in the
-    instrument written to catch those, and its first real run printed it.
-
-    Derived from the capability register instead, which is what the
-    application itself consults.
-    """
-    on_alpaca = settings_checks(_paper(broker="alpaca", market="US", market_data_source="alpaca"))
-    names = [c.name for c in on_alpaca]
-
-    assert (
-        "corporate actions" not in names
-        or _named(on_alpaca, "corporate actions").status is Status.OK
-    ), "claimed corporate-action detection is unavailable on a broker that implements it"
 
 
 def test_the_corporate_action_note_still_fires_on_ibkr() -> None:

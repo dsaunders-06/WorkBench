@@ -70,8 +70,8 @@ OPTIONAL: dict[str, str] = {
         "case this entry originally described and this row can never appear in "
         "`missing_optional`. What actually decides whether the resting-order "
         "scan sees anything on an adapter is what that method's BODY returns: "
-        "AlpacaAdapter and MockBroker both implement it as an unconditional "
-        "`[]`, so the scan sees nothing resting on either, silently, forever - "
+        "MockBroker implements it as an unconditional `[]`, so the scan sees "
+        "nothing resting on that simulator, silently, forever - "
         "the same blind spot that let 24 August's sixteen orphaned GTC legs go "
         "unwatched, now reachable only by reading each adapter's own docstring "
         "rather than by this audit. `OMS.check_resting_orders` itself logs an "
@@ -141,7 +141,6 @@ def KNOWN_ADAPTERS() -> dict[str, type]:  # noqa: N802 - a registry, named as on
     in ib_async, and an import-time failure in a reporting module would take
     the application down with it.
     """
-    from qat.data.broker.alpaca_adapter import AlpacaAdapter
     from qat.data.broker.ib_adapter import IBAdapter
     from qat.data.broker.mock_broker import MockBroker
     from qat.data.broker.simulated_broker import SimulatedBroker
@@ -151,7 +150,6 @@ def KNOWN_ADAPTERS() -> dict[str, type]:  # noqa: N802 - a registry, named as on
     # the point: a harness missing a capability the live path depends on must
     # fail a test rather than quietly measure a book it never verified.
     return {
-        "alpaca": AlpacaAdapter,
         "ibkr": IBAdapter,
         "mock": MockBroker,
         "simulated": SimulatedBroker,

@@ -83,21 +83,21 @@ def _settings(tmp_path: Path) -> Settings:
 async def test_an_entry_is_dated_by_the_simulated_clock_not_the_wall_clock(tmp_path: Path):
     """The bridge's entry record is what every churn rail measures from."""
     session = ReplaySession(
-        bars={"AAA": _dip_then_drift()},
+        bars={"AAA.AX": _dip_then_drift()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
         warm_bars=60,
         # The regime gate refuses entries until a regime is published, so a
         # replay needs a benchmark it actually has bars for. In a single-symbol
         # fixture that symbol IS the market proxy.
-        benchmark="AAA",
+        benchmark="AAA.AX",
     )
 
     await session.run()
 
-    entries = session.bridge._entries
-    assert entries, "no entry was recorded, so the churn rails have nothing to measure"
-    opened = next(iter(entries.values())).opened_at
+    trades = session.ledger.closed_trades()
+    assert trades, "no entry was recorded, so the churn rails have nothing to measure"
+    opened = trades[0].opened_at
     last_bar = session.broker.session_dates[-1].to_pydatetime().replace(tzinfo=UTC)
     assert opened <= last_bar, (
         f"entry dated {opened.date()} against a window ending {last_bar.date()} - it was "
@@ -115,14 +115,14 @@ async def test_the_time_stop_fires_and_produces_a_closed_trade(tmp_path: Path):
     what the first ASX run did across two hundred and fifty sessions.
     """
     session = ReplaySession(
-        bars={"AAA": _dip_then_drift()},
+        bars={"AAA.AX": _dip_then_drift()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
         warm_bars=60,
         # The regime gate refuses entries until a regime is published, so a
         # replay needs a benchmark it actually has bars for. In a single-symbol
         # fixture that symbol IS the market proxy.
-        benchmark="AAA",
+        benchmark="AAA.AX",
     )
 
     await session.run()

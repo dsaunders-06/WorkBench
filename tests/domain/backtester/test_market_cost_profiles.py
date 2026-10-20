@@ -117,18 +117,6 @@ def test_an_explicit_setting_beats_the_published_profile() -> None:
     assert CostModel.from_settings(settings).min_commission == 99.0
 
 
-def test_us_trading_does_not_inherit_australian_pricing() -> None:
-    """The whole point of a per-market profile.
-
-    There is no published US profile here yet, so US falls back to the
-    configured defaults rather than quietly charging ASX rates.
-    """
-    assert ("US", "fixed") not in MARKET_COST_PROFILES
-
-    us = CostModel.from_settings(Settings(_env_file=None, market="US"))
-    assert us.third_party_bps == 0.0
-
-
 @pytest.mark.parametrize("pricing_model", ["fixed", "tiered"])
 def test_float_and_exact_adapters_share_one_canonical_fee_source(pricing_model: str) -> None:
     text = MARKET_COST_PARAMETER_TEXT[("ASX", pricing_model)]

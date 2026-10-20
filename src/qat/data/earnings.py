@@ -65,7 +65,7 @@ class NullEarningsCalendar:
         return 0
 
 
-def trading_days_between(start: date, end: date, market: mc.Market = "US") -> int:
+def trading_days_between(start: date, end: date, market: mc.Market = "ASX") -> int:
     """Sessions from `start` up to and including `end`.
 
     Negative when `end` is already behind `start`, which is how a stale
@@ -104,7 +104,7 @@ class YFinanceEarningsCalendar:
         data_dir: str | Path,
         ttl_days: float = 1.0,
         filename: str = CACHE_FILENAME,
-        market: mc.Market = "US",
+        market: mc.Market = "ASX",
     ) -> None:
         self.path = Path(data_dir) / filename
         self.ttl = timedelta(days=ttl_days)
@@ -243,7 +243,7 @@ class YFinanceEarningsCalendar:
 
 
 def _first_future_date(
-    calendar: object, market: mc.Market = "US", now: datetime | None = None
+    calendar: object, market: mc.Market = "ASX", now: datetime | None = None
 ) -> date | None:
     """The next announcement out of whatever shape yfinance returned.
 
@@ -275,7 +275,7 @@ def _first_future_date(
     return min(found) if found else None
 
 
-def _as_date(value: object, market: mc.Market = "US") -> date | None:
+def _as_date(value: object, market: mc.Market = "ASX") -> date | None:
     """The announcement's calendar date IN THE MARKET'S OWN TIMEZONE.
 
     yfinance stamps announcement times in America/New_York even for ASX
@@ -314,7 +314,7 @@ __all__ = [
 def earnings_date_from_sources(
     calendar: object,
     frame: object,
-    market: mc.Market = "US",
+    market: mc.Market = "ASX",
     now: datetime | None = None,
 ) -> date | None:
     """The next announcement from either yfinance surface (item 49).

@@ -54,15 +54,14 @@ _PROVIDER_LABELS = {"anthropic": "Anthropic", "local": "Local (LM Studio)", "dem
 _PROVIDER_VALUES = {label: value for value, label in _PROVIDER_LABELS.items()}
 _GENERAL_ORDER = ("anthropic", "local", "demo")
 _SENSITIVE_ORDER = ("local", "anthropic", "demo")
-_MARKETS = ("US", "ASX")
+_MARKETS = ("ASX",)
 _CATEGORIES = ("curated", "etf", "megacap")
 _BROKER_LABELS = {
     "mock": "Simulated (built-in)",
-    "alpaca": "Alpaca paper account",
     "ibkr": "Interactive Brokers",
 }
 _BROKER_VALUES = {label: value for value, label in _BROKER_LABELS.items()}
-_BROKERS = ("mock", "alpaca", "ibkr")
+_BROKERS = ("mock", "ibkr")
 # Recommend is listed first so it is the top item as well as the default value -
 # the safe option should also be the one a careless click lands on.
 _EXECUTION_MODE_LABELS = {
@@ -73,15 +72,8 @@ _EXECUTION_MODE_VALUES = {label: value for value, label in _EXECUTION_MODE_LABEL
 _DATA_SOURCE_LABELS = {
     "synthetic": "Simulated (random walk)",
     "yfinance": "Real market data (Yahoo, free/delayed)",
-    "alpaca": "Real market data (Alpaca, US only)",
 }
 _DATA_SOURCE_VALUES = {label: value for value, label in _DATA_SOURCE_LABELS.items()}
-_ALPACA_FEED_LABELS = {
-    "iex": "IEX - real time, single exchange (any account)",
-    "sip": "SIP - full consolidated tape (paid subscription)",
-    "delayed_sip": "Delayed SIP - consolidated, 15 min behind (free)",
-}
-_ALPACA_FEED_VALUES = {label: value for value, label in _ALPACA_FEED_LABELS.items()}
 _FUNDAMENTALS_LABELS = {
     "mock": "Simulated (every figure invented)",
     "yfinance": "Real company fundamentals (Yahoo)",
@@ -170,9 +162,8 @@ def check_broker_connection(
 ) -> tuple[bool, str]:
     """Can this broker actually be reached? (M105)
 
-    This returned `True, "<broker> needs no connection test"` for everything
-    except Alpaca - and it was TRUE when written, because the only other
-    brokers were `mock` and `simulated`, which run in-process.
+    This returned `True, "<broker> needs no connection test"` for mock and
+    simulated brokers, which run in-process.
 
     **IBKR broke that assumption and nothing noticed.** It is a real broker
     over a socket, and it is the one where "is the Gateway up?" is most likely
@@ -184,16 +175,6 @@ def check_broker_connection(
     account number, because the Settings screen is exactly where somebody looks
     to confirm which account they are on, and DU is what says paper.
     """
-    if broker == "alpaca":
-        from qat.data.broker.alpaca_adapter import AlpacaAdapter
-
-        adapter = AlpacaAdapter(settings=settings)
-        account = asyncio.run(adapter.account())
-        return True, (
-            f"connected to Alpaca {'paper' if adapter.paper else 'LIVE'} - "
-            f"cash ${account.cash:,.2f}, equity ${account.net_liquidation:,.2f}"
-        )
-
     if broker == "ibkr":
         client = ib_client
         if client is None:
@@ -344,7 +325,6 @@ class SettingsScreen(QWidget):
         for market in _MARKETS:
             self.market_combo.addItem(market)
         self.market_combo.setCurrentText(settings.market)
-        self.market_combo.currentTextChanged.connect(self._refresh_broker_warning)
         market_form.addRow("Market:", self.market_combo)
 
         self.category_combo = QComboBox()
@@ -352,9 +332,6 @@ class SettingsScreen(QWidget):
             self.category_combo.addItem(category)
         self.category_combo.setCurrentText(settings.watchlist_category)
         market_form.addRow("Watchlist category:", self.category_combo)
-
-        self.curated_us_input = QLineEdit(settings.watchlist_curated_us)
-        market_form.addRow("US curated tickers:", self.curated_us_input)
 
         self.curated_asx_input = QLineEdit(settings.watchlist_curated_asx)
         market_form.addRow("ASX curated tickers:", self.curated_asx_input)
@@ -379,26 +356,7 @@ class SettingsScreen(QWidget):
         for value in _BROKERS:
             self.broker_combo.addItem(_BROKER_LABELS[value])
         self.broker_combo.setCurrentText(_BROKER_LABELS[settings.broker])
-        self.broker_combo.currentTextChanged.connect(self._refresh_broker_warning)
         broker_form.addRow("Broker:", self.broker_combo)
-
-        self.broker_warning = QLabel(
-            "⚠ Alpaca trades US equities only - it cannot trade an ASX watchlist. "
-            "Switch Market to US to use it."
-        )
-        self.broker_warning.setStyleSheet(theme.text(theme.DANGER))
-        self.broker_warning.setWordWrap(True)
-        broker_form.addRow(self.broker_warning)
-
-        self.alpaca_key_input = QLineEdit()
-        self.alpaca_key_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.alpaca_key_input.setPlaceholderText("(leave blank to keep the existing key)")
-        broker_form.addRow("Alpaca API key:", self.alpaca_key_input)
-
-        self.alpaca_secret_input = QLineEdit()
-        self.alpaca_secret_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.alpaca_secret_input.setPlaceholderText("(leave blank to keep the existing secret)")
-        broker_form.addRow("Alpaca secret key:", self.alpaca_secret_input)
 
         broker_test_row = QHBoxLayout()
         self.broker_test_button = QPushButton("Test Broker Connection")
@@ -427,7 +385,6 @@ class SettingsScreen(QWidget):
         broker_form.addRow(cash_note)
 
         basic_layout.addWidget(broker_group)
-        self._refresh_broker_warning()
 
         basic_layout.addWidget(self._build_data_group(settings))
         advanced_layout.addWidget(self._build_risk_group(settings))
@@ -537,12 +494,6 @@ class SettingsScreen(QWidget):
         experimented with. A field can therefore be watched for unsaved changes
         without being something Restore Defaults may touch.
 
-        The Alpaca key and secret are deliberately ABSENT. They are write-only
-        password fields that start empty and never echo, and an earlier draft of
-        this plan wrongly assumed the operator's boundary excluded them - it
-        does not, they sit in Broker & Cash, below the line. They are handled
-        separately in `unsaved_changes`, which reports only THAT something was
-        entered and never what.
         """
         d = Settings(_env_file=None)
         pct = 100.0  # stored as a fraction, shown as a percentage
@@ -550,14 +501,12 @@ class SettingsScreen(QWidget):
             # label, widget, default to restore (None = watched but not tunable)
             ("Market", self.market_combo, None),
             ("Watchlist category", self.category_combo, None),
-            ("US curated tickers", self.curated_us_input, None),
             ("ASX curated tickers", self.curated_asx_input, None),
             ("Max symbols", self.max_symbols_input, d.watchlist_max_symbols),
             ("Min avg. daily volume", self.min_volume_input, d.watchlist_min_avg_volume),
             ("Broker", self.broker_combo, None),
             ("Minimum cash reserve", self.min_cash_reserve_input, d.min_cash_reserve),
             ("Market data source", self.data_source_combo, None),
-            ("Alpaca data feed", self.alpaca_feed_combo, None),
             ("Fundamentals source", self.fundamentals_combo, None),
             ("Per-trade risk", self.per_trade_risk_input, d.per_trade_risk_pct * pct),
             ("ATR stop multiple", self.atr_stop_multiple_input, d.atr_stop_multiple),
@@ -616,13 +565,6 @@ class SettingsScreen(QWidget):
         """
         current = self._snapshot()
         changed = [label for label, value in current.items() if self._baseline.get(label) != value]
-        # Reported, never echoed. That a key was typed is worth telling an
-        # operator about before it is thrown away; the key itself is not ours
-        # to put in a dialog.
-        if self.alpaca_key_input.text().strip():
-            changed.append("Alpaca API key (entered)")
-        if self.alpaca_secret_input.text().strip():
-            changed.append("Alpaca secret key (entered)")
         return changed
 
     def _on_restore_defaults_clicked(self) -> None:
@@ -757,28 +699,6 @@ class SettingsScreen(QWidget):
         real_note.setWordWrap(True)
         form.addRow(real_note)
 
-        self.alpaca_feed_combo = QComboBox()
-        for label in _ALPACA_FEED_LABELS.values():
-            self.alpaca_feed_combo.addItem(label)
-        self.alpaca_feed_combo.setCurrentText(_ALPACA_FEED_LABELS[settings.alpaca_data_feed])
-        self.alpaca_feed_combo.currentTextChanged.connect(self._refresh_data_warning)
-        # Kept so the row - label included - can be hidden as a unit. Hiding only
-        # the combo leaves a stranded "Alpaca feed:" label next to empty space.
-        self._data_form = form
-        form.addRow("Alpaca feed:", self.alpaca_feed_combo)
-
-        self.alpaca_feed_note = QLabel(
-            "Alpaca uses the same API keys as the broker (Settings -> Broker) and serves US "
-            "equities only. <b>IEX is a single exchange</b> carrying a small share of "
-            "consolidated volume, so quotes for less liquid names can be sparse or lag the "
-            "tape. SIP is the full consolidated tape but needs a paid Algo Trader Plus "
-            "subscription - without one, those requests fail and the app falls back to "
-            "simulated data with a logged warning."
-        )
-        self.alpaca_feed_note.setStyleSheet(theme.text(theme.MUTED))
-        self.alpaca_feed_note.setWordWrap(True)
-        form.addRow(self.alpaca_feed_note)
-
         self.fundamentals_combo = QComboBox()
         for label in _FUNDAMENTALS_LABELS.values():
             self.fundamentals_combo.addItem(label)
@@ -812,12 +732,6 @@ class SettingsScreen(QWidget):
     def _refresh_data_warning(self) -> None:
         selected = _DATA_SOURCE_VALUES[self.data_source_combo.currentText()]
         self.data_warning.setVisible(selected == "synthetic")
-        # The feed picker only means anything for Alpaca, and showing it
-        # otherwise implies it affects Yahoo or the random walk.
-        is_alpaca = selected == "alpaca"
-        self._data_form.setRowVisible(self.alpaca_feed_combo, is_alpaca)
-        self.alpaca_feed_note.setVisible(is_alpaca)
-
         is_mock_fundamentals = _FUNDAMENTALS_VALUES[self.fundamentals_combo.currentText()] == "mock"
         self.fundamentals_warning.setVisible(is_mock_fundamentals)
         self.fundamentals_note.setVisible(not is_mock_fundamentals)
@@ -1233,11 +1147,6 @@ class SettingsScreen(QWidget):
         is_anthropic = self.sensitive_provider.currentText() == _PROVIDER_LABELS["anthropic"]
         self.sensitive_warning.setVisible(is_anthropic)
 
-    def _refresh_broker_warning(self) -> None:
-        is_alpaca = self.broker_combo.currentText() == _BROKER_LABELS["alpaca"]
-        is_asx = self.market_combo.currentText() == "ASX"
-        self.broker_warning.setVisible(is_alpaca and is_asx)
-
     def _on_test_broker_clicked(self) -> None:
         asyncio.ensure_future(self._test_broker())
 
@@ -1246,9 +1155,6 @@ class SettingsScreen(QWidget):
         self.broker_test_result.setText("Checking...")
         self.broker_test_result.setStyleSheet("")
         broker = _BROKER_VALUES[self.broker_combo.currentText()]
-        # Persist any freshly typed keys first, since the adapter reads them
-        # from the keyring rather than from these fields.
-        self._save_broker_secrets()
         try:
             ok, message = await asyncio.to_thread(self._check_broker, broker)
         except Exception as exc:  # noqa: BLE001 - surfaced to the user below
@@ -1261,16 +1167,6 @@ class SettingsScreen(QWidget):
 
     def _check_broker(self, broker: str) -> tuple[bool, str]:
         return check_broker_connection(broker, self.runtime.settings)
-
-    def _save_broker_secrets(self) -> None:
-        api_key = self.alpaca_key_input.text().strip()
-        if api_key:
-            security.set_secret("ALPACA_API_KEY", api_key)
-            self.alpaca_key_input.clear()
-        secret_key = self.alpaca_secret_input.text().strip()
-        if secret_key:
-            security.set_secret("ALPACA_SECRET_KEY", secret_key)
-            self.alpaca_secret_input.clear()
 
     def _on_test_connection_clicked(self) -> None:
         asyncio.ensure_future(self._test_connection())
@@ -1346,14 +1242,12 @@ class SettingsScreen(QWidget):
             "QAT_LOCAL_LLM_MODEL": self.local_model_input.text().strip(),
             "QAT_MARKET": self.market_combo.currentText(),
             "QAT_WATCHLIST_CATEGORY": self.category_combo.currentText(),
-            "QAT_WATCHLIST_CURATED_US": self.curated_us_input.text().strip(),
             "QAT_WATCHLIST_CURATED_ASX": self.curated_asx_input.text().strip(),
             "QAT_WATCHLIST_MAX_SYMBOLS": str(self.max_symbols_input.value()),
             "QAT_WATCHLIST_MIN_AVG_VOLUME": str(self.min_volume_input.value()),
             "QAT_BROKER": _BROKER_VALUES[self.broker_combo.currentText()],
             "QAT_MIN_CASH_RESERVE": f"{self.min_cash_reserve_input.value():.2f}",
             "QAT_MARKET_DATA_SOURCE": _DATA_SOURCE_VALUES[self.data_source_combo.currentText()],
-            "QAT_ALPACA_DATA_FEED": _ALPACA_FEED_VALUES[self.alpaca_feed_combo.currentText()],
             "QAT_FUNDAMENTALS_SOURCE": _FUNDAMENTALS_VALUES[self.fundamentals_combo.currentText()],
             "QAT_EXECUTION_MODE": self._selected_execution_mode(),
             "QAT_AUTONOMOUS_STRATEGIES": ",".join(self.selected_strategies()),
@@ -1393,7 +1287,6 @@ class SettingsScreen(QWidget):
         if api_key:
             security.set_secret("ANTHROPIC_API_KEY", api_key)
             self.anthropic_key_input.clear()
-        self._save_broker_secrets()
 
         self.mark_saved()
         self.status_label.setText("Saved. Restart the application for changes to take effect.")

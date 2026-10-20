@@ -230,13 +230,12 @@ def confirm_force_start(parent: QWidget | None = None) -> bool:
 
 
 class SessionPanel(QFrame):
-    """Session state and countdowns for the configured market, plus any other
-    market currently trading."""
+    """Session state and countdown for the ASX."""
 
     def __init__(
         self,
         controller: SessionController,
-        market: mc.Market = "US",
+        market: mc.Market = "ASX",
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -259,11 +258,6 @@ class SessionPanel(QFrame):
         grid.addWidget(self.headline, 0, 0)
         grid.addWidget(self.detail, 0, 1)
 
-        # The other market only earns a line when it is actually trading -
-        # a permanent "ASX closed" row is noise to a US-configured operator.
-        self.other_market = QLabel("")
-        self.other_market.setStyleSheet(theme.text(_OPEN_COLOUR, size=theme.BODY, bold=True))
-        grid.addWidget(self.other_market, 1, 0, 1, 2)
         layout.addLayout(grid)
 
         status_row = QHBoxLayout()
@@ -323,15 +317,6 @@ class SessionPanel(QFrame):
             if loud
             else theme.text(countdown.colour, size=theme.BODY)
         )
-
-        other: mc.Market = "ASX" if self.market == "US" else "US"
-        other_countdown = countdown_for(other, now)
-        self.other_market.setText(
-            f"{other_countdown.headline} - {other_countdown.detail}"
-            if other_countdown.is_open
-            else ""
-        )
-        self.other_market.setVisible(other_countdown.is_open)
 
         self.session_status.setText(self.controller.status_line())
         # Only offer the override when it would do something.

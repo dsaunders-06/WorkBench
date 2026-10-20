@@ -34,14 +34,14 @@ from qat.presentation.ui_level import UiLevel
 # at, so a row with no market is not claimed by it - which is the safe
 # direction, and means a fixture has to say which era it is writing.
 _COLUMNS = ["timestamp", "symbol", "approved", "reason", "shares", "inputs", "market"]
-_MARKET = "US"  # Settings here takes the default market
+_MARKET = "ASX"  # Settings here takes the default market
 # M120. The panel is bounded to the TRADING day, so the fixture must be too.
 # Under `datetime.now(UTC).date()` these rows were written against a UTC date:
 # between 00:00 UTC and the exchange catching up, "today" was dated into the
 # future and "yesterday" was in fact the session still running, so the panel
 # correctly counted two candidates where the test demanded one. Settings here
-# takes the default market, which is US.
-_SESSION_DAY = mc.trading_date("US")
+# takes the default market, which is ASX.
+_SESSION_DAY = mc.trading_date("ASX")
 _TODAY = _SESSION_DAY.isoformat()
 _YESTERDAY = (_SESSION_DAY - timedelta(days=1)).isoformat()
 

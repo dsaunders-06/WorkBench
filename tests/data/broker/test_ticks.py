@@ -59,11 +59,6 @@ def test_previous_tick_refuses_a_price_without_a_positive_predecessor() -> None:
         previous_raw_order_tick(Decimal("0.0005"), "ASX")
 
 
-def test_the_us_tick_is_a_cent_everywhere_this_system_trades() -> None:
-    assert tick_size(105.47, "US") == Decimal("0.01")
-    assert tick_size(0.5, "US") == Decimal("0.0001")
-
-
 def test_the_swing_stop_that_prompted_this() -> None:
     """MGR.AX at 1.91 with an ATR stop. 1.8734 is not a price on the ASX, and
     IBKR rejects it rather than rounding it for us."""

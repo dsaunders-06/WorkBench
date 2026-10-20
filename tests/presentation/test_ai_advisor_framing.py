@@ -298,7 +298,7 @@ def test_an_unknown_day_pnl_produces_no_verdict_rather_than_a_permissive_one(qtb
         summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
     )
 
-    verdict, view = advisory_account.build_symbol_verdict(screen.runtime, "AMD", [], snapshot)
+    verdict, view = advisory_account.build_symbol_verdict(screen.runtime, "BHP.AX", [], snapshot)
 
     assert verdict is None
     assert view is None
@@ -332,7 +332,7 @@ def test_the_monitors_day_pnl_is_enough_to_produce_a_verdict(qtbot):
         summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
     )
 
-    verdict, _view = advisory_account.build_symbol_verdict(screen.runtime, "AMD", [], snapshot)
+    verdict, _view = advisory_account.build_symbol_verdict(screen.runtime, "BHP.AX", [], snapshot)
 
     assert verdict is not None, (
         "the verdict is still suppressed - the monitor's figure is not reaching "
@@ -350,6 +350,6 @@ def test_a_fully_known_account_still_produces_a_verdict(qtbot):
         summary=None, balances=balances, positions=(), taken_at=datetime.now(UTC), error=None
     )
 
-    verdict, _view = advisory_account.build_symbol_verdict(screen.runtime, "AMD", [], snapshot)
+    verdict, _view = advisory_account.build_symbol_verdict(screen.runtime, "BHP.AX", [], snapshot)
 
     assert verdict is not None

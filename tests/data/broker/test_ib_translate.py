@@ -19,10 +19,10 @@ from qat.data.broker.ib_translate import (
 
 
 def test_to_ib_contract_builds_a_stock_contract():
-    contract = to_ib_contract("AAPL")
-    assert contract.symbol == "AAPL"
+    contract = to_ib_contract("BHP.AX")
+    assert contract.symbol == "BHP"
     assert contract.exchange == "SMART"
-    assert contract.currency == "USD"
+    assert contract.currency == "AUD"
 
 
 def test_to_ib_order_market_buy():
@@ -67,12 +67,12 @@ def test_from_ib_trade_leaves_unmapped_intermediate_status_alone():
 
 
 def test_from_ib_position_translates_symbol_quantity_and_avg_cost():
-    contract = Stock("AAPL", "SMART", "USD")
+    contract = Stock("BHP", "SMART", "AUD")
     ib_position = IBPosition(account="DU12345", contract=contract, position=25.0, avgCost=142.5)
 
     position = from_ib_position(ib_position)
 
-    assert position.symbol == "AAPL"
+    assert position.symbol == "BHP.AX"
     assert position.quantity == 25.0
     assert position.avg_price == 142.5
 

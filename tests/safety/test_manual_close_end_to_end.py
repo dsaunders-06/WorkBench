@@ -47,12 +47,12 @@ from qat.domain.oms.position_closer import CloseOutcome, PositionCloser
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
-_NY = ZoneInfo("America/New_York")
-# Inside a regular US session, so the gate's `session.is_open` check passes for
+_SYD = ZoneInfo("Australia/Sydney")
+# Inside a regular ASX session, so the gate's `session.is_open` check passes for
 # the market sell. A protective stop does not need it (M33c).
-OPEN_US = datetime(2026, 7, 23, 10, 30, tzinfo=_NY)
+OPEN_ASX = datetime(2026, 7, 23, 11, 0, tzinfo=_SYD)
 
-SYMBOL = "AAPL"
+SYMBOL = "BHP.AX"
 
 
 class _Entry:
@@ -221,7 +221,7 @@ def _wire(tmp_path, broker: _IbkrLikeBroker, *, execution_mode: str = "auto") ->
         bus=bus,
         settings=settings,
     )
-    gate = AutonomyGate(settings, kill_switch, clock=lambda: OPEN_US)
+    gate = AutonomyGate(settings, kill_switch, clock=lambda: OPEN_ASX)
     journal = DecisionJournal(tmp_path)
     executor = AutonomousExecutor(bus, oms, gate, journal, settings=settings)
     closer = PositionCloser(oms, broker, kill_switch, {SYMBOL: _Entry()})
