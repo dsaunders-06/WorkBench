@@ -98,7 +98,7 @@ class FakeIBClient:
         return [self.reqMktData(c) for c in contracts]
 
 
-def _candidate_order(symbol: str = "AAPL") -> Order:
+def _candidate_order(symbol: str = "BHP.AX") -> Order:
     return Order(symbol=symbol, side="buy", quantity=10, order_id="order-1")
 
 
@@ -107,7 +107,10 @@ async def test_connect_calls_client_connect_and_starts_heartbeat():
     client = FakeIBClient()
     bus = EventBus()
     adapter = IBAdapter(
-        client, bus, settings=Settings(_env_file=None), heartbeat_interval_seconds=1000
+        client,
+        bus,
+        settings=Settings(_env_file=None, ibkr_account_id="DU_TEST"),
+        heartbeat_interval_seconds=1000,
     )
 
     await adapter.connect()
@@ -202,7 +205,7 @@ async def test_get_market_data_returns_bid_ask_last():
     bus = EventBus()
     adapter = IBAdapter(client, bus, settings=Settings(_env_file=None))
 
-    quote = await adapter.get_market_data("AAPL")
+    quote = await adapter.get_market_data("BHP.AX")
 
     assert quote == {"bid": 99.0, "ask": 101.0, "last": 100.0}
 
@@ -214,7 +217,7 @@ async def test_reconnect_succeeds_within_backoff_budget():
     adapter = IBAdapter(
         client,
         bus,
-        settings=Settings(_env_file=None),
+        settings=Settings(_env_file=None, ibkr_account_id="DU_TEST"),
         initial_backoff_seconds=0.001,
         max_backoff_seconds=0.01,
         max_reconnect_attempts=3,
@@ -261,7 +264,7 @@ async def test_heartbeat_loop_triggers_reconnect_when_unhealthy():
     adapter = IBAdapter(
         client,
         bus,
-        settings=Settings(_env_file=None),
+        settings=Settings(_env_file=None, ibkr_account_id="DU_TEST"),
         heartbeat_interval_seconds=0.01,
         initial_backoff_seconds=0.001,
         max_backoff_seconds=0.01,

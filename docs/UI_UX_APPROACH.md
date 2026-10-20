@@ -1,5 +1,10 @@
 # UI/UX approach plan
 
+> **Historical design reference.** Screens and settings mentioned below were
+> observed in August 2026. Alpaca and US trading are retired; QAT is ASX-only
+> with IBKR as its broker. Any Alpaca credentials or US account examples below
+> are historical, not current user instructions.
+
 **Drafted 4 August 2026, against build M38. §4.x re-read against M79 on
 8 August — see below.**
 

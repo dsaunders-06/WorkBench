@@ -41,13 +41,6 @@ def test_the_zone_is_always_named():
     assert "AEST" in format_session_time(ts, "ASX") or "AEDT" in format_session_time(ts, "ASX")
 
 
-def test_the_us_market_gets_its_own_zone():
-    ts = datetime(2026, 8, 25, 14, 30, 0, tzinfo=UTC)
-    shown = format_session_time(ts, "US")
-    assert shown.startswith("10:30:00"), shown
-    assert "ED" in shown or "ES" in shown
-
-
 def test_a_naive_timestamp_is_treated_as_utc_rather_than_guessed():
     """Records written before this existed carry naive UTC. Assuming local
     would move them by ten hours; assuming UTC is what they actually are."""

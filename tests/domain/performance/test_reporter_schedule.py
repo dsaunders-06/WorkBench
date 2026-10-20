@@ -7,7 +7,7 @@ close, honour the trading calendar, and survive a restart without duplicating.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -17,15 +17,15 @@ from qat.domain.bus import EventBus
 from qat.domain.performance.reporter import PerformanceReporter
 from qat.domain.performance.trades import EquityCurve, TradeLedger
 
-_NY = ZoneInfo("America/New_York")
+_SYD = ZoneInfo("Australia/Sydney")
 
-# Thursday 23 July 2026 - an ordinary US trading day.
-MIDSESSION = datetime(2026, 7, 23, 12, 0, tzinfo=_NY)
-AFTER_CLOSE = datetime(2026, 7, 23, 17, 0, tzinfo=_NY)
-BEFORE_OPEN = datetime(2026, 7, 23, 6, 0, tzinfo=_NY)
-FRIDAY_AFTER_CLOSE = datetime(2026, 7, 24, 17, 0, tzinfo=_NY)
-SATURDAY = datetime(2026, 7, 25, 17, 0, tzinfo=_NY)
-CHRISTMAS = datetime(2026, 12, 25, 17, 0, tzinfo=UTC)
+# Thursday 23 July 2026 - an ordinary ASX trading day.
+MIDSESSION = datetime(2026, 7, 23, 12, 0, tzinfo=_SYD)
+AFTER_CLOSE = datetime(2026, 7, 23, 17, 0, tzinfo=_SYD)
+BEFORE_OPEN = datetime(2026, 7, 23, 6, 0, tzinfo=_SYD)
+FRIDAY_AFTER_CLOSE = datetime(2026, 7, 24, 17, 0, tzinfo=_SYD)
+SATURDAY = datetime(2026, 7, 25, 17, 0, tzinfo=_SYD)
+CHRISTMAS = datetime(2026, 12, 25, 17, 0, tzinfo=_SYD)
 
 
 def _reporter(tmp_path, now: datetime) -> PerformanceReporter:
@@ -66,7 +66,7 @@ async def test_a_daily_report_counts_only_the_days_own_blocked_decisions(tmp_pat
                 "reason": "kill-switch active - daily loss",
             },
             {
-                "timestamp": "2026-07-23T14:00:00+00:00",
+                "timestamp": "2026-07-23T04:00:00+00:00",
                 "outcome": "blocked",
                 "reason": "already at the 10-position limit",
             },
@@ -148,7 +148,7 @@ async def test_nothing_is_reported_on_a_holiday(tmp_path):
 async def test_the_weekly_moves_to_thursday_when_friday_is_a_holiday(tmp_path):
     """Christmas 2026 falls on a Friday, so Thursday 24 December is the last
     trading day of that week. A hardcoded Friday would skip the week entirely."""
-    thursday = datetime(2026, 12, 24, 17, 0, tzinfo=_NY)
+    thursday = datetime(2026, 12, 24, 17, 0, tzinfo=_SYD)
     written = await _reporter(tmp_path, thursday).maybe_report()
     assert "weekly" in written
 

@@ -44,9 +44,9 @@ async def test_several_symbols_share_one_book(tmp_path):
     """Each symbol pulls back on a different day, so entries arrive spread out
     rather than all at once - which is what a portfolio actually looks like."""
     bars = {
-        "AAA": _bars_with_pullback_at(120),
-        "BBB": _bars_with_pullback_at(140),
-        "CCC": _bars_with_pullback_at(160),
+        "AAA.AX": _bars_with_pullback_at(120),
+        "BBB.AX": _bars_with_pullback_at(140),
+        "CCC.AX": _bars_with_pullback_at(160),
     }
     session = ReplaySession(
         bars=bars,
@@ -55,7 +55,7 @@ async def test_several_symbols_share_one_book(tmp_path):
         # The regime gate refuses entries until a regime is published, so a
         # replay needs a benchmark it actually has bars for. In a single-symbol
         # fixture that symbol IS the market proxy.
-        benchmark="AAA",
+        benchmark="AAA.AX",
     )
 
     await session.run()
@@ -63,7 +63,7 @@ async def test_several_symbols_share_one_book(tmp_path):
     held = {p.symbol for p in await session.broker.positions()}
     orders = {o.symbol for o in session.broker._orders.values()}
     assert orders, "the production path produced no order across three symbols"
-    assert held <= {"AAA", "BBB", "CCC"}
+    assert held <= {"AAA.AX", "BBB.AX", "CCC.AX"}
 
 
 @pytest.mark.asyncio
@@ -77,8 +77,8 @@ async def test_the_position_limit_refuses_an_entry_and_says_so(tmp_path):
     cannot show the rail acting.
     """
     bars = {
-        "AAA": _bars_with_pullback_at(120),
-        "BBB": _bars_with_pullback_at(124),  # while AAA is still held
+        "AAA.AX": _bars_with_pullback_at(120),
+        "BBB.AX": _bars_with_pullback_at(124),  # while AAA is still held
     }
     settings = _settings(tmp_path).model_copy(update={"max_concurrent_positions": 1})
     session = ReplaySession(
@@ -88,7 +88,7 @@ async def test_the_position_limit_refuses_an_entry_and_says_so(tmp_path):
         # The regime gate refuses entries until a regime is published, so a
         # replay needs a benchmark it actually has bars for. In a single-symbol
         # fixture that symbol IS the market proxy.
-        benchmark="AAA",
+        benchmark="AAA.AX",
     )
 
     await session.run()
@@ -100,7 +100,7 @@ async def test_the_position_limit_refuses_an_entry_and_says_so(tmp_path):
     # its time-stop exit - and the question here has only ever been which
     # symbols were ENTERED.
     entered = sorted(o.symbol for o in session.broker._orders.values() if o.side == "buy")
-    assert entered == ["AAA"], f"only the first setup should be entered, got {entered}"
+    assert entered == ["AAA.AX"], f"only the first setup should be entered, got {entered}"
 
     # risk_decisions.csv, not decision_journal.csv. The journal records the
     # SIGN-OFF path - what was transmitted and why it was allowed. Which rail

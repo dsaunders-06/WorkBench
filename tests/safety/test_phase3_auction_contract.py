@@ -9,7 +9,6 @@ import pytest
 
 from qat.config import Settings
 from qat.data.broker.adapter import Order
-from qat.data.broker.alpaca_adapter import AlpacaAdapter
 from qat.data.broker.ib_adapter import IBAdapter
 from qat.data.broker.ib_translate import UnrepresentableOrderError, to_ib_order, to_ib_parent
 from qat.data.broker.mock_broker import MockBroker
@@ -99,7 +98,7 @@ def test_existing_transmission_identity_can_retain_auction_open(tmp_path) -> Non
 @pytest.mark.asyncio
 async def test_all_broker_entrypoints_refuse_unverified_auction_intent() -> None:
     order = _auction_order()
-    for adapter_type in (AlpacaAdapter, IBAdapter):
+    for adapter_type in (IBAdapter,):
         adapter = adapter_type.__new__(adapter_type)
         with pytest.raises(ValueError, match="opening auction"):
             await adapter.place_order(order)

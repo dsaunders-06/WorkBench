@@ -183,7 +183,7 @@ async def test_the_dashboard_shows_balances_instead_of_a_nav_tile(qtbot):
 
     await dashboard._refresh()
 
-    assert dashboard.balances_panel.portfolio_value._value.text().startswith("$")
+    assert dashboard.balances_panel.portfolio_value._value.text().startswith("AUD ")
     assert not hasattr(dashboard, "nav_tile")
 
 

@@ -22,9 +22,9 @@ from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
-_NY = ZoneInfo("America/New_York")
-OPEN_US = datetime(2026, 7, 23, 10, 30, tzinfo=_NY)
-CLOSED_US = datetime(2026, 7, 23, 18, 0, tzinfo=_NY)
+_SYD = ZoneInfo("Australia/Sydney")
+OPEN_ASX = datetime(2026, 7, 23, 11, 0, tzinfo=_SYD)
+CLOSED_ASX = datetime(2026, 7, 23, 18, 0, tzinfo=_SYD)
 
 
 class _Broker:
@@ -84,7 +84,7 @@ def _settings(**overrides) -> Settings:
     return Settings(**base)  # type: ignore[arg-type]
 
 
-def _candidate(symbol: str = "AAPL", strategy: str | None = "swing") -> OrderCandidate:
+def _candidate(symbol: str = "BHP.AX", strategy: str | None = "swing") -> OrderCandidate:
     dates = pd.date_range("2024-01-01", periods=30)
     return OrderCandidate(
         symbol=symbol,
@@ -98,7 +98,7 @@ def _candidate(symbol: str = "AAPL", strategy: str | None = "swing") -> OrderCan
     )
 
 
-def _build(tmp_path, settings: Settings, broker: _Broker | None = None, now=OPEN_US):
+def _build(tmp_path, settings: Settings, broker: _Broker | None = None, now=OPEN_ASX):
     broker = broker or _Broker()
     bus = EventBus()
     switch = KillSwitch()
@@ -170,7 +170,7 @@ async def test_an_auto_signed_order_is_attributed_to_the_executor_not_a_person(t
 
 @pytest.mark.asyncio
 async def test_a_closed_market_leaves_the_order_for_a_human(tmp_path):
-    broker, _, oms, _, journal, executor = _build(tmp_path, _settings(), now=CLOSED_US)
+    broker, _, oms, _, journal, executor = _build(tmp_path, _settings(), now=CLOSED_ASX)
     await executor.start()
 
     order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
@@ -204,7 +204,7 @@ async def test_account_state_is_fetched_for_every_order_not_once_per_batch(tmp_p
     broker, _, oms, _, _, executor = _build(tmp_path, _settings())
     await executor.start()
 
-    for symbol in ("AAPL", "MSFT", "NVDA"):
+    for symbol in ("BHP.AX", "CBA.AX", "WOW.AX"):
         await oms.submit_order(_candidate(symbol=symbol), 100_000.0, {}, {})
 
     assert len(broker.placed) == 3
@@ -228,13 +228,13 @@ async def test_cash_exhausted_partway_through_stops_the_later_orders(tmp_path):
     _, _, oms, _, journal, executor = _build(tmp_path, _settings(), broker=broker)
     await executor.start()
 
-    first = await oms.submit_order(_candidate(symbol="AAPL"), 100_000.0, {}, {})
+    first = await oms.submit_order(_candidate(symbol="BHP.AX"), 100_000.0, {}, {})
     broker.cash = 5.0  # a fill elsewhere drained the account
-    second = await oms.submit_order(_candidate(symbol="MSFT"), 100_000.0, {}, {})
+    second = await oms.submit_order(_candidate(symbol="CBA.AX"), 100_000.0, {}, {})
 
     assert first.status == "filled"
     assert second.status == "rejected", "the no-leverage check must stop it at submission"
-    assert [order.symbol for order in broker.placed] == ["AAPL"]
+    assert [order.symbol for order in broker.placed] == ["BHP.AX"]
     assert [row["outcome"] for row in journal.entries()] == ["auto_signed"]
 
 
@@ -248,7 +248,7 @@ async def test_cash_drained_after_submission_is_caught_at_sign_off(tmp_path):
         tmp_path, _settings(execution_mode="recommend"), broker=broker
     )
     await executor.start()
-    order = await oms.submit_order(_candidate(symbol="AAPL"), 100_000.0, {}, {})
+    order = await oms.submit_order(_candidate(symbol="BHP.AX"), 100_000.0, {}, {})
     assert order.status == "pending_signoff"
 
     broker.cash = 5.0
@@ -312,11 +312,11 @@ async def test_the_journal_records_the_entity_name_and_context(tmp_path):
     broker, _, oms, _, journal, executor = _build(tmp_path, _settings())
     await executor.start()
 
-    await oms.submit_order(_candidate(symbol="AAPL"), 100_000.0, {}, {})
+    await oms.submit_order(_candidate(symbol="BHP.AX"), 100_000.0, {}, {})
 
     row = journal.entries()[0]
-    assert row["entity_name"] == "Apple Inc."
-    assert row["market"] == "US"
+    assert row["entity_name"] == "BHP Group Limited"
+    assert row["market"] == "ASX"
     assert row["session_phase"] == "Morning Trend"
     assert row["execution_mode"] == "auto"
     assert float(row["equity"]) == 100_000.0
@@ -328,12 +328,12 @@ async def test_blocked_and_executed_decisions_share_one_journal(tmp_path):
     broker, _, oms, _, journal, executor = _build(tmp_path, _settings())
     await executor.start()
 
-    await oms.submit_order(_candidate(symbol="AAPL"), 100_000.0, {}, {})
-    await oms.submit_order(_candidate(symbol="MSFT", strategy="momentum"), 100_000.0, {}, {})
+    await oms.submit_order(_candidate(symbol="BHP.AX"), 100_000.0, {}, {})
+    await oms.submit_order(_candidate(symbol="CBA.AX", strategy="momentum"), 100_000.0, {}, {})
 
     rows = journal.entries()
     assert [row["outcome"] for row in rows] == ["auto_signed", "blocked"]
-    assert [row["symbol"] for row in rows] == ["AAPL", "MSFT"]
+    assert [row["symbol"] for row in rows] == ["BHP.AX", "CBA.AX"]
 
 
 def test_the_journal_survives_a_missing_file(tmp_path):

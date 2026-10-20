@@ -39,9 +39,9 @@ def test_a_date_already_past_reads_as_negative() -> None:
     assert trading_days_between(TUESDAY, FRIDAY) < 0
 
 
-def test_a_us_holiday_is_not_counted() -> None:
-    """4 July 2026 falls on a Saturday and is observed on Friday the 3rd."""
-    before, after = date(2026, 7, 2), date(2026, 7, 6)
+def test_an_asx_holiday_is_not_counted() -> None:
+    """Australia Day 2026 falls on Monday 26 January."""
+    before, after = date(2026, 1, 23), date(2026, 1, 27)
     assert (after - before).days == 4
     assert trading_days_between(before, after) == 1
 

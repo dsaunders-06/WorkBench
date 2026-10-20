@@ -54,8 +54,8 @@ def test_live_is_enforced_in_both_flag_positions(flag: bool):
 
 # --- The gate honours it, not just the setting -----------------------------
 
-_NY = ZoneInfo("America/New_York")
-OPEN_US = datetime(2026, 7, 23, 10, 30, tzinfo=_NY)
+_SYD = ZoneInfo("Australia/Sydney")
+OPEN_ASX = datetime(2026, 7, 23, 11, 0, tzinfo=_SYD)
 
 
 def _below_bar(strategy: str) -> StrategyScorecard:
@@ -66,7 +66,7 @@ def _below_bar(strategy: str) -> StrategyScorecard:
 def _order() -> Order:
     return Order(
         order_id="o1",
-        symbol="AAPL",
+        symbol="BHP.AX",
         side="buy",
         quantity=10.0,
         status="pending_signoff",
@@ -90,7 +90,7 @@ def test_a_paper_account_still_trades_while_it_gathers_evidence():
     )
     gate = AutonomyGate(settings, KillSwitch(), scorecard_source=_below_bar)
 
-    decision = gate.evaluate(_order(), _account(), current_price=100.0, now=OPEN_US)
+    decision = gate.evaluate(_order(), _account(), current_price=100.0, now=OPEN_ASX)
 
     assert decision.allowed is True
 
@@ -106,7 +106,7 @@ def test_a_live_account_refuses_a_strategy_below_the_bar():
     )
     gate = AutonomyGate(settings, KillSwitch(), scorecard_source=_below_bar)
 
-    decision = gate.evaluate(_order(), _account(), current_price=100.0, now=OPEN_US)
+    decision = gate.evaluate(_order(), _account(), current_price=100.0, now=OPEN_ASX)
 
     assert decision.allowed is False
     assert "evidence bar" in decision.reason

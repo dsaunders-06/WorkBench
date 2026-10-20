@@ -81,16 +81,16 @@ async def test_unknown_symbol_falls_back_to_the_symbol_itself(qtbot):
     """A curated watchlist can contain anything the operator typed, so the
     name column must degrade rather than blank out or raise."""
     screen = _build_screen(qtbot)
-    screen.runtime.settings.watchlist_curated_us = "ZZZZ"
+    screen.runtime.settings.watchlist_curated_asx = "ZZZZ.AX"
     screen.category_combo.setCurrentText("curated")
-    screen.market_combo.setCurrentText("US")
+    screen.market_combo.setCurrentText("ASX")
     screen.min_avg_volume_input.setValue(0)
 
     await screen._run_screen()
 
     name_column = _column_index(screen, "Name")
     assert screen.results_table.rowCount() == 1
-    assert screen.results_table.item(0, name_column).text() == "ZZZZ"
+    assert screen.results_table.item(0, name_column).text() == "ZZZZ.AX"
 
 
 def _column_index(screen: ScreenerScreen, header: str) -> int:

@@ -177,37 +177,6 @@ def resolve_market_data_source(settings: Settings) -> MarketDataSource:
     believing you are trading against real prices while running on a random
     walk would be the worst of the available outcomes.
     """
-    if settings.market_data_source == "alpaca":
-        if settings.market != "US":
-            logger.warning(
-                "market_data_source=alpaca but market=%s - Alpaca serves US equities only",
-                settings.market,
-            )
-        try:
-            from qat.data.alpaca_source import AlpacaMarketDataSource
-
-            logger.info(
-                "Using real market data (Alpaca, feed=%s, poll=%.0fs).%s",
-                settings.alpaca_data_feed,
-                settings.alpaca_poll_seconds,
-                (
-                    " IEX is a single exchange carrying a small share of consolidated volume."
-                    if settings.alpaca_data_feed == "iex"
-                    else ""
-                ),
-            )
-            return AlpacaMarketDataSource(
-                feed=settings.alpaca_data_feed,
-                poll_seconds=settings.alpaca_poll_seconds,
-            )
-        except Exception as exc:  # noqa: BLE001 - degrade, but loudly
-            logger.warning(
-                "Could not build the Alpaca market data source (%s) - falling back to "
-                "SYNTHETIC data. Prices shown are not real.",
-                exc,
-            )
-        return SyntheticMarketDataSource(seed=1, interval_seconds=1.0)
-
     if settings.market_data_source == "yfinance":
         try:
             from qat.data.yfinance_source import YFinanceMarketDataSource
@@ -231,10 +200,7 @@ class BrokerNotAvailableError(RuntimeError):
     """A broker was configured that cannot be built, where substituting a
     different one would be worse than not starting.
 
-    Deliberately NOT raised for the alpaca path: a missing key there is a
-    configuration problem and degrading to MockBroker with a warning keeps the
-    operator in the application (spec M12). It IS raised for a broker that was
-    never wired at all, because the fallback is indistinguishable from success.
+    Raised when a configured broker cannot be built safely.
     """
 
 
@@ -245,7 +211,7 @@ class BrokerConnection:
     the socket AND starts the heartbeat and the reconnect-with-backoff loop, so
     it cannot happen at construction. Rather than making the caller know which
     adapters need connecting, this tolerates the ones that do not: MockBroker
-    and Alpaca have no connect step and pass through as a no-op.
+    has no connect step and passes through as a no-op.
 
     **Registered FIRST**, so the socket is up before any engine that might place
     an order - and therefore stopped LAST, because `Orchestrator.stop_all`
@@ -285,20 +251,6 @@ def resolve_broker(
     quietly paper-trading against a simulator while believing you are
     connected to a real account would be worse than either.
     """
-    if settings.broker == "alpaca":
-        if settings.market != "US":
-            logger.warning(
-                "broker=alpaca but market=%s - Alpaca trades US equities only, so this "
-                "watchlist cannot be traded through it",
-                settings.market,
-            )
-        try:
-            from qat.data.broker.alpaca_adapter import AlpacaAdapter
-
-            return AlpacaAdapter(settings=settings)
-        except Exception as exc:  # noqa: BLE001 - degrade to mock, but loudly
-            logger.warning("Could not build the Alpaca broker (%s) - using MockBroker", exc)
-            return MockBroker(seed=1)
     if settings.broker == "ibkr":
         from qat.data.broker.capabilities import KNOWN_ADAPTERS, inspect_adapter
         from qat.data.broker.ib_adapter import IBAdapter

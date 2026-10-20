@@ -65,9 +65,8 @@ async def _round_trip(ledger: TradeLedger, symbol: str = "RIO.AX") -> None:
         )
 
 
-def test_the_currency_map_covers_every_market() -> None:
+def test_the_currency_map_covers_the_asx_market() -> None:
     assert currency_for("ASX") == "AUD"
-    assert currency_for("US") == "USD"
 
 
 @pytest.mark.asyncio

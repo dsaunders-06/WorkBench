@@ -52,7 +52,7 @@ from qat.presentation.ui_level import UiLevel
 
 logger = logging.getLogger(__name__)
 
-_MARKETS = ("US", "ASX")
+_MARKETS = ("ASX",)
 _CATEGORIES = ("curated", "etf", "megacap")
 _TREND_BARS = 40
 _TREND_WINDOW = 20
@@ -364,11 +364,7 @@ class ScreenerScreen(QWidget):
         market = self.market_combo.currentText()
         category = self.category_combo.currentText()
         if category == "curated":
-            return (
-                self.runtime.settings.watchlist_curated_us_tuple
-                if market == "US"
-                else self.runtime.settings.watchlist_curated_asx_tuple
-            )
+            return self.runtime.settings.watchlist_curated_asx_tuple
         return universe.MARKET_WATCHLISTS[market][category]  # type: ignore[index]
 
     async def _run_screen(self) -> None:

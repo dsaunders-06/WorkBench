@@ -7,8 +7,8 @@ from qat.config import Settings
 from qat.data import universe
 
 
-def test_watchlist_tables_are_non_empty_for_both_markets():
-    for market in ("US", "ASX"):
+def test_asx_watchlist_tables_are_non_empty():
+    for market in ("ASX",):
         assert market in universe.MARKET_BENCHMARKS
         for category in ("curated", "etf", "megacap"):
             assert len(universe.MARKET_WATCHLISTS[market][category]) > 0  # type: ignore[literal-required]
@@ -16,16 +16,17 @@ def test_watchlist_tables_are_non_empty_for_both_markets():
 
 def test_synthetic_average_daily_volume_is_deterministic():
     assert universe.synthetic_average_daily_volume(
-        "AAPL"
-    ) == universe.synthetic_average_daily_volume("AAPL")
+        "BHP.AX"
+    ) == universe.synthetic_average_daily_volume("BHP.AX")
     assert universe.synthetic_average_daily_volume(
-        "AAPL"
-    ) != universe.synthetic_average_daily_volume("MSFT")
+        "BHP.AX"
+    ) != universe.synthetic_average_daily_volume("CBA.AX")
 
 
-def test_resolve_watchlist_curated_matches_settings_default():
+def test_resolve_watchlist_curated_matches_asx_settings_default():
     settings = Settings(_env_file=None)
-    assert universe.resolve_watchlist(settings) == ("SPY", "AAPL", "MSFT", "GOOGL")
+    assert settings.market == "ASX"
+    assert universe.resolve_watchlist(settings) == settings.watchlist_curated_asx_tuple
 
 
 def test_resolve_watchlist_uses_asx_curated_when_market_is_asx():
@@ -36,7 +37,7 @@ def test_resolve_watchlist_uses_asx_curated_when_market_is_asx():
 def test_resolve_watchlist_megacap_category_uses_full_pool():
     settings = Settings(_env_file=None, watchlist_category="megacap", watchlist_max_symbols=200)
     resolved = universe.resolve_watchlist(settings)
-    assert resolved == universe.MARKET_WATCHLISTS["US"]["megacap"]
+    assert resolved == universe.MARKET_WATCHLISTS["ASX"]["megacap"]
 
 
 def test_resolve_watchlist_caps_at_max_symbols():
@@ -62,4 +63,4 @@ def test_resolve_watchlist_min_volume_filter_narrows_pool():
 
 def test_resolve_watchlist_falls_back_when_volume_filter_excludes_everything():
     settings = Settings(_env_file=None, watchlist_min_avg_volume=1_000_000_000)
-    assert universe.resolve_watchlist(settings) == settings.watchlist_curated_us_tuple
+    assert universe.resolve_watchlist(settings) == settings.watchlist_curated_asx_tuple

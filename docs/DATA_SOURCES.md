@@ -1,12 +1,20 @@
 # QAT data-source inventory — 16 October 2026
 
+> **Historical snapshot, updated for the ASX-only cleanup.** The detailed
+> inventory below records the code and account configuration observed on
+> 16 October; its references to selectable Alpaca paths describe that date.
+> On this branch, Alpaca code and the US trading option have been removed.
+> QAT supports ASX equities only. IBKR is the approved broker and data
+> authority under [I-6 and I-8](INTENT.md); Yahoo earnings remain an approved
+> reduce-only event-risk input. The Anthropic key remains out of scope.
+
 DS changed [I-6](INTENT.md) on 15 and 16 October 2026: IBKR is the single data and
 broker source; Yahoo is a logged cross-check only, except that Yahoo earnings
 dates are approved as an event-risk input that can only reduce position size.
 DS also decided on 16 October 2026 that Alpaca is retired as both broker and
 data source. An Anthropic key is out of scope. [I-8](INTENT.md) limits QAT to
 ASX equities; US trading is not part of its functionality. References below
-to the still-present Alpaca code and historical US use describe inventory,
+to then-present Alpaca code and historical US use describe inventory,
 not an approved source or market.
 
 A validated source, direct or indirect, is added, removed or changed only by

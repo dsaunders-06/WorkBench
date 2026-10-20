@@ -122,18 +122,3 @@ async def test_a_split_adjusted_stop_is_re_ticked_on_modify(monkeypatch) -> None
 
     assert is_on_tick(modified.stop_price, "ASX")
     assert modified.stop_price == 0.94  # 0.9367 -> up to the half-cent grid
-
-
-@pytest.mark.asyncio
-async def test_a_us_order_is_unchanged_at_a_cent(monkeypatch) -> None:
-    """The US path had no defect and must not acquire one."""
-    adapter, _client = _adapter(market="US")
-    monkeypatch.setattr(adapter, "_check_not_read_only", lambda: None)
-
-    placed = await adapter.place_order(
-        _entry(symbol="AAPL", limit_price=105.47, stop_price=99.36, take_profit_price=115.02)
-    )
-
-    assert placed.limit_price == 105.47
-    assert placed.stop_price == 99.36
-    assert placed.take_profit_price == 115.02

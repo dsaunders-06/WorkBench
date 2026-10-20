@@ -132,7 +132,6 @@ def _adapter(client: FillsIB, market: str = "ASX") -> IBAdapter:
 
 def test_the_symbol_comes_back_in_the_apps_own_form() -> None:
     assert from_ibkr("BHP", "ASX") == "BHP.AX"
-    assert from_ibkr("AAPL", "US") == "AAPL"
 
 
 def test_a_symbol_that_already_carries_its_suffix_is_not_doubled() -> None:
@@ -231,14 +230,6 @@ async def test_reqexecutions_is_used_rather_than_the_session_scoped_fills() -> N
     assert client.filters, "reqExecutions was never called"
     assert len(result) == 1, "the empty streamed cache cannot be the fill authority"
     assert client.fills_called, "the streamed cache is now read only for time diagnostics"
-
-
-async def test_a_us_fill_keeps_its_plain_symbol() -> None:
-    client = FillsIB([_fill(symbol="AAPL")])
-
-    fill = (await _adapter(client, market="US").recent_fills(SINCE))[0]
-
-    assert fill.symbol == "AAPL"
 
 
 async def test_recent_fill_resolves_order_reference_after_adapter_restart() -> None:

@@ -1,9 +1,9 @@
-"""Market hours, holidays and session phases for US and ASX (spec M13).
+"""ASX market hours, holidays and session phases (spec M13).
 
 This is the piece the original ShareTrader app got approximately right and
 explicitly flagged as incomplete: its hours check was a weekday + clock-time
 comparison with no holiday awareness at all, so it believed the market was
-open on Thanksgiving, Christmas and every ASX public holiday. That was
+open on Christmas and every ASX public holiday. That was
 tolerable when a human was watching. It is not tolerable for unattended
 execution, where "the market is open" is a precondition that gates real
 orders - so holidays are computed here rather than ignored.
@@ -29,12 +29,11 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
-Market = Literal["US", "ASX"]
+Market = Literal["ASX"]
 
-US_TZ = ZoneInfo("America/New_York")
 ASX_TZ = ZoneInfo("Australia/Sydney")
 
-MARKET_TIMEZONES: dict[Market, ZoneInfo] = {"US": US_TZ, "ASX": ASX_TZ}
+MARKET_TIMEZONES: dict[Market, ZoneInfo] = {"ASX": ASX_TZ}
 
 # The currency a market's prices and P&L are denominated in (M122).
 #
@@ -43,7 +42,7 @@ MARKET_TIMEZONES: dict[Market, ZoneInfo] = {"US": US_TZ, "ASX": ASX_TZ}
 # carried no currency at all: two US trades from the Alpaca period sat in the
 # same file the ASX trial appends to, and their USD net_pnl would have been
 # summed with AUD net_pnl into one total that means nothing.
-CURRENCY_BY_MARKET: dict[Market, str] = {"US": "USD", "ASX": "AUD"}
+CURRENCY_BY_MARKET: dict[Market, str] = {"ASX": "AUD"}
 
 
 def currency_for(market: Market) -> str:
@@ -51,7 +50,6 @@ def currency_for(market: Market) -> str:
 
 
 _REGULAR_HOURS: dict[Market, tuple[time, time]] = {
-    "US": (time(9, 30), time(16, 0)),
     "ASX": (time(10, 0), time(16, 0)),
 }
 
@@ -69,7 +67,6 @@ def regular_hours(market: Market) -> tuple[time, time]:
 
 
 _EARLY_CLOSE_TIMES: dict[Market, time] = {
-    "US": time(13, 0),
     "ASX": time(14, 10),
 }
 
@@ -110,7 +107,7 @@ TradingState = Literal["pre_open", "opening_auction", "continuous", "closing_auc
 # is the pre-CSPA and the closing auction. Unchanged across both probes and
 # across a broker round trip to TWS and back.
 # See docs/superpowers/specs/2026-09-09-asx-session-hours-raw.md.
-_AUCTION_TAIL_MINUTES: dict[Market, int] = {"US": 0, "ASX": 11}
+_AUCTION_TAIL_MINUTES: dict[Market, int] = {"ASX": 11}
 
 # A JUDGEMENT, not a measurement, and the difference matters. The ASX opens in
 # staggered alphabetical groups across roughly the first ten minutes, so an
@@ -120,9 +117,7 @@ _AUCTION_TAIL_MINUTES: dict[Market, int] = {"US": 0, "ASX": 11}
 # zero. Ten minutes is a deliberately conservative blanket over a window the
 # broker cannot confirm.
 #
-# US is 0 on both tables, so a US session reaches only pre_open, continuous and
-# closed and its behaviour is bit-identical to before this existed.
-_OPENING_AUCTION_MINUTES: dict[Market, int] = {"US": 0, "ASX": 10}
+_OPENING_AUCTION_MINUTES: dict[Market, int] = {"ASX": 10}
 
 
 def auction_tail_minutes(market: Market) -> int:
@@ -162,8 +157,7 @@ class MarketSession:
 
 
 def easter_sunday(year: int) -> date:
-    """Anonymous Gregorian algorithm. Good Friday and Easter Monday are both
-    market holidays on both exchanges and neither has a fixed date."""
+    """Anonymous Gregorian algorithm for the ASX Easter holidays."""
     a = year % 19
     b, c = divmod(year, 100)
     d, e = divmod(b, 4)
@@ -188,16 +182,6 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
     return last - timedelta(days=(last.weekday() - weekday) % 7)
 
 
-def _observed_us(holiday: date) -> date:
-    """NYSE observance: a Saturday holiday moves to the preceding Friday, a
-    Sunday holiday to the following Monday."""
-    if holiday.weekday() == 5:
-        return holiday - timedelta(days=1)
-    if holiday.weekday() == 6:
-        return holiday + timedelta(days=1)
-    return holiday
-
-
 def _observed_au(holiday: date) -> date:
     """ASX observance: a weekend holiday moves forward to the next weekday."""
     if holiday.weekday() == 5:
@@ -205,22 +189,6 @@ def _observed_au(holiday: date) -> date:
     if holiday.weekday() == 6:
         return holiday + timedelta(days=1)
     return holiday
-
-
-def us_holidays(year: int) -> set[date]:
-    easter = easter_sunday(year)
-    return {
-        _observed_us(date(year, 1, 1)),  # New Year's Day
-        _nth_weekday(year, 1, 0, 3),  # Martin Luther King Jr. Day
-        _nth_weekday(year, 2, 0, 3),  # Washington's Birthday
-        easter - timedelta(days=2),  # Good Friday
-        _nth_weekday(year, 5, 0, -1),  # Memorial Day
-        _observed_us(date(year, 6, 19)),  # Juneteenth
-        _observed_us(date(year, 7, 4)),  # Independence Day
-        _nth_weekday(year, 9, 0, 1),  # Labor Day
-        _nth_weekday(year, 11, 3, 4),  # Thanksgiving
-        _observed_us(date(year, 12, 25)),  # Christmas Day
-    }
 
 
 def asx_holidays(year: int) -> set[date]:
@@ -244,23 +212,11 @@ def asx_holidays(year: int) -> set[date]:
 
 
 def _holidays(market: Market, year: int) -> set[date]:
-    return us_holidays(year) if market == "US" else asx_holidays(year)
+    return asx_holidays(year)
 
 
 def early_closes(market: Market, year: int) -> set[date]:
-    """Scheduled half-days. Not exhaustive - NYSE occasionally adds one - but
-    the recurring ones are here, and getting the close time wrong would skew
-    every session-phase boundary for that day."""
-    if market == "US":
-        thanksgiving = _nth_weekday(year, 11, 3, 4)
-        closes = {thanksgiving + timedelta(days=1)}  # Black Friday
-        july_3 = date(year, 7, 3)
-        if july_3.weekday() < 5 and _observed_us(date(year, 7, 4)) == date(year, 7, 4):
-            closes.add(july_3)
-        christmas_eve = date(year, 12, 24)
-        if christmas_eve.weekday() < 5:
-            closes.add(christmas_eve)
-        return closes
+    """Scheduled ASX half-days used for session-phase boundaries."""
     closes = set()
     for candidate in (date(year, 12, 24), date(year, 12, 31)):
         if candidate.weekday() < 5:
@@ -399,8 +355,8 @@ def session_for(market: Market, now: datetime | None = None) -> MarketSession:
 
 
 def open_markets(now: datetime | None = None) -> tuple[Market, ...]:
-    """Which markets are in their regular session - can be both, one, or none."""
-    markets: tuple[Market, ...] = ("US", "ASX")
+    """Which market is in its regular session."""
+    markets: tuple[Market, ...] = ("ASX",)
     return tuple(market for market in markets if session_for(market, now).is_open)
 
 

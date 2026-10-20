@@ -65,16 +65,16 @@ def test_settings_default_to_the_app_data_directory(home):
 
 
 def test_the_env_writer_defaults_to_the_app_directory(home):
-    update_env_file({"QAT_MARKET": "US"})
+    update_env_file({"QAT_MARKET": "ASX"})
 
     assert env_path().is_file()
-    assert "QAT_MARKET=US" in env_path().read_text(encoding="utf-8")
+    assert "QAT_MARKET=ASX" in env_path().read_text(encoding="utf-8")
 
 
 def test_the_env_writer_creates_the_directory_if_it_is_missing(home):
     assert not home.exists()
 
-    update_env_file({"QAT_MARKET": "US"})
+    update_env_file({"QAT_MARKET": "ASX"})
 
     assert env_path().is_file()
 
@@ -85,7 +85,7 @@ def test_the_env_writer_creates_the_directory_if_it_is_missing(home):
 def _legacy(root: Path) -> Path:
     """A pre-M22 layout: a .env and a data directory beside the executable."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / ".env").write_text("QAT_MARKET=US\nQAT_WATCHLIST_MAX_SYMBOLS=12\n", encoding="utf-8")
+    (root / ".env").write_text("QAT_MARKET=ASX\nQAT_WATCHLIST_MAX_SYMBOLS=12\n", encoding="utf-8")
     data = root / "data"
     (data / "logs").mkdir(parents=True)
     (data / "closed_trades.csv").write_text("symbol,pnl\nAAPL,12.5\n", encoding="utf-8")
@@ -100,7 +100,7 @@ def test_a_legacy_layout_is_brought_across(home, tmp_path):
     result = migrate_legacy_layout(origin)
 
     assert result.did_anything
-    assert env_path().read_text(encoding="utf-8").startswith("QAT_MARKET=US")
+    assert env_path().read_text(encoding="utf-8").startswith("QAT_MARKET=ASX")
     assert (data_dir() / "closed_trades.csv").is_file()
     assert (data_dir() / "logs" / "qat.log").is_file()
     assert set(result.files_copied) == {
@@ -157,7 +157,7 @@ def test_nothing_to_migrate_is_reported_as_such(home, tmp_path):
 
 def test_migrating_from_the_app_directory_itself_is_a_no_op(home):
     home.mkdir(parents=True)
-    env_path().write_text("QAT_MARKET=US\n", encoding="utf-8")
+    env_path().write_text("QAT_MARKET=ASX\n", encoding="utf-8")
 
     result = migrate_legacy_layout(home)
 

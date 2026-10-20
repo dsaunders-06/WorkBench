@@ -46,17 +46,6 @@ def test_the_exchange_suffix_is_stripped_for_ibkr() -> None:
     assert to_ibkr("BHP.AX") == "BHP"
 
 
-def test_a_us_symbol_is_unchanged() -> None:
-    assert to_ibkr("AAPL") == "AAPL"
-
-
-def test_a_class_share_keeps_its_dot() -> None:
-    """The M26 distinction, which is why the suffixes are listed rather than
-    inferred: `.AX` is an exchange, `.B` is a class share, and a rule that
-    stripped both would send BRK for BRK.B."""
-    assert to_ibkr("BRK.B") == "BRK.B"
-
-
 def test_an_asx_contract_carries_aud_and_the_asx_primary_exchange() -> None:
     contract = to_ib_contract("BHP.AX", market="ASX")
 
@@ -67,14 +56,6 @@ def test_an_asx_contract_carries_aud_and_the_asx_primary_exchange() -> None:
         "without primaryExchange the symbol is ambiguous across venues - this "
         "is what pointed BHP at the NYSE ADR"
     )
-
-
-def test_a_us_contract_is_unchanged() -> None:
-    contract = to_ib_contract("AAPL")
-
-    assert contract.symbol == "AAPL"
-    assert contract.currency == "USD"
-    assert contract.exchange == "SMART"
 
 
 class _Recorder:
@@ -215,22 +196,6 @@ def test_a_position_comes_back_in_the_apps_own_symbol_form() -> None:
     )
 
     assert from_ib_position(ib_position, market="ASX").symbol == "BHP.AX"
-
-
-def test_a_us_position_is_unchanged() -> None:
-    from ib_async import Contract
-    from ib_async import Position as IBPosition
-
-    from qat.data.broker.ib_translate import from_ib_position
-
-    ib_position = IBPosition(
-        account="DU1",
-        contract=Contract(symbol="AAPL", secType="STK", exchange="SMART", currency="USD"),
-        position=5.0,
-        avgCost=200.0,
-    )
-
-    assert from_ib_position(ib_position, market="US").symbol == "AAPL"
 
 
 async def test_positions_and_resting_stops_agree_on_the_symbol_form() -> None:

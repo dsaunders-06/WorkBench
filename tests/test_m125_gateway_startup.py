@@ -51,7 +51,7 @@ def _adapter(client, **kwargs) -> IBAdapter:
     return IBAdapter(
         client,
         EventBus(),
-        settings=Settings(_env_file=None, trading_mode="paper"),
+        settings=Settings(_env_file=None, trading_mode="paper", ibkr_account_id="DU_TEST"),
         initial_backoff_seconds=0.0,
         max_backoff_seconds=0.0,
         **kwargs,

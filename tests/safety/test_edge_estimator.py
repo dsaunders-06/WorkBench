@@ -43,7 +43,7 @@ class _Ledger:
 def _trade(pnl: float, strategy: str = "swing", n: int = 0) -> ClosedTrade:
     """P&L is a property of the prices, so it is expressed through them."""
     return ClosedTrade(
-        symbol="AAA",
+        symbol="AAA.AX",
         strategy=strategy,
         quantity=10.0,
         entry_price=100.0,
@@ -51,11 +51,10 @@ def _trade(pnl: float, strategy: str = "swing", n: int = 0) -> ClosedTrade:
         stop_price=95.0,
         opened_at=datetime.now(UTC) - timedelta(days=60 - n),
         closed_at=datetime.now(UTC) - timedelta(days=40 - n),
-        # Settings here take the default market, so these have to be US trades
-        # to be measurable at all after M122 - which is the point of the
-        # scoping, not an inconvenience of it.
-        market="US",
-        currency="USD",
+        # Settings take the ASX default, so the measured rows use the same
+        # market and currency as the active book.
+        market="ASX",
+        currency="AUD",
     )
 
 

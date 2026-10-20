@@ -17,15 +17,15 @@ from qat.presentation.session_panel import (
     format_duration,
 )
 
-NY = ZoneInfo("America/New_York")
+SYD = ZoneInfo("Australia/Sydney")
 
-MID_SESSION = datetime(2026, 7, 29, 12, 0, tzinfo=NY)
-JUST_INSIDE_CLOSE_ALERT = datetime(2026, 7, 29, 15, 31, tzinfo=NY)  # 29 min to 16:00
-JUST_OUTSIDE_CLOSE_ALERT = datetime(2026, 7, 29, 15, 29, tzinfo=NY)  # 31 min to 16:00
-JUST_INSIDE_OPEN_ALERT = datetime(2026, 7, 29, 9, 1, tzinfo=NY)  # 29 min to 09:30
-JUST_OUTSIDE_OPEN_ALERT = datetime(2026, 7, 29, 8, 59, tzinfo=NY)  # 31 min to 09:30
-SATURDAY = datetime(2026, 7, 25, 12, 0, tzinfo=NY)
-HOLIDAY = datetime(2026, 7, 3, 12, 0, tzinfo=NY)  # observed Independence Day
+MID_SESSION = datetime(2026, 7, 29, 12, 0, tzinfo=SYD)
+JUST_INSIDE_CLOSE_ALERT = datetime(2026, 7, 29, 15, 31, tzinfo=SYD)  # 29 min to 16:00
+JUST_OUTSIDE_CLOSE_ALERT = datetime(2026, 7, 29, 15, 29, tzinfo=SYD)  # 31 min to 16:00
+JUST_INSIDE_OPEN_ALERT = datetime(2026, 7, 29, 9, 31, tzinfo=SYD)  # 29 min to 10:00
+JUST_OUTSIDE_OPEN_ALERT = datetime(2026, 7, 29, 9, 29, tzinfo=SYD)  # 31 min to 10:00
+SATURDAY = datetime(2026, 7, 25, 12, 0, tzinfo=SYD)
+HOLIDAY = datetime(2026, 1, 26, 12, 0, tzinfo=SYD)  # Australia Day
 
 
 def test_durations_render_as_hh_mm_ss():
@@ -41,16 +41,16 @@ def test_a_passed_deadline_clamps_to_zero_rather_than_going_negative():
 
 
 def test_an_open_market_counts_down_to_the_close():
-    countdown = countdown_for("US", MID_SESSION)
+    countdown = countdown_for("ASX", MID_SESSION)
 
     assert countdown.is_open is True
-    assert countdown.headline == "US OPEN"
+    assert countdown.headline == "ASX OPEN"
     assert countdown.detail == "closes in 04:00:00"
     assert countdown.alerting is False
 
 
 def test_a_closed_market_counts_down_to_the_next_open():
-    countdown = countdown_for("US", JUST_OUTSIDE_OPEN_ALERT)
+    countdown = countdown_for("ASX", JUST_OUTSIDE_OPEN_ALERT)
 
     assert countdown.is_open is False
     assert "opens in 00:31:00" in countdown.detail
@@ -66,7 +66,7 @@ def test_a_closed_market_counts_down_to_the_next_open():
     ],
 )
 def test_the_alert_turns_on_inside_thirty_minutes(label, now, expected):
-    assert countdown_for("US", now).alerting is expected, label
+    assert countdown_for("ASX", now).alerting is expected, label
 
 
 def test_the_alert_threshold_is_thirty_minutes():
@@ -74,7 +74,7 @@ def test_the_alert_threshold_is_thirty_minutes():
 
 
 def test_a_weekend_counts_down_to_monday_not_to_tomorrow():
-    countdown = countdown_for("US", SATURDAY)
+    countdown = countdown_for("ASX", SATURDAY)
 
     assert countdown.is_open is False
     assert "weekend" in countdown.headline
@@ -83,7 +83,7 @@ def test_a_weekend_counts_down_to_monday_not_to_tomorrow():
 
 def test_a_holiday_is_named_rather_than_shown_as_an_ordinary_closure():
     """ "Closed" on a Friday morning with no explanation reads as a bug."""
-    countdown = countdown_for("US", HOLIDAY)
+    countdown = countdown_for("ASX", HOLIDAY)
 
     assert "public holiday" in countdown.headline
     assert countdown.is_open is False
@@ -91,12 +91,12 @@ def test_a_holiday_is_named_rather_than_shown_as_an_ordinary_closure():
 
 def test_routine_closures_are_not_editorialised():
     """Before the open on a trading day is mechanics, not news."""
-    assert countdown_for("US", JUST_OUTSIDE_OPEN_ALERT).headline == "US closed"
+    assert countdown_for("ASX", JUST_OUTSIDE_OPEN_ALERT).headline == "ASX closed"
 
 
 def test_an_alerting_countdown_is_coloured_differently_from_a_calm_one():
-    calm = countdown_for("US", MID_SESSION)
-    alerting = countdown_for("US", JUST_INSIDE_CLOSE_ALERT)
+    calm = countdown_for("ASX", MID_SESSION)
+    alerting = countdown_for("ASX", JUST_INSIDE_CLOSE_ALERT)
 
     assert calm.colour != alerting.colour
 
@@ -153,21 +153,21 @@ def test_the_panel_reports_the_controller_state_rather_than_re_deriving_it(qtbot
 def test_an_open_market_is_a_filled_banner_not_just_coloured_text():
     """Whether the market is open is the most consequential fact on the
     Dashboard, and coloured text alone was too easy to miss."""
-    assert "background-color" in countdown_for("US", MID_SESSION).banner_style
+    assert "background-color" in countdown_for("ASX", MID_SESSION).banner_style
 
 
 def test_an_imminent_open_is_also_filled():
-    assert "background-color" in countdown_for("US", JUST_INSIDE_OPEN_ALERT).banner_style
+    assert "background-color" in countdown_for("ASX", JUST_INSIDE_OPEN_ALERT).banner_style
 
 
 def test_a_quiet_closure_stays_flat():
     """Making every state shout is the same as making none of them."""
-    assert "background-color" not in countdown_for("US", SATURDAY).banner_style
+    assert "background-color" not in countdown_for("ASX", SATURDAY).banner_style
 
 
 def test_the_open_banner_and_the_alert_banner_differ():
-    calm = countdown_for("US", MID_SESSION).banner_style
-    closing_soon = countdown_for("US", JUST_INSIDE_CLOSE_ALERT).banner_style
+    calm = countdown_for("ASX", MID_SESSION).banner_style
+    closing_soon = countdown_for("ASX", JUST_INSIDE_CLOSE_ALERT).banner_style
 
     assert calm != closing_soon
     assert "background-color" in calm and "background-color" in closing_soon

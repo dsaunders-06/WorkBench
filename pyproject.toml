@@ -20,7 +20,6 @@ dependencies = [
     "hmmlearn>=0.3",
     "scikit-learn>=1.4",
     "ib_async>=2.0",
-    "alpaca-py>=0.43",
     "anthropic>=0.119",
     "pyqtgraph>=0.13",
     # Real market data (M14). Free and unofficial: rate-limited, sparse on

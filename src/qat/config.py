@@ -159,9 +159,8 @@ class Settings(BaseSettings):
 
     # --- Broker ------------------------------------------------------------
     # mock = in-process simulator (default, no credentials needed)
-    # alpaca = Alpaca paper account (US equities only)
     # ibkr = Interactive Brokers Gateway/TWS
-    broker: Literal["mock", "alpaca", "ibkr"] = "mock"
+    broker: Literal["mock", "ibkr"] = "mock"
 
     # --- IBKR ------------------------------------------------------------
     ibkr_host: str = "127.0.0.1"
@@ -690,7 +689,7 @@ class Settings(BaseSettings):
     # Synthetic remains the default so the demo app and the test suite are
     # unchanged and offline by default. Nothing about a strategy's behaviour on
     # synthetic prices tells you anything about its behaviour on real ones.
-    market_data_source: Literal["synthetic", "yfinance", "alpaca"] = "synthetic"
+    market_data_source: Literal["synthetic", "yfinance"] = "synthetic"
     # Company news for the advisory screen (M117). Defaults to "none":
     # news is third-party text and reaches a model, so it is opt-in rather
     # than something a fresh install starts doing on its own.
@@ -755,17 +754,6 @@ class Settings(BaseSettings):
     # unaffected either way: an exchange filing is the news, not a report about
     # it, and has never been held to this bar.
     news_min_sources: int = Field(default=1, ge=1)
-
-    # Which Alpaca data feed to request (M17). iex is real time on any account
-    # including free paper, but is a single exchange carrying a small share of
-    # US consolidated volume. sip is the full consolidated tape and needs a
-    # paid Algo Trader Plus subscription - requesting it without one fails
-    # rather than quietly degrading. delayed_sip is consolidated but 15 minutes
-    # behind, and is available on the free tier.
-    alpaca_data_feed: Literal["iex", "sip", "delayed_sip"] = "iex"
-
-    # How often Alpaca's latest-trade endpoint is polled.
-    alpaca_poll_seconds: float = Field(default=60.0, gt=0)
 
     # Where company fundamentals come from (M18). "mock" is the seeded
     # generator every milestone up to M17 ran on; it answers every field for
@@ -904,15 +892,12 @@ class Settings(BaseSettings):
     sensitive_request_provider: Literal["local", "anthropic", "demo"] = "demo"
 
     # --- Market & watchlist (M10) --------------------------------------------
-    market: Literal["US", "ASX"] = "US"
+    market: Literal["ASX"] = "ASX"
     watchlist_category: Literal["curated", "etf", "megacap"] = "curated"
     # Plain comma-separated strings, not tuple[str, ...] fields: pydantic-settings
     # JSON-decodes any complex-typed env value before a field_validator ever runs,
-    # so a human-editable "SPY,AAPL,MSFT" env value would fail to parse as JSON.
-    # A plain str field sidesteps that entirely; watchlist_curated_us_tuple below
-    # does the actual comma-splitting. Matches the fixed 4-symbol watchlist every
-    # prior milestone shipped with, so existing behaviour is unchanged by default.
-    watchlist_curated_us: str = "SPY,AAPL,MSFT,GOOGL"
+    # so a human-editable comma-separated env value would fail to parse as JSON.
+    # A plain str field sidesteps that entirely.
     watchlist_curated_asx: str = "STW.AX,BHP.AX,CBA.AX,CSL.AX"
     watchlist_max_symbols: int = Field(default=10, gt=0)
     watchlist_min_avg_volume: int = Field(default=100_000, ge=0)
@@ -924,10 +909,6 @@ class Settings(BaseSettings):
 
     # --- Logging -----------------------------------------------------------
     log_level: str = "INFO"
-
-    @property
-    def watchlist_curated_us_tuple(self) -> tuple[str, ...]:
-        return tuple(s.strip() for s in self.watchlist_curated_us.split(",") if s.strip())
 
     @property
     def watchlist_curated_asx_tuple(self) -> tuple[str, ...]:

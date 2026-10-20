@@ -13,6 +13,20 @@ def test_defaults_are_safe():
     assert settings.storage_backend == "sqlite"
 
 
+def test_unset_market_defaults_to_asx(monkeypatch):
+    monkeypatch.delenv("QAT_MARKET", raising=False)
+    assert Settings(_env_file=None).market == "ASX"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("market", "US"), ("broker", "alpaca"), ("market_data_source", "alpaca")],
+)
+def test_retired_market_and_sources_are_rejected(field, value):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: value})
+
+
 def test_trading_mode_can_be_overridden_via_env(monkeypatch):
     monkeypatch.setenv("QAT_TRADING_MODE", "live")
     settings = Settings(_env_file=None)

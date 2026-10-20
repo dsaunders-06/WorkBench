@@ -58,14 +58,14 @@ async def test_the_strategy_sees_true_daily_bars_not_flattened_ones(tmp_path):
     """If a tick flattened the bar, high == low == close and ATR collapses -
     which would silently break every stop distance in the system."""
     session = ReplaySession(
-        bars={"AAA": _trending_bars()},
+        bars={"AAA.AX": _trending_bars()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
     )
 
     await session.run()
 
-    frame = session.engine.bars.frame("AAA")
+    frame = session.engine.bars.frame("AAA.AX")
     assert not frame.empty
     assert (frame["high"] > frame["low"]).all(), "a flattened bar means ATR is zero"
 
@@ -74,7 +74,7 @@ async def test_the_strategy_sees_true_daily_bars_not_flattened_ones(tmp_path):
 async def test_the_session_advances_the_broker_to_the_end_of_the_series(tmp_path):
     bars = _trending_bars()
     session = ReplaySession(
-        bars={"AAA": bars},
+        bars={"AAA.AX": bars},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
     )
@@ -89,17 +89,17 @@ async def test_a_signal_becomes_an_order_at_the_broker(tmp_path):
     """The claim the harness rests on: the production path, driven by history,
     produces an order without a single rule being re-implemented."""
     session = ReplaySession(
-        bars={"AAA": _trending_bars()},
+        bars={"AAA.AX": _trending_bars()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
-        benchmark="AAA",
+        benchmark="AAA.AX",
     )
 
     await session.run()
 
     submitted = list(session.broker._orders.values())
     assert submitted, "the production path produced no order at all"
-    assert all(o.symbol == "AAA" for o in submitted)
+    assert all(o.symbol == "AAA.AX" for o in submitted)
 
 
 @pytest.mark.asyncio
@@ -108,7 +108,7 @@ async def test_the_buffers_are_warm_before_the_first_replayed_day(tmp_path):
     measured window is systematically quiet - an artefact of the instrument
     rather than anything the market did."""
     session = ReplaySession(
-        bars={"AAA": _trending_bars()},
+        bars={"AAA.AX": _trending_bars()},
         strategies=[SwingStrategy()],
         settings=_settings(tmp_path),
         warm_bars=60,
@@ -119,5 +119,5 @@ async def test_the_buffers_are_warm_before_the_first_replayed_day(tmp_path):
     # satisfy the same counts from replayed bars alone.
     await session._warm_start()
 
-    assert len(session.engine.bars.frame("AAA")) >= 60, "seeded before day one"
-    assert len(session.bridge.bars.frame("AAA")) >= 60
+    assert len(session.engine.bars.frame("AAA.AX")) >= 60, "seeded before day one"
+    assert len(session.bridge.bars.frame("AAA.AX")) >= 60

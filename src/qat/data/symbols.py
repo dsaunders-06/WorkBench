@@ -1,47 +1,19 @@
-"""One canonical symbol form, translated at each vendor boundary (spec M26).
+"""ASX symbol normalisation at vendor and IBKR boundaries (spec M26).
 
-Class-share tickers are written differently by different vendors: Alpaca and
-most US brokers use a dot (``BRK.B``), Yahoo Finance uses a hyphen (``BRK-B``).
-The watchlist carried the Yahoo form, and that single character cost an entire
-trading session.
-
-It was not a degraded symbol. Alpaca's latest-trade endpoint rejects the
-*whole request* with HTTP 400 when any symbol in it is unknown, so one bad
-entry in a hundred-symbol batch returned nothing for all hundred. Five empty
-polls later the feed shut itself down, and the session ran six hours seventeen
-minutes with no market data at all - strategies, risk engine and execution
-path all healthy and never given a price to act on.
-
-The lesson is not "fix BRK-B". It is that a symbol has no single correct
-spelling, so the app needs one internal form and a translation at each
-boundary. Canonical here is the **broker's** form, because that is what
-positions, fills and reconciliation all speak: a symbol that round-trips
-wrongly against the broker is a reconciliation mismatch and a halted session,
-which is worse than a missing fundamentals lookup.
+QAT stores ``.AX`` symbols. Legacy ASX inputs such as ``BHP-AX`` are accepted
+and normalised to ``BHP.AX`` before positions, fills and reconciliation use
+them. IBKR contract symbols omit the exchange suffix and are restored on
+the return path.
 """
 
 from __future__ import annotations
 
-# Yahoo writes class shares with a hyphen where the brokers use a dot. This is
-# the only systematic divergence between the two in US equities; anything else
-# is a genuinely different listing and must not be papered over here.
-_YFINANCE_CLASS_SEPARATOR = "-"
-_CANONICAL_CLASS_SEPARATOR = "."
+# Legacy ASX watchlists may spell the exchange suffix with a hyphen. Keep that
+# accepted input form while removing the retired US class-share translation.
+_ASX_INPUT_SUFFIX = "-AX"
 
-# EXCHANGE SUFFIXES, which the rule above explicitly does not cover and which
-# the translation used to mangle anyway. `.AX` is what Yahoo itself requires for
-# an ASX listing, so rewriting `BHP.AX` to `BHP-AX` is a 404 - and a 404 is not
-# where the damage stopped: `YFinanceHistorySource` falls back to SYNTHETIC bars
-# when a fetch returns nothing, so the caller got 500 fabricated daily bars with
-# a warning in the log and no exception. A research run on that would have
-# produced expectancy, rail bindings and an ablation verdict, all invented and
-# all plausible.
-#
-# Listed rather than inferred from shape. A single trailing letter is a class
-# share (`BRK.B`) and two is usually an exchange (`.AX`) - but `.L` is London
-# and would break the guess, so the markets this application actually supports
-# are named. `Market` is `Literal["US", "ASX"]`; when a third arrives it is
-# added here deliberately rather than by a heuristic that was right twice.
+# Yahoo expects ``.AX`` for an ASX listing. Keep the exchange suffix explicit
+# rather than inferring it from the shape of the last component.
 _EXCHANGE_SUFFIXES = (".AX",)
 
 
@@ -60,14 +32,14 @@ def to_yfinance(symbol: str) -> str:
     The exchange suffix is preserved: Yahoo wants `.AX` and translating it is
     a lookup failure that degrades to synthetic prices rather than to an error.
     """
-    base, exchange = _split_exchange(symbol)
-    return base.replace(_CANONICAL_CLASS_SEPARATOR, _YFINANCE_CLASS_SEPARATOR) + exchange
+    return symbol
 
 
 def from_yfinance(symbol: str) -> str:
     """Yahoo form -> canonical. Used when reading vendor-shaped input back."""
-    base, exchange = _split_exchange(symbol)
-    return base.replace(_YFINANCE_CLASS_SEPARATOR, _CANONICAL_CLASS_SEPARATOR) + exchange
+    if symbol.upper().endswith(_ASX_INPUT_SUFFIX):
+        return symbol[: -len(_ASX_INPUT_SUFFIX)] + ".AX"
+    return symbol
 
 
 def to_ibkr(symbol: str) -> str:
@@ -80,10 +52,8 @@ def to_ibkr(symbol: str) -> str:
     definition has been found", in AUD as well as USD. Every ASX order the
     application could place would have been rejected outright (M96).
 
-    The class-share dot is PRESERVED, which is why `_split_exchange` lists the
-    exchange suffixes rather than inferring them: `.AX` is an exchange and
-    `.B` is part of the name, and a rule that stripped both would ask IBKR for
-    BRK when the app meant BRK.B.
+    `_split_exchange` lists the ASX exchange suffix rather than stripping
+    arbitrary dotted components.
     """
     base, _ = _split_exchange(symbol)
     return base
@@ -92,10 +62,10 @@ def to_ibkr(symbol: str) -> str:
 # Which suffix each market's symbols carry in the app's own form. IBKR speaks
 # the base symbol and learns the venue from the contract, so the suffix has to
 # be removed on the way out and put back on the way in (M96, Task 2).
-_MARKET_SUFFIX = {"US": "", "ASX": ".AX"}
+_MARKET_SUFFIX = {"ASX": ".AX"}
 
 
-def from_ibkr(symbol: str, market: str = "US") -> str:
+def from_ibkr(symbol: str, market: str = "ASX") -> str:
     """IBKR's form -> canonical, the return leg of `to_ibkr`.
 
     The app tracks `BHP.AX` and IBKR answers `BHP`. A fill returned as `BHP`
@@ -108,6 +78,8 @@ def from_ibkr(symbol: str, market: str = "US") -> str:
     a symbol that round-trips wrongly against the broker is a reconciliation
     mismatch and a halted session.
     """
+    if market != "ASX":
+        raise ValueError(f"unsupported market: {market}")
     suffix = _MARKET_SUFFIX[market]
     if not suffix:
         return symbol
@@ -120,8 +92,7 @@ def from_ibkr(symbol: str, market: str = "US") -> str:
 def canonical(symbol: str) -> str:
     """Normalise a symbol from any source into the app's internal form.
 
-    Uppercased and hyphen-to-dot, so a watchlist typed by hand in either
-    convention reaches the broker in the one it accepts.
+    Uppercased, with the ASX exchange suffix normalised to ``.AX``.
     """
     return from_yfinance(symbol.strip().upper())
 

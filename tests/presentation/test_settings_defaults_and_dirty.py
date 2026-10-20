@@ -46,7 +46,7 @@ def test_changing_a_field_is_reported_by_name(qtbot):
 def test_retyping_the_same_value_is_not_a_change(qtbot):
     screen = _screen(qtbot)
     screen.max_positions_input.setValue(screen.max_positions_input.value())
-    screen.curated_us_input.setText(screen.curated_us_input.text())
+    screen.curated_asx_input.setText(screen.curated_asx_input.text())
 
     assert screen.unsaved_changes() == []
 
@@ -58,20 +58,6 @@ def test_fields_above_the_boundary_are_not_watched(qtbot):
     screen.local_model_input.setText("something-else")
 
     assert screen.unsaved_changes() == []
-
-
-def test_an_entered_api_key_is_reported_but_never_echoed(qtbot):
-    """The Alpaca key and secret sit BELOW the boundary, in Broker & Cash - an
-    earlier draft of the plan wrongly assumed they were above it. They are
-    write-only password fields, so the prompt says that something was entered
-    and never what."""
-    screen = _screen(qtbot)
-    screen.alpaca_key_input.setText("PKTESTSECRETVALUE")
-
-    changed = screen.unsaved_changes()
-
-    assert "Alpaca API key (entered)" in changed
-    assert not any("PKTESTSECRETVALUE" in entry for entry in changed)
 
 
 def test_saving_clears_the_pending_changes(qtbot, monkeypatch):
@@ -117,13 +103,13 @@ def test_restore_defaults_leaves_configuration_alone(qtbot, monkeypatch):
             "PySide6.QtWidgets", fromlist=["QMessageBox"]
         ).QMessageBox.StandardButton.Yes,
     )
-    screen = _screen(qtbot, max_concurrent_positions=17, watchlist_curated_us="AAA,BBB")
-    before = screen.curated_us_input.text()
+    screen = _screen(qtbot, max_concurrent_positions=17, watchlist_curated_asx="AAA.AX,BBB.AX")
+    before = screen.curated_asx_input.text()
     broker_before = screen.broker_combo.currentText()
 
     screen._on_restore_defaults_clicked()
 
-    assert screen.curated_us_input.text() == before
+    assert screen.curated_asx_input.text() == before
     assert screen.broker_combo.currentText() == broker_before
 
 

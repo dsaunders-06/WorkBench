@@ -1,4 +1,9 @@
-"""Regenerate docs/Quant_Advisory_Terminal_User_Manual.docx.
+"""Historical US/Alpaca manual generator, retained for provenance.
+
+The generated manual is marked historical. Its US demo symbols are not QAT's
+current ASX trading configuration; do not use this script for an ASX manual.
+
+Regenerate docs/Quant_Advisory_Terminal_User_Manual.docx.
 
 The first edition of this manual was built by a throwaway script that was never
 committed, so the document drifted six milestones behind the application with

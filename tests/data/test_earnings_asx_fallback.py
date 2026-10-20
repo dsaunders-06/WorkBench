@@ -77,18 +77,6 @@ def test_a_new_york_stamped_date_is_read_in_the_MARKET_timezone():
     ), "the ASX date, not the New York one"
 
 
-def test_the_same_instant_reads_as_the_new_york_date_for_a_US_symbol():
-    """The conversion follows the MARKET, it is not a blanket shift to Sydney."""
-    import pandas as pd
-
-    ny_evening = pd.Timestamp("2026-11-17 21:00:00", tz="America/New_York")
-    frame = pd.DataFrame(index=pd.DatetimeIndex([ny_evening]))
-
-    assert earnings_date_from_sources({"Earnings Date": []}, frame, market="US", now=_NOW) == date(
-        2026, 11, 17
-    )
-
-
 def test_a_naive_date_is_left_alone():
     """A plain date carries no time and must not be shifted by a conversion."""
     assert earnings_date_from_sources(

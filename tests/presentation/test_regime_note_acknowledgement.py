@@ -102,18 +102,6 @@ def test_the_caption_confirms_with_a_zoned_local_time(qtbot, tmp_path) -> None:
     assert "AEST" in caption or "AEDT" in caption, caption
 
 
-def test_the_caption_follows_the_MARKET_not_the_machine(qtbot, tmp_path) -> None:
-    """⚠️ Item 21's actual instruction, which is easy to satisfy by accident on
-    a box that happens to sit in Sydney. The zone comes from the exchange the
-    book trades on; the same click under `market="US"` must not say AEST."""
-    screen = _screen(qtbot, tmp_path, market="US")
-    screen.review_button.click()
-
-    caption = screen.review_button.text()
-    assert "AEST" not in caption and "AEDT" not in caption, caption
-    assert "ST" in caption or "DT" in caption, caption
-
-
 async def test_a_new_regime_resets_the_button_but_not_the_record(qtbot, tmp_path, caplog) -> None:
     """The caption is per-note and SHOULD reset - a tick left standing under a
     new regime would claim an acknowledgement nobody made. The log line is what

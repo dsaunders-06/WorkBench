@@ -114,7 +114,7 @@ class PerformanceReporter:
         once.
         """
         now = self.clock()
-        market: mc.Market = "ASX" if self.settings.market == "ASX" else "US"
+        market: mc.Market = "ASX"
         session = mc.session_for(market, now)
         today = session.local_time.date()
 

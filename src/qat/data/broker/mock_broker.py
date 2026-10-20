@@ -241,7 +241,7 @@ class MockBroker:
             buying_power=summary.buying_power,
             long_market_value=long_value,
             short_market_value=0.0,
-            currency="USD",
+            currency="AUD",
             status="SIMULATED",
         )
 

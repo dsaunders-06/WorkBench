@@ -34,114 +34,6 @@ WatchlistCategory = Literal["curated", "etf", "megacap"]
 
 MARKET_BENCHMARKS: dict[Market, str] = {"US": "SPY", "ASX": "STW.AX"}
 
-_WATCHLISTS_US: dict[WatchlistCategory, tuple[str, ...]] = {
-    "curated": ("AAPL", "MSFT", "NVDA", "AMZN", "GOOGL"),
-    "etf": ("SPY", "QQQ"),
-    "megacap": (
-        "AAPL",
-        "MSFT",
-        "NVDA",
-        "AMZN",
-        "GOOGL",
-        "GOOG",
-        "META",
-        "AVGO",
-        "TSLA",
-        "BRK.B",
-        "LLY",
-        "JPM",
-        "V",
-        "UNH",
-        "XOM",
-        "MA",
-        "COST",
-        "HD",
-        "PG",
-        "JNJ",
-        "NFLX",
-        "ABBV",
-        "BAC",
-        "KO",
-        "MRK",
-        "ORCL",
-        "CRM",
-        "ADBE",
-        "AMD",
-        "PEP",
-        "TMO",
-        "ABT",
-        "CSCO",
-        "ACN",
-        "MCD",
-        "DHR",
-        "LIN",
-        "WFC",
-        "TXN",
-        "IBM",
-        "GE",
-        "CAT",
-        "VZ",
-        "CMCSA",
-        "PM",
-        "NKE",
-        "UNP",
-        "HON",
-        "QCOM",
-        "INTU",
-        "WMT",
-        "DIS",
-        "NOW",
-        "INTC",
-        "BA",
-        "RTX",
-        "LOW",
-        "SBUX",
-        "MDT",
-        "GS",
-        "MS",
-        "BLK",
-        "AXP",
-        "SPGI",
-        "SCHW",
-        "C",
-        "PGR",
-        "PLTR",
-        "AMAT",
-        "MU",
-        "ADI",
-        "LRCX",
-        "KLAC",
-        "PANW",
-        "CRWD",
-        "ISRG",
-        "VRTX",
-        "REGN",
-        "GILD",
-        "BMY",
-        "PFE",
-        "CVS",
-        "SYK",
-        "DE",
-        "LMT",
-        "NOC",
-        "UPS",
-        "MMM",
-        "DUK",
-        "SO",
-        "NEE",
-        "SHW",
-        "FCX",
-        "NEM",
-        "TJX",
-        "BKNG",
-        "MAR",
-        "GM",
-        "F",
-        "MO",
-    ),
-}
-
-# ASX tickers use the ".AX" suffix, matching ShareTrader's convention.
 _WATCHLISTS_ASX: dict[WatchlistCategory, tuple[str, ...]] = {
     "curated": ("BHP.AX", "CBA.AX", "CSL.AX", "NAB.AX", "WBC.AX"),
     "etf": ("STW.AX", "IOZ.AX"),
@@ -276,7 +168,6 @@ _WATCHLISTS_ASX: dict[WatchlistCategory, tuple[str, ...]] = {
 }
 
 MARKET_WATCHLISTS: dict[Market, dict[WatchlistCategory, tuple[str, ...]]] = {
-    "US": _WATCHLISTS_US,
     "ASX": _WATCHLISTS_ASX,
 }
 
@@ -307,11 +198,7 @@ def synthetic_average_daily_volume(symbol: str) -> int:
 def resolve_watchlist(settings: Settings) -> tuple[str, ...]:
     """category -> candidate pool -> min-volume filter -> size cap (spec M10)."""
     if settings.watchlist_category == "curated":
-        candidates = (
-            settings.watchlist_curated_us_tuple
-            if settings.market == "US"
-            else settings.watchlist_curated_asx_tuple
-        )
+        candidates = settings.watchlist_curated_asx_tuple
     else:
         candidates = MARKET_WATCHLISTS[settings.market][settings.watchlist_category]
 
