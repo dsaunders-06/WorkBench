@@ -68,6 +68,11 @@ per-closure ASX provenance manifest. Its SHA-256 is
 `0f15b244bb3a82cacaad05c9efd6f4620256883dec52b3e38b62a8c2c2e97dd6`.
 The manifest's SHA-256 is
 `ecc8ae28ed1c615357d2a4925fbd98d68eaab3c0b0245c0b47e88345935d176e`.
+The loader has only one `source` URL for this multi-year file and requires
+closure `notice` URLs on `www.asx.com.au`; the separate manifest preserves the
+year-specific ASX Trade notices, including ASX Online notices whose hostname
+the loader rejects. DS should review that provenance representation before
+approving a file.
 The operational loader parses its schema and supplies the 23 October 2026
 next open, but `CalendarLedger.conflicts` returns true for today's three-year
 window because of 27 April 2026. No full-day ad hoc event was added without
