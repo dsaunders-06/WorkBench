@@ -17,6 +17,18 @@ ASX equities; US trading is not part of its functionality. References below
 to then-present Alpaca code and historical US use describe inventory,
 not an approved source or market.
 
+**DS decision, 22 October 2026 — I-6 reference authorities.** Operator-supplied
+ASX trading calendar and closure notices, dated index membership, trading
+halts, and corporate actions are approved reference inputs when each file has
+cited provenance and DS approves it before use. Operator-supplied sector
+classification has the same approval path **when Phase 4 limits are active**.
+This decision approves the input roles, not a particular file, vendor licence,
+purchase, or unverified historical coverage. The operational files remain
+missing; cards abstain when a required authority is absent or invalid. IBKR
+remains the broker and bar/quote source, and the separate Yahoo earnings
+reduce-only exception is unchanged. See [the requirement inventory](DATA_REQUIREMENTS.md)
+and [the operational-window analysis](REFERENCE_AUTHORITY_WINDOW.md).
+
 A validated source, direct or indirect, is added, removed or changed only by
 DS's explicit decision.
 This inventory describes the **current code and resolved Friday launch

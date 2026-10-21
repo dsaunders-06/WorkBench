@@ -19,7 +19,14 @@ I-4 | The strategy is unvalidated, with no edge claim, and every
       recommendation says so | Binding
 I-5 | DS approves every order; signing and approval authority
       rests with DS | Binding (reworded 10 October)
-I-6 | IBKR is the single data and broker source. Yahoo is a logged cross-check only, except Yahoo earnings dates, which are approved as an event-risk input that can only reduce position size. | Binding (changed by DS 16 October 2026)
+I-6 | IBKR is the single data and broker source. Yahoo is a logged
+      cross-check only, except Yahoo earnings dates, which are approved
+      as an event-risk input that can only reduce position size.
+      Operator-supplied reference authorities (ASX trading calendar and
+      closures, index membership, trading halts, corporate actions, and
+      sector classification when Phase 4 limits are active) are approved
+      inputs, each with cited provenance and DS approval before use.
+      | Binding (changed by DS 15, 16 and 22 October 2026)
 I-7 | Phase 1 safety controls (kill switch, pre-trade checks,
       protective stops) are never bypassed | Binding
 I-8 | QAT trades ASX equities only. US trading is not part of QAT's
@@ -28,7 +35,7 @@ I-8 | QAT trades ASX equities only. US trading is not part of QAT's
 
 The current advisory-only state is a temporary deviation from I-1. Every next step must aim at restoring I-1, not at living with the deviation.
 
-DS changed I-6 on 15 and 16 October 2026. The [data-source inventory](DATA_SOURCES.md)
+DS changed I-6 on 15, 16 and 22 October 2026. The [data-source inventory](DATA_SOURCES.md)
 records all sources, including indirect ones, and their validation status. A
 source is added, removed or changed only by DS's explicit decision. The present
 configuration's deviations are recorded there, without silently treating them
