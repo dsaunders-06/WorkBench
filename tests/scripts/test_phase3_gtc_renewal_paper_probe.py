@@ -187,6 +187,7 @@ async def test_probe_calls_approved_renewal_before_cancel_and_exit(monkeypatch) 
     monkeypatch.setattr(probe, "_exact_account", lambda *args: None)
     adapter = SimpleNamespace(
         place_order=place,
+        pending_identity_reason=AsyncMock(return_value=None),
         plan_gtc_renewal=AsyncMock(return_value=plan),
         apply_approved_gtc_renewal=renew,
     )
@@ -201,7 +202,39 @@ async def test_probe_calls_approved_renewal_before_cancel_and_exit(monkeypatch) 
         "flat",
     ]
     assert stop_snapshots.await_count == 2
+    adapter.pending_identity_reason.assert_awaited_once_with("BHP.AX")
     execution_recheck.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unresolved_stop_identity_refuses_renewal(monkeypatch) -> None:
+    monkeypatch.setattr(
+        probe, "_qualified_bhp_contract", AsyncMock(return_value=SimpleNamespace(conId=123))
+    )
+    monkeypatch.setattr(probe, "_session_window", lambda session: None)
+    monkeypatch.setattr(probe, "_require_flat_book", AsyncMock())
+    monkeypatch.setattr(probe, "_reference_quote", AsyncMock(return_value={"price": Decimal("65")}))
+    monkeypatch.setattr(probe, "_wait_for_position", AsyncMock(return_value=8))
+    monkeypatch.setattr(probe, "_open_bhp_orders", AsyncMock(return_value=[]))
+    monkeypatch.setattr(probe, "_wait_for_stop", AsyncMock())
+    monkeypatch.setattr(probe, "_record_trade", lambda *args: None)
+    monkeypatch.setattr(probe, "_record_buy_fill", lambda *args: None)
+    monkeypatch.setattr(probe, "_record_stop_book", AsyncMock())
+    monkeypatch.setattr(probe, "_trade_filled", lambda *args: 8)
+    monkeypatch.setattr(probe, "_exact_account", lambda *args: None)
+    emergency = AsyncMock()
+    monkeypatch.setattr(probe, "_emergency_exit", emergency)
+    renewal = AsyncMock()
+    adapter = SimpleNamespace(
+        place_order=AsyncMock(),
+        pending_identity_reason=AsyncMock(return_value="pending broker identity for BHP.AX"),
+        plan_gtc_renewal=renewal,
+    )
+    with pytest.raises(RuntimeError, match="pending broker identity"):
+        await probe._perform(SimpleNamespace(expected_account=FAKE_ACCOUNT), adapter, "DS", [])
+    assert adapter.place_order.await_count == 2
+    renewal.assert_not_awaited()
+    emergency.assert_awaited_once()
 
 
 @pytest.mark.asyncio

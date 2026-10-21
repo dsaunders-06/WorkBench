@@ -335,6 +335,9 @@ async def _perform(
         await _wait_for_stop(client, stop_ref, first_stop)
         _record_trade(client, stop_ref, "initial GTC stop working", events)
         await _record_stop_book(client, stop_ref, "initial stop auto-cancel date", events)
+        pending_identity = await adapter.pending_identity_reason(SYMBOL)
+        if pending_identity:
+            raise RuntimeError(pending_identity)
         before = await adapter.plan_gtc_renewal(SYMBOL)
         if (
             before.account != client.expected_account
