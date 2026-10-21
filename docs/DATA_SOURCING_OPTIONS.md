@@ -13,6 +13,14 @@ The [10 October real Gateway probe](PHASE3_REAL_GATEWAY_PROBE_2026-10-10.md#auth
 
 **Agent's view:** IBKR is first because it matches I-6 and has observed ASX paper data. The direct ASX option is useful for independent official-close corroboration only if DS chooses a licensed role; it cannot be quietly promoted into the primary path.
 
+## Phase 4 limit calculation (R26; depends on R01, R10–R11, R17–R18, R21 and R24)
+
+| Rank and option | Coverage, history and update timing | Storage/use terms and indicative cost | Build effort; I-6 consequence |
+| --- | --- | --- | --- |
+| **1. QAT calculation over verified IBKR and approved authority inputs** | Re-evaluate the proposed 10% name, 5% aggregate stop-risk, 25% sector, 2% entry-to-stop and 1% of 20-day median-volume limits at approval/transmission. Broker positions/account/stop orders must be fresh; sector and volume inherit their own unresolved requirements. These limits remain inactive on paper and require DS's separate live decision. [Phase 4 proposal](phase-3-recommend-mode-integration-spec.md). | Internal calculation has no additional vendor licence; the underlying sector/history rights still matter. **Incremental software cost not estimated.** | **Medium–high:** implement five explicit checks, refusal on absent inputs, replay and held-book alerts. **I-6: none** for calculation; any external sector authority has its own intent consequence. |
+
+**Agent's view:** this is the only identified implementation path for the limit arithmetic. No data purchase alone activates or validates a risk limit, and this paper does not select Phase 4 values.
+
 ## ASX calendar and ad hoc closures (R05)
 
 | Rank and option | Coverage, history and update timing | Storage/use terms and indicative cost | Build effort; I-6 consequence |
