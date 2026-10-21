@@ -1,0 +1,20 @@
+# Legacy data contributions awaiting a card-path decision
+
+**Status:** report for DS; no contribution below is implemented on the Phase 3
+card path. The authoritative swing strategy remains unvalidated, and Yahoo is
+not a substitute for IBKR operational bars. This report uses the pre-freeze
+inventory in [DATA_SOURCES](DATA_SOURCES.md), the
+[intent register](INTENT.md), and the
+[Phase 3 integration contract](phase-3-recommend-mode-integration-spec.md).
+
+| Contribution | Legacy path today and pre-freeze evidence | Proposed Phase 3 home, subject to DS decision | Requirements before use |
+| --- | --- | --- | --- |
+| FRED macro: DGS3MO, DGS10, T10Y3M, VIXCLS, BAA10Y | `resolve_macro_source` selects FRED when its key exists; `MacroFeed` and `WarmStart` feed regime, features and exposure decisions. Otherwise it selects invented mock observations. Rotated logs show real polling through 23 August; DS reported a 16 October DGS10 fetch of 16,181 observations, which the 16 October report did not independently inspect. The time when the original key disappeared is unknown. | **Context on the card**: show dated values and the legacy regime assessment separately from the authoritative setup, without changing qualification or size. | DS must approve this role under I-6. Pin observation dates, release lag, missing-value policy, source/version and replayable snapshots. Refuse mock macro data in any order-capable mode; do not imply that FRED validates an edge. A macro signal input would require a new declared strategy and validation protocol. |
+| Yahoo company fundamentals and relative strength | `resolve_fundamentals_source` supplies Yahoo/cache to `StrategyEngine` and the Advisor/Workbench/Screener. Relative strength reads the selected history source. Real fundamentals were available before the freeze; no controlled pre-freeze evidence establishes that they improved the authoritative swing strategy. Construction failure currently selects invented fundamentals. | **Context on the card**, not a signal input: display dated, sourced figures in a separate section. | DS must decide whether even the context role is compatible with I-6. Require field-level provenance, age and missing-value labels; no synthetic substitute in an order-capable session. Any use to qualify or size a card needs a separately specified and validated signal. |
+| Yahoo company news | `news_for` reaches the AI Advisor and Workbench model context, not the deterministic verdict, Phase 2 engine or OMS. A 20 August six-symbol sample yielded 47 items, with two stories passing the then-two-outlet rule. DS reduced the threshold to one on 21 August; single-outlet stories could then reach the model. | **Context on the card** only if DS approves: clearly separate untrusted headlines from evidence and risk gates. | Establish publication time, publisher identity, cross-listing and stale-result filters, licensing and prompt-injection isolation. Do not let a headline qualify a setup or raise its size. The current decision-journal headline-storage claim is unverified. |
+| Yahoo earnings dates | `YFinanceEarningsCalendar` feeds the Phase 1 earnings scalar. The 16 October controlled example exposed a violation: an unscaled order rejected at 0 shares was admitted at 62.5 after the earnings scalar. Stage A changes risk ordering so the unscaled risk decision is final before the earnings reduction. | **Reduce-only overlay** after all unscaled risk gates, with date/source and before/after quantity on the card. | Keep the approved I-6 exception narrow. An absent or disputed date must be explicit; it must never rescue a rejected order, increase exposure, or serve as a signal. Validate freshness and timezone against the ASX session. |
+
+The remaining legacy signal path still uses direct Yahoo live prices and Yahoo
+daily history when selected. Its retirement and any wider role for these four
+contributions require DS decisions; the shadow card path does not make them
+approved strategy inputs by proximity.
