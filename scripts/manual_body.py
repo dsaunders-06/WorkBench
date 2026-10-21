@@ -2675,6 +2675,12 @@ def _config_reference(doc: Any) -> None:
         (
             ("QAT_TRADING_MODE", "paper", "paper or live."),
             ("QAT_EXECUTION_MODE", "recommend", "recommend or auto (Section 11.8)."),
+            (
+                "QAT_OPERATOR_NAME",
+                "(empty)",
+                "Current ASX build: configure the named operator before sign-off, card approval, "
+                "manual close, anomaly clearance or kill-switch reset. Blank refuses the action.",
+            ),
             ("QAT_AUTONOMOUS_STRATEGIES", "(empty)", "Strategies cleared to auto-trade."),
             (
                 "QAT_ALLOW_AUTONOMOUS_LIVE_TRADING",

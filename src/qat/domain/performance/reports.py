@@ -344,7 +344,7 @@ def build_report(
 _QUOTED_AMOUNT = re.compile(r"\$[\d,]+(?:\.\d+)?|[\d,]+(?:\.\d+)?%")
 
 # A structured payload a reason carries verbatim. `OMS.sign_off` records
-# `f"broker refused: {exc}"`, and an Alpaca exception is a JSON blob holding the
+# `f"broker refused: {exc}"`, and a retired broker exception is a JSON blob holding the
 # quantities of that specific order - so every distinct `existing_qty` mints a
 # new key, the same fragmentation the amount-stripping above exists to stop,
 # arriving by a route it cannot see. The journal keeps the whole payload; only

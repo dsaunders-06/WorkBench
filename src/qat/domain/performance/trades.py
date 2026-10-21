@@ -112,7 +112,7 @@ _FIELDS = (
     "earnings_at_entry",
     "held_through_earnings",
     # Which exchange, and what the money on this row is denominated in (M122).
-    # This file had no era dimension at all, so two US trades from the Alpaca
+    # This file had no era dimension at all, so two US trades from the retired broker
     # period - one of them an unadjusted MNST split recorded as a stop-out -
     # sat in the same ledger the ASX trial appends to, with their USD P&L
     # summable against AUD P&L. Blank on both means a pre-M122 row.
@@ -337,7 +337,7 @@ class ClosedTrade:
     market: str | None = None
     """Which exchange this trade belongs to (M122). None for a trade closed
     before this field existed - which is not the same as "unknown market", it
-    means the Alpaca/US period, and the migration script names them."""
+    means the retired broker/US period, and the migration script names them."""
     currency: str | None = None
     """What `net_pnl` and every other money figure on this row is denominated
     in (M122). Recorded rather than derived from `market`, because a row that
@@ -535,7 +535,7 @@ class ClosedTrade:
             ),
             "order_id": s.order_id or "",
             "fill_id": s.fill_id or "",
-            # Blank on a pre-M122 row, which means the Alpaca/US period rather
+            # Blank on a pre-M122 row, which means the retired broker/US period rather
             # than "unknown" - see the migration script, which names them.
             "market": s.market or "",
             "currency": s.currency or "",
@@ -605,7 +605,7 @@ class ClosedTrade:
                 # .get and blank-to-None, same reason again (M122): the two
                 # rows in the live record predate both columns, and a restart
                 # that dropped them would destroy the only evidence of what the
-                # Alpaca period actually did.
+                # the retired broker period actually did.
                 market=row.get("market") or None,
                 currency=row.get("currency") or None,
             )
@@ -630,7 +630,7 @@ class TradeLedger:
         self.settings = settings or Settings()
         # The broker's CHARGE, modelled (M175). Measured 11 September: IBKR's
         # own commission equals this model on 17 of 17 logged orders, to the
-        # cent - and the paper account bills it, so the Alpaca-era reason for
+        # cent - and the paper account bills it, so the retired broker-era reason for
         # modelling ("a paper broker charges nothing") no longer applies; the
         # model is simply exact. `commission_checks.csv` keeps checking it.
         # Slippage is NOT charged here: a fill's price already contains it.
@@ -1499,7 +1499,7 @@ class TradeLedger:
 
         `market` exists because strategy alone was never a sufficient filter
         (M122). "swing" names the same code on two exchanges in two currencies,
-        so asking for swing's trades returned an Alpaca US loss alongside the
+        so asking for swing's trades returned a retired broker US loss alongside the
         ASX trial's - and `EdgeEstimator` turns exactly that list into a win
         rate that sets position size.
 
@@ -1541,7 +1541,7 @@ class EquityPoint:
     cash: float
     market: str | None = None
     """Which account this sample measures (M127). None means a sample written
-    before this column existed - the Alpaca/US period - and is treated as its
+    before this column existed - the retired broker/US period - and is treated as its
     own era rather than as "unknown"."""
     position_value: float | None = None
     """Market value of what was HELD at this sample (M133). None when the
@@ -1569,7 +1569,7 @@ class EquityCurve:
 
     FILENAME = "equity_curve.csv"
     # "market" since M127. This file spans a BROKER MIGRATION: on 2026-08-18 it
-    # records 101,157.17 in an Alpaca US account and on 2026-08-19 it records
+    # records 101,157.17 in a retired broker US account and on 2026-08-19 it records
     # 1,003,733.21 in an IBKR one, in a single continuous series. Nothing said
     # so, and the weekly report of 21 August read the step as "a dramatic
     # nominal equity rise ... a 896.39% increase" and had an LLM reason about

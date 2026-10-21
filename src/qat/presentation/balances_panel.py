@@ -4,7 +4,7 @@
 Two rules govern what this shows.
 
 Nothing is recomputed that the broker already reports. The day's profit is
-Alpaca's equity against its own last_equity, not a figure derived here - when
+the retired broker's equity against its own last_equity, not a figure derived here - when
 two screens disagree about money the operator has to work out which one is
 lying, and that is a worse position than having one number with a caveat.
 
@@ -20,7 +20,7 @@ does not reach an ASX account. A permanent dash teaches an operator to stop
 reading the row, which costs the rule its force where it genuinely applies.
 
 The one figure here that is NOT the broker's is spendable cash, and it is the
-most important one on the panel. Alpaca will offer four times your cash as
+most important one on the panel. The retired broker offered four times your cash as
 buying power; this application refuses anything above cash less the reserve.
 Seeing $365,162 of buying power next to an order rejected for insufficient
 cash is the single most confusing thing about running the two side by side.
@@ -230,7 +230,7 @@ class BalancesPanel(QFrame):
             "broker's buying power on a margin account.",
             # At Guided the buying-power CELL is absent, so this line is the
             # only thing standing between the operator and the $336k they can
-            # see on Alpaca's own page.
+            # see on the retired broker's own page.
             "What a buy may actually use. The broker will offer several times "
             "this on margin; this system never uses margin.",
         )
@@ -279,7 +279,7 @@ class BalancesPanel(QFrame):
         # REMOVED 21 August 2026: Short market value, Initial margin,
         # Maintenance margin, Day trades (5d).
         #
-        # All four were Alpaca-shaped and none of them can be filled on IBKR.
+        # All four were retired broker-shaped and none of them can be filled on IBKR.
         # `ib_adapter.balances` says so itself - "the IB translation layer does
         # not map margin or day-trade fields, so those stay None rather than
         # being guessed at" - and `_ACCOUNT_TAGS` requests four tags, none of
@@ -297,7 +297,7 @@ class BalancesPanel(QFrame):
         # and MaintMarginReq - and were deliberately not, because the
         # no-leverage rail means the account never borrows and the numbers would
         # be reported at rather than acted on. `AccountBalances` keeps all four
-        # fields: the Alpaca adapter still populates them, and this was a
+        # fields: the retired broker adapter once populated them, and this was a
         # decision about what the Dashboard SHOWS, not about the data model.
 
         self.broker_group: QWidget | None = None
@@ -437,7 +437,7 @@ def day_pnl_from(
 
     Two computations existed and the panel used the dead one. IBKR never
     populates `AccountBalances.last_equity` - the field's own comment calls it
-    "previous close", an Alpaca-era idea - so `balances.day_pnl` was always
+    "previous close", a retired broker-era idea - so `balances.day_pnl` was always
     None on this broker, while `EquityMonitor.day_pnl_pct()` worked and was
     what the autonomy gate actually gated on.
 

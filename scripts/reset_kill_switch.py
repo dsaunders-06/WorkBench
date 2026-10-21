@@ -21,6 +21,7 @@ made against the reason rather than against a habit.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -34,7 +35,7 @@ from qat.domain.risk_engine.kill_switch import KillSwitch  # noqa: E402
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="actually reset")
-    parser.add_argument("--operator", default="operator (scripts/reset_kill_switch.py)")
+    parser.add_argument("--operator", help="named operator; defaults to QAT_OPERATOR_NAME")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -53,7 +54,22 @@ def main() -> int:
         print("\nDRY RUN - nothing was changed. Re-run with --apply to clear it.")
         return 0
 
-    switch.reset(operator=args.operator)
+    operator = (args.operator or getattr(settings, "operator_name", "")).strip()
+    if not operator:
+        print("\nRESET FAILED: configure an operator name or pass --operator")
+        return 1
+
+    try:
+        switch.reset(operator=operator)
+        persisted = json.loads(
+            (Path(settings.data_dir) / "kill_switch.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"\nRESET FAILED: persisted switch could not be verified: {exc}")
+        return 1
+    if persisted != {"tripped": False, "reason": None} or KillSwitch(settings.data_dir).tripped:
+        print("\nRESET FAILED: persisted switch is not clear")
+        return 1
     print(f"\nRESET. tripped now: {switch.tripped}")
     print("⚠️ Order flow resumes at the next launch. The position cap and every")
     print("   other rail are unaffected - this clears the HALT and nothing else.")

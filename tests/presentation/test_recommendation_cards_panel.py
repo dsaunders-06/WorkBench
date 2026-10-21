@@ -102,7 +102,7 @@ async def test_approve_requires_signoff_dialog_then_shows_exact_manual_order(
     qtbot, monkeypatch
 ) -> None:
     service = FakeService()
-    panel = RecommendationCardsPanel(service, now=lambda: NOW)
+    panel = RecommendationCardsPanel(service, now=lambda: NOW, operator_name=lambda: "Alice")
     qtbot.addWidget(panel)
     panel.set_cards((service.card,))
     prompts = []
@@ -117,7 +117,7 @@ async def test_approve_requires_signoff_dialog_then_shows_exact_manual_order(
     await asyncio.sleep(0.05)
     assert len(prompts) == 1
     assert "Protective stop" in str(prompts[0])
-    assert service.approval_calls == [("card-1", "operator", False)]
+    assert service.approval_calls == [("card-1", "Alice", False)]
     assert "BHP.AX" in str(shown) and "100.00" in str(shown) and "98.00" in str(shown)
 
 
@@ -125,7 +125,7 @@ async def test_approve_requires_signoff_dialog_then_shows_exact_manual_order(
 async def test_changed_sizing_requires_second_confirmation(qtbot, monkeypatch) -> None:
     service = FakeService()
     service.changed = True
-    panel = RecommendationCardsPanel(service, now=lambda: NOW)
+    panel = RecommendationCardsPanel(service, now=lambda: NOW, operator_name=lambda: "Alice")
     qtbot.addWidget(panel)
     panel.set_cards((service.card,))
     prompts = []
@@ -139,20 +139,34 @@ async def test_changed_sizing_requires_second_confirmation(qtbot, monkeypatch) -
     await asyncio.sleep(0.05)
     assert len(prompts) == 2
     assert "10" in str(prompts[1]) and "8" in str(prompts[1])
-    assert service.approval_calls[-1] == ("card-1", "operator", True)
+    assert service.approval_calls[-1] == ("card-1", "Alice", True)
 
 
 def test_decline_and_expiry_disable_card_actions(qtbot) -> None:
     service = FakeService()
-    panel = RecommendationCardsPanel(service, now=lambda: NOW)
+    panel = RecommendationCardsPanel(service, now=lambda: NOW, operator_name=lambda: "Alice")
     qtbot.addWidget(panel)
     panel.set_cards((service.card,))
     qtbot.mouseClick(panel.decline_buttons["card-1"], Qt.MouseButton.LeftButton)
-    assert service.declines == [("card-1", "operator")]
+    assert service.declines == [("card-1", "Alice")]
     panel.now = lambda: OPEN
     panel.refresh()
     assert not panel.approve_buttons["card-1"].isEnabled()
     assert not panel.decline_buttons["card-1"].isEnabled()
+
+
+@pytest.mark.asyncio
+async def test_card_approval_refuses_missing_operator_name(qtbot, monkeypatch) -> None:
+    service = FakeService()
+    panel = RecommendationCardsPanel(service, now=lambda: NOW)
+    qtbot.addWidget(panel)
+    notices: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: notices.append(str(args[-1])))
+
+    await panel._approve("card-1")
+
+    assert service.approval_calls == []
+    assert notices and "operator name" in notices[0].lower()
 
 
 def test_revoked_card_is_disabled_and_manual_exit_alerts_show_exact_details(qtbot) -> None:

@@ -68,11 +68,6 @@ _EM_DASH = "—"
 # whole fix. `&&` is Qt's escape for a literal ampersand, which is why the old
 # label was doubled - a detail worth keeping in mind before adding one back.
 _ACKNOWLEDGE_LABEL = "Acknowledge note"
-# Same convention as blotter.py's and risk_console.py's own `_OPERATOR`: a
-# per-screen identity string, since there is no single app-wide operator
-# identity to import instead (config.py defines none). Manual position close
-# (2026-09-01 spec, Task 7).
-_OPERATOR = "operator (dashboard)"
 _POSITIONS_COLUMNS = (
     "Symbol",
     "Qty",
@@ -727,6 +722,9 @@ class DashboardScreen(QWidget):
         if closer is None:
             self._show_error("Closing is unavailable: no PositionCloser is wired for this runtime.")
             return
+        if not self.runtime.settings.operator_name.strip():
+            self._show_error("Configure an operator name before closing a position.")
+            return
         legs = closer.believed_legs_for(symbol)
         halt_reason = self.runtime.kill_switch.reason if self.runtime.kill_switch.tripped else None
         if not self._confirm_close(symbol, quantity, legs, halt_reason):
@@ -761,7 +759,10 @@ class DashboardScreen(QWidget):
         come back either way.
         """
         try:
-            result = await closer.close_position(symbol, operator=_OPERATOR)
+            operator = self.runtime.settings.operator_name.strip()
+            if not operator:
+                raise ValueError("Configure an operator name before closing a position.")
+            result = await closer.close_position(symbol, operator=operator)
             # ⚠️ A REFUSAL IS NOT ALWAYS HARMLESS, and assuming it was put a
             # bare downside behind a reassuring information dialog. OMS may
             # refuse only after one or more cancellation requests have gone

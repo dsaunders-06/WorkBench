@@ -31,7 +31,9 @@ from qat.presentation.runtime import Runtime
 
 
 def _build(qtbot, tmp_path):
-    runtime = Runtime.build_demo(settings=Settings(_env_file=None, data_dir=str(tmp_path)))
+    runtime = Runtime.build_demo(
+        settings=Settings(_env_file=None, data_dir=str(tmp_path), operator_name="Alice")
+    )
     screen = RiskConsoleScreen(runtime)
     qtbot.addWidget(screen)
     return screen, runtime

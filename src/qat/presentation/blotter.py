@@ -50,7 +50,6 @@ from qat.presentation.ui_level import UiLevel
 logger = logging.getLogger(__name__)
 
 _REFRESH_INTERVAL_MS = 2000
-_OPERATOR = "operator (blotter)"
 # How often the decision journal may be re-read for reasons we do not have
 # (M77). `entries()` re-parses the whole CSV - 464KB on the live account - and
 # this screen refreshes every two seconds, so an uncached lookup would parse it
@@ -447,10 +446,14 @@ class BlotterScreen(QWidget):
         asyncio.ensure_future(self._do_sign_off([o.order_id for o in orders]))
 
     async def _do_sign_off(self, order_ids: list[str]) -> None:
+        operator = self.runtime.settings.operator_name.strip()
+        if not operator:
+            self._show_error("Configure an operator name before signing off an order.")
+            return
         failures: list[str] = []
         for order_id in order_ids:
             try:
-                await self.runtime.oms.sign_off(order_id, _OPERATOR)
+                await self.runtime.oms.sign_off(order_id, operator)
             except Exception as exc:  # noqa: BLE001 - collected and surfaced below
                 # A silently failed sign-off is dangerous: the operator would be
                 # left unsure whether the order reached the broker or not.
@@ -474,10 +477,14 @@ class BlotterScreen(QWidget):
         asyncio.ensure_future(self._do_reject([o.order_id for o in orders]))
 
     async def _do_reject(self, order_ids: list[str]) -> None:
+        operator = self.runtime.settings.operator_name.strip()
+        if not operator:
+            self._show_error("Configure an operator name before rejecting an order.")
+            return
         failures: list[str] = []
         for order_id in order_ids:
             try:
-                await self.runtime.oms.reject_order(order_id, _OPERATOR, "rejected via blotter")
+                await self.runtime.oms.reject_order(order_id, operator, "rejected via blotter")
             except Exception as exc:  # noqa: BLE001 - collected and surfaced below
                 logger.exception("Reject failed for order %s", order_id)
                 failures.append(f"{order_id}: {exc}")

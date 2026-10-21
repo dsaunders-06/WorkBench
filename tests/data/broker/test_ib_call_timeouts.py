@@ -23,7 +23,7 @@ losing every future poll is what actually happened.
 from __future__ import annotations
 
 import asyncio
-import time
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -47,46 +47,40 @@ async def _never_answers(*_args, **_kwargs):
     raise AssertionError("unreachable")
 
 
-async def _assert_gives_up_quickly(coro) -> None:
+async def _assert_gives_up_quickly(coro, caplog) -> None:
     """The ADAPTER must be what times out, not this test.
 
     An outer `asyncio.wait_for` would raise `TimeoutError` whether or not the
     adapter has a guard, so asserting on the exception alone is vacuous - the
     first draft of these tests passed against the unfixed adapter for exactly
-    that reason. The elapsed time is what separates them: the adapter is
-    configured at 0.15s here, so a guarded call returns in well under a second
-    and an unguarded one only ends when the outer bound fires at 5s.
+    that reason. The adapter's own timeout log distinguishes its deadline from
+    the outer test guard without a flaky one-second wall-clock assertion.
     """
-    started = time.monotonic()
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(coro, timeout=5)
-    elapsed = time.monotonic() - started
-    assert elapsed < 1.0, (
-        f"the call ran {elapsed:.2f}s before giving up - the ADAPTER did not "
-        "time out, this test's own outer bound did, so the guard is absent"
-    )
+    with caplog.at_level(logging.ERROR), pytest.raises(TimeoutError):
+        await asyncio.wait_for(coro, timeout=10)
+    assert "IBKR did not answer" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_recent_fills_does_not_hang_forever():
+async def test_recent_fills_does_not_hang_forever(caplog):
     """The call that wedged the poll on 25 August."""
     adapter = _hanging_adapter(reqExecutionsAsync=_never_answers)
-    await _assert_gives_up_quickly(adapter.recent_fills(None, None))  # type: ignore[arg-type]
+    await _assert_gives_up_quickly(adapter.recent_fills(None, None), caplog)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_open_orders_does_not_hang_forever():
+async def test_open_orders_does_not_hang_forever(caplog):
     """The orphan scan's own call. If this hangs, M141's rail is dead too."""
     adapter = _hanging_adapter(reqAllOpenOrdersAsync=_never_answers)
-    await _assert_gives_up_quickly(adapter.open_orders())
+    await _assert_gives_up_quickly(adapter.open_orders(), caplog)
 
 
 @pytest.mark.asyncio
-async def test_resting_stop_orders_does_not_hang_forever():
+async def test_resting_stop_orders_does_not_hang_forever(caplog):
     """The protection check. A hang here means `verify_position_stops` never
     runs and nothing notices a stop has gone."""
     adapter = _hanging_adapter(reqAllOpenOrdersAsync=_never_answers)
-    await _assert_gives_up_quickly(adapter.resting_stop_orders())
+    await _assert_gives_up_quickly(adapter.resting_stop_orders(), caplog)
 
 
 @pytest.mark.asyncio

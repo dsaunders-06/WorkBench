@@ -104,7 +104,7 @@ class SessionController:
             # Every tool that anchors on "Trading session started" then fell
             # back to the PREVIOUS run. On 20 August `session_check` reported
             # the 09:49 session's start time, its 1,056 errors and its adopted
-            # Alpaca positions against a session that had begun at 11:12 -
+            # prior broker positions against a session that had begun at 11:12 -
             # three wrong answers from one missing line, in the instrument an
             # operator relies on overnight.
             #

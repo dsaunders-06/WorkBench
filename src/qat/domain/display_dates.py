@@ -1,6 +1,6 @@
 """How a date reads on screen, for a human, in one place (the ASX move).
 
-The system is moving from a US Alpaca paper account to the ASX: the US period
+The system moved from a retired US paper broker to the ASX: the US period
 ends 19 August 2026, after which the operator trades this book against an
 Australian broker with Australian eyes reading the screen every day.
 `18/08/2026` is unambiguous to that reader; `2026-08-18` is not wrong, but it

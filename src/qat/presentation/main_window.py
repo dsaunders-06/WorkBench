@@ -95,7 +95,10 @@ class MainWindow(QMainWindow):
         tabs.addTab(AiAdvisorScreen(runtime), "AI Advisor")
         tabs.addTab(BlotterScreen(runtime), "Order Blotter")
         tabs.addTab(
-            RecommendationCardsPanel(getattr(runtime, "recommendation_service", None)),
+            RecommendationCardsPanel(
+                getattr(runtime, "recommendation_service", None),
+                operator_name=lambda: runtime.settings.operator_name,
+            ),
             "Recommendation Cards",
         )
         tabs.addTab(ScreenerScreen(runtime), "Screener")

@@ -6,7 +6,7 @@ reconciliation capability rather than a reconciliation check. This engine is
 what makes it run.
 
 It also solves the ordering problem that made it unusable against a real
-account: an OMS that has filled nothing, compared against an Alpaca paper
+account: an OMS that has filled nothing, compared against a retired broker paper
 account carrying positions from a previous session or another application,
 reports a mismatch on the first call and trips the kill-switch at startup,
 every time. Adopting the existing holdings as an explicit, logged baseline

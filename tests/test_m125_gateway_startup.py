@@ -46,6 +46,9 @@ class _RefusingClient:
     def disconnect(self) -> None:
         self.connected = False
 
+    def managedAccounts(self) -> list[str]:  # noqa: N802 - ib_async API spelling
+        return ["DU_TEST"]
+
 
 def _adapter(client, **kwargs) -> IBAdapter:
     return IBAdapter(

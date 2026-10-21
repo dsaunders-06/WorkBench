@@ -72,7 +72,9 @@ class _FakeKillSwitch:
 def dashboard(qtbot, tmp_path):
     # data_dir per test (isolate_data_dir is session-scoped): the same reason
     # test_positions_table.py's `_runtime` helper passes tmp_path through.
-    runtime = Runtime.build_demo(settings=Settings(_env_file=None, data_dir=str(tmp_path)))
+    runtime = Runtime.build_demo(
+        settings=Settings(_env_file=None, data_dir=str(tmp_path), operator_name="Alice")
+    )
     runtime.closer = _FakeCloser()
     runtime.kill_switch = _FakeKillSwitch()
     screen = DashboardScreen(runtime)
@@ -142,15 +144,19 @@ async def test_confirming_calls_the_closer_with_the_operator(dashboard, monkeypa
     dashboard.positions_table.selectRow(0)
     dashboard._on_close_clicked()
     await asyncio.sleep(0.05)
-    # ⚠️ "operator (dashboard)", not the brief's literal "operator". The
-    # brief's own operator="operator" line was flagged as a placeholder: risk
-    # console and blotter each source their operator identity from their own
-    # module-level `_OPERATOR = "operator (<screen>)"` constant
-    # (risk_console.py, blotter.py) rather than a single shared literal -
-    # there is no app-wide operator identity to import instead (checked
-    # config.py: nothing named `operator`). Dashboard follows that same
-    # established convention rather than the brief's hardcoded string.
-    assert dashboard.runtime.closer.calls == [("CBA.AX", "operator (dashboard)")]
+    assert dashboard.runtime.closer.calls == [("CBA.AX", "Alice")]
+
+
+def test_close_refuses_missing_operator_name(dashboard, monkeypatch):
+    dashboard.runtime.settings.operator_name = ""
+    errors: list[str] = []
+    monkeypatch.setattr(dashboard, "_show_error", errors.append)
+    dashboard.positions_table.selectRow(0)
+
+    dashboard._on_close_clicked()
+
+    assert dashboard.runtime.closer.calls == []
+    assert errors and "operator name" in errors[0].lower()
 
 
 def test_confirm_dialog_does_not_overclaim_the_legs_shown(dashboard, monkeypatch):
@@ -424,7 +430,7 @@ async def test_the_closer_is_never_asked_to_override_a_halt(dashboard, monkeypat
     dashboard.positions_table.selectRow(0)
     dashboard._on_close_clicked()
     await asyncio.sleep(0.05)
-    assert dashboard.runtime.closer.calls == [("CBA.AX", "operator (dashboard)")]
+    assert dashboard.runtime.closer.calls == [("CBA.AX", "Alice")]
 
 
 def test_the_dialog_does_not_offer_a_halt_override(dashboard, monkeypatch):

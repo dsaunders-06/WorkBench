@@ -82,7 +82,7 @@ async def fetch_daily_panel(
     unavailable = tuple(symbol for symbol in symbols if symbol not in frames)
     if unavailable and len(unavailable) == len(symbols):
         # M118. This used to print the same line however it failed, and on
-        # 20 August that cost four hours: an ALPACA source asked for ASX
+        # 20 August that cost four hours: a retired broker source asked for ASX
         # symbols answered nothing, the message read exactly like a yfinance
         # rate limit, and it was waited out, retried, and written into a
         # handover as the next session's top risk. One clears on its own; the

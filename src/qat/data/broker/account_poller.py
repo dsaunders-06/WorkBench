@@ -1,7 +1,7 @@
 """One throttled, shared read of the broker's account state (spec M21).
 
 The Dashboard's two-second timer called broker.account() and
-broker.positions() on every tick. Against Alpaca that is sixty requests a
+broker.positions() on every tick. Against the retired broker that is sixty requests a
 minute, permanently, to redraw one tile - and the documented per-account limit
 read straight off the response headers is:
 

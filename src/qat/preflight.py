@@ -283,7 +283,7 @@ def settings_checks(settings: Settings) -> list[Check]:
     # --- what is knowingly given up, DERIVED for the configured broker -----
     #
     # This asserted "IBKR publishes no corporate-action feed" unconditionally,
-    # and printed it on the first real run against an ALPACA configuration -
+    # and printed it on the first real run against the retired broker configuration -
     # where announcements are implemented and the ex-date gate works. A
     # sentence that explains and is wrong, inside the instrument written to
     # catch those. Asked of the capability register now, which is what the
@@ -734,7 +734,7 @@ async def feed_checks(symbols: list[str], source: object) -> list[Check]:
     except Exception as exc:  # noqa: BLE001
         return [Check("feed", Status.UNKNOWN, f"{type(exc).__name__}: {exc}")]
 
-    # TWO SOURCES, TWO SIGNATURES. `AlpacaSource._poll_once` returns a bare
+    # TWO SOURCES, TWO SIGNATURES. The retired source's poll method returned a bare
     # `list[RawTick]`; `YFinanceSource._poll_once` returns `(ticks, missing)`.
     # This was written against the first, and the second is the one
     # `QAT_MARKET_DATA_SOURCE` actually selects - so `t` bound to the inner
@@ -743,7 +743,7 @@ async def feed_checks(symbols: list[str], source: object) -> list[Check]:
     # down before the broker half executed.
     #
     # Found on 10 September by running the pre-flight, not by the suite: all
-    # three fakes here returned the Alpaca shape, so the tests agreed with the
+    # three fakes here returned the retired source's shape, so the tests agreed with the
     # code and the code disagreed with the only source in use.
     ticks = polled[0] if isinstance(polled, tuple) else polled
 

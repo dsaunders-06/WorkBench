@@ -500,7 +500,7 @@ class OMS:
             )
 
         # Whole shares only (M31a). Every buy leaves here with a protective
-        # bracket, and Alpaca refuses a fractional quantity that carries one:
+        # bracket, and the retired broker refused a fractional bracket quantity:
         #   {"code":42210000,"message":"fractional orders must be simple orders"}
         # The sizer works in continuous shares - 1% of equity over a stop
         # distance almost never lands on an integer - so before this, every
@@ -1200,6 +1200,18 @@ class OMS:
                     order.status = "rejected"
                     self._record(order, "rejected", pending_reason, operator)
                     return order
+            foreign_orders = getattr(self.broker, "foreign_order_reason", None)
+            if callable(foreign_orders):
+                try:
+                    foreign_reason = await foreign_orders(order.symbol)
+                except Exception:
+                    foreign_reason = (
+                        f"broker open-order ownership could not be checked for {order.symbol}"
+                    )
+                if foreign_reason:
+                    order.status = "rejected"
+                    self._record(order, "rejected", foreign_reason, operator)
+                    return order
             try:
                 foreign = [pos for pos in await self.broker.positions() if not pos.qat_holding]
             except Exception:
@@ -1366,8 +1378,8 @@ class OMS:
             if price is None:
                 # Fails CLOSED. An unknown price used to fall back to 0.0, which
                 # made cost 0 and let this check pass unconditionally - and
-                # AlpacaAdapter raises on get_market_data by design, so with a
-                # real Alpaca account that was every buy, not a rare outage.
+                # The prior broker adapter supplied no market data, so this
+                # affected every buy rather than a rare quote outage.
                 # A no-leverage guarantee that evaporates when a quote is
                 # missing is not a guarantee.
                 order.status = "rejected"
@@ -1467,7 +1479,7 @@ class OMS:
         # `order.status = "transmitted"` used to run BEFORE the call, so when
         # place_order raised, the order kept a status saying it was live at the
         # broker. Three orders showed as transmitted in the blotter on 31 July
-        # while Alpaca held nothing at all, and reconciliation could not catch
+        # while the broker held nothing at all, and reconciliation could not catch
         # it: that compares FILLED quantities, and an order that never reached
         # the broker has filled nothing on either side, so both agree.
         if self._order_identity is not None:
@@ -1533,8 +1545,8 @@ class OMS:
                 )
 
         # No status assignment here at all: the returned order carries the
-        # broker's own, mapped by the adapter (Alpaca's accepted/new/pending
-        # become "transmitted", a same-second fill becomes "filled"). Setting
+        # broker's own, mapped by the adapter (working states become
+        # "transmitted", a same-second fill becomes "filled"). Setting
         # it ourselves would overwrite the one authoritative answer with a
         # guess - which is what the pre-call assignment was.
         # Recorded the instant the broker accepted it, before anything that
@@ -2203,7 +2215,7 @@ class OMS:
         it is.
 
         On 31 July that happened to six positions at once. The brackets were
-        submitted DAY, their take-profit legs expired at the close, and Alpaca
+        submitted DAY, their take-profit legs expired at the close, and the broker
         cancelled the paired stops with them. Reconciliation saw nothing,
         because it compares FILLED QUANTITIES and an expired protective leg
         changes none of them.
@@ -2387,7 +2399,7 @@ class OMS:
         Every stop before this rode in as a bracket leg on an entry, so a
         position whose legs died had no way to get another one - the state all
         six holdings were in on 1 August, after the take-profit legs expired at
-        Friday's close and Alpaca cancelled the paired stops with them.
+        Friday's close and the broker cancelled the paired stops with them.
 
         Pending sign-off like everything else. This creates protection rather
         than exposure, which is an argument for letting it through unattended
@@ -2399,6 +2411,14 @@ class OMS:
             return self._new_rejected_order_for(
                 symbol, "sell", 0.0, "durable exit recovery owns protection for this symbol"
             )
+        foreign_orders = getattr(self.broker, "foreign_order_reason", None)
+        if callable(foreign_orders):
+            try:
+                foreign_reason = await foreign_orders(symbol)
+            except Exception:
+                foreign_reason = f"broker open-order ownership could not be checked for {symbol}"
+            if foreign_reason:
+                return self._new_rejected_order_for(symbol, "sell", 0.0, foreign_reason)
         if quantity <= 0:
             return self._new_rejected_order_for(symbol, "sell", 0.0)
         if stop_price <= 0:
@@ -2956,8 +2976,8 @@ class OMS:
                 logger.exception("Could not read recent broker fills")
                 return replayed
 
-        # IBKR returns one Fill per EXECUTION; Alpaca returns one order object
-        # per order. Both now carry the order's CUMULATIVE quantity, so the
+        # IBKR returns one Fill per EXECUTION; the retired broker returned one
+        # order object per order. Both carry the order's CUMULATIVE quantity, so the
         # highest one per order is the whole story and the rest are earlier
         # snapshots of the same order.
         #
@@ -2967,8 +2987,7 @@ class OMS:
         # closed trades for a single exit. The promotion gate counts closed
         # trades toward 20 and 30, so that is not a cosmetic problem.
         #
-        # Alpaca is unaffected: one entry per order id means the max is that
-        # entry.
+        # One entry per order id is unchanged by the collapse.
         fills = _latest_cumulative_fills(fills)
 
         absorbed: list[BrokerFill] = list(replayed)
@@ -3109,7 +3128,7 @@ class OMS:
 
         `_announce_fill` publishes at "transmitted" as well as at "filled", and
         at transmit there is no fill price - so what went out was the price the
-        order was SIZED against. Alpaca acknowledges asynchronously, so that is
+        order was SIZED against. The prior broker acknowledged asynchronously, so that is
         the normal case rather than the exceptional one: 8 of the 10 positions
         held on 8 August recorded a price the account never paid, AMD by 141
         bps.

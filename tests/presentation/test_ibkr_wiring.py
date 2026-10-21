@@ -71,6 +71,9 @@ class FakeIB:
     def positions(self, account: str = "") -> list[Any]:
         return []
 
+    def managedAccounts(self) -> list[str]:
+        return ["DU123456"]
+
     def accountSummary(self, account: str = "") -> list[Any]:
         return []
 

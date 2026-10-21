@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # --- Trading mode --------------------------------------------------
     trading_mode: Literal["paper", "live"] = "paper"
 
+    # Human approvals and safety resets must identify the person who acted.
+    # Blank permits read-only startup, but the action paths refuse it.
+    operator_name: str = ""
+
     # --- Execution mode (M13) ------------------------------------------------
     # "recommend": every order waits for a human sign-off in the Order Blotter,
     #   carrying the reasoning behind it. This is the default and always has
@@ -777,7 +781,7 @@ class Settings(BaseSettings):
     session_follows_market_hours: bool = True
     session_poll_seconds: float = Field(default=20.0, gt=0)
 
-    # How often the shared account poller re-reads the broker (M21). Alpaca
+    # How often the shared account poller re-reads the broker (M21). The retired broker
     # documents 200 requests a minute per account, read straight off the
     # X-Ratelimit-Limit response header; the Dashboard's own two-second timer
     # was spending sixty of them on repainting one tile. Five seconds costs

@@ -20,7 +20,12 @@ from qat.presentation.runtime import Runtime
 
 def _window(qtbot) -> MainWindow:
     runtime = Runtime.build_demo(
-        settings=Settings(_env_file=None, execution_mode="auto", autonomous_strategies="swing")
+        settings=Settings(
+            _env_file=None,
+            execution_mode="auto",
+            autonomous_strategies="swing",
+            operator_name="Alice",
+        )
     )
     # A strategy is deployed because these tests are about what the banner says
     # when something happens to an app that CAN trade. With an empty deployed

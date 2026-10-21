@@ -130,6 +130,9 @@ class FakeIBClient:
     def positions(self, account: str = "") -> list[Any]:
         return []
 
+    async def reqAllOpenOrdersAsync(self) -> list[Any]:
+        return []
+
 
 def _order(symbol: str = "AAPL", side: str = "buy", order_id: str = "app-order-1") -> Order:
     return Order(symbol=symbol, side=side, quantity=10, order_id=order_id)

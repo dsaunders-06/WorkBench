@@ -18,7 +18,9 @@ from qat.presentation.runtime import Runtime
 
 
 def _build_screen(qtbot, tmp_path) -> tuple[RiskConsoleScreen, Runtime]:
-    runtime = Runtime.build_demo(settings=Settings(_env_file=None, data_dir=str(tmp_path)))
+    runtime = Runtime.build_demo(
+        settings=Settings(_env_file=None, data_dir=str(tmp_path), operator_name="Alice")
+    )
     screen = RiskConsoleScreen(runtime)
     qtbot.addWidget(screen)
     return screen, runtime
