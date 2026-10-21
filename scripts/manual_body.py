@@ -3256,3 +3256,53 @@ def _config_reference(doc: Any) -> None:
             ),
         ),
     )
+    doc.add_paragraph(
+        "Current ASX Phase 3 Stage A addendum: the historical table above predates the "
+        "ASX-only and synthetic-source refusals. These settings control the new shadow "
+        "path; its cards are read-only and always labelled unvalidated."
+    )
+    _table(
+        doc,
+        ("Setting", "Default", "Meaning"),
+        (
+            (
+                "QAT_DEMO_MODE",
+                "false",
+                "Explicit isolated mock-paper session that may use synthetic prices, history, "
+                "fundamentals and macro. Normal startup refuses those sources.",
+            ),
+            (
+                "QAT_PHASE3_SHADOW_ENABLED",
+                "false",
+                "Runs the read-only Phase 3 card path after 17:30 Sydney on ASX sessions. "
+                "It requires IBKR paper recommend mode and has no card approval control.",
+            ),
+            (
+                "QAT_PHASE3_OPERATIONAL_ROOT",
+                "(empty)",
+                "Outside-Git OPERATIONAL directory for audited bars, cards and abstentions.",
+            ),
+            (
+                "QAT_PHASE3_AUTHORITIES_DIR",
+                "(empty)",
+                "Directory containing real dated ASX calendar, membership, halt and "
+                "corporate-action authority files. Test fixtures are refused.",
+            ),
+            (
+                "QAT_PHASE3_LIQUIDITY_MAX_PARTICIPATION",
+                "(unset)",
+                "Operator-approved maximum participation in prior observed volume; set "
+                "together with both impact estimates.",
+            ),
+            (
+                "QAT_PHASE3_LIQUIDITY_ENTRY_IMPACT_BPS",
+                "(unset)",
+                "Operator-approved entry impact estimate in basis points.",
+            ),
+            (
+                "QAT_PHASE3_LIQUIDITY_STOP_EXIT_IMPACT_BPS",
+                "(unset)",
+                "Operator-approved protective-stop exit impact estimate in basis points.",
+            ),
+        ),
+    )

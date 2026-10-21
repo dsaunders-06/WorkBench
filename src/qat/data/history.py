@@ -170,6 +170,8 @@ class RealHistorySource:
         self,
         yf_source: YFinanceHistoryLike | None = None,
         fallback: HistoricalBarSource | None = None,
+        *,
+        allow_synthetic_fallback: bool = True,
     ) -> None:
         if yf_source is None:
             from qat.data.yfinance_source import YFinanceHistorySource
@@ -177,6 +179,7 @@ class RealHistorySource:
             yf_source = YFinanceHistorySource()
         self.yf_source = yf_source
         self.fallback = fallback or SyntheticHistorySource()
+        self.allow_synthetic_fallback = allow_synthetic_fallback
         self.last_was_synthetic = False
 
     async def get_daily_bars(self, symbol: str, n_bars: int = DEFAULT_BARS) -> pd.DataFrame:
@@ -184,6 +187,8 @@ class RealHistorySource:
         frame = await self.yf_source.get_bars(symbol, period=period, interval="1d")
 
         if frame is None or frame.empty:
+            if not self.allow_synthetic_fallback:
+                raise RuntimeError(f"real daily bars unavailable for {symbol}")
             logger.warning(
                 "No real daily bars for %s - falling back to synthetic. This data is NOT real.",
                 symbol,
@@ -216,5 +221,7 @@ def _period_for(n_bars: int) -> str:
 
 def resolve_history_source(settings: Settings) -> HistoricalBarSource:
     if settings.market_data_source == "yfinance":
-        return RealHistorySource()
+        return RealHistorySource(allow_synthetic_fallback=settings.synthetic_demo_allowed)
+    if not settings.synthetic_demo_allowed:
+        raise RuntimeError("synthetic history requires explicit demo mode")
     return SyntheticHistorySource()

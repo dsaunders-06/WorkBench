@@ -97,6 +97,7 @@ from qat.domain.strategies.value import ValueStrategy
 from qat.domain.strategies.volatility import VolatilityStrategy
 from qat.domain.warm_start import WarmStart
 from qat.operational.cards import CardService
+from qat.operational.shadow import Phase3ShadowRunner
 from qat.security import get_secret
 
 logger = logging.getLogger(__name__)
@@ -170,13 +171,7 @@ def resolve_news_source(settings: Settings) -> NewsSource:
 
 
 def resolve_market_data_source(settings: Settings) -> MarketDataSource:
-    """Real or synthetic ticks (spec M14).
-
-    A failure to construct the real source degrades to synthetic with a loud
-    warning rather than refusing to start - but it is never silent, because
-    believing you are trading against real prices while running on a random
-    walk would be the worst of the available outcomes.
-    """
+    """Use real ticks in normal sessions; synthetic ticks require explicit demo."""
     if settings.market_data_source == "yfinance":
         try:
             from qat.data.yfinance_source import YFinanceMarketDataSource
@@ -188,11 +183,15 @@ def resolve_market_data_source(settings: Settings) -> MarketDataSource:
             )
             return YFinanceMarketDataSource(poll_seconds=settings.yfinance_poll_seconds)
         except Exception as exc:  # noqa: BLE001 - degrade, but loudly
+            if not settings.synthetic_demo_allowed:
+                raise RuntimeError("real market data source unavailable") from exc
             logger.warning(
                 "Could not build the yfinance market data source (%s) - falling back to "
                 "SYNTHETIC data. Prices shown are not real.",
                 exc,
             )
+    if not settings.synthetic_demo_allowed:
+        raise RuntimeError("synthetic market data requires explicit demo mode")
     return SyntheticMarketDataSource(seed=1, interval_seconds=1.0)
 
 
@@ -305,7 +304,7 @@ def resolve_broker(
 
 
 def resolve_macro_source(settings: Settings) -> MacroDataSource:
-    """Real FRED when a key is configured, the seeded mock otherwise (M27a).
+    """Use real FRED in normal sessions; seeded mock requires explicit demo.
 
     This resolver is the point of the change. MockMacroSource was wired in
     directly here from M2 to M27 with no resolver and no warning, so three of
@@ -315,9 +314,8 @@ def resolve_macro_source(settings: Settings) -> MacroDataSource:
     which gated the only promoted strategy off for a full session, and the
     system reported it as normal operation.
 
-    So the fallback is loud about the consequence rather than the mechanism: a
-    regime classified from invented macro data is itself invented, and it
-    decides which strategies are allowed to trade.
+    A regime classified from invented macro data is itself invented. Normal
+    startup refuses it; the explicit demo logs its synthetic source.
     """
     if get_secret("FRED_API_KEY"):
         try:
@@ -327,7 +325,12 @@ def resolve_macro_source(settings: Settings) -> MacroDataSource:
             )
             return source
         except Exception as exc:  # noqa: BLE001 - degrade, but loudly
+            if not settings.synthetic_demo_allowed:
+                raise RuntimeError("FRED macro source unavailable") from exc
             logger.warning("Could not build the FRED macro source (%s)", exc)
+
+    if not settings.synthetic_demo_allowed:
+        raise RuntimeError("mock macro requires explicit demo mode or a FRED key")
 
     logger.warning(
         "No FRED_API_KEY is configured - falling back to SYNTHETIC macro data. VIX, the "
@@ -367,18 +370,19 @@ def resolve_fundamentals_source(
     history_source: HistoricalBarSource,
     universe: tuple[str, ...],
 ) -> FundamentalsSource:
-    """Real fundamentals when configured, the seeded mock otherwise (spec M18).
+    """Use real fundamentals in normal sessions; mock requires explicit demo.
 
     The real source is wrapped in the TTL disk cache, and given a relative
     strength ranker built over the same universe the strategies see - the rank
     is a percentile, so it only means anything relative to the set it was
     measured against.
 
-    A failure to construct it degrades to the mock, loudly. The mock answers
-    every field, so a silent fallback would turn "we could not reach the
-    vendor" into a screen of confident invented figures.
+    A failed real-source construction halts normal startup. The explicit demo
+    may use mock fields and logs the fallback.
     """
     if settings.fundamentals_source != "yfinance":
+        if not settings.synthetic_demo_allowed:
+            raise RuntimeError("mock fundamentals require explicit demo mode")
         return MockFundamentalsSource(seed=1)  # the earnings calendar follows the same switch
 
     try:
@@ -392,6 +396,8 @@ def resolve_fundamentals_source(
         cache = FundamentalsCache(settings.data_dir, ttl_days=settings.fundamentals_cache_days)
         return CachingFundamentalsSource(real, cache)
     except Exception as exc:  # noqa: BLE001 - degrade, but loudly
+        if not settings.synthetic_demo_allowed:
+            raise RuntimeError("real fundamentals source unavailable") from exc
         logger.warning(
             "Could not build the real fundamentals source (%s) - falling back to SYNTHETIC "
             "fundamentals. Every fundamental figure shown or traded on will be INVENTED.",
@@ -499,6 +505,7 @@ class Runtime:
     # Set only when a frozen OPERATIONAL snapshot and paper fake-broker hand-off
     # have been explicitly supplied. No operational vendor is auto-connected.
     recommendation_service: CardService | None = None
+    shadow_runner: Phase3ShadowRunner | None = None
 
     def opened_position_symbols(self) -> set[str]:
         """Symbols this app opened itself, from its own entry record (M33e).
@@ -522,8 +529,20 @@ class Runtime:
         macro_source: MacroDataSource | None = None,
         anthropic_engine: LLMEngine | None = None,
         local_engine: LLMEngine | None = None,
+        *,
+        explicit_demo: bool = True,
     ) -> Runtime:
         settings = settings or Settings()
+        # This named builder is the test/development demo entry point. The
+        # actual application passes explicit_demo=False; its normal startup
+        # cannot infer permission to use synthetic data from mock defaults.
+        if (
+            explicit_demo
+            and not settings.demo_mode
+            and settings.broker == "mock"
+            and settings.trading_mode == "paper"
+        ):
+            settings = settings.model_copy(update={"demo_mode": True})
         watchlist = watchlist if watchlist is not None else universe.resolve_watchlist(settings)
         benchmark_symbol = universe.MARKET_BENCHMARKS[settings.market]
 
@@ -929,6 +948,12 @@ class Runtime:
         if bar_series_feed is not None:
             orchestrator.register(bar_series_feed)
 
+        shadow_runner = (
+            Phase3ShadowRunner(settings, broker, oms) if settings.phase3_shadow_enabled else None
+        )
+        if shadow_runner is not None:
+            orchestrator.register(shadow_runner)
+
         return cls(
             settings=settings,
             bus=bus,
@@ -960,4 +985,5 @@ class Runtime:
             history_source=history_source,
             news_source=resolve_news_source(settings),
             macro_source=macro,
+            shadow_runner=shadow_runner,
         )

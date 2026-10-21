@@ -44,7 +44,11 @@ def _bars(n: int = 100) -> pd.DataFrame:
 
 
 def test_settings_default_to_synthetic():
-    assert isinstance(resolve_history_source(Settings(_env_file=None)), SyntheticHistorySource)
+    with pytest.raises(RuntimeError, match="explicit demo mode"):
+        resolve_history_source(Settings(_env_file=None))
+    assert isinstance(
+        resolve_history_source(Settings(_env_file=None, demo_mode=True)), SyntheticHistorySource
+    )
 
 
 def test_settings_can_select_the_real_source():

@@ -33,7 +33,7 @@ _EXPECTED_TABS = [
 
 
 def _build_runtime(**settings_kwargs: object) -> Runtime:
-    return Runtime.build_demo(settings=Settings(_env_file=None, **settings_kwargs))  # type: ignore[arg-type]
+    return Runtime.build_demo(settings=Settings(_env_file=None, demo_mode=True, **settings_kwargs))  # type: ignore[arg-type]
 
 
 def test_main_window_renders_all_screens_in_paper_mode(qtbot):
@@ -49,7 +49,9 @@ def test_main_window_renders_all_screens_in_paper_mode(qtbot):
 
 
 def test_main_window_shows_live_banner_when_live(qtbot):
-    window = MainWindow(_build_runtime(trading_mode="live"))
+    runtime = _build_runtime()
+    runtime.settings = runtime.settings.model_copy(update={"trading_mode": "live"})
+    window = MainWindow(runtime)
     qtbot.addWidget(window)
 
     banner = next(child for child in window.centralWidget().children() if hasattr(child, "text"))

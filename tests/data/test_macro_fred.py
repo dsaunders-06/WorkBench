@@ -219,7 +219,7 @@ def test_resolve_macro_source_warns_loudly_when_falling_back_to_the_mock(monkeyp
     monkeypatch.setattr(runtime, "get_secret", lambda name: None)
 
     with caplog.at_level(logging.WARNING, logger="qat.presentation.runtime"):
-        source = runtime.resolve_macro_source(Settings())
+        source = runtime.resolve_macro_source(Settings(demo_mode=True))
 
     assert isinstance(source, MockMacroSource)
     assert "RANDOM NUMBERS" in caplog.text

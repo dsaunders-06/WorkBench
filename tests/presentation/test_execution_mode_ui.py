@@ -11,6 +11,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 
 from qat.config import Settings
+from qat.data.macro_fred import FredMacroSource
 from qat.domain.events import KillSwitchEvent
 from qat.domain.strategies.swing import SwingStrategy
 from qat.presentation.main_window import MainWindow
@@ -25,7 +26,13 @@ from qat.presentation.settings import (
 def _runtime(**overrides) -> Runtime:
     base = {"_env_file": None}
     base.update(overrides)
-    runtime = Runtime.build_demo(settings=Settings(**base))  # type: ignore[arg-type]
+    if base.get("trading_mode") == "live":
+        base.update(market_data_source="yfinance", fundamentals_source="yfinance")
+        runtime = Runtime.build_demo(
+            settings=Settings(**base), macro_source=FredMacroSource(api_key="test")
+        )
+    else:
+        runtime = Runtime.build_demo(settings=Settings(**base))  # type: ignore[arg-type]
     # These tests are about what the banner says when something happens to an
     # app that CAN trade. With an empty deployed set the banner correctly
     # reports that nothing can (M27b).

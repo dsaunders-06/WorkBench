@@ -204,14 +204,16 @@ def test_the_runtime_registers_the_connection_first() -> None:
     """
     from qat.presentation.runtime import Runtime
 
-    runtime = Runtime.build_demo(settings=Settings(_env_file=None, trading_mode="paper"))
+    runtime = Runtime.build_demo(
+        settings=Settings(_env_file=None, trading_mode="paper", demo_mode=True)
+    )
     engines = runtime.orchestrator._engines
 
     assert engines, "no engines registered at all"
     assert isinstance(engines[0], BrokerConnection), [type(e).__name__ for e in engines]
 
 
-def test_the_runtime_builds_with_an_ibkr_broker_without_connecting() -> None:
+def test_the_runtime_refuses_synthetic_data_with_an_ibkr_broker_without_connecting() -> None:
     """Construction must not open a socket - the app has to be buildable with
     no Gateway running, or a test suite and a first launch both fail on
     something that is only needed at start."""
@@ -219,9 +221,8 @@ def test_the_runtime_builds_with_an_ibkr_broker_without_connecting() -> None:
 
     client = FakeIB()
     broker = resolve_broker(_paper(), bus=EventBus(), ib_client=client)
-    runtime = Runtime.build_demo(settings=_paper(), broker=broker)
-
-    assert runtime.broker is broker
+    with pytest.raises(RuntimeError, match="synthetic market data"):
+        Runtime.build_demo(settings=_paper(), broker=broker)
     assert not client.connected, "building the runtime opened a broker connection"
 
 
@@ -243,7 +244,7 @@ def test_the_default_client_is_a_real_ib_and_is_not_connected() -> None:
     assert not broker.ib_client.isConnected()
 
 
-def test_the_runtime_builds_on_ibkr_without_being_handed_a_broker() -> None:
+def test_the_runtime_refuses_synthetic_data_on_ibkr_without_being_handed_a_broker() -> None:
     """The path a real launch takes, and the one the live check broke on.
 
     `test_the_runtime_builds_with_an_ibkr_broker_without_connecting` passes a
@@ -255,10 +256,19 @@ def test_the_runtime_builds_on_ibkr_without_being_handed_a_broker() -> None:
     """
     from qat.presentation.runtime import Runtime
 
-    runtime = Runtime.build_demo(settings=_paper())
+    with pytest.raises(RuntimeError, match="synthetic market data"):
+        Runtime.build_demo(settings=_paper())
+
+
+def test_the_runtime_still_builds_on_ibkr_with_real_source_configuration() -> None:
+    """The source refusal must not hide a broken broker-to-bus connection."""
+    from qat.data.macro_fred import FredMacroSource
+    from qat.presentation.runtime import Runtime
+
+    settings = _paper(market_data_source="yfinance", fundamentals_source="yfinance")
+    runtime = Runtime.build_demo(settings=settings, macro_source=FredMacroSource(api_key="test"))
 
     assert isinstance(runtime.broker, IBAdapter)
-    assert runtime.broker.bus is runtime.bus, (
-        "the adapter was built against a different bus than the application "
-        "runs on - its KillSwitchEvent would halt nothing"
-    )
+    assert runtime.broker.bus is runtime.bus
+    assert isinstance(runtime.orchestrator._engines[0], BrokerConnection)
+    assert not runtime.broker.ib_client.isConnected()

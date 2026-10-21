@@ -97,6 +97,15 @@ def test_card_panel_shows_required_evidence_and_only_individual_actions(qtbot) -
     assert "font-weight" in panel.warning_label.styleSheet()
 
 
+def test_shadow_cards_have_no_approval_or_decline_controls(qtbot) -> None:
+    panel = RecommendationCardsPanel(None, now=lambda: NOW, read_only=True)
+    qtbot.addWidget(panel)
+    panel.set_cards((sample_card(),))
+    assert panel.approve_buttons == {}
+    assert panel.decline_buttons == {}
+    assert "unvalidated strategy" in panel.warning_label.text()
+
+
 @pytest.mark.asyncio
 async def test_approve_requires_signoff_dialog_then_shows_exact_manual_order(
     qtbot, monkeypatch

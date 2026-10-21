@@ -75,7 +75,7 @@ def _run_application(app: QApplication, loop: qasync.QEventLoop) -> None:
     if lost_run:
         logger.warning("%s", lost_run)
 
-    runtime = Runtime.build_demo(settings=settings)
+    runtime = Runtime.build_demo(settings=settings, explicit_demo=False)
 
     window = MainWindow(runtime)
     window.show()
