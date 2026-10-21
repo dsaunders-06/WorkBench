@@ -69,7 +69,7 @@ async def test_sign_off_never_called_without_dialog_confirmation(qtbot):
 async def test_sign_off_failure_is_reported_not_swallowed(qtbot):
     """A sign-off that fails at the broker must never look like nothing
     happened - the operator would not know whether it reached the broker."""
-    runtime = Runtime.build_demo(settings=Settings(_env_file=None))
+    runtime = Runtime.build_demo(settings=Settings(_env_file=None, operator_name="Test Operator"))
     order = await _build_pending_order(runtime)
 
     screen = BlotterScreen(runtime)
@@ -95,7 +95,7 @@ async def test_sign_off_failure_is_reported_not_swallowed(qtbot):
 
 
 async def test_sign_off_called_after_dialog_confirms(qtbot):
-    runtime = Runtime.build_demo(settings=Settings(_env_file=None))
+    runtime = Runtime.build_demo(settings=Settings(_env_file=None, operator_name="Test Operator"))
     order = await _build_pending_order(runtime)
 
     screen = BlotterScreen(runtime)
@@ -112,3 +112,19 @@ async def test_sign_off_called_after_dialog_confirms(qtbot):
 
     assert sign_off_calls == [order.order_id]
     assert runtime.oms.get_order(order.order_id).status == "filled"
+
+
+async def test_sign_off_records_the_configured_operator(qtbot):
+    runtime = Runtime.build_demo(settings=Settings(_env_file=None, operator_name="Alice Example"))
+    order = await _build_pending_order(runtime)
+    screen = BlotterScreen(runtime)
+    qtbot.addWidget(screen)
+    operators: list[str] = []
+
+    async def capture(order_id: str, operator: str) -> Order:
+        operators.append(operator)
+        return order
+
+    runtime.oms.sign_off = capture  # type: ignore[method-assign]
+    await screen._do_sign_off([order.order_id])
+    assert operators == ["Alice Example"]

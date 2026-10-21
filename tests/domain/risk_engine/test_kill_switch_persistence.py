@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import logging
 
+import pytest
+
 from qat.domain.risk_engine.kill_switch import KillSwitch
 
 
@@ -97,3 +99,39 @@ def test_the_runtime_gives_the_switch_somewhere_to_persist():
         "runtime constructs a bare KillSwitch, so the halt has nowhere to "
         "persist and item 32 is not actually fixed in the running app"
     )
+
+
+def test_failed_trip_save_keeps_halt_visible_and_raises(tmp_path, caplog):
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory", encoding="utf-8")
+    switch = KillSwitch(blocked)
+    seen: list[bool] = []
+    switch.add_listener(lambda: seen.append(switch.tripped))
+
+    with caplog.at_level(logging.CRITICAL), pytest.raises(OSError):
+        switch.trip("broker mismatch")
+
+    assert switch.tripped
+    assert switch.reason == "broker mismatch"
+    assert seen == [True]
+    assert "operator" in caplog.text.lower()
+
+
+def test_failed_reset_save_leaves_halt_and_persisted_reason(tmp_path, monkeypatch):
+    switch = KillSwitch(tmp_path)
+    switch.trip("broker mismatch")
+    before = (tmp_path / "kill_switch.json").read_bytes()
+    seen: list[bool] = []
+    switch.add_listener(lambda: seen.append(switch.tripped))
+
+    def fail_save() -> None:
+        raise OSError("disk refused write")
+
+    monkeypatch.setattr(switch, "_save", fail_save)
+    with pytest.raises(OSError, match="disk refused write"):
+        switch.reset("named operator")
+
+    assert switch.tripped
+    assert switch.reason == "broker mismatch"
+    assert seen == []
+    assert (tmp_path / "kill_switch.json").read_bytes() == before

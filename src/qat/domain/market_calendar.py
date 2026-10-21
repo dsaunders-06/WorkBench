@@ -39,7 +39,7 @@ MARKET_TIMEZONES: dict[Market, ZoneInfo] = {"ASX": ASX_TZ}
 #
 # Here rather than in the ledger because it is a property of the exchange, and
 # because the ledger is not the only thing that will need it. `closed_trades.csv`
-# carried no currency at all: two US trades from the Alpaca period sat in the
+# carried no currency at all: two US trades from the retired broker period sat in the
 # same file the ASX trial appends to, and their USD net_pnl would have been
 # summed with AUD net_pnl into one total that means nothing.
 CURRENCY_BY_MARKET: dict[Market, str] = {"ASX": "AUD"}

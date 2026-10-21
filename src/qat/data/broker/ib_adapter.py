@@ -28,6 +28,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, TypeVar
+from zoneinfo import ZoneInfo
 
 from ib_async import ExecutionFilter
 from ib_async import Position as IBPosition
@@ -45,6 +46,8 @@ from qat.data.broker.adapter import (
     RestingStopOrder,
     balances_from_summary,
 )
+from qat.data.broker.foreign_orders import ForeignOrderQuarantine
+from qat.data.broker.gtc_expiry import GtcExpiryStore, GtcRenewalJournal, GtcRenewalPlan
 from qat.data.broker.ib_client_protocol import IBClientProtocol
 from qat.data.broker.ib_errors import ErrorAction, classify
 from qat.data.broker.ib_translate import (
@@ -66,7 +69,7 @@ from qat.data.broker.ticks import round_to_tick
 from qat.data.symbols import from_ibkr
 from qat.domain.bus import EventBus
 from qat.domain.events import BrokerOrderIdResolvedEvent, KillSwitchEvent, OrderRejectedEvent
-from qat.domain.oms.resting_orders import WORKING_STATUSES
+from qat.domain.oms.resting_orders import TERMINAL_STATUSES, WORKING_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +294,21 @@ class IBAdapter:
             if settings.ibkr_account_id
             else None
         )
+        self._gtc_expiry = (
+            GtcExpiryStore(Path(settings.data_dir) / "gtc_expiry.json")
+            if settings.ibkr_account_id and not read_only
+            else None
+        )
+        self._gtc_renewal_journal = (
+            GtcRenewalJournal(Path(settings.data_dir) / "gtc_renewal_history.json")
+            if settings.ibkr_account_id and not read_only
+            else None
+        )
+        self._foreign_orders = (
+            ForeignOrderQuarantine(Path(settings.data_dir) / "foreign_order_quarantine.json")
+            if settings.ibkr_account_id and not read_only
+            else None
+        )
         self._deferred_leg_intents: dict[str, tuple[Order, str, object]] = {}
         # M175. Where a completed order's commission goes; None until wired.
         self._commission_listener: Callable[[BrokerCommission], None] | None = None
@@ -391,6 +409,23 @@ class IBAdapter:
         refs = store.unresolved(symbol)
         return f"pending broker identity for {symbol}: {', '.join(refs)}" if refs else None
 
+    def _require_managed_account(self) -> None:
+        """Refuse a trading connection unless Gateway exposes only our account."""
+        expected = self.settings.ibkr_account_id
+        if self.read_only and not expected:
+            return
+        source = getattr(self.ib_client, "managedAccounts", None)
+        if not callable(source):
+            raise ValueError("IBKR managed account source is unavailable")
+        try:
+            accounts = list(source())
+        except Exception as exc:
+            raise ValueError("IBKR managed account source failed") from exc
+        if accounts != [expected]:
+            raise ValueError(
+                f"IBKR managed account set does not match the configured account: {accounts!r}"
+            )
+
     async def connect(self) -> None:
         """Connect, retrying a refused port for a bounded time (M125).
 
@@ -449,6 +484,11 @@ class IBAdapter:
                 logger.info(
                     "IBKR connected on attempt %d of %d", attempt, self.max_connect_attempts
                 )
+            try:
+                self._require_managed_account()
+            except ValueError:
+                self.ib_client.disconnect()
+                raise
             # ⚠️ ASK FOR THE FREE DELAYED TIER, OR IBKR ANSWERS NOTHING.
             #
             # `reqMarketDataType` defaults to 1 (real-time) on every new API
@@ -573,6 +613,18 @@ class IBAdapter:
                 logger.warning("IBKR reconnect attempt %d failed: %s", attempt + 1, exc)
                 continue
             if self.ib_client.isConnected():
+                try:
+                    self._require_managed_account()
+                except ValueError:
+                    self.ib_client.disconnect()
+                    logger.critical("IBKR reconnect exposed a different managed account set")
+                    await self.bus.publish(
+                        KillSwitchEvent(
+                            reason="IBKR managed account mismatch after reconnect",
+                            triggered_by="ib-adapter",
+                        )
+                    )
+                    return
                 logger.info("IBKR reconnected after %d attempt(s)", attempt + 1)
                 return
 
@@ -879,7 +931,7 @@ class IBAdapter:
         that mattered.
 
         **The window is applied HERE, on fill time.** `ExecutionFilter` carries
-        a `time`, and it is deliberately not used to bound the answer: Alpaca's
+        a `time`, and it is deliberately not used to bound the answer: the retired broker's
         `after=` read like "activity since then" and turned out to mean
         `submitted_at`, so the one execution the method existed to catch was
         the one it could not see (M48). A broker-side filter whose semantics
@@ -1018,6 +1070,89 @@ class IBAdapter:
             raise RuntimeError("IBKR could not verify the open-order book")
         return [from_ib_open_order(trade, self.settings.market) for trade in trades]
 
+    def _owns_open_order(self, trade: object) -> bool:
+        """A visible order is ours only with a matching durable leg identity."""
+        store = self._pending_legs
+        if store is None:
+            return False
+        order = trade.order  # type: ignore[attr-defined]
+        contract = trade.contract  # type: ignore[attr-defined]
+        order_id = int(getattr(order, "orderId", 0) or 0)
+        perm_id = int(getattr(order, "permId", 0) or 0)
+        if not order_id or not perm_id:
+            return False
+        ref = str(getattr(order, "orderRef", "") or "")
+        leg = store.legs.get(ref)
+        return bool(
+            leg is not None
+            and leg.resolved
+            and leg.symbol == from_ibkr(str(getattr(contract, "symbol", "")), self.settings.market)
+            and leg.account == str(getattr(order, "account", "") or "")
+            and leg.account == self.settings.ibkr_account_id
+            and leg.client_id == int(getattr(order, "clientId", 0) or 0)
+            and leg.client_id == self.settings.ibkr_client_id
+            and leg.con_id == int(getattr(contract, "conId", 0) or 0)
+            and leg.broker_order_id == order_id
+            and leg.perm_id == perm_id
+        )
+
+    async def foreign_order_reason(self, symbol: str) -> str | None:
+        """Block exposure until DS clears any observed foreign-order quarantine."""
+        trades = await self._all_open_orders()
+        if trades is None:
+            raise RuntimeError("IBKR open-order book is unavailable")
+        quarantine = getattr(self, "_foreign_orders", None)
+        for trade in trades:
+            resting = from_ib_open_order(trade, self.settings.market)
+            if resting.symbol != symbol or resting.status in TERMINAL_STATUSES:
+                continue
+            if not self._owns_open_order(trade):
+                if quarantine is not None:
+                    quarantine.record(symbol, self._foreign_identity(trade))
+                logger.critical(
+                    "OPERATOR ACTION REQUIRED: unowned broker order on %s; "
+                    "exposure addition is blocked until DS clears its quarantine",
+                    symbol,
+                )
+                return f"unowned broker order on {symbol}; DS clearance required"
+        return quarantine.reason(symbol) if quarantine is not None else None
+
+    @staticmethod
+    def _foreign_identity(trade: object) -> dict[str, int]:
+        order = trade.order  # type: ignore[attr-defined]
+        contract = trade.contract  # type: ignore[attr-defined]
+        return {
+            "order_id": int(getattr(order, "orderId", 0) or 0),
+            "perm_id": int(getattr(order, "permId", 0) or 0),
+            "client_id": int(getattr(order, "clientId", 0) or 0),
+            "con_id": int(getattr(contract, "conId", 0) or 0),
+        }
+
+    async def clear_foreign_order_quarantine(
+        self, symbol: str, *, operator: str, ds_approval_ref: str
+    ) -> bool:
+        """Clear only after an independent broker read proves the symbol clean."""
+        self._check_not_read_only()
+        configured = self.settings.operator_name.strip()
+        if not configured or operator.strip() != configured or not ds_approval_ref.strip():
+            raise ValueError("configured operator and DS approval reference are required")
+        quarantine = self._foreign_orders
+        if quarantine is None:
+            raise RuntimeError("foreign-order quarantine is unavailable")
+        trades = await self._all_open_orders()
+        if trades is None:
+            raise RuntimeError("IBKR open-order book is unavailable")
+        if any(
+            from_ib_open_order(trade, self.settings.market).symbol == symbol
+            and from_ib_open_order(trade, self.settings.market).status not in TERMINAL_STATUSES
+            and not self._owns_open_order(trade)
+            for trade in trades
+        ):
+            raise ValueError(f"unowned broker order still working on {symbol}")
+        return quarantine.clear(
+            symbol, operator=configured, ds_approval_ref=ds_approval_ref.strip()
+        )
+
     async def completed_orders(self) -> list[RestingOrder]:
         """Broker terminal rows, including legacy rows with orderId zero.
 
@@ -1059,13 +1194,28 @@ class IBAdapter:
         """
         trades = await self._all_open_orders()
         if trades is None:
-            return {}
+            raise RuntimeError("IBKR could not verify protective orders")
 
         resting: dict[str, RestingStopOrder] = {}
+        observed_stops: list[RestingStopOrder] = []
         for trade in trades:
             stop = from_ib_resting_stop(trade, self.settings.market)
             if stop is None:
                 continue
+            if (
+                self.settings.ibkr_account_id
+                and not self.read_only
+                and not self._owns_open_order(trade)
+            ):
+                quarantine = getattr(self, "_foreign_orders", None)
+                if quarantine is not None:
+                    quarantine.record(stop.symbol, self._foreign_identity(trade))
+                logger.critical(
+                    "OPERATOR ACTION REQUIRED: unowned stop on %s is not QAT protection",
+                    stop.symbol,
+                )
+                continue
+            observed_stops.append(stop)
             existing = resting.get(stop.symbol)
             if existing is None:
                 resting[stop.symbol] = stop
@@ -1083,6 +1233,20 @@ class IBAdapter:
             resting[stop.symbol] = tighter_stop(
                 existing, stop, selling=str(trade.order.action).upper() == "SELL"
             )
+        expiry_store = getattr(self, "_gtc_expiry", None)
+        if expiry_store is not None:
+            expiry_store.record(observed_stops)
+            today = datetime.now(ZoneInfo("Australia/Sydney")).date()
+            for stop in observed_stops:
+                remaining = (stop.auto_cancel_date - today).days if stop.auto_cancel_date else None
+                if remaining is None or remaining <= 30:
+                    logger.critical(
+                        "OPERATOR ACTION REQUIRED: QAT stop %s (%s) has %s auto-cancel days "
+                        "remaining; approve an in-place GTC renewal before expiry",
+                        stop.symbol,
+                        stop.order_id,
+                        remaining if remaining is not None else "unknown",
+                    )
         return resting
 
     async def resting_stops(self) -> dict[str, float]:
@@ -1097,6 +1261,129 @@ class IBAdapter:
         return {
             symbol: stop.stop_price for symbol, stop in (await self.resting_stop_orders()).items()
         }
+
+    async def _gtc_renewal_snapshot(self, symbol: str) -> GtcRenewalPlan:
+        trades = await self._all_open_orders()
+        if trades is None:
+            raise RuntimeError("IBKR open-order book is unavailable for GTC renewal")
+        matches: list[GtcRenewalPlan] = []
+        for trade in trades:
+            resting = from_ib_open_order(trade, self.settings.market)
+            if resting.symbol != symbol or resting.status in TERMINAL_STATUSES:
+                continue
+            if not self._owns_open_order(trade):
+                raise ValueError(f"unowned order on {symbol} blocks GTC renewal")
+            stop = from_ib_resting_stop(trade, self.settings.market)
+            if stop is None:
+                continue  # An owned OCA target may accompany the stop.
+            order = trade.order
+            if (
+                str(order.tif) != "GTC"
+                or str(order.action).upper() != "SELL"
+                or stop.auto_cancel_date is None
+            ):
+                raise ValueError(f"GTC stop terms or auto-cancel date are unverified on {symbol}")
+            matches.append(
+                GtcRenewalPlan(
+                    symbol=stop.symbol,
+                    order_id=stop.order_id,
+                    broker_order_id=int(order.orderId),
+                    quantity=stop.quantity,
+                    stop_price=stop.stop_price,
+                    auto_cancel_date=stop.auto_cancel_date,
+                    account=str(order.account),
+                    con_id=int(trade.contract.conId),
+                    oca_group=str(order.ocaGroup or ""),
+                    oca_type=int(order.ocaType or 0),
+                )
+            )
+        if len(matches) != 1:
+            raise ValueError(f"exactly one owned working GTC stop is required on {symbol}")
+        return matches[0]
+
+    async def plan_gtc_renewal(self, symbol: str) -> GtcRenewalPlan:
+        """Read the broker and produce exact terms for separate human approval."""
+        return await self._gtc_renewal_snapshot(symbol)
+
+    async def apply_approved_gtc_renewal(
+        self, plan: GtcRenewalPlan, *, approved_plan_sha256: str, operator: str
+    ) -> GtcRenewalPlan:
+        """Amend the same owned stop in place; never cancel it or loosen terms."""
+        self._check_not_read_only()
+        configured = self.settings.operator_name.strip()
+        if not configured or operator.strip() != configured or approved_plan_sha256 != plan.digest:
+            raise ValueError("named operator and exact approved GTC plan hash are required")
+        journal = self._gtc_renewal_journal
+        if journal is None:
+            raise ValueError("durable GTC renewal journal is unavailable")
+        before = await self._gtc_renewal_snapshot(plan.symbol)
+        if before != plan:
+            raise ValueError("GTC renewal broker terms changed since approval")
+        holdings = [
+            position
+            for position in await self.positions()
+            if position.symbol == plan.symbol and position.qat_holding
+        ]
+        if len(holdings) != 1 or not math.isclose(
+            holdings[0].quantity, plan.quantity, abs_tol=1e-6
+        ):
+            raise ValueError("GTC renewal stop does not cover the verified QAT holding")
+        journal.append(
+            {
+                "status": "approved_intent",
+                "operator": configured,
+                "plan_sha256": plan.digest,
+                "at_utc": datetime.now(UTC).isoformat(),
+            }
+        )
+        # An in-place amendment preserves the original stop throughout. IBKR
+        # assigns a new auto-expire date to modified GTC orders; a missing
+        # extension is reported as failure, never mistaken for renewal.
+        try:
+            await self.modify_order(plan.order_id, stop_price=plan.stop_price)
+            after = await self._gtc_renewal_snapshot(plan.symbol)
+            if (
+                after.symbol,
+                after.order_id,
+                after.broker_order_id,
+                after.quantity,
+                after.stop_price,
+                after.account,
+                after.con_id,
+                after.oca_group,
+                after.oca_type,
+            ) != (
+                plan.symbol,
+                plan.order_id,
+                plan.broker_order_id,
+                plan.quantity,
+                plan.stop_price,
+                plan.account,
+                plan.con_id,
+                plan.oca_group,
+                plan.oca_type,
+            ) or after.auto_cancel_date <= plan.auto_cancel_date:
+                raise RuntimeError(
+                    "in-place GTC renewal did not extend the broker auto-cancel date"
+                )
+            journal.append(
+                {
+                    "status": "confirmed",
+                    "operator": configured,
+                    "plan_sha256": plan.digest,
+                    "new_auto_cancel_date": after.auto_cancel_date.isoformat(),
+                    "at_utc": datetime.now(UTC).isoformat(),
+                }
+            )
+        except Exception:
+            logger.critical(
+                "OPERATOR ACTION REQUIRED: GTC renewal on %s was not confirmed and requires "
+                "independent broker reconciliation",
+                plan.symbol,
+                exc_info=True,
+            )
+            raise
+        return after
 
     def _price_side(self, order: Order, field: str) -> str:
         """Which side a given price field is actually transmitted as (M123).
@@ -1114,7 +1401,7 @@ class IBAdapter:
     def _round_prices_onto_ticks(self, order: Order) -> None:
         """Move every price on this order onto a valid exchange increment (M123).
 
-        Done HERE, at the broker boundary, for the same reason AlpacaAdapter
+        Done HERE, at the broker boundary, because a broker adapter
         rounds to 2dp here: fifteen call sites construct order prices and none
         of them should have to know what an exchange's price steps are. Mutated
         in place rather than copied so the object the OMS keeps is the one the
@@ -1122,7 +1409,7 @@ class IBAdapter:
         1.875 is the M95 Stage A failure in miniature.
 
         Nothing rounded before the ASX move and nothing needed to: the US tick
-        is a cent at every price a megacap trades at, so AlpacaAdapter's 2dp
+        is a cent at every price a megacap trades at, so the prior adapter's 2dp
         and "on tick" were the same thing. On the ASX between $0.10 and $2.00
         the step is half a cent, and an ATR-derived stop lands off it.
         """

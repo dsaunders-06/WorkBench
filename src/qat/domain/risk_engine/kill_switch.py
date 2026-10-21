@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 
 from qat.domain.bus import EventBus
@@ -94,13 +96,18 @@ class KillSwitch:
         if self._path is None:
             return
         payload = {"tripped": self._tripped, "reason": self._reason}
+        temporary = self._path.with_suffix(".tmp")
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                json.dump(payload, handle, indent=2)
+                handle.flush()
+                os.fsync(handle.fileno())
+            temporary.replace(self._path)
         except OSError:
-            logger.exception(
-                "Could not write %s - this halt will NOT survive a restart", self._path
-            )
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
+            raise
 
     def add_listener(self, listener: Callable[[], None]) -> None:
         """Called synchronously whenever the switch trips or is reset.
@@ -148,7 +155,16 @@ class KillSwitch:
         self._tripped = True
         self._reason = reason
         logger.warning("KILL-SWITCH TRIPPED: %s. All new order flow is halted.", reason)
-        self._save()
+        try:
+            self._save()
+        except OSError:
+            logger.critical(
+                "OPERATOR ACTION REQUIRED: kill-switch trip could not be persisted; "
+                "the app remains halted and must not trade after restart",
+                exc_info=True,
+            )
+            self._notify()
+            raise
         self._notify()
 
     def check_daily_loss(
@@ -177,13 +193,27 @@ class KillSwitch:
 
     def reset(self, operator: str) -> None:
         """Explicit human-attributed action required to clear a tripped switch."""
-        if self._tripped:
-            logger.warning(
-                "Kill-switch reset by %s - order flow resumes (was: %s)", operator, self._reason
-            )
+        previous_reason = self._reason
         self._tripped = False
         self._reason = None
-        self._save()
+        try:
+            self._save()
+        except OSError:
+            self._tripped = True
+            self._reason = previous_reason
+            logger.critical(
+                "OPERATOR ACTION REQUIRED: kill-switch reset by %s failed to persist; "
+                "the app remains halted",
+                operator,
+                exc_info=True,
+            )
+            raise
+        if previous_reason is not None:
+            logger.warning(
+                "Kill-switch reset by %s - order flow resumes (was: %s)",
+                operator,
+                previous_reason,
+            )
         self._notify()
 
 

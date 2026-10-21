@@ -151,6 +151,88 @@ async def test_a_full_exit_cancels_the_protective_legs_first() -> None:
 
 
 @pytest.mark.asyncio
+async def test_19_october_oca_partner_and_order_id_zero_rows_release_one_cancel(
+    monkeypatch,
+) -> None:
+    """IBKR's completed rows lose orderId but retain permId after an OCA cancel."""
+    broker = _BrokerWithLegs()
+    broker._legs = [
+        replace(
+            broker._legs[1], order_id="111", perm_id=111, broker_order_id=152, oca_group="OCA-1"
+        ),
+        replace(
+            broker._legs[0], order_id="222", perm_id=222, broker_order_id=153, oca_group="OCA-1"
+        ),
+    ]
+
+    async def cancel_target(order_id: str) -> Order:
+        broker.cancelled.append(order_id)
+        broker.completed = [
+            replace(leg, order_id="0", broker_order_id=0, status="Cancelled")
+            for leg in broker._legs
+        ]
+        broker._legs = []  # IBKR cancels the stop as the OCA partner.
+        return Order("AAA", "sell", 100, order_id, status="cancelled")
+
+    monkeypatch.setattr(broker, "cancel_order", cancel_target)
+    oms = _oms(broker)
+    order = await oms.submit_exit_order("AAA", 100, 100, reason="signal")
+    signed = await oms.sign_off(order.order_id, "test")
+
+    assert signed.status != "rejected"
+    assert broker.cancelled == ["111"]
+    assert await broker.open_orders() == []
+
+
+@pytest.mark.asyncio
+async def test_missing_completed_source_refuses_disappeared_oca_partner(monkeypatch) -> None:
+    broker = _BrokerWithLegs()
+    broker._legs = [
+        replace(broker._legs[1], order_id="111", perm_id=111, oca_group="OCA-1"),
+        replace(broker._legs[0], order_id="222", perm_id=222, oca_group="OCA-1"),
+    ]
+    broker.completed_orders = None  # type: ignore[method-assign]
+
+    async def cancel_target(order_id: str) -> Order:
+        broker.cancelled.append(order_id)
+        broker._legs = []
+        return Order("AAA", "sell", 100, order_id, status="cancelled")
+
+    monkeypatch.setattr(broker, "cancel_order", cancel_target)
+    oms = _oms(broker)
+    order = await oms.submit_exit_order("AAA", 100, 100, reason="signal")
+    signed = await oms.sign_off(order.order_id, "test")
+
+    assert signed.status == "rejected"
+    assert broker.cancelled == ["111"]
+
+
+@pytest.mark.asyncio
+async def test_20_october_pending_cancel_partner_refuses_exit_without_second_cancel(
+    monkeypatch,
+) -> None:
+    broker = _BrokerWithLegs()
+    target = replace(broker._legs[1], order_id="111", perm_id=111, oca_group="OCA-1")
+    stop = replace(broker._legs[0], order_id="222", perm_id=222, oca_group="OCA-1")
+    broker._legs = [target, stop]
+
+    async def cancel_target(order_id: str) -> Order:
+        broker.cancelled.append(order_id)
+        broker.completed = [replace(target, order_id="0", status="Cancelled")]
+        broker._legs = [replace(stop, status="PendingCancel")]
+        return Order("AAA", "sell", 100, order_id, status="cancelled")
+
+    monkeypatch.setattr(broker, "cancel_order", cancel_target)
+    oms = _oms(broker)
+    order = await oms.submit_exit_order("AAA", 100, 100, reason="signal")
+    signed = await oms.sign_off(order.order_id, "test")
+
+    assert signed.status == "rejected"
+    assert broker.cancelled == ["111"]
+    assert (await broker.open_orders())[0].status == "PendingCancel"
+
+
+@pytest.mark.asyncio
 async def test_the_exit_is_REFUSED_when_a_leg_will_not_cancel() -> None:
     """⚠️ Fail closed. Selling into a resting leg is the double-fill that turns
     a protected long into a short; refusing leaves the position protected and

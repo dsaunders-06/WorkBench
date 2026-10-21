@@ -304,7 +304,7 @@ def load_risk_decisions(
     layer, and it must never be able to stop a report being produced.
 
     `market` narrows to one era (M127). This file, like the equity curve and
-    the trade ledger, spans the Alpaca/US period and the IBKR/ASX one - and the
+    the trade ledger, spans the retired broker/US period and the IBKR/ASX one - and the
     weekly report of 21 August cited *"rejected all 120 candidate orders
     because the book was full"* as this week's ASX behaviour when every one of
     those refusals happened on the other broker, against a book that no longer

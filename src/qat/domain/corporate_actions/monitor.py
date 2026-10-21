@@ -40,7 +40,7 @@ DECLARED_BY = "corporate-action-monitor"
 # ex-date gate, so an application down across a split for more than five days
 # would come back blind to it.
 #
-# 90 days costs nothing to widen - the query is bounded per SYMBOL, and Alpaca
+# 90 days costs nothing to widen - the query is bounded per SYMBOL, and the retired broker
 # returns a handful of records for one symbol over a quarter either way. What it
 # does change is that the ex-date gate in `SplitDetector` is now the ONLY thing
 # keeping a correctly-sized position like CRWD from being adjusted a second

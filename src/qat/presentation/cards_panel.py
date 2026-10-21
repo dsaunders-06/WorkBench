@@ -26,16 +26,20 @@ from qat.presentation import theme
 from qat.presentation.signoff import confirm_order_action
 
 logger = logging.getLogger(__name__)
-_OPERATOR = "operator"
 
 
 class RecommendationCardsPanel(QWidget):
     def __init__(
-        self, service: CardService | None = None, *, now: Callable[[], datetime] | None = None
+        self,
+        service: CardService | None = None,
+        *,
+        now: Callable[[], datetime] | None = None,
+        operator_name: Callable[[], str] | None = None,
     ) -> None:
         super().__init__()
         self.service = service
         self.now = now or (lambda: datetime.now().astimezone())
+        self.operator_name = operator_name or (lambda: "")
         self._cards: tuple[RecommendationCard, ...] = ()
         self.approve_buttons: dict[str, QPushButton] = {}
         self.decline_buttons: dict[str, QPushButton] = {}
@@ -147,6 +151,9 @@ class RecommendationCardsPanel(QWidget):
         if service is None:
             return
         try:
+            operator = self.operator_name().strip()
+            if not operator:
+                raise ValueError("Configure an operator name before approving a card.")
             preview = service.preview(card_id, now=self.now())
             if not confirm_order_action(
                 self,
@@ -156,7 +163,7 @@ class RecommendationCardsPanel(QWidget):
             ):
                 return
             try:
-                instruction = await service.approve(card_id, _OPERATOR, now=self.now())
+                instruction = await service.approve(card_id, operator, now=self.now())
             except ReconfirmationRequired as changed:
                 if not confirm_order_action(
                     self,
@@ -166,7 +173,7 @@ class RecommendationCardsPanel(QWidget):
                 ):
                     return
                 instruction = await service.approve(
-                    card_id, _OPERATOR, now=self.now(), reconfirm=True
+                    card_id, operator, now=self.now(), reconfirm=True
                 )
             QMessageBox.information(
                 self,
@@ -183,7 +190,10 @@ class RecommendationCardsPanel(QWidget):
         if service is None:
             return
         try:
-            service.decline(card_id, _OPERATOR, now=self.now())
+            operator = self.operator_name().strip()
+            if not operator:
+                raise ValueError("Configure an operator name before declining a card.")
+            service.decline(card_id, operator, now=self.now())
         except (ValueError, OSError) as error:
             QMessageBox.warning(self, "Card unavailable", str(error))
         self.refresh()

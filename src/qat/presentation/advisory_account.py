@@ -162,7 +162,7 @@ def resolve_day_pnl_pct(*, broker_pct: float | None, monitor_pct: float | None) 
     an unreported -6% day would read as "no rail here would refuse it".
 
     What was wrong was the input. `balances.day_pnl_pct` derives from
-    `last_equity`, an Alpaca-era "previous close" that IBKR never supplies, so
+    `last_equity`, a retired broker-era "previous close" that IBKR never supplies, so
     on this broker it is ALWAYS None and the verdict had never rendered in
     production. `EquityMonitor.day_pnl_pct()` measures against a persisted
     `day_start_equity`, works on any broker, and is what `AutonomyGate`

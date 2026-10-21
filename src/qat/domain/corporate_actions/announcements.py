@@ -1,7 +1,7 @@
 """What the broker says is coming, remembered across restarts (M39).
 
 **Deduped on `(symbol, ex_date)`**, not on the record id and never on a count.
-Alpaca returned the same MNST announcement once on the Saturday and twice on the
+The retired broker returned the same MNST announcement once on the Saturday and twice on the
 Monday, byte-identical, and the difference was the `payable_date` arriving. A
 detector reading a changing count as a changing action would adjust the same
 position twice.
@@ -33,7 +33,7 @@ _FILENAME = "corporate_announcements.json"
 class Announcement:
     """One corporate action the broker has published.
 
-    `ratio` is `new_rate / old_rate`, which is how Alpaca expresses it: a forward
+    `ratio` is `new_rate / old_rate`, which is how the retired broker expressed it: a forward
     split is `old_rate=1.0, new_rate=4.0` and a reverse split inverts it. So 2.0
     is a 2-for-1 and 0.001 is a 1-for-1000.
     """

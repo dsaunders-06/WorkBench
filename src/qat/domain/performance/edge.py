@@ -94,7 +94,7 @@ class EdgeEstimator:
 
         # Scoped to the market being traded (M122). This list becomes a win
         # rate and a win/loss ratio, and those set POSITION SIZE - so a trade
-        # from the Alpaca/US period, in another currency, on another broker,
+        # from the retired broker/US period, in another currency, on another broker,
         # must not be one of the twenty that switches measurement on.
         # Already collapsed to POSITIONS by the ledger - see
         # `TradeLedger.closed_trades`. Collapsing again here would be harmless

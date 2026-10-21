@@ -22,6 +22,7 @@ def _build_screen(qtbot) -> tuple[RiskConsoleScreen, Runtime]:
 
 def test_kill_switch_button_trips_the_real_kill_switch(qtbot):
     screen, runtime = _build_screen(qtbot)
+    runtime.settings.operator_name = "Alice Example"
     assert not runtime.kill_switch.tripped
 
     # Halting now asks first (item 36), because this button is a toggle bound
@@ -37,6 +38,7 @@ def test_kill_switch_button_trips_the_real_kill_switch(qtbot):
 
 def test_kill_switch_button_resets_when_already_tripped(qtbot):
     screen, runtime = _build_screen(qtbot)
+    runtime.settings.operator_name = "Alice Example"
     runtime.kill_switch.trigger_manual("test-setup")
     screen._refresh_kill_switch_button()
     assert runtime.kill_switch.tripped
@@ -45,6 +47,61 @@ def test_kill_switch_button_resets_when_already_tripped(qtbot):
 
     assert not runtime.kill_switch.tripped
     assert "inactive" in screen.kill_switch_button.text()
+
+
+def test_reset_refuses_an_unconfigured_operator(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    screen, runtime = _build_screen(qtbot)
+    runtime.kill_switch.trip("broker mismatch")
+    notices: list[str] = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: notices.append(str(args[-1])))
+
+    screen._on_kill_switch_clicked()
+
+    assert runtime.kill_switch.tripped
+    assert notices and "operator" in notices[0].lower()
+
+
+def test_failed_reset_save_reports_failure_and_keeps_button_halted(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    screen, runtime = _build_screen(qtbot)
+    runtime.settings.operator_name = "Alice Example"
+    runtime.kill_switch.trip("broker mismatch")
+    screen._refresh_kill_switch_button()
+    notices: list[str] = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: notices.append(str(args[-1])))
+
+    def fail_save() -> None:
+        raise OSError("disk refused write")
+
+    monkeypatch.setattr(runtime.kill_switch, "_save", fail_save)
+    screen._on_kill_switch_clicked()
+
+    assert runtime.kill_switch.tripped
+    assert "TRIPPED" in screen.kill_switch_button.text()
+    assert notices and "failed" in notices[0].lower()
+
+
+def test_failed_trip_save_alerts_and_keeps_button_halted(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    screen, runtime = _build_screen(qtbot)
+    runtime.settings.operator_name = "Alice Example"
+    notices: list[str] = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: notices.append(str(args[-1])))
+    screen._confirm_trip = lambda: True  # type: ignore[assignment]
+
+    def fail_save() -> None:
+        raise OSError("disk refused write")
+
+    monkeypatch.setattr(runtime.kill_switch, "_save", fail_save)
+    screen._on_kill_switch_clicked()
+
+    assert runtime.kill_switch.tripped
+    assert "TRIPPED" in screen.kill_switch_button.text()
+    assert notices and "persistence" in notices[0]
 
 
 def test_timer_tick_catches_a_trip_from_reconciliation_not_the_button(qtbot):

@@ -8,7 +8,8 @@ objects requiring no network connection.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
+import re
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from ib_async import AccountValue, Contract, Fill, Stock
@@ -58,9 +59,8 @@ _ACCOUNT_TAGS = ("NetLiquidation", "TotalCashValue", "BuyingPower", "GrossPositi
 # defeated by a map with four entries, so nobody set it at all.
 #
 # DEFAULTS TO "transmitted", never to leaving the caller's value. This mirrors
-# `alpaca_adapter._STATUS_MAP`, whose own note says "anything unrecognised maps
-# to transmitted rather than a terminal state" - the sibling that had this right
-# all along. After a place_order that did NOT raise, the broker has the order;
+# the prior broker adapter's status map: an unrecognised acknowledgement means
+# transmitted rather than terminal. After a place_order that did NOT raise,
 # the only safe unknown is "live at the broker", never "still needs signing".
 _IB_STATUS_MAP: dict[str, OrderStatus] = {
     "Filled": "filled",
@@ -152,7 +152,7 @@ def to_ib_order(order: Order) -> IBOrder:
                 "IBKR OCA transmission is not implemented - refusing rather than "
                 "dropping the target leg"
             )
-        # GTC unconditionally, mirroring AlpacaAdapter. DAY killed every stop
+        # GTC unconditionally. DAY killed every stop
         # this system ever placed: on 31 July six positions filled with
         # brackets attached, the take-profit legs expired at the close, the
         # paired stops were cancelled with them as OCO does, and about $36,000
@@ -212,8 +212,8 @@ def to_ib_parent(order: Order) -> IBOrder:
             "opening auction limit is not verified against the Gateway GTC preset"
         )
     action = "BUY" if order.side == "buy" else "SELL"
-    # GTC explicitly, matching AlpacaAdapter's rule that anything CARRYING
-    # protective legs is GTC (M31b) - and because leaving it unset does not
+    # GTC explicitly for anything carrying protective legs (M31b), because
+    # leaving it unset does not
     # mean "IBKR's default". Measured live: IBKR answered warning 10349,
     # "Order TIF was set to DAY based on order preset", so a Gateway-side
     # preset chose the TIF instead of this application (M96).
@@ -327,7 +327,7 @@ def to_ib_oca_pair(order: Order, oca_group: str) -> list[IBOrder]:
 def from_ib_trade(trade: Trade, our_order: Order) -> Order:
     """Updates our Order's status/fill fields from an ib_async Trade, and
     carries the broker's own order identity onto `our_order.order_id` -
-    mirroring what AlpacaAdapter does at transmit (three sites).
+    matching the broker's durable identity at transmit.
     ⚠️ THAT LAST SENTENCE USED TO READ: "Intermediate IBKR states
     (Submitted/PreSubmitted/PendingSubmit) aren't in the map - they leave our
     own already-set 'transmitted' status alone rather than guessing at a
@@ -524,6 +524,16 @@ def from_ib_resting_stop(trade: Trade, market: str = "ASX") -> RestingStopOrder 
         return None
     if not order.auxPrice:
         return None
+    raw_cancel = str(getattr(order, "autoCancelDate", "") or "").strip()
+    auto_cancel_date: date | None = None
+    if raw_cancel:
+        match = re.match(r"^(\d{4})-?(\d{2})-?(\d{2})(?:\s|$)", raw_cancel)
+        if match is None:
+            raise ValueError(f"IBKR auto-cancel date is unrecognised: {raw_cancel!r}")
+        try:
+            auto_cancel_date = date(*(int(part) for part in match.groups()))
+        except ValueError as exc:
+            raise ValueError(f"IBKR auto-cancel date is invalid: {raw_cancel!r}") from exc
     return RestingStopOrder(
         symbol=from_ibkr(trade.contract.symbol, market),
         order_id=str(order.permId or order.orderId),
@@ -531,6 +541,7 @@ def from_ib_resting_stop(trade: Trade, market: str = "ASX") -> RestingStopOrder 
         quantity=float(order.totalQuantity),
         why_held=str(trade.orderStatus.whyHeld) or None,
         owner_client_id=int(order.clientId),
+        auto_cancel_date=auto_cancel_date,
     )
 
 

@@ -250,7 +250,7 @@ class RegimeEngine:
         -100% move into the first breadth reading.
         """
         # Matched on the calendar date, not the raw timestamp: vendors stamp a
-        # daily bar at their own hour (Alpaca uses 04:00 UTC) and a warm start
+        # daily bar at their own hour (the retired broker used 04:00 UTC) and a warm start
         # must not depend on two sources having chosen the same one.
         wanted = [ts.date() for ts in dates]
         if not wanted:

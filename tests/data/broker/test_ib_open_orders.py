@@ -136,6 +136,8 @@ def _adapter(trades, monkeypatch):
     adapter = IBAdapter.__new__(IBAdapter)
     adapter.ib_client = _FakeIB(trades)
     adapter.settings = _settings()
+    adapter.read_only = True  # translation fixture, not a trading ownership test
+    adapter._gtc_expiry = None
     return adapter
 
 

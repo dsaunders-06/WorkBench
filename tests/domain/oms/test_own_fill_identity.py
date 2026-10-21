@@ -140,6 +140,9 @@ class _LateAckIBGateway:
     def positions(self, account: str = "") -> list[object]:
         return []
 
+    async def reqAllOpenOrdersAsync(self) -> list[object]:
+        return []
+
     def reqMktData(self, _contract, _generic, _snapshot, _regulatory):
         # Identity is the subject here. The market buy gets a fresh type-3
         # quote rather than bypassing the current-quote gate.

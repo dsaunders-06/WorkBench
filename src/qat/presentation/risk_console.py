@@ -45,7 +45,6 @@ _MIN_POINTS_FOR_CORRELATION = 5
 _TRIPPED_STYLE = theme.banner(theme.DANGER)
 _ACTIVE_STYLE = theme.banner(theme.SUCCESS)
 
-_OPERATOR = "operator (risk console)"
 
 # Suffixes distinguishing the two quarantine stores in the "Clear a
 # quarantine..." picker (I4, final review). A symbol can be quarantined in
@@ -437,6 +436,10 @@ class RiskConsoleScreen(QWidget):
         wrong binding either silences a real divergence or fails to explain the
         actual one.
         """
+        operator = self.runtime.settings.operator_name.strip()
+        if not operator:
+            QMessageBox.warning(self, "Operator name required", "Configure an operator name first.")
+            return
         snapshot = self.runtime.account_poller.last_snapshot
         if snapshot is None:
             logger.error(
@@ -452,14 +455,18 @@ class RiskConsoleScreen(QWidget):
         self.runtime.oms.anomalies.declare(
             symbol=symbol,
             reason=reason,
-            declared_by=_OPERATOR,
+            declared_by=operator,
             tracked_quantity=self.runtime.oms.filled_quantities().get(symbol, 0.0),
             broker_quantity=broker_quantity,
         )
         self._refresh_anomalies()
 
     def _clear_anomaly(self, symbol: str) -> None:
-        self.runtime.oms.anomalies.clear(symbol, operator=_OPERATOR)
+        operator = self.runtime.settings.operator_name.strip()
+        if not operator:
+            QMessageBox.warning(self, "Operator name required", "Configure an operator name first.")
+            return
+        self.runtime.oms.anomalies.clear(symbol, operator=operator)
         self._refresh_anomalies()
 
     def _clear_resting_anomaly(self, symbol: str) -> None:
@@ -474,7 +481,11 @@ class RiskConsoleScreen(QWidget):
         clearable independently - clearing one must never look like it
         cleared the other.
         """
-        self.runtime.oms.resting_order_anomalies.clear(symbol, operator=_OPERATOR)
+        operator = self.runtime.settings.operator_name.strip()
+        if not operator:
+            QMessageBox.warning(self, "Operator name required", "Configure an operator name first.")
+            return
+        self.runtime.oms.resting_order_anomalies.clear(symbol, operator=operator)
         self._refresh_anomalies()
 
     def _on_declare_clicked(self) -> None:
@@ -671,10 +682,22 @@ class RiskConsoleScreen(QWidget):
         AUTO-TRADE ACTIVE and resetting left it reading HALTED. The state was
         right and every other view of it was wrong.
         """
-        operator = "operator (risk console)"
+        operator = self.runtime.settings.operator_name.strip()
+        if not operator:
+            QMessageBox.warning(self, "Operator name required", "Configure an operator name first.")
+            return
         if self.runtime.kill_switch.tripped:
             # No confirmation: de-risking stays one click, deliberately.
-            self.runtime.kill_switch.reset(operator)
+            try:
+                self.runtime.kill_switch.reset(operator)
+            except OSError as exc:
+                QMessageBox.critical(
+                    self,
+                    "Kill-switch reset failed",
+                    f"Reset failed to persist; trading remains halted. {exc}",
+                )
+                self._refresh_kill_switch_button()
+                return
         else:
             # Item 36. A TOGGLE bound to Qt's clicked, which fires on Space
             # or Enter when focused - and it is the first widget on this
@@ -682,7 +705,17 @@ class RiskConsoleScreen(QWidget):
             # from an unrelated instruction.
             if not self._confirm_trip():
                 return
-            self.runtime.kill_switch.trigger_manual(operator)
+            try:
+                self.runtime.kill_switch.trigger_manual(operator)
+            except OSError as exc:
+                QMessageBox.critical(
+                    self,
+                    "Kill-switch halt could not be saved",
+                    "Trading remains halted in this process; resolve persistence "
+                    f"before restart. {exc}",
+                )
+                self._refresh_kill_switch_button()
+                return
         # Every other view of the switch now updates through its listeners, so
         # this screen no longer has to remember to announce what it did.
         self._refresh_kill_switch_button()

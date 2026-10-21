@@ -53,6 +53,9 @@ class FakeIBClient:
     def disconnect(self) -> None:
         self.connected = False
 
+    def managedAccounts(self) -> list[str]:
+        return ["DU_TEST"]
+
     async def reqCurrentTimeAsync(self) -> datetime:
         if not self.connected:
             raise ConnectionError("not connected")
@@ -118,6 +121,39 @@ async def test_connect_calls_client_connect_and_starts_heartbeat():
     assert client.connect_calls == 1
     assert client.connected is True
     await adapter.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("accounts", [[], ["DU_OTHER"], ["DU_TEST", "DU_OTHER"]])
+async def test_connect_refuses_any_managed_account_set_except_the_configured_one(accounts):
+    client = FakeIBClient()
+    client.managedAccounts = lambda: accounts  # type: ignore[method-assign]
+    adapter = IBAdapter(
+        client,
+        EventBus(),
+        settings=Settings(_env_file=None, ibkr_account_id="DU_TEST"),
+        max_connect_attempts=1,
+    )
+
+    with pytest.raises(ValueError, match="managed account"):
+        await adapter.connect()
+    assert not client.connected
+
+
+@pytest.mark.asyncio
+async def test_connect_refuses_when_managed_account_source_is_missing():
+    client = FakeIBClient()
+    client.managedAccounts = None  # type: ignore[method-assign]
+    adapter = IBAdapter(
+        client,
+        EventBus(),
+        settings=Settings(_env_file=None, ibkr_account_id="DU_TEST"),
+        max_connect_attempts=1,
+    )
+
+    with pytest.raises(ValueError, match="managed account"):
+        await adapter.connect()
+    assert not client.connected
 
 
 @pytest.mark.asyncio

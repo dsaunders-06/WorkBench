@@ -35,7 +35,7 @@ async def _pending_orders(runtime: Runtime, symbols: list[str]) -> list[Order]:
 
 
 def _build(qtbot) -> tuple[BlotterScreen, Runtime]:
-    runtime = Runtime.build_demo(settings=Settings(_env_file=None))
+    runtime = Runtime.build_demo(settings=Settings(_env_file=None, operator_name="Alice"))
     screen = BlotterScreen(runtime)
     qtbot.addWidget(screen)
     return screen, runtime

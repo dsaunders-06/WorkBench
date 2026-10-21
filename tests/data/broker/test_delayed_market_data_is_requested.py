@@ -50,6 +50,9 @@ class _RecordingClient:
     def disconnect(self) -> None:
         self.connected = False
 
+    def managedAccounts(self) -> list[str]:
+        return ["DU123456"]
+
     async def reqCurrentTimeAsync(self) -> datetime:
         return datetime.now()
 

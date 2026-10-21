@@ -61,6 +61,35 @@ async def test_sign_off_transmits_and_fills():
 
 
 @pytest.mark.asyncio
+async def test_unowned_broker_order_blocks_exposure_at_signoff(monkeypatch):
+    oms, _ = _oms()
+    order = await oms.submit_order(_candidate(), 100_000.0, {}, {})
+
+    async def foreign_order_reason(symbol: str) -> str:
+        assert symbol == order.symbol
+        return "unowned broker order; DS reconciliation required"
+
+    monkeypatch.setattr(oms.broker, "foreign_order_reason", foreign_order_reason, raising=False)
+    refused = await oms.sign_off(order.order_id, operator="alice")
+
+    assert refused.status == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_unowned_broker_order_blocks_duplicate_protection(monkeypatch):
+    oms, _ = _oms()
+
+    async def foreign_order_reason(symbol: str) -> str:
+        assert symbol == "AAA"
+        return "unowned broker stop; DS reconciliation required"
+
+    monkeypatch.setattr(oms.broker, "foreign_order_reason", foreign_order_reason, raising=False)
+    order = await oms.submit_protective_stop("AAA", 10, 90.0)
+
+    assert order.status == "rejected"
+
+
+@pytest.mark.asyncio
 async def test_sign_off_on_non_pending_order_raises():
     oms, _ = _oms()
     order = await oms.submit_order(_candidate(), 100_000.0, {}, {})

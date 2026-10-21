@@ -361,7 +361,7 @@ class RiskEngine:
     def _costs_apply(self) -> bool:
         """Costs are modelled in paper too, unless explicitly switched off.
 
-        Alpaca paper charges nothing, so it would be easy to measure a
+        The retired paper broker charged nothing, so it would be easy to measure a
         commission-free strategy and promote it - onto a broker with a $6
         minimum, where the same trades lose money. A paper test is only
         informative if it prices the costs the strategy will actually pay.

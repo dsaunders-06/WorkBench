@@ -633,7 +633,7 @@ class SignalToOrderBridge:
             logger.exception("Could not read positions to reconcile recorded entry prices")
             return []
 
-        # M175. IBKR's `avgCost` is commission-INCLUSIVE (Alpaca's average was
+        # M175. IBKR's `avgCost` is commission-INCLUSIVE (the retired broker's average was
         # not), so read raw it put every entry 8.8 bp high and charged the
         # commission twice - once in the price, once in `entry_cost`. An adapter
         # that says so has it converted back to the fill first.
@@ -1544,7 +1544,7 @@ class SignalToOrderBridge:
             #   16:41:12  Restored entry dates for 10 held position(s): AMAT, ...
             #   16:41:26  No pre-existing broker positions to adopt
             # fourteen seconds apart. Both were emitted by a healthy app; the
-            # first was simply describing a file, and those ten named an Alpaca
+            # first was simply describing a file, and those ten named a retired broker
             # account this build no longer trades. Say what is known.
             logger.info(
                 "Restored %d entry record(s) from open_position_entries.json: %s. These are "
@@ -1840,7 +1840,7 @@ class SignalToOrderBridge:
 
         # A broker blip must REFUSE the signal, not throw it (M54).
         #
-        # This call sat outside every guard. On 6 August Alpaca returned HTTP
+        # This call sat outside every guard. On 6 August the retired broker returned HTTP
         # 500 for ninety seconds, the exception escaped through the event bus,
         # and the signal vanished - no order, no refusal, no journal entry,
         # nothing on any screen. Only the stack trace said it had ever existed.

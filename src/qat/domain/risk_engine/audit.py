@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 AUDIT_FILENAME = "risk_decisions.csv"
 
-# "market" since M127. This file spans the Alpaca/US period and the IBKR/ASX
+# "market" since M127. This file spans the retired broker/US period and the IBKR/ASX
 # one with nothing to separate them, and the weekly report of 21 August cited
 # "rejected all 120 candidate orders because the book was full" as that week's
 # ASX behaviour when every one of those refusals happened on the other broker,

@@ -103,12 +103,11 @@ class BrokerFill:
     `execution.shares` while `OMS._is_foreign_unrecorded` compared it against a
     stored cumulative, so only executions setting a new running maximum were
     absorbed. 374 shares reached the ledger and 2,843 did not, and the kill
-    switch tripped on the difference. Alpaca returns one order object per order
-    carrying a cumulative `filled_qty`, which is where the assumption came from
-    and why it was invisible after the broker changed.
+    switch tripped on the difference. The retired broker returned one order
+    object per order with cumulative quantity, hiding this assumption.
 
     ⚠️ `price` carries the SAME contract, and for the same reason: it is the
-    order's CUMULATIVE AVERAGE fill price - Alpaca's `filled_avg_price` - not
+    order's CUMULATIVE AVERAGE fill price, not
     the price one execution filled at. `OMS._unabsorbed_part` recovers an
     increment's own price from the DIFFERENCE of two running averages
     (`(fill.price * fill.quantity) - (prior.price * prior.quantity)`, divided
@@ -185,8 +184,10 @@ class RestingStopOrder:
     # not cancellable, so "is this position protected" and "can I actually move
     # that stop" are different questions - and this record is what M39 calls
     # `modify_order` from. `None` means the adapter does not scope orders this
-    # way, which is Alpaca's case.
+    # way.
     owner_client_id: int | None = None
+    # Broker-reported GTC auto-cancel date; None means IBKR did not provide one.
+    auto_cancel_date: date | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,9 +262,8 @@ class Position:
     # mark", which is a DIFFERENT CLAIM from "the mark is zero" - read as zero,
     # every position would measure as risk-free.
     #
-    # Alpaca's is the consolidated tape, measured against both feeds across ten
-    # held positions: matches SIP 10, matches IEX 0. So it carries none of the
-    # IEX range bias the application's own bars do, and costs no extra request.
+    # A retired broker's mark matched SIP rather than IEX for ten historical
+    # positions. The field remains optional for the current IBKR adapter.
     current_price: float | None = None
     account: str = ""
     con_id: int = 0
@@ -362,8 +362,8 @@ class AccountBalances:
     engine size against it - and widening it would invite a display concern
     into a safety-critical structure. This one is read by screens only.
 
-    Every field is optional because a broker can genuinely not know: an Alpaca
-    paper account returns nothing for day-trade count or the PDT flag, and an
+    Every field is optional because a broker can genuinely not know: a historical
+    paper account returned nothing for day-trade count or the PDT flag, and an
     unreported count is not the same fact as a count of zero. None renders as
     a dash, never as 0.
     """
@@ -466,7 +466,7 @@ class BrokerAdapter(Protocol):
     #
     # `symbols` bounds the question to what the caller is tracking (M48), and
     # `since` is a FILL-time window - not a "submitted since" one, which is
-    # what Alpaca's own `after=` parameter turns out to mean.
+    # what a retired broker's `after=` parameter meant.
     async def recent_fills(
         self, since: datetime, symbols: list[str] | None = None
     ) -> list[BrokerFill]: ...

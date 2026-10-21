@@ -272,7 +272,7 @@ class SimulatedBroker:
 
         THE BROKER KEEPS ITS OWN COPY, and returns another. It used to store and
         return the caller's object, so a later `filled_price` set here mutated
-        the OMS's order too - and no real adapter can do that, because Alpaca
+        the OMS's order too - and no real adapter can do that, because the retired broker
         builds a fresh object out of its JSON response and the app learns about
         a fill by asking.
 
@@ -313,7 +313,7 @@ class SimulatedBroker:
             # populated path the real adapter takes.
             order.filled_quantity = order.quantity
             # Reported through `recent_fills` like any other execution, because
-            # that is what the adapter this stands in for does. `AlpacaAdapter`
+            # that is what the adapter this stands in for does. The retired broker adapter
             # returns every filled order in the window, its own included - which
             # is why `absorb_broker_fills` has a branch for a fill that is OURS
             # and calls `_correct_announced_price` on it (M70).

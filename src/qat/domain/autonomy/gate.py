@@ -129,7 +129,7 @@ class AutonomyGate:
         # Found by running it: on 1 August the app detected an unprotected
         # position, proposed the repair, and then blocked ITSELF from applying
         # it because the market was shut - while a manual sign-off of the same
-        # order was accepted by Alpaca without complaint, because GTC orders
+        # order was accepted by the retired broker without complaint, because GTC orders
         # rest fine outside hours.
         #
         # The rail was dormant in precisely the window it exists for. Brackets
