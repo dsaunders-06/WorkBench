@@ -6,7 +6,7 @@ import hashlib
 import json
 import sys
 from dataclasses import replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -14,14 +14,196 @@ from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from ib_async import Stock
+from ib_async.order import OrderStatus, Trade
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import phase3_gtc_renewal_paper_probe as probe  # noqa: E402
 
+from qat.config import Settings  # noqa: E402
+from qat.data.broker.adapter import Order  # noqa: E402
 from qat.data.broker.gtc_expiry import GtcRenewalPlan  # noqa: E402
+from qat.data.broker.ib_adapter import IBAdapter  # noqa: E402
+from qat.data.broker.pending_legs import leg_order_ref  # noqa: E402
+from qat.domain.bus import EventBus  # noqa: E402
 
 SYDNEY = ZoneInfo("Australia/Sydney")
 FAKE_ACCOUNT = "DUTEST"
+
+
+class FakeReferenceIB:
+    """Return real adapter-generated broker refs, never application IDs."""
+
+    def __init__(self) -> None:
+        self.expected_account = FAKE_ACCOUNT
+        self.contract = Stock("BHP", "ASX", "AUD", conId=4036812)
+        self._trades: list[Trade] = []
+        self.held = 0
+
+    def managedAccounts(self) -> list[str]:
+        return [FAKE_ACCOUNT]
+
+    def trades(self) -> list[Trade]:
+        return self._trades
+
+    def positions(self) -> list[SimpleNamespace]:
+        return (
+            [SimpleNamespace(account=FAKE_ACCOUNT, contract=self.contract, position=self.held)]
+            if self.held
+            else []
+        )
+
+    async def qualifyContractsAsync(self, *contracts):
+        return [self.contract]
+
+    async def reqAllOpenOrdersAsync(self) -> list[Trade]:
+        return [trade for trade in self._trades if trade.orderStatus.status == "Submitted"]
+
+    def placeOrder(self, contract, order) -> Trade:
+        if not order.orderId:
+            order.orderId = 100 + len(self._trades)
+        if not order.permId:
+            order.permId = 500 + len(self._trades)
+        order.clientId = 101
+        if order.orderType == "STP":
+            order.autoCancelDate = "20270122"
+        filled = order.orderType == "MKT"
+        if filled:
+            self.held += int(order.totalQuantity) * (1 if order.action == "BUY" else -1)
+        trade = Trade(
+            contract=self.contract,
+            order=order,
+            orderStatus=OrderStatus(
+                status="Filled" if filled else "Submitted",
+                filled=order.totalQuantity if filled else 0,
+                remaining=0 if filled else order.totalQuantity,
+                avgFillPrice=65 if filled else 0,
+                permId=order.permId,
+            ),
+        )
+        if filled:
+            trade.fills.append(
+                SimpleNamespace(
+                    time=datetime.now(UTC),
+                    execution=SimpleNamespace(
+                        execId=f"fake-{order.orderId}",
+                        shares=order.totalQuantity,
+                        price=65,
+                        time=datetime.now(UTC),
+                    ),
+                    commissionReport=SimpleNamespace(commission=1, currency="AUD"),
+                )
+            )
+        self._trades.append(trade)
+        return trade
+
+    def cancelOrder(self, order, manualCancelOrderTime="") -> None:
+        matches = [trade for trade in self._trades if trade.order is order]
+        assert len(matches) == 1
+        matches[0].orderStatus.status = "Cancelled"
+
+
+def _real_reference_adapter(tmp_path, client: FakeReferenceIB) -> IBAdapter:
+    settings = Settings(
+        _env_file=None,
+        broker="ibkr",
+        market="ASX",
+        trading_mode="paper",
+        ibkr_account_id=FAKE_ACCOUNT,
+        ibkr_client_id=101,
+        ibkr_permid_wait_seconds=0,
+        operator_name="DS",
+        data_dir=str(tmp_path),
+    )
+    return IBAdapter(client, EventBus(), settings=settings)
+
+
+def _stub_nonidentity_inputs(monkeypatch, client: FakeReferenceIB) -> None:
+    monkeypatch.setattr(probe, "_session_window", lambda session: None)
+    monkeypatch.setattr(probe, "_qualified_bhp_contract", AsyncMock(return_value=client.contract))
+    monkeypatch.setattr(probe, "_require_flat_book", AsyncMock())
+    monkeypatch.setattr(probe, "_reference_quote", AsyncMock(return_value={"price": Decimal("65")}))
+
+    async def held(*args, **kwargs):
+        return float(client.held)
+
+    monkeypatch.setattr(probe, "_positions", held)
+    monkeypatch.setattr(probe, "_wait_for_position", held)
+
+
+@pytest.mark.asyncio
+async def test_real_adapter_refs_drive_buy_stop_renewal_and_exit(tmp_path, monkeypatch) -> None:
+    client = FakeReferenceIB()
+    adapter = _real_reference_adapter(tmp_path, client)
+    _stub_nonidentity_inputs(monkeypatch, client)
+    execution_recheck = AsyncMock()
+    monkeypatch.setattr(probe, "_record_execution_recheck", execution_recheck)
+
+    async def approved_renewal(plan, *, approved_plan_sha256, operator):
+        assert operator == "DS" and approved_plan_sha256 == plan.digest
+        stop = next(t for t in client.trades() if t.order.orderType == "STP")
+        assert stop.order.orderRef == leg_order_ref(stop_app_id, "primary")
+        assert plan.order_id == str(stop.order.permId)
+        return replace(plan, auto_cancel_date=plan.auto_cancel_date + timedelta(days=90))
+
+    original_place = adapter.place_order
+    stop_app_id = ""
+
+    async def capture_stop_id(order: Order):
+        nonlocal stop_app_id
+        if order.order_type == "stop":
+            stop_app_id = order.order_id
+        return await original_place(order)
+
+    monkeypatch.setattr(adapter, "place_order", capture_stop_id)
+    monkeypatch.setattr(adapter, "apply_approved_gtc_renewal", approved_renewal)
+    events: list[dict] = []
+    await probe._perform(client, adapter, "DS", events)
+
+    assert client.held == 0
+    assert [t.order.orderType for t in client.trades()] == ["MKT", "STP", "MKT"]
+    buy, stop, sell = client.trades()
+    for trade in (buy, stop, sell):
+        leg = next(
+            leg
+            for leg in adapter._pending_legs.legs.values()
+            if leg.broker_order_id == trade.order.orderId
+        )
+        assert trade.order.orderRef == leg_order_ref(leg.app_order_id, "primary")
+        assert trade.order.orderRef != leg.app_order_id
+    assert stop.orderStatus.status == "Cancelled"
+    assert any(event["event"] == "GTC renewal result" for event in events)
+    snapshots = [event for event in events if event["event"] == "initial stop auto-cancel date"]
+    assert snapshots[0]["working_stops"][0]["order_ref"] == stop.order.orderRef
+    assert execution_recheck.await_args.args[2] == (
+        buy.order.orderRef,
+        sell.order.orderRef,
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_adapter_refs_allow_bounded_emergency_sale(tmp_path, monkeypatch) -> None:
+    client = FakeReferenceIB()
+    adapter = _real_reference_adapter(tmp_path, client)
+    _stub_nonidentity_inputs(monkeypatch, client)
+
+    def halt_after_buy(*args):
+        raise RuntimeError("forced post-buy halt")
+
+    monkeypatch.setattr(probe, "_record_buy_fill", halt_after_buy)
+    with pytest.raises(RuntimeError, match="forced post-buy halt"):
+        await probe._perform(client, adapter, "DS", [])
+    assert client.held == 0
+    assert len(client.trades()) == 2
+    buy, rescue = client.trades()
+    assert buy.order.action == "BUY" and rescue.order.action == "SELL"
+    rescue_leg = next(
+        leg
+        for leg in adapter._pending_legs.legs.values()
+        if leg.broker_order_id == rescue.order.orderId
+    )
+    assert rescue.order.orderRef == leg_order_ref(rescue_leg.app_order_id, "primary")
+    assert rescue.order.orderRef != rescue_leg.app_order_id
 
 
 def test_session_gate_allows_only_thursday_after_1030_aedt() -> None:
@@ -262,7 +444,7 @@ async def test_broker_snapshot_keeps_raw_auto_cancel_date(monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_emergency_sale_refuses_uncertain_stop(monkeypatch) -> None:
     trade = SimpleNamespace(
-        order=SimpleNamespace(orderRef="probe-stop"),
+        order=SimpleNamespace(orderRef=leg_order_ref("probe-stop", "primary")),
         orderStatus=SimpleNamespace(status="PendingCancel"),
     )
     client = SimpleNamespace(trades=lambda: [trade])
@@ -278,7 +460,7 @@ async def test_emergency_sale_refuses_uncertain_stop(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_emergency_sale_refuses_after_normal_sell_submitted() -> None:
-    sale = SimpleNamespace(order=SimpleNamespace(orderRef="probe-sell"))
+    sale = SimpleNamespace(order=SimpleNamespace(orderRef=leg_order_ref("probe-sell", "primary")))
     client = SimpleNamespace(trades=lambda: [sale])
     adapter = SimpleNamespace(place_order=AsyncMock(), cancel_order=AsyncMock())
     with pytest.raises(RuntimeError, match="second sale"):
@@ -305,11 +487,11 @@ async def test_emergency_sale_refuses_unidentified_submitted_stop(monkeypatch) -
 @pytest.mark.asyncio
 async def test_emergency_sale_is_limited_to_confirmed_probe_shares(monkeypatch) -> None:
     buy = SimpleNamespace(
-        order=SimpleNamespace(orderRef="probe-buy"),
+        order=SimpleNamespace(orderRef=leg_order_ref("probe-buy", "primary")),
         orderStatus=SimpleNamespace(filled=8),
     )
     stopped = SimpleNamespace(
-        order=SimpleNamespace(orderRef="probe-stop"),
+        order=SimpleNamespace(orderRef=leg_order_ref("probe-stop", "primary")),
         orderStatus=SimpleNamespace(status="Cancelled"),
     )
     client = SimpleNamespace(trades=lambda: [buy, stopped])

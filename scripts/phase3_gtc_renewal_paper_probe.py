@@ -44,6 +44,7 @@ from phase3_paper_stop_lifecycle_probe import (  # noqa: E402
 from qat.config import Settings  # noqa: E402
 from qat.data.broker.adapter import Order  # noqa: E402
 from qat.data.broker.ib_adapter import IBAdapter  # noqa: E402
+from qat.data.broker.pending_legs import leg_order_ref  # noqa: E402
 from qat.domain.bus import EventBus  # noqa: E402
 
 SESSION = date(2026, 10, 22)
@@ -210,15 +211,16 @@ async def _record_stop_book(
 
 
 async def _cancel_confirmed(
-    client: Any, adapter: IBAdapter, ref: str, events: list[dict[str, Any]]
+    client: Any, adapter: IBAdapter, app_order_id: str, events: list[dict[str, Any]]
 ) -> None:
+    ref = leg_order_ref(app_order_id, "primary")
     matching = [
         trade for trade in await _open_bhp_orders(client) if str(trade.order.orderRef) == ref
     ]
     if len(matching) != 1:
         raise RuntimeError("expected exactly one working probe stop before cancellation")
     _exact_account(client)
-    await adapter.cancel_order(ref)
+    await adapter.cancel_order(app_order_id)
     await _wait_for_stop(client, ref, None)
     _record_trade(client, ref, "stop cancellation confirmed", events)
 
@@ -227,14 +229,17 @@ async def _emergency_exit(
     client: Any,
     adapter: IBAdapter,
     con_id: int,
-    buy_ref: str,
-    stop_ref: str,
-    sell_ref: str,
+    buy_id: str,
+    stop_id: str,
+    sell_id: str,
     planned_quantity: int,
     stop_attempted: bool,
     events: list[dict[str, Any]],
 ) -> None:
     """Only sell confirmed probe-owned shares after protection is gone."""
+    buy_ref = leg_order_ref(buy_id, "primary")
+    stop_ref = leg_order_ref(stop_id, "primary")
+    sell_ref = leg_order_ref(sell_id, "primary")
     if any(str(trade.order.orderRef) == sell_ref for trade in client.trades()):
         raise RuntimeError("normal market exit was submitted; a second sale is forbidden")
     buy_open = [
@@ -242,14 +247,14 @@ async def _emergency_exit(
     ]
     if buy_open:
         _exact_account(client)
-        await adapter.cancel_order(buy_ref)
+        await adapter.cancel_order(buy_id)
         await _wait_for_stop(client, buy_ref, None)
     held = await _positions(client, con_id, events)
     stop_open = [
         trade for trade in await _open_bhp_orders(client) if str(trade.order.orderRef) == stop_ref
     ]
     if stop_open:
-        await _cancel_confirmed(client, adapter, stop_ref, events)
+        await _cancel_confirmed(client, adapter, stop_id, events)
     else:
         known = [trade for trade in client.trades() if str(trade.order.orderRef) == stop_ref]
         if stop_attempted and not known:
@@ -266,10 +271,11 @@ async def _emergency_exit(
     quantity = _rescue_quantity(held, planned_quantity, _trade_filled(client, buy_ref))
     if quantity != held or quantity <= 0:
         raise RuntimeError("holding exceeds proven probe purchase; emergency sale refused")
-    rescue_ref = f"{sell_ref}-rescue"
+    rescue_id = f"{sell_id}-rescue"
+    rescue_ref = leg_order_ref(rescue_id, "primary")
     _exact_account(client)
     await adapter.place_order(
-        Order(symbol=SYMBOL, side="sell", quantity=quantity, order_id=rescue_ref)
+        Order(symbol=SYMBOL, side="sell", quantity=quantity, order_id=rescue_id)
     )
     _record_trade(client, rescue_ref, "emergency market sale submitted", events)
     await _wait_for_position(client, con_id, events, positive=False)
@@ -300,9 +306,12 @@ async def _perform(
         }
     )
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    buy_ref = f"gtc-probe-buy-{run_id}"
-    stop_ref = f"gtc-probe-stop-{run_id}"
-    sell_ref = f"gtc-probe-sell-{run_id}"
+    buy_id = f"gtc-probe-buy-{run_id}"
+    stop_id = f"gtc-probe-stop-{run_id}"
+    sell_id = f"gtc-probe-sell-{run_id}"
+    buy_ref = leg_order_ref(buy_id, "primary")
+    stop_ref = leg_order_ref(stop_id, "primary")
+    sell_ref = leg_order_ref(sell_id, "primary")
     exposure_started = False
     stop_attempted = False
     try:
@@ -312,7 +321,7 @@ async def _perform(
         exposure_started = True
         _exact_account(client)
         await adapter.place_order(
-            Order(symbol=SYMBOL, side="buy", quantity=quantity, order_id=buy_ref)
+            Order(symbol=SYMBOL, side="buy", quantity=quantity, order_id=buy_id)
         )
         held = await _wait_for_position(client, con_id, events, positive=True)
         if held != quantity or _trade_filled(client, buy_ref) != quantity:
@@ -327,7 +336,7 @@ async def _perform(
                 symbol=SYMBOL,
                 side="sell",
                 quantity=quantity,
-                order_id=stop_ref,
+                order_id=stop_id,
                 order_type="stop",
                 stop_price=float(first_stop),
             )
@@ -385,7 +394,7 @@ async def _perform(
             }
         )
         _record_trade(client, stop_ref, "renewed GTC stop broker state", events)
-        await _cancel_confirmed(client, adapter, stop_ref, events)
+        await _cancel_confirmed(client, adapter, stop_id, events)
         held = await _positions(client, con_id, events)
         if held != quantity:
             raise RuntimeError("probe holding changed before market exit")
@@ -393,7 +402,7 @@ async def _perform(
             raise RuntimeError("working BHP order remains before market exit")
         _exact_account(client)
         await adapter.place_order(
-            Order(symbol=SYMBOL, side="sell", quantity=quantity, order_id=sell_ref)
+            Order(symbol=SYMBOL, side="sell", quantity=quantity, order_id=sell_id)
         )
         _record_trade(client, sell_ref, "market exit submitted", events)
         await _wait_for_position(client, con_id, events, positive=False)
@@ -407,9 +416,9 @@ async def _perform(
                     client,
                     adapter,
                     con_id,
-                    buy_ref,
-                    stop_ref,
-                    sell_ref,
+                    buy_id,
+                    stop_id,
+                    sell_id,
                     quantity,
                     stop_attempted,
                     events,
