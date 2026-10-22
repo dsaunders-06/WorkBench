@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -84,17 +83,21 @@ async def test_late_entry_id_survives_restart_and_blocks_second_buy(tmp_path) ->
 
 
 @pytest.mark.asyncio
-async def test_stop_and_market_exit_do_not_wait_for_broker_identity(tmp_path) -> None:
+async def test_stop_and_market_exit_do_not_wait_for_broker_identity(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     gateway = Gateway()
     broker = adapter(gateway, tmp_path)
     broker.settings.ibkr_permid_wait_seconds = 5
-    loop = asyncio.get_running_loop()
-    started = loop.time()
+
+    async def fail_if_identity_waited(*_args: object) -> None:
+        raise AssertionError("sell orders must not wait for a broker identity")
+
+    monkeypatch.setattr(broker, "_await_perm_id", fail_if_identity_waited)
     stop = Order("BHP.AX", "sell", 9, order_id=str(uuid4()), order_type="stop", stop_price=55)
     await broker.place_order(stop)
     market_exit = Order("BHP.AX", "sell", 9, order_id=str(uuid4()))
     await broker.place_order(market_exit)
-    assert loop.time() - started < 1
     assert len(gateway.placed) == 2
     assert all(str(UUID(trade.order.orderRef)) == trade.order.orderRef for trade in gateway.placed)
     assert broker._pending_legs is not None
