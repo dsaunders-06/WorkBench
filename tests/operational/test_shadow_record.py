@@ -63,6 +63,7 @@ async def test_shadow_run_uses_adapter_and_records_missing_history_abstention(
     for filename in ("calendar.json", "membership.json", "actions.json"):
         payload = json.loads((FIXTURES / filename).read_text())
         payload["fixture"] = False
+        payload["valid_through"] = "2026-01-06"
         if filename == "membership.json":
             payload["managed_symbols"] = []
         (authorities / filename).write_text(json.dumps(payload))
@@ -73,6 +74,7 @@ async def test_shadow_run_uses_adapter_and_records_missing_history_abstention(
                 "version": 1,
                 "published_on": "2026-01-06",
                 "fixture": False,
+                "valid_through": "2026-01-06",
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -122,12 +124,68 @@ async def test_shadow_run_uses_adapter_and_records_missing_history_abstention(
 
 
 @pytest.mark.asyncio
+async def test_shadow_stale_authority_abstains_before_card_source(tmp_path, monkeypatch):
+    authorities = tmp_path / "authorities"
+    authorities.mkdir()
+    for filename in ("calendar.json", "membership.json", "actions.json"):
+        payload = json.loads((FIXTURES / filename).read_text())
+        payload["fixture"] = False
+        payload["valid_through"] = "2026-01-06"
+        if filename == "membership.json":
+            payload["valid_through"] = "2026-01-05"
+        (authorities / filename).write_text(json.dumps(payload))
+    (authorities / "halts.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": "asx-halts-v1",
+                "version": 1,
+                "published_on": "2026-01-06",
+                "valid_through": "2026-01-06",
+                "fixture": False,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+
+    class OfflineProbe:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fetch(self, session, symbols):
+            return ()
+
+    class ForbiddenCardSource:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("stale authority reached card source")
+
+    monkeypatch.setattr("qat.operational.shadow.IBKRRawBarProbe", OfflineProbe)
+    monkeypatch.setattr("qat.operational.shadow.IBKRHistoricalBarSource", ForbiddenCardSource)
+    settings = Settings(
+        _env_file=None,
+        broker="ibkr",
+        market_data_source="yfinance",
+        fundamentals_source="yfinance",
+        phase3_shadow_enabled=True,
+        phase3_operational_root=str(tmp_path / "OPERATIONAL"),
+        phase3_authorities_dir=str(authorities),
+    )
+    runner = Phase3ShadowRunner(settings, object(), object())
+    assert await runner.run_once(date(2026, 1, 6)) is False
+    events = ShadowRecord(tmp_path / "OPERATIONAL" / "shadow.jsonl").events
+    assert events[-1]["kind"] == "abstention"
+    assert "membership authority is not valid through session" in str(events[-1]["detail"])
+
+
+@pytest.mark.asyncio
 async def test_shadow_abstains_on_revised_final_ohlc_and_keeps_first_bar(tmp_path, monkeypatch):
     authorities = tmp_path / "authorities"
     authorities.mkdir()
     for filename in ("calendar.json", "membership.json", "actions.json"):
         payload = json.loads((FIXTURES / filename).read_text())
         payload["fixture"] = False
+        payload["valid_through"] = "2026-01-06"
         if filename == "membership.json":
             payload["managed_symbols"] = []
         (authorities / filename).write_text(json.dumps(payload))
@@ -138,6 +196,7 @@ async def test_shadow_abstains_on_revised_final_ohlc_and_keeps_first_bar(tmp_pat
                 "version": 1,
                 "published_on": "2026-01-06",
                 "fixture": False,
+                "valid_through": "2026-01-06",
             },
             sort_keys=True,
             separators=(",", ":"),

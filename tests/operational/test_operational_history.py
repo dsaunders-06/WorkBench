@@ -29,6 +29,171 @@ def authorities():
     )
 
 
+def test_membership_v2_preserves_per_symbol_dates_and_two_issuer_citations(tmp_path):
+    h = api()
+    stw = "https://www.ssga.com/library-content/products/fund-data/etfs/apac/holdings-daily-au-en-stw.xlsx"
+    ioz = "https://www.blackrock.com/au/products/251852/ishares-core-s-p-asx-200-etf/1478358644060.ajax?dataType=fund&fileName=IOZ_holdings&fileType=csv"
+    payload = {
+        "schema": "asx200-membership-v2",
+        "version": 2,
+        "published_on": "2026-10-23",
+        "valid_through": "2026-10-23",
+        "fixture": False,
+        "managed_symbols": [],
+        "entries": [
+            {
+                "symbol": symbol,
+                "effective_from": "2026-10-21",
+                "effective_to": None,
+                "citations": [stw, ioz],
+            }
+            for symbol in ("BHP.AX", "SUN.AX")
+        ],
+    }
+    payload["entries"][1]["effective_to"] = "2026-10-22"
+    path = tmp_path / "membership.json"
+    path.write_text(json.dumps(payload))
+    membership = h.load_membership(path)
+    assert membership.symbols == ("BHP.AX", "SUN.AX")
+    assert membership.valid_through == date(2026, 10, 23)
+    assert membership.is_current("BHP.AX", date(2026, 10, 21))
+    assert membership.is_current("BHP.AX", date(2026, 10, 23))
+    assert not membership.is_current("SUN.AX", date(2026, 10, 23))
+    assert not membership.is_current("BHP.AX", date(2026, 10, 20))
+    assert not membership.is_current("BHP.AX", date(2026, 10, 24))
+    assert membership.entries[0].citations == (stw, ioz)
+    payload["entries"][0]["citations"][1] = "https://blackrock.com.evil.test/holdings"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="citation"):
+        h.load_membership(path)
+
+
+@pytest.mark.parametrize(
+    ("filename", "loader"),
+    [
+        ("calendar.json", "load_calendar"),
+        ("membership.json", "load_membership"),
+        ("actions.json", "load_actions"),
+    ],
+)
+def test_real_json_authorities_require_valid_through(tmp_path, filename, loader):
+    h = api()
+    payload = json.loads((FIXTURES / filename).read_text())
+    payload["fixture"] = False
+    path = tmp_path / filename
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="valid_through"):
+        getattr(h, loader)(path)
+
+
+def test_real_halt_validity_is_bound_into_append_chain(tmp_path):
+    h = api()
+    path = tmp_path / "halts.jsonl"
+    missing = {
+        "schema": "asx-halts-v1",
+        "version": 1,
+        "published_on": "2026-10-22",
+        "fixture": False,
+    }
+    path.write_bytes(h.canonical_payload(missing) + b"\n")
+    with pytest.raises(ValueError, match="valid_through"):
+        h.load_halts(path)
+    header = {
+        "schema": "asx-halts-v1",
+        "version": 1,
+        "published_on": "2026-10-22",
+        "valid_through": "2026-10-23",
+        "fixture": False,
+    }
+    path.write_bytes(h.canonical_payload(header) + b"\n")
+    accepted = h.append_halt(
+        path,
+        "MFG.AX",
+        date(2026, 3, 2),
+        date(2026, 3, 2),
+        "asx_notice",
+        "https://announcements.asx.com.au/asxpdf/20260302/pdf/06wy6h899cx8sz.pdf",
+    )
+    assert accepted.valid_through == date(2026, 10, 23)
+    assert len(h.load_halts(path).entries) == 1
+    changed = path.read_text().replace("2026-10-23", "2026-10-24", 1)
+    path.write_text(changed)
+    with pytest.raises(ValueError, match="broken append chain"):
+        h.load_halts(path)
+
+
+def test_halt_notice_supporting_delivery_is_hash_bound_but_not_an_authority(tmp_path):
+    h = api()
+    path = tmp_path / "halts.jsonl"
+    header = {
+        "schema": "asx-halts-v1",
+        "version": 1,
+        "published_on": "2026-10-23",
+        "valid_through": "2026-10-23",
+        "fixture": False,
+    }
+    path.write_bytes(h.canonical_payload(header) + b"\n")
+    notice = (
+        "https://www.asx.com.au/asx/v2/statistics/displayAnnouncement.do?display=pdf&idsId=03066996"
+    )
+    lift = "https://announcements.asx.com.au/asxpdf/20260303/pdf/06wzyrt8g4hswg.pdf"
+    delivery = "https://cdn-api.markitdigital.com/apiman-gateway/ASX/asx-research/1.0/file/2924-03063204-2A1657132%26v%3Dundefined"
+    ledger = h.append_halt(
+        path,
+        "MFG.AX",
+        date(2026, 3, 2),
+        date(2026, 3, 2),
+        "asx_notice",
+        notice,
+        lift_citation=lift,
+        delivery_url=delivery,
+        delivery_document_id="2924-03063204-2A1657132",
+        delivery_sha256="c3ae734a37752b2790738a3a513ec1644daccb2628ba3dd7f309ba6c53a7e9a2",
+    )
+    entry = ledger.entries[0]
+    assert entry.evidence_reference == notice
+    assert entry.lift_citation == lift
+    assert entry.delivery_url == delivery
+    assert h.load_halts(path).entries[0] == entry
+    with pytest.raises(ValueError, match="invalid halt entry"):
+        h.append_halt(
+            path,
+            "SUN.AX",
+            date(2026, 3, 3),
+            date(2026, 3, 3),
+            "asx_notice",
+            delivery,
+        )
+    tampered = path.read_text().replace("c3ae734a", "f3ae734a")
+    path.write_text(tampered)
+    with pytest.raises(ValueError, match="broken append chain"):
+        h.load_halts(path)
+
+
+def test_action_authority_records_unheld_dividend_scope(tmp_path):
+    h = api()
+    payload = {
+        "schema": "asx-corporate-actions-v2",
+        "version": 2,
+        "published_on": "2026-10-23",
+        "coverage_start": "2023-10-22",
+        "coverage_end": "2026-10-23",
+        "valid_through": "2026-10-23",
+        "source": "https://asxonline.com/public/notices/2025/february/0128.25.02.html",
+        "fixture": False,
+        "events": [],
+        "capital_returns": [],
+        "dividend_scope": "unheld_out_of_scope",
+    }
+    path = tmp_path / "actions.json"
+    path.write_text(json.dumps(payload))
+    assert h.load_actions(path).dividend_scope == "unheld_out_of_scope"
+    payload["dividend_scope"] = "unverified"
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="invalid ASX corporate-action authority"):
+        h.load_actions(path)
+
+
 def make_store(tmp_path):
     h = api()
     cal, members = authorities()

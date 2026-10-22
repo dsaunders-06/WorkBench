@@ -203,6 +203,16 @@ class OperationalAdapter:
         reasons = []
         symbols = []
         source_failed = False
+        for name, authority in (
+            ("calendar", self._calendar),
+            ("membership", self._membership),
+            ("halts", self._halts),
+            ("actions", self._actions),
+        ):
+            if authority.valid_through is not None and authority.valid_through < session:
+                reasons.append(f"{name}_authority_expired")
+            elif authority.valid_through is None and not authority.fixture:
+                reasons.append(f"{name}_authority_expired")
         try:
             self._calendar.next_open(session)
         except ValueError:

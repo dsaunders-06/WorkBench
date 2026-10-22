@@ -197,6 +197,14 @@ class Phase3ShadowRunner:
         try:
             calendar, membership, halts, actions = self._authorities()
             calendar.next_open(session)
+            for name, authority in (
+                ("calendar", calendar),
+                ("membership", membership),
+                ("halts", halts),
+                ("actions", actions),
+            ):
+                if authority.valid_through is None or authority.valid_through < session:
+                    raise ValueError(f"{name} authority is not valid through session")
             if not membership.effective_from <= session <= membership.effective_to:
                 raise ValueError("dated ASX membership does not cover session")
         except (OSError, ValueError, KeyError) as error:

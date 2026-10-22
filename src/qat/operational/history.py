@@ -38,6 +38,7 @@ SYDNEY = ZoneInfo("Australia/Sydney")
 ASX_AUTHORITY_HOSTS = frozenset(
     {"www.asx.com.au", "asxonline.com", "www.asxonline.com", "announcements.asx.com.au"}
 )
+MEMBERSHIP_CITATION_HOSTS = frozenset({"www.spglobal.com", "www.ssga.com", "www.blackrock.com"})
 
 
 def is_asx_authority_url(value: str) -> bool:
@@ -48,6 +49,14 @@ def is_asx_authority_url(value: str) -> bool:
         isinstance(value, str)
         and not any(ord(char) <= 32 or char == "\\" for char in value)
         and any(value.startswith(f"https://{host}/") for host in ASX_AUTHORITY_HOSTS)
+    )
+
+
+def is_membership_citation_url(value: str) -> bool:
+    return (
+        isinstance(value, str)
+        and not any(ord(char) <= 32 or char == "\\" for char in value)
+        and any(value.startswith(f"https://{host}/") for host in MEMBERSHIP_CITATION_HOSTS)
     )
 
 
@@ -139,6 +148,7 @@ class CalendarLedger:
     fixture: bool
     sessions: tuple[Session, ...]
     closures: tuple[Closure, ...]
+    valid_through: date | None = None
 
     def __post_init__(self) -> None:
         dates = tuple(s.session for s in self.sessions)
@@ -150,6 +160,10 @@ class CalendarLedger:
             or self.coverage_start > self.coverage_end
             or dates != tuple(sorted(set(dates)))
             or any(not self.coverage_start <= d <= self.coverage_end for d in dates)
+            or (
+                self.valid_through is not None
+                and not self.coverage_start <= self.valid_through <= self.coverage_end
+            )
         ):
             raise ValueError("invalid calendar schema, coverage, or ordered sessions")
         for s in self.sessions:
@@ -202,16 +216,32 @@ class Membership:
     fixture: bool
     symbols: tuple[str, ...]
     managed_symbols: tuple[str, ...]
+    entries: tuple[MembershipEntry, ...] = ()
+    valid_through: date | None = None
 
     def __post_init__(self) -> None:
-        if (
-            self.schema != "asx200-membership-v1"
-            or self.version < 1
-            or self.published_on > self.effective_from
-            or self.effective_from > self.effective_to
-            or not self.source.startswith("https://www.spglobal.com/")
-            or not self.symbols
-        ):
+        if self.schema == "asx200-membership-v1":
+            if (
+                self.version != 1
+                or self.published_on > self.effective_from
+                or self.effective_from > self.effective_to
+                or not self.source.startswith("https://www.spglobal.com/")
+                or self.entries
+                or not self.symbols
+            ):
+                raise ValueError("invalid dated membership authority")
+        elif self.schema == "asx200-membership-v2":
+            if (
+                self.version != 2
+                or not self.entries
+                or self.valid_through is None
+                or self.symbols != tuple(entry.symbol for entry in self.entries)
+                or self.effective_from != min(entry.effective_from for entry in self.entries)
+                or self.effective_to != self.valid_through
+                or self.published_on > self.valid_through
+            ):
+                raise ValueError("invalid dated membership authority")
+        else:
             raise ValueError("invalid dated membership authority")
         for symbols in (self.symbols, self.managed_symbols):
             if symbols != tuple(sorted(set(symbols))) or any(
@@ -223,9 +253,41 @@ class Membership:
     def content_hash(self) -> str:
         return digest(self)
 
+    def is_current(self, symbol: str, session: date) -> bool:
+        if self.valid_through is not None and session > self.valid_through:
+            return False
+        if self.schema == "asx200-membership-v2":
+            return any(
+                entry.symbol == symbol
+                and entry.effective_from <= session
+                and (entry.effective_to is None or session <= entry.effective_to)
+                for entry in self.entries
+            )
+        return symbol in self.symbols and self.effective_from <= session <= self.effective_to
+
+
+@dataclass(frozen=True, slots=True)
+class MembershipEntry:
+    symbol: str
+    effective_from: date
+    effective_to: date | None
+    citations: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            not self.symbol.endswith(".AX")
+            or (self.effective_to is not None and self.effective_to < self.effective_from)
+            or not self.citations
+            or len(set(self.citations)) != len(self.citations)
+            or any(not is_membership_citation_url(source) for source in self.citations)
+        ):
+            raise ValueError("invalid membership entry citation or interval")
+
 
 def load_calendar(path: Path) -> CalendarLedger:
     obj = _read(path)
+    if not obj["fixture"] and "valid_through" not in obj:
+        raise ValueError("real calendar requires valid_through")
     return CalendarLedger(
         _text(obj["schema"]),
         _integer(obj["version"]),
@@ -242,11 +304,56 @@ def load_calendar(path: Path) -> CalendarLedger:
             Closure(date.fromisoformat(_text(s["session"])), _text(s["notice"]))
             for s in map(_object, _list(obj["closures"]))
         ),
+        date.fromisoformat(_text(obj["valid_through"])) if "valid_through" in obj else None,
     )
 
 
 def load_membership(path: Path) -> Membership:
     obj = _read(path)
+    if obj["schema"] == "asx200-membership-v2":
+        if set(obj) != {
+            "schema",
+            "version",
+            "published_on",
+            "valid_through",
+            "fixture",
+            "managed_symbols",
+            "entries",
+        }:
+            raise ValueError("invalid membership authority fields")
+        entries = []
+        for raw in _list(obj["entries"]):
+            item = _object(raw)
+            if set(item) != {"symbol", "effective_from", "effective_to", "citations"}:
+                raise ValueError("invalid membership entry fields")
+            entries.append(
+                MembershipEntry(
+                    _text(item["symbol"]),
+                    date.fromisoformat(_text(item["effective_from"])),
+                    (
+                        date.fromisoformat(_text(item["effective_to"]))
+                        if item["effective_to"] is not None
+                        else None
+                    ),
+                    tuple(_text(source) for source in _list(item["citations"])),
+                )
+            )
+        valid_through = date.fromisoformat(_text(obj["valid_through"]))
+        return Membership(
+            "asx200-membership-v2",
+            _integer(obj["version"]),
+            date.fromisoformat(_text(obj["published_on"])),
+            min(entry.effective_from for entry in entries),
+            valid_through,
+            "",
+            _boolean(obj["fixture"]),
+            tuple(entry.symbol for entry in entries),
+            tuple(_text(symbol) for symbol in _list(obj["managed_symbols"])),
+            tuple(entries),
+            valid_through,
+        )
+    if not obj["fixture"] and "valid_through" not in obj:
+        raise ValueError("real membership requires valid_through")
     return Membership(
         _text(obj["schema"]),
         _integer(obj["version"]),
@@ -257,6 +364,8 @@ def load_membership(path: Path) -> Membership:
         _boolean(obj["fixture"]),
         tuple(_text(s) for s in _list(obj["symbols"])),
         tuple(_text(s) for s in _list(obj["managed_symbols"])),
+        (),
+        date.fromisoformat(_text(obj["valid_through"])) if "valid_through" in obj else None,
     )
 
 
@@ -271,6 +380,10 @@ class HaltEntry:
     evidence_reference: str
     previous_hash: str
     content_hash: str
+    lift_citation: str | None = None
+    delivery_url: str | None = None
+    delivery_document_id: str | None = None
+    delivery_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,18 +393,20 @@ class HaltLedger:
     published_on: date
     fixture: bool
     entries: tuple[HaltEntry, ...]
+    valid_through: date | None = None
 
     def __post_init__(self) -> None:
-        if self.schema != "asx-halts-v1" or self.version < 1:
+        if (
+            self.schema != "asx-halts-v1"
+            or self.version < 1
+            or (
+                not self.fixture
+                and self.valid_through is not None
+                and self.valid_through < self.published_on
+            )
+        ):
             raise ValueError("invalid halt authority header")
-        previous_hash = digest(
-            {
-                "schema": self.schema,
-                "version": self.version,
-                "published_on": self.published_on,
-                "fixture": self.fixture,
-            }
-        )
+        previous_hash = digest(self.header_identity())
         previous_entries: list[HaltEntry] = []
         for index, entry in enumerate(self.entries, start=1):
             identity = {
@@ -304,6 +419,12 @@ class HaltLedger:
                 "evidence_reference": entry.evidence_reference,
                 "previous_hash": entry.previous_hash,
             }
+            if entry.lift_citation is not None:
+                identity["lift_citation"] = entry.lift_citation
+            if entry.delivery_url is not None:
+                identity["delivery_url"] = entry.delivery_url
+                identity["delivery_document_id"] = entry.delivery_document_id
+                identity["delivery_sha256"] = entry.delivery_sha256
             if (
                 entry.sequence != index
                 or not entry.symbol.endswith(".AX")
@@ -319,6 +440,30 @@ class HaltLedger:
                 or (
                     entry.evidence_kind == "broker_record"
                     and not entry.evidence_reference.startswith("IBKR:")
+                )
+                or (
+                    entry.lift_citation is not None
+                    and not is_asx_authority_url(entry.lift_citation)
+                )
+                or (
+                    entry.delivery_url is None
+                    and (
+                        entry.delivery_document_id is not None or entry.delivery_sha256 is not None
+                    )
+                )
+                or (
+                    entry.delivery_url is not None
+                    and (
+                        entry.evidence_kind != "asx_notice"
+                        or entry.delivery_document_id is None
+                        or entry.delivery_sha256 is None
+                        or not entry.delivery_url.startswith(
+                            "https://cdn-api.markitdigital.com/apiman-gateway/ASX/asx-research/1.0/file/"
+                        )
+                        or entry.delivery_document_id not in entry.delivery_url
+                        or len(entry.delivery_sha256) != 64
+                        or any(c not in "0123456789abcdef" for c in entry.delivery_sha256)
+                    )
                 )
             ):
                 raise ValueError("invalid halt entry or broken append chain")
@@ -336,19 +481,23 @@ class HaltLedger:
     def content_hash(self) -> str:
         return digest(self)
 
+    def header_identity(self) -> dict[str, object]:
+        header: dict[str, object] = {
+            "schema": self.schema,
+            "version": self.version,
+            "published_on": self.published_on,
+            "fixture": self.fixture,
+        }
+        if self.valid_through is not None:
+            header["valid_through"] = self.valid_through
+        return header
+
     def chain_hash_at(self, sequence: int) -> str:
         if sequence < 0 or sequence > len(self.entries):
             raise ValueError("halt ledger rollback: missing accepted sequence")
         if sequence:
             return self.entries[sequence - 1].content_hash
-        return digest(
-            {
-                "schema": self.schema,
-                "version": self.version,
-                "published_on": self.published_on,
-                "fixture": self.fixture,
-            }
-        )
+        return digest(self.header_identity())
 
     def covers(self, symbol: str, session: date) -> bool:
         return any(
@@ -407,6 +556,8 @@ class ActionLedger:
     fixture: bool
     events: tuple[CorporateAction, ...]
     capital_returns: tuple[CapitalReturn, ...] = ()
+    valid_through: date | None = None
+    dividend_scope: str | None = None
 
     def __post_init__(self) -> None:
         keys = tuple((e.symbol, e.ex_session) for e in self.events)
@@ -414,6 +565,11 @@ class ActionLedger:
             self.schema not in ("asx-corporate-actions-v1", "asx-corporate-actions-v2")
             or self.version < 1
             or self.coverage_start > self.coverage_end
+            or (
+                self.valid_through is not None
+                and not self.coverage_start <= self.valid_through <= self.coverage_end
+            )
+            or self.dividend_scope not in (None, "unheld_out_of_scope", "complete")
             or not is_asx_authority_url(self.source)
             or keys != tuple(sorted(set(keys)))
             or any(
@@ -454,8 +610,11 @@ def load_actions(path: Path) -> ActionLedger:
         "fixture",
         "events",
     }
-    if set(obj) not in (fields, fields | {"capital_returns"}):
+    optional = {"capital_returns", "valid_through", "dividend_scope"}
+    if not fields <= set(obj) or not set(obj) <= fields | optional:
         raise ValueError("invalid corporate-action authority fields")
+    if not obj["fixture"] and "valid_through" not in obj:
+        raise ValueError("real corporate-action authority requires valid_through")
     if (obj["schema"] == "asx-corporate-actions-v2") != ("capital_returns" in obj):
         raise ValueError("capital-return field requires v2 authority")
     events = []
@@ -498,6 +657,8 @@ def load_actions(path: Path) -> ActionLedger:
         _boolean(obj["fixture"]),
         tuple(events),
         tuple(capital_returns),
+        date.fromisoformat(_text(obj["valid_through"])) if "valid_through" in obj else None,
+        _text(obj["dividend_scope"]) if "dividend_scope" in obj else None,
     )
 
 
@@ -521,12 +682,15 @@ def load_halts(path: Path) -> HaltLedger:
         raise ValueError("halt ledger requires complete newline-terminated records")
     lines = raw.splitlines()
     header = line(lines[0])
-    if set(header) != {"schema", "version", "published_on", "fixture"}:
+    fields = {"schema", "version", "published_on", "fixture"}
+    if set(header) not in (fields, fields | {"valid_through"}):
         raise ValueError("invalid halt ledger header fields")
+    if not header["fixture"] and "valid_through" not in header:
+        raise ValueError("real halt authority requires valid_through")
     entries = []
     for value in lines[1:]:
         obj = line(value)
-        if set(obj) != {
+        required = {
             "sequence",
             "symbol",
             "first_session",
@@ -536,8 +700,12 @@ def load_halts(path: Path) -> HaltLedger:
             "evidence_reference",
             "previous_hash",
             "content_hash",
-        }:
+        }
+        optional = {"lift_citation", "delivery_url", "delivery_document_id", "delivery_sha256"}
+        if not required <= set(obj) or not set(obj) <= required | optional:
             raise ValueError("invalid halt entry fields")
+        if ("delivery_url" in obj) != ("delivery_document_id" in obj and "delivery_sha256" in obj):
+            raise ValueError("incomplete halt delivery evidence")
         entries.append(
             HaltEntry(
                 _integer(obj["sequence"]),
@@ -549,6 +717,10 @@ def load_halts(path: Path) -> HaltLedger:
                 _text(obj["evidence_reference"]),
                 _string(obj["previous_hash"]),
                 _text(obj["content_hash"]),
+                _text(obj["lift_citation"]) if "lift_citation" in obj else None,
+                _text(obj["delivery_url"]) if "delivery_url" in obj else None,
+                _text(obj["delivery_document_id"]) if "delivery_document_id" in obj else None,
+                _text(obj["delivery_sha256"]) if "delivery_sha256" in obj else None,
             )
         )
     return HaltLedger(
@@ -557,6 +729,7 @@ def load_halts(path: Path) -> HaltLedger:
         date.fromisoformat(_text(header["published_on"])),
         _boolean(header["fixture"]),
         tuple(entries),
+        date.fromisoformat(_text(header["valid_through"])) if "valid_through" in header else None,
     )
 
 
@@ -569,20 +742,15 @@ def append_halt(
     evidence_reference: str,
     *,
     interruption_type: str = "halt",
+    lift_citation: str | None = None,
+    delivery_url: str | None = None,
+    delivery_document_id: str | None = None,
+    delivery_sha256: str | None = None,
 ) -> HaltLedger:
     """Append one hash-chained authority entry without rewriting prior lines."""
     ledger = load_halts(path)
     previous_hash = (
-        ledger.entries[-1].content_hash
-        if ledger.entries
-        else digest(
-            {
-                "schema": ledger.schema,
-                "version": ledger.version,
-                "published_on": ledger.published_on,
-                "fixture": ledger.fixture,
-            }
-        )
+        ledger.entries[-1].content_hash if ledger.entries else digest(ledger.header_identity())
     )
     identity = {
         "sequence": len(ledger.entries) + 1,
@@ -594,6 +762,12 @@ def append_halt(
         "evidence_reference": evidence_reference,
         "previous_hash": previous_hash,
     }
+    if lift_citation is not None:
+        identity["lift_citation"] = lift_citation
+    if delivery_url is not None:
+        identity["delivery_url"] = delivery_url
+        identity["delivery_document_id"] = delivery_document_id
+        identity["delivery_sha256"] = delivery_sha256
     entry = HaltEntry(
         len(ledger.entries) + 1,
         symbol,
@@ -604,6 +778,10 @@ def append_halt(
         evidence_reference,
         previous_hash,
         digest(identity),
+        lift_citation,
+        delivery_url,
+        delivery_document_id,
+        delivery_sha256,
     )
     result = HaltLedger(
         ledger.schema,
@@ -611,6 +789,7 @@ def append_halt(
         ledger.published_on,
         ledger.fixture,
         (*ledger.entries, entry),
+        ledger.valid_through,
     )
     with path.open("ab") as file:
         file.write(canonical_payload({**identity, "content_hash": entry.content_hash}) + b"\n")
@@ -1494,10 +1673,7 @@ def assess_history(
     """Pure quality assessment, shared by the live store and frozen read view."""
     reasons: set[str] = set()
     start = _three_year_start(session)
-    current = (
-        membership.effective_from <= session <= membership.effective_to
-        and symbol in membership.symbols
-    )
+    current = membership.is_current(symbol, session)
     managed = symbol in membership.managed_symbols
     if not current and not managed:
         reasons.add("not_member_or_managed")

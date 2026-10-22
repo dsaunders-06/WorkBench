@@ -64,6 +64,32 @@ def prepared(tmp_path, *, qualified=False, managed=True):
     return adapter, snapshot, store, cal, members, parameters
 
 
+@pytest.mark.parametrize("stale", ["calendar", "membership", "halts", "actions"])
+def test_any_expired_authority_abstains_all_symbols(tmp_path, stale):
+    h = __import__("qat.operational.history", fromlist=["history"])
+    _, _, store, cal, members, params = prepared(tmp_path)
+    authorities = {
+        "calendar": cal,
+        "membership": members,
+        "halts": h.load_halts(HALT_FIXTURE),
+        "actions": h.load_actions(ACTION_FIXTURE),
+    }
+    authorities[stale] = replace(authorities[stale], valid_through=date(2026, 1, 5))
+    adapter = api().OperationalAdapter(
+        store,
+        authorities["calendar"],
+        authorities["membership"],
+        authorities["halts"],
+        authorities["actions"],
+    )
+    snapshot = adapter.freeze(SESSION, params)
+    assert f"{stale}_authority_expired" in snapshot.reasons
+    result = adapter.run(snapshot, now=NOW)
+    assert not result.candidates
+    assert result.abstentions
+    assert all(f"{stale}_authority_expired" in item.reasons for item in result.abstentions)
+
+
 def test_adapter_feature_exists():
     assert api().LABEL == "unvalidated strategy, no demonstrated edge"
 
