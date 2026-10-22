@@ -1,6 +1,7 @@
 """Offline tests for the operational history boundary."""
 
 import hashlib
+import importlib.util
 import json
 import sqlite3
 from dataclasses import replace
@@ -166,6 +167,193 @@ def test_shadow_analytical_ohlc_revision_alone_requires_review(tmp_path):
     event = json.loads(store.audit_bytes().splitlines()[-1])
     assert event["ohlc_changed"] is False
     assert event["analytical_ohlc_changed"] is True
+
+
+def test_shadow_revision_review_keeps_original_and_clears_only_one_session(tmp_path):
+    store, cal, _ = make_store(tmp_path)
+    first = bar()
+    other = bar(date(2026, 1, 7))
+    for original in (first, other):
+        store.ingest((original,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+        changed = replace(
+            original,
+            raw=replace(original.raw, close=original.raw.close + Decimal("0.01")),
+            analytical=replace(
+                original.analytical, close=original.analytical.close + Decimal("0.01")
+            ),
+        )
+        store.ingest((changed,), cal, received_at=changed.retrieved_at, shadow_freeze_final=True)
+    revision = store.versions(first.symbol, first.session)[-1]
+    reviewed = store.review_shadow_revision(
+        first.symbol,
+        first.session,
+        decision="keep_original",
+        expected_revision_hash=revision.content_hash,
+        operator="DS",
+        reason="ASX announcement and first IBKR bar agree",
+        reviewed_at=first.retrieved_at + timedelta(minutes=1),
+    )
+    assert reviewed.content_hash == store.versions(first.symbol, first.session)[0].content_hash
+    assert store.shadow_revision_pending((first.symbol,)) == (first.symbol,)
+    events = [json.loads(line) for line in store.audit_bytes().splitlines()]
+    assert events[-1]["kind"] == "shadow_bar_revision_review"
+    assert events[-1]["operator"] == "DS"
+    assert events[-1]["reason"] == "ASX announcement and first IBKR bar agree"
+    assert [record.accepted for record in store.versions(first.symbol, first.session)] == [
+        True,
+        False,
+    ]
+    assert store.shadow_revision_pending((first.symbol,), sessions=(first.session,)) == ()
+    assert store.shadow_revision_pending((first.symbol,), sessions=(other.session,)) == (
+        first.symbol,
+    )
+
+
+def test_shadow_revision_review_accepts_exact_bar_and_new_revision_reblocks(tmp_path):
+    store, cal, _ = make_store(tmp_path)
+    original = bar()
+    store.ingest((original,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    revised = replace(
+        original,
+        raw=replace(original.raw, close=original.raw.close + Decimal("0.01")),
+        analytical=replace(original.analytical, close=original.analytical.close + Decimal("0.01")),
+    )
+    observed = store.ingest(
+        (revised,), cal, received_at=revised.retrieved_at, shadow_freeze_final=True
+    )[0]
+    accepted = store.review_shadow_revision(
+        original.symbol,
+        original.session,
+        decision="accept_revised",
+        expected_revision_hash=observed.content_hash,
+        operator="DS",
+        reason="Verified against ASX notice",
+        reviewed_at=original.retrieved_at + timedelta(minutes=1),
+    )
+    assert accepted.accepted
+    assert accepted.version == 3
+    assert accepted.bar == revised
+    assert store.decision_bars(original.symbol, original.session)[-1] == accepted
+    assert store.shadow_revision_pending((original.symbol,)) == ()
+    restarted, _, _ = make_store(tmp_path)
+    assert restarted.decision_bars(original.symbol, original.session)[-1] == accepted
+    assert restarted.shadow_revision_pending((original.symbol,)) == ()
+    # A repeat observation of the accepted bar is not a new discrepancy.
+    store.ingest((revised,), cal, received_at=revised.retrieved_at, shadow_freeze_final=True)
+    assert store.shadow_revision_pending((original.symbol,)) == ()
+    later = replace(
+        revised,
+        raw=replace(revised.raw, close=revised.raw.close + Decimal("0.01")),
+        analytical=replace(revised.analytical, close=revised.analytical.close + Decimal("0.01")),
+    )
+    store.ingest((later,), cal, received_at=later.retrieved_at, shadow_freeze_final=True)
+    assert store.shadow_revision_pending((original.symbol,)) == (original.symbol,)
+
+
+def test_shadow_review_clears_all_prior_revisions_but_not_another_symbol(tmp_path):
+    store, cal, _ = make_store(tmp_path)
+    original = bar()
+    peer = replace(original, symbol="CBA.AX")
+    for current in (original, peer):
+        store.ingest((current,), cal, received_at=current.retrieved_at, shadow_freeze_final=True)
+        for cents in ("0.01", "0.02"):
+            revised = replace(
+                current,
+                raw=replace(current.raw, close=current.raw.close + Decimal(cents)),
+                analytical=replace(
+                    current.analytical, close=current.analytical.close + Decimal(cents)
+                ),
+            )
+            store.ingest(
+                (revised,), cal, received_at=revised.retrieved_at, shadow_freeze_final=True
+            )
+    latest = store.versions(original.symbol, original.session)[-1]
+    store.review_shadow_revision(
+        original.symbol,
+        original.session,
+        decision="keep_original",
+        expected_revision_hash=latest.content_hash,
+        operator="DS",
+        reason="Both revisions checked against the primary source",
+        reviewed_at=original.retrieved_at + timedelta(minutes=1),
+    )
+    assert store.shadow_revision_pending((original.symbol, peer.symbol)) == (peer.symbol,)
+
+
+def test_shadow_revision_review_rejects_stale_hash_or_non_ds_without_write(tmp_path):
+    store, cal, _ = make_store(tmp_path)
+    original = bar()
+    store.ingest((original,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    revised = replace(
+        original,
+        raw=replace(original.raw, close=original.raw.close + Decimal("0.01")),
+        analytical=replace(original.analytical, close=original.analytical.close + Decimal("0.01")),
+    )
+    store.ingest((revised,), cal, received_at=revised.retrieved_at, shadow_freeze_final=True)
+    before = (store.audit_bytes(), store.versions(original.symbol, original.session))
+    for operator, revision_hash, reason in (
+        ("operator", store.versions(original.symbol, original.session)[-1].content_hash, "valid"),
+        ("DS", "0" * 64, "valid"),
+        ("DS", store.versions(original.symbol, original.session)[-1].content_hash, " "),
+    ):
+        with pytest.raises(ValueError):
+            store.review_shadow_revision(
+                original.symbol,
+                original.session,
+                decision="keep_original",
+                expected_revision_hash=revision_hash,
+                operator=operator,
+                reason=reason,
+                reviewed_at=original.retrieved_at + timedelta(minutes=1),
+            )
+    assert (store.audit_bytes(), store.versions(original.symbol, original.session)) == before
+
+
+def test_review_script_previews_then_applies_one_decision(tmp_path, capsys):
+    script = Path(__file__).resolve().parents[2] / "scripts" / "review_shadow_bar_revision.py"
+    spec = importlib.util.spec_from_file_location("review_shadow_bar_revision", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    store, cal, _ = make_store(tmp_path)
+    original = bar()
+    store.ingest((original,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    revised = replace(
+        original,
+        raw=replace(original.raw, close=original.raw.close + Decimal("0.01")),
+        analytical=replace(original.analytical, close=original.analytical.close + Decimal("0.01")),
+    )
+    observed = store.ingest(
+        (revised,), cal, received_at=revised.retrieved_at, shadow_freeze_final=True
+    )[0]
+    args = [
+        "--operational-root",
+        str(tmp_path / "OPERATIONAL"),
+        "--symbol",
+        original.symbol,
+        "--session",
+        original.session.isoformat(),
+        "--decision",
+        "keep_original",
+        "--expected-revision-hash",
+        observed.content_hash,
+        "--operator",
+        "DS",
+        "--reason",
+        "ASX and IBKR agree with original",
+    ]
+    before = store.audit_bytes()
+    assert module.main(args) == 0
+    preview = json.loads(capsys.readouterr().out)
+    assert preview["mode"] == "preview"
+    assert preview["observed_bar"]["raw"]["close"] == str(revised.raw.close)
+    assert store.audit_bytes() == before
+    assert module.main([*args, "--apply"]) == 0
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["mode"] == "apply" and applied["pending_after"] is False
+    assert store.shadow_revision_pending((original.symbol,)) == ()
+    with pytest.raises(ValueError, match="no pending revision"):
+        module.main([*args, "--apply"])
 
 
 def test_asx_official_announcement_hosts_and_spoofs(tmp_path):

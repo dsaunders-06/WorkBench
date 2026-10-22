@@ -1122,22 +1122,143 @@ class HistoryStore:
             rows = conn.execute("SELECT payload FROM audit ORDER BY id").fetchall()
         return b"\n".join(row[0].encode() for row in rows)
 
-    def shadow_revision_pending(self, symbols: Sequence[str]) -> tuple[str, ...]:
-        """A material revision remains blocked until a future explicit DS review path."""
+    def shadow_revision_pending(
+        self, symbols: Sequence[str], *, sessions: Sequence[date] | None = None
+    ) -> tuple[str, ...]:
+        """Material revisions remain blocked until DS reviews that symbol and session."""
         scope = set(symbols)
+        days = set(sessions) if sessions is not None else None
         with self._connect() as conn:
             rows = conn.execute("SELECT payload FROM audit ORDER BY id").fetchall()
+        pending: set[tuple[str, date]] = set()
+        for (payload,) in rows:
+            event = json.loads(payload)
+            if event.get("kind") == "shadow_bar_revision" and event.get("review_required") is True:
+                pending.add((event["symbol"], date.fromisoformat(event["session"])))
+            elif event.get("kind") == "shadow_bar_revision_review":
+                pending.discard((event["symbol"], date.fromisoformat(event["session"])))
         return tuple(
             sorted(
-                {
-                    event["symbol"]
-                    for (payload,) in rows
-                    if (event := json.loads(payload)).get("kind") == "shadow_bar_revision"
-                    and event.get("review_required") is True
-                    and event.get("symbol") in scope
-                }
+                symbol
+                for symbol in scope
+                if any(
+                    key_symbol == symbol and (days is None or day in days)
+                    for key_symbol, day in pending
+                )
             )
         )
+
+    def review_shadow_revision(
+        self,
+        symbol: str,
+        session: date,
+        *,
+        decision: str,
+        expected_revision_hash: str,
+        operator: str,
+        reason: str,
+        reviewed_at: datetime,
+    ) -> BarRecord:
+        """Append one DS review, optionally accepting an exact rejected bar version."""
+        if decision not in {"accept_revised", "keep_original"}:
+            raise ValueError("unknown revision decision")
+        if operator != "DS" or not isinstance(reason, str) or not reason.strip():
+            raise ValueError("DS operator and a nonempty reason are required")
+        if reviewed_at.tzinfo is None or reviewed_at.utcoffset() is None:
+            raise ValueError("review timestamp must be timezone-aware")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            audit_rows = conn.execute("SELECT id,payload FROM audit ORDER BY id").fetchall()
+            latest_revision: tuple[int, dict[str, object]] | None = None
+            last_review_id = 0
+            for audit_id, payload in audit_rows:
+                event = _object(json.loads(payload))
+                if event.get("symbol") != symbol or event.get("session") != session.isoformat():
+                    continue
+                if (
+                    event.get("kind") == "shadow_bar_revision"
+                    and event.get("review_required") is True
+                ):
+                    latest_revision = (audit_id, event)
+                elif event.get("kind") == "shadow_bar_revision_review":
+                    last_review_id = audit_id
+            if latest_revision is None or latest_revision[0] <= last_review_id:
+                raise ValueError("no pending material revision for symbol and session")
+            revision_id, event = latest_revision
+            if event.get("observed_hash") != expected_revision_hash:
+                raise ValueError("revision hash is stale or does not match")
+            rows = conn.execute(
+                "SELECT * FROM bars WHERE symbol=? AND session=? ORDER BY version",
+                (symbol, session.isoformat()),
+            ).fetchall()
+            versions = tuple(self._decode(row) for row in rows)
+            current = next((record for record in reversed(versions) if record.accepted), None)
+            observed = next(
+                (record for record in versions if record.content_hash == expected_revision_hash),
+                None,
+            )
+            if current is None or observed is None or observed.accepted:
+                raise ValueError("reviewed bar identities are unavailable")
+            result = current
+            if decision == "accept_revised":
+                previous_hash = versions[-1].content_hash
+                version = versions[-1].version + 1
+                payload = _bar_payload(observed.bar).decode()
+                identity = {
+                    "bar": json.loads(payload),
+                    "version": version,
+                    "accepted": True,
+                    "received_at": reviewed_at,
+                    "calendar_hash": observed.calendar_hash,
+                    "previous_hash": previous_hash,
+                    "label": OPERATIONAL,
+                }
+                content_hash = digest(identity)
+                conn.execute(
+                    "INSERT INTO bars VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        symbol,
+                        session.isoformat(),
+                        version,
+                        payload,
+                        content_hash,
+                        1,
+                        observed.calendar_hash,
+                        previous_hash,
+                        reviewed_at.isoformat(),
+                        OPERATIONAL,
+                    ),
+                )
+                result = BarRecord(
+                    observed.bar,
+                    version,
+                    content_hash,
+                    True,
+                    reviewed_at,
+                    observed.calendar_hash,
+                    previous_hash,
+                )
+            conn.execute(
+                "INSERT INTO audit(payload) VALUES(?)",
+                (
+                    canonical_payload(
+                        {
+                            "kind": "shadow_bar_revision_review",
+                            "symbol": symbol,
+                            "session": session,
+                            "decision": decision,
+                            "operator": operator,
+                            "reason": reason.strip(),
+                            "reviewed_at": reviewed_at,
+                            "reviewed_revision_audit_id": revision_id,
+                            "observed_hash": expected_revision_hash,
+                            "previous_accepted_hash": current.content_hash,
+                            "accepted_hash": result.content_hash,
+                        }
+                    ).decode(),
+                ),
+            )
+        return result
 
     def ingest(
         self,
@@ -1185,7 +1306,11 @@ class HistoryStore:
                 versions = tuple(self._decode(row) for row in rows)
                 frozen = (
                     next(
-                        (record for record in versions if record.accepted and record.bar.finalised),
+                        (
+                            record
+                            for record in reversed(versions)
+                            if record.accepted and record.bar.finalised
+                        ),
                         None,
                     )
                     if shadow_freeze_final
@@ -1258,7 +1383,7 @@ class HistoryStore:
                                     "kind": "shadow_bar_revision",
                                     "symbol": bar.symbol,
                                     "session": bar.session,
-                                    "first_final_hash": frozen.content_hash,
+                                    "authoritative_hash": frozen.content_hash,
                                     "observed_hash": content_hash,
                                     "old_raw": old,
                                     "new_raw": new,
