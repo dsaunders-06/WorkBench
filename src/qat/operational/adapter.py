@@ -207,10 +207,10 @@ class OperationalAdapter:
             self._calendar.next_open(session)
         except ValueError:
             reasons.append("calendar_session_or_next_open_missing")
-        if any(
-            e.ex_session not in {s.session for s in self._calendar.sessions}
-            for e in (*self._actions.events, *self._actions.capital_returns)
-        ):
+        action_sessions = {e.ex_session for e in self._actions.events} | {
+            e.ex_session for e in self._actions.capital_returns
+        }
+        if action_sessions - {s.session for s in self._calendar.sessions}:
             reasons.append("corporate_action_session_invalid")
         try:
             self._store.accept_halts(self._halts)
