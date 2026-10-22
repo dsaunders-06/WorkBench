@@ -56,9 +56,21 @@ def test_asx_is_closed_on_holidays(day, label):
     assert not mc.is_trading_day("ASX", day), label
 
 
-def test_anzac_day_on_a_weekend_is_observed_on_the_monday():
-    # 25 April 2026 is a Saturday.
-    assert date(2026, 4, 27) in mc.asx_holidays(2026)
+@pytest.mark.parametrize(
+    ("day", "trading"),
+    [
+        (date(2023, 4, 25), False),
+        (date(2024, 4, 25), False),
+        (date(2025, 4, 25), False),
+        (date(2026, 4, 25), False),  # Saturday
+        (date(2026, 4, 27), True),  # ASX cash market trades after Saturday ANZAC Day
+        (date(2027, 4, 25), False),  # Sunday
+        (date(2027, 4, 26), True),  # ASX lists the substitute day as OPEN
+    ],
+)
+def test_asx_anzac_trading_days_2023_to_2027(day, trading):
+    assert mc.is_trading_day("ASX", day) is trading
+    assert (day in mc.asx_holidays(day.year)) is (not trading and day.weekday() < 5)
 
 
 def test_christmas_and_boxing_day_never_collapse_onto_the_same_date():

@@ -183,7 +183,7 @@ def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
 
 
 def _observed_au(holiday: date) -> date:
-    """ASX observance: a weekend holiday moves forward to the next weekday."""
+    """Weekend substitution for holidays the ASX observes on a weekday."""
     if holiday.weekday() == 5:
         return holiday + timedelta(days=2)
     if holiday.weekday() == 6:
@@ -199,16 +199,22 @@ def asx_holidays(year: int) -> set[date]:
     boxing_day = _observed_au(date(year, 12, 26))
     if boxing_day <= christmas:
         boxing_day = christmas + timedelta(days=1)
-    return {
+    holidays = {
         _observed_au(date(year, 1, 1)),  # New Year's Day
         _observed_au(date(year, 1, 26)),  # Australia Day
         easter - timedelta(days=2),  # Good Friday
         easter + timedelta(days=1),  # Easter Monday
-        _observed_au(date(year, 4, 25)),  # ANZAC Day
         _nth_weekday(year, 6, 0, 2),  # King's Birthday
         christmas,
         boxing_day,
     }
+    # ASX cash market does not substitute a weekday closure for weekend ANZAC
+    # Day: 27 April 2026 and 26 April 2027 are trading days. ASX calendar:
+    # https://www.asx.com.au/markets/market-resources/trading-hours-calendar/cash-market-trading-hours/trading-calendar
+    anzac_day = date(year, 4, 25)
+    if anzac_day.weekday() < 5:
+        holidays.add(anzac_day)
+    return holidays
 
 
 def _holidays(market: Market, year: int) -> set[date]:
