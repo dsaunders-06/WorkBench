@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -107,6 +109,77 @@ async def test_shadow_run_uses_adapter_and_records_missing_history_abstention(
     events = ShadowRecord(tmp_path / "OPERATIONAL" / "shadow.jsonl").events
     assert events and events[-1]["kind"] == "abstention"
     assert "three_year_history" in str(events[-1]["detail"])
+
+
+@pytest.mark.asyncio
+async def test_shadow_abstains_on_revised_final_ohlc_and_keeps_first_bar(tmp_path, monkeypatch):
+    authorities = tmp_path / "authorities"
+    authorities.mkdir()
+    for filename in ("calendar.json", "membership.json", "actions.json"):
+        payload = json.loads((FIXTURES / filename).read_text())
+        payload["fixture"] = False
+        if filename == "membership.json":
+            payload["managed_symbols"] = []
+        (authorities / filename).write_text(json.dumps(payload))
+    (authorities / "halts.jsonl").write_text(
+        json.dumps(
+            {
+                "schema": "asx-halts-v1",
+                "version": 1,
+                "published_on": "2026-01-06",
+                "fixture": False,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
+    original = h.parse_bar(json.loads((FIXTURES / "bar.json").read_text()))
+    next_bar = {"value": original}
+
+    class OfflineSource:
+        backfill = ()
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def fetch(self, _session, _symbols):
+            return (next_bar["value"],)
+
+    monkeypatch.setattr("qat.operational.shadow.IBKRHistoricalBarSource", OfflineSource)
+    settings = Settings(
+        _env_file=None,
+        broker="ibkr",
+        phase3_shadow_enabled=True,
+        phase3_operational_root=str(tmp_path / "OPERATIONAL"),
+        phase3_authorities_dir=str(authorities),
+    )
+
+    class OfflineBroker:
+        async def account(self):
+            return SimpleNamespace(net_liquidation=0.0, cash=0.0)
+
+    runner = Phase3ShadowRunner(
+        settings,
+        OfflineBroker(),
+        object(),
+        now=lambda: datetime.fromisoformat("2026-01-06T17:30:00+11:00"),
+    )
+    assert await runner.run_once(date(2026, 1, 6)) is True
+    next_bar["value"] = replace(
+        original,
+        raw=replace(original.raw, close=original.raw.close + Decimal("0.01")),
+        analytical=replace(original.analytical, close=original.analytical.close + Decimal("0.01")),
+    )
+    assert await runner.run_once(date(2026, 1, 6)) is True
+    event = ShadowRecord(tmp_path / "OPERATIONAL" / "shadow.jsonl").events[-1]
+    assert event["detail"]["reason"] == "bar_revision_pending_ds_review"
+    store = h.HistoryStore(
+        tmp_path / "OPERATIONAL",
+        repository_root=Path(__file__).resolve().parents[2],
+        protected_roots=(),
+    )
+    assert store.decision_bars("BHP.AX", date(2026, 1, 6))[-1].bar.raw == original.raw
 
 
 @pytest.mark.asyncio

@@ -185,6 +185,7 @@ class OperationalAdapter:
         cross_check: YahooCrossCheck | None = None,
         *,
         received_at: datetime,
+        shadow_freeze_final: bool = False,
     ) -> IngestResult:
         """Record one primary-source attempt; the caller schedules any retry."""
         return ingest_session(
@@ -195,6 +196,7 @@ class OperationalAdapter:
             source,
             cross_check,
             received_at=received_at,
+            shadow_freeze_final=shadow_freeze_final,
         )
 
     def freeze(self, session: date, parameters: EvaluationParameters) -> FrozenSnapshot:

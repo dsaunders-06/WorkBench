@@ -17,6 +17,7 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from fractions import Fraction
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from qat.data.broker.ticks import tick_size
@@ -31,6 +32,28 @@ from qat.domain.strategies.authoritative_swing.numeric import (
 
 OPERATIONAL = "OPERATIONAL"
 SYDNEY = ZoneInfo("Australia/Sydney")
+
+# ASX identifies ASXOnline as its announcement frontend in its ComNews Direct
+# guide: https://www.asx.com.au/content/dam/asx/documents/unlinked-docs/asx-comnews-direct.pdf
+# ASX publishes announcement PDFs under announcements.asx.com.au.
+ASX_AUTHORITY_HOSTS = frozenset(
+    {"www.asx.com.au", "asxonline.com", "www.asxonline.com", "announcements.asx.com.au"}
+)
+
+
+def is_asx_authority_url(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname in ASX_AUTHORITY_HOSTS
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.port in (None, 443)
+            and parsed.path.startswith("/")
+        )
+    except ValueError:
+        return False
 
 
 def digest(value: object) -> str:
@@ -125,7 +148,7 @@ class CalendarLedger:
     def __post_init__(self) -> None:
         dates = tuple(s.session for s in self.sessions)
         if (
-            not self.source.startswith("https://www.asx.com.au/")
+            not is_asx_authority_url(self.source)
             or self.schema != "asx-calendar-v1"
             or self.version < 1
             or not dates
@@ -142,7 +165,7 @@ class CalendarLedger:
             raise ValueError("duplicate closure")
         for c in self.closures:
             if (
-                not c.notice.startswith("https://www.asx.com.au/")
+                not is_asx_authority_url(c.notice)
                 or c.session in dates
                 or not self.coverage_start <= c.session <= self.coverage_end
             ):
@@ -296,7 +319,7 @@ class HaltLedger:
                 or entry.evidence_kind not in ("asx_notice", "broker_record")
                 or (
                     entry.evidence_kind == "asx_notice"
-                    and not entry.evidence_reference.startswith("https://www.asx.com.au/")
+                    and not is_asx_authority_url(entry.evidence_reference)
                 )
                 or (
                     entry.evidence_kind == "broker_record"
@@ -350,12 +373,32 @@ class CorporateAction:
     def __post_init__(self) -> None:
         if (
             not self.symbol.endswith(".AX")
-            or not self.evidence_reference.startswith("https://www.asx.com.au/")
+            or not is_asx_authority_url(self.evidence_reference)
             or not isinstance(self.dividend, Decimal)
             or not self.dividend.is_finite()
             or self.dividend < 0
         ):
             raise ValueError("invalid ASX corporate action")
+
+
+@dataclass(frozen=True, slots=True)
+class CapitalReturn:
+    """Cited cash capital return; no split or dividend adjustment uses it."""
+
+    symbol: str
+    ex_session: date
+    amount_per_share: Decimal
+    evidence_reference: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.symbol.endswith(".AX")
+            or not is_asx_authority_url(self.evidence_reference)
+            or not isinstance(self.amount_per_share, Decimal)
+            or not self.amount_per_share.is_finite()
+            or self.amount_per_share <= 0
+        ):
+            raise ValueError("invalid ASX capital return")
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,17 +411,26 @@ class ActionLedger:
     source: str
     fixture: bool
     events: tuple[CorporateAction, ...]
+    capital_returns: tuple[CapitalReturn, ...] = ()
 
     def __post_init__(self) -> None:
         keys = tuple((e.symbol, e.ex_session) for e in self.events)
         if (
-            self.schema != "asx-corporate-actions-v1"
+            self.schema not in ("asx-corporate-actions-v1", "asx-corporate-actions-v2")
             or self.version < 1
             or self.coverage_start > self.coverage_end
-            or not self.source.startswith("https://www.asx.com.au/")
+            or not is_asx_authority_url(self.source)
             or keys != tuple(sorted(set(keys)))
             or any(
                 not self.coverage_start <= e.ex_session <= self.coverage_end for e in self.events
+            )
+            or (self.schema == "asx-corporate-actions-v1" and self.capital_returns)
+            or (self.schema == "asx-corporate-actions-v2" and self.version < 2)
+            or tuple((e.symbol, e.ex_session) for e in self.capital_returns)
+            != tuple(sorted({(e.symbol, e.ex_session) for e in self.capital_returns}))
+            or any(
+                not self.coverage_start <= e.ex_session <= self.coverage_end
+                for e in self.capital_returns
             )
         ):
             raise ValueError("invalid ASX corporate-action authority")
@@ -397,7 +449,7 @@ class ActionLedger:
 
 def load_actions(path: Path) -> ActionLedger:
     obj = _read(path)
-    if set(obj) != {
+    fields = {
         "schema",
         "version",
         "published_on",
@@ -406,8 +458,11 @@ def load_actions(path: Path) -> ActionLedger:
         "source",
         "fixture",
         "events",
-    }:
+    }
+    if set(obj) not in (fields, fields | {"capital_returns"}):
         raise ValueError("invalid corporate-action authority fields")
+    if (obj["schema"] == "asx-corporate-actions-v2") != ("capital_returns" in obj):
+        raise ValueError("capital-return field requires v2 authority")
     events = []
     for value in _list(obj["events"]):
         item = _object(value)
@@ -425,6 +480,19 @@ def load_actions(path: Path) -> ActionLedger:
                 _text(item["evidence_reference"]),
             )
         )
+    capital_returns = []
+    for value in _list(obj.get("capital_returns", [])):
+        item = _object(value)
+        if set(item) != {"symbol", "ex_session", "amount_per_share", "evidence_reference"}:
+            raise ValueError("invalid capital-return fields")
+        capital_returns.append(
+            CapitalReturn(
+                _text(item["symbol"]),
+                date.fromisoformat(_text(item["ex_session"])),
+                _decimal(item["amount_per_share"]),
+                _text(item["evidence_reference"]),
+            )
+        )
     return ActionLedger(
         _text(obj["schema"]),
         _integer(obj["version"]),
@@ -434,6 +502,7 @@ def load_actions(path: Path) -> ActionLedger:
         _text(obj["source"]),
         _boolean(obj["fixture"]),
         tuple(events),
+        tuple(capital_returns),
     )
 
 
@@ -1058,8 +1127,30 @@ class HistoryStore:
             rows = conn.execute("SELECT payload FROM audit ORDER BY id").fetchall()
         return b"\n".join(row[0].encode() for row in rows)
 
+    def shadow_revision_pending(self, symbols: Sequence[str]) -> tuple[str, ...]:
+        """A material revision remains blocked until a future explicit DS review path."""
+        scope = set(symbols)
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM audit ORDER BY id").fetchall()
+        return tuple(
+            sorted(
+                {
+                    event["symbol"]
+                    for (payload,) in rows
+                    if (event := json.loads(payload)).get("kind") == "shadow_bar_revision"
+                    and event.get("review_required") is True
+                    and event.get("symbol") in scope
+                }
+            )
+        )
+
     def ingest(
-        self, bars: Sequence[OperationalBar], calendar: CalendarLedger, *, received_at: datetime
+        self,
+        bars: Sequence[OperationalBar],
+        calendar: CalendarLedger,
+        *,
+        received_at: datetime,
+        shadow_freeze_final: bool = False,
     ) -> tuple[BarRecord, ...]:
         if received_at.tzinfo is None or received_at.utcoffset() is None:
             raise ValueError("receipt timestamp must be timezone-aware")
@@ -1097,8 +1188,21 @@ class HistoryStore:
                     (bar.symbol, bar.session.isoformat()),
                 ).fetchall()
                 versions = tuple(self._decode(row) for row in rows)
+                frozen = (
+                    next(
+                        (record for record in versions if record.accepted and record.bar.finalised),
+                        None,
+                    )
+                    if shadow_freeze_final
+                    else None
+                )
+                if frozen and replace(bar, retrieved_at=frozen.bar.retrieved_at) == frozen.bar:
+                    result.append(frozen)
+                    continue
                 version = len(versions) + 1
-                accepted = not versions or received_at <= calendar.next_open(bar.session)
+                accepted = frozen is None and (
+                    not versions or received_at <= calendar.next_open(bar.session)
+                )
                 payload = _bar_payload(bar).decode()
                 previous_hash = versions[-1].content_hash if versions else ""
                 identity = {
@@ -1126,7 +1230,41 @@ class HistoryStore:
                         OPERATIONAL,
                     ),
                 )
-                if not accepted:
+                if frozen is not None:
+                    old, new = frozen.bar.raw, bar.raw
+                    ohlc_changed = (old.open, old.high, old.low, old.close) != (
+                        new.open,
+                        new.high,
+                        new.low,
+                        new.close,
+                    )
+                    volume_change_percent = (
+                        abs(Decimal(new.volume - old.volume)) * 100 / Decimal(old.volume)
+                        if old.volume > 0
+                        else None
+                    )
+                    conn.execute(
+                        "INSERT INTO audit(payload) VALUES(?)",
+                        (
+                            canonical_payload(
+                                {
+                                    "kind": "shadow_bar_revision",
+                                    "symbol": bar.symbol,
+                                    "session": bar.session,
+                                    "first_final_hash": frozen.content_hash,
+                                    "observed_hash": content_hash,
+                                    "old_raw": old,
+                                    "new_raw": new,
+                                    "ohlc_changed": ohlc_changed,
+                                    "volume_change_percent": volume_change_percent,
+                                    "review_required": ohlc_changed
+                                    or volume_change_percent is None
+                                    or volume_change_percent > Decimal("0.1"),
+                                }
+                            ).decode(),
+                        ),
+                    )
+                if not accepted and frozen is None:
                     conn.execute(
                         "INSERT INTO audit(payload) VALUES(?)",
                         (
@@ -1357,6 +1495,7 @@ def ingest_session(
     cross_check: YahooCrossCheck | None = None,
     *,
     received_at: datetime,
+    shadow_freeze_final: bool = False,
 ) -> IngestResult:
     deadline = datetime.combine(session, datetime.min.time().replace(hour=20), SYDNEY)
     status = "failure"
@@ -1379,7 +1518,9 @@ def ingest_session(
             for b in bars
         ):
             raise ValueError("unexpected, duplicate, wrong-session, or non-IBKR source bar")
-        store.ingest(bars, calendar, received_at=received_at)
+        store.ingest(
+            bars, calendar, received_at=received_at, shadow_freeze_final=shadow_freeze_final
+        )
         received = {b.symbol: b for b in bars}
         missing = tuple(sorted(set(symbols) - set(received)))
         unfinished = tuple(sorted(b.symbol for b in bars if not b.finalised))

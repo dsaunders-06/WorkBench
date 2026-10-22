@@ -231,7 +231,9 @@ class Phase3ShadowRunner:
                 )
             )
             if changed:
-                await asyncio.to_thread(store.ingest, changed, calendar, received_at=receipt)
+                await asyncio.to_thread(
+                    store.ingest, changed, calendar, received_at=receipt, shadow_freeze_final=True
+                )
         adapter = OperationalAdapter(store, calendar, membership, halts, actions)
         attempt = await asyncio.to_thread(
             adapter.attempt_primary,
@@ -239,7 +241,16 @@ class Phase3ShadowRunner:
             symbols,
             _ReadySource(bars),
             received_at=receipt,
+            shadow_freeze_final=True,
         )
+        pending = store.shadow_revision_pending(symbols)
+        if pending:
+            shadow.append(
+                "abstention",
+                session,
+                {"reason": "bar_revision_pending_ds_review", "symbols": pending},
+            )
+            return True
         if attempt.abstained:
             shadow.append("abstention", session, {"reasons": attempt.reasons})
             return False

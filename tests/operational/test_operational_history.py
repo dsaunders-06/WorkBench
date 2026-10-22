@@ -96,6 +96,102 @@ def test_append_correction_deadline_and_restart(tmp_path):
             conn.execute("UPDATE bars SET version=99")
 
 
+def test_shadow_freezes_first_final_bar_and_records_every_revision(tmp_path):
+    store, cal, _ = make_store(tmp_path)
+    original = bar()
+    store.ingest((original,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    revised_volume = replace(
+        original,
+        raw=replace(original.raw, volume=original.raw.volume + 1),
+        analytical=replace(original.analytical, volume=original.raw.volume + 1),
+    )
+    store.ingest(
+        (revised_volume,), cal, received_at=original.retrieved_at, shadow_freeze_final=True
+    )
+    assert store.decision_bars("BHP.AX", original.session)[-1].bar.raw == original.raw
+    assert store.shadow_revision_pending(("BHP.AX",)) == ()
+    severe = replace(
+        original,
+        raw=replace(original.raw, close=original.raw.close + Decimal("0.01")),
+        analytical=replace(original.analytical, close=original.analytical.close + Decimal("0.01")),
+    )
+    store.ingest((severe,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    assert store.shadow_revision_pending(("BHP.AX",)) == ("BHP.AX",)
+    revisions = [json.loads(line) for line in store.audit_bytes().splitlines()]
+    assert [event["kind"] for event in revisions] == ["shadow_bar_revision", "shadow_bar_revision"]
+    assert revisions[0]["review_required"] is False
+    assert revisions[1]["review_required"] is True
+    assert [r.accepted for r in store.versions("BHP.AX", original.session)] == [True, False, False]
+
+
+def test_shadow_volume_revision_over_point_one_percent_requires_review(tmp_path):
+    store, cal, _ = make_store(tmp_path)
+    original = bar()
+    store.ingest((original,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    increased = original.raw.volume + max(2, original.raw.volume // 100)
+    revised = replace(
+        original,
+        raw=replace(original.raw, volume=increased),
+        analytical=replace(original.analytical, volume=increased),
+    )
+    store.ingest((revised,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    assert store.shadow_revision_pending(("BHP.AX",)) == ("BHP.AX",)
+
+
+def test_shadow_volume_revision_at_point_one_percent_is_logged_without_abstention(tmp_path):
+    store, cal, _ = make_store(tmp_path)
+    original = bar()
+    store.ingest((original,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    increased = original.raw.volume + original.raw.volume // 1000
+    revised = replace(
+        original,
+        raw=replace(original.raw, volume=increased),
+        analytical=replace(original.analytical, volume=increased),
+    )
+    store.ingest((revised,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    assert store.shadow_revision_pending(("BHP.AX",)) == ()
+    assert json.loads(store.audit_bytes().splitlines()[-1])["volume_change_percent"] == "0.1"
+
+
+def test_asx_official_announcement_hosts_and_spoofs(tmp_path):
+    h = api()
+    for source in (
+        "https://www.asx.com.au/markets/",
+        "https://asxonline.com/public/notices/2025/february/0128.25.02.html",
+        "https://www.asxonline.com/public/notices/2025/february/0128.25.02.html",
+        "https://announcements.asx.com.au/asxpdf/20260302/pdf/example.pdf",
+    ):
+        assert h.is_asx_authority_url(source)
+    for source in (
+        "http://www.asx.com.au/notices",
+        "https://www.asx.com.au.evil.test/notices",
+        "https://www.asx.com.au@evil.test/notices",
+        "https://company-announcements.afr.com/asx/mfg/notice.pdf",
+    ):
+        assert not h.is_asx_authority_url(source)
+
+
+def test_capital_return_authority_is_cited_but_never_adjusts_split_factor(tmp_path):
+    h = api()
+    payload = json.loads(ACTION_FIXTURE.read_text())
+    payload["schema"] = "asx-corporate-actions-v2"
+    payload["version"] = 2
+    payload["capital_returns"] = [
+        {
+            "symbol": "SUN.AX",
+            "ex_session": "2025-02-17",
+            "amount_per_share": "3.00",
+            "evidence_reference": "https://asxonline.com/public/notices/2025/february/0128.25.02.html",
+        }
+    ]
+    path = tmp_path / "actions-v2.json"
+    path.write_text(json.dumps(payload))
+    actions = h.load_actions(path)
+    assert actions.capital_returns[0].amount_per_share == Decimal("3.00")
+    assert actions.split_events("SUN.AX", date(2025, 2, 18)) == ()
+    assert actions.events == ()
+
+
 def test_complete_history_and_managed_departed_symbol(tmp_path):
     store, cal, members = make_store(tmp_path)
     populate(store, cal)
