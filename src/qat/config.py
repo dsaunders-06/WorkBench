@@ -6,6 +6,7 @@ Default trading_mode is always "paper" - this is a hard safety default
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -43,6 +44,46 @@ class Settings(BaseSettings):
 
     # --- Trading mode --------------------------------------------------
     trading_mode: Literal["paper", "live"] = "paper"
+
+    # Synthetic prices, history, fundamentals and macro require an explicit
+    # isolated demo session. The normal application startup does not infer
+    # permission to fabricate data from the absence of credentials.
+    demo_mode: bool = False
+
+    # The Phase 3 path is shadow-only and disabled until the operator supplies
+    # a separate outside-Git operational root and real dated ASX authorities.
+    phase3_shadow_enabled: bool = False
+    phase3_operational_root: str = ""
+    phase3_authorities_dir: str = ""
+    phase3_liquidity_max_participation: Decimal | None = None
+    phase3_liquidity_entry_impact_bps: Decimal | None = None
+    phase3_liquidity_stop_exit_impact_bps: Decimal | None = None
+
+    @model_validator(mode="after")
+    def _demo_cannot_reach_real_orders(self) -> Settings:
+        if self.demo_mode and (self.broker != "mock" or self.trading_mode != "paper"):
+            raise ValueError("demo mode requires mock broker and paper mode")
+        if self.phase3_shadow_enabled and (
+            self.demo_mode
+            or self.broker != "ibkr"
+            or self.trading_mode != "paper"
+            or self.execution_mode != "recommend"
+            or not self.phase3_operational_root
+            or not self.phase3_authorities_dir
+        ):
+            raise ValueError(
+                "Phase 3 shadow requires IBKR paper recommend mode and authority paths"
+            )
+        liquidity = (
+            self.phase3_liquidity_max_participation,
+            self.phase3_liquidity_entry_impact_bps,
+            self.phase3_liquidity_stop_exit_impact_bps,
+        )
+        if any(value is not None for value in liquidity) and not all(
+            value is not None for value in liquidity
+        ):
+            raise ValueError("Phase 3 liquidity values must be configured together")
+        return self
 
     # Human approvals and safety resets must identify the person who acted.
     # Blank permits read-only startup, but the action paths refuse it.
@@ -921,6 +962,10 @@ class Settings(BaseSettings):
     @property
     def is_live(self) -> bool:
         return self.trading_mode == "live"
+
+    @property
+    def synthetic_demo_allowed(self) -> bool:
+        return self.demo_mode and self.broker == "mock" and self.trading_mode == "paper"
 
     @property
     def autonomous_strategies_tuple(self) -> tuple[str, ...]:

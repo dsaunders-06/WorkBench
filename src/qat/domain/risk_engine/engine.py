@@ -231,7 +231,8 @@ class RiskEngine:
             raw_shares = risk_budget / stop_distance
             inputs["resized_for_stop_budget"] = True
 
-        scaled_shares = raw_shares * self.regime_scalar * self._earnings_scalar(candidate, inputs)
+        earnings_scalar = self._earnings_scalar(candidate, inputs)
+        scaled_shares = raw_shares * self.regime_scalar
 
         # No-leverage rule (spec M12): a buy can never cost more than the cash
         # actually available, less a reserve that can never be zero. Applies to
@@ -318,10 +319,11 @@ class RiskEngine:
         if not portfolio_result.approved:
             return self._reject(candidate.symbol, portfolio_result.reason, inputs)
 
-        # Cost rail (M27). Last, because it needs the FINAL share count - the
-        # cash cap and the governor both shrink orders, and a trade that was
-        # worth its fees at full size may not be after being trimmed to a
-        # third of it.
+        # The earnings date is a reduce-only overlay. All gates first decide
+        # on the unscaled proposal; otherwise a rejected portfolio exposure
+        # could become an approved buy merely because earnings is near.
+        # Recheck costs after the reduction too: a smaller approved trade may
+        # no longer carry its fees.
         #
         # Measured against risk rather than notional. Every order has a stop so
         # 1R is always known, where a profit target is optional strategy
@@ -329,28 +331,30 @@ class RiskEngine:
         # 1.2% of a $1,000 risk and 4% of a $300 one, and it is the small trade
         # that needs refusing. Entries only: refusing to exit because it costs
         # money is the same error as refusing to de-risk.
+        final_shares = scaled_shares * earnings_scalar
         if candidate.side == "buy" and self._costs_apply():
-            risk_dollars = scaled_shares * stop_distance
-            round_trip = self.cost_model.round_trip(scaled_shares * candidate.price)
-            inputs["round_trip_cost"] = round_trip
-            inputs["cost_to_risk_pct"] = (
-                round_trip / risk_dollars if risk_dollars > 0 else float("inf")
-            )
-            limit = self.settings.max_cost_to_risk_pct
-            if risk_dollars <= 0 or round_trip > limit * risk_dollars:
-                return self._reject(
-                    candidate.symbol,
-                    f"Round-trip cost ${round_trip:,.2f} is "
-                    f"{inputs['cost_to_risk_pct']:.1%} of the ${risk_dollars:,.2f} at risk, "
-                    f"above the {limit:.1%} limit - the trade is too small to carry its fees",
-                    inputs,
+            for shares in (scaled_shares, final_shares):
+                risk_dollars = shares * stop_distance
+                round_trip = self.cost_model.round_trip(shares * candidate.price)
+                inputs["round_trip_cost"] = round_trip
+                inputs["cost_to_risk_pct"] = (
+                    round_trip / risk_dollars if risk_dollars > 0 else float("inf")
                 )
+                limit = self.settings.max_cost_to_risk_pct
+                if risk_dollars <= 0 or round_trip > limit * risk_dollars:
+                    return self._reject(
+                        candidate.symbol,
+                        f"Round-trip cost ${round_trip:,.2f} is "
+                        f"{inputs['cost_to_risk_pct']:.1%} of the ${risk_dollars:,.2f} at risk, "
+                        f"above the {limit:.1%} limit - the trade is too small to carry its fees",
+                        inputs,
+                    )
 
         decision = RiskDecision(
             ts=self._now(),
             symbol=candidate.symbol,
             approved=True,
-            final_shares=scaled_shares,
+            final_shares=final_shares,
             reason="approved",
             inputs=inputs,
             stop_price=effective_stop,

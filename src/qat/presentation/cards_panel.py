@@ -35,11 +35,13 @@ class RecommendationCardsPanel(QWidget):
         *,
         now: Callable[[], datetime] | None = None,
         operator_name: Callable[[], str] | None = None,
+        read_only: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
         self.now = now or (lambda: datetime.now().astimezone())
         self.operator_name = operator_name or (lambda: "")
+        self.read_only = read_only
         self._cards: tuple[RecommendationCard, ...] = ()
         self.approve_buttons: dict[str, QPushButton] = {}
         self.decline_buttons: dict[str, QPushButton] = {}
@@ -116,6 +118,9 @@ class RecommendationCardsPanel(QWidget):
                 label = QLabel(alert_text)
                 label.setWordWrap(True)
                 content.addWidget(label)
+            if self.read_only:
+                self.card_layout.addWidget(group)
+                continue
             approve = QPushButton("Approve")
             decline = QPushButton("Decline")
             enabled = card.status == "created" and card.quantity >= 2 and self.service is not None
@@ -132,6 +137,8 @@ class RecommendationCardsPanel(QWidget):
             self.card_layout.addWidget(group)
 
     def _start_approve(self, card_id: str) -> None:
+        if self.read_only:
+            raise ValueError("shadow cards are read-only")
         asyncio.ensure_future(self._approve(card_id))
 
     @staticmethod

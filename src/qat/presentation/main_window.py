@@ -9,6 +9,7 @@ it updates live as the kill-switch trips rather than only at startup.
 
 from __future__ import annotations
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QLabel,
@@ -94,13 +95,19 @@ class MainWindow(QMainWindow):
         tabs.addTab(RiskConsoleScreen(runtime), "Risk Console")
         tabs.addTab(AiAdvisorScreen(runtime), "AI Advisor")
         tabs.addTab(BlotterScreen(runtime), "Order Blotter")
-        tabs.addTab(
-            RecommendationCardsPanel(
-                getattr(runtime, "recommendation_service", None),
-                operator_name=lambda: runtime.settings.operator_name,
-            ),
-            "Recommendation Cards",
+        shadow_runner = getattr(runtime, "shadow_runner", None)
+        cards_panel = RecommendationCardsPanel(
+            None if shadow_runner is not None else getattr(runtime, "recommendation_service", None),
+            operator_name=lambda: runtime.settings.operator_name,
+            read_only=shadow_runner is not None,
         )
+        if shadow_runner is not None:
+            cards_panel.set_cards(shadow_runner.cards)
+            self._shadow_refresh = QTimer(self)
+            self._shadow_refresh.setInterval(30_000)
+            self._shadow_refresh.timeout.connect(lambda: cards_panel.set_cards(shadow_runner.cards))
+            self._shadow_refresh.start()
+        tabs.addTab(cards_panel, "Recommendation Cards")
         tabs.addTab(ScreenerScreen(runtime), "Screener")
         tabs.addTab(PerformanceScreen(runtime), "Performance")
         self.settings_screen = SettingsScreen(runtime)

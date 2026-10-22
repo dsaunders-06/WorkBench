@@ -17,6 +17,7 @@ from qat.config import Settings
 from qat.domain.bus import EventBus
 from qat.domain.risk_engine.engine import OrderCandidate, RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
+from qat.domain.risk_engine.portfolio_risk import PortfolioCheckResult
 
 
 def _engine(**kwargs: object) -> RiskEngine:
@@ -132,3 +133,31 @@ def test_the_decision_records_why_it_was_halved() -> None:
 
     assert decision.inputs.get("days_to_earnings") == 2
     assert decision.inputs.get("earnings_event_scalar") == 0.5
+
+
+def test_earnings_cannot_rescue_an_unscaled_portfolio_rejection() -> None:
+    class ExposureGate:
+        def check(self, **values: object) -> PortfolioCheckResult:
+            exposure = float(values["candidate_dollar_exposure"])  # type: ignore[arg-type]
+            approved = exposure <= 10_000
+            return PortfolioCheckResult(
+                approved=approved,
+                reason="expected shortfall above limit" if not approved else "approved",
+                historical_var_95=0.0,
+                historical_var_99=0.0,
+                expected_shortfall_975=0.05 if not approved else 0.025,
+                single_name_pct=exposure / 100_000,
+                sector_pct=None,
+            )
+
+    engine = _engine()
+    engine.portfolio_checker = ExposureGate()  # type: ignore[assignment]
+    clear = engine.evaluate_order(_candidate(), 100_000, {}, {}, available_cash=500_000)
+    event = engine.evaluate_order(
+        _candidate(days_to_earnings=2), 100_000, {}, {}, available_cash=500_000
+    )
+
+    assert clear.final_shares == 0
+    assert event.final_shares == 0
+    assert not event.approved
+    assert event.inputs["portfolio_check"]["es_975"] == 0.05
