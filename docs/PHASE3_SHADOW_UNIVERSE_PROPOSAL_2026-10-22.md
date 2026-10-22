@@ -4,7 +4,7 @@
 membership authority or an enabled card universe. No symbol enters operational
 shadow generation until DS approves the universe and the calendar, membership,
 halt and corporate-action files. Missing or disputed evidence makes that symbol
-abstain. The shortlist favours well-traded large caps across nine sectors, with
+abstain. The shortlist favours well-traded large caps across ten sectors, with
 SUN and MFG included specifically to exercise a consolidation and a halt.
 
 | Symbol | Sector for selection | One-line reason |
