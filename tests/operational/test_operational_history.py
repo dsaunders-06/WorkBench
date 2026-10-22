@@ -153,6 +153,21 @@ def test_shadow_volume_revision_at_point_one_percent_is_logged_without_abstentio
     assert json.loads(store.audit_bytes().splitlines()[-1])["volume_change_percent"] == "0.1"
 
 
+def test_shadow_analytical_ohlc_revision_alone_requires_review(tmp_path):
+    store, cal, _ = make_store(tmp_path)
+    original = bar()
+    store.ingest((original,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    revised = replace(
+        original,
+        analytical=replace(original.analytical, close=original.analytical.close + Decimal("0.01")),
+    )
+    store.ingest((revised,), cal, received_at=original.retrieved_at, shadow_freeze_final=True)
+    assert store.shadow_revision_pending(("BHP.AX",)) == ("BHP.AX",)
+    event = json.loads(store.audit_bytes().splitlines()[-1])
+    assert event["ohlc_changed"] is False
+    assert event["analytical_ohlc_changed"] is True
+
+
 def test_asx_official_announcement_hosts_and_spoofs(tmp_path):
     h = api()
     for source in (

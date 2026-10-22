@@ -1233,6 +1233,18 @@ class HistoryStore:
                         new.low,
                         new.close,
                     )
+                    old_analytical, new_analytical = frozen.bar.analytical, bar.analytical
+                    analytical_ohlc_changed = (
+                        old_analytical.open,
+                        old_analytical.high,
+                        old_analytical.low,
+                        old_analytical.close,
+                    ) != (
+                        new_analytical.open,
+                        new_analytical.high,
+                        new_analytical.low,
+                        new_analytical.close,
+                    )
                     volume_change_percent = (
                         abs(Decimal(new.volume - old.volume)) * 100 / Decimal(old.volume)
                         if old.volume > 0
@@ -1251,8 +1263,10 @@ class HistoryStore:
                                     "old_raw": old,
                                     "new_raw": new,
                                     "ohlc_changed": ohlc_changed,
+                                    "analytical_ohlc_changed": analytical_ohlc_changed,
                                     "volume_change_percent": volume_change_percent,
                                     "review_required": ohlc_changed
+                                    or analytical_ohlc_changed
                                     or volume_change_percent is None
                                     or volume_change_percent > Decimal("0.1"),
                                 }
