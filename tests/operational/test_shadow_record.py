@@ -13,9 +13,19 @@ import pytest
 
 from qat.config import Settings
 from qat.operational import history as h
-from qat.operational.shadow import Phase3ShadowRunner, ShadowRecord
+from qat.operational.adapter import AdapterResult
+from qat.operational.shadow import Phase3ShadowRunner, ShadowRecord, _abstain_revised_symbols
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_material_revision_abstains_only_affected_symbol():
+    result = AdapterResult((SimpleNamespace(symbol="BHP.AX"), SimpleNamespace(symbol="CBA.AX")), ())
+    filtered = _abstain_revised_symbols(result, ("BHP.AX",), date(2026, 10, 22), "snapshot")
+    assert [card.symbol for card in filtered.candidates] == ["CBA.AX"]
+    assert [(item.symbol, item.reasons) for item in filtered.abstentions] == [
+        ("BHP.AX", ("bar_revision_pending_ds_review",))
+    ]
 
 
 def test_cards_and_abstentions_append_and_verify_after_restart(tmp_path):
