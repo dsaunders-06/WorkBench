@@ -300,6 +300,29 @@ def test_session_outside_calendar_and_missing_next_open_abstain(tmp_path):
     assert result.abstentions[0].reasons == ("calendar_session_or_next_open_missing",)
 
 
+def test_capital_return_on_non_session_abstains_before_card(tmp_path):
+    _, _, store, cal, members, params = prepared(tmp_path, managed=False)
+    h = __import__("qat.operational.history", fromlist=["history"])
+    actions = replace(
+        h.load_actions(ACTION_FIXTURE),
+        schema="asx-corporate-actions-v2",
+        version=2,
+        fixture=False,
+        capital_returns=(
+            h.CapitalReturn(
+                "BHP.AX",
+                date(2026, 1, 4),
+                Decimal("1.00"),
+                "https://www.asx.com.au/fixture/capital-return",
+            ),
+        ),
+    )
+    adapter = api().OperationalAdapter(store, cal, members, h.load_halts(HALT_FIXTURE), actions)
+    snapshot = adapter.freeze(SESSION, params)
+    assert "corporate_action_session_invalid" in snapshot.reasons
+    assert not adapter.run(snapshot, now=NOW).candidates
+
+
 def test_engine_failure_is_a_recorded_deterministic_abstention(tmp_path, monkeypatch):
     a, snapshot, *_ = prepared(tmp_path, qualified=True, managed=False)
 

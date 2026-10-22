@@ -209,7 +209,7 @@ class OperationalAdapter:
             reasons.append("calendar_session_or_next_open_missing")
         if any(
             e.ex_session not in {s.session for s in self._calendar.sessions}
-            for e in self._actions.events
+            for e in (*self._actions.events, *self._actions.capital_returns)
         ):
             reasons.append("corporate_action_session_invalid")
         try:
