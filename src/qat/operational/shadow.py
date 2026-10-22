@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -19,7 +19,12 @@ from qat.domain.market_calendar import is_trading_day
 from qat.domain.oms.oms import OMS
 from qat.domain.strategies.authoritative_swing.evidence import canonical_payload
 from qat.domain.strategies.authoritative_swing.sizing import LiquidityProfile, exact_cost_profile
-from qat.operational.adapter import EvaluationParameters, OperationalAdapter
+from qat.operational.adapter import (
+    Abstention,
+    AdapterResult,
+    EvaluationParameters,
+    OperationalAdapter,
+)
 from qat.operational.cards import CardEventStore, CardService, RecommendationCard
 from qat.operational.history import (
     OPERATIONAL,
@@ -40,6 +45,22 @@ from qat.operational.ibkr_history import IBKRHistoricalBarSource, IBKRRawBarProb
 
 logger = logging.getLogger(__name__)
 PROBE_SYMBOLS = ("SUN.AX", "MFG.AX", "BHP.AX", "CBA.AX", "WGX.AX")
+
+
+def _abstain_revised_symbols(
+    result: AdapterResult, pending: tuple[str, ...], session: date, snapshot_hash: str
+) -> AdapterResult:
+    blocked = set(pending)
+    return replace(
+        result,
+        candidates=tuple(card for card in result.candidates if card.symbol not in blocked),
+        abstentions=result.abstentions
+        + tuple(
+            Abstention(symbol, session, snapshot_hash, ("bar_revision_pending_ds_review",))
+            for symbol in pending
+            if not any(existing.symbol == symbol for existing in result.abstentions)
+        ),
+    )
 
 
 class ShadowRecord:
@@ -231,7 +252,9 @@ class Phase3ShadowRunner:
                 )
             )
             if changed:
-                await asyncio.to_thread(store.ingest, changed, calendar, received_at=receipt)
+                await asyncio.to_thread(
+                    store.ingest, changed, calendar, received_at=receipt, shadow_freeze_final=True
+                )
         adapter = OperationalAdapter(store, calendar, membership, halts, actions)
         attempt = await asyncio.to_thread(
             adapter.attempt_primary,
@@ -239,7 +262,17 @@ class Phase3ShadowRunner:
             symbols,
             _ReadySource(bars),
             received_at=receipt,
+            shadow_freeze_final=True,
         )
+        pending = store.shadow_revision_pending(symbols)
+        if pending:
+            shadow.append(
+                "abstention",
+                session,
+                {"reason": "bar_revision_pending_ds_review", "symbols": pending},
+            )
+            if len(pending) == len(symbols):
+                return True
         if attempt.abstained:
             shadow.append("abstention", session, {"reasons": attempt.reasons})
             return False
@@ -260,6 +293,7 @@ class Phase3ShadowRunner:
         )
         snapshot = await asyncio.to_thread(adapter.freeze, session, parameters)
         result = await asyncio.to_thread(adapter.run, snapshot, now=self.now())
+        result = _abstain_revised_symbols(result, pending, session, snapshot.content_hash)
         self.abstentions = result.abstentions
         for abstention in result.abstentions:
             shadow.append("abstention", session, abstention)
