@@ -17,7 +17,6 @@ from decimal import ROUND_HALF_EVEN, Decimal
 from fractions import Fraction
 from pathlib import Path
 from typing import Protocol
-from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from qat.data.broker.ticks import tick_size
@@ -42,18 +41,14 @@ ASX_AUTHORITY_HOSTS = frozenset(
 
 
 def is_asx_authority_url(value: str) -> bool:
-    try:
-        parsed = urlsplit(value)
-        return (
-            parsed.scheme == "https"
-            and parsed.hostname in ASX_AUTHORITY_HOSTS
-            and parsed.username is None
-            and parsed.password is None
-            and parsed.port in (None, 443)
-            and parsed.path.startswith("/")
-        )
-    except ValueError:
-        return False
+    # An exact host followed by '/' excludes userinfo, ports, and lookalike
+    # suffixes without importing the network-oriented urllib package into the
+    # isolated operational adapter's dependency graph.
+    return (
+        isinstance(value, str)
+        and not any(ord(char) <= 32 or char == "\\" for char in value)
+        and any(value.startswith(f"https://{host}/") for host in ASX_AUTHORITY_HOSTS)
+    )
 
 
 def digest(value: object) -> str:
