@@ -17,13 +17,22 @@ entry. A missing or unfinished bar blocks only its symbol; session-wide calendar
 time and unresolved IBKR-source failures block the whole session. Abstentions
 and missing data produce no executable card.
 
+DS's 23 October 2026 amendment to the step-4 entry ruling specifies a pre-open
+`BUY LMT GTD` at the approved card limit, with an IBKR-enforced expiry shortly
+after the stock's opening auction (default 10:15:00 Australia/Sydney). The
+entry must never fall back to a `DAY` or `GTC` limit. `OPG` is unavailable for
+ASX stocks in the observed contract details; the 19 October IBCS reply says
+paper mirrors live for this order-type restriction. The one-off paper GTD
+probe precedes any production implementation. See the
+[Phase 3 decision log](PHASE3_DECISION_LOG.md).
+
 The engine cannot import the UI, OMS, broker, scheduler or network. The new
 adapter translates operational snapshots into pure engine inputs; the separate
 hand-off layer recalculates current quantity and risk under the Phase 1
 safeguards. In the current build, the existing per-order `OMS.sign_off` path is
 the only transmission path and requires explicit DS confirmation in
 `recommend` mode; opening-auction
-transmission remains disabled, so approval records an advisory decision and
+transmission remains disabled in the current build, so approval records an advisory decision and
 exact manual-entry details, not a broker order. An accepted correction to card
 inputs appends a revocation and requires a fresh card and approval before the
 next open. Changed quantity or risk at approval requires DS to reconfirm both
