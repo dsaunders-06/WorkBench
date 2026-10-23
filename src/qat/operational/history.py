@@ -253,8 +253,11 @@ class Membership:
     def content_hash(self) -> str:
         return digest(self)
 
-    def is_current(self, symbol: str, session: date) -> bool:
-        if self.valid_through is not None and session > self.valid_through:
+    def is_current(
+        self, symbol: str, session: date, *, attested_through: date | None = None
+    ) -> bool:
+        through = max(self.valid_through or date.min, attested_through or date.min)
+        if self.valid_through is not None and session > through:
             return False
         if self.schema == "asx200-membership-v2":
             return any(
@@ -263,7 +266,9 @@ class Membership:
                 and (entry.effective_to is None or session <= entry.effective_to)
                 for entry in self.entries
             )
-        return symbol in self.symbols and self.effective_from <= session <= self.effective_to
+        return symbol in self.symbols and self.effective_from <= session <= max(
+            self.effective_to, attested_through or date.min
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1669,15 +1674,18 @@ def assess_history(
     records: tuple[BarRecord, ...],
     events: Sequence[Mapping[str, object]],
     actions: ActionLedger | None = None,
+    *,
+    attested_through: date | None = None,
 ) -> QualityResult:
     """Pure quality assessment, shared by the live store and frozen read view."""
     reasons: set[str] = set()
     start = _three_year_start(session)
-    current = membership.is_current(symbol, session)
+    current = membership.is_current(symbol, session, attested_through=attested_through)
     managed = symbol in membership.managed_symbols
     if not current and not managed:
         reasons.add("not_member_or_managed")
-    if not membership.effective_from <= session <= membership.effective_to:
+    effective_to = max(membership.effective_to, attested_through or date.min)
+    if not membership.effective_from <= session <= effective_to:
         reasons.add("membership_stale")
     if calendar.coverage_start > start or calendar.coverage_end < session:
         reasons.add("calendar_coverage")

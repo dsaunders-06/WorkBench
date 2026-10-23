@@ -101,6 +101,11 @@ def test_approved_hashes_load_exact_ten_symbol_real_authorities(tmp_path):
         payload = json.loads((fixtures / name).read_text())
         payload["fixture"] = False
         payload["valid_through"] = session.isoformat()
+        if name == "calendar.json":
+            payload["coverage_end"] = "2026-01-08"
+            payload["sessions"].append(
+                {"session": "2026-01-08", "open": "2026-01-08T10:00:00+11:00"}
+            )
         (root / name).write_text(json.dumps(payload))
     membership = {
         "schema": "asx200-membership-v2",
@@ -142,6 +147,28 @@ def test_approved_hashes_load_exact_ten_symbol_real_authorities(tmp_path):
     assert all(not item.fixture and item.valid_through == session for item in loaded)
     with pytest.raises(ValueError, match="valid through"):
         module.validate_approved_authorities(root, hashes, date(2026, 1, 7))
+
+    from qat.operational.authority_attestations import AuthorityAttestations
+    from qat.operational.history import load_calendar
+
+    operational = tmp_path / "OPERATIONAL"
+    operational.mkdir()
+    audit = tmp_path / "daily-audit.json"
+    audit.write_text("completed ASX daily audit", encoding="utf-8")
+    ledger = AuthorityAttestations(operational / "authority_attestations.jsonl")
+    ledger.append(
+        date(2026, 1, 7),
+        hashes,
+        audit,
+        operator="DS",
+        recorded_at=datetime.fromisoformat("2026-01-07T16:30:00+11:00"),
+        calendar=load_calendar(root / "calendar.json"),
+        base_valid_through=session,
+    )
+    advanced = module.validate_approved_authorities(
+        root, hashes, date(2026, 1, 7), operational_root=operational
+    )
+    assert all(item.valid_through == session for item in advanced)
 
 
 def test_account_equity_comes_from_one_checked_readonly_summary_request():

@@ -28,9 +28,17 @@ from qat.domain.strategies.authoritative_swing.sizing import (  # noqa: E402
     exact_cost_profile,
 )
 from qat.operational.adapter import EvaluationParameters, OperationalAdapter  # noqa: E402
+from qat.operational.authority_attestations import (  # noqa: E402
+    AuthorityAttestations,
+    base_validity,
+)
 from qat.operational.history import (  # noqa: E402
     SYDNEY,
+    ActionLedger,
+    CalendarLedger,
+    HaltLedger,
     HistoryStore,
+    Membership,
     OperationalBar,
     load_actions,
     load_calendar,
@@ -76,7 +84,11 @@ def validate_window(
 
 
 def validate_approved_authorities(
-    root: Path, expected_hashes: dict[str, str], session: date
+    root: Path,
+    expected_hashes: dict[str, str],
+    session: date,
+    *,
+    operational_root: Path | None = None,
 ) -> tuple[Any, Any, Any, Any]:
     """Refuse any file outside the exact DS-approved four-file set."""
     if any((parent / ".git").exists() for parent in (root, *root.parents)):
@@ -106,19 +118,34 @@ def validate_approved_authorities(
     for name in AUTHORITY_FILES:
         if hashlib.sha256((root / name).read_bytes()).hexdigest() != expected_hashes[name]:
             raise ValueError(f"{name}: authority changed while loading")
-    for name, authority in zip(
-        AUTHORITY_FILES, (calendar, membership, halts, actions), strict=True
-    ):
+    authorities = (calendar, membership, halts, actions)
+    if any(item.valid_through is None for item in authorities):
+        raise ValueError("real authority has no valid-through date")
+    base = base_validity(
+        calendar.valid_through,
+        membership.valid_through,
+        halts.valid_through,
+        actions.valid_through,
+    )
+    attested = ""
+    if session > base and operational_root is not None:
+        attested = AuthorityAttestations(
+            operational_root / "authority_attestations.jsonl"
+        ).require_current(session, expected_hashes, calendar, base)
+    named_authorities: tuple[
+        tuple[str, CalendarLedger | Membership | HaltLedger | ActionLedger], ...
+    ] = tuple(zip(AUTHORITY_FILES, authorities, strict=True))
+    for name, authority in named_authorities:
         if (
             authority.fixture
             or authority.valid_through is None
-            or authority.valid_through < session
+            or (authority.valid_through < session and not attested)
         ):
             raise ValueError(f"{name}: real authority must be valid through the session")
     calendar.next_open(session)
     if set(membership.symbols) != set(SHADOW_SYMBOLS) or membership.managed_symbols:
         raise ValueError("approved membership must be exactly the ten-name shadow universe")
-    if not membership.effective_from <= session <= membership.effective_to:
+    if membership.effective_from > session or (membership.effective_to < session and not attested):
         raise ValueError("approved membership does not cover the session")
     return calendar, membership, halts, actions
 
@@ -253,8 +280,31 @@ async def run_approved_once(
 ) -> bool:
     """Read IBKR history, evaluate Phase 2 candidates, and append only shadow evidence."""
     clock = now or (lambda: datetime.now(SYDNEY))
-    calendar, membership, halts, actions = validate_approved_authorities(
-        authorities, expected_hashes, session
+    operational_root = getattr(settings, "phase3_operational_root", None)
+    if operational_root is None:
+        calendar, membership, halts, actions = validate_approved_authorities(
+            authorities, expected_hashes, session
+        )
+    else:
+        calendar, membership, halts, actions = validate_approved_authorities(
+            authorities, expected_hashes, session, operational_root=Path(operational_root)
+        )
+    base = (
+        base_validity(
+            calendar.valid_through,
+            membership.valid_through,
+            halts.valid_through,
+            actions.valid_through,
+        )
+        if operational_root is not None
+        else session
+    )
+    attestation_hash = (
+        AuthorityAttestations(
+            Path(operational_root) / "authority_attestations.jsonl"
+        ).require_current(session, expected_hashes, calendar, base)
+        if session > base and operational_root is not None
+        else ""
     )
     symbols = tuple(sorted(SHADOW_SYMBOLS))
     source = source_factory(
@@ -291,7 +341,18 @@ async def run_approved_once(
             await asyncio.to_thread(
                 store.ingest, changed, calendar, received_at=receipt, shadow_freeze_final=True
             )
-    adapter = OperationalAdapter(store, calendar, membership, halts, actions)
+    if attestation_hash:
+        adapter = OperationalAdapter(
+            store,
+            calendar,
+            membership,
+            halts,
+            actions,
+            attested_through=session,
+            attestation_hash=attestation_hash,
+        )
+    else:
+        adapter = OperationalAdapter(store, calendar, membership, halts, actions)
     attempt = await asyncio.to_thread(
         adapter.attempt_primary,
         session,
@@ -308,6 +369,11 @@ async def run_approved_once(
         return False
     liquidity = None
     if settings.phase3_liquidity_max_participation is not None:
+        if (
+            settings.phase3_liquidity_entry_impact_bps is None
+            or settings.phase3_liquidity_stop_exit_impact_bps is None
+        ):
+            raise ValueError("Phase 3 liquidity settings must be configured together")
         liquidity = LiquidityProfile(
             "operator-configured-v1",
             settings.phase3_liquidity_max_participation,
@@ -368,7 +434,12 @@ def main() -> int:
         raise ValueError("all four DS-approved authority hashes must be supplied")
     validate_window(args.session, now, args.authorities_dir, approved=approved)
     if approved:
-        validate_approved_authorities(args.authorities_dir, expected_hashes, args.session)
+        validate_approved_authorities(
+            args.authorities_dir,
+            expected_hashes,
+            args.session,
+            operational_root=args.operational_root,
+        )
     settings = Settings(
         market="ASX",
         broker="ibkr",

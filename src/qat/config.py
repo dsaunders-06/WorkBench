@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     phase3_shadow_enabled: bool = False
     phase3_operational_root: str = ""
     phase3_authorities_dir: str = ""
+    phase3_calendar_sha256: str = ""
+    phase3_membership_sha256: str = ""
+    phase3_halts_sha256: str = ""
+    phase3_actions_sha256: str = ""
     phase3_liquidity_max_participation: Decimal | None = None
     phase3_liquidity_entry_impact_bps: Decimal | None = None
     phase3_liquidity_stop_exit_impact_bps: Decimal | None = None

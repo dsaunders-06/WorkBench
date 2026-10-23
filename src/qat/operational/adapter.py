@@ -109,6 +109,7 @@ class FrozenSnapshot:
     engine_hash: str
     content_hash: str
     label: str = OPERATIONAL
+    attestation_hash: str = ""
 
     def identity(self) -> dict[str, object]:
         return {f.name: getattr(self, f.name) for f in fields(self) if f.name != "content_hash"}
@@ -170,12 +171,25 @@ class OperationalAdapter:
         membership: Membership,
         halts: HaltLedger,
         actions: ActionLedger,
+        *,
+        attested_through: date | None = None,
+        attestation_hash: str = "",
     ) -> None:
+        if (attested_through is None) != (attestation_hash == "") or (
+            attestation_hash
+            and (
+                len(attestation_hash) != 64
+                or any(character not in "0123456789abcdef" for character in attestation_hash)
+            )
+        ):
+            raise ValueError("a verified attestation date and hash must be supplied together")
         self._store = store
         self._calendar = calendar
         self._membership = membership
         self._halts = halts
         self._actions = actions
+        self._attested_through = attested_through
+        self._attestation_hash = attestation_hash
 
     def attempt_primary(
         self,
@@ -209,6 +223,8 @@ class OperationalAdapter:
             ("halts", self._halts),
             ("actions", self._actions),
         ):
+            if self._attested_through is not None and self._attested_through >= session:
+                continue
             if authority.valid_through is not None and authority.valid_through < session:
                 reasons.append(f"{name}_authority_expired")
             elif authority.valid_through is None and not authority.fixture:
@@ -278,6 +294,7 @@ class OperationalAdapter:
                         history,
                         events,
                         self._actions,
+                        attested_through=self._attested_through,
                     )
                 symbols.append(SymbolInput(symbol, history, quality))
         except (ValueError, OSError, sqlite3.Error, KeyError, TypeError):
@@ -295,6 +312,7 @@ class OperationalAdapter:
             tuple(sorted(reasons)),
             engine_code_hash(),
             "",
+            attestation_hash=self._attestation_hash,
         )
         return replace(snapshot, content_hash=digest(snapshot.identity()))
 

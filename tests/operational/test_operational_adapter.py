@@ -90,6 +90,27 @@ def test_any_expired_authority_abstains_all_symbols(tmp_path, stale):
     assert all(f"{stale}_authority_expired" in item.reasons for item in result.abstentions)
 
 
+def test_validated_attestation_advances_effective_date_without_changing_file_hashes(tmp_path):
+    h = __import__("qat.operational.history", fromlist=["history"])
+    _, _, store, cal, members, params = prepared(tmp_path)
+    halts = h.load_halts(HALT_FIXTURE)
+    actions = h.load_actions(ACTION_FIXTURE)
+    fixed_hashes = tuple(item.content_hash for item in (cal, members, halts, actions))
+    adapter = api().OperationalAdapter(
+        store,
+        replace(cal, valid_through=date(2026, 1, 5)),
+        members,
+        halts,
+        actions,
+        attested_through=SESSION,
+        attestation_hash="a" * 64,
+    )
+    snapshot = adapter.freeze(SESSION, params)
+    assert not any(reason.endswith("_authority_expired") for reason in snapshot.reasons)
+    assert snapshot.attestation_hash == "a" * 64
+    assert tuple(item.content_hash for item in (cal, members, halts, actions)) == fixed_hashes
+
+
 def test_adapter_feature_exists():
     assert api().LABEL == "unvalidated strategy, no demonstrated edge"
 

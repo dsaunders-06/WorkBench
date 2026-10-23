@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -21,6 +22,7 @@ from qat.operational.adapter import (
     EvaluationParameters,
     OperationalAdapter,
 )
+from qat.operational.authority_attestations import AuthorityAttestations, base_validity
 from qat.operational.cards import CardEventStore, CardService, RecommendationCard
 from qat.operational.history import (
     SYDNEY,
@@ -107,8 +109,8 @@ class Phase3ShadowRunner:
             self._task = None
 
     def _authorities(
-        self,
-    ) -> tuple[CalendarLedger, Membership, HaltLedger, ActionLedger]:
+        self, session: date
+    ) -> tuple[CalendarLedger, Membership, HaltLedger, ActionLedger, str]:
         root = Path(self.settings.phase3_authorities_dir)
         calendar = load_calendar(root / "calendar.json")
         membership = load_membership(root / "membership.json")
@@ -116,7 +118,35 @@ class Phase3ShadowRunner:
         actions = load_actions(root / "actions.json")
         if any(item.fixture for item in (calendar, membership, halts, actions)):
             raise ValueError("Phase 3 requires real dated ASX authorities, not fixtures")
-        return calendar, membership, halts, actions
+        if any(item.valid_through is None for item in (calendar, membership, halts, actions)):
+            raise ValueError("Phase 3 authority has no valid-through date")
+        base = base_validity(
+            calendar.valid_through,
+            membership.valid_through,
+            halts.valid_through,
+            actions.valid_through,
+        )
+        attestation_hash = ""
+        ledger = AuthorityAttestations(
+            Path(self.settings.phase3_operational_root) / "authority_attestations.jsonl"
+        )
+        if session > base and ledger.path.exists():
+            hashes = {
+                name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                for name in ("calendar.json", "membership.json", "halts.jsonl", "actions.json")
+            }
+            approved = {
+                "calendar.json": self.settings.phase3_calendar_sha256,
+                "membership.json": self.settings.phase3_membership_sha256,
+                "halts.jsonl": self.settings.phase3_halts_sha256,
+                "actions.json": self.settings.phase3_actions_sha256,
+            }
+            if hashes != approved:
+                raise ValueError(
+                    "Phase 3 authority files differ from configured DS-approved hashes"
+                )
+            attestation_hash = ledger.require_current(session, hashes, calendar, base)
+        return calendar, membership, halts, actions, attestation_hash
 
     def _liquidity(self) -> LiquidityProfile | None:
         participation = self.settings.phase3_liquidity_max_participation
@@ -133,7 +163,7 @@ class Phase3ShadowRunner:
         store = HistoryStore(root, repository_root=repository, protected_roots=())
         shadow = ShadowRecord(root / "shadow.jsonl")
         try:
-            calendar, membership, halts, actions = self._authorities()
+            calendar, membership, halts, actions, attestation_hash = self._authorities(session)
             calendar.next_open(session)
             for name, authority in (
                 ("calendar", calendar),
@@ -141,9 +171,13 @@ class Phase3ShadowRunner:
                 ("halts", halts),
                 ("actions", actions),
             ):
-                if authority.valid_through is None or authority.valid_through < session:
+                if authority.valid_through is None or (
+                    authority.valid_through < session and not attestation_hash
+                ):
                     raise ValueError(f"{name} authority is not valid through session")
-            if not membership.effective_from <= session <= membership.effective_to:
+            if membership.effective_from > session or (
+                membership.effective_to < session and not attestation_hash
+            ):
                 raise ValueError("dated ASX membership does not cover session")
         except (OSError, ValueError, KeyError) as error:
             detail: dict[str, object] = {"reason": f"authority_unavailable:{error}"}
@@ -204,7 +238,15 @@ class Phase3ShadowRunner:
                 await asyncio.to_thread(
                     store.ingest, changed, calendar, received_at=receipt, shadow_freeze_final=True
                 )
-        adapter = OperationalAdapter(store, calendar, membership, halts, actions)
+        adapter = OperationalAdapter(
+            store,
+            calendar,
+            membership,
+            halts,
+            actions,
+            attested_through=session if attestation_hash else None,
+            attestation_hash=attestation_hash,
+        )
         attempt = await asyncio.to_thread(
             adapter.attempt_primary,
             session,

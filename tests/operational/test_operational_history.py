@@ -61,6 +61,21 @@ def test_membership_v2_preserves_per_symbol_dates_and_two_issuer_citations(tmp_p
     assert not membership.is_current("SUN.AX", date(2026, 10, 23))
     assert not membership.is_current("BHP.AX", date(2026, 10, 20))
     assert not membership.is_current("BHP.AX", date(2026, 10, 24))
+    assert membership.is_current("BHP.AX", date(2026, 10, 26), attested_through=date(2026, 10, 26))
+    assert not membership.is_current(
+        "SUN.AX", date(2026, 10, 26), attested_through=date(2026, 10, 26)
+    )
+    quality = h.assess_history(
+        "BHP.AX",
+        date(2026, 10, 26),
+        h.load_calendar(FIXTURES / "calendar.json"),
+        membership,
+        h.load_halts(HALT_FIXTURE),
+        (),
+        (),
+        attested_through=date(2026, 10, 26),
+    )
+    assert "membership_stale" not in quality.reasons
     assert membership.entries[0].citations == (stw, ioz)
     payload["entries"][0]["citations"][1] = "https://blackrock.com.evil.test/holdings"
     path.write_text(json.dumps(payload))
