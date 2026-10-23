@@ -13,6 +13,15 @@ from qat.domain.strategies.authoritative_swing.numeric import SplitFactor
 from qat.operational.history import ActionLedger, CorporateAction, HaltEntry, HaltLedger, digest
 from qat.operational.ibkr_history import IBKRHistoricalBarSource, IBKRRawBarProbe, _default_client
 
+
+def test_readonly_contract_mapping_matches_existing_asx_contracts():
+    from qat.data.broker.ib_readonly import to_asx_stock_contract
+    from qat.data.broker.ib_translate import to_ib_contract
+
+    for symbol in ("SUN", "MFG", "CBA", "BHP", "CSL", "WES", "WOW", "TLS", "WDS", "TCL"):
+        assert to_asx_stock_contract(f"{symbol}.AX") == to_ib_contract(f"{symbol}.AX", "ASX")
+
+
 SESSION = date(2026, 10, 12)
 OBSERVED = datetime.fromisoformat("2026-10-12T17:30:00+11:00")
 

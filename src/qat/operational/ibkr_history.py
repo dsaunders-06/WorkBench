@@ -16,8 +16,11 @@ from fractions import Fraction
 from typing import Any
 
 from qat.config import Settings
-from qat.data.broker.ib_probe import check_paper_account, connection_target
-from qat.data.broker.ib_translate import to_ib_contract
+from qat.data.broker.ib_readonly import (
+    check_paper_account,
+    connection_target,
+    to_asx_stock_contract,
+)
 from qat.data.broker.ticks import tick_size
 from qat.domain.strategies.authoritative_swing.model import Ohlcv
 from qat.domain.strategies.authoritative_swing.numeric import SplitFactor
@@ -105,7 +108,7 @@ class IBKRHistoricalBarSource:
                     if round_index or symbol_index:
                         await self.sleep(MIN_REQUEST_SPACING_SECONDS)
                     self._check_account(client)
-                    qualified = await client.qualifyContractsAsync(to_ib_contract(symbol, "ASX"))
+                    qualified = await client.qualifyContractsAsync(to_asx_stock_contract(symbol))
                     if len(qualified) != 1:
                         raise ValueError(f"{symbol}: expected one qualified ASX contract")
                     self._check_account(client)
@@ -363,7 +366,7 @@ class IBKRRawBarProbe:
                     if round_index or symbol_index:
                         await self.sleep(MIN_REQUEST_SPACING_SECONDS)
                     self._check_account(client)
-                    qualified = await client.qualifyContractsAsync(to_ib_contract(symbol, "ASX"))
+                    qualified = await client.qualifyContractsAsync(to_asx_stock_contract(symbol))
                     if len(qualified) != 1:
                         raise ValueError(f"{symbol}: expected one qualified ASX contract")
                     self._check_account(client)
