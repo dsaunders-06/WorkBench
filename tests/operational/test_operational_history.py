@@ -290,6 +290,23 @@ def test_shadow_freezes_first_final_bar_and_records_every_revision(tmp_path):
     assert [r.accepted for r in store.versions("BHP.AX", original.session)] == [True, False, False]
 
 
+def test_shadow_backfills_an_older_new_session_without_calling_it_a_revision(tmp_path):
+    store, calendar, _ = make_store(tmp_path)
+    current = bar(date(2026, 1, 6))
+    older = bar(date(2023, 1, 3))
+    store.ingest((current,), calendar, received_at=current.retrieved_at, shadow_freeze_final=True)
+
+    stored = store.ingest(
+        (older,), calendar, received_at=current.retrieved_at, shadow_freeze_final=True
+    )
+
+    assert len(stored) == 1
+    assert stored[0].accepted and stored[0].version == 1
+    assert store.versions("BHP.AX", date(2023, 1, 3))[0].bar.session == date(2023, 1, 3)
+    assert store.versions("BHP.AX", date(2026, 1, 6))[0].accepted
+    assert b"shadow_bar_revision" not in store.audit_bytes()
+
+
 def test_shadow_volume_revision_over_point_one_percent_requires_review(tmp_path):
     store, cal, _ = make_store(tmp_path)
     original = bar()

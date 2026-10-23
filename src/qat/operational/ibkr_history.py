@@ -115,7 +115,10 @@ class IBKRHistoricalBarSource:
                     rows = await client.reqHistoricalDataAsync(
                         qualified[0],
                         endDateTime="",
-                        durationStr="3 Y",
+                        # Fetch beyond the three-year decision window so the
+                        # first required calendar session survives IBKR's
+                        # rolling end-time boundary.
+                        durationStr="4 Y",
                         barSizeSetting="1 day",
                         whatToShow="TRADES",
                         useRTH=False,

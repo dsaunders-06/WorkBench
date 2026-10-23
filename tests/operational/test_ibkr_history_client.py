@@ -123,6 +123,19 @@ def test_recorded_all_hours_bar_is_final_only_after_matching_second_read():
     assert client.connected is False
 
 
+def test_history_request_has_margin_before_the_first_required_session():
+    earliest_required = RecordedBar(date=date(2023, 10, 12))
+    client = FakeIB([earliest_required, RecordedBar()])
+
+    history = source(client)
+    history.fetch(SESSION, ("BHP.AX",))
+
+    assert [request["durationStr"] for request in client.requests] == ["4 Y", "4 Y"]
+    assert all(request["whatToShow"] == "TRADES" for request in client.requests)
+    assert all(request["useRTH"] is False for request in client.requests)
+    assert [bar.session for bar in history.backfill] == [date(2023, 10, 12)]
+
+
 def test_default_client_is_unconnected_ib_async():
     from ib_async import IB
 
