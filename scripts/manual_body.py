@@ -3289,6 +3289,30 @@ def _config_reference(doc: Any) -> None:
                 "corporate-action authority files. Test fixtures are refused.",
             ),
             (
+                "QAT_PHASE3_CALENDAR_SHA256",
+                "(empty)",
+                "DS-approved SHA-256 of the fixed ASX calendar file. Required when a "
+                "daily attestation extends its validity; a mismatch makes cards abstain.",
+            ),
+            (
+                "QAT_PHASE3_MEMBERSHIP_SHA256",
+                "(empty)",
+                "DS-approved SHA-256 of the fixed dated membership file, checked with "
+                "the other three authority hashes before an attested shadow run.",
+            ),
+            (
+                "QAT_PHASE3_HALTS_SHA256",
+                "(empty)",
+                "DS-approved SHA-256 of the fixed trading-halt file, checked before "
+                "the daily attestation can extend its validity.",
+            ),
+            (
+                "QAT_PHASE3_ACTIONS_SHA256",
+                "(empty)",
+                "DS-approved SHA-256 of the fixed corporate-action file, checked "
+                "before the daily attestation can extend its validity.",
+            ),
+            (
                 "QAT_PHASE3_LIQUIDITY_MAX_PARTICIPATION",
                 "(unset)",
                 "Operator-approved maximum participation in prior observed volume; set "
