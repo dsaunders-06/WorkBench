@@ -40,6 +40,7 @@ from qat.operational.history import (  # noqa: E402
 from qat.operational.ibkr_history import (
     IBKRHistoricalBarSource,  # noqa: E402
     IBKRRawBarProbe,  # noqa: E402
+    filter_backfill_to_calendar,  # noqa: E402
 )
 from qat.operational.shadow_record import ShadowRecord  # noqa: E402
 
@@ -263,7 +264,8 @@ async def run_approved_once(
         record.append("abstention", session, {"reason": f"ibkr_source_failure:{error}"})
         return False
     receipt = clock()
-    if source.backfill:
+    backfill = filter_backfill_to_calendar(source.backfill, calendar, audit=store.log)
+    if backfill:
         existing = {
             (row.bar.symbol, row.bar.session): row.bar
             for symbol in symbols
@@ -271,7 +273,7 @@ async def run_approved_once(
         }
         changed = tuple(
             bar
-            for bar in source.backfill
+            for bar in backfill
             if (prior := existing.get((bar.symbol, bar.session))) is None
             or (
                 prior.raw,
@@ -328,7 +330,7 @@ async def run_approved_once(
     }
     return (
         len(bars) == len(symbols)
-        and all(bar.finalised for bar in (*bars, *source.backfill))
+        and all(bar.finalised for bar in (*bars, *backfill))
         and not any(retryable.intersection(item.reasons) for item in result.abstentions)
     )
 

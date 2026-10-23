@@ -35,7 +35,11 @@ from qat.operational.history import (
     load_halts,
     load_membership,
 )
-from qat.operational.ibkr_history import IBKRHistoricalBarSource, IBKRRawBarProbe
+from qat.operational.ibkr_history import (
+    IBKRHistoricalBarSource,
+    IBKRRawBarProbe,
+    filter_backfill_to_calendar,
+)
 from qat.operational.shadow_record import ShadowRecord
 
 logger = logging.getLogger(__name__)
@@ -164,7 +168,8 @@ class Phase3ShadowRunner:
             return False
 
         receipt = self.now()
-        if source.backfill:
+        backfill = filter_backfill_to_calendar(source.backfill, calendar, audit=store.log)
+        if backfill:
             existing = {
                 (record.bar.symbol, record.bar.session): record.bar
                 for symbol in symbols
@@ -172,7 +177,7 @@ class Phase3ShadowRunner:
             }
             changed = tuple(
                 bar
-                for bar in source.backfill
+                for bar in backfill
                 if (
                     (prior := existing.get((bar.symbol, bar.session))) is None
                     or (
@@ -260,7 +265,7 @@ class Phase3ShadowRunner:
         }
         return (
             len(bars) == len(symbols)
-            and all(bar.finalised for bar in (*bars, *source.backfill))
+            and all(bar.finalised for bar in (*bars, *backfill))
             and not any(
                 retryable_history.intersection(abstention.reasons)
                 for abstention in result.abstentions

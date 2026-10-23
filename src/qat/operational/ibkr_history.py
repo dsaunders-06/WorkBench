@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from collections import Counter
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, time
 from decimal import Decimal
@@ -27,6 +28,7 @@ from qat.domain.strategies.authoritative_swing.numeric import SplitFactor
 from qat.operational.history import (
     SYDNEY,
     ActionLedger,
+    CalendarLedger,
     HaltLedger,
     OperationalAnalyticalOhlcv,
     OperationalBar,
@@ -34,6 +36,32 @@ from qat.operational.history import (
 )
 
 MIN_REQUEST_SPACING_SECONDS = 15.0
+
+
+def filter_backfill_to_calendar(
+    bars: tuple[OperationalBar, ...],
+    calendar: CalendarLedger,
+    *,
+    audit: Callable[[dict[str, object]], None],
+) -> tuple[OperationalBar, ...]:
+    """Exclude request-margin bars before ingest, preserving a per-symbol audit count."""
+    dropped: Counter[str] = Counter()
+    accepted: list[OperationalBar] = []
+    for bar in bars:
+        if bar.session < calendar.coverage_start:
+            dropped[bar.symbol] += 1
+        else:
+            accepted.append(bar)
+    for symbol, count in sorted(dropped.items()):
+        audit(
+            {
+                "kind": "history_before_calendar_dropped",
+                "symbol": symbol,
+                "count": count,
+                "coverage_start": calendar.coverage_start.isoformat(),
+            }
+        )
+    return tuple(accepted)
 
 
 def _default_client() -> Any:

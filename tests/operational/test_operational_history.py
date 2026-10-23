@@ -236,6 +236,58 @@ def populate(store, cal, *, symbol="BHP.AX", omit=None):
     return ingest(store, values, cal)
 
 
+def test_extra_year_is_recorded_as_dropped_not_as_a_history_block(tmp_path):
+    from zoneinfo import ZoneInfo
+
+    from qat.domain.market_calendar import is_trading_day
+    from qat.operational.ibkr_history import filter_backfill_to_calendar
+
+    h = api()
+    store, original, members = make_store(tmp_path)
+    start = date(2023, 10, 22)
+    session = date(2026, 10, 23)
+    day = start
+    sessions = []
+    while day <= session:
+        if is_trading_day("ASX", day):
+            sessions.append(
+                h.Session(
+                    day,
+                    datetime.combine(
+                        day, datetime.min.time().replace(hour=10), ZoneInfo("Australia/Sydney")
+                    ),
+                )
+            )
+        day += timedelta(days=1)
+    cal = replace(
+        original,
+        coverage_start=start,
+        coverage_end=session,
+        sessions=tuple(sessions),
+        closures=(),
+    )
+    fetched = (bar(date(2022, 10, 24)),) + tuple(bar(s.session) for s in sessions)
+
+    accepted = filter_backfill_to_calendar(fetched, cal, audit=store.log)
+    ingest(store, accepted, cal)
+    result = store.check("BHP.AX", session, cal, members, h.load_halts(HALT_FIXTURE))
+
+    assert len(accepted) == len(sessions)
+    assert accepted[0].session == sessions[0].session
+    with store._connect() as conn:
+        events = [json.loads(row[0]) for row in conn.execute("SELECT payload FROM audit")]
+    assert not {"ingest_block", "unexpected_session"}.intersection(row["kind"] for row in events)
+    assert not {"unexpected_session", "gaps", "three_year_history"}.intersection(result.reasons)
+    assert [row for row in events if row["kind"] == "history_before_calendar_dropped"] == [
+        {
+            "kind": "history_before_calendar_dropped",
+            "symbol": "BHP.AX",
+            "count": 1,
+            "coverage_start": start.isoformat(),
+        }
+    ]
+
+
 def test_history_feature_exists():
     assert api().OPERATIONAL == "OPERATIONAL"
 

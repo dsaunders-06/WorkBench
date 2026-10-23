@@ -329,3 +329,70 @@ def test_approved_path_evaluates_unvalidated_candidates_without_trading_imports(
     assert calls == ["adapter", "history", "freeze", "run"]
     assert record.events[0]["kind"] == "card"
     assert record.events[0]["detail"]["label"] == "unvalidated strategy, no demonstrated edge"
+
+
+def test_approved_path_drops_pre_calendar_bars_before_ingest(monkeypatch, tmp_path):
+    session = date(2026, 10, 23)
+    start = date(2023, 10, 22)
+    record = module.approved_shadow_record(tmp_path / "OPERATIONAL")
+    account = module.AccountSnapshot(
+        module.Decimal("100000"),
+        module.Decimal("90000"),
+        datetime.fromisoformat("2026-10-23T17:31:00+11:00"),
+    )
+    old = SimpleNamespace(symbol="BHP.AX", session=date(2022, 10, 24), finalised=True)
+    first = SimpleNamespace(symbol="BHP.AX", session=date(2023, 10, 23), finalised=True)
+    source = SimpleNamespace(
+        backfill=(old, first),
+        fetch=lambda _day, _names: tuple(
+            SimpleNamespace(finalised=True) for _ in module.SHADOW_SYMBOLS
+        ),
+    )
+    ingested = []
+    events = []
+    store = SimpleNamespace(
+        log=events.append,
+        decision_bars=lambda _symbol, _session: (),
+        ingest=lambda bars, *_args, **_kwargs: ingested.extend(bars),
+        shadow_revision_pending=lambda _names: (),
+    )
+
+    class Adapter:
+        def __init__(self, *_args):
+            pass
+
+        def attempt_primary(self, *_args, **_kwargs):
+            return SimpleNamespace(abstained=True, reasons={"BHP.AX": ("test_abstention",)})
+
+    async def immediate(function, *args, **kwargs):
+        return function(*args, **kwargs)
+
+    monkeypatch.setattr(
+        module,
+        "validate_approved_authorities",
+        lambda *_: (SimpleNamespace(coverage_start=start), None, None, None),
+    )
+    monkeypatch.setattr(module, "OperationalAdapter", Adapter)
+    monkeypatch.setattr(module.asyncio, "to_thread", immediate)
+    coroutine = module.run_approved_once(
+        session,
+        SimpleNamespace(),
+        tmp_path,
+        {},
+        store,
+        record,
+        account,
+        source_factory=lambda *_args, **_kwargs: source,
+    )
+    with pytest.raises(StopIteration):
+        coroutine.send(None)
+
+    assert ingested == [first]
+    assert events == [
+        {
+            "kind": "history_before_calendar_dropped",
+            "symbol": "BHP.AX",
+            "count": 1,
+            "coverage_start": start.isoformat(),
+        }
+    ]
