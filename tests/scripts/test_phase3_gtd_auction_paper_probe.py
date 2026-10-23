@@ -136,6 +136,14 @@ def test_unrelated_working_order_blocks_exit() -> None:
         probe._owned_orders_only([own, foreign], {"gtd-20261026-A"})
 
 
+def test_fill_details_must_match_broker_filled_status() -> None:
+    fill = SimpleNamespace(execution=SimpleNamespace(shares=2))
+    trade = SimpleNamespace(orderStatus=SimpleNamespace(filled=3), fills=[fill])
+    assert probe._fills_match_status(trade) is False
+    trade.orderStatus.filled = 2
+    assert probe._fills_match_status(trade) is True
+
+
 def test_exact_private_approval_terms_and_hash(tmp_path: Path) -> None:
     path = tmp_path / "approval.json"
     terms = {

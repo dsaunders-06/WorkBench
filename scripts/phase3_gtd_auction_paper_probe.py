@@ -245,6 +245,19 @@ def _fill_count(trade: Any) -> int:
     return int(shares)
 
 
+def _fills_match_status(trade: Any) -> bool:
+    reported = Decimal(str(trade.orderStatus.filled))
+    return reported == _fill_count(trade)
+
+
+async def _wait_fill_details(trades: list[Any], deadline: time) -> None:
+    while _now().time() < deadline:
+        if all(_fills_match_status(trade) for trade in trades):
+            return
+        await asyncio.sleep(0.5)
+    raise RuntimeError("IBKR execution details did not match reported filled quantity")
+
+
 def _check_pre_expiry(buys: list[Any], now: datetime) -> None:
     if now.time() >= time(10, 15):
         return
@@ -387,6 +400,7 @@ async def _run(
         positions, orders = await _book(client, events, "before exit")
         if orders:
             raise RuntimeError("working buy remains before exit")
+        await _wait_fill_details(buys, time(10, 31))
         qty = _exit_quantity(
             _fill_count(buys[0]), _fill_count(buys[1]), _held(positions, account, contract.conId)
         )
@@ -398,6 +412,7 @@ async def _run(
             sale = client.placeOrder(contract, sell)
             _event(events, "exit transmitted", order=_trade_view(sale))
             await _wait_status(sale, frozenset({"Filled"}), time(11, 0))
+            await _wait_fill_details([sale], time(11, 0))
             if _fill_count(sale) != qty:
                 raise RuntimeError("exit fills do not match attributable probe shares")
             _event(events, "exit filled", order=_trade_view(sale))
@@ -423,6 +438,7 @@ async def _run(
                 if orders:
                     raise RuntimeError("emergency buys still working; no sale attempted")
                 if not sell_attempted:
+                    await _wait_fill_details(buys, time(11, 0))
                     qty = _exit_quantity(
                         sum(_fill_count(trade) for trade in buys),
                         0,
@@ -436,6 +452,7 @@ async def _run(
                         trade = client.placeOrder(buys[0].contract, emergency_order)
                         _event(events, "emergency exit transmitted", order=_trade_view(trade))
                         await _wait_status(trade, frozenset({"Filled"}), time(11, 0))
+                        await _wait_fill_details([trade], time(11, 0))
                         _event(events, "emergency exit result", order=_trade_view(trade))
             except Exception as cleanup_exc:  # noqa: BLE001 - preserve both failures
                 _event(events, "emergency halt", reason=repr(cleanup_exc))
