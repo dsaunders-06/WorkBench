@@ -160,7 +160,9 @@ class Phase3ShadowRunner:
             )
 
         symbols = tuple(sorted(set(membership.symbols + membership.managed_symbols)))
-        source = IBKRHistoricalBarSource(self.settings, actions, halts, audit=store.log)
+        source = IBKRHistoricalBarSource(
+            self.settings, actions, halts, audit=store.log, coverage_start=calendar.coverage_start
+        )
         try:
             bars = await asyncio.to_thread(source.fetch, session, symbols)
         except Exception as error:  # noqa: BLE001 - read-only retry, never a card

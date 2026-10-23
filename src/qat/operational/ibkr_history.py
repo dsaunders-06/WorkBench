@@ -83,6 +83,7 @@ class IBKRHistoricalBarSource:
         client_factory: Callable[[], Any] = _default_client,
         now: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        coverage_start: date | None = None,
     ) -> None:
         if settings.market != "ASX" or settings.is_live or not settings.ibkr_account_id:
             raise ValueError("operational history requires configured ASX paper account")
@@ -99,6 +100,7 @@ class IBKRHistoricalBarSource:
         self.now = now or (lambda: datetime.now(SYDNEY))
         self.sleep = sleep or asyncio.sleep
         self.host, self.port, self.client_id = host, port, client_id
+        self.coverage_start = max(actions.coverage_start, coverage_start or actions.coverage_start)
         self.backfill: tuple[OperationalBar, ...] = ()
 
     def fetch(self, session: date, symbols: tuple[str, ...]) -> tuple[OperationalBar, ...]:
@@ -168,7 +170,11 @@ class IBKRHistoricalBarSource:
             result: list[OperationalBar] = []
             backfill: list[OperationalBar] = []
             for symbol in symbols:
+                dropped = 0
                 for bar_session, (row, retrieved_at) in sorted(rounds[1][symbol].items()):
+                    if bar_session < self.coverage_start:
+                        dropped += 1
+                        continue
                     if self._halt_placeholder(symbol, bar_session, row):
                         continue
                     previous = rounds[0][symbol].get(bar_session)
@@ -184,6 +190,15 @@ class IBKRHistoricalBarSource:
                         result.append(bar)
                     else:
                         backfill.append(bar)
+                if dropped:
+                    self.audit(
+                        {
+                            "kind": "history_before_calendar_dropped",
+                            "symbol": symbol,
+                            "count": dropped,
+                            "coverage_start": self.coverage_start.isoformat(),
+                        }
+                    )
             self.backfill = tuple(backfill)
             return tuple(result)
         finally:

@@ -70,7 +70,16 @@ class FakeIB:
         self.connected = False
 
 
-def source(client: FakeIB, *, audit=None, sleep=None, now=OBSERVED, actions=None, halts=None):
+def source(
+    client: FakeIB,
+    *,
+    audit=None,
+    sleep=None,
+    now=OBSERVED,
+    actions=None,
+    halts=None,
+    coverage_start=None,
+):
     async def no_wait(_seconds):
         return None
 
@@ -92,6 +101,7 @@ def source(client: FakeIB, *, audit=None, sleep=None, now=OBSERVED, actions=None
         client_factory=lambda: client,
         now=lambda: now,
         sleep=sleep or no_wait,
+        coverage_start=coverage_start,
     )
 
 
@@ -134,6 +144,26 @@ def test_history_request_has_margin_before_the_first_required_session():
     assert all(request["whatToShow"] == "TRADES" for request in client.requests)
     assert all(request["useRTH"] is False for request in client.requests)
     assert [bar.session for bar in history.backfill] == [date(2023, 10, 12)]
+
+
+def test_request_margin_before_actions_and_calendar_is_dropped_before_conversion():
+    outside = RecordedBar(date=date(2022, 10, 24))
+    first_required = RecordedBar(date=date(2023, 10, 23))
+    client = FakeIB([outside, first_required, RecordedBar()])
+    events = []
+
+    history = source(client, audit=events.append, coverage_start=date(2023, 10, 22))
+    history.fetch(SESSION, ("BHP.AX",))
+
+    assert [bar.session for bar in history.backfill] == [first_required.date]
+    assert [event for event in events if event["kind"] == "history_before_calendar_dropped"] == [
+        {
+            "kind": "history_before_calendar_dropped",
+            "symbol": "BHP.AX",
+            "count": 1,
+            "coverage_start": "2023-10-22",
+        }
+    ]
 
 
 def test_default_client_is_unconnected_ib_async():

@@ -309,7 +309,11 @@ def test_approved_path_evaluates_unvalidated_candidates_without_trading_imports(
     async def immediate(function, *args, **kwargs):
         return function(*args, **kwargs)
 
-    monkeypatch.setattr(module, "validate_approved_authorities", lambda *_: (None,) * 4)
+    monkeypatch.setattr(
+        module,
+        "validate_approved_authorities",
+        lambda *_: (SimpleNamespace(coverage_start=date(2023, 10, 22)), None, None, None),
+    )
     monkeypatch.setattr(module, "OperationalAdapter", Adapter)
     monkeypatch.setattr(module.asyncio, "to_thread", immediate)
     coroutine = module.run_approved_once(

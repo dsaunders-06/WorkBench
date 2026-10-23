@@ -257,7 +257,9 @@ async def run_approved_once(
         authorities, expected_hashes, session
     )
     symbols = tuple(sorted(SHADOW_SYMBOLS))
-    source = source_factory(settings, actions, halts, audit=store.log)
+    source = source_factory(
+        settings, actions, halts, audit=store.log, coverage_start=calendar.coverage_start
+    )
     try:
         bars = await asyncio.to_thread(source.fetch, session, symbols)
     except Exception as error:  # noqa: BLE001 - same-source retry only
