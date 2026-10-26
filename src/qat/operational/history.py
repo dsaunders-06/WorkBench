@@ -1720,7 +1720,8 @@ def assess_history(
     for record in records:
         reasons.update(_bar_reasons(record.bar))
     if actions is not None and not actions.fixture:
-        if actions.coverage_start > start or actions.coverage_end < session:
+        actions_end = max(actions.coverage_end, attested_through or date.min)
+        if actions.coverage_start > start or actions_end < session:
             reasons.add("corporate_action_coverage")
         action_days = {
             e.ex_session: e

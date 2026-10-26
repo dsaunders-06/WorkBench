@@ -84,6 +84,7 @@ class IBKRHistoricalBarSource:
         now: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
         coverage_start: date | None = None,
+        attested_through: date | None = None,
     ) -> None:
         if settings.market != "ASX" or settings.is_live or not settings.ibkr_account_id:
             raise ValueError("operational history requires configured ASX paper account")
@@ -101,6 +102,8 @@ class IBKRHistoricalBarSource:
         self.sleep = sleep or asyncio.sleep
         self.host, self.port, self.client_id = host, port, client_id
         self.coverage_start = max(actions.coverage_start, coverage_start or actions.coverage_start)
+        # The caller supplies this only after its existing authority loader verifies it.
+        self._attested_through = attested_through
         self.backfill: tuple[OperationalBar, ...] = ()
 
     def fetch(self, session: date, symbols: tuple[str, ...]) -> tuple[OperationalBar, ...]:
@@ -263,7 +266,8 @@ class IBKRHistoricalBarSource:
         retrieved_at: datetime,
         stable: bool,
     ) -> OperationalBar:
-        if not self.actions.coverage_start <= bar_session <= self.actions.coverage_end:
+        coverage_end = max(self.actions.coverage_end, self._attested_through or date.min)
+        if not self.actions.coverage_start <= bar_session <= coverage_end:
             raise ValueError("corporate action authority does not cover session")
         factor_value = Fraction(1)
         for event in self.actions.events:

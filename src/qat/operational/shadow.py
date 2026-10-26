@@ -195,7 +195,12 @@ class Phase3ShadowRunner:
 
         symbols = tuple(sorted(set(membership.symbols + membership.managed_symbols)))
         source = IBKRHistoricalBarSource(
-            self.settings, actions, halts, audit=store.log, coverage_start=calendar.coverage_start
+            self.settings,
+            actions,
+            halts,
+            audit=store.log,
+            coverage_start=calendar.coverage_start,
+            attested_through=session if attestation_hash else None,
         )
         try:
             bars = await asyncio.to_thread(source.fetch, session, symbols)

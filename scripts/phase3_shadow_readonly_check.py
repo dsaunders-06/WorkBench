@@ -308,7 +308,12 @@ async def run_approved_once(
     )
     symbols = tuple(sorted(SHADOW_SYMBOLS))
     source = source_factory(
-        settings, actions, halts, audit=store.log, coverage_start=calendar.coverage_start
+        settings,
+        actions,
+        halts,
+        audit=store.log,
+        coverage_start=calendar.coverage_start,
+        attested_through=session if attestation_hash else None,
     )
     try:
         bars = await asyncio.to_thread(source.fetch, session, symbols)
