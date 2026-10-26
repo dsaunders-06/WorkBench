@@ -14,7 +14,20 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
-from ib_async import CommissionReport, Execution, Fill, OrderStatus, Stock, Trade
+from ib_async import (
+    IB,
+    CommissionReport,
+    Contract,
+    Execution,
+    Fill,
+    Order,
+    OrderState,
+    OrderStatus,
+    Stock,
+    Trade,
+)
+from ib_async.decoder import Decoder
+from ib_async.util import UNSET_DOUBLE
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 SYDNEY = ZoneInfo("Australia/Sydney")
@@ -88,7 +101,14 @@ def test_attempt_lock_never_repeats(tmp_path):
         p.claim_attempt(tmp_path)
 
 
+@pytest.fixture(params=["0", ""], ids=["unused-zero", "unused-unset"], autouse=True)
+def wire_variant(request, monkeypatch):
+    monkeypatch.setattr(Paper, "unused_wire_price", request.param)
+
+
 class Paper:
+    unused_wire_price = ""
+
     def __init__(
         self, clock, *, disappear=False, pending_minutes=0, wrong_quantity=False, foreign=False
     ):
@@ -103,6 +123,10 @@ class Paper:
         self.executions = []
         self.cancels = []
         self.pending = {}
+        self.price_drift = False
+        self.incomplete_stop_polls = 0
+        self.market_data_requests = []
+        self.market_data_type = 1
         self.contract = Stock("BHP", "SMART", "AUD", primaryExchange="ASX", conId=42)
 
     def managedAccounts(self):
@@ -182,15 +206,88 @@ class Paper:
             else []
         )
 
+    def decoded_snapshot(self, original, *, omit_status=False):
+        # A disconnected IB supplies the actual decoder.parse/openOrder/orderStatus
+        # machinery. Every response is a new wrapper, Trade, Order and OrderStatus.
+        observer = IB()
+        assert not observer.isConnected()
+        owner = original.order
+        wire = Order(
+            orderId=str(owner.orderId),
+            clientId=str(owner.clientId),
+            permId=str(owner.permId),
+            action=owner.action,
+            orderType=owner.orderType,
+            totalQuantity=str(owner.totalQuantity),
+            account=owner.account,
+            orderRef=owner.orderRef,
+            tif=owner.tif,
+            ocaGroup=owner.ocaGroup,
+            ocaType=str(owner.ocaType),
+            lmtPrice=str(owner.lmtPrice) if owner.orderType == "LMT" else self.unused_wire_price,
+            auxPrice=str(owner.auxPrice) if owner.orderType == "STP" else self.unused_wire_price,
+        )
+        if self.price_drift:
+            if owner.orderType == "STP":
+                wire.auxPrice = str(float(owner.auxPrice) + 0.000000000000006)
+            elif owner.orderType == "LMT":
+                wire.lmtPrice = str(float(owner.lmtPrice) + 0.000000000000006)
+        contract = Contract(
+            conId=str(original.contract.conId),
+            symbol=original.contract.symbol,
+            secType="STK",
+            exchange="SMART",
+            primaryExchange="ASX",
+            currency="AUD",
+        )
+        decoder = Decoder(observer.wrapper, 180)
+        decoder.parse(wire)
+        decoder.parse(contract)
+        observer.wrapper._results["openOrders"] = []
+        observer.wrapper.openOrder(
+            wire.orderId, contract, wire, OrderState(status=original.orderStatus.status)
+        )
+        if not omit_status:
+            status = original.orderStatus
+            observer.wrapper.orderStatus(
+                wire.orderId,
+                status.status,
+                status.filled,
+                status.remaining,
+                status.avgFillPrice,
+                wire.permId,
+                wire.parentId,
+                status.lastFillPrice,
+                wire.clientId,
+                status.whyHeld,
+                status.mktCapPrice,
+            )
+        result = observer.wrapper._results["openOrders"][0]
+        assert result is not original and result.order is not owner
+        assert result.orderStatus is not original.orderStatus
+        assert result.contract is not original.contract
+        return result
+
     async def reqAllOpenOrdersAsync(self):
+        missing = self.incomplete_stop_polls > 0
+        if missing:
+            self.incomplete_stop_polls -= 1
         return [
-            t
+            self.decoded_snapshot(t, omit_status=missing and t.order.orderType == "STP")
             for t in self.trades
             if t.orderStatus.status not in {"Filled", "Cancelled", "ApiCancelled"}
         ]
 
+    def reqMarketDataType(self, value):
+        self.market_data_requests.append(value)
+        self.market_data_type = value
+
     async def reqTickersAsync(self, contract):
-        return [SimpleNamespace(bid=56.0, ask=56.0, time=self.clock[0], marketDataType=1)]
+        return [
+            SimpleNamespace(
+                bid=56.0, ask=56.0, time=self.clock[0], marketDataType=self.market_data_type
+            )
+        ]
 
     async def reqExecutionsAsync(self, *args):
         return list(self.executions)
@@ -589,10 +686,7 @@ async def test_stop_disappearing_before_partial_exits_full_holding_without_quote
     async def lost_stop():
         orders = await original()
         if run.armed and run.stage == "partial handoff":
-            for trade in orders:
-                if trade.order.orderType == "STP":
-                    trade.orderStatus.status = "Cancelled"
-            orders = await original()
+            orders = [trade for trade in orders if trade.order.orderType != "STP"]
         return orders
 
     broker.reqAllOpenOrdersAsync = lost_stop
@@ -622,4 +716,214 @@ async def test_stop_disappearing_during_partial_quote_blocks_half_and_cleans_ful
     sales = [t for t in broker.trades if t.order.orderType == "MKT"]
     assert [t.order.totalQuantity for t in sales] == [9]
     assert sales[0].order.orderRef.endswith("-cleanup")
+    assert broker.held == 0
+
+
+@pytest.mark.asyncio
+async def test_wire_snapshots_are_independent_and_float_drift_is_on_same_tick(monkeypatch):
+    _, broker, run, _ = scenario(monkeypatch)
+    broker.price_drift = True
+    await run.run_cases(types=(2,), monitor=False)
+    assert broker.held == 0
+    assert len([t for t in broker.trades if t.order.orderType == "MKT"]) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("order_type", ["STP", "LMT"])
+@pytest.mark.parametrize("status", ["PreSubmitted", "Submitted"])
+async def test_working_zero_remaining_is_unavailable_without_protection_or_gap(
+    monkeypatch, order_type, status
+):
+    p, broker, run, events = scenario(monkeypatch)
+    run.group, run.oca_type, run.planned_quantity, broker.held = "test", 2, 5, 5
+    stop = run.place(
+        p.StopOrder("SELL", 5, 50.4, ocaGroup="test", ocaType=2), "stop", Decimal("56")
+    )
+    if order_type == "LMT":
+        stop.order.orderType, stop.order.lmtPrice = "LMT", 61.6
+        run.terms[stop.order.orderRef] = run.order_terms(stop.order)
+    stop.orderStatus.status = status
+    original = broker.reqAllOpenOrdersAsync
+    calls = 0
+
+    async def missing_once():
+        nonlocal calls
+        calls += 1
+        return [broker.decoded_snapshot(stop, omit_status=True)] if calls == 1 else await original()
+
+    broker.reqAllOpenOrdersAsync = missing_once
+    with pytest.raises(p.SnapshotUnavailable):
+        await run.poll()
+    assert run.latest is None and run.gap_started is None
+    assert not any(e["event"] in {"protection gap", "client99 poll"} for e in events)
+    assert any(e["event"] == "evidence unavailable" for e in events)
+    valid = await run.poll()
+    if order_type == "STP":
+        assert valid["exact_stop"] and valid["stop_quantity"] == "5"
+    else:
+        assert valid["orders"][0]["remaining"] == "5"
+    assert stop.orderStatus.remaining == 5
+
+
+@pytest.mark.asyncio
+async def test_transient_zero_remaining_retries_before_partial_without_cancel_or_cleanup(
+    monkeypatch,
+):
+    _, broker, run, events = scenario(monkeypatch)
+    original = broker.reqAllOpenOrdersAsync
+    injected = False
+
+    async def incomplete():
+        nonlocal injected
+        if run.armed and not injected:
+            injected = True
+            broker.incomplete_stop_polls = 1
+        return await original()
+
+    broker.reqAllOpenOrdersAsync = incomplete
+    await run.run_cases(types=(2,), monitor=False)
+    assert broker.held == 0 and not broker.cancels
+    assert [t.order.totalQuantity for t in broker.trades if t.order.orderType == "MKT"] == [4, 5]
+    assert any(e["event"] == "evidence unavailable" for e in events)
+    assert not any(e["event"] == "case observation" for e in events)
+    assert not any(
+        e["event"] == "protection gap" and e["stage"] == "partial handoff" for e in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_unusable_requests_delayed_once_and_buffers_entry_limit(monkeypatch):
+    _, broker, run, events = scenario(monkeypatch)
+    good = broker.reqTickersAsync
+
+    async def snapshot(contract):
+        if broker.market_data_type == 1:
+            return [
+                SimpleNamespace(bid=float("nan"), ask=-1, time=broker.clock[0], marketDataType=1)
+            ]
+        return await good(contract)
+
+    broker.reqTickersAsync = snapshot
+    await run.run_cases(types=(2, 3, 1), monitor=False)
+    buys = [t.order for t in broker.trades if t.order.action == "BUY"]
+    assert broker.market_data_requests == [3]
+    assert len(buys) == 3 and all(order.lmtPrice == 56.56 for order in buys)
+    assert all(
+        Decimal(str(order.totalQuantity)) * Decimal(str(order.lmtPrice)) <= 800 for order in buys
+    )
+    assert any(
+        e["event"] == "market data type request" and e["requested_type"] == 3 for e in events
+    )
+    assert any(e["event"] == "IBKR quote" and e["market_data_type"] == 3 for e in events)
+    assert broker.held == 0
+
+
+@pytest.mark.asyncio
+async def test_delayed_entry_buffer_cannot_escape_cap(monkeypatch):
+    p, broker, run, _ = scenario(monkeypatch)
+
+    async def snapshot(contract):
+        value = float("nan") if broker.market_data_type == 1 else 400.0
+        return [
+            SimpleNamespace(
+                bid=value, ask=value, time=broker.clock[0], marketDataType=broker.market_data_type
+            )
+        ]
+
+    broker.reqTickersAsync = snapshot
+    with pytest.raises(ValueError, match="800"):
+        await run.case(2)
+    assert broker.market_data_requests == [3] and not broker.trades
+
+
+@pytest.mark.asyncio
+async def test_unusable_delayed_snapshot_does_not_resend_type_request_or_place(monkeypatch):
+    p, broker, run, events = scenario(monkeypatch)
+
+    async def missing(*args):
+        return []
+
+    broker.reqTickersAsync = missing
+    for _ in range(2):
+        with pytest.raises(p.ObservationTimeout):
+            await run.quote()
+    assert broker.market_data_requests == [3]
+    assert not broker.trades
+
+
+@pytest.mark.parametrize(
+    "order_type,used", [("STP", "auxPrice"), ("LMT", "lmtPrice"), ("MKT", None)]
+)
+def test_terms_ignore_every_unused_price_and_round_only_used_prices(order_type, used):
+    p = api()
+    order = Order(action="SELL", orderType=order_type, ocaGroup="test", ocaType=2)
+    if used:
+        setattr(order, used, 50.4)
+    expected = p.HandoffProbe.order_terms(order)
+    for unused in (0.0, UNSET_DOUBLE, -1.0, float("nan"), "unused"):
+        for name in ("auxPrice", "lmtPrice"):
+            if name != used:
+                setattr(order, name, unused)
+        if used:
+            setattr(order, used, 50.400000000000006)
+        assert p.HandoffProbe.order_terms(order) == expected
+    if used:
+        setattr(order, used, 50.41)
+        assert p.HandoffProbe.order_terms(order) != expected
+
+
+@pytest.mark.asyncio
+async def test_account_failure_cannot_request_delayed_fallback(monkeypatch):
+    p, broker, run, _ = scenario(monkeypatch)
+
+    async def changed_account(*args):
+        broker.accounts = ["DUOTHER"]
+        return []
+
+    broker.reqTickersAsync = changed_account
+    with pytest.raises(p.SafetyHalt, match="account"):
+        await run.quote()
+    assert not broker.market_data_requests and not broker.trades
+
+
+@pytest.mark.asyncio
+async def test_live_usable_snapshot_keeps_entry_and_never_requests_delayed(monkeypatch):
+    _, broker, run, _ = scenario(monkeypatch)
+    await run.run_cases(types=(2,), monitor=False)
+    assert not broker.market_data_requests
+    assert next(t.order for t in broker.trades if t.order.action == "BUY").lmtPrice == 56
+
+
+def test_delayed_limit_rounds_up_to_destination_asx_tick():
+    p = api()
+    run = p.HandoffProbe(None, None, None, "DUFAKE", [])
+    run.delayed_requested = True
+    assert run.entry_limit(Decimal("50.401")) == Decimal("50.91")
+    assert run.entry_limit(Decimal("1.99")) == Decimal("2.01")
+    assert run.entry_limit(Decimal("0.0995")) == Decimal("0.105")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("actual_type", [2, 4])
+async def test_frozen_snapshot_never_supplies_entry_reference(monkeypatch, actual_type):
+    p, broker, run, _ = scenario(monkeypatch)
+
+    async def frozen(*args):
+        return [SimpleNamespace(bid=56, ask=56, time=broker.clock[0], marketDataType=actual_type)]
+
+    broker.reqTickersAsync = frozen
+    with pytest.raises(p.ObservationTimeout):
+        await run.case(2)
+    assert broker.market_data_requests == [3]
+    assert not broker.trades
+
+
+@pytest.mark.asyncio
+async def test_initial_already_delayed_response_requires_selected_fallback_and_buffer(monkeypatch):
+    _, broker, run, events = scenario(monkeypatch)
+    broker.market_data_type = 3
+    await run.run_cases(types=(2,), monitor=False)
+    assert broker.market_data_requests == [3]
+    assert next(t.order for t in broker.trades if t.order.action == "BUY").lmtPrice == 56.56
+    assert any(e["event"] == "IBKR snapshot unavailable" for e in events)
     assert broker.held == 0

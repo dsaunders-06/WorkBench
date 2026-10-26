@@ -12,7 +12,7 @@ import hashlib
 import json
 import sys
 from datetime import date, datetime, time, timedelta
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -41,6 +41,10 @@ class SafetyHalt(RuntimeError):
 
 class ObservationTimeout(RuntimeError):
     """An experiment could not establish its next condition before its deadline."""
+
+
+class SnapshotUnavailable(ObservationTimeout):
+    """A client-99 working order lacks quantity evidence; retry without interpreting it."""
 
 
 def now() -> datetime:
@@ -182,6 +186,7 @@ class HandoffProbe:
         self.cancelled: set[str] = set()
         self.terms: dict[str, tuple[Any, ...]] = {}
         self.quote_reference: Decimal | None = None
+        self.delayed_requested = False
         self.final_held: int | None = None
         self.lock = asyncio.Lock()
         self.fatal: SafetyHalt | None = None
@@ -200,14 +205,18 @@ class HandoffProbe:
 
     @staticmethod
     def order_terms(order: Any) -> tuple[Any, ...]:
-        return (
-            order.action,
-            order.orderType,
-            order.ocaGroup,
-            order.ocaType,
-            str(order.auxPrice),
-            str(order.lmtPrice),
-        )
+        terms = (order.action, order.orderType, order.ocaGroup, order.ocaType)
+        field = {"STP": "auxPrice", "LMT": "lmtPrice"}.get(order.orderType)
+        if field is None:
+            return terms
+        value = Decimal(str(getattr(order, field)))
+        if not value.is_finite() or value <= 0:
+            raise SafetyHalt("invalid used order price in terms")
+        tick = tick_size(value, "ASX")
+        rounded = (value / tick).to_integral_value(rounding=ROUND_HALF_UP) * tick
+        settled = tick_size(rounded, "ASX")
+        rounded = (rounded / settled).to_integral_value(rounding=ROUND_HALF_UP) * settled
+        return (*terms, rounded)
 
     def event(self, kind: str, **values: Any) -> None:
         self.events.append(
@@ -298,6 +307,24 @@ class HandoffProbe:
                 for trade in working
             ):
                 raise SafetyHalt("oversell risk: live sell quantity exceeds holding")
+            incomplete = [
+                view(trade)
+                for trade in working
+                if trade.orderStatus.status in WORKING
+                and Decimal(str(trade.orderStatus.remaining)) == 0
+            ]
+            if incomplete:
+                self.latest = None
+                self.event(
+                    "evidence unavailable",
+                    request="client99 open orders",
+                    reason="working owned order has zero remaining; orderStatus unavailable",
+                    orders=incomplete,
+                    positions=[repr(row) for row in positions],
+                    held_quantity=held,
+                    protection=None,
+                )
+                raise SnapshotUnavailable("working-order remaining quantity unavailable")
             at = now()
             if self.last_poll and (at - self.last_poll).total_seconds() > 2.5:
                 self.event("poll coverage gap", seconds=(at - self.last_poll).total_seconds())
@@ -326,6 +353,15 @@ class HandoffProbe:
                 self.gap_started = None
             self.latest = snapshot
             return snapshot
+
+    async def fresh_poll(self) -> dict[str, Any]:
+        end = datetime.combine(SESSION, time(15, 30), SYDNEY)
+        while now() < end:
+            try:
+                return await self.poll()
+            except SnapshotUnavailable:
+                await asyncio.sleep(1)
+        raise ObservationTimeout("quantity evidence unavailable at 15:30")
 
     async def final_inventory(self) -> tuple[int, list[Any]]:
         """Read after a safety halt; never transmit or silently reuse old positions."""
@@ -373,13 +409,51 @@ class HandoffProbe:
             await asyncio.sleep(1)
 
     async def quote(self) -> Decimal:
-        tickers = await self.read("reqTickersAsync", self.contract)
-        if not tickers or len(tickers) != 1:
-            raise ObservationTimeout("IBKR quote unavailable")
-        ticker = tickers[0]
-        values = [Decimal(str(ticker.bid)), Decimal(str(ticker.ask))]
-        if any(not item.is_finite() or item <= 0 for item in values) or values[0] > values[1]:
-            raise ObservationTimeout("IBKR bid/ask unavailable")
+        for _ in range(2):
+            try:
+                tickers = await self.read("reqTickersAsync", self.contract)
+                self.event(
+                    "IBKR snapshot response",
+                    requested_type=3 if self.delayed_requested else 1,
+                    tickers=[repr(ticker) for ticker in (tickers or [])],
+                    reported_types=[
+                        getattr(ticker, "marketDataType", None) for ticker in (tickers or [])
+                    ],
+                )
+                if not tickers or len(tickers) != 1:
+                    raise ObservationTimeout("IBKR quote unavailable")
+                ticker = tickers[0]
+                actual_type = getattr(ticker, "marketDataType", None)
+                if type(actual_type) is not int or actual_type not in {1, 3}:
+                    raise ObservationTimeout("IBKR quote type is not live or delayed")
+                if actual_type == 3 and not self.delayed_requested:
+                    raise ObservationTimeout(
+                        "delayed quote arrived before explicit fallback selection"
+                    )
+                values = [Decimal(str(ticker.bid)), Decimal(str(ticker.ask))]
+                if (
+                    any(not item.is_finite() or item <= 0 for item in values)
+                    or values[0] > values[1]
+                ):
+                    raise ObservationTimeout("IBKR bid/ask unavailable")
+                break
+            except SafetyHalt:
+                raise
+            except Exception as exc:  # noqa: BLE001 - one authorised delayed-data fallback
+                self.event(
+                    "IBKR snapshot unavailable",
+                    reason=repr(exc),
+                    requested_type=3 if self.delayed_requested else 1,
+                )
+                if self.delayed_requested:
+                    raise ObservationTimeout("IBKR delayed snapshot bid/ask unavailable") from exc
+                self.guard()
+                self.delayed_requested = (
+                    True  # pin before an uncertain acknowledgement; never resend
+                )
+                self.event("market data type request", requested_type=3)
+                self.reader.reqMarketDataType(3)
+                exact_account(self.reader, self.account)
         stamp = ticker.time
         if (
             not isinstance(stamp, datetime)
@@ -393,10 +467,18 @@ class HandoffProbe:
             ask=str(values[1]),
             received_at=stamp.isoformat(),
             market_data_type=ticker.marketDataType,
+            requested_type=3 if self.delayed_requested else 1,
             cap_basis="quote reference, not a guaranteed market fill value",
         )
         self.quote_reference = values[1]
         return values[1]
+
+    def entry_limit(self, reference: Decimal) -> Decimal:
+        value = reference * (Decimal("1.01") if self.delayed_requested else Decimal(1))
+        tick = tick_size(value, "ASX")
+        result = (value / tick).to_integral_value(rounding=ROUND_CEILING) * tick
+        settled = tick_size(result, "ASX")
+        return (result / settled).to_integral_value(rounding=ROUND_CEILING) * settled
 
     def place(self, order: Any, role: str, reference: Decimal) -> Any:
         self.guard()
@@ -513,7 +595,7 @@ class HandoffProbe:
         return complete
 
     async def sell(self, quantity: int, role: str) -> Any:
-        snapshot = await self.poll()
+        snapshot = await self.fresh_poll()
         if role == "partial" and not snapshot["exact_stop"]:
             raise ObservationTimeout("stop lost before partial handoff; full gap cleanup required")
         if quantity > snapshot["held_quantity"] or quantity <= 0:
@@ -530,14 +612,14 @@ class HandoffProbe:
                 await self.cancel_once(trade)
             elif trade.order.orderType == "MKT":
                 raise SafetyHalt("oversell risk: another exit may still fill")
-        snapshot = await self.poll()
+        snapshot = await self.fresh_poll()
         if quantity != min(quantity, snapshot["held_quantity"]):
             raise SafetyHalt("oversell risk: holding changed before exit")
         reference = self.quote_reference if self.stage == "gap market cleanup" else None
         if reference is None:
             reference = await self.quote()
         # All exits join this experiment's existing group, including gap cleanup.
-        final_check = await self.poll()
+        final_check = await self.fresh_poll()
         if quantity > final_check["held_quantity"]:
             raise SafetyHalt("oversell risk: holding changed during quote request")
         if role == "partial" and not final_check["exact_stop"]:
@@ -546,7 +628,7 @@ class HandoffProbe:
         trade = self.place(order, role, reference)
         end = min(now() + timedelta(minutes=2), datetime.combine(SESSION, time(15, 30), SYDNEY))
         while now() < end:
-            snapshot = await self.poll()
+            snapshot = await self.fresh_poll()
             if trade.orderStatus.status in TERMINAL:
                 return trade
             if trade.orderStatus.filled and not snapshot["exact_stop"]:
@@ -576,13 +658,21 @@ class HandoffProbe:
     async def case(self, oca_type: int) -> None:
         self.oca_type, self.group, self.armed = oca_type, f"oca-20261027-type-{oca_type}", False
         self.stage = "case start"
-        snapshot = await self.poll()
+        snapshot = await self.fresh_poll()
         if snapshot["held_quantity"] or snapshot["orders"]:
             raise SafetyHalt("case start requires flat account and no working orders")
         reference = await self.quote()
-        self.planned_quantity = parcel(reference)
+        entry_limit = self.entry_limit(reference)
+        self.planned_quantity = parcel(entry_limit)
+        self.event(
+            "entry limit",
+            reference=str(reference),
+            limit=str(entry_limit),
+            delayed_buffer=self.delayed_requested,
+            cap_per_order_aud=str(CAP),
+        )
         buy = self.place(
-            LimitOrder("BUY", self.planned_quantity, float(reference), tif="DAY"),
+            LimitOrder("BUY", self.planned_quantity, float(entry_limit), tif="DAY"),
             "entry",
             reference,
         )
@@ -642,7 +732,7 @@ class HandoffProbe:
         )
         self.armed, self.stage = True, "partial handoff"
         await self.sell(self.planned_quantity // 2, "partial")
-        snapshot = await self.poll()
+        snapshot = await self.fresh_poll()
         self.stage = "second handoff" if snapshot["exact_stop"] else "gap market cleanup"
         if snapshot["held_quantity"]:
             await self.sell(snapshot["held_quantity"], "remainder")
@@ -663,7 +753,7 @@ class HandoffProbe:
                 and (trade.order.action == "BUY" or trade.order.orderType == "MKT")
             ):
                 await self.cancel_once(trade)
-        snapshot = await self.poll()
+        snapshot = await self.fresh_poll()
         if snapshot["held_quantity"]:
             self.stage = "second handoff" if snapshot["exact_stop"] else "gap market cleanup"
             await self.sell(snapshot["held_quantity"], "cleanup")
