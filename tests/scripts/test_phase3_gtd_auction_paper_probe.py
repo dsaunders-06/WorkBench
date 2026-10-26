@@ -247,9 +247,12 @@ async def test_own_cancel_waits_through_pendingcancel_to_apicancelled(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["PendingCancel", "Inactive"])
-async def test_unrequested_cancel_or_inactive_halts(status: str) -> None:
+async def test_pre_observation_unsolicited_state_still_refuses_cancel(
+    monkeypatch: pytest.MonkeyPatch, status: str
+) -> None:
     trade = _trade()
     trade.orderStatus.status = status
+    monkeypatch.setattr(probe, "_now", lambda: datetime(2026, 10, 27, 10, 10, tzinfo=SYDNEY))
     with pytest.raises(RuntimeError):
         await probe._cancel_live_buy(object(), trade, [], set())
 
@@ -353,8 +356,12 @@ class ScenarioGateway:
     async def advance(self, seconds: float) -> None:
         self.clock[0] += timedelta(seconds=seconds)
         for trade in self.buys:
-            if trade.orderStatus.status == "PendingCancel" and (
-                self.cancel_release_at is None or self.clock[0].time() >= self.cancel_release_at
+            if (
+                trade.orderStatus.status == "PendingCancel"
+                and any(ref == trade.order.orderRef for ref, _ in self.cancel_requests)
+                and (
+                    self.cancel_release_at is None or self.clock[0].time() >= self.cancel_release_at
+                )
             ):
                 trade.orderStatus.status = "ApiCancelled"
                 self.orderStatusEvent(trade)
@@ -810,8 +817,8 @@ async def test_expiry_checkpoints_take_priority_over_new_execution_requests(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["PendingCancel", "Inactive"])
-async def test_persistent_unsolicited_status_only_halts_after_final_observation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str
+async def test_persistent_unsolicited_status_waits_until_1100_and_reports_held_quantity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
     advance = ScenarioGateway.advance
 
@@ -828,5 +835,149 @@ async def test_persistent_unsolicited_status_only_halts_after_final_observation(
     assert result == 1
     assert [at.time() for at in gateway.completed_requests] == [time(10, 15, 30), time(10, 16)]
     halt = next(row for row in events if row["event"] == "halt")
-    assert halt["at_aedt"] == "2026-10-27T10:16:00+11:00"
+    assert halt["at_aedt"] == "2026-10-27T11:00:00+11:00"
     assert not gateway.cancel_requests
+    assert not gateway.sales
+    assert gateway.held == 19
+    action = next(row for row in events if row["event"] == "DS action required")
+    assert action["held_quantity"] == 19
+    assert action["buys"][1]["status"] == status
+    output = capsys.readouterr().out
+    assert "DS action required" in output
+    assert "held quantity 19" in output
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["PendingCancel", "Inactive"])
+@pytest.mark.parametrize("emergency", [False, True])
+async def test_broker_led_state_resolves_at_1025_without_cancel_and_exits_flat(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str, emergency: bool
+) -> None:
+    original = ScenarioGateway.advance
+
+    async def broker_expiry(self: ScenarioGateway, seconds: float) -> None:
+        await original(self, seconds)
+        if self.clock[0].time() >= time(10, 15):
+            second = self.buys[1]
+            new_status = status if self.clock[0].time() < time(10, 25) else "Cancelled"
+            if second.orderStatus.status != new_status:
+                second.orderStatus.status = new_status
+                self.orderStatusEvent(second)
+
+    monkeypatch.setattr(ScenarioGateway, "advance", broker_expiry)
+    if emergency:
+        observe = probe._observe_pre_expiry
+
+        async def fail_after_observations(*args: object) -> None:
+            await observe(*args)
+            raise RuntimeError("controlled account-unrelated post-observation failure")
+
+        monkeypatch.setattr(probe, "_observe_pre_expiry", fail_after_observations)
+    result, gateway, events = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=False
+    )
+    assert result == (1 if emergency else 0)
+    assert [at.time() for at in gateway.completed_requests] == [time(10, 15, 30), time(10, 16)]
+    assert not gateway.cancel_requests
+    assert len(gateway.sales) == 1
+    assert gateway.sales[0].order.totalQuantity == 19
+    assert gateway.sales[0].fills[0].execution.time.astimezone(SYDNEY).time() >= time(10, 25)
+    assert gateway.held == 0
+    assert not any(row["event"] in {"emergency halt", "DS action required"} for row in events)
+    states = [row["order"]["status"] for row in events if row["event"] == "buy terminal state"]
+    assert states == [status, "Cancelled"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["PendingCancel", "Inactive"])
+@pytest.mark.parametrize("emergency", [False, True])
+async def test_waiting_on_a_does_not_delay_required_b_cancel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str, emergency: bool
+) -> None:
+    original = ScenarioGateway.advance
+
+    async def unresolved_a(self: ScenarioGateway, seconds: float) -> None:
+        await original(self, seconds)
+        if self.clock[0].time() >= time(10, 15):
+            self.buys[0].orderStatus.status = status
+            self.orderStatusEvent(self.buys[0])
+
+    monkeypatch.setattr(ScenarioGateway, "advance", unresolved_a)
+    if emergency:
+        observe = probe._observe_pre_expiry
+
+        async def fail_after_observations(*args: object) -> None:
+            await observe(*args)
+            raise RuntimeError("controlled post-observation failure")
+
+        monkeypatch.setattr(probe, "_observe_pre_expiry", fail_after_observations)
+    result, gateway, events = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=False
+    )
+    assert result == 1
+    assert gateway.cancel_requests == [
+        ("gtd-20261027-B", datetime(2026, 10, 27, 10, 16, tzinfo=SYDNEY))
+    ]
+    assert gateway.buys[1].orderStatus.status == "ApiCancelled"
+    assert not gateway.sales
+    assert gateway.held == 19
+    assert any(row["event"] == "DS action required" for row in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure", ["positions", "orders", "disconnected", "positions-unanswered", "orders-unanswered"]
+)
+async def test_unresolved_inactive_reports_ds_action_when_final_evidence_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failure: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    advance = ScenarioGateway.advance
+    positions = ScenarioGateway.reqPositionsAsync
+    orders = ScenarioGateway.reqAllOpenOrdersAsync
+
+    async def unresolved(self: ScenarioGateway, seconds: float) -> None:
+        await advance(self, seconds)
+        if self.clock[0].time() >= time(10, 15):
+            self.buys[1].orderStatus.status = "Inactive"
+            self.orderStatusEvent(self.buys[1])
+        if failure == "disconnected" and self.clock[0].time() >= time(11):
+            self.connected = False
+
+    async def final_positions(self: ScenarioGateway) -> list[object]:
+        if failure == "positions-unanswered" and self.clock[0].time() >= time(11):
+            await asyncio.Future()
+        if failure == "positions" and self.clock[0].time() >= time(11):
+            raise TimeoutError("final positions unavailable")
+        return await positions(self)
+
+    async def final_orders(self: ScenarioGateway) -> list[Trade]:
+        if failure == "orders-unanswered" and self.clock[0].time() >= time(11):
+            await asyncio.Future()
+        if failure == "orders" and self.clock[0].time() >= time(11):
+            raise TimeoutError("final orders unavailable")
+        return await orders(self)
+
+    monkeypatch.setattr(ScenarioGateway, "advance", unresolved)
+    monkeypatch.setattr(ScenarioGateway, "reqPositionsAsync", final_positions)
+    monkeypatch.setattr(ScenarioGateway, "reqAllOpenOrdersAsync", final_orders)
+    monkeypatch.setattr(probe, "EVIDENCE_TIMEOUT_SECONDS", 0.01)
+    task = asyncio.create_task(_scenario(monkeypatch, tmp_path, early=False, natural_expiry=False))
+    done, pending = await asyncio.wait({task}, timeout=0.5)
+    if pending:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert done, "unanswered final evidence must not prevent the DS-action report"
+    result, gateway, events = task.result()
+    assert result == 1
+    assert not gateway.cancel_requests
+    assert not gateway.sales
+    action = next(row for row in events if row["event"] == "DS action required")
+    have_positions = failure in {"orders", "orders-unanswered"}
+    assert action["held_quantity"] == (19 if have_positions else None)
+    assert action["observed_buy_fill_quantity"] == 19
+    output = capsys.readouterr().out
+    assert "DS action required" in output
+    assert ("held quantity 19" if have_positions else "held quantity unavailable") in output

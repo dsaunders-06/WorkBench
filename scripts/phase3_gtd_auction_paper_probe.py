@@ -223,9 +223,15 @@ def _trade_view(trade: Any) -> dict[str, Any]:
 
 
 async def _book(
-    client: Any, events: list[dict[str, Any]], name: str
+    client: Any,
+    events: list[dict[str, Any]],
+    name: str,
+    position_snapshot: dict[str, Any] | None = None,
 ) -> tuple[list[Any], list[Any]]:
     positions = await client.reqPositionsAsync()
+    if position_snapshot is not None and positions is not None:
+        position_snapshot["positions"] = list(positions)
+        _event(events, f"{name} positions", positions=[repr(row) for row in positions])
     orders = await client.reqAllOpenOrdersAsync()
     if positions is None or orders is None:
         raise RuntimeError("independent paper book unavailable")
@@ -276,6 +282,8 @@ async def _wait_fill_details(trades: list[Any], deadline: time) -> None:
 def _check_pre_expiry(
     buys: list[Any], now: datetime, cancel_requests: set[str] | None = None
 ) -> None:
+    if now.time() >= time(10, 16):
+        return  # broker-led PendingCancel/Inactive are reconciled by the terminal wait
     for trade in buys:
         status = trade.orderStatus.status
         own_cancel = str(getattr(getattr(trade, "order", None), "orderRef", "")) in (
@@ -479,6 +487,7 @@ async def _wait_status(
     deadline: time,
     *,
     cancel_requested: bool = False,
+    wait_buy_terminal: bool = False,
     events: list[dict[str, Any]] | None = None,
     callback_halts: list[str] | None = None,
 ) -> None:
@@ -487,14 +496,54 @@ async def _wait_status(
         _raise_callback_halt(callback_halts)
         status = trade.orderStatus.status
         if events is not None and status != last_status:
-            _event(events, "cancel state", order=_trade_view(trade))
+            _event(
+                events,
+                (
+                    "buy terminal state"
+                    if wait_buy_terminal and not cancel_requested
+                    else "cancel state"
+                ),
+                order=_trade_view(trade),
+                script_cancel_requested=cancel_requested,
+            )
             last_status = status
         if status in allowed:
             return
-        if status == "Inactive" or (status == "PendingCancel" and not cancel_requested):
+        if not wait_buy_terminal and (
+            status == "Inactive" or (status == "PendingCancel" and not cancel_requested)
+        ):
             raise RuntimeError(f"unexpected order state: {status}")
         await asyncio.sleep(0.5)
+    if events is not None and wait_buy_terminal:
+        _event(events, "buy terminal deadline", order=_trade_view(trade))
     raise RuntimeError(f"order status not confirmed before {deadline}: {trade.orderStatus.status}")
+
+
+def _request_buy_cancel(
+    client: Any,
+    trade: Any,
+    events: list[dict[str, Any]],
+    requested: set[str],
+    broker_waits: set[str],
+    *,
+    emergency: bool = False,
+) -> bool:
+    ref = str(trade.order.orderRef)
+    if _now().time() >= time(10, 16) and trade.orderStatus.status in {"PendingCancel", "Inactive"}:
+        broker_waits.add(ref)
+    if ref not in requested and ref not in broker_waits:
+        if not _cancel_required(trade.orderStatus.status, float(trade.orderStatus.remaining)):
+            return False
+        _event(
+            events,
+            "emergency cancellation" if emergency else "cancel requested",
+            order=_trade_view(trade),
+        )
+        # Mark before the call: ib_async may emit PendingCancel synchronously.
+        # An ambiguous/failed request must never be resent by emergency cleanup.
+        requested.add(ref)
+        client.cancelOrder(trade.order)
+    return True
 
 
 async def _cancel_live_buy(
@@ -506,30 +555,56 @@ async def _cancel_live_buy(
     deadline: time = time(11, 0),
     emergency: bool = False,
     callback_halts: list[str] | None = None,
+    broker_waits: set[str] | None = None,
 ) -> None:
     requested = cancel_requests if cancel_requests is not None else set()
+    waiting = broker_waits if broker_waits is not None else set()
+    if not _request_buy_cancel(client, trade, events, requested, waiting, emergency=emergency):
+        return
     ref = str(trade.order.orderRef)
-    if ref not in requested:
-        if not _cancel_required(trade.orderStatus.status, float(trade.orderStatus.remaining)):
-            return
-        _event(
-            events,
-            "emergency cancellation" if emergency else "cancel requested",
-            order=_trade_view(trade),
-        )
-        # Mark before the call: ib_async may emit PendingCancel synchronously.
-        # An ambiguous/failed request must never be resent by emergency cleanup.
-        requested.add(ref)
-        client.cancelOrder(trade.order)
     await _wait_status(
         trade,
         TERMINAL,
         deadline,
-        cancel_requested=True,
+        cancel_requested=ref in requested,
+        wait_buy_terminal=_now().time() >= time(10, 16),
         events=events,
         callback_halts=callback_halts,
     )
-    _event(events, "cancel confirmed", order=_trade_view(trade))
+    _event(
+        events,
+        "cancel confirmed" if ref in requested else "buy terminal confirmed",
+        order=_trade_view(trade),
+        script_cancel_requested=ref in requested,
+    )
+
+
+async def _settle_buys(
+    client: Any,
+    buys: list[Any],
+    events: list[dict[str, Any]],
+    cancel_requests: set[str],
+    broker_waits: set[str],
+    *,
+    emergency: bool = False,
+    callback_halts: list[str] | None = None,
+) -> None:
+    # Dispatch every eligible cancellation before one long broker-led wait can
+    # consume the deadline. Broker-led waits and own requests survive reentry.
+    for trade in buys:
+        _request_buy_cancel(
+            client, trade, events, cancel_requests, broker_waits, emergency=emergency
+        )
+    for trade in buys:
+        await _cancel_live_buy(
+            client,
+            trade,
+            events,
+            cancel_requests,
+            emergency=emergency,
+            callback_halts=callback_halts,
+            broker_waits=broker_waits,
+        )
 
 
 async def _observe_b_expiry(
@@ -582,6 +657,7 @@ async def _run(
     known_trades: list[Any] = []
     refs = {f"gtd-20261027-{label}" for label in ("A", "B")}
     cancel_requests: set[str] = set()
+    broker_waits: set[str] = set()
     callback_halts: list[str] = []
     streamed_times: dict[str, dict[str, Any]] = {}
     observation_active = False
@@ -694,10 +770,9 @@ async def _run(
         _raise_callback_halt(callback_halts)
         _check_pre_expiry(buys, _now(), cancel_requests)
         _event(events, "post-auction statuses", orders=[_trade_view(trade) for trade in buys])
-        for trade in buys:
-            await _cancel_live_buy(
-                client, trade, events, cancel_requests, callback_halts=callback_halts
-            )
+        await _settle_buys(
+            client, buys, events, cancel_requests, broker_waits, callback_halts=callback_halts
+        )
         positions, orders = await _book(client, events, "after 10:16 cancellation")
         _owned_orders_only(orders, refs)
         if orders:
@@ -715,6 +790,8 @@ async def _run(
         )
         _raise_callback_halt(callback_halts)
         _check_pre_expiry(buys, _now(), cancel_requests)
+        if any(trade.orderStatus.status not in TERMINAL for trade in buys):
+            raise RuntimeError("buy is not terminal before exit")
         qty = _exit_quantity(
             _fill_count(buys[0]), _fill_count(buys[1]), _held(positions, account, contract.conId)
         )
@@ -750,16 +827,17 @@ async def _run(
         # Bounded emergency cleanup acts on this probe's orders and shares only.
         if raw.isConnected() and buys:
             try:
-                for trade in buys:
-                    await _cancel_live_buy(
-                        client, trade, events, cancel_requests, deadline=time(11, 0), emergency=True
-                    )
+                await _settle_buys(
+                    client, buys, events, cancel_requests, broker_waits, emergency=True
+                )
                 positions, orders = await _book(client, events, "emergency book")
                 _owned_orders_only(orders, refs)
                 if orders:
                     raise RuntimeError("emergency buys still working; no sale attempted")
                 if not sell_attempted:
                     await _wait_fill_details(buys, time(11, 0))
+                    if any(trade.orderStatus.status not in TERMINAL for trade in buys):
+                        raise RuntimeError("buy is not terminal before emergency exit")
                     qty = _exit_quantity(
                         sum(_fill_count(trade) for trade in buys),
                         0,
@@ -793,9 +871,11 @@ async def _run(
             except Exception as cleanup_exc:  # noqa: BLE001 - preserve both failures
                 _event(events, "emergency halt", reason=repr(cleanup_exc))
     finally:
+        final_snapshot: dict[str, Any] = {}
         if raw.isConnected():
             try:
-                await _book(client, events, "independent final book")
+                async with asyncio.timeout(EVIDENCE_TIMEOUT_SECONDS):
+                    await _book(client, events, "independent final book", final_snapshot)
                 await _record_execution_times(
                     client,
                     events,
@@ -807,6 +887,33 @@ async def _run(
                 _event(events, "final book unavailable", reason=repr(exc))
                 error = error or repr(exc)
             raw.disconnect()
+        if buys:
+            held = None
+            observed_fills = None
+            try:
+                if "positions" in final_snapshot:
+                    held = _held(final_snapshot["positions"], account, buys[0].contract.conId)
+                observed_fills = sum(_fill_count(trade) for trade in buys)
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 - action reporting must survive evidence failure
+                _event(events, "final quantity unavailable", reason=repr(exc))
+                error = error or repr(exc)
+            if (
+                held
+                or any(trade.orderStatus.status not in TERMINAL for trade in buys)
+                or (held is None and error)
+            ):
+                _event(
+                    events,
+                    "DS action required",
+                    held_quantity=held,
+                    observed_buy_fill_quantity=observed_fills,
+                    buys=[_trade_view(trade) for trade in buys],
+                )
+                quantity = str(held) if held is not None else "unavailable"
+                action = f"DS action required: held quantity {quantity} {SYMBOL}"
+                error = f"{error}; {action}" if error else action
         path, digest = _write_raw(
             output,
             "gtd-auction-paper",
