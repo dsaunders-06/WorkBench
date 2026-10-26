@@ -33,9 +33,10 @@ CAP = Decimal("800")
 # IBKR's order reference permits yyyyMMdd-HH:mm:ss in UTC for goodTillDate:
 # https://ibkrcampus.com/docs/tws-api/ref/order
 GTD_UTC = "20261026-23:15:00"  # 10:15:00 Australia/Sydney on 27 October.
-# DS's bounded fill threshold. Current ASX cash-market OSPA/normal-trading
+# ASX's single opening auction begins in a randomised window from 09:59:00;
+# continuous trading starts from 09:59:45 (random 15 seconds). Fill timestamps
+# are observations, never halt conditions. Current schedule:
 # schedule: https://www.asx.com.au/markets/market-resources/trading-hours-calendar/cash-market-trading-hours
-EARLIEST_FILL = time(9, 59, 45)
 EVIDENCE_TIMEOUT_SECONDS = 10.0
 LIVE = frozenset({"PendingSubmit", "PreSubmitted", "Submitted"})
 CANCELLED = frozenset({"Cancelled", "ApiCancelled"})
@@ -113,9 +114,17 @@ def _exit_quantity(a_filled: int, b_filled: int, held: int) -> int:
     return owned
 
 
+class ExactAccountError(ValueError):
+    """The one fatal condition during the protected expiry-observation window."""
+
+
 def _exact_account(client: Any) -> None:
-    if list(client.managedAccounts()) != [client.expected_account]:
-        raise ValueError("probe requires exactly the approved DU paper account")
+    try:
+        accounts = list(client.managedAccounts())
+    except Exception as exc:  # noqa: BLE001 - an unconfirmable account is fatal
+        raise ExactAccountError("approved DU paper account could not be confirmed") from exc
+    if accounts != [client.expected_account]:
+        raise ExactAccountError("probe requires exactly the approved DU paper account")
 
 
 class _ExactAccountGateway:
@@ -202,7 +211,8 @@ def _trade_view(trade: Any) -> dict[str, Any]:
         "fills": [
             {
                 "exec_id": str(fill.execution.execId),
-                "time": str(fill.execution.time),
+                "streamed_execution_time": str(fill.execution.time),
+                "time_role": "streamed observation only; not execution-time evidence",
                 "shares": str(fill.execution.shares),
                 "price": str(fill.execution.price),
                 "commission": repr(fill.commissionReport),
@@ -255,11 +265,12 @@ def _fills_match_status(trade: Any) -> bool:
 
 
 async def _wait_fill_details(trades: list[Any], deadline: time) -> None:
-    while _now().time() < deadline:
+    while True:
         if all(_fills_match_status(trade) for trade in trades):
             return
+        if _now().time() >= deadline:
+            raise RuntimeError("IBKR execution details did not match reported filled quantity")
         await asyncio.sleep(0.5)
-    raise RuntimeError("IBKR execution details did not match reported filled quantity")
 
 
 def _check_pre_expiry(
@@ -276,19 +287,25 @@ def _check_pre_expiry(
             or (status in CANCELLED and now.time() < time(10, 15) and not own_cancel)
         ):
             raise RuntimeError(f"buy ended unexpectedly before GTD expiry: {status}")
-        for fill in getattr(trade, "fills", ()):
-            executed = fill.execution.time
-            if not isinstance(executed, datetime) or executed.tzinfo is None:
-                raise RuntimeError("buy execution time is unavailable or timezone-naive")
-            local = executed.astimezone(SYDNEY)
-            if local.date() != SESSION or local.time() < EARLIEST_FILL:
-                raise RuntimeError("buy filled before the ASX opening auction threshold")
-        if status == "Filled" and now.time() < EARLIEST_FILL:
-            raise RuntimeError("buy filled before the ASX opening auction")
+
+
+def _streamed_time(fill: Any) -> dict[str, Any]:
+    value = fill.execution.time
+    return {
+        "repr": repr(value),
+        "utc": (
+            value.astimezone(UTC).isoformat()
+            if isinstance(value, datetime) and value.tzinfo is not None
+            else None
+        ),
+    }
 
 
 async def _record_execution_times(
-    client: Any, events: list[dict[str, Any]], expected_ids: set[str] | None = None
+    client: Any,
+    events: list[dict[str, Any]],
+    expected_ids: set[str] | None = None,
+    streamed_times: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     requested = _now().isoformat()
     async with asyncio.timeout(EVIDENCE_TIMEOUT_SECONDS):
@@ -298,17 +315,30 @@ async def _record_execution_times(
     if executions is None:
         raise RuntimeError("reqExecutions response unavailable")
     rows: list[dict[str, Any]] = []
+    invalid_time = False
     for fill in executions:
         executed = fill.execution.time
-        if not isinstance(executed, datetime) or executed.tzinfo is None:
-            raise RuntimeError("reqExecutions time is unavailable or timezone-naive")
+        aware = isinstance(executed, datetime) and executed.tzinfo is not None
+        invalid_time = invalid_time or not aware
+        streamed = (streamed_times or {}).get(str(fill.execution.execId), {})
+        streamed_utc = streamed.get("utc")
+        difference = (
+            (executed.astimezone(UTC) - datetime.fromisoformat(streamed_utc)).total_seconds()
+            if aware and streamed_utc
+            else None
+        )
         rows.append(
             {
                 "exec_id": str(fill.execution.execId),
                 "order_ref": str(fill.execution.orderRef),
                 "execution_time_repr": repr(executed),
-                "execution_time_utc": executed.astimezone(UTC).isoformat(),
-                "execution_time_aedt": executed.astimezone(SYDNEY).isoformat(),
+                "execution_time_utc": executed.astimezone(UTC).isoformat() if aware else None,
+                "execution_time_aedt": executed.astimezone(SYDNEY).isoformat() if aware else None,
+                "time_source": "reqExecutions",
+                "streamed_execution_time_repr": streamed.get("repr"),
+                "streamed_execution_time_utc": streamed_utc,
+                "times_match": difference == 0 if difference is not None else None,
+                "time_difference_seconds": difference,
                 "shares": str(fill.execution.shares),
                 "price": str(fill.execution.price),
                 "commission": repr(fill.commissionReport),
@@ -321,8 +351,99 @@ async def _record_execution_times(
         fills=rows,
         executions=[repr(fill) for fill in executions],
     )
+    if invalid_time:
+        raise RuntimeError("reqExecutions time is unavailable or timezone-naive")
     if expected_ids and not expected_ids.issubset({row["exec_id"] for row in rows}):
         raise RuntimeError("reqExecutions did not confirm every observed fill")
+
+
+async def _try_observation(
+    client: Any,
+    events: list[dict[str, Any]],
+    kind: str,
+    operation: Any,
+    next_checkpoint: time | None = None,
+) -> bool:
+    """Protected-window evidence failure: record now, retry on the next poll."""
+    _exact_account(client)
+    try:
+        seconds = EVIDENCE_TIMEOUT_SECONDS
+        if next_checkpoint is not None:
+            remaining = (
+                datetime.combine(SESSION, next_checkpoint, SYDNEY) - _now()
+            ).total_seconds()
+            seconds = min(seconds, max(0.001, remaining))
+        async with asyncio.timeout(seconds):
+            await operation()
+        _exact_account(client)
+    except ExactAccountError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - all other window failures are observations
+        _exact_account(client)
+        _event(events, "pre-expiry evidence error", kind=kind, reason=repr(exc))
+        return False
+    return True
+
+
+async def _observe_pre_expiry(
+    client: Any,
+    buys: list[Any],
+    events: list[dict[str, Any]],
+    cancel_requests: set[str],
+    streamed_times: dict[str, dict[str, Any]],
+) -> None:
+    """Only an exact-account failure can escape until both checkpoint attempts finish."""
+    checkpoints = (time(10, 15, 30), time(10, 16))
+    checkpoint = 0
+    pending_completed = False
+    recorded: set[str] = set()
+    while checkpoint < len(checkpoints):
+        _exact_account(client)
+        try:
+            if _now().time() >= checkpoints[checkpoint]:
+                scheduled = checkpoints[checkpoint]
+                checkpoint += 1
+                pending_completed = True
+                _event(
+                    events,
+                    "B GTD expiry observation start",
+                    scheduled_for=scheduled.isoformat(),
+                    status=buys[1].orderStatus.status,
+                    script_cancel_requested=str(buys[1].order.orderRef) in cancel_requests,
+                )
+            if pending_completed:
+                pending_completed = not await _try_observation(
+                    client,
+                    events,
+                    "completed-orders",
+                    lambda: _observe_b_expiry(client, buys[1], events, cancel_requests),
+                    checkpoints[checkpoint] if checkpoint < len(checkpoints) else None,
+                )
+            if checkpoint < len(checkpoints):
+                observed = {str(fill.execution.execId) for trade in buys for fill in trade.fills}
+                if observed - recorded:
+                    success = await _try_observation(
+                        client,
+                        events,
+                        "reqExecutions",
+                        lambda expected=observed: _record_execution_times(
+                            client, events, expected, streamed_times
+                        ),
+                        checkpoints[checkpoint],
+                    )
+                    if success:
+                        recorded.update(observed)
+        except ExactAccountError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - no other pre-expiry kill switch
+            _exact_account(client)
+            _event(events, "pre-expiry observation error", reason=repr(exc))
+        if checkpoint < len(checkpoints):
+            seconds = (
+                datetime.combine(SESSION, checkpoints[checkpoint], SYDNEY) - _now()
+            ).total_seconds()
+            await asyncio.sleep(max(0.1, min(5.0, seconds)))
+    _exact_account(client)
 
 
 async def _wait_until(
@@ -382,7 +503,7 @@ async def _cancel_live_buy(
     events: list[dict[str, Any]],
     cancel_requests: set[str] | None = None,
     *,
-    deadline: time = time(10, 20),
+    deadline: time = time(11, 0),
     emergency: bool = False,
     callback_halts: list[str] | None = None,
 ) -> None:
@@ -436,7 +557,7 @@ async def _observe_b_expiry(
         completed_orders=[{"order": _trade_view(row), "repr": repr(row)} for row in matching],
         script_cancel_requested=script_cancel,
         terminal_without_script_cancel=not script_cancel and bool(states & TERMINAL),
-        expired_without_script_cancellation=not script_cancel and bool(states & CANCELLED),
+        cancelled_without_script_cancellation=not script_cancel and bool(states & CANCELLED),
     )
 
 
@@ -462,6 +583,8 @@ async def _run(
     refs = {f"gtd-20261027-{label}" for label in ("A", "B")}
     cancel_requests: set[str] = set()
     callback_halts: list[str] = []
+    streamed_times: dict[str, dict[str, Any]] = {}
+    observation_active = False
     sell_attempted = False
     error: str | None = None
     try:
@@ -502,6 +625,8 @@ async def _run(
         def check_callback(trade: Any) -> None:
             if str(trade.order.orderRef) not in refs:
                 return
+            if observation_active:
+                return  # all status transitions in this window are observations
             try:
                 _check_pre_expiry([trade], _now(), cancel_requests)
             except RuntimeError as exc:
@@ -516,21 +641,34 @@ async def _run(
                 "gtd-20261027-exit",
                 "gtd-20261027-emergency",
             }:
-                _event(events, "status", order=_trade_view(trade))
-                check_callback(trade)
+                try:
+                    _event(events, "status", order=_trade_view(trade))
+                    check_callback(trade)
+                except Exception as exc:  # noqa: BLE001 - callbacks must preserve the window
+                    if observation_active:
+                        _event(events, "pre-expiry callback error", reason=repr(exc))
+                    else:
+                        callback_halts.append(repr(exc))
 
         def on_execution(trade: Any, fill: Any) -> None:
             if str(trade.order.orderRef) in refs or str(trade.order.orderRef) in {
                 "gtd-20261027-exit",
                 "gtd-20261027-emergency",
             }:
-                _event(
-                    events,
-                    "execution",
-                    order=_trade_view(trade),
-                    exec_id=str(fill.execution.execId),
-                )
-                check_callback(trade)
+                try:
+                    streamed_times[str(fill.execution.execId)] = _streamed_time(fill)
+                    _event(
+                        events,
+                        "execution",
+                        order=_trade_view(trade),
+                        exec_id=str(fill.execution.execId),
+                    )
+                    check_callback(trade)
+                except Exception as exc:  # noqa: BLE001 - raw stream metadata is diagnostic
+                    if observation_active:
+                        _event(events, "pre-expiry callback error", reason=repr(exc))
+                    else:
+                        callback_halts.append(repr(exc))
 
         raw.orderStatusEvent += on_status
         raw.execDetailsEvent += on_execution
@@ -548,12 +686,13 @@ async def _run(
                 callback_halts=callback_halts,
             )
         _event(events, "preopen acceptance", orders=[_trade_view(trade) for trade in buys])
-        await _wait_until(time(10, 15, 30), buys, client, events, callback_halts)
-        await _observe_b_expiry(client, buys[1], events, cancel_requests)
+        observation_active = True
+        try:
+            await _observe_pre_expiry(client, buys, events, cancel_requests, streamed_times)
+        finally:
+            observation_active = False
         _raise_callback_halt(callback_halts)
-        await _wait_until(time(10, 16), buys, client, events, callback_halts)
-        await _observe_b_expiry(client, buys[1], events, cancel_requests)
-        _raise_callback_halt(callback_halts)
+        _check_pre_expiry(buys, _now(), cancel_requests)
         _event(events, "post-auction statuses", orders=[_trade_view(trade) for trade in buys])
         for trade in buys:
             await _cancel_live_buy(
@@ -569,7 +708,10 @@ async def _run(
             raise RuntimeError("working buy remains before exit")
         await _wait_fill_details(buys, time(10, 31))
         await _record_execution_times(
-            client, events, {str(fill.execution.execId) for row in buys for fill in row.fills}
+            client,
+            events,
+            {str(fill.execution.execId) for row in buys for fill in row.fills},
+            streamed_times,
         )
         _raise_callback_halt(callback_halts)
         _check_pre_expiry(buys, _now(), cancel_requests)
@@ -580,6 +722,8 @@ async def _run(
             sell = MarketOrder("SELL", qty, tif="DAY")
             sell.account = account
             sell.orderRef = "gtd-20261027-exit"
+            if _now().time() >= time(11, 0):
+                raise RuntimeError("exit submission deadline 11:00 reached; no sale attempted")
             sell_attempted = True
             sale = client.placeOrder(contract, sell)
             known_trades.append(sale)
@@ -593,6 +737,7 @@ async def _run(
                 client,
                 events,
                 {str(fill.execution.execId) for row in known_trades for fill in row.fills},
+                streamed_times,
             )
             _raise_callback_halt(callback_halts)
         positions, orders = await _book(client, events, "final book")
@@ -624,6 +769,10 @@ async def _run(
                         emergency_order = MarketOrder("SELL", qty, tif="DAY")
                         emergency_order.account = account
                         emergency_order.orderRef = "gtd-20261027-emergency"
+                        if _now().time() >= time(11, 0):
+                            raise RuntimeError(
+                                "exit submission deadline 11:00 reached; no sale attempted"
+                            )
                         sell_attempted = True
                         trade = client.placeOrder(buys[0].contract, emergency_order)
                         known_trades.append(trade)
@@ -639,6 +788,7 @@ async def _run(
                                 for row in known_trades
                                 for fill in row.fills
                             },
+                            streamed_times,
                         )
             except Exception as cleanup_exc:  # noqa: BLE001 - preserve both failures
                 _event(events, "emergency halt", reason=repr(cleanup_exc))
@@ -650,6 +800,7 @@ async def _run(
                     client,
                     events,
                     {str(fill.execution.execId) for row in known_trades for fill in row.fills},
+                    streamed_times,
                 )
                 _raise_callback_halt(callback_halts)
             except Exception as exc:  # noqa: BLE001

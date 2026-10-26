@@ -107,13 +107,10 @@ def test_cancel_only_live_remainder_and_never_retry() -> None:
         probe._cancel_required("Inactive", 1)
 
 
-def test_early_cancellation_and_preopen_fill_halt() -> None:
+def test_strict_status_check_outside_observation_window() -> None:
     cancelled = SimpleNamespace(orderStatus=SimpleNamespace(status="Cancelled"))
-    filled = SimpleNamespace(orderStatus=SimpleNamespace(status="Filled"))
     with pytest.raises(RuntimeError, match="before GTD expiry"):
         probe._check_pre_expiry([cancelled], datetime(2026, 10, 27, 10, 5, tzinfo=SYDNEY))
-    with pytest.raises(RuntimeError, match="before the ASX opening auction"):
-        probe._check_pre_expiry([filled], datetime(2026, 10, 27, 9, 55, tzinfo=SYDNEY))
     probe._check_pre_expiry([cancelled], datetime(2026, 10, 27, 10, 16, tzinfo=SYDNEY))
 
 
@@ -197,8 +194,8 @@ def _fill(trade: Trade, at: datetime, quantity: int, exec_id: str = "test-buy") 
     )
 
 
-@pytest.mark.parametrize("second", [45, 50])
-def test_real_trade_fill_at_or_after_095945_is_permitted(second: int) -> None:
+@pytest.mark.parametrize("second", [5, 40, 45, 50])
+def test_fill_time_is_never_a_halt_condition(second: int) -> None:
     trade = _trade("A", 14)
     at = datetime(2026, 10, 27, 9, 59, second, tzinfo=SYDNEY)
     trade.fills.append(_fill(trade, at, 14))
@@ -207,13 +204,12 @@ def test_real_trade_fill_at_or_after_095945_is_permitted(second: int) -> None:
 
 
 @pytest.mark.parametrize("status", ["Submitted", "Filled"])
-def test_execution_before_095945_halts_even_if_observed_after_1000(status: str) -> None:
+def test_partial_or_delayed_fill_time_is_observational_only(status: str) -> None:
     trade = _trade("A", 14)
     at = datetime(2026, 10, 27, 9, 59, 40, tzinfo=SYDNEY)
     trade.fills.append(_fill(trade, at, 1))
     trade.orderStatus = OrderStatus(status=status, filled=1, remaining=13)
-    with pytest.raises(RuntimeError, match="before the ASX opening"):
-        probe._check_pre_expiry([trade], datetime(2026, 10, 27, 10, 1, tzinfo=SYDNEY))
+    probe._check_pre_expiry([trade], datetime(2026, 10, 27, 10, 1, tzinfo=SYDNEY))
 
 
 @pytest.mark.asyncio
@@ -262,10 +258,22 @@ class ScenarioGateway:
     """Offline broker boundary; every trade, fill and status is a real ib_async object."""
 
     def __init__(
-        self, clock: list[datetime], *, early: bool, natural_expiry: bool, late_fill: bool = False
+        self,
+        clock: list[datetime],
+        *,
+        early: bool,
+        natural_expiry: bool,
+        late_fill: bool = False,
+        fill_time: time | None = None,
+        streamed_offset_hours: int = 0,
+        cancel_release_at: time | None = None,
     ) -> None:
         self.clock = clock
         self.early = early
+        self.fill_time = fill_time or time(9, 59, 40 if early else 50)
+        self.streamed_offset_hours = streamed_offset_hours
+        self.cancel_release_at = cancel_release_at
+        self.accounts = ["DUFAKE"]
         self.natural_expiry = natural_expiry
         self.late_fill = late_fill
         self.buy_filled = False
@@ -282,7 +290,7 @@ class ScenarioGateway:
         self.held = 0
 
     def managedAccounts(self) -> list[str]:
-        return ["DUFAKE"]
+        return self.accounts
 
     async def connectAsync(self, *args: object, **kwargs: object) -> None:
         self.connected = True
@@ -345,26 +353,29 @@ class ScenarioGateway:
     async def advance(self, seconds: float) -> None:
         self.clock[0] += timedelta(seconds=seconds)
         for trade in self.buys:
-            if trade.orderStatus.status == "PendingCancel":
+            if trade.orderStatus.status == "PendingCancel" and (
+                self.cancel_release_at is None or self.clock[0].time() >= self.cancel_release_at
+            ):
                 trade.orderStatus.status = "ApiCancelled"
                 self.orderStatusEvent(trade)
         if not self.buys:
             return
         first = self.buys[0]
-        at = datetime(2026, 10, 27, 9, 59, 40 if self.early else 50, tzinfo=SYDNEY)
+        at = datetime.combine(date(2026, 10, 27), self.fill_time, SYDNEY)
         if self.clock[0] >= at and not self.buy_filled:
             quantity = int(first.order.totalQuantity)
             fill = _fill(first, at, quantity)
+            streamed = _fill(first, at + timedelta(hours=self.streamed_offset_hours), quantity)
             self.buy_filled = True
             if self.late_fill:
                 self.delayed_fill = fill
             else:
-                first.fills.append(fill)
+                first.fills.append(streamed)
                 self.executions.append(fill)
             first.orderStatus = OrderStatus(status="Filled", filled=quantity, remaining=0)
             self.held = quantity
             if not self.late_fill:
-                self.execDetailsEvent(first, fill)
+                self.execDetailsEvent(first, streamed)
             self.orderStatusEvent(first)
         if self.delayed_fill and self.clock[0].time() >= time(10, 20):
             first.fills.append(self.delayed_fill)
@@ -404,10 +415,19 @@ async def _scenario(
     early: bool,
     natural_expiry: bool,
     late_fill: bool = False,
+    fill_time: time | None = None,
+    streamed_offset_hours: int = 0,
+    cancel_release_at: time | None = None,
 ) -> tuple[int, ScenarioGateway, list[dict]]:
     clock = [datetime(2026, 10, 27, 9, 45, tzinfo=SYDNEY)]
     gateway = ScenarioGateway(
-        clock, early=early, natural_expiry=natural_expiry, late_fill=late_fill
+        clock,
+        early=early,
+        natural_expiry=natural_expiry,
+        late_fill=late_fill,
+        fill_time=fill_time,
+        streamed_offset_hours=streamed_offset_hours,
+        cancel_release_at=cancel_release_at,
     )
     monkeypatch.setattr(probe, "IB", lambda: gateway)
     monkeypatch.setattr(probe, "_now", lambda: clock[0])
@@ -424,10 +444,17 @@ async def _scenario(
 async def test_emergency_sale_proceeds_after_pendingcancel_resolves(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    observe = probe._observe_pre_expiry
+
+    async def fail_after_observations(*args: object) -> None:
+        await observe(*args)
+        raise RuntimeError("controlled post-observation failure")
+
+    monkeypatch.setattr(probe, "_observe_pre_expiry", fail_after_observations)
     result, gateway, events = await _scenario(
         monkeypatch, tmp_path, early=True, natural_expiry=False
     )
-    assert result == 1  # the original early-fill halt remains recorded
+    assert result == 1  # the controlled post-window failure remains recorded
     assert gateway.held == 0
     assert len(gateway.sales) == 1
     assert gateway.sales[0].order.orderRef == "gtd-20261027-emergency"
@@ -504,7 +531,7 @@ async def test_unanswered_evidence_request_has_its_own_timeout(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["PendingCancel", "Inactive"])
-async def test_brief_unsolicited_state_is_latched_between_poll_iterations(
+async def test_brief_unsolicited_state_is_recorded_without_preexpiry_halt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str
 ) -> None:
     advance = ScenarioGateway.advance
@@ -525,11 +552,10 @@ async def test_brief_unsolicited_state_is_latched_between_poll_iterations(
     result, gateway, events = await _scenario(
         monkeypatch, tmp_path, early=False, natural_expiry=False
     )
-    assert result == 1
-    assert any(
-        row["event"] == "callback halt latched" and status in row["reason"] for row in events
-    )
-    assert gateway.held == 0  # bounded emergency cleanup still runs
+    assert result == 0
+    assert any(row["event"] == "status" and row["order"]["status"] == status for row in events)
+    assert not any(row["event"] in {"halt", "emergency cancellation"} for row in events)
+    assert gateway.held == 0
 
 
 @pytest.mark.asyncio
@@ -549,3 +575,258 @@ async def test_missing_reqexecutions_confirmation_for_late_buy_or_sale_fails(
     )
     assert result == 1
     assert any("reqExecutions did not confirm" in row.get("reason", "") for row in events)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second", [5, 40])
+async def test_auction_fills_before_095945_are_recorded_and_complete_normally(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, second: int
+) -> None:
+    result, gateway, events = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=True, fill_time=time(9, 59, second)
+    )
+    assert result == 0
+    rows = [
+        row
+        for event in events
+        if event["event"] == "execution times recheck"
+        for row in event["fills"]
+    ]
+    buy = next(row for row in rows if row["exec_id"] == "test-buy")
+    assert buy["execution_time_utc"] == f"2026-10-26T22:59:{second:02d}+00:00"
+    assert buy["time_source"] == "reqExecutions"
+    assert not gateway.cancel_requests
+    assert not any(event["event"] == "halt" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_streamed_time_eleven_hours_wrong_is_diagnostic_not_execution_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    result, _, events = await _scenario(
+        monkeypatch,
+        tmp_path,
+        early=False,
+        natural_expiry=True,
+        fill_time=time(9, 59, 5),
+        streamed_offset_hours=11,
+    )
+    assert result == 0
+    rows = [
+        row
+        for event in events
+        if event["event"] == "execution times recheck"
+        for row in event["fills"]
+    ]
+    buy = next(row for row in rows if row["exec_id"] == "test-buy")
+    assert buy["execution_time_utc"] == "2026-10-26T22:59:05+00:00"
+    assert buy["streamed_execution_time_utc"] == "2026-10-27T09:59:05+00:00"
+    assert buy["time_source"] == "reqExecutions"
+    assert buy["times_match"] is False
+    assert buy["time_difference_seconds"] == -39600
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["executions", "completed"])
+@pytest.mark.parametrize("when", [time(10, 0), time(10, 15, 30)])
+async def test_preexpiry_timeout_is_recorded_and_next_attempt_succeeds(
+    monkeypatch: pytest.MonkeyPatch, kind: str, when: time
+) -> None:
+    clock = [datetime.combine(date(2026, 10, 27), when, SYDNEY)]
+    gateway = ScenarioGateway(clock, early=False, natural_expiry=False)
+    client = probe._ExactAccountGateway(gateway, "DUFAKE")
+    events: list[dict] = []
+    calls = 0
+
+    async def request_once() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise TimeoutError("controlled evidence timeout")
+
+    monkeypatch.setattr(probe, "_now", lambda: clock[0])
+    assert await probe._try_observation(client, events, kind, request_once) is False
+    clock[0] += timedelta(seconds=5)
+    assert await probe._try_observation(client, events, kind, request_once) is True
+    assert calls == 2
+    assert any(row["event"] == "pre-expiry evidence error" for row in events)
+    assert not gateway.cancel_requests
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["executions", "completed"])
+async def test_timeout_in_full_window_retries_without_early_cancel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, kind: str
+) -> None:
+    method = "reqExecutionsAsync" if kind == "executions" else "reqCompletedOrdersAsync"
+    original = getattr(ScenarioGateway, method)
+    attempts: list[datetime] = []
+
+    async def timeout_once(self: ScenarioGateway, *args: object) -> object:
+        attempts.append(self.clock[0])
+        if len(attempts) == 1:
+            raise TimeoutError("controlled evidence timeout")
+        return await original(self, *args)
+
+    monkeypatch.setattr(ScenarioGateway, method, timeout_once)
+    result, gateway, events = await _scenario(
+        monkeypatch,
+        tmp_path,
+        early=False,
+        natural_expiry=False,
+        fill_time=time(10, 0) if kind == "executions" else time(9, 59, 5),
+    )
+    assert result == 0
+    assert attempts[1] > attempts[0]
+    assert any(row["event"] == "pre-expiry evidence error" for row in events)
+    assert all(
+        at >= datetime(2026, 10, 27, 10, 16, tzinfo=SYDNEY) for _, at in gateway.cancel_requests
+    )
+    assert not any(row["event"] == "emergency cancellation" for row in events)
+
+
+@pytest.mark.asyncio
+async def test_unrequested_cancelled_at_1005_does_not_cancel_or_halt_probe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    original = ScenarioGateway.advance
+    cancelled = False
+
+    async def unsolicited(self: ScenarioGateway, seconds: float) -> None:
+        nonlocal cancelled
+        await original(self, seconds)
+        if not cancelled and self.clock[0].time() >= time(10, 5):
+            cancelled = True
+            self.buys[1].orderStatus.status = "Cancelled"
+            self.orderStatusEvent(self.buys[1])
+
+    monkeypatch.setattr(ScenarioGateway, "advance", unsolicited)
+    result, gateway, events = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=False
+    )
+    assert result == 0
+    assert not gateway.cancel_requests
+    assert not any(row["event"] == "halt" for row in events)
+    assert len([row for row in events if row["event"] == "B GTD expiry observation"]) == 2
+    observations = [row for row in events if row["event"] == "B GTD expiry observation"]
+    assert all(row["cancelled_without_script_cancellation"] for row in observations)
+    assert all("expired_without_script_cancellation" not in row for row in observations)
+
+
+@pytest.mark.asyncio
+async def test_exact_account_failure_at_1005_still_halts_immediately(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    original = ScenarioGateway.advance
+
+    async def lose_account(self: ScenarioGateway, seconds: float) -> None:
+        await original(self, seconds)
+        if self.clock[0].time() >= time(10, 5):
+            self.accounts = ["DUOTHER"]
+
+    monkeypatch.setattr(ScenarioGateway, "advance", lose_account)
+    result, gateway, events = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=False
+    )
+    assert result == 1
+    halt = next(row for row in events if row["event"] == "halt")
+    assert halt["at_aedt"] == "2026-10-27T10:05:00+11:00"
+    assert "approved DU paper account" in halt["reason"]
+    assert not gateway.cancel_requests
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("emergency", [False, True])
+async def test_normal_cancel_can_remain_pending_until_1036_without_resend(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, emergency: bool
+) -> None:
+    if emergency:
+        observe = probe._observe_pre_expiry
+
+        async def fail_after_observations(*args: object) -> None:
+            await observe(*args)
+            raise RuntimeError("controlled post-observation failure")
+
+        monkeypatch.setattr(probe, "_observe_pre_expiry", fail_after_observations)
+    result, gateway, events = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=False, cancel_release_at=time(10, 36)
+    )
+    assert result == (1 if emergency else 0)
+    assert len(gateway.cancel_requests) == 1
+    assert len(gateway.sales) == 1
+    assert gateway.sales[0].fills[0].execution.time.astimezone(SYDNEY).time() == time(10, 36)
+    assert any(row["event"] == "emergency cancellation" for row in events) is emergency
+    assert gateway.held == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("emergency", [False, True])
+async def test_cancel_resolution_near_1100_does_not_submit_sale_after_deadline(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, emergency: bool
+) -> None:
+    if emergency:
+        observe = probe._observe_pre_expiry
+
+        async def fail_after_observations(*args: object) -> None:
+            await observe(*args)
+            raise RuntimeError("controlled post-observation failure")
+
+        monkeypatch.setattr(probe, "_observe_pre_expiry", fail_after_observations)
+    positions = ScenarioGateway.reqPositionsAsync
+
+    async def slow_final_book(self: ScenarioGateway) -> list[object]:
+        if self.clock[0].time() >= time(10, 59, 59):
+            self.clock[0] += timedelta(seconds=2)
+        return await positions(self)
+
+    monkeypatch.setattr(ScenarioGateway, "reqPositionsAsync", slow_final_book)
+    result, gateway, events = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=False, cancel_release_at=time(10, 59, 59)
+    )
+    assert result == 1
+    assert len(gateway.cancel_requests) == 1
+    assert not gateway.sales
+    assert gateway.held > 0
+    assert any("exit submission deadline" in row.get("reason", "") for row in events)
+
+
+@pytest.mark.asyncio
+async def test_expiry_checkpoints_take_priority_over_new_execution_requests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    original = ScenarioGateway.reqExecutionsAsync
+
+    async def slow(self: ScenarioGateway, execution_filter: object) -> list[Fill]:
+        self.clock[0] += timedelta(seconds=1)
+        return await original(self, execution_filter)
+
+    monkeypatch.setattr(ScenarioGateway, "reqExecutionsAsync", slow)
+    result, gateway, _ = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=False, fill_time=time(10, 15, 30)
+    )
+    assert result == 0
+    assert [at.time() for at in gateway.completed_requests] == [time(10, 15, 30), time(10, 16)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["PendingCancel", "Inactive"])
+async def test_persistent_unsolicited_status_only_halts_after_final_observation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, status: str
+) -> None:
+    advance = ScenarioGateway.advance
+
+    async def persist(self: ScenarioGateway, seconds: float) -> None:
+        await advance(self, seconds)
+        if self.clock[0].time() >= time(10, 5):
+            self.buys[1].orderStatus.status = status
+            self.orderStatusEvent(self.buys[1])
+
+    monkeypatch.setattr(ScenarioGateway, "advance", persist)
+    result, gateway, events = await _scenario(
+        monkeypatch, tmp_path, early=False, natural_expiry=False
+    )
+    assert result == 1
+    assert [at.time() for at in gateway.completed_requests] == [time(10, 15, 30), time(10, 16)]
+    halt = next(row for row in events if row["event"] == "halt")
+    assert halt["at_aedt"] == "2026-10-27T10:16:00+11:00"
+    assert not gateway.cancel_requests
