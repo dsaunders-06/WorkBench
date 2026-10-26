@@ -44,7 +44,7 @@ as approved.
 
 ## D3 — DS decision, 24 October 2026
 
-Proposed register wording; subject to DS's approval before merge.
+Wording approved by DS, 26 October 2026.
 
 Within the approved swing strategy and deterministic safety rules, AI
 interprets approved data and forms a BUY, HOLD or SELL recommendation for
