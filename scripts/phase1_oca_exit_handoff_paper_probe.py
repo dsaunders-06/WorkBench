@@ -514,6 +514,8 @@ class HandoffProbe:
 
     async def sell(self, quantity: int, role: str) -> Any:
         snapshot = await self.poll()
+        if role == "partial" and not snapshot["exact_stop"]:
+            raise ObservationTimeout("stop lost before partial handoff; full gap cleanup required")
         if quantity > snapshot["held_quantity"] or quantity <= 0:
             raise SafetyHalt("oversell risk: sale exceeds independently observed holding")
         # A previous exit or pending leg must settle before another exit exists.
@@ -538,6 +540,8 @@ class HandoffProbe:
         final_check = await self.poll()
         if quantity > final_check["held_quantity"]:
             raise SafetyHalt("oversell risk: holding changed during quote request")
+        if role == "partial" and not final_check["exact_stop"]:
+            raise ObservationTimeout("stop lost during quote; full gap cleanup required")
         order = MarketOrder("SELL", quantity, tif="DAY", ocaGroup=self.group, ocaType=self.oca_type)
         trade = self.place(order, role, reference)
         end = min(now() + timedelta(minutes=2), datetime.combine(SESSION, time(15, 30), SYDNEY))

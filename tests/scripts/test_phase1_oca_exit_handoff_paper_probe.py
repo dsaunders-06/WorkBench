@@ -579,3 +579,47 @@ async def test_initial_target_must_cover_full_holding_before_partial_handoff(mon
     assert not [t for t in broker.trades if t.order.orderRef.endswith("-partial")]
     assert any(e["event"] == "case observation" for e in events)
     assert broker.held == 0
+
+
+@pytest.mark.asyncio
+async def test_stop_disappearing_before_partial_exits_full_holding_without_quote_delay(monkeypatch):
+    _, broker, run, events = scenario(monkeypatch)
+    original = broker.reqAllOpenOrdersAsync
+
+    async def lost_stop():
+        orders = await original()
+        if run.armed and run.stage == "partial handoff":
+            for trade in orders:
+                if trade.order.orderType == "STP":
+                    trade.orderStatus.status = "Cancelled"
+            orders = await original()
+        return orders
+
+    broker.reqAllOpenOrdersAsync = lost_stop
+    await run.run_cases(types=(2,), monitor=False)
+    sales = [t for t in broker.trades if t.order.orderType == "MKT"]
+    assert [t.order.totalQuantity for t in sales] == [9]
+    assert sales[0].order.orderRef.endswith("-cleanup")
+    assert not any(e["event"] == "IBKR quote" and e["stage"] == "partial handoff" for e in events)
+    assert broker.held == 0
+    assert any(e["event"] == "protection gap" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_stop_disappearing_during_partial_quote_blocks_half_and_cleans_full(monkeypatch):
+    _, broker, run, _ = scenario(monkeypatch)
+    original = broker.reqTickersAsync
+
+    async def disappear(contract):
+        if run.armed and run.stage == "partial handoff":
+            for trade in broker.trades:
+                if trade.order.orderType == "STP":
+                    trade.orderStatus.status = "Cancelled"
+        return await original(contract)
+
+    broker.reqTickersAsync = disappear
+    await run.run_cases(types=(2,), monitor=False)
+    sales = [t for t in broker.trades if t.order.orderType == "MKT"]
+    assert [t.order.totalQuantity for t in sales] == [9]
+    assert sales[0].order.orderRef.endswith("-cleanup")
+    assert broker.held == 0
