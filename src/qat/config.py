@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     # Human approvals and safety resets must identify the person who acted.
     # Blank permits read-only startup, but the action paths refuse it.
     operator_name: str = ""
+    # Optional DS-pinned ASX corporate-action authority for stop warnings.
+    # Both a file and its approved SHA-256 are required; absent means inactive.
+    protection_actions_authority_path: str = ""
+    protection_actions_authority_sha256: str = ""
 
     # --- Execution mode (M13) ------------------------------------------------
     # "recommend": every order waits for a human sign-off in the Order Blotter,

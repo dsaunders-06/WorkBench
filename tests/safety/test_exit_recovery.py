@@ -1,13 +1,18 @@
 """Failure injection for the protective-stop handoff, using the real OMS."""
 
+import hashlib
+import json
 from dataclasses import replace
+from datetime import date
 
 import pytest
 
 from qat.config import Settings
 from qat.data.broker.adapter import Order, Position, RestingOrder
 from qat.data.broker.mock_broker import MockBroker
+from qat.data.broker.pending_legs import leg_order_ref
 from qat.domain.bus import EventBus
+from qat.domain.decision_journal import DecisionJournal, JournalEntry
 from qat.domain.oms.oms import OMS
 from qat.domain.risk_engine.engine import RiskEngine
 from qat.domain.risk_engine.kill_switch import KillSwitch
@@ -18,8 +23,12 @@ class ExitBroker(MockBroker):
         super().__init__(seed=1)
         self._positions["AAA"] = Position("AAA", 100.0, 100.0)
         self.legs = [
-            RestingOrder("AAA", "stop", "sell", "STP", 100.0, "Submitted", stop_price=90.0),
-            RestingOrder("AAA", "target", "sell", "LMT", 100.0, "Submitted", limit_price=120.0),
+            RestingOrder(
+                "AAA", "stop", "sell", "STP", 100.0, "Submitted", stop_price=90.0, tif="GTC"
+            ),
+            RestingOrder(
+                "AAA", "target", "sell", "LMT", 100.0, "Submitted", limit_price=120.0, tif="GTC"
+            ),
         ]
         self.cancelled = []
         self.sent = []
@@ -66,6 +75,7 @@ class ExitBroker(MockBroker):
                     order.quantity,
                     "Submitted",
                     stop_price=order.stop_price,
+                    tif="GTC",
                 )
             )
             return order
@@ -90,6 +100,514 @@ def make_oms(broker, tmp_path, switch=None):
         bus=bus,
         settings=settings,
     )
+
+
+def make_watchdog_oms(broker, tmp_path):
+    settings = Settings(_env_file=None, data_dir=str(tmp_path), operator_name="DS")
+    bus = EventBus()
+    switch = KillSwitch()
+    journal = DecisionJournal(tmp_path)
+    journal.record(JournalEntry("entry-1", "AAA", "buy", "signed_off", "entry", entity_name="DS"))
+    (tmp_path / "open_position_entries.json").write_text(
+        json.dumps(
+            {
+                "AAA": {
+                    "order_id": "entry-1",
+                    "quantity": 100,
+                    "stop_price": 90.0,
+                    "opened_at": "2026-10-20T10:30:00+11:00",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    broker.owns_resting_order = lambda order: bool(order.order_ref and order.perm_id)
+
+    async def no_pending(symbol):
+        return None
+
+    broker.pending_identity_reason = no_pending
+    broker.last_owned_protection = lambda symbol: {
+        "order_id": "999",
+        "order_ref": "qat-stop-ref",
+        "stop_price": 90.0,
+        "seen_at": "2026-10-20T10:31:00+11:00",
+    }
+    broker.completed = [RestingOrder("AAA", "0", "sell", "STP", 100, "Cancelled", perm_id=999)]
+    return OMS(
+        broker,
+        RiskEngine(bus, switch, settings=settings),
+        switch,
+        bus=bus,
+        settings=settings,
+        journal=journal,
+    )
+
+
+def write_approved_card_legs(tmp_path, legs):
+    (tmp_path / "approved_protection_legs.json").write_text(
+        json.dumps({"AAA": {"entry_order_id": "entry-1", "legs": legs}}), encoding="utf-8"
+    )
+
+
+@pytest.mark.asyncio
+async def test_watchdog_restores_once_after_two_empty_broker_reads(tmp_path):
+    broker = ExitBroker()
+    broker.legs = []
+    oms = make_watchdog_oms(broker, tmp_path)
+
+    await oms.watch_protection()
+
+    assert len(broker.sent) == 1
+    assert broker.sent[0].is_protective_stop
+    assert broker.sent[0].quantity == 100
+    assert broker.sent[0].stop_price == 90.0
+    assert oms._exit_recovery is not None
+    plan = oms._exit_recovery.plans["AAA"]
+    assert (plan.approval_order_id, plan.approval_operator) == ("entry-1", "DS")
+    assert any(
+        "DS restoration under entry approval entry-1" in row["entity_name"]
+        for row in oms.journal.entries()
+        if row["outcome"] == "signed_off"
+    )
+    await oms.watch_protection()
+    assert len(broker.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_watchdog_pending_cancel_alerts_and_never_rearms(tmp_path):
+    broker = ExitBroker()
+    broker.legs = [replace(broker.legs[0], status="PendingCancel")]
+    oms = make_watchdog_oms(broker, tmp_path)
+
+    await oms.watch_protection()
+
+    assert broker.sent == []
+    assert oms.kill_switch.tripped
+    assert "AAA" in oms.protection_warnings()[0]
+
+
+@pytest.mark.asyncio
+async def test_watchdog_never_restores_a_looser_entry_stop_after_tightening(tmp_path):
+    broker = ExitBroker()
+    broker.legs = []
+    oms = make_watchdog_oms(broker, tmp_path)
+    broker.last_owned_protection = lambda symbol: {
+        "order_id": "999",
+        "order_ref": "qat-stop-ref",
+        "stop_price": 95.0,
+        "seen_at": "2026-10-20T10:31:00+11:00",
+    }
+
+    await oms.watch_protection()
+
+    assert broker.sent == []
+    assert oms.kill_switch.tripped
+
+
+@pytest.mark.asyncio
+async def test_watchdog_waits_when_missing_stop_has_no_terminal_broker_evidence(tmp_path):
+    broker = ExitBroker()
+    broker.legs = []
+    oms = make_watchdog_oms(broker, tmp_path)
+    broker.completed = []
+
+    await oms.watch_protection()
+
+    assert broker.sent == []
+    assert oms.kill_switch.tripped
+
+
+@pytest.mark.asyncio
+async def test_watchdog_second_read_catches_new_pending_cancel_before_transmission(tmp_path):
+    class ChangingBook(ExitBroker):
+        def __init__(self):
+            super().__init__()
+            self.legs = []
+            self.reads = 0
+
+        async def open_orders(self):
+            self.reads += 1
+            if self.reads >= 2:
+                return [
+                    RestingOrder(
+                        "AAA",
+                        "999",
+                        "sell",
+                        "STP",
+                        100,
+                        "PendingCancel",
+                        stop_price=90.0,
+                        perm_id=999,
+                    )
+                ]
+            return []
+
+    broker = ChangingBook()
+    oms = make_watchdog_oms(broker, tmp_path)
+    await oms.watch_protection()
+
+    assert broker.reads >= 2
+    assert broker.sent == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_role", ["runner", "banked"])
+async def test_watchdog_restores_only_the_missing_card_leg(tmp_path, missing_role):
+    class TwoLegBroker(ExitBroker):
+        async def place_order(self, order):
+            self.sent.append(order)
+            order.status = "transmitted"
+            self.legs.append(
+                RestingOrder(
+                    "AAA",
+                    "new-stop",
+                    "sell",
+                    "STP",
+                    order.quantity,
+                    "Submitted",
+                    stop_price=order.stop_price,
+                    perm_id=2002,
+                    order_ref=leg_order_ref(order.order_id, "primary"),
+                    oca_group=order.oca_group,
+                    tif="GTC",
+                    oca_type=1 if order.oca_group else 0,
+                )
+            )
+            return order
+
+    broker = TwoLegBroker()
+    original_banked = RestingOrder(
+        "AAA",
+        "banked",
+        "sell",
+        "STP",
+        50,
+        "Submitted",
+        stop_price=90,
+        perm_id=1000,
+        order_ref="banked-ref",
+        oca_group="BANKED",
+        tif="GTC",
+        oca_type=1,
+    )
+    original_runner = RestingOrder(
+        "AAA",
+        "runner",
+        "sell",
+        "STP",
+        50,
+        "Submitted",
+        stop_price=90,
+        perm_id=1001,
+        order_ref="runner-ref",
+        tif="GTC",
+    )
+    target = RestingOrder(
+        "AAA",
+        "target",
+        "sell",
+        "LMT",
+        50,
+        "Submitted",
+        limit_price=120,
+        perm_id=1003,
+        order_ref="target-ref",
+        oca_group="BANKED",
+        tif="GTC",
+        oca_type=1,
+    )
+    broker.legs = [original_banked if missing_role == "runner" else original_runner, target]
+    oms = make_watchdog_oms(broker, tmp_path)
+    prior_perm = 1001 if missing_role == "runner" else 1000
+    broker.completed = [
+        RestingOrder("AAA", "0", "sell", "STP", 50, "Cancelled", perm_id=prior_perm)
+    ]
+    broker.last_owned_protection = lambda symbol, ref: {
+        "order_id": str(prior_perm),
+        "order_ref": ref,
+        "stop_price": 90,
+        "seen_at": "2026-10-20T10:31:00+11:00",
+    }
+    write_approved_card_legs(
+        tmp_path,
+        [
+            {
+                "role": "banked",
+                "quantity": 50,
+                "stop_price": 90,
+                "order_ref": "banked-ref",
+                "perm_id": 1000,
+                "oca_group": "BANKED",
+                "target_order_ref": "target-ref",
+                "target_perm_id": 1003,
+                "target_price": 120,
+            },
+            {
+                "role": "runner",
+                "quantity": 50,
+                "stop_price": 90,
+                "order_ref": "runner-ref",
+                "perm_id": 1001,
+            },
+        ],
+    )
+
+    await oms.watch_protection()
+
+    assert len(broker.sent) == 1
+    assert broker.sent[0].quantity == 50
+    assert broker.sent[0].stop_price == 90
+    assert broker.sent[0].oca_group == ("BANKED" if missing_role == "banked" else None)
+    expected_sibling = "banked-ref" if missing_role == "runner" else "runner-ref"
+    assert [order.order_ref for order in broker.legs[:2]] == [expected_sibling, "target-ref"]
+    assert oms._exit_recovery is not None and "AAA" not in oms._exit_recovery.plans
+    lineage = json.loads((tmp_path / "protection_leg_lineage.json").read_text())
+    assert lineage[f"AAA:{missing_role}"]["current_perm_id"] == 2002
+    await oms.watch_protection()
+    assert len(broker.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_watchdog_restores_two_confirmed_missing_card_legs_one_at_a_time(tmp_path):
+    class TwoLegBroker(ExitBroker):
+        async def place_order(self, order):
+            self.sent.append(order)
+            order.status = "transmitted"
+            self.legs.append(
+                RestingOrder(
+                    "AAA",
+                    order.order_id,
+                    "sell",
+                    "STP",
+                    order.quantity,
+                    "Submitted",
+                    stop_price=order.stop_price,
+                    perm_id=2000 + len(self.sent),
+                    order_ref=leg_order_ref(order.order_id, "primary"),
+                    oca_group=order.oca_group,
+                    tif="GTC",
+                    oca_type=1 if order.oca_group else 0,
+                )
+            )
+            return order
+
+    broker = TwoLegBroker()
+    broker.legs = []
+    oms = make_watchdog_oms(broker, tmp_path)
+    broker.completed = [
+        RestingOrder("AAA", "0", "sell", "STP", 50, "Cancelled", perm_id=1000),
+        RestingOrder("AAA", "0", "sell", "STP", 50, "Cancelled", perm_id=1001),
+    ]
+    broker.last_owned_protection = lambda symbol, ref: {
+        "order_id": "1000" if ref == "banked-ref" else "1001",
+        "order_ref": ref,
+        "stop_price": 90,
+        "seen_at": "2026-10-20T10:31:00+11:00",
+    }
+    write_approved_card_legs(
+        tmp_path,
+        [
+            {
+                "role": "banked",
+                "quantity": 50,
+                "stop_price": 90,
+                "order_ref": "banked-ref",
+                "perm_id": 1000,
+            },
+            {
+                "role": "runner",
+                "quantity": 50,
+                "stop_price": 90,
+                "order_ref": "runner-ref",
+                "perm_id": 1001,
+            },
+        ],
+    )
+
+    await oms.watch_protection()
+    assert len(broker.sent) == 1
+    assert len(broker.legs) == 1
+    assert broker.sent[0].quantity == 50
+    assert oms._exit_recovery is not None and "AAA" not in oms._exit_recovery.plans
+    await oms.watch_protection()
+    assert len(broker.sent) == 2
+    assert len(broker.legs) == 2
+    assert sum(order.quantity for order in broker.legs) == 100
+    assert "AAA" not in oms._exit_recovery.plans
+    lineage = json.loads((tmp_path / "protection_leg_lineage.json").read_text())
+    assert set(lineage) == {"AAA:banked", "AAA:runner"}
+
+
+@pytest.mark.asyncio
+async def test_watchdog_waits_if_missing_banked_leg_has_pending_cancel_target(tmp_path):
+    broker = ExitBroker()
+    broker.legs = [
+        RestingOrder(
+            "AAA",
+            "runner",
+            "sell",
+            "STP",
+            50,
+            "Submitted",
+            stop_price=90,
+            perm_id=1001,
+            order_ref="runner-ref",
+            tif="GTC",
+        ),
+        RestingOrder(
+            "AAA",
+            "target",
+            "sell",
+            "LMT",
+            50,
+            "PendingCancel",
+            limit_price=120,
+            perm_id=1003,
+            order_ref="target-ref",
+            oca_group="BANKED",
+            tif="GTC",
+            oca_type=1,
+        ),
+    ]
+    oms = make_watchdog_oms(broker, tmp_path)
+    write_approved_card_legs(
+        tmp_path,
+        [
+            {
+                "role": "banked",
+                "quantity": 50,
+                "stop_price": 90,
+                "order_ref": "banked-ref",
+                "perm_id": 1000,
+                "oca_group": "BANKED",
+                "target_order_ref": "target-ref",
+                "target_perm_id": 1003,
+                "target_price": 120,
+            },
+            {
+                "role": "runner",
+                "quantity": 50,
+                "stop_price": 90,
+                "order_ref": "runner-ref",
+                "perm_id": 1001,
+            },
+        ],
+    )
+    await oms.watch_protection()
+    assert broker.sent == []
+    assert oms.kill_switch.tripped
+
+
+@pytest.mark.asyncio
+async def test_unacknowledged_card_leg_stays_durable_and_is_never_sent_twice(tmp_path):
+    class NoAcknowledgement(ExitBroker):
+        async def place_order(self, order):
+            self.sent.append(order)
+            order.status = "transmitted"
+            return order
+
+    broker = NoAcknowledgement()
+    broker.legs = [
+        RestingOrder(
+            "AAA",
+            "banked",
+            "sell",
+            "STP",
+            50,
+            "Submitted",
+            stop_price=90,
+            perm_id=1000,
+            order_ref="banked-ref",
+            tif="GTC",
+        )
+    ]
+    oms = make_watchdog_oms(broker, tmp_path)
+    broker.completed = [RestingOrder("AAA", "0", "sell", "STP", 50, "Cancelled", perm_id=1001)]
+    broker.last_owned_protection = lambda symbol, ref: {
+        "order_id": "1001",
+        "order_ref": ref,
+        "stop_price": 90,
+        "seen_at": "2026-10-20T10:31:00+11:00",
+    }
+    write_approved_card_legs(
+        tmp_path,
+        [
+            {
+                "role": "banked",
+                "quantity": 50,
+                "stop_price": 90,
+                "order_ref": "banked-ref",
+                "perm_id": 1000,
+            },
+            {
+                "role": "runner",
+                "quantity": 50,
+                "stop_price": 90,
+                "order_ref": "runner-ref",
+                "perm_id": 1001,
+            },
+        ],
+    )
+
+    await oms.watch_protection()
+    assert len(broker.sent) == 1
+    assert oms._exit_recovery is not None
+    assert oms._exit_recovery.plans["AAA"].stage == "working"
+    assert oms._exit_recovery.plans["AAA"].replacement_order_ref
+    await oms.recover_exit_protection()
+    await oms.watch_protection()
+    assert len(broker.sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_corporate_warning_uses_only_ds_pinned_nonfixture_authority(tmp_path):
+    broker = ExitBroker()
+    broker._positions = {"BHP.AX": Position("BHP.AX", 10, 60, qat_holding=False)}
+    authority = {
+        "schema": "asx-corporate-actions-v1",
+        "version": 1,
+        "published_on": "2026-10-22",
+        "coverage_start": "2026-10-22",
+        "coverage_end": "2026-10-23",
+        "source": "https://www.asx.com.au/connectivity-and-data/information-services/reference-data",
+        "fixture": False,
+        "events": [
+            {
+                "symbol": "BHP.AX",
+                "ex_session": "2026-10-23",
+                "split_ratio": [1, 1],
+                "dividend": "0.50",
+                "evidence_reference": "https://www.asx.com.au/markets/BHP",
+            }
+        ],
+    }
+    path = tmp_path / "actions.json"
+    path.write_text(json.dumps(authority), encoding="utf-8")
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    settings = Settings(
+        _env_file=None,
+        data_dir=str(tmp_path),
+        protection_actions_authority_path=str(path),
+        protection_actions_authority_sha256=digest,
+    )
+    bus = EventBus()
+    switch = KillSwitch()
+    oms = OMS(
+        broker, RiskEngine(bus, switch, settings=settings), switch, bus=bus, settings=settings
+    )
+
+    await oms.watch_corporate_stop_risk(today=date(2026, 10, 22))
+    assert "BHP.AX" in oms.corporate_stop_warnings()[0]
+    assert broker.sent == []
+
+    authority["fixture"] = True
+    path.write_text(json.dumps(authority), encoding="utf-8")
+    await oms.watch_corporate_stop_risk(today=date(2026, 10, 22))
+    assert "unreadable" in oms.corporate_stop_warnings()[0]
+    path.unlink()
+    await oms.watch_corporate_stop_risk(today=date(2026, 10, 22))
+    assert oms.corporate_stop_warnings() == ()
 
 
 @pytest.mark.asyncio

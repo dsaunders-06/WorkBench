@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from ib_async import OrderStatus, Stock, StopOrder, Trade
 
 from qat.config import Settings
 from qat.data.broker.ib_adapter import IBAdapter
+from qat.data.broker.ib_translate import from_ib_open_order
 from qat.domain.bus import EventBus
 
 
@@ -42,6 +44,31 @@ def _stop(
     order.orderRef = order_ref
     order.autoCancelDate = auto_cancel_date
     return Trade(contract, order, OrderStatus(status="Submitted", remaining=10))
+
+
+def test_watchdog_requires_permid_and_orderref_to_match_durable_leg(tmp_path) -> None:
+    adapter = _adapter(tmp_path)
+    ref = "245cd4e6-6339-483a-a686-e6115476bcb1"
+    assert adapter._pending_legs is not None
+    adapter._pending_legs.begin("entry-1", "BHP.AX", "stop", "DU_TEST", 123, ref, 1)
+    adapter._pending_legs.observe(ref, broker_order_id=88, perm_id=999)
+    order = from_ib_open_order(_stop(order_ref=ref))
+    assert adapter.owns_resting_order(order)
+    assert not adapter.owns_resting_order(replace(order, perm_id=0))
+    assert not adapter.owns_resting_order(replace(order, order_ref=""))
+    assert not adapter.owns_resting_order(replace(order, broker_order_id=0))
+
+
+def test_qat_stop_handoff_records_placement_time_without_broker_expiry(tmp_path) -> None:
+    adapter = _adapter(tmp_path)
+    ref = "395cd4e6-6339-483a-a686-e6115476bcb1"
+    assert adapter._pending_legs is not None
+    adapter._pending_legs.begin("entry-2", "BHP.AX", "stop", "DU_TEST", 123, ref, 1)
+    trade = _stop(order_ref=ref)
+    adapter._observe_leg(ref, trade.order, trade)
+    saved = json.loads((tmp_path / "gtc_expiry.json").read_text(encoding="utf-8"))
+    today = datetime.now(ZoneInfo("Australia/Sydney")).date().isoformat()
+    assert saved["placements"][ref].startswith(today)
 
 
 @pytest.mark.asyncio
@@ -74,7 +101,7 @@ async def test_durably_proven_qat_stop_remains_visible_as_protection(tmp_path, c
     with caplog.at_level(logging.CRITICAL):
         assert (await adapter.resting_stop_orders())["BHP.AX"].order_id == "999"
     saved = json.loads((tmp_path / "gtc_expiry.json").read_text(encoding="utf-8"))
-    assert saved["stops"]["999"]["auto_cancel_date"] == expiry.isoformat()
+    assert saved["stops"]["999"]["auto_cancel_date"] is None
     assert "OPERATOR ACTION REQUIRED" in caplog.text
 
 

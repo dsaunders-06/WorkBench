@@ -23,6 +23,19 @@ class ExitRecovery:
     stop_price: float | None
     stage: RecoveryStage = "prepared"
     other_orders_present: bool = False
+    # Watchdog restorations cite the original entry sign-off; old recovery
+    # records remain readable with these fields absent.
+    approval_order_id: str | None = None
+    approval_operator: str | None = None
+    # A multi-stop card plan restores only one missing approved leg. The
+    # sibling references are a snapshot; any change before submission halts.
+    leg_role: str | None = None
+    leg_quantity: float | None = None
+    leg_oca_group: str | None = None
+    permitted_order_refs: tuple[str, ...] = ()
+    previous_order_ref: str | None = None
+    replacement_order_ref: str | None = None
+    replacement_app_order_id: str | None = None
 
 
 class ExitRecoveryStore:
@@ -32,6 +45,8 @@ class ExitRecoveryStore:
         if path.exists():
             raw = json.loads(path.read_text(encoding="utf-8"))
             for symbol, data in raw.items():
+                if "permitted_order_refs" in data:
+                    data = {**data, "permitted_order_refs": tuple(data["permitted_order_refs"])}
                 plan = ExitRecovery(**data)
                 if (
                     symbol != plan.symbol
@@ -42,6 +57,18 @@ class ExitRecoveryStore:
                         and (not math.isfinite(plan.stop_price) or plan.stop_price <= 0)
                     )
                     or plan.stage not in {"prepared", "uncertain", "working"}
+                    or (
+                        plan.leg_role is not None
+                        and (
+                            not plan.leg_role
+                            or plan.leg_quantity is None
+                            or not math.isfinite(plan.leg_quantity)
+                            or plan.leg_quantity <= 0
+                            or plan.leg_quantity > plan.quantity
+                            or not plan.previous_order_ref
+                            or len(set(plan.permitted_order_refs)) != len(plan.permitted_order_refs)
+                        )
+                    )
                 ):
                     raise ValueError("invalid exit recovery record")
                 self.plans[symbol] = plan
@@ -62,6 +89,17 @@ class ExitRecoveryStore:
     def stage(self, symbol: str, stage: RecoveryStage) -> None:
         if symbol in self.plans:
             self.put(replace(self.plans[symbol], stage=stage))
+
+    def replacement(self, symbol: str, app_order_id: str, order_ref: str) -> None:
+        if symbol in self.plans:
+            self.put(
+                replace(
+                    self.plans[symbol],
+                    replacement_app_order_id=app_order_id,
+                    replacement_order_ref=order_ref,
+                    stage="uncertain",
+                )
+            )
 
     def remove(self, symbol: str) -> None:
         self._save({key: value for key, value in self.plans.items() if key != symbol})

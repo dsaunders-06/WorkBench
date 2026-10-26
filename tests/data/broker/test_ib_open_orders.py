@@ -27,11 +27,13 @@ def _trade(**kw: object) -> SimpleNamespace:
         orderType=kw.get("order_type", "STP"),
         totalQuantity=kw.get("total_quantity", 100.0),
         ocaGroup=kw.get("oca_group", ""),
+        ocaType=kw.get("oca_type", 0),
         parentPermId=kw.get("parent_perm_id", 0),
         clientId=kw.get("client_id", 1),
         account=kw.get("account", "DUQ200898"),
         auxPrice=kw.get("aux_price", 30.69),
         lmtPrice=kw.get("lmt_price", 0.0),
+        tif=kw.get("tif", "GTC"),
     )
     status = SimpleNamespace(
         status=kw.get("status", "PreSubmitted"),
@@ -90,6 +92,19 @@ def test_the_symbol_is_translated() -> None:
     """M104 - every IBKR boundary translates."""
     resting = from_ib_open_order(_trade(symbol="TNE"), market="ASX")  # type: ignore[arg-type]
     assert resting.symbol == "TNE.AX"
+
+
+def test_raw_broker_time_in_force_reaches_the_watchdog() -> None:
+    resting = from_ib_open_order(_trade(tif="DAY"), market="ASX")  # type: ignore[arg-type]
+    assert resting.tif == "DAY"
+
+
+def test_raw_broker_oca_type_reaches_the_watchdog() -> None:
+    resting = from_ib_open_order(
+        _trade(oca_group="BANKED", oca_type=1), market="ASX"  # type: ignore[arg-type]
+    )
+    assert resting.oca_group == "BANKED"
+    assert resting.oca_type == 1
 
 
 def test_group_keys_are_carried_raw() -> None:

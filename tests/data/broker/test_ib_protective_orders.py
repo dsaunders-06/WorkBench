@@ -86,6 +86,13 @@ def test_a_protective_stop_is_gtc() -> None:
     assert to_ib_order(_protective_stop()).tif == "GTC"
 
 
+def test_restored_banked_stop_keeps_its_approved_oca_group() -> None:
+    broker_order = to_ib_order(_protective_stop(oca_group="QAT-BANKED"))
+    assert broker_order.ocaGroup == "QAT-BANKED"
+    assert broker_order.ocaType == 1
+    assert broker_order.orderType == "STP"
+
+
 def test_a_stop_with_no_stop_price_is_refused() -> None:
     """Mirrors alpaca_adapter.py:522. Silence is what made this dangerous;
     an unusable stop must not become a usable market order."""

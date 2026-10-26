@@ -2696,6 +2696,18 @@ def _config_reference(doc: Any) -> None:
                 "connections are refused until this is configured.",
             ),
             (
+                "QAT_PROTECTION_ACTIONS_AUTHORITY_PATH",
+                "(empty)",
+                "Optional operational corporate-actions file for protective-stop split and "
+                "dividend warnings. With no file, this warning check is inactive.",
+            ),
+            (
+                "QAT_PROTECTION_ACTIONS_AUTHORITY_SHA256",
+                "(empty)",
+                "DS-approved SHA-256 of that exact authority file. A supplied file without "
+                "a matching hash is rejected and raises an operator warning.",
+            ),
+            (
                 "QAT_CURRENT_QUOTE_MAX_AGE_SECONDS",
                 "1800",
                 "Maximum source age for a current quote used by a market buy or price-drift "

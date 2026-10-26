@@ -13,6 +13,7 @@ the broker. See tests/safety/test_no_order_without_signoff.py.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -22,6 +23,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal, cast
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -37,6 +39,7 @@ from qat.data.broker.adapter import (
     spendable_from,
 )
 from qat.data.broker.mock_broker import new_order_id
+from qat.data.broker.pending_legs import leg_order_ref
 from qat.domain.bus import EventBus
 from qat.domain.decision_journal import DecisionJournal, JournalEntry
 from qat.domain.events import (
@@ -50,6 +53,14 @@ from qat.domain.events import (
 from qat.domain.oms.anomaly import PositionAnomalyStore
 from qat.domain.oms.exit_recovery import ExitAttempt, ExitRecovery, ExitRecoveryStore
 from qat.domain.oms.order_identity import OrderIdentityStore
+from qat.domain.oms.protection_watchdog import (
+    ApprovedEntryPlan,
+    ApprovedStopLeg,
+    ProtectionLegLineage,
+    approved_entry_plan,
+    assess_protection,
+    corporate_action_warnings,
+)
 from qat.domain.oms.resting_order_anomaly import RestingOrderAnomalyStore
 from qat.domain.oms.resting_orders import (
     TERMINAL_STATUSES,
@@ -239,6 +250,8 @@ class OMS:
         # governor can measure aggregate risk-at-stop without re-querying open
         # orders from the broker on every candidate.
         self._position_stops: dict[str, float] = {}
+        self._protection_warnings: dict[str, str] = {}
+        self._corporate_stop_warnings: list[str] = []
         # Symbols that have already spent their one-check reprieve while a
         # replacement protective order sits awaiting sign-off. Cleared the
         # moment a stop is seen resting again. See `verify_position_stops`.
@@ -852,8 +865,320 @@ class OMS:
                 for symbol in list(self._exit_recovery.plans):
                     await self._recover_exit_protection_locked(symbol)
 
+    async def watch_protection(self) -> None:
+        """Reconcile every QAT long against its signed entry stop plan.
+
+        A missing stop is restored only after a second complete account-wide
+        read inside the sign-off lock. Ambiguous legs never become permission to
+        transmit a duplicate. Mock/read-only brokers without durable ownership
+        evidence cannot transmit through this path.
+        """
+        owner = getattr(self.broker, "owns_resting_order", None)
+        source = getattr(self.broker, "open_orders", None)
+        if not callable(owner) or not callable(source):
+            return
+        positions = [pos for pos in await self._qat_positions() if pos.quantity > 0]
+        held_symbols = {position.symbol for position in positions}
+        self._protection_warnings = {
+            symbol: warning
+            for symbol, warning in self._protection_warnings.items()
+            if symbol in held_symbols
+        }
+        if not positions:
+            return
+        settings = self.settings or self.risk_engine.settings
+        rows = self.journal.entries() if self.journal is not None else []
+        try:
+            observed = await source()
+        except Exception:
+            logger.critical("OPERATOR ACTION REQUIRED: protective order book is unreadable")
+            self._protection_warnings = {
+                position.symbol: "broker protective order book is unreadable"
+                for position in positions
+            }
+            self.kill_switch.trip("protective order book cannot be verified")
+            return
+        pending_source = getattr(self.broker, "pending_identity_reason", None)
+        for position in positions:
+            symbol = position.symbol
+            try:
+                plan = approved_entry_plan(
+                    Path(settings.data_dir),
+                    rows,
+                    position,
+                    operator_name=settings.operator_name,
+                )
+                legs = (
+                    ProtectionLegLineage(
+                        Path(settings.data_dir) / "protection_leg_lineage.json"
+                    ).effective_legs(symbol, plan)
+                    if plan is not None
+                    else ()
+                )
+                pending = bool(await pending_source(symbol)) if callable(pending_source) else True
+                assessment = assess_protection(
+                    position,
+                    observed,
+                    approved_legs=legs,
+                    owns_order=owner,
+                    pending_identity=pending,
+                )
+            except Exception:
+                logger.exception(
+                    "OPERATOR ACTION REQUIRED: protection for %s is unverified", symbol
+                )
+                self._protection_warnings[symbol] = "broker or approval evidence is unverified"
+                self.kill_switch.trip(f"protection for {symbol} cannot be verified")
+                continue
+            if assessment.state == "protected":
+                self._protection_warnings.pop(symbol, None)
+                continue
+            self._protection_warnings[symbol] = assessment.reason
+            logger.critical(
+                "OPERATOR ACTION REQUIRED: %s protection %s: %s",
+                symbol,
+                assessment.state,
+                assessment.reason,
+            )
+            self.kill_switch.trip(f"protective stop for {symbol} is not verified")
+            if assessment.state != "restore" or plan is None or self._exit_recovery is None:
+                continue
+            missing_leg = next((leg for leg in legs if leg.role == assessment.missing_role), None)
+            if missing_leg is None:
+                continue
+            last_source = getattr(self.broker, "last_owned_protection", None)
+            try:
+                last = (
+                    last_source(symbol, missing_leg.order_ref)
+                    if callable(last_source) and len(legs) > 1
+                    else last_source(symbol) if callable(last_source) else None
+                )
+                last_price = float(str(last["stop_price"])) if last is not None else None
+                last_perm_id = int(str(last["order_id"])) if last is not None else None
+                last_seen = (
+                    datetime.fromisoformat(str(last["seen_at"])) if last is not None else None
+                )
+            except (KeyError, TypeError, ValueError, OSError, RuntimeError):
+                last = None
+                last_price = None
+                last_perm_id = None
+                last_seen = None
+            if (
+                last_price is None
+                or not math.isfinite(last_price)
+                or last_price > missing_leg.stop_price + 1e-6
+                or last_seen is None
+                or last_seen.tzinfo is None
+                or last_seen < plan.opened_at
+                or not isinstance(last, dict)
+                or not last.get("order_ref")
+                or not last_perm_id
+                or (
+                    len(legs) > 1
+                    and (
+                        last.get("order_ref") != missing_leg.order_ref
+                        or last_perm_id != missing_leg.perm_id
+                    )
+                )
+            ):
+                logger.critical(
+                    "Restoration on %s withheld: last proven QAT stop is absent or tighter "
+                    "than the entry plan; DS must approve the exact current stop",
+                    symbol,
+                )
+                continue
+            completed_source = getattr(self.broker, "completed_orders", None)
+            if not callable(completed_source):
+                logger.critical(
+                    "Restoration on %s withheld: completed-order evidence is unavailable", symbol
+                )
+                continue
+            try:
+                completed = await completed_source()
+            except (OSError, RuntimeError, TypeError, ValueError, KeyError):
+                logger.exception(
+                    "Restoration on %s withheld: terminal stop status unverified", symbol
+                )
+                continue
+            if not any(
+                row.symbol == symbol
+                and row.perm_id == last_perm_id
+                and row.status in {"Cancelled", "ApiCancelled"}
+                for row in completed
+            ):
+                logger.critical(
+                    "Restoration on %s withheld: prior stop permId %s is not confirmed "
+                    "cancelled by the broker",
+                    symbol,
+                    last_perm_id,
+                )
+                continue
+            async with self._signoff_lock:
+                if symbol in self._exit_recovery.plans:
+                    logger.critical("Restoration on %s waits for an existing recovery plan", symbol)
+                    continue
+                try:
+                    latest = await source()
+                    pending = (
+                        bool(await pending_source(symbol)) if callable(pending_source) else True
+                    )
+                    latest_position = next(
+                        (pos for pos in await self._qat_positions() if pos.symbol == symbol), None
+                    )
+                    if latest_position is None:
+                        continue
+                    again = assess_protection(
+                        latest_position,
+                        latest,
+                        approved_legs=legs,
+                        owns_order=owner,
+                        pending_identity=pending,
+                    )
+                    if again.state != "restore" or again.missing_role != missing_leg.role:
+                        logger.critical(
+                            "Restoration on %s withheld after second broker read: %s",
+                            symbol,
+                            again.reason,
+                        )
+                        continue
+                    self._exit_recovery.put(
+                        ExitRecovery(
+                            symbol,
+                            latest_position.quantity,
+                            missing_leg.stop_price,
+                            other_orders_present=any(
+                                order.symbol != symbol and order.status not in TERMINAL_STATUSES
+                                for order in latest
+                            ),
+                            approval_order_id=plan.order_id,
+                            approval_operator=plan.operator,
+                            leg_role=missing_leg.role if len(legs) > 1 else None,
+                            leg_quantity=missing_leg.quantity if len(legs) > 1 else None,
+                            leg_oca_group=missing_leg.oca_group if len(legs) > 1 else None,
+                            permitted_order_refs=(
+                                tuple(
+                                    order.order_ref
+                                    for order in latest
+                                    if order.symbol == symbol
+                                    and order.status not in TERMINAL_STATUSES
+                                )
+                                if len(legs) > 1
+                                else ()
+                            ),
+                            previous_order_ref=(missing_leg.order_ref if len(legs) > 1 else None),
+                        )
+                    )
+                    await self._recover_exit_protection_locked(symbol)
+                    if len(legs) > 1:
+                        await self._recover_exit_protection_locked(symbol)
+                        continue
+                    # Submission is not broker confirmation. Keep the durable
+                    # recovery record and the halt unless the new leg is seen
+                    # working with its permanent and application identities.
+                    confirmed = await source()
+                    actual = next(
+                        (pos for pos in await self._qat_positions() if pos.symbol == symbol), None
+                    )
+                    if (
+                        actual is None
+                        or assess_protection(
+                            actual,
+                            confirmed,
+                            approved_legs=legs,
+                            owns_order=owner,
+                            pending_identity=False,
+                        ).state
+                        != "protected"
+                    ):
+                        logger.critical(
+                            "OPERATOR ACTION REQUIRED: restored stop on %s is not yet "
+                            "broker-confirmed",
+                            symbol,
+                        )
+                    else:
+                        await self._recover_exit_protection_locked(symbol)
+                except Exception:
+                    logger.exception("OPERATOR ACTION REQUIRED: restoration of %s halted", symbol)
+                    self.kill_switch.trip(f"restoration of {symbol} needs broker review")
+
+    async def watch_corporate_stop_risk(self, *, today: date | None = None) -> None:
+        """Use only a DS-pinned operational action authority, if supplied."""
+        self._corporate_stop_warnings = []
+        settings = self.settings or self.risk_engine.settings
+        raw_path = settings.protection_actions_authority_path.strip()
+        if not raw_path:
+            return
+        path = Path(raw_path)
+        if not path.is_file():
+            return  # The operational authority has not been supplied yet.
+        try:
+            raw = path.read_bytes()
+            if (
+                not settings.protection_actions_authority_sha256
+                or hashlib.sha256(raw).hexdigest()
+                != settings.protection_actions_authority_sha256.lower()
+            ):
+                raise ValueError("corporate-action authority is not DS-pinned")
+            from qat.operational.history import load_actions
+
+            actions = load_actions(path)
+            if actions.fixture:
+                raise ValueError("test fixture cannot be an operational authority")
+            # A manually managed holding needs the same warning even though
+            # QAT must never restore its stop without a QAT entry approval.
+            positions = await self.broker.positions()
+            self._corporate_stop_warnings = corporate_action_warnings(
+                actions,
+                positions,
+                today or datetime.now(ZoneInfo("Australia/Sydney")).date(),
+            )
+        except Exception:
+            logger.exception("OPERATOR ACTION REQUIRED: corporate-action stop authority is invalid")
+            self._corporate_stop_warnings = [
+                "Corporate-action stop authority is unreadable or lacks DS approval"
+            ]
+        for warning in self._corporate_stop_warnings:
+            logger.critical("OPERATOR ACTION REQUIRED: %s", warning)
+
+    def corporate_stop_warnings(self) -> tuple[str, ...]:
+        return tuple(self._corporate_stop_warnings)
+
+    def protection_warnings(self) -> tuple[str, ...]:
+        return tuple(
+            f"{symbol}: {reason}" for symbol, reason in sorted(self._protection_warnings.items())
+        )
+
     def exit_protection_pending(self, symbol: str) -> bool:
         return self._exit_recovery is not None and symbol in self._exit_recovery.plans
+
+    async def _approved_recovery_snapshot(
+        self, symbol: str
+    ) -> tuple[Position, ApprovedEntryPlan, tuple[ApprovedStopLeg, ...]]:
+        """Read the live holding and immutable sign-off before a leg restore."""
+        settings = self.settings or self.risk_engine.settings
+        position = next(
+            (item for item in await self._qat_positions() if item.symbol == symbol), None
+        )
+        if position is None or position.quantity <= 0 or self.journal is None:
+            raise RuntimeError("approved held position cannot be verified")
+        plan = approved_entry_plan(
+            Path(settings.data_dir),
+            self.journal.entries(),
+            position,
+            operator_name=settings.operator_name,
+        )
+        if plan is None:
+            raise RuntimeError("named entry approval cannot be verified")
+        legs = ProtectionLegLineage(
+            Path(settings.data_dir) / "protection_leg_lineage.json"
+        ).effective_legs(symbol, plan)
+        owner = getattr(self.broker, "owns_resting_order", None)
+        if not callable(owner):
+            raise RuntimeError("broker cannot prove order ownership")
+        pending_source = getattr(self.broker, "pending_identity_reason", None)
+        if not callable(pending_source) or await pending_source(symbol):
+            raise RuntimeError("broker leg identity is unresolved")
+        return position, plan, legs
 
     async def _recover_exit_protection_locked(self, symbol: str) -> None:
         store = self._exit_recovery
@@ -895,6 +1220,9 @@ class OMS:
                 raise RuntimeError(
                     "remaining holding cannot be verified against captured protection"
                 )
+            if plan.leg_role is not None:
+                await self._recover_approved_leg_locked(symbol, plan, working, held)
+                return
             if working:
                 # PendingCancel is not stable protection; retain the journal.
                 stops = [
@@ -907,10 +1235,19 @@ class OMS:
                     and plan.stop_price is not None
                     and abs(o.stop_price - plan.stop_price) <= max(0.01, plan.stop_price * 1e-4)
                 ]
+                owner = getattr(self.broker, "owns_resting_order", None)
                 if (
                     len(stops) == 1
                     and all(is_protective_leg(o) and o.status in WORKING_STATUSES for o in working)
                     and all(0 < o.quantity <= held + _POSITION_EPSILON for o in working)
+                    and (
+                        not plan.approval_order_id
+                        or (
+                            bool(stops[0].perm_id and stops[0].order_ref)
+                            and callable(owner)
+                            and owner(stops[0])
+                        )
+                    )
                 ):
                     store.remove(symbol)
                 return
@@ -928,7 +1265,13 @@ class OMS:
             try:
                 store.stage(symbol, "uncertain")
                 placed = await self._sign_off_locked(
-                    protective.order_id, "exit-protection-recovery"
+                    protective.order_id,
+                    (
+                        f"{plan.approval_operator} restoration under entry approval "
+                        f"{plan.approval_order_id}"
+                        if plan.approval_order_id and plan.approval_operator
+                        else "exit-protection-recovery"
+                    ),
                 )
             finally:
                 self._recovery_order_ids.discard(recovery_id)
@@ -946,6 +1289,101 @@ class OMS:
         except Exception:
             logger.exception("Could not restore exit protection for %s", symbol)
             self.kill_switch.trip(f"exit protection for {symbol} requires broker verification")
+
+    async def _recover_approved_leg_locked(
+        self, symbol: str, recovery: ExitRecovery, working: list[RestingOrder], held: float
+    ) -> None:
+        """Restore one card leg; other approved legs stay untouched and pinned."""
+        if not math.isclose(held, recovery.quantity, rel_tol=0, abs_tol=_POSITION_EPSILON):
+            raise RuntimeError("holding changed during approved leg restoration")
+        position, approval, legs = await self._approved_recovery_snapshot(symbol)
+        if approval.order_id != recovery.approval_order_id:
+            raise RuntimeError("entry approval changed during leg restoration")
+        missing = next((leg for leg in legs if leg.role == recovery.leg_role), None)
+        if (
+            missing is None
+            or missing.order_ref != recovery.previous_order_ref
+            or missing.quantity != recovery.leg_quantity
+            or missing.stop_price != recovery.stop_price
+            or missing.oca_group != recovery.leg_oca_group
+        ):
+            raise RuntimeError("approved leg terms changed during restoration")
+        owner = getattr(self.broker, "owns_resting_order", None)
+        if not callable(owner):
+            raise RuntimeError("broker cannot prove restored leg ownership")
+        if recovery.stage == "working":
+            replacement = next(
+                (order for order in working if order.order_ref == recovery.replacement_order_ref),
+                None,
+            )
+            if replacement is None or not replacement.perm_id or not owner(replacement):
+                logger.critical(
+                    "OPERATOR ACTION REQUIRED: replacement %s leg is not broker-confirmed",
+                    recovery.leg_role,
+                )
+                return
+            checked = tuple(
+                (
+                    replace(leg, order_ref=replacement.order_ref, perm_id=replacement.perm_id)
+                    if leg.role == recovery.leg_role
+                    else leg
+                )
+                for leg in legs
+            )
+            assessment = assess_protection(
+                position, working, approved_legs=checked, owns_order=owner
+            )
+            if assessment.state not in {"protected", "restore"} or (
+                assessment.state == "restore" and assessment.missing_role == recovery.leg_role
+            ):
+                logger.critical(
+                    "OPERATOR ACTION REQUIRED: replacement %s leg remains unverified: %s",
+                    recovery.leg_role,
+                    assessment.reason,
+                )
+                return
+            settings = self.settings or self.risk_engine.settings
+            ProtectionLegLineage(Path(settings.data_dir) / "protection_leg_lineage.json").record(
+                symbol, approval, missing, replacement
+            )
+            if self._exit_recovery is not None:
+                self._exit_recovery.remove(symbol)
+            return
+        assessment = assess_protection(position, working, approved_legs=legs, owns_order=owner)
+        if assessment.state != "restore" or assessment.missing_role != recovery.leg_role:
+            raise RuntimeError("missing leg was not reconfirmed before transmission")
+        if set(order.order_ref for order in working) != set(recovery.permitted_order_refs):
+            raise RuntimeError("sibling order book changed before leg restoration")
+        if recovery.stop_price is None or recovery.leg_quantity is None:
+            raise RuntimeError("approved leg lacks a complete stop plan")
+        protective = self._new_pending_order(
+            symbol, "sell", recovery.leg_quantity, stop_price=recovery.stop_price
+        )
+        protective.order_type = "stop"
+        protective.oca_group = recovery.leg_oca_group
+        recovery_id = protective.order_id
+        if self._exit_recovery is None:
+            raise RuntimeError("durable recovery store is unavailable")
+        self._exit_recovery.replacement(symbol, recovery_id, leg_order_ref(recovery_id, "primary"))
+        self._recovery_order_ids.add(recovery_id)
+        try:
+            placed = await self._sign_off_locked(
+                recovery_id,
+                f"{recovery.approval_operator} restoration under entry approval "
+                f"{recovery.approval_order_id} ({recovery.leg_role} leg)",
+            )
+        finally:
+            self._recovery_order_ids.discard(recovery_id)
+        if placed.status not in {"transmitted", "filled"}:
+            raise RuntimeError("approved leg restoration was not accepted")
+        self._exit_recovery.stage(symbol, "working")
+        logger.warning(
+            "Restoration submitted for %s %s leg: %g shares at stop %.4f",
+            symbol,
+            recovery.leg_role,
+            recovery.leg_quantity,
+            recovery.stop_price,
+        )
 
     async def submit_exit_order(
         self,
@@ -1301,11 +1739,38 @@ class OMS:
                 # Only the captured-stop recovery may transmit during this
                 # handoff; an ordinary protection sweep must not race it.
                 try:
-                    busy = any(
-                        o
-                        for o in await self.broker.open_orders()
-                        if o.symbol == order.symbol and o.status not in TERMINAL_STATUSES
+                    visible = [
+                        item
+                        for item in await self.broker.open_orders()
+                        if item.symbol == order.symbol and item.status not in TERMINAL_STATUSES
+                    ]
+                    recovery_plan = (
+                        self._exit_recovery.plans.get(order.symbol)
+                        if self._exit_recovery is not None
+                        else None
                     )
+                    if recovering and recovery_plan is not None and recovery_plan.leg_role:
+                        current_position, approval, legs = await self._approved_recovery_snapshot(
+                            order.symbol
+                        )
+                        owner = getattr(self.broker, "owns_resting_order", None)
+                        if not callable(owner):
+                            raise RuntimeError("broker cannot prove sibling ownership")
+                        assessment = assess_protection(
+                            current_position, visible, approved_legs=legs, owns_order=owner
+                        )
+                        busy = (
+                            approval.order_id != recovery_plan.approval_order_id
+                            or assessment.state != "restore"
+                            or assessment.missing_role != recovery_plan.leg_role
+                            or set(item.order_ref for item in visible)
+                            != set(recovery_plan.permitted_order_refs)
+                            or order.quantity != recovery_plan.leg_quantity
+                            or order.stop_price != recovery_plan.stop_price
+                            or order.oca_group != recovery_plan.leg_oca_group
+                        )
+                    else:
+                        busy = bool(visible)
                 except Exception:
                     busy = True  # unreadable is not an empty book
                 if not recovering or busy:
@@ -3327,6 +3792,8 @@ class OMS:
         # accumulates nothing from the only exits this system actually has.
         await self.recover_exit_protection()
         await self.absorb_broker_fills()
+        await self.watch_protection()
+        await self.watch_corporate_stop_risk()
 
         # Protection is checked alongside quantity, because they fail in
         # different ways and only one of them was ever being watched.

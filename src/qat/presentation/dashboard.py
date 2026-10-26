@@ -19,6 +19,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pyqtgraph as pg
@@ -38,6 +40,7 @@ from PySide6.QtWidgets import (
 )
 
 from qat.data.broker.adapter import Order
+from qat.data.broker.gtc_expiry import GtcExpiryStore
 from qat.domain.display_dates import format_session_time
 from qat.domain.events import RegimeEvent
 from qat.domain.oms.adopted import assess_adopted_positions
@@ -253,6 +256,11 @@ class DashboardScreen(QWidget):
         # again - a new operator at a new session has not seen it.
         self._standing_condition_stated = False
         layout.addWidget(self.corporate_action_banner)
+        self.protection_expiry_banner = QLabel("")
+        self.protection_expiry_banner.setWordWrap(True)
+        self.protection_expiry_banner.setStyleSheet(theme.banner(theme.WARNING))
+        self.protection_expiry_banner.setVisible(False)
+        layout.addWidget(self.protection_expiry_banner)
 
         # What the operator's acknowledgement is recorded AGAINST. `None` until
         # the first RegimeEvent, and the log line says "unknown" rather than
@@ -457,6 +465,37 @@ class DashboardScreen(QWidget):
         if self._equity_history:
             self.equity_curve.setData(self._equity_times, self._equity_history)
 
+    def _refresh_protection_expiry(self) -> None:
+        """Keep imminent and unknown-age stop warnings visible until DS acts."""
+        try:
+            store = GtcExpiryStore(Path(self.runtime.settings.data_dir) / "gtc_expiry.json")
+            alerts = store.active_alerts(datetime.now(ZoneInfo("Australia/Sydney")).date())
+        except (OSError, ValueError):
+            logger.exception("Could not read protective-stop expiry warnings")
+            self.protection_expiry_banner.setText(
+                "PROTECTION ALERT: stop expiry records cannot be read. DS must verify broker stops."
+            )
+            self.protection_expiry_banner.setVisible(True)
+            return
+        warning_source = getattr(self.runtime.oms, "corporate_stop_warnings", None)
+        corporate = warning_source() if callable(warning_source) else ()
+        protection_source = getattr(self.runtime.oms, "protection_warnings", None)
+        protection = protection_source() if callable(protection_source) else ()
+        if not alerts and not corporate and not protection:
+            self.protection_expiry_banner.setVisible(False)
+            return
+        notices = []
+        if alerts:
+            symbols = ", ".join(sorted({str(item["symbol"]) for item in alerts}))
+            notices.append(
+                f"GTC stop expiry is near or placement age is unknown for {symbols}. "
+                "DS must verify broker protection and decide the exit."
+            )
+        notices.extend(corporate)
+        notices.extend(protection)
+        self.protection_expiry_banner.setText("PROTECTION ALERT: " + " | ".join(notices))
+        self.protection_expiry_banner.setVisible(True)
+
     async def _refresh(self) -> None:
         # One shared, throttled read rather than two broker calls per tick.
         # This screen's two-second timer was spending sixty requests a minute
@@ -472,6 +511,7 @@ class DashboardScreen(QWidget):
         )
         self.balances_panel.update_from(snapshot)
         self._refresh_corporate_actions()
+        self._refresh_protection_expiry()
 
         positions = list(snapshot.positions)
         equity = snapshot.balances.equity

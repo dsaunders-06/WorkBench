@@ -63,6 +63,9 @@ class Order:
     # trade closes, the calendar has moved on to the next quarter.
     earnings_date: date | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # A restored card-plan banked stop retains its approved OCA link to the
+    # target already resting at IBKR. Phase 1 stops leave this unset.
+    oca_group: str | None = None
 
     @property
     def is_bracket(self) -> bool:
@@ -188,6 +191,8 @@ class RestingStopOrder:
     owner_client_id: int | None = None
     # Broker-reported GTC auto-cancel date; None means IBKR did not provide one.
     auto_cancel_date: date | None = None
+    # Durable application reference sent to IBKR; absent for manual orders.
+    order_ref: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,6 +253,13 @@ class RestingOrder:
     # as zero while permId remains the durable identity of the same leg.
     broker_order_id: int = 0
     perm_id: int = 0
+    # Sent to IBKR as orderRef; together with perm_id proves durable ownership.
+    order_ref: str = ""
+    account: str = ""
+    con_id: int = 0
+    # Raw broker time-in-force. An absent value is not proof of GTC.
+    tif: str = ""
+    oca_type: int = 0
 
 
 @dataclass(slots=True)

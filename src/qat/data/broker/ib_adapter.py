@@ -47,7 +47,7 @@ from qat.data.broker.adapter import (
     balances_from_summary,
 )
 from qat.data.broker.foreign_orders import ForeignOrderQuarantine
-from qat.data.broker.gtc_expiry import GtcExpiryStore, GtcRenewalJournal, GtcRenewalPlan
+from qat.data.broker.gtc_expiry import GtcExpiryStore
 from qat.data.broker.ib_client_protocol import IBClientProtocol
 from qat.data.broker.ib_errors import ErrorAction, classify
 from qat.data.broker.ib_translate import (
@@ -299,11 +299,6 @@ class IBAdapter:
             if settings.ibkr_account_id and not read_only
             else None
         )
-        self._gtc_renewal_journal = (
-            GtcRenewalJournal(Path(settings.data_dir) / "gtc_renewal_history.json")
-            if settings.ibkr_account_id and not read_only
-            else None
-        )
         self._foreign_orders = (
             ForeignOrderQuarantine(Path(settings.data_dir) / "foreign_order_quarantine.json")
             if settings.ibkr_account_id and not read_only
@@ -363,6 +358,13 @@ class IBAdapter:
                 broker_order_id=int(getattr(leg, "orderId", 0) or 0),
                 perm_id=int(getattr(leg, "permId", 0) or getattr(status, "permId", 0) or 0),
             )
+            expiry_store = getattr(self, "_gtc_expiry", None)
+            if (
+                expiry_store is not None
+                and str(getattr(leg, "orderType", "")).upper() in {"STP", "STP LMT"}
+                and str(getattr(leg, "tif", "")).upper() == "GTC"
+            ):
+                expiry_store.mark_placed(ref, datetime.now(ZoneInfo("Australia/Sydney")))
         except (KeyError, OSError):
             logger.exception(
                 "Could not persist or update broker leg %s identity after transmission; "
@@ -1096,6 +1098,23 @@ class IBAdapter:
             and leg.perm_id == perm_id
         )
 
+    def owns_resting_order(self, order: RestingOrder) -> bool:
+        """Proof that a translated order matches a durable QAT leg identity."""
+        store = self._pending_legs
+        if store is None or not order.order_ref or not order.perm_id or not order.broker_order_id:
+            return False
+        leg = store.legs.get(order.order_ref)
+        return bool(
+            leg is not None
+            and leg.resolved
+            and leg.symbol == order.symbol
+            and leg.account == order.account == self.settings.ibkr_account_id
+            and leg.client_id == order.owner_client_id == self.settings.ibkr_client_id
+            and leg.con_id == order.con_id
+            and leg.broker_order_id == order.broker_order_id
+            and leg.perm_id == order.perm_id
+        )
+
     async def foreign_order_reason(self, symbol: str) -> str | None:
         """Block exposure until DS clears any observed foreign-order quarantine."""
         trades = await self._all_open_orders()
@@ -1198,10 +1217,14 @@ class IBAdapter:
 
         resting: dict[str, RestingStopOrder] = {}
         observed_stops: list[RestingStopOrder] = []
+        owned_stops: list[RestingStopOrder] = []
         for trade in trades:
             stop = from_ib_resting_stop(trade, self.settings.market)
             if stop is None:
                 continue
+            # All visible stops need an age warning, including TWS/manual legs.
+            # Ownership below still determines what may count as QAT protection.
+            observed_stops.append(stop)
             if (
                 self.settings.ibkr_account_id
                 and not self.read_only
@@ -1215,7 +1238,7 @@ class IBAdapter:
                     stop.symbol,
                 )
                 continue
-            observed_stops.append(stop)
+            owned_stops.append(stop)
             existing = resting.get(stop.symbol)
             if existing is None:
                 resting[stop.symbol] = stop
@@ -1235,19 +1258,23 @@ class IBAdapter:
             )
         expiry_store = getattr(self, "_gtc_expiry", None)
         if expiry_store is not None:
-            expiry_store.record(observed_stops)
+            expiry_store.record(observed_stops, owned_stops=owned_stops)
             today = datetime.now(ZoneInfo("Australia/Sydney")).date()
-            for stop in observed_stops:
-                remaining = (stop.auto_cancel_date - today).days if stop.auto_cancel_date else None
-                if remaining is None or remaining <= 30:
-                    logger.critical(
-                        "OPERATOR ACTION REQUIRED: QAT stop %s (%s) has %s auto-cancel days "
-                        "remaining; approve an in-place GTC renewal before expiry",
-                        stop.symbol,
-                        stop.order_id,
-                        remaining if remaining is not None else "unknown",
-                    )
+            for alert in expiry_store.due_alerts(today):
+                logger.critical(
+                    "OPERATOR ACTION REQUIRED: stop %s (%s) approaches its expected "
+                    "GTC cancellation or has unknown placement age; verify protection "
+                    "and decide the exit with DS",
+                    alert["symbol"],
+                    alert["order_id"],
+                )
         return resting
+
+    def last_owned_protection(
+        self, symbol: str, order_ref: str | None = None
+    ) -> dict[str, object] | None:
+        store = self._gtc_expiry
+        return store.last_owned_stop(symbol, order_ref) if store is not None else None
 
     async def resting_stops(self) -> dict[str, float]:
         """Symbol to stop price, from the one scan `resting_stop_orders` runs.
@@ -1261,129 +1288,6 @@ class IBAdapter:
         return {
             symbol: stop.stop_price for symbol, stop in (await self.resting_stop_orders()).items()
         }
-
-    async def _gtc_renewal_snapshot(self, symbol: str) -> GtcRenewalPlan:
-        trades = await self._all_open_orders()
-        if trades is None:
-            raise RuntimeError("IBKR open-order book is unavailable for GTC renewal")
-        matches: list[GtcRenewalPlan] = []
-        for trade in trades:
-            resting = from_ib_open_order(trade, self.settings.market)
-            if resting.symbol != symbol or resting.status in TERMINAL_STATUSES:
-                continue
-            if not self._owns_open_order(trade):
-                raise ValueError(f"unowned order on {symbol} blocks GTC renewal")
-            stop = from_ib_resting_stop(trade, self.settings.market)
-            if stop is None:
-                continue  # An owned OCA target may accompany the stop.
-            order = trade.order
-            if (
-                str(order.tif) != "GTC"
-                or str(order.action).upper() != "SELL"
-                or stop.auto_cancel_date is None
-            ):
-                raise ValueError(f"GTC stop terms or auto-cancel date are unverified on {symbol}")
-            matches.append(
-                GtcRenewalPlan(
-                    symbol=stop.symbol,
-                    order_id=stop.order_id,
-                    broker_order_id=int(order.orderId),
-                    quantity=stop.quantity,
-                    stop_price=stop.stop_price,
-                    auto_cancel_date=stop.auto_cancel_date,
-                    account=str(order.account),
-                    con_id=int(trade.contract.conId),
-                    oca_group=str(order.ocaGroup or ""),
-                    oca_type=int(order.ocaType or 0),
-                )
-            )
-        if len(matches) != 1:
-            raise ValueError(f"exactly one owned working GTC stop is required on {symbol}")
-        return matches[0]
-
-    async def plan_gtc_renewal(self, symbol: str) -> GtcRenewalPlan:
-        """Read the broker and produce exact terms for separate human approval."""
-        return await self._gtc_renewal_snapshot(symbol)
-
-    async def apply_approved_gtc_renewal(
-        self, plan: GtcRenewalPlan, *, approved_plan_sha256: str, operator: str
-    ) -> GtcRenewalPlan:
-        """Amend the same owned stop in place; never cancel it or loosen terms."""
-        self._check_not_read_only()
-        configured = self.settings.operator_name.strip()
-        if not configured or operator.strip() != configured or approved_plan_sha256 != plan.digest:
-            raise ValueError("named operator and exact approved GTC plan hash are required")
-        journal = self._gtc_renewal_journal
-        if journal is None:
-            raise ValueError("durable GTC renewal journal is unavailable")
-        before = await self._gtc_renewal_snapshot(plan.symbol)
-        if before != plan:
-            raise ValueError("GTC renewal broker terms changed since approval")
-        holdings = [
-            position
-            for position in await self.positions()
-            if position.symbol == plan.symbol and position.qat_holding
-        ]
-        if len(holdings) != 1 or not math.isclose(
-            holdings[0].quantity, plan.quantity, abs_tol=1e-6
-        ):
-            raise ValueError("GTC renewal stop does not cover the verified QAT holding")
-        journal.append(
-            {
-                "status": "approved_intent",
-                "operator": configured,
-                "plan_sha256": plan.digest,
-                "at_utc": datetime.now(UTC).isoformat(),
-            }
-        )
-        # An in-place amendment preserves the original stop throughout. IBKR
-        # assigns a new auto-expire date to modified GTC orders; a missing
-        # extension is reported as failure, never mistaken for renewal.
-        try:
-            await self.modify_order(plan.order_id, stop_price=plan.stop_price)
-            after = await self._gtc_renewal_snapshot(plan.symbol)
-            if (
-                after.symbol,
-                after.order_id,
-                after.broker_order_id,
-                after.quantity,
-                after.stop_price,
-                after.account,
-                after.con_id,
-                after.oca_group,
-                after.oca_type,
-            ) != (
-                plan.symbol,
-                plan.order_id,
-                plan.broker_order_id,
-                plan.quantity,
-                plan.stop_price,
-                plan.account,
-                plan.con_id,
-                plan.oca_group,
-                plan.oca_type,
-            ) or after.auto_cancel_date <= plan.auto_cancel_date:
-                raise RuntimeError(
-                    "in-place GTC renewal did not extend the broker auto-cancel date"
-                )
-            journal.append(
-                {
-                    "status": "confirmed",
-                    "operator": configured,
-                    "plan_sha256": plan.digest,
-                    "new_auto_cancel_date": after.auto_cancel_date.isoformat(),
-                    "at_utc": datetime.now(UTC).isoformat(),
-                }
-            )
-        except Exception:
-            logger.critical(
-                "OPERATOR ACTION REQUIRED: GTC renewal on %s was not confirmed and requires "
-                "independent broker reconciliation",
-                plan.symbol,
-                exc_info=True,
-            )
-            raise
-        return after
 
     def _price_side(self, order: Order, field: str) -> str:
         """Which side a given price field is actually transmitted as (M123).
@@ -1644,6 +1548,18 @@ class IBAdapter:
             contract = to_ib_contract(order.symbol, self.settings.market)
             for leg in touched:
                 self.ib_client.placeOrder(contract, leg)  # type: ignore[arg-type]
+                expiry_store = self._gtc_expiry
+                if (
+                    expiry_store is not None
+                    and str(getattr(leg, "orderType", "")).upper() in {"STP", "STP LMT"}
+                    and str(getattr(leg, "tif", "")).upper() == "GTC"
+                ):
+                    expiry_store.mark_modification_submitted(
+                        str(getattr(leg, "orderRef", "") or ""),
+                        float(getattr(leg, "auxPrice", 0) or 0),
+                        float(getattr(leg, "totalQuantity", 0) or 0),
+                        datetime.now(ZoneInfo("Australia/Sydney")),
+                    )
         return order
 
     @staticmethod

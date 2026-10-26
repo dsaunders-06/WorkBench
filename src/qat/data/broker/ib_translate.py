@@ -8,8 +8,7 @@ objects requiring no network connection.
 from __future__ import annotations
 
 import logging
-import re
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from ib_async import AccountValue, Contract, Fill, Stock
@@ -158,7 +157,11 @@ def to_ib_order(order: Order) -> IBOrder:
         # paired stops were cancelled with them as OCO does, and about $36,000
         # sat through a three-day weekend with no protection at the broker.
         # A stop meant to outlive the application must outlive the session.
-        return StopOrder(action, order.quantity, order.stop_price, tif="GTC")
+        stop = StopOrder(action, order.quantity, order.stop_price, tif="GTC")
+        if order.oca_group:
+            stop.ocaGroup = order.oca_group
+            stop.ocaType = 1  # Cancel the other leg; never leave a residual sell.
+        return stop
 
     if order.is_bracket:
         # An entry whose protection rides along as bracket legs. One IBOrder
@@ -524,16 +527,6 @@ def from_ib_resting_stop(trade: Trade, market: str = "ASX") -> RestingStopOrder 
         return None
     if not order.auxPrice:
         return None
-    raw_cancel = str(getattr(order, "autoCancelDate", "") or "").strip()
-    auto_cancel_date: date | None = None
-    if raw_cancel:
-        match = re.match(r"^(\d{4})-?(\d{2})-?(\d{2})(?:\s|$)", raw_cancel)
-        if match is None:
-            raise ValueError(f"IBKR auto-cancel date is unrecognised: {raw_cancel!r}")
-        try:
-            auto_cancel_date = date(*(int(part) for part in match.groups()))
-        except ValueError as exc:
-            raise ValueError(f"IBKR auto-cancel date is invalid: {raw_cancel!r}") from exc
     return RestingStopOrder(
         symbol=from_ibkr(trade.contract.symbol, market),
         order_id=str(order.permId or order.orderId),
@@ -541,7 +534,7 @@ def from_ib_resting_stop(trade: Trade, market: str = "ASX") -> RestingStopOrder 
         quantity=float(order.totalQuantity),
         why_held=str(trade.orderStatus.whyHeld) or None,
         owner_client_id=int(order.clientId),
-        auto_cancel_date=auto_cancel_date,
+        order_ref=str(getattr(order, "orderRef", "") or ""),
     )
 
 
@@ -584,6 +577,11 @@ def from_ib_open_order(trade: Trade, market: str = "ASX") -> RestingOrder:
         total_quantity=float(order.totalQuantity),
         broker_order_id=int(order.orderId or 0),
         perm_id=int(order.permId or 0),
+        order_ref=str(getattr(order, "orderRef", "") or ""),
+        account=str(getattr(order, "account", "") or ""),
+        con_id=int(getattr(trade.contract, "conId", 0) or 0),
+        tif=str(getattr(order, "tif", "") or ""),
+        oca_type=int(getattr(order, "ocaType", 0) or 0),
     )
 
 
