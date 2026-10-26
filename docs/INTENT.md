@@ -40,3 +40,17 @@ records all sources, including indirect ones, and their validation status. A
 source is added, removed or changed only by DS's explicit decision. The present
 configuration's deviations are recorded there, without silently treating them
 as approved.
+
+
+## D3 — DS decision, 24 October 2026
+
+Proposed register wording; subject to DS's approval before merge.
+
+Within the approved swing strategy and deterministic safety rules, AI
+interprets approved data and forms a BUY, HOLD or SELL recommendation for
+DS to approve or decline; no risk-control bypass; no broker authority;
+autonomy a separate later DS decision; deterministic cards are groundwork
+and machinery evidence only.
+
+24 October design rule: AI discretionary SELL is distinct from protective
+and plan exits, which never consult or wait for the AI.
