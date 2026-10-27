@@ -31,6 +31,11 @@ from ib_async.util import UNSET_DOUBLE
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 SYDNEY = ZoneInfo("Australia/Sydney")
+OBSERVED_UNGROUPED = json.loads(
+    (
+        Path(__file__).parents[1] / "fixtures" / "ibkr_ungrouped_completed_order_shape.json"
+    ).read_text()
+)["order"]
 
 
 def api():
@@ -40,7 +45,7 @@ def api():
 
 def test_session_gate_and_minimum_parcel_cap():
     p = api()
-    p.session_window(date(2026, 10, 27), datetime(2026, 10, 27, 11, 30, tzinfo=SYDNEY))
+    p.session_window(date(2026, 10, 27), datetime(2026, 10, 27, 14, 0, tzinfo=SYDNEY))
     for now in [
         datetime(2026, 10, 26, 12, tzinfo=SYDNEY),
         datetime(2026, 10, 27, 15, 30, tzinfo=SYDNEY),
@@ -60,7 +65,7 @@ def test_exact_approval_hash_terms_and_dedicated_directory(tmp_path, monkeypatch
     terms = {
         "account": "DUFAKE",
         "approved_by": "DS",
-        "approval_date": "2026-10-26",
+        "approval_date": "2026-10-27",
         "session": "2026-10-27",
         "symbol": "BHP.AX",
         "operator": "DS",
@@ -223,9 +228,19 @@ class Paper:
             orderRef=owner.orderRef,
             tif=owner.tif,
             ocaGroup=owner.ocaGroup,
-            ocaType=str(owner.ocaType),
+            # Observed IBKR value: even an ungrouped BUY/SELL returns type3.
+            # Shape retained from the preserved 26Oct B completed-order record.
+            ocaType=str(owner.ocaType if owner.ocaGroup else OBSERVED_UNGROUPED["ocaType"]),
             lmtPrice=str(owner.lmtPrice) if owner.orderType == "LMT" else self.unused_wire_price,
             auxPrice=str(owner.auxPrice) if owner.orderType == "STP" else self.unused_wire_price,
+            displaySize=str(OBSERVED_UNGROUPED["displaySize"]),
+            openClose=OBSERVED_UNGROUPED["openClose"],
+            volatilityType=str(OBSERVED_UNGROUPED["volatilityType"]),
+            deltaNeutralOrderType=OBSERVED_UNGROUPED["deltaNeutralOrderType"],
+            referencePriceType=str(OBSERVED_UNGROUPED["referencePriceType"]),
+            clearingIntent=OBSERVED_UNGROUPED["clearingIntent"],
+            cashQty=str(OBSERVED_UNGROUPED["cashQty"]),
+            dontUseAutoPriceForHedge="1",
         )
         if self.price_drift:
             if owner.orderType == "STP":
@@ -310,7 +325,7 @@ class Paper:
 
 def scenario(monkeypatch, **kwargs):
     p = api()
-    clock = [datetime(2026, 10, 27, 11, 30, tzinfo=SYDNEY)]
+    clock = [datetime(2026, 10, 27, 14, 0, tzinfo=SYDNEY)]
     broker = Paper(clock, **kwargs)
     broker.real_sleep = asyncio.sleep
     monkeypatch.setattr(p, "now", lambda: clock[0])
@@ -464,9 +479,9 @@ async def test_broker_changed_group_is_not_treated_as_coordinated_protection(mon
         return orders
 
     broker.reqAllOpenOrdersAsync = changed_group
-    with pytest.raises(p.SafetyHalt, match="terms|group"):
-        await run.run_cases(types=(2,), monitor=False)
-    assert not [t for t in broker.trades if t.order.orderType == "MKT"]
+    await run.run_cases(types=(2,), monitor=False)
+    assert broker.held == 0
+    assert len([t for t in broker.trades if t.order.orderType == "MKT"]) == 1
 
 
 @pytest.mark.asyncio
@@ -490,9 +505,13 @@ async def test_flat_cleanup_dispatches_all_cancels_before_twenty_minute_wait(mon
     run.group, run.oca_type = "test", 2
     for index in range(2):
         order = p.LimitOrder(
-            "SELL", 1, 70, account="DUFAKE", orderRef=f"test-{index}", ocaGroup="test", ocaType=2
+            "BUY", 1, 70, account="DUFAKE", orderRef=f"test-{index}", ocaGroup="test", ocaType=2
         )
-        trade = broker.placeOrder(broker.contract, order)
+        # Pending entries at zero holdings are safe to cancel; live SELLs here
+        # would themselves be an oversell transmission halt under the new rule.
+        order.orderId, order.permId, order.clientId = index + 1, index + 101, 1
+        trade = Trade(broker.contract, order, OrderStatus(status="Submitted", remaining=1))
+        broker.trades.append(trade)
         run.known[order.orderRef] = trade
     await run.flat()
     assert len(broker.cancels) == 2
@@ -548,9 +567,9 @@ async def test_stop_terms_cannot_change_and_still_count_as_protection(monkeypatc
         return orders
 
     broker.reqAllOpenOrdersAsync = altered
-    with pytest.raises(p.SafetyHalt, match="terms"):
-        await run.run_cases(types=(2,), monitor=False)
-    assert not [t for t in broker.trades if t.order.orderType == "MKT"]
+    await run.run_cases(types=(2,), monitor=False)
+    assert broker.held == 0
+    assert len([t for t in broker.trades if t.order.orderType == "MKT"]) == 1
 
 
 @pytest.mark.asyncio
@@ -621,8 +640,8 @@ async def test_invalid_final_quantity_preserves_raw_evidence_and_requires_action
     monkeypatch.setattr(p, "connect", connect)
     monkeypatch.setattr(p, "load_approval", lambda *args: "DUFAKE")
     monkeypatch.setattr(p, "_safe_output_dir", lambda root: root)
-    monkeypatch.setattr(p, "claim_attempt", lambda root: None)
-    broker.clock[0] = datetime(2026, 10, 27, 11, 30, tzinfo=SYDNEY)
+    monkeypatch.setattr(p, "claim_attempt", lambda *args: None)
+    broker.clock[0] = datetime(2026, 10, 27, 14, 0, tzinfo=SYDNEY)
 
     async def halted(self):
         raise p.SafetyHalt("synthetic halt")

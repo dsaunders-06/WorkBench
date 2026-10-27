@@ -1,0 +1,19 @@
+{
+  "provenance": "Distilled non-account defaults observed in IBKR's 26 October B completed record; raw evidence and account/order identities remain private. Scenario-specific prices, quantities and identities are supplied by the offline fake.",
+  "order": {
+    "action": "BUY",
+    "orderType": "LMT",
+    "ocaGroup": "",
+    "ocaType": 3,
+    "auxPrice": 0.0,
+    "tif": "GTD",
+    "displaySize": 2147483647,
+    "openClose": "",
+    "volatilityType": 0,
+    "deltaNeutralOrderType": "None",
+    "referencePriceType": 0,
+    "clearingIntent": "IB",
+    "cashQty": 0.0,
+    "dontUseAutoPriceForHedge": true
+  }
+}
