@@ -32,20 +32,29 @@ class PendingEntry(Paper):
         self.trades.append(trade)
         return trade
 
+    async def reqPositionsAsync(self):
+        if self.fill_on_mismatch and not self.changed and self.trades:
+            trade = self.trades[0]
+            self.fill(trade, 9)
+            # Position update precedes the final owner status callback.
+            trade.orderStatus.status = "Submitted"
+            trade.orderStatus.remaining = 9
+        return await super().reqPositionsAsync()
+
     async def reqAllOpenOrdersAsync(self):
         rows = await super().reqAllOpenOrdersAsync()
-        if not self.changed and rows:
-            self.changed = True
-            # A genuine used-field mismatch, separate from harmless ungrouped type3.
+        if rows:
             rows[0].order.lmtPrice += 0.01
             if self.fill_on_mismatch:
-                self.fill(self.trades[0], 9)
+                self.trades[0].orderStatus.status = "Filled"
+                self.trades[0].orderStatus.remaining = 0
+            self.changed = True
         return rows
 
 
 def pending_scenario(monkeypatch, **kwargs):
     p, old, _, _ = scenario(monkeypatch)
-    old.clock[0] = datetime(2026, 10, 27, 14, tzinfo=SYDNEY)
+    old.clock[0] = datetime(2026, 10, 27, 14, 45, tzinfo=SYDNEY)
     broker = PendingEntry(old.clock, **kwargs)
     broker.real_sleep = old.real_sleep
     monkeypatch.setattr(p.asyncio, "sleep", broker.advance)
@@ -101,7 +110,7 @@ async def test_transmission_halt_has_no_orders(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_filled_entry_with_stale_zero_position_is_reconciled_before_exit(monkeypatch):
-    _, broker, run, _ = pending_scenario(monkeypatch, fill_on_mismatch=True)
+    _, broker, run, events = pending_scenario(monkeypatch, fill_on_mismatch=True)
     positions = broker.reqPositionsAsync
     stale = 2
 
@@ -115,13 +124,14 @@ async def test_filled_entry_with_stale_zero_position_is_reconciled_before_exit(m
     broker.reqPositionsAsync = temporarily_zero
     await run.run_cases(types=(2,), monitor=False)
     assert broker.held == 0
-    assert len([t for t in broker.trades if t.order.orderType == "MKT"]) == 1
+    assert sum(t.order.totalQuantity for t in broker.trades if t.order.orderType == "MKT") == 9
+    assert any(e["event"] == "evidence unavailable" for e in events)
 
 
 @pytest.mark.asyncio
 async def test_window_end_pending_entry_is_not_flat_or_early_exit(monkeypatch, tmp_path, capsys):
     p, broker, _, _ = pending_scenario(monkeypatch, pending_minutes=300)
-    broker.clock[0] = datetime(2026, 10, 27, 15, 29, 58, tzinfo=SYDNEY)
+    broker.clock[0] = datetime(2026, 10, 27, 14, 59, 58, tzinfo=SYDNEY)
 
     class Event:
         def __iadd__(self, callback):
@@ -216,7 +226,7 @@ async def test_final_zero_snapshot_cannot_claim_flat_against_unexited_owned_fill
     "session,hour,minute,allowed",
     [
         (27, 13, 59, False),
-        (27, 14, 0, True),
+        (27, 14, 45, True),
         (27, 15, 30, False),
         (28, 11, 29, False),
         (28, 11, 30, True),
@@ -236,23 +246,27 @@ def test_revised_session_windows(session, hour, minute, allowed):
 
 def test_revision_session_locks_are_separate_and_preserve_morning_attempt(tmp_path):
     p = api()
-    (tmp_path / "oca-20261027-attempt.lock").write_text("morning attempt\n")
-    p.claim_attempt(tmp_path, date(2026, 10, 27))
+    pm = tmp_path / "phase1-oca-exit-handoff-20261027-pm"
+    fallback = tmp_path / "phase1-oca-exit-handoff-20261028"
+    pm.mkdir()
+    fallback.mkdir()
+    p.claim_attempt(pm, date(2026, 10, 27))
     with pytest.raises(FileExistsError):
-        p.claim_attempt(tmp_path, date(2026, 10, 27))
-    p.claim_attempt(tmp_path, date(2026, 10, 28))
-    assert (tmp_path / "oca-20261027-attempt.lock").read_text() == "morning attempt\n"
+        p.claim_attempt(pm, date(2026, 10, 27))
+    p.claim_attempt(fallback, date(2026, 10, 28))
+    assert (pm / "oca-20261027-pm-attempt.lock").exists()
+    assert (fallback / "oca-20261028-attempt.lock").exists()
 
 
 @pytest.mark.parametrize(
     "session,signing,allowed",
-    [(27, 26, False), (27, 27, True), (28, 27, True), (28, 28, True), (27, 28, False)],
+    [(27, 26, True), (27, 27, True), (28, 27, True), (28, 28, True), (27, 28, False)],
 )
 def test_new_approval_names_session_and_actual_signing_date(
     tmp_path, monkeypatch, session, signing, allowed
 ):
     p = api()
-    root = tmp_path / f"phase1-oca-exit-handoff-202610{session}"
+    root = tmp_path / f"phase1-oca-exit-handoff-{p.session_tag(date(2026, 10, session))}"
     root.mkdir()
     value = {
         "account": "DUFAKE",

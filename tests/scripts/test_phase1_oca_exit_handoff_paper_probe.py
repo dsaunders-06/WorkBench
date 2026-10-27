@@ -45,7 +45,7 @@ def api():
 
 def test_session_gate_and_minimum_parcel_cap():
     p = api()
-    p.session_window(date(2026, 10, 27), datetime(2026, 10, 27, 14, 0, tzinfo=SYDNEY))
+    p.session_window(date(2026, 10, 27), datetime(2026, 10, 27, 14, 45, tzinfo=SYDNEY))
     for now in [
         datetime(2026, 10, 26, 12, tzinfo=SYDNEY),
         datetime(2026, 10, 27, 15, 30, tzinfo=SYDNEY),
@@ -59,7 +59,7 @@ def test_session_gate_and_minimum_parcel_cap():
 
 def test_exact_approval_hash_terms_and_dedicated_directory(tmp_path, monkeypatch):
     p = api()
-    root = tmp_path / "phase1-oca-exit-handoff-20261027"
+    root = tmp_path / "phase1-oca-exit-handoff-20261027-pm"
     root.mkdir()
     path = root / "approval.json"
     terms = {
@@ -101,9 +101,11 @@ def test_wire_rechecks_account_and_client99_cannot_transmit():
 
 def test_attempt_lock_never_repeats(tmp_path):
     p = api()
-    p.claim_attempt(tmp_path)
+    root = tmp_path / "phase1-oca-exit-handoff-20261027-pm"
+    root.mkdir()
+    p.claim_attempt(root)
     with pytest.raises(FileExistsError):
-        p.claim_attempt(tmp_path)
+        p.claim_attempt(root)
 
 
 @pytest.fixture(params=["0", ""], ids=["unused-zero", "unused-unset"], autouse=True)
@@ -325,7 +327,7 @@ class Paper:
 
 def scenario(monkeypatch, **kwargs):
     p = api()
-    clock = [datetime(2026, 10, 27, 14, 0, tzinfo=SYDNEY)]
+    clock = [datetime(2026, 10, 27, 14, 45, tzinfo=SYDNEY)]
     broker = Paper(clock, **kwargs)
     broker.real_sleep = asyncio.sleep
     monkeypatch.setattr(p, "now", lambda: clock[0])
@@ -365,12 +367,11 @@ async def test_disappearing_stop_records_gap_and_cleans_remaining_without_restor
 
 
 @pytest.mark.asyncio
-async def test_wrong_sized_live_stop_is_oversell_safety_halt_not_duplicate_sale(monkeypatch):
+async def test_wrong_sized_live_stop_is_settled_before_cleanup(monkeypatch):
     p, broker, run, _ = scenario(monkeypatch, wrong_quantity=True)
-    with pytest.raises(p.SafetyHalt, match="oversell"):
-        await run.run_cases(types=(2,), monitor=False)
-    assert broker.held == 5
-    assert len([t for t in broker.trades if t.order.orderType == "MKT"]) == 1
+    await run.run_cases(types=(2,), monitor=False)
+    assert broker.held == 0
+    assert len([t for t in broker.trades if t.order.orderType == "MKT"]) == 2
 
 
 @pytest.mark.asyncio
@@ -413,10 +414,9 @@ async def test_oversized_target_also_blocks_another_exit(monkeypatch):
         return trade
 
     broker.placeOrder = wrong_target
-    with pytest.raises(p.SafetyHalt, match="oversell"):
-        await run.run_cases(types=(2,), monitor=False)
-    assert broker.held == 5
-    assert len([t for t in broker.trades if t.order.orderType == "MKT"]) == 1
+    await run.run_cases(types=(2,), monitor=False)
+    assert broker.held == 0
+    assert len([t for t in broker.trades if t.order.orderType == "MKT"]) == 2
 
 
 @pytest.mark.asyncio
@@ -641,7 +641,7 @@ async def test_invalid_final_quantity_preserves_raw_evidence_and_requires_action
     monkeypatch.setattr(p, "load_approval", lambda *args: "DUFAKE")
     monkeypatch.setattr(p, "_safe_output_dir", lambda root: root)
     monkeypatch.setattr(p, "claim_attempt", lambda *args: None)
-    broker.clock[0] = datetime(2026, 10, 27, 14, 0, tzinfo=SYDNEY)
+    broker.clock[0] = datetime(2026, 10, 27, 14, 45, tzinfo=SYDNEY)
 
     async def halted(self):
         raise p.SafetyHalt("synthetic halt")

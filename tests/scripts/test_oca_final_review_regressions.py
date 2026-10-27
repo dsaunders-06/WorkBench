@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from ib_async import OrderStatus, Stock, Trade
@@ -57,16 +58,18 @@ async def test_incomplete_final_orders_response_cannot_emit_flat(monkeypatch, tm
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["Submitted", "PendingCancel"])
-async def test_zero_holding_live_sell_is_transmission_halt_before_any_cancel(monkeypatch, status):
+async def test_zero_holding_live_sell_is_observed_and_settled_before_exit(monkeypatch, status):
     p, broker, run, _ = scenario(monkeypatch)
     run.group, run.oca_type, run.planned_quantity = "test", 2, 9
     trade = run.place(
         p.StopOrder("SELL", 5, 50, ocaGroup="test", ocaType=2), "stop", p.Decimal("56")
     )
     trade.orderStatus.status = status
-    with pytest.raises(p.TransmissionHalt, match="oversell"):
-        await run.cleanup()
-    assert not broker.cancels and len(broker.trades) == 1
+    if status == "PendingCancel":
+        broker.pending[trade.order.orderRef] = broker.clock[0] + timedelta(seconds=3)
+    await run.cleanup()
+    assert len(broker.cancels) == (1 if status == "Submitted" else 0)
+    assert len(broker.trades) == 1
 
 
 @pytest.mark.asyncio
@@ -145,7 +148,10 @@ async def test_terminal_partial_emergency_sale_never_emits_flat_or_retries(monke
 
 
 @pytest.mark.asyncio
-async def test_last_snapshot_pending_order_is_drained_before_disconnect(monkeypatch, tmp_path):
+@pytest.mark.parametrize("inconsistent", [False, True, "foreign"])
+async def test_last_snapshot_pending_order_is_drained_before_disconnect(
+    monkeypatch, tmp_path, inconsistent
+):
     p, broker, _, _ = scenario(monkeypatch)
 
     class Event:
@@ -177,9 +183,22 @@ async def test_last_snapshot_pending_order_is_drained_before_disconnect(monkeypa
             # A fresh independent snapshot contradicts the owner's terminal cache.
             row = broker.decoded_snapshot(broker.trades[0])
             row.orderStatus = OrderStatus(status="PendingSubmit", remaining=9)
+            if inconsistent == "foreign":
+                other = Trade(
+                    Stock("OTHER", "SMART", "AUD", conId=99),
+                    p.LimitOrder("BUY", 1, 1, account="DUFAKE", clientId=7, orderRef="foreign"),
+                    OrderStatus(status="Submitted", remaining=1),
+                )
+                return [row, other]
             return [row]
         return []
 
+    async def changing_final_positions():
+        if inconsistent is True and calls == 2:
+            return [SimpleNamespace(account="DUFAKE", contract=broker.contract, position=1)]
+        return []
+
+    broker.reqPositionsAsync = changing_final_positions
     broker.qualifyContractsAsync = qualified
     broker.reqAllOpenOrdersAsync = late_pending
     monkeypatch.setattr(p, "IB", lambda: broker)
@@ -195,6 +214,8 @@ async def test_last_snapshot_pending_order_is_drained_before_disconnect(monkeypa
         return root / "raw.json", "fake"
 
     monkeypatch.setattr(p, "_write_raw", write)
-    assert await p.run(p.SESSION, tmp_path, tmp_path / "approval.json", "fake", True) == 0
+    assert await p.run(p.SESSION, tmp_path, tmp_path / "approval.json", "fake", True) == int(
+        bool(inconsistent)
+    )
     assert broker.clock[0] - start >= timedelta(minutes=20)
     assert captured[0]["flat"] and not captured[0]["own_nonterminal_orders"]

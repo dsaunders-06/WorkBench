@@ -32,7 +32,7 @@ ACCOUNT_SHA256 = "29e762210575a39a23ff25eb7d95e435ac13f2b86ba5609eade17b55877bad
 TERMINAL = frozenset({"Filled", "Cancelled", "ApiCancelled"})
 WORKING = frozenset({"PreSubmitted", "Submitted"})
 TIMEOUT = 10.0
-STARTS = {date(2026, 10, 27): time(14, 0), date(2026, 10, 28): time(11, 30)}
+STARTS = {date(2026, 10, 27): time(14, 45), date(2026, 10, 28): time(11, 30)}
 
 
 class SafetyHalt(RuntimeError):
@@ -47,6 +47,10 @@ class CleanupHalt(RuntimeError):
     """An owned-order/experiment fault requires emergency settlement and exit."""
 
 
+class OwnSellExcess(CleanupHalt):
+    """Confirmed sibling overage: cancel owned excessive SELLs, then clean up."""
+
+
 class ObservationTimeout(RuntimeError):
     """An experiment could not establish its next condition before its deadline."""
 
@@ -59,7 +63,9 @@ def now() -> datetime:
     return datetime.now(SYDNEY)
 
 
-def session_window(session: date, current: datetime | None = None) -> None:
+def session_window(
+    session: date, current: datetime | None = None, *, starting: bool = True
+) -> None:
     value = current or now()
     if value.tzinfo is None:
         raise ValueError("aware session clock required")
@@ -67,11 +73,28 @@ def session_window(session: date, current: datetime | None = None) -> None:
     if (
         session not in STARTS
         or value.date() != session
-        or not STARTS[session] <= value.time() < time(15, 30)
+        or not STARTS[session] <= value.time() < (time(15, 0) if starting else time(15, 30))
     ):
         raise ValueError(
-            "OCA probe starts only 27 October 14:00–15:30 or 28 October 11:30–15:30 AEDT"
+            "OCA probe starts only 27 October 14:45–15:00 or 28 October 11:30–15:00 AEDT"
         )
+
+
+def session_tag(session: date) -> str:
+    return f"{session:%Y%m%d}" + ("-pm" if session == date(2026, 10, 27) else "")
+
+
+def checked_output(output: Path, session: date) -> Path:
+    root = output.resolve()
+    if (
+        session not in STARTS
+        or root.name != f"phase1-oca-exit-handoff-{session_tag(session)}"
+        or any(
+            p.name.casefold() == "phase1-oca-exit-handoff-20261027" for p in (root, *root.parents)
+        )
+    ):
+        raise ValueError("dedicated PM/fallback output required; morning27 directory is protected")
+    return root
 
 
 def parcel(reference: Decimal) -> int:
@@ -84,11 +107,11 @@ def parcel(reference: Decimal) -> int:
 
 
 def load_approval(path: Path, digest: str, output: Path, session: date = SESSION) -> str:
-    source, root = path.resolve(), output.resolve()
+    source, root = path.resolve(), checked_output(output, session)
     if (
         session not in STARTS
         or source.parent != root
-        or root.name != f"phase1-oca-exit-handoff-{session:%Y%m%d}"
+        or root.name != f"phase1-oca-exit-handoff-{session_tag(session)}"
         or source.name != "approval.json"
     ):
 
@@ -112,8 +135,8 @@ def load_approval(path: Path, digest: str, output: Path, session: date = SESSION
         signed = date.fromisoformat(value["approval_date"])
     except (TypeError, ValueError) as exc:
         raise ValueError("approval signing date invalid") from exc
-    if not date(2026, 10, 27) <= signed <= session:
-        raise ValueError("new approval must name its actual signing date, not the superseded file")
+    if signed > session:
+        raise ValueError("approval must name its actual signing date on or before the session")
     account = value["account"]
     if (
         any(value[key] != item for key, item in expected.items())
@@ -126,7 +149,8 @@ def load_approval(path: Path, digest: str, output: Path, session: date = SESSION
 
 
 def claim_attempt(output: Path, session: date = SESSION) -> None:
-    with (output / f"oca-revised-{session:%Y%m%d}-attempt.lock").open(
+    output = checked_output(output, session)
+    with (output / f"oca-{session_tag(session)}-attempt.lock").open(
         "x", encoding="utf-8"
     ) as handle:
         handle.write(now().isoformat() + "\n")
@@ -211,6 +235,9 @@ class HandoffProbe:
             account,
             events,
         )
+        self.excess_since: dict[str, datetime] = {}
+        self.confirmed_excess: dict[str, dict[str, Any]] = {}
+        self.last_orders: list[Any] = []
         self.session = session
         self.grouped_refs: dict[str, bool] = {}
         self.emergency = False
@@ -281,29 +308,116 @@ class HandoffProbe:
         exact_account(self.reader, self.account)
         return result
 
+    def position_state(self, rows: list[Any]) -> tuple[int, tuple[Any, ...]]:
+        held, fingerprint = 0, []
+        for row in rows:
+            quantity = Decimal(str(row.position))
+            if not quantity.is_finite() or quantity < 0 or quantity != int(quantity):
+                raise TransmissionHalt("fractional, negative or invalid holding")
+            if quantity and (
+                row.account != self.account or row.contract.conId != self.contract.conId
+            ):
+                raise TransmissionHalt("unrelated position")
+            if row.account == self.account and row.contract.conId == self.contract.conId:
+                held += int(quantity)
+            fingerprint.append((row.account, row.contract.conId, quantity))
+        if held > self.planned_quantity:
+            raise TransmissionHalt("unrelated BHP quantity exceeds owned parcel")
+        return held, tuple(sorted(fingerprint))
+
+    async def consistent_book(self, *, final: bool = False) -> tuple[int, list[Any], list[Any]]:
+        try:
+            first = await self.read("reqPositionsAsync")
+            if first is None:
+                raise SnapshotUnavailable("first position response unavailable")
+            self.event(
+                "independent final positions" if final else "position snapshot first",
+                positions=[repr(r) for r in first],
+            )
+            _, before = self.position_state(first)
+            orders = await self.read("reqAllOpenOrdersAsync")
+            if orders is None:
+                raise SnapshotUnavailable("open-order response unavailable")
+            # Retain order-lifecycle evidence even if the bracketing position
+            # read fails or differs. It cannot establish protection/oversell,
+            # but a live owned order must still be drained before disconnect.
+            working = [t for t in orders if t.orderStatus.status not in TERMINAL]
+            self.last_orders = working
+            self.check_settlement_book(0, working)
+            second = await self.read("reqPositionsAsync")
+            if second is None:
+                raise SnapshotUnavailable("second position response unavailable")
+            held, after = self.position_state(second)
+            working = [t for t in orders if t.orderStatus.status not in TERMINAL]
+            self.check_settlement_book(held, working)
+            if before != after:
+                self.latest = None
+                self.event(
+                    "evidence unavailable",
+                    request="positions/orders/positions",
+                    reason="position reads differ",
+                    first_positions=[repr(r) for r in first],
+                    second_positions=[repr(r) for r in second],
+                    orders=[view(t) for t in working],
+                    protection=None,
+                    oversell=None,
+                )
+                raise SnapshotUnavailable("position reads differ")
+            self.last_positions, self.last_orders = list(second), working
+            self.event("position pair verified", positions=[repr(r) for r in second])
+            return held, working, list(second)
+        except Exception:
+            self.excess_since.clear()
+            raise
+
+    def observe_excess(self, held: int, orders: list[Any]) -> list[Any]:
+        if any(
+            t.orderStatus.status in WORKING and Decimal(str(t.orderStatus.remaining)) == 0
+            for t in orders
+        ):
+            self.excess_since.clear()
+            self.event(
+                "evidence unavailable",
+                request="owned remaining quantity",
+                oversell=None,
+                reason="working owned order has zero remaining",
+            )
+            return []
+        excessive = [
+            t
+            for t in orders
+            if t.order.action == "SELL" and Decimal(str(t.orderStatus.remaining)) > held
+        ]
+        at, seen, confirmed = now(), set(), []
+        for trade in excessive:
+            ref = trade.order.orderRef
+            seen.add(ref)
+            started = self.excess_since.setdefault(ref, at)
+            elapsed = (at - started).total_seconds()
+            self.event(
+                "own SELL exceeds holding",
+                order=view(trade),
+                held_quantity=held,
+                observed_since=started.isoformat(),
+                consecutive_seconds=elapsed,
+            )
+            if elapsed >= 10:
+                confirmed.append(trade)
+        self.excess_since = {ref: stamp for ref, stamp in self.excess_since.items() if ref in seen}
+        if confirmed and not self.emergency:
+            self.confirmed_excess.update({t.order.orderRef: view(t) for t in confirmed})
+            self.event(
+                "persistent own SELL excess",
+                orders=[view(t) for t in confirmed],
+                held_quantity=held,
+            )
+            raise OwnSellExcess("own SELL excess persisted across consistent polls for 10 seconds")
+        return excessive
+
     async def poll(self) -> dict[str, Any]:
         async with self.lock:
             self.guard()
-            positions = await self.read("reqPositionsAsync")
-            if positions is None:
-                raise ObservationTimeout("position response unavailable")
-            self.last_positions = list(positions)
-            orders = await self.read("reqAllOpenOrdersAsync")
-            if orders is None:
-                raise ObservationTimeout("open-order response unavailable")
-            held = 0
-            for row in positions:
-                quantity = Decimal(str(row.position))
-                if quantity and (
-                    row.account != self.account or row.contract.conId != self.contract.conId
-                ):
-                    raise TransmissionHalt("unrelated position")
-                if row.account == self.account and row.contract.conId == self.contract.conId:
-                    if not quantity.is_finite() or quantity != int(quantity):
-                        raise TransmissionHalt("oversell risk: fractional holding")
-                    held += int(quantity)
-            if held < 0 or held > self.planned_quantity:
-                raise TransmissionHalt("oversell risk or unowned BHP quantity")
+            held, orders, positions = await self.consistent_book()
             for trade in orders:
                 if trade.orderStatus.status in TERMINAL:
                     continue
@@ -353,11 +467,6 @@ class HandoffProbe:
             ]
             stop_qty = sum(Decimal(str(trade.orderStatus.remaining)) for trade in stops)
             protected = bool(held and len(stops) == 1 and stop_qty == held)
-            if any(
-                trade.order.action == "SELL" and Decimal(str(trade.orderStatus.remaining)) > held
-                for trade in working
-            ):
-                raise TransmissionHalt("oversell risk: live sell quantity exceeds holding")
             incomplete = [
                 view(trade)
                 for trade in working
@@ -365,6 +474,7 @@ class HandoffProbe:
                 and Decimal(str(trade.orderStatus.remaining)) == 0
             ]
             if incomplete:
+                self.excess_since.clear()
                 self.latest = None
                 self.event(
                     "evidence unavailable",
@@ -382,6 +492,7 @@ class HandoffProbe:
                     "orders": [view(t) for t in working],
                     "exact_stop": None,
                 }
+            excessive = self.observe_excess(held, working)
             at = now()
             if self.last_poll and (at - self.last_poll).total_seconds() > 2.5:
                 self.event("poll coverage gap", seconds=(at - self.last_poll).total_seconds())
@@ -392,6 +503,7 @@ class HandoffProbe:
                 "stop_working": bool(stops),
                 "stop_quantity": str(stop_qty),
                 "exact_stop": protected,
+                "oversized_sells": [view(t) for t in excessive],
                 "orders": [view(trade) for trade in working],
                 "positions": [repr(row) for row in positions],
             }
@@ -415,7 +527,11 @@ class HandoffProbe:
         end = datetime.combine(self.session, time(15, 30), SYDNEY)
         while now() < end:
             try:
-                return await self.poll()
+                snapshot = await self.poll()
+                if snapshot.get("oversized_sells") and not self.emergency:
+                    await asyncio.sleep(1)
+                    continue
+                return snapshot
             except SnapshotUnavailable:
                 await asyncio.sleep(1)
         raise ObservationTimeout("quantity evidence unavailable at 15:30")
@@ -424,28 +540,11 @@ class HandoffProbe:
         """Read after a safety halt; never transmit or silently reuse old positions."""
         self.final_positions, self.final_observed_at, self.final_held = None, None, None
         async with self.lock:
-            positions = await self.read("reqPositionsAsync")
-            if positions is None:
-                raise ObservationTimeout("independent final positions unavailable")
+            held, working, positions = await self.consistent_book(final=True)
             self.final_positions = list(positions)
             self.final_observed_at = now().isoformat()
-            self.event("independent final positions", positions=[repr(row) for row in positions])
-            held = 0
-            for row in positions:
-                quantity = Decimal(str(row.position))
-                if quantity and (
-                    row.account != self.account or row.contract.conId != self.contract.conId
-                ):
-                    raise TransmissionHalt("unrelated final position")
-                if row.account == self.account and row.contract.conId == self.contract.conId:
-                    if not quantity.is_finite() or quantity != int(quantity):
-                        raise TransmissionHalt("invalid final BHP quantity")
-                    held += int(quantity)
             self.final_held = held
-            orders = await self.read("reqAllOpenOrdersAsync")
-            if orders is None:
-                raise ObservationTimeout("independent final orders unavailable")
-            working = [trade for trade in orders if trade.orderStatus.status not in TERMINAL]
+            self.observe_excess(held, working)
             self.event(
                 "independent final book",
                 held_quantity=held,
@@ -546,14 +645,16 @@ class HandoffProbe:
 
     def place(self, order: Any, role: str, reference: Decimal) -> Any:
         self.guard()
-        session_window(self.session)
+        session_window(self.session, starting=False)
+        if not self.known:
+            session_window(self.session)
         quantity = Decimal(str(order.totalQuantity))
         price = Decimal(str(order.lmtPrice)) if order.orderType == "LMT" else reference
         if not quantity.is_finite() or quantity <= 0 or quantity != int(quantity):
             raise TransmissionHalt("oversell risk: invalid order quantity")
         if not price.is_finite() or price <= 0 or quantity * price > CAP:
             raise CleanupHalt("per-order A$800 reference cap or price invalid")
-        ref = f"oca-{self.session:%Y%m%d}-{self.oca_type}-{role}"
+        ref = f"oca-{session_tag(self.session)}-{self.oca_type}-{role}"
         if ref in self.known:
             raise TransmissionHalt("duplicate order request")
         order.orderRef, order.account = ref, self.account
@@ -588,7 +689,7 @@ class HandoffProbe:
             self.guard()
             try:
                 snapshot = await self.poll()
-                if predicate(snapshot):
+                if predicate(snapshot) and not snapshot.get("oversized_sells"):
                     return snapshot
             except (TransmissionHalt, CleanupHalt):
                 raise
@@ -597,16 +698,30 @@ class HandoffProbe:
             await asyncio.sleep(1)
         raise ObservationTimeout(f"{label}: deadline reached")
 
-    def request_cancel_once(self, trade: Any) -> None:
+    def request_cancel_once(
+        self, trade: Any, *, own_sell_safety: bool = False, observed_live: bool = False
+    ) -> None:
         ref = trade.order.orderRef
-        if trade.orderStatus.status in TERMINAL:
+        if trade.orderStatus.status in TERMINAL and not observed_live:
             return
         if ref not in self.cancelled and trade.orderStatus.status not in {
             "PendingCancel",
             "Inactive",
         }:
-            self.guard()
-            session_window(self.session)
+            if own_sell_safety:
+                exact_account(self.trader, self.account)
+                exact_account(self.reader, self.account)
+                if (
+                    self.known.get(ref) is not trade
+                    or trade.order.action != "SELL"
+                    or trade.order.account != self.account
+                    or trade.order.clientId != 1
+                    or trade.contract.conId != self.contract.conId
+                ):
+                    raise TransmissionHalt("own SELL cancellation identity unavailable")
+            else:
+                self.guard()
+            session_window(self.session, starting=False)
             self.cancelled.add(ref)
             self.event("cancel request", order=view(trade))
             try:
@@ -720,7 +835,7 @@ class HandoffProbe:
     async def case(self, oca_type: int) -> None:
         self.oca_type, self.group, self.armed = (
             oca_type,
-            f"oca-{self.session:%Y%m%d}-type-{oca_type}",
+            f"oca-{session_tag(self.session)}-type-{oca_type}",
             False,
         )
         self.stage = "case start"
@@ -810,7 +925,9 @@ class HandoffProbe:
             overfill_blocking="not proven merely by absence of an observed overfill",
         )
 
-    def own_nonterminal_orders(self, orders: list[Any] | None = None) -> list[dict[str, Any]]:
+    def own_nonterminal_orders(
+        self, orders: list[Any] | None = None, refs: set[str] | None = None
+    ) -> list[dict[str, Any]]:
         pending = {
             ref: view(trade) if trade is not None else {"ref": ref, "status": "ack unavailable"}
             for ref, trade in self.known.items()
@@ -819,7 +936,7 @@ class HandoffProbe:
         for trade in orders or []:
             if trade.order.orderRef in self.known and trade.orderStatus.status not in TERMINAL:
                 pending[trade.order.orderRef] = view(trade)
-        return list(pending.values())
+        return [row for ref, row in pending.items() if refs is None or ref in refs]
 
     def check_settlement_book(self, held: int, orders: list[Any]) -> None:
         """Ownership/oversell guards remain binding even after a terms halt."""
@@ -834,8 +951,6 @@ class HandoffProbe:
                 or (expected.order.permId and expected.order.permId != trade.order.permId)
             ):
                 raise TransmissionHalt("unrelated order in settlement snapshot")
-            if trade.order.action == "SELL" and Decimal(str(trade.orderStatus.remaining)) > held:
-                raise TransmissionHalt("oversell risk during settlement")
 
     def attributable_holding(self) -> int:
         balance = 0
@@ -852,7 +967,7 @@ class HandoffProbe:
             raise TransmissionHalt("oversell risk: owned sells exceed owned buys")
         return balance
 
-    async def wait_own_terminal(self) -> tuple[int, list[Any]]:
+    async def wait_own_terminal(self, refs: set[str] | None = None) -> tuple[int, list[Any]]:
         """Never disconnect on a zero position while an owned order may still fill."""
         end = datetime.combine(self.session, time(15, 30), SYDNEY)
         last = None
@@ -861,11 +976,13 @@ class HandoffProbe:
             try:
                 held, orders = await self.final_inventory()
                 self.check_settlement_book(held, orders)
-                pending = self.own_nonterminal_orders(orders)
+                pending = self.own_nonterminal_orders(orders, refs)
                 signature = repr(pending)
                 if signature != last:
                     self.event("own terminal wait", orders=pending, held_quantity=held)
                     last = signature
+                if not pending and refs is not None:
+                    return held, orders
                 if not pending:
                     attributed = self.attributable_holding()
                     if held == attributed:
@@ -875,10 +992,13 @@ class HandoffProbe:
                         held_quantity=held,
                         attributable_quantity=attributed,
                     )
+            except OwnSellExcess:
+                raise
             except Exception as exc:  # noqa: BLE001 - observe, never transmit/retry a cancel
                 if isinstance(exc, TransmissionHalt):
                     self.fatal = exc
-                    if not self.own_nonterminal_orders(orders):
+                    observed = orders if orders is not None else self.last_orders
+                    if not self.own_nonterminal_orders(observed, refs):
                         raise  # foreign exposure is reported promptly once our orders settle
                 self.event("terminal evidence unavailable", reason=repr(exc))
             await asyncio.sleep(1)
@@ -889,8 +1009,27 @@ class HandoffProbe:
         )
         raise ObservationTimeout("own order non-terminal or snapshot unavailable at 15:30")
 
+    async def settle_final_orders(self) -> tuple[int, list[Any]]:
+        try:
+            return await self.wait_own_terminal()
+        except OwnSellExcess as exc:
+            self.halt_reason = self.halt_reason or repr(exc)
+            await self.cleanup()
+            return await self.wait_own_terminal()
+
     async def cleanup(self) -> None:
         self.emergency = True
+        if self.confirmed_excess:
+            self.stage = "oversized SELL settlement"
+            refs = set(self.confirmed_excess)
+            self.event("oversized SELL settlement", orders=list(self.confirmed_excess.values()))
+            for ref in refs:
+                trade = self.known.get(ref)
+                if trade is None:
+                    raise TransmissionHalt("owned oversized SELL acknowledgement unavailable")
+                self.request_cancel_once(trade, own_sell_safety=True, observed_live=True)
+            await self.wait_own_terminal(refs)
+            self.confirmed_excess.clear()
         self.stage = "emergency cleanup"
         self.event("emergency cleanup", reason=self.halt_reason)
         self.guard()
@@ -909,7 +1048,7 @@ class HandoffProbe:
             raise ObservationTimeout("cleanup book unavailable at 15:30")
         for trade in tuple(self.known.values()):
             if trade is not None:
-                self.request_cancel_once(trade)
+                self.request_cancel_once(trade, own_sell_safety=trade.order.action == "SELL")
         held, orders = await self.wait_own_terminal()
         self.guard()
         if orders:
@@ -1043,7 +1182,7 @@ async def run(
         if driver:
             if driver.known:
                 try:
-                    await driver.wait_own_terminal()
+                    await driver.settle_final_orders()
                 except Exception as exc:  # noqa: BLE001 - window-end handoff, never early exit
                     error = error or repr(exc)
             if not await driver.executions():
@@ -1060,6 +1199,7 @@ async def run(
                     }
                 )
                 held = driver.final_held
+                final_orders = driver.last_orders
                 error = error or repr(exc)
             end = datetime.combine(session, time(15, 30), SYDNEY)
             # The last independent snapshot can contradict the owner's terminal
@@ -1071,7 +1211,7 @@ async def run(
                 )
                 await asyncio.sleep(1)
                 try:
-                    await driver.wait_own_terminal()
+                    await driver.settle_final_orders()
                 except (
                     Exception
                 ) as exc:  # noqa: BLE001 - retain failure, continue observing own orders
@@ -1082,6 +1222,7 @@ async def run(
                     final_book_available = True
                 except Exception as exc:  # noqa: BLE001 - retain the last pending order evidence
                     held = driver.final_held
+                    final_orders = driver.last_orders
                     error = error or repr(exc)
                     driver.event("final inventory unavailable", reason=repr(exc))
             if final_orders:
@@ -1089,6 +1230,7 @@ async def run(
         for ib in (trader, reader):
             if ib.isConnected():
                 ib.disconnect()
+        error = error or (driver.halt_reason if driver else None)
         own_nonterminal = driver.own_nonterminal_orders(final_orders) if driver else []
         attributable = None
         if driver:
