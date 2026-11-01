@@ -46,7 +46,7 @@ class LaggingPaper(Paper):
 
 def lag_scenario(monkeypatch, **kwargs):
     p = api()
-    clock = [datetime(2026, 10, 27, 14, 45, tzinfo=SYDNEY)]
+    clock = [datetime(2026, 11, 2, 12, 0, tzinfo=SYDNEY)]
     broker = LaggingPaper(clock, **kwargs)
     broker.real_sleep = asyncio.sleep
     monkeypatch.setattr(p, "now", lambda: clock[0])
@@ -146,16 +146,17 @@ async def test_unrelated_order_remains_immediate_transmission_halt(monkeypatch):
 @pytest.mark.parametrize(
     "day,hour,minute,allowed",
     [
-        (27, 14, 44, False),
-        (27, 14, 45, True),
-        (27, 15, 0, False),
-        (28, 11, 30, True),
-        (28, 15, 0, False),
+        (2, 11, 59, False),
+        (2, 12, 0, True),
+        (2, 12, 30, False),
+        (3, 11, 29, False),
+        (3, 11, 30, True),
+        (3, 12, 0, False),
     ],
 )
 def test_corrected_start_gates(day, hour, minute, allowed):
     p = api()
-    args = date(2026, 10, day), datetime(2026, 10, day, hour, minute, tzinfo=SYDNEY)
+    args = date(2026, 11, day), datetime(2026, 11, day, hour, minute, tzinfo=SYDNEY)
     if allowed:
         p.session_window(*args)
     else:
@@ -163,16 +164,16 @@ def test_corrected_start_gates(day, hour, minute, allowed):
             p.session_window(*args)
 
 
-def test_pm_directory_required_and_morning_directory_rejected_before_read(tmp_path, monkeypatch):
+def test_session_directory_required_and_old_directory_rejected_before_read(tmp_path, monkeypatch):
     p = api()
-    root = tmp_path / "phase1-oca-exit-handoff-20261027-pm"
+    root = tmp_path / "phase1-oca-exit-handoff-20261102"
     root.mkdir()
     terms = {
         "account": "DUFAKE",
         "approved_by": "DS",
         "operator": "DS",
-        "approval_date": "2026-10-27",
-        "session": "2026-10-27",
+        "approval_date": "2026-11-02",
+        "session": "2026-11-02",
         "symbol": "BHP.AX",
         "cap_per_order_aud": "800",
     }
@@ -188,12 +189,12 @@ def test_pm_directory_required_and_morning_directory_rejected_before_read(tmp_pa
 
 def test_valid_started_session_cleanup_allowed_after_start_cutoff():
     p = api()
-    stamp = datetime(2026, 10, 27, 15, 10, tzinfo=SYDNEY)
-    p.session_window(date(2026, 10, 27), stamp, starting=False)
+    stamp = datetime(2026, 11, 2, 15, 10, tzinfo=SYDNEY)
+    p.session_window(date(2026, 11, 2), stamp, starting=False)
     with pytest.raises(ValueError):
-        p.session_window(date(2026, 10, 27), stamp)
+        p.session_window(date(2026, 11, 2), stamp)
     with pytest.raises(ValueError):
-        p.session_window(date(2026, 10, 27), stamp.replace(minute=30), starting=False)
+        p.session_window(date(2026, 11, 2), stamp.replace(minute=30), starting=False)
 
 
 @pytest.mark.asyncio
@@ -225,11 +226,12 @@ async def test_unknown_poll_resets_ten_second_oversized_streak(monkeypatch):
     assert len([e for e in events if e["event"] == "persistent own SELL excess"]) == 1
 
 
-def test_protected_morning_ancestor_is_case_insensitive(tmp_path):
+@pytest.mark.parametrize("protected", ["20261027", "20261027-pm", "20261028"])
+def test_protected_old_ancestor_is_case_insensitive(tmp_path, protected):
     p = api()
-    root = tmp_path / "PHASE1-OCA-EXIT-HANDOFF-20261027" / "phase1-oca-exit-handoff-20261027-pm"
+    root = tmp_path / f"PHASE1-OCA-EXIT-HANDOFF-{protected}" / "phase1-oca-exit-handoff-20261102"
     with pytest.raises(ValueError):
-        p.checked_output(root, date(2026, 10, 27))
+        p.checked_output(root, date(2026, 11, 2))
     assert not root.exists()
 
 
@@ -249,3 +251,10 @@ async def test_background_monitor_transient_and_persistent_sibling_lag(monkeypat
         assert len([c for c in broker.cancels if c[0] == broker.lag_stop.order.orderRef]) == 1
     else:
         assert not broker.cancels
+
+
+@pytest.mark.parametrize("day", [27, 28])
+def test_october_session_is_refused(day):
+    p = api()
+    with pytest.raises(ValueError):
+        p.session_window(date(2026, 10, day), datetime(2026, 10, day, 11, 30, tzinfo=SYDNEY))

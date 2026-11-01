@@ -1,4 +1,4 @@
-"""One private-approved 27 October BHP paper OCA handoff experiment.
+"""One private-approved 2 or 3 November BHP paper OCA handoff experiment.
 
 Build-only until DS approves the exact commit and private approval-file hash.
 Client 1 transmits; independent client 99 only reads. No QAT/OMS path is changed.
@@ -24,7 +24,7 @@ from phase3_daily_history_probe import _safe_output_dir, _write_raw  # noqa: E40
 
 from qat.data.broker.ticks import tick_size  # noqa: E402
 
-SESSION = date(2026, 10, 27)
+SESSION = date(2026, 11, 2)
 SYDNEY = ZoneInfo("Australia/Sydney")
 CAP = Decimal("800")
 MIN_PARCEL = Decimal("500")  # Existing local paper-probe parcel convention.
@@ -32,7 +32,8 @@ ACCOUNT_SHA256 = "29e762210575a39a23ff25eb7d95e435ac13f2b86ba5609eade17b55877bad
 TERMINAL = frozenset({"Filled", "Cancelled", "ApiCancelled"})
 WORKING = frozenset({"PreSubmitted", "Submitted"})
 TIMEOUT = 10.0
-STARTS = {date(2026, 10, 27): time(14, 45), date(2026, 10, 28): time(11, 30)}
+STARTS = {date(2026, 11, 2): time(12, 0), date(2026, 11, 3): time(11, 30)}
+START_ENDS = {date(2026, 11, 2): time(12, 30), date(2026, 11, 3): time(12, 0)}
 
 
 class SafetyHalt(RuntimeError):
@@ -73,15 +74,15 @@ def session_window(
     if (
         session not in STARTS
         or value.date() != session
-        or not STARTS[session] <= value.time() < (time(15, 0) if starting else time(15, 30))
+        or not STARTS[session] <= value.time() < (START_ENDS[session] if starting else time(15, 30))
     ):
         raise ValueError(
-            "OCA probe starts only 27 October 14:45–15:00 or 28 October 11:30–15:00 AEDT"
+            "OCA probe starts only 2 November 12:00–12:30 or 3 November 11:30–12:00 AEDT"
         )
 
 
 def session_tag(session: date) -> str:
-    return f"{session:%Y%m%d}" + ("-pm" if session == date(2026, 10, 27) else "")
+    return f"{session:%Y%m%d}"
 
 
 def checked_output(output: Path, session: date) -> Path:
@@ -90,10 +91,18 @@ def checked_output(output: Path, session: date) -> Path:
         session not in STARTS
         or root.name != f"phase1-oca-exit-handoff-{session_tag(session)}"
         or any(
-            p.name.casefold() == "phase1-oca-exit-handoff-20261027" for p in (root, *root.parents)
+            p.name.casefold()
+            in {
+                "phase1-oca-exit-handoff-20261027",
+                "phase1-oca-exit-handoff-20261027-pm",
+                "phase1-oca-exit-handoff-20261028",
+            }
+            for p in (root, *root.parents)
         )
     ):
-        raise ValueError("dedicated PM/fallback output required; morning27 directory is protected")
+        raise ValueError(
+            "dedicated November session output required; October evidence directories are protected"
+        )
     return root
 
 

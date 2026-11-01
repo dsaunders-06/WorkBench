@@ -45,13 +45,13 @@ def api():
 
 def test_session_gate_and_minimum_parcel_cap():
     p = api()
-    p.session_window(date(2026, 10, 27), datetime(2026, 10, 27, 14, 45, tzinfo=SYDNEY))
+    p.session_window(date(2026, 11, 2), datetime(2026, 11, 2, 12, 0, tzinfo=SYDNEY))
     for now in [
         datetime(2026, 10, 26, 12, tzinfo=SYDNEY),
-        datetime(2026, 10, 27, 15, 30, tzinfo=SYDNEY),
+        datetime(2026, 11, 2, 15, 30, tzinfo=SYDNEY),
     ]:
         with pytest.raises(ValueError):
-            p.session_window(date(2026, 10, 27), now)
+            p.session_window(date(2026, 11, 2), now)
     assert p.parcel(Decimal("56")) == 9
     with pytest.raises(ValueError):
         p.parcel(Decimal("900"))
@@ -59,14 +59,14 @@ def test_session_gate_and_minimum_parcel_cap():
 
 def test_exact_approval_hash_terms_and_dedicated_directory(tmp_path, monkeypatch):
     p = api()
-    root = tmp_path / "phase1-oca-exit-handoff-20261027-pm"
+    root = tmp_path / "phase1-oca-exit-handoff-20261102"
     root.mkdir()
     path = root / "approval.json"
     terms = {
         "account": "DUFAKE",
         "approved_by": "DS",
-        "approval_date": "2026-10-27",
-        "session": "2026-10-27",
+        "approval_date": "2026-11-02",
+        "session": "2026-11-02",
         "symbol": "BHP.AX",
         "operator": "DS",
         "cap_per_order_aud": "800",
@@ -101,7 +101,7 @@ def test_wire_rechecks_account_and_client99_cannot_transmit():
 
 def test_attempt_lock_never_repeats(tmp_path):
     p = api()
-    root = tmp_path / "phase1-oca-exit-handoff-20261027-pm"
+    root = tmp_path / "phase1-oca-exit-handoff-20261102"
     root.mkdir()
     p.claim_attempt(root)
     with pytest.raises(FileExistsError):
@@ -327,7 +327,7 @@ class Paper:
 
 def scenario(monkeypatch, **kwargs):
     p = api()
-    clock = [datetime(2026, 10, 27, 14, 45, tzinfo=SYDNEY)]
+    clock = [datetime(2026, 11, 2, 12, 0, tzinfo=SYDNEY)]
     broker = Paper(clock, **kwargs)
     broker.real_sleep = asyncio.sleep
     monkeypatch.setattr(p, "now", lambda: clock[0])
@@ -521,7 +521,7 @@ async def test_flat_cleanup_dispatches_all_cancels_before_twenty_minute_wait(mon
 @pytest.mark.asyncio
 async def test_flat_cleanup_never_cancels_a_stop_before_independent_zero(monkeypatch):
     p, broker, run, _ = scenario(monkeypatch)
-    broker.clock[0] = datetime(2026, 10, 27, 15, 29, 59, tzinfo=SYDNEY)
+    broker.clock[0] = datetime(2026, 11, 2, 15, 29, 59, tzinfo=SYDNEY)
     broker.held, run.planned_quantity, run.group, run.oca_type = 5, 5, "test", 2
     order = p.StopOrder(
         "SELL", 5, 50, account="DUFAKE", orderRef="stop-test", ocaGroup="test", ocaType=2
@@ -641,7 +641,7 @@ async def test_invalid_final_quantity_preserves_raw_evidence_and_requires_action
     monkeypatch.setattr(p, "load_approval", lambda *args: "DUFAKE")
     monkeypatch.setattr(p, "_safe_output_dir", lambda root: root)
     monkeypatch.setattr(p, "claim_attempt", lambda *args: None)
-    broker.clock[0] = datetime(2026, 10, 27, 14, 45, tzinfo=SYDNEY)
+    broker.clock[0] = datetime(2026, 11, 2, 12, 0, tzinfo=SYDNEY)
 
     async def halted(self):
         raise p.SafetyHalt("synthetic halt")
@@ -654,7 +654,7 @@ async def test_invalid_final_quantity_preserves_raw_evidence_and_requires_action
         return root / "raw.json", "fake-digest"
 
     monkeypatch.setattr(p, "_write_raw", write)
-    assert await p.run(date(2026, 10, 27), tmp_path, tmp_path / "approval.json", "fake", True) == 1
+    assert await p.run(date(2026, 11, 2), tmp_path, tmp_path / "approval.json", "fake", True) == 1
     assert captured[0]["held_quantity"] is None
     assert captured[0]["ds_action_required"]
     assert any(row["event"] == "independent final positions" for row in captured[0]["events"])
