@@ -1676,11 +1676,14 @@ def assess_history(
     actions: ActionLedger | None = None,
     *,
     attested_through: date | None = None,
+    active_symbols: tuple[str, ...] | None = None,
 ) -> QualityResult:
     """Pure quality assessment, shared by the live store and frozen read view."""
     reasons: set[str] = set()
     start = _three_year_start(session)
-    current = membership.is_current(symbol, session, attested_through=attested_through)
+    current = membership.is_current(symbol, session, attested_through=attested_through) and (
+        active_symbols is None or symbol in active_symbols
+    )
     managed = symbol in membership.managed_symbols
     if not current and not managed:
         reasons.add("not_member_or_managed")

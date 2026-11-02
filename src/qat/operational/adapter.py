@@ -48,6 +48,11 @@ from qat.operational.history import (
     ingest_session,
     to_engine_adjusted,
 )
+from qat.operational.membership_scope import (
+    ActiveMembers,
+    base_active_members,
+    validate_active_members,
+)
 
 LABEL = "unvalidated strategy, no demonstrated edge"
 
@@ -110,6 +115,12 @@ class FrozenSnapshot:
     content_hash: str
     label: str = OPERATIONAL
     attestation_hash: str = ""
+    active_members: ActiveMembers | None = None
+
+    @property
+    def active_inputs(self) -> tuple[SymbolInput, ...]:
+        active = set(self.active_members.symbols) if self.active_members is not None else set()
+        return tuple(item for item in self.symbols if item.symbol in active)
 
     def identity(self) -> dict[str, object]:
         return {f.name: getattr(self, f.name) for f in fields(self) if f.name != "content_hash"}
@@ -174,6 +185,7 @@ class OperationalAdapter:
         *,
         attested_through: date | None = None,
         attestation_hash: str = "",
+        active_members: ActiveMembers | None = None,
     ) -> None:
         if (attested_through is None) != (attestation_hash == "") or (
             attestation_hash
@@ -190,6 +202,7 @@ class OperationalAdapter:
         self._actions = actions
         self._attested_through = attested_through
         self._attestation_hash = attestation_hash
+        self._active_members = active_members
 
     def attempt_primary(
         self,
@@ -202,6 +215,15 @@ class OperationalAdapter:
         shadow_freeze_final: bool = False,
     ) -> IngestResult:
         """Record one primary-source attempt; the caller schedules any retry."""
+        if self._active_members is not None:
+            selected = validate_active_members(
+                self._membership,
+                session,
+                self._active_members,
+                attested_through=self._attested_through,
+            )
+            if not set(symbols) <= set(selected.symbols):
+                raise ValueError("source request exceeds active membership")
         return ingest_session(
             self._store,
             self._calendar,
@@ -217,6 +239,22 @@ class OperationalAdapter:
         reasons = []
         symbols = []
         source_failed = False
+        selected = None
+        try:
+            selected = (
+                validate_active_members(
+                    self._membership,
+                    session,
+                    self._active_members,
+                    attested_through=self._attested_through,
+                )
+                if self._active_members is not None
+                else base_active_members(
+                    self._membership, session, attested_through=self._attested_through
+                )
+            )
+        except ValueError:
+            reasons.append("active_membership_unavailable")
         for name, authority in (
             ("calendar", self._calendar),
             ("membership", self._membership),
@@ -280,7 +318,9 @@ class OperationalAdapter:
                         else:
                             raise ValueError("unknown source attempt status")
             source_failed = bool(unresolved) or terminal_failure
-            for symbol in sorted(set(self._membership.symbols + self._membership.managed_symbols)):
+            for symbol in sorted(
+                set((selected.symbols if selected else ()) + self._membership.managed_symbols)
+            ):
                 history = tuple(r for r in records if r.bar.symbol == symbol)
                 with localcontext(
                     Context(prec=NUMERIC_POLICY.precision, rounding=NUMERIC_POLICY.rounding)
@@ -295,6 +335,7 @@ class OperationalAdapter:
                         events,
                         self._actions,
                         attested_through=self._attested_through,
+                        active_symbols=selected.symbols if selected else (),
                     )
                 symbols.append(SymbolInput(symbol, history, quality))
         except (ValueError, OSError, sqlite3.Error, KeyError, TypeError):
@@ -313,6 +354,7 @@ class OperationalAdapter:
             engine_code_hash(),
             "",
             attestation_hash=self._attestation_hash,
+            active_members=selected,
         )
         return replace(snapshot, content_hash=digest(snapshot.identity()))
 
@@ -379,6 +421,26 @@ class OperationalAdapter:
             return global_abstention(("before_1730_sydney",))
         if snapshot.reasons:
             return global_abstention(snapshot.reasons)
+        try:
+            if snapshot.active_members is None:
+                raise ValueError("missing frozen active membership")
+            selected = validate_active_members(
+                snapshot.membership,
+                snapshot.session,
+                snapshot.active_members,
+                attested_through=self._attested_through,
+            )
+            if self._active_members is not None and selected != self._active_members:
+                raise ValueError("frozen active membership changed")
+            if (
+                tuple(sorted(item.symbol for item in snapshot.active_inputs)) != selected.symbols
+                or len({item.symbol for item in snapshot.symbols}) != len(snapshot.symbols)
+                or not {item.symbol for item in snapshot.symbols}
+                <= set(selected.symbols + snapshot.membership.managed_symbols)
+            ):
+                raise ValueError("mixed frozen active membership")
+        except ValueError:
+            return global_abstention(("active_membership_snapshot_mismatch",))
         expires = snapshot.calendar.next_open(snapshot.session)
         if now >= expires:
             return global_abstention(("session_expired",))
@@ -417,7 +479,7 @@ class OperationalAdapter:
                     )
                 )
                 continue
-            if not symbol.quality.new_cards_allowed:
+            if not symbol.quality.new_cards_allowed or symbol.symbol not in selected.symbols:
                 abstentions.append(
                     Abstention(
                         symbol.symbol,

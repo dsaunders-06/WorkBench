@@ -3313,6 +3313,38 @@ def _config_reference(doc: Any) -> None:
                 "before the daily attestation can extend its validity.",
             ),
             (
+                "QAT_PHASE3_CATCHUP_APPROVAL_FILE",
+                "(empty)",
+                "Absolute private path to DS's signed catch-up approval. The approved "
+                "range, audit hash, authority hashes and predecessor must match the record.",
+            ),
+            (
+                "QAT_PHASE3_CATCHUP_APPROVAL_SHA256",
+                "(empty)",
+                "Independently approved exact SHA-256 of the catch-up approval file. "
+                "Ordinary reads recheck this pin; the ledger cannot approve its own evidence.",
+            ),
+            (
+                "QAT_PHASE3_MEMBERSHIP_SUCCESSOR_FILE",
+                "(empty)",
+                "Absolute private path to the restriction-only membership successor. "
+                "It must also be named by the verified catch-up record; no additions or "
+                "symbol renames are allowed. Missing approval after MFG retires abstains.",
+            ),
+            (
+                "QAT_PHASE3_MEMBERSHIP_SUCCESSOR_SHA256",
+                "(empty)",
+                "Independently approved exact SHA-256 of the successor file, bound to "
+                "the unchanged base membership file. Ordinary reads recheck this pin.",
+            ),
+            (
+                "QAT_PHASE3_CATCHUP_AUDIT_FILE",
+                "(empty)",
+                "Absolute private path to the auditor-reviewed catch-up manifest. Its "
+                "bytes are checked against the approval's hash at dry-run, append and "
+                "independent verification; ordinary loads do not read its contents.",
+            ),
+            (
                 "QAT_PHASE3_LIQUIDITY_MAX_PARTICIPATION",
                 "(unset)",
                 "Operator-approved maximum participation in prior observed volume; set "

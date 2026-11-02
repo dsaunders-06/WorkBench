@@ -24,6 +24,7 @@ from qat.operational.adapter import (
 )
 from qat.operational.authority_attestations import AuthorityAttestations, base_validity
 from qat.operational.cards import CardEventStore, CardService, RecommendationCard
+from qat.operational.continuity import VerifiedMembershipSource, evidence_from_settings
 from qat.operational.history import (
     SYDNEY,
     ActionLedger,
@@ -39,13 +40,12 @@ from qat.operational.history import (
 )
 from qat.operational.ibkr_history import (
     IBKRHistoricalBarSource,
-    IBKRRawBarProbe,
     filter_backfill_to_calendar,
 )
+from qat.operational.membership_scope import ActiveMembershipSource, resolve_active_members
 from qat.operational.shadow_record import ShadowRecord
 
 logger = logging.getLogger(__name__)
-PROBE_SYMBOLS = ("SUN.AX", "MFG.AX", "BHP.AX", "CBA.AX", "WGX.AX")
 
 
 def _abstain_revised_symbols(
@@ -84,6 +84,7 @@ class Phase3ShadowRunner:
         oms: OMS,
         *,
         now: Callable[[], datetime] | None = None,
+        active_membership: ActiveMembershipSource | None = None,
     ) -> None:
         if not settings.phase3_shadow_enabled or not settings.phase3_operational_root:
             raise ValueError("Phase 3 shadow is not configured")
@@ -91,6 +92,7 @@ class Phase3ShadowRunner:
         self.broker = broker
         self.oms = oms
         self.now = now or (lambda: datetime.now(SYDNEY))
+        self.active_membership = active_membership
         self.cards: tuple[RecommendationCard, ...] = ()
         self.abstentions: tuple[object, ...] = ()
         self._task: asyncio.Task[None] | None = None
@@ -112,10 +114,26 @@ class Phase3ShadowRunner:
         self, session: date
     ) -> tuple[CalendarLedger, Membership, HaltLedger, ActionLedger, str]:
         root = Path(self.settings.phase3_authorities_dir)
+        hashes = {
+            name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+            for name in ("calendar.json", "membership.json", "halts.jsonl", "actions.json")
+        }
+        approved = {
+            "calendar.json": self.settings.phase3_calendar_sha256,
+            "membership.json": self.settings.phase3_membership_sha256,
+            "halts.jsonl": self.settings.phase3_halts_sha256,
+            "actions.json": self.settings.phase3_actions_sha256,
+        }
+        if hashes != approved:
+            raise ValueError("Phase 3 authority files differ from configured DS-approved hashes")
         calendar = load_calendar(root / "calendar.json")
         membership = load_membership(root / "membership.json")
         halts = load_halts(root / "halts.jsonl")
         actions = load_actions(root / "actions.json")
+        if {
+            name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in hashes
+        } != approved:
+            raise ValueError("Phase 3 authority files changed while loading")
         if any(item.fixture for item in (calendar, membership, halts, actions)):
             raise ValueError("Phase 3 requires real dated ASX authorities, not fixtures")
         if any(item.valid_through is None for item in (calendar, membership, halts, actions)):
@@ -128,7 +146,8 @@ class Phase3ShadowRunner:
         )
         attestation_hash = ""
         ledger = AuthorityAttestations(
-            Path(self.settings.phase3_operational_root) / "authority_attestations.jsonl"
+            Path(self.settings.phase3_operational_root) / "authority_attestations.jsonl",
+            evidence=evidence_from_settings(self.settings),
         )
         if session > base and ledger.path.exists():
             hashes = {
@@ -179,21 +198,35 @@ class Phase3ShadowRunner:
                 membership.effective_to < session and not attestation_hash
             ):
                 raise ValueError("dated ASX membership does not cover session")
-        except (OSError, ValueError, KeyError) as error:
-            detail: dict[str, object] = {"reason": f"authority_unavailable:{error}"}
-            raw_bars: tuple[dict[str, object], ...] = ()
-            try:
-                probe = IBKRRawBarProbe(self.settings, audit=store.log)
-                raw_bars = await asyncio.to_thread(probe.fetch, session, PROBE_SYMBOLS)
-                detail["raw_bars"] = raw_bars
-            except Exception as probe_error:  # noqa: BLE001 - read-only retry, never a card
-                detail["raw_probe_error"] = str(probe_error)
-            shadow.append("abstention", session, detail)
-            return len(raw_bars) == len(PROBE_SYMBOLS) and all(
-                bar["stable"] is True for bar in raw_bars
+            scope_source = self.active_membership
+            if scope_source is None:
+                evidence = evidence_from_settings(self.settings)
+                base = base_validity(
+                    calendar.valid_through,
+                    membership.valid_through,
+                    halts.valid_through,
+                    actions.valid_through,
+                )
+                ledger = AuthorityAttestations(
+                    root / "authority_attestations.jsonl", evidence=evidence
+                )
+                scope_source = VerifiedMembershipSource(
+                    self.settings.phase3_membership_sha256,
+                    calendar,
+                    evidence,
+                    ledger.successor_hash(calendar, base) if ledger.path.exists() else None,
+                )
+            selected = resolve_active_members(
+                membership,
+                session,
+                scope_source,
+                attested_through=session if attestation_hash else None,
             )
+        except (OSError, ValueError, KeyError) as error:
+            shadow.append("abstention", session, {"reason": f"authority_unavailable:{error}"})
+            return False
 
-        symbols = tuple(sorted(set(membership.symbols + membership.managed_symbols)))
+        symbols = selected.symbols
         source = IBKRHistoricalBarSource(
             self.settings,
             actions,
@@ -251,6 +284,7 @@ class Phase3ShadowRunner:
             actions,
             attested_through=session if attestation_hash else None,
             attestation_hash=attestation_hash,
+            active_members=selected,
         )
         attempt = await asyncio.to_thread(
             adapter.attempt_primary,

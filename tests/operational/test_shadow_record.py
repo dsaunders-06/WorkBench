@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import replace
 from datetime import date, datetime
@@ -56,7 +57,7 @@ def test_shadow_record_refuses_truncated_or_changed_chain(tmp_path):
 
 @pytest.mark.asyncio
 async def test_shadow_run_uses_adapter_and_records_missing_history_abstention(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, historical_membership_scope
 ):
     authorities = tmp_path / "authorities"
     authorities.mkdir()
@@ -104,6 +105,7 @@ async def test_shadow_run_uses_adapter_and_records_missing_history_abstention(
         phase3_shadow_enabled=True,
         phase3_operational_root=str(tmp_path / "OPERATIONAL"),
         phase3_authorities_dir=str(authorities),
+        **approved_hash_settings(authorities),
     )
 
     class OfflineBroker:
@@ -116,6 +118,7 @@ async def test_shadow_run_uses_adapter_and_records_missing_history_abstention(
         broker,
         object(),
         now=lambda: datetime.fromisoformat("2026-01-06T17:30:00+11:00"),
+        active_membership=historical_membership_scope,
     )
     assert await runner.run_once(date(2026, 1, 6)) is False
     events = ShadowRecord(tmp_path / "OPERATIONAL" / "shadow.jsonl").events
@@ -124,7 +127,9 @@ async def test_shadow_run_uses_adapter_and_records_missing_history_abstention(
 
 
 @pytest.mark.asyncio
-async def test_shadow_stale_authority_abstains_before_card_source(tmp_path, monkeypatch):
+async def test_shadow_stale_authority_abstains_before_card_source(
+    tmp_path, monkeypatch, historical_membership_scope
+):
     authorities = tmp_path / "authorities"
     authorities.mkdir()
     for filename in ("calendar.json", "membership.json", "actions.json"):
@@ -160,7 +165,7 @@ async def test_shadow_stale_authority_abstains_before_card_source(tmp_path, monk
         def __init__(self, *args, **kwargs):
             raise AssertionError("stale authority reached card source")
 
-    monkeypatch.setattr("qat.operational.shadow.IBKRRawBarProbe", OfflineProbe)
+    monkeypatch.setattr("qat.operational.ibkr_history.IBKRRawBarProbe", OfflineProbe)
     monkeypatch.setattr("qat.operational.shadow.IBKRHistoricalBarSource", ForbiddenCardSource)
     settings = Settings(
         _env_file=None,
@@ -170,6 +175,7 @@ async def test_shadow_stale_authority_abstains_before_card_source(tmp_path, monk
         phase3_shadow_enabled=True,
         phase3_operational_root=str(tmp_path / "OPERATIONAL"),
         phase3_authorities_dir=str(authorities),
+        **approved_hash_settings(authorities),
     )
     runner = Phase3ShadowRunner(settings, object(), object())
     assert await runner.run_once(date(2026, 1, 6)) is False
@@ -179,7 +185,9 @@ async def test_shadow_stale_authority_abstains_before_card_source(tmp_path, monk
 
 
 @pytest.mark.asyncio
-async def test_shadow_abstains_on_revised_final_ohlc_and_keeps_first_bar(tmp_path, monkeypatch):
+async def test_shadow_abstains_on_revised_final_ohlc_and_keeps_first_bar(
+    tmp_path, monkeypatch, historical_membership_scope
+):
     authorities = tmp_path / "authorities"
     authorities.mkdir()
     for filename in ("calendar.json", "membership.json", "actions.json"):
@@ -222,6 +230,7 @@ async def test_shadow_abstains_on_revised_final_ohlc_and_keeps_first_bar(tmp_pat
         phase3_shadow_enabled=True,
         phase3_operational_root=str(tmp_path / "OPERATIONAL"),
         phase3_authorities_dir=str(authorities),
+        **approved_hash_settings(authorities),
     )
 
     class OfflineBroker:
@@ -233,6 +242,7 @@ async def test_shadow_abstains_on_revised_final_ohlc_and_keeps_first_bar(tmp_pat
         OfflineBroker(),
         object(),
         now=lambda: datetime.fromisoformat("2026-01-06T17:30:00+11:00"),
+        active_membership=historical_membership_scope,
     )
     assert await runner.run_once(date(2026, 1, 6)) is True
     next_bar["value"] = replace(
@@ -252,8 +262,8 @@ async def test_shadow_abstains_on_revised_final_ohlc_and_keeps_first_bar(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_missing_real_authorities_probes_raw_bars_but_cannot_make_cards(
-    tmp_path, monkeypatch
+async def test_missing_real_authorities_abstains_without_raw_request(
+    tmp_path, monkeypatch, historical_membership_scope
 ):
     observed = []
 
@@ -266,7 +276,7 @@ async def test_missing_real_authorities_probes_raw_bars_but_cannot_make_cards(
             self.audit({"kind": "ibkr_history_observation", "symbol": "BHP.AX"})
             return tuple({"symbol": symbol, "close": "62.43", "stable": True} for symbol in symbols)
 
-    monkeypatch.setattr("qat.operational.shadow.IBKRRawBarProbe", OfflineRawProbe)
+    monkeypatch.setattr("qat.operational.ibkr_history.IBKRRawBarProbe", OfflineRawProbe)
     settings = Settings(
         _env_file=None,
         broker="ibkr",
@@ -281,17 +291,17 @@ async def test_missing_real_authorities_probes_raw_bars_but_cannot_make_cards(
         object(),
         now=lambda: datetime.fromisoformat("2026-10-21T17:30:00+11:00"),
     )
-    assert await runner.run_once(date(2026, 10, 21)) is True
-    assert observed == [(date(2026, 10, 21), ("SUN.AX", "MFG.AX", "BHP.AX", "CBA.AX", "WGX.AX"))]
+    assert await runner.run_once(date(2026, 10, 21)) is False
+    assert observed == []
     event = ShadowRecord(tmp_path / "OPERATIONAL" / "shadow.jsonl").events[-1]
     assert event["kind"] == "abstention"
     assert event["detail"]["reason"].startswith("authority_unavailable:")
-    assert event["detail"]["raw_bars"][0]["symbol"] == "SUN.AX"
+    assert "raw_bars" not in event["detail"]
     assert runner.cards == ()
 
 
 @pytest.mark.asyncio
-async def test_raw_probe_failure_records_abstention_and_retries(tmp_path, monkeypatch):
+async def test_unavailable_authority_never_enters_raw_probe(tmp_path, monkeypatch):
     class FailingProbe:
         def __init__(self, _settings, *, audit):
             pass
@@ -299,7 +309,7 @@ async def test_raw_probe_failure_records_abstention_and_retries(tmp_path, monkey
         def fetch(self, _session, _symbols):
             raise RuntimeError("recorded IBKR request failure")
 
-    monkeypatch.setattr("qat.operational.shadow.IBKRRawBarProbe", FailingProbe)
+    monkeypatch.setattr("qat.operational.ibkr_history.IBKRRawBarProbe", FailingProbe)
     settings = Settings(
         _env_file=None,
         broker="ibkr",
@@ -312,4 +322,17 @@ async def test_raw_probe_failure_records_abstention_and_retries(tmp_path, monkey
     assert await runner.run_once(date(2026, 10, 21)) is False
     event = ShadowRecord(tmp_path / "OPERATIONAL" / "shadow.jsonl").events[-1]
     assert event["kind"] == "abstention"
-    assert event["detail"]["raw_probe_error"] == "recorded IBKR request failure"
+    assert event["detail"]["reason"].startswith("authority_unavailable:")
+    assert "raw_probe_error" not in event["detail"]
+
+
+def approved_hash_settings(root):
+    return {
+        f"phase3_{name}_sha256": hashlib.sha256((root / filename).read_bytes()).hexdigest()
+        for name, filename in [
+            ("calendar", "calendar.json"),
+            ("membership", "membership.json"),
+            ("actions", "actions.json"),
+            ("halts", "halts.jsonl"),
+        ]
+    }

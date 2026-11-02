@@ -12,6 +12,13 @@ from types import SimpleNamespace
 
 import pytest
 
+SHADOW_SYMBOLS = tuple(
+    sorted(
+        f"{name}.AX"
+        for name in ("SUN", "MFG", "CBA", "BHP", "CSL", "WES", "WOW", "TLS", "WDS", "TCL")
+    )
+)
+
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "phase3_shadow_readonly_check.py"
 spec = importlib.util.spec_from_file_location("phase3_shadow_readonly_check", SCRIPT)
 assert spec and spec.loader
@@ -121,7 +128,7 @@ def test_approved_hashes_load_exact_ten_symbol_real_authorities(tmp_path):
                 "effective_to": None,
                 "citations": ["https://www.ssga.com/stw", "https://www.blackrock.com/au/ioz"],
             }
-            for symbol in sorted(module.SHADOW_SYMBOLS)
+            for symbol in sorted(SHADOW_SYMBOLS)
         ],
     }
     (root / "membership.json").write_text(json.dumps(membership))
@@ -291,7 +298,7 @@ def test_revised_symbol_is_abstained_and_never_recorded_as_card(tmp_path):
 
 
 def test_approved_path_evaluates_unvalidated_candidates_without_trading_imports(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, historical_membership_scope
 ):
     session = date(2026, 10, 23)
     record = module.approved_shadow_record(tmp_path / "OPERATIONAL")
@@ -309,13 +316,13 @@ def test_approved_path_evaluates_unvalidated_candidates_without_trading_imports(
     )
     bar = SimpleNamespace(finalised=True)
     source = SimpleNamespace(
-        backfill=(), fetch=lambda _day, _names: tuple(bar for _ in module.SHADOW_SYMBOLS)
+        backfill=(), fetch=lambda _day, _names: tuple(bar for _ in SHADOW_SYMBOLS)
     )
     store = SimpleNamespace(log=lambda _event: None, shadow_revision_pending=lambda _names: ())
     calls = []
 
     class Adapter:
-        def __init__(self, *_args):
+        def __init__(self, *_args, **_kwargs):
             calls.append("adapter")
 
         def attempt_primary(self, *_args, **kwargs):
@@ -339,7 +346,12 @@ def test_approved_path_evaluates_unvalidated_candidates_without_trading_imports(
     monkeypatch.setattr(
         module,
         "validate_approved_authorities",
-        lambda *_: (SimpleNamespace(coverage_start=date(2023, 10, 22)), None, None, None),
+        lambda *_: (
+            SimpleNamespace(coverage_start=date(2023, 10, 22)),
+            historical_membership(session),
+            None,
+            None,
+        ),
     )
     monkeypatch.setattr(module, "OperationalAdapter", Adapter)
     monkeypatch.setattr(module.asyncio, "to_thread", immediate)
@@ -353,6 +365,7 @@ def test_approved_path_evaluates_unvalidated_candidates_without_trading_imports(
         account,
         now=lambda: account.observed_at,
         source_factory=lambda *_args, **_kwargs: source,
+        active_membership=historical_membership_scope,
     )
     with pytest.raises(StopIteration) as done:
         coroutine.send(None)
@@ -362,7 +375,9 @@ def test_approved_path_evaluates_unvalidated_candidates_without_trading_imports(
     assert record.events[0]["detail"]["label"] == "unvalidated strategy, no demonstrated edge"
 
 
-def test_approved_path_drops_pre_calendar_bars_before_ingest(monkeypatch, tmp_path):
+def test_approved_path_drops_pre_calendar_bars_before_ingest(
+    monkeypatch, tmp_path, historical_membership_scope
+):
     session = date(2026, 10, 23)
     start = date(2023, 10, 22)
     record = module.approved_shadow_record(tmp_path / "OPERATIONAL")
@@ -375,9 +390,7 @@ def test_approved_path_drops_pre_calendar_bars_before_ingest(monkeypatch, tmp_pa
     first = SimpleNamespace(symbol="BHP.AX", session=date(2023, 10, 23), finalised=True)
     source = SimpleNamespace(
         backfill=(old, first),
-        fetch=lambda _day, _names: tuple(
-            SimpleNamespace(finalised=True) for _ in module.SHADOW_SYMBOLS
-        ),
+        fetch=lambda _day, _names: tuple(SimpleNamespace(finalised=True) for _ in SHADOW_SYMBOLS),
     )
     ingested = []
     events = []
@@ -389,7 +402,7 @@ def test_approved_path_drops_pre_calendar_bars_before_ingest(monkeypatch, tmp_pa
     )
 
     class Adapter:
-        def __init__(self, *_args):
+        def __init__(self, *_args, **_kwargs):
             pass
 
         def attempt_primary(self, *_args, **_kwargs):
@@ -401,7 +414,12 @@ def test_approved_path_drops_pre_calendar_bars_before_ingest(monkeypatch, tmp_pa
     monkeypatch.setattr(
         module,
         "validate_approved_authorities",
-        lambda *_: (SimpleNamespace(coverage_start=start), None, None, None),
+        lambda *_: (
+            SimpleNamespace(coverage_start=start),
+            historical_membership(session),
+            None,
+            None,
+        ),
     )
     monkeypatch.setattr(module, "OperationalAdapter", Adapter)
     monkeypatch.setattr(module.asyncio, "to_thread", immediate)
@@ -414,6 +432,7 @@ def test_approved_path_drops_pre_calendar_bars_before_ingest(monkeypatch, tmp_pa
         record,
         account,
         source_factory=lambda *_args, **_kwargs: source,
+        active_membership=historical_membership_scope,
     )
     with pytest.raises(StopIteration):
         coroutine.send(None)
@@ -427,3 +446,19 @@ def test_approved_path_drops_pre_calendar_bars_before_ingest(monkeypatch, tmp_pa
             "coverage_start": start.isoformat(),
         }
     ]
+
+
+def historical_membership(session):
+    from qat.operational.history import Membership
+
+    return Membership(
+        "asx200-membership-v1",
+        1,
+        session,
+        session,
+        session,
+        "https://www.spglobal.com/spdji/fixture-rebalance",
+        True,
+        tuple(sorted(SHADOW_SYMBOLS)),
+        (),
+    )

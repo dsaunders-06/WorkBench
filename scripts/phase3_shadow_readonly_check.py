@@ -32,6 +32,13 @@ from qat.operational.authority_attestations import (  # noqa: E402
     AuthorityAttestations,
     base_validity,
 )
+from qat.operational.continuity import (  # noqa: E402
+    ContinuityEvidence,
+    VerifiedMembershipSource,
+    add_continuity_arguments,
+    continuity_values,
+    evidence_from_settings,
+)
 from qat.operational.history import (  # noqa: E402
     SYDNEY,
     ActionLedger,
@@ -47,16 +54,17 @@ from qat.operational.history import (  # noqa: E402
 )
 from qat.operational.ibkr_history import (
     IBKRHistoricalBarSource,  # noqa: E402
-    IBKRRawBarProbe,  # noqa: E402
     filter_backfill_to_calendar,  # noqa: E402
 )
 from qat.operational.shadow_record import ShadowRecord  # noqa: E402
 
 AUTHORITY_FILES = ("calendar.json", "membership.json", "halts.jsonl", "actions.json")
-SHADOW_SYMBOLS = tuple(
-    f"{name}.AX" for name in ("SUN", "MFG", "CBA", "BHP", "CSL", "WES", "WOW", "TLS", "WDS", "TCL")
+from qat.operational.membership_scope import (  # noqa: E402
+    ActiveMembers,
+    ActiveMembershipSource,
+    resolve_active_members,
+    validate_active_members,
 )
-RAW_SYMBOLS = ("SUN.AX", "MFG.AX", "BHP.AX", "CBA.AX", "WGX.AX")
 
 
 class _NoTradingSurface:
@@ -89,6 +97,7 @@ def validate_approved_authorities(
     session: date,
     *,
     operational_root: Path | None = None,
+    continuity_evidence: ContinuityEvidence | None = None,
 ) -> tuple[Any, Any, Any, Any]:
     """Refuse any file outside the exact DS-approved four-file set."""
     if any((parent / ".git").exists() for parent in (root, *root.parents)):
@@ -130,7 +139,7 @@ def validate_approved_authorities(
     attested = ""
     if session > base and operational_root is not None:
         attested = AuthorityAttestations(
-            operational_root / "authority_attestations.jsonl"
+            operational_root / "authority_attestations.jsonl", evidence=continuity_evidence
         ).require_current(session, expected_hashes, calendar, base)
     named_authorities: tuple[
         tuple[str, CalendarLedger | Membership | HaltLedger | ActionLedger], ...
@@ -143,8 +152,8 @@ def validate_approved_authorities(
         ):
             raise ValueError(f"{name}: real authority must be valid through the session")
     calendar.next_open(session)
-    if set(membership.symbols) != set(SHADOW_SYMBOLS) or membership.managed_symbols:
-        raise ValueError("approved membership must be exactly the ten-name shadow universe")
+    if membership.managed_symbols:
+        raise ValueError("approved shadow membership cannot add managed symbols")
     if membership.effective_from > session or (membership.effective_to < session and not attested):
         raise ValueError("approved membership does not cover the session")
     return calendar, membership, halts, actions
@@ -277,36 +286,75 @@ async def run_approved_once(
     *,
     now: Callable[[], datetime] | None = None,
     source_factory: Callable[..., IBKRHistoricalBarSource] = IBKRHistoricalBarSource,
+    active_membership: ActiveMembershipSource | None = None,
+    resolved_members: ActiveMembers | None = None,
 ) -> bool:
     """Read IBKR history, evaluate Phase 2 candidates, and append only shadow evidence."""
     clock = now or (lambda: datetime.now(SYDNEY))
-    operational_root = getattr(settings, "phase3_operational_root", None)
-    if operational_root is None:
-        calendar, membership, halts, actions = validate_approved_authorities(
-            authorities, expected_hashes, session
+    try:
+        continuity = evidence_from_settings(settings)
+        authority_kwargs = {"continuity_evidence": continuity} if continuity is not None else {}
+        operational_root = getattr(settings, "phase3_operational_root", None)
+        if operational_root is None:
+            calendar, membership, halts, actions = validate_approved_authorities(
+                authorities, expected_hashes, session, **authority_kwargs
+            )
+        else:
+            calendar, membership, halts, actions = validate_approved_authorities(
+                authorities,
+                expected_hashes,
+                session,
+                operational_root=Path(operational_root),
+                **authority_kwargs,
+            )
+        base = (
+            base_validity(
+                calendar.valid_through,
+                membership.valid_through,
+                halts.valid_through,
+                actions.valid_through,
+            )
+            if operational_root is not None
+            else session
         )
-    else:
-        calendar, membership, halts, actions = validate_approved_authorities(
-            authorities, expected_hashes, session, operational_root=Path(operational_root)
+        attestation_hash = (
+            AuthorityAttestations(
+                Path(operational_root) / "authority_attestations.jsonl", evidence=continuity
+            ).require_current(session, expected_hashes, calendar, base)
+            if session > base and operational_root is not None
+            else ""
         )
-    base = (
-        base_validity(
-            calendar.valid_through,
-            membership.valid_through,
-            halts.valid_through,
-            actions.valid_through,
-        )
-        if operational_root is not None
-        else session
-    )
-    attestation_hash = (
-        AuthorityAttestations(
-            Path(operational_root) / "authority_attestations.jsonl"
-        ).require_current(session, expected_hashes, calendar, base)
-        if session > base and operational_root is not None
-        else ""
-    )
-    symbols = tuple(sorted(SHADOW_SYMBOLS))
+        if resolved_members is not None:
+            if active_membership is not None:
+                raise ValueError("ambiguous active membership sources")
+            selected = validate_active_members(
+                membership,
+                session,
+                resolved_members,
+                attested_through=session if attestation_hash else None,
+            )
+        else:
+            if active_membership is None:
+                bound = (
+                    AuthorityAttestations(
+                        Path(operational_root) / "authority_attestations.jsonl", evidence=continuity
+                    ).successor_hash(calendar, base)
+                    if operational_root is not None
+                    else None
+                )
+                active_membership = VerifiedMembershipSource(
+                    expected_hashes["membership.json"], calendar, continuity, bound
+                )
+            selected = resolve_active_members(
+                membership,
+                session,
+                active_membership,
+                attested_through=session if attestation_hash else None,
+            )
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        record.append("abstention", session, {"reason": f"authority_unavailable:{error}"})
+        return False
+    symbols = selected.symbols
     source = source_factory(
         settings,
         actions,
@@ -355,9 +403,12 @@ async def run_approved_once(
             actions,
             attested_through=session,
             attestation_hash=attestation_hash,
+            active_members=selected,
         )
     else:
-        adapter = OperationalAdapter(store, calendar, membership, halts, actions)
+        adapter = OperationalAdapter(
+            store, calendar, membership, halts, actions, active_members=selected
+        )
     attempt = await asyncio.to_thread(
         adapter.attempt_primary,
         session,
@@ -411,14 +462,8 @@ async def run_approved_once(
 async def run_raw_once(
     session: date, settings: Settings, store: HistoryStore, record: ShadowRecord
 ) -> bool:
-    probe = IBKRRawBarProbe(settings, audit=store.log)
-    try:
-        bars = await asyncio.to_thread(probe.fetch, session, RAW_SYMBOLS)
-        record.append("abstention", session, {"reason": "authority_unavailable", "raw_bars": bars})
-        return len(bars) == len(RAW_SYMBOLS) and all(bar["stable"] is True for bar in bars)
-    except Exception as error:  # noqa: BLE001 - read-only retry only
-        record.append("abstention", session, {"reason": f"raw_probe_failure:{error}"})
-        return False
+    record.append("abstention", session, {"reason": "active_membership_source_unconfigured"})
+    return False
 
 
 def main() -> int:
@@ -428,6 +473,7 @@ def main() -> int:
     parser.add_argument("--authorities-dir", type=Path, required=True)
     for name in AUTHORITY_FILES:
         parser.add_argument(f"--{name.replace('.', '-').replace('jsonl', 'jsonl')}-sha256")
+    add_continuity_arguments(parser)
     args = parser.parse_args()
     now = datetime.now(SYDNEY)
     expected_hashes = {
@@ -438,13 +484,6 @@ def main() -> int:
     if any(expected_hashes.values()) and not approved:
         raise ValueError("all four DS-approved authority hashes must be supplied")
     validate_window(args.session, now, args.authorities_dir, approved=approved)
-    if approved:
-        validate_approved_authorities(
-            args.authorities_dir,
-            expected_hashes,
-            args.session,
-            operational_root=args.operational_root,
-        )
     settings = Settings(
         market="ASX",
         broker="ibkr",
@@ -456,7 +495,29 @@ def main() -> int:
         phase3_authorities_dir=str(args.authorities_dir),
         ibkr_host="127.0.0.1",
         ibkr_port=4002,
+        **continuity_values(args),
     )
+    if approved:
+        evidence = evidence_from_settings(settings)
+        cal, members, halts, actions = validate_approved_authorities(
+            args.authorities_dir,
+            expected_hashes,
+            args.session,
+            operational_root=args.operational_root,
+            continuity_evidence=evidence,
+        )
+        base = base_validity(
+            cal.valid_through, members.valid_through, halts.valid_through, actions.valid_through
+        )
+        ledger = AuthorityAttestations(
+            args.operational_root / "authority_attestations.jsonl", evidence=evidence
+        )
+        bound = ledger.successor_hash(cal, base) if ledger.path.exists() else None
+        selected_for_pass = VerifiedMembershipSource(
+            expected_hashes["membership.json"], cal, evidence, bound
+        ).resolve(
+            members, args.session, attested_through=args.session if args.session > base else None
+        )
     if not settings.ibkr_account_id:
         raise ValueError("a configured IBKR paper account is required")
     store = HistoryStore(
@@ -477,28 +538,24 @@ def main() -> int:
                 "summary_requests": 1,
             }
         )
-    while True:
-        validate_window(args.session, datetime.now(SYDNEY), args.authorities_dir, approved=approved)
-        if approved:
-            assert account is not None
-            complete = asyncio.run(
-                run_approved_once(
-                    args.session,
-                    settings,
-                    args.authorities_dir,
-                    expected_hashes,
-                    store,
-                    record,
-                    account,
-                )
+    validate_window(args.session, datetime.now(SYDNEY), args.authorities_dir, approved=approved)
+    if approved:
+        if account is None:
+            raise ValueError("approved shadow requires a checked account snapshot")
+        complete = asyncio.run(
+            run_approved_once(
+                args.session,
+                settings,
+                args.authorities_dir,
+                expected_hashes,
+                store,
+                record,
+                account,
+                resolved_members=selected_for_pass,
             )
-        else:
-            complete = asyncio.run(run_raw_once(args.session, settings, store, record))
-        if complete:
-            break
-        if datetime.now(SYDNEY) >= datetime.combine(args.session, time(19, 55), SYDNEY):
-            break
-        asyncio.run(asyncio.sleep(300))
+        )
+    else:
+        complete = asyncio.run(run_raw_once(args.session, settings, store, record))
     event = record.events[-1]
     evidence_hashes = {
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()

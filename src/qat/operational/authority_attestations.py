@@ -10,12 +10,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from qat.operational.continuity import RETIREMENT, ContinuityEvidence, checked_date
 from qat.operational.history import CalendarLedger
 
 AUTHORITY_FILES = ("calendar.json", "membership.json", "halts.jsonl", "actions.json")
@@ -80,29 +82,105 @@ class Attestation:
     content_hash: str
 
 
+@dataclass(frozen=True, slots=True)
+class CatchUpAttestation:
+    sequence: int
+    first_session: date
+    last_session: date
+    authority_hashes: dict[str, str]
+    audit_sha256: str
+    approval_sha256: str
+    membership_successor_sha256: str | None
+    operator: str
+    recorded_at: datetime
+    previous_hash: str
+    content_hash: str
+
+    @property
+    def session(self) -> date:
+        return self.last_session
+
+
+Record = Attestation | CatchUpAttestation
+_CATCHUP_FIELDS = (_FIELDS - {"session"}) | {
+    "record_type",
+    "first_session",
+    "last_session",
+    "approval_sha256",
+    "membership_successor_sha256",
+}
+
+
+def _value(record: Record) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "sequence": record.sequence,
+        "authority_hashes": record.authority_hashes,
+        "audit_sha256": record.audit_sha256,
+        "operator": record.operator,
+        "recorded_at": record.recorded_at.isoformat(),
+        "previous_hash": record.previous_hash,
+        "content_hash": record.content_hash,
+    }
+    if isinstance(record, CatchUpAttestation):
+        result.update(
+            record_type="catch_up_v1",
+            first_session=str(record.first_session),
+            last_session=str(record.last_session),
+            approval_sha256=record.approval_sha256,
+            membership_successor_sha256=record.membership_successor_sha256,
+        )
+    else:
+        result["session"] = str(record.session)
+    return result
+
+
+def _json_unique(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate attestation JSON key")
+        result[name] = value
+    return result
+
+
 class AuthorityAttestations:
-    """Strict reader and single-session append writer for the private ledger."""
+    """Strict physical chain and contiguous logical ASX-session coverage."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, evidence: ContinuityEvidence | None = None) -> None:
         self.path = path
+        self.evidence = evidence
 
-    def load(self) -> tuple[Attestation, ...]:
+    def load(
+        self,
+        *,
+        calendar: CalendarLedger | None = None,
+        base_valid_through: date | None = None,
+        verify_evidence: bool = False,
+    ) -> tuple[Record, ...]:
         _outside_git(self.path)
         if not self.path.exists():
             return ()
-        if not self.path.is_file() or self.path.is_symlink() or self.path.is_junction():
+        if (
+            not self.path.is_file()
+            or self.path.is_symlink()
+            or self.path.is_junction()
+            or self.path.stat().st_nlink != 1
+        ):
             raise ValueError("authority attestation ledger is not a regular file")
         raw = self.path.read_bytes()
         if not raw or not raw.endswith(b"\n"):
             raise ValueError("authority attestation ledger has an incomplete record")
         previous = ""
-        records: list[Attestation] = []
+        records: list[Record] = []
         for number, line in enumerate(raw.splitlines(), start=1):
             try:
-                value = json.loads(line)
-                if not isinstance(value, dict) or set(value) != _FIELDS:
+                value = json.loads(line, object_pairs_hook=_json_unique)
+                if not isinstance(value, dict):
                     raise ValueError("invalid attestation fields")
-                session = date.fromisoformat(value["session"])
+                is_range = value.get("record_type") == "catch_up_v1"
+                if set(value) != (_CATCHUP_FIELDS if is_range else _FIELDS):
+                    raise ValueError("invalid attestation fields")
+                session = checked_date(value["last_session"] if is_range else value["session"])
                 recorded_at = datetime.fromisoformat(value["recorded_at"])
                 operator = value["operator"]
                 hashes = _hashes(value["authority_hashes"])
@@ -113,29 +191,116 @@ class AuthorityAttestations:
                     or not isinstance(operator, str)
                     or not operator.strip()
                     or recorded_at.tzinfo is None
-                    or recorded_at.astimezone(SYDNEY).date() != session
+                    or recorded_at.utcoffset() is None
                     or value["previous_hash"] != previous
                     or (records and session <= records[-1].session)
                     or _hash(value["content_hash"])
-                    != _digest({key: item for key, item in value.items() if key != "content_hash"})
+                    != _digest({k: v for k, v in value.items() if k != "content_hash"})
                 ):
                     raise ValueError("broken attestation hash chain")
+                if is_range:
+                    first = checked_date(value["first_session"])
+                    local = recorded_at.astimezone(SYDNEY)
+                    if (
+                        first > session
+                        or session > local.date()
+                        or (session == local.date() and (local.hour, local.minute) < (16, 20))
+                    ):
+                        raise ValueError("catch-up cannot cover an uncompleted/future session")
+                    approval_hash = _hash(value["approval_sha256"])
+                    successor_hash = value["membership_successor_sha256"]
+                    if successor_hash is not None:
+                        successor_hash = _hash(successor_hash)
+                    record: Record = CatchUpAttestation(
+                        number,
+                        first,
+                        session,
+                        hashes,
+                        audit,
+                        approval_hash,
+                        successor_hash,
+                        operator,
+                        recorded_at,
+                        previous,
+                        value["content_hash"],
+                    )
+                else:
+                    if recorded_at.astimezone(SYDNEY).date() != session:
+                        raise ValueError("daily attestation cannot be backdated")
+                    record = Attestation(
+                        number,
+                        session,
+                        hashes,
+                        audit,
+                        operator,
+                        recorded_at,
+                        previous,
+                        value["content_hash"],
+                    )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
                 raise ValueError(f"broken attestation hash chain at record {number}") from error
-            records.append(
-                Attestation(
-                    number,
-                    session,
-                    hashes,
-                    audit,
-                    operator,
-                    recorded_at,
-                    previous,
-                    value["content_hash"],
-                )
-            )
-            previous = value["content_hash"]
+            if isinstance(record, CatchUpAttestation):
+                if self.evidence is None:
+                    raise ValueError("independently pinned catch-up evidence is required")
+                self.evidence.verify_record(value, verify_review=verify_evidence)
+            records.append(record)
+            previous = record.content_hash
+        if any(isinstance(row, CatchUpAttestation) for row in records):
+            if calendar is None or base_valid_through is None:
+                raise ValueError("approved calendar/base required to load catch-up coverage")
+            self._coverage(tuple(records), calendar, base_valid_through)
         return tuple(records)
+
+    def _coverage(
+        self, records: tuple[Record, ...], calendar: CalendarLedger, base: date
+    ) -> tuple[date, ...]:
+        days = tuple(row.session for row in calendar.sessions)
+        if days != tuple(sorted(set(days))):
+            raise ValueError("invalid approved calendar sessions")
+        covered: list[date] = []
+        active_hashes: dict[str, str] | None = None
+        for row in records:
+            if isinstance(row, CatchUpAttestation):
+                if row.first_session not in days or row.last_session not in days:
+                    raise ValueError("missing session in approved ASX calendar")
+                covered.extend(d for d in days if row.first_session <= d <= row.last_session)
+                active_hashes = row.authority_hashes
+                if row.membership_successor_sha256 is not None:
+                    from qat.operational.continuity import EFFECTIVE, RETIREMENT
+
+                    if (
+                        RETIREMENT not in days
+                        or EFFECTIVE not in days
+                        or days.index(EFFECTIVE) != days.index(RETIREMENT) + 1
+                    ):
+                        raise ValueError(
+                            "membership restriction boundary differs from approved calendar"
+                        )
+            elif row.session > base:
+                if active_hashes is not None and row.authority_hashes != active_hashes:
+                    raise ValueError("daily authority hashes differ from catch-up base")
+                covered.append(row.session)
+        if covered:
+            expected = tuple(d for d in days if base < d <= covered[-1])
+            if tuple(covered) != expected:
+                raise ValueError("duplicate or missing session in authority attestation ledger")
+        return tuple(covered)
+
+    def covered_sessions(
+        self, calendar: CalendarLedger, base_valid_through: date
+    ) -> tuple[date, ...]:
+        return self._coverage(
+            self.load(calendar=calendar, base_valid_through=base_valid_through),
+            calendar,
+            base_valid_through,
+        )
+
+    def successor_hash(self, calendar: CalendarLedger, base_valid_through: date) -> str | None:
+        records = self.load(calendar=calendar, base_valid_through=base_valid_through)
+        values = [
+            r.membership_successor_sha256 for r in records if isinstance(r, CatchUpAttestation)
+        ]
+        return values[-1] if values else None
 
     def require_current(
         self,
@@ -143,27 +308,44 @@ class AuthorityAttestations:
         approved_hashes: dict[str, str],
         calendar: CalendarLedger,
         base_valid_through: date,
+        *,
+        verify_evidence: bool = False,
     ) -> str:
-        """Return the current attestation hash or refuse any gap or mismatch."""
-        expected = _hashes(approved_hashes)
-        sessions = tuple(
-            row.session for row in calendar.sessions if base_valid_through < row.session <= session
-        )
+        expected_hashes = _hashes(approved_hashes)
         if session <= base_valid_through:
             return ""
-        if not sessions or sessions[-1] != session:
-            raise ValueError("missing session in approved ASX calendar")
-        records = self.load()
-        recorded = tuple(
-            row.session for row in records if base_valid_through < row.session <= session
+        expected = tuple(
+            r.session for r in calendar.sessions if base_valid_through < r.session <= session
         )
-        if recorded != sessions:
+        if not expected or expected[-1] != session:
+            raise ValueError("missing session in approved ASX calendar")
+        records = self.load(
+            calendar=calendar,
+            base_valid_through=base_valid_through,
+            verify_evidence=verify_evidence,
+        )
+        covered = self._coverage(records, calendar, base_valid_through)
+        if covered != expected:
             raise ValueError("missing session in authority attestation ledger")
-        if records[-1].session != session or records[-1].authority_hashes != expected:
+        if (
+            not records
+            or records[-1].session != session
+            or records[-1].authority_hashes != expected_hashes
+        ):
             raise ValueError("current authority attestation names a different hash or session")
+        if session > RETIREMENT and not any(
+            isinstance(r, CatchUpAttestation) and r.membership_successor_sha256 is not None
+            for r in records
+        ):
+            raise ValueError("post-retirement validity requires a ledger-bound successor")
+        if any(
+            isinstance(r, CatchUpAttestation) and r.authority_hashes != expected_hashes
+            for r in records
+        ):
+            raise ValueError("catch-up authority hashes differ from current approved files")
         return records[-1].content_hash
 
-    def append(
+    def validate_append(
         self,
         session: date,
         approved_hashes: dict[str, str],
@@ -173,6 +355,7 @@ class AuthorityAttestations:
         recorded_at: datetime,
         calendar: CalendarLedger,
         base_valid_through: date,
+        expected_audit_sha256: str | None = None,
     ) -> Attestation:
         _outside_git(self.path)
         _outside_git(audit_file)
@@ -187,28 +370,189 @@ class AuthorityAttestations:
             raise ValueError("invalid daily authority attestation")
         hashes = _hashes(approved_hashes)
         audit_hash = hashlib.sha256(audit_file.read_bytes()).hexdigest()
-        prior = self.load()
+        if expected_audit_sha256 is not None and audit_hash != _hash(expected_audit_sha256):
+            raise ValueError("daily audit evidence differs from reviewed SHA-256")
+        prior = self.load(
+            calendar=calendar, base_valid_through=base_valid_through, verify_evidence=True
+        )
+        if session > RETIREMENT and not any(
+            isinstance(r, CatchUpAttestation) and r.membership_successor_sha256 is not None
+            for r in prior
+        ):
+            raise ValueError("post-retirement daily append requires a ledger-bound successor")
         expected = tuple(
             row.session for row in calendar.sessions if base_valid_through < row.session <= session
         )
         if not expected or expected[-1] != session:
             raise ValueError("missing session in approved ASX calendar")
-        if tuple(row.session for row in prior if row.session > base_valid_through) != expected[:-1]:
+        if self._coverage(prior, calendar, base_valid_through) != expected[:-1]:
             raise ValueError("duplicate or missing session in authority attestation ledger")
+        if any(isinstance(r, CatchUpAttestation) and r.authority_hashes != hashes for r in prior):
+            raise ValueError("daily authority hashes differ from catch-up base")
         identity = {
             "sequence": len(prior) + 1,
-            "session": session.isoformat(),
+            "session": str(session),
             "authority_hashes": hashes,
             "audit_sha256": audit_hash,
             "operator": operator,
             "recorded_at": recorded_at.isoformat(),
             "previous_hash": prior[-1].content_hash if prior else "",
         }
-        record = {**identity, "content_hash": _digest(identity)}
-        line = (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode("ascii")
+        return Attestation(
+            len(prior) + 1,
+            session,
+            hashes,
+            audit_hash,
+            operator,
+            recorded_at,
+            prior[-1].content_hash if prior else "",
+            _digest(identity),
+        )
+
+    def validate_catchup(
+        self,
+        first_session: date,
+        last_session: date,
+        approved_hashes: dict[str, str],
+        *,
+        recorded_at: datetime,
+        calendar: CalendarLedger,
+        base_valid_through: date,
+        operator: str = "DS",
+    ) -> CatchUpAttestation:
+        _outside_git(self.path)
+        if self.evidence is None or recorded_at.tzinfo is None or operator != "DS":
+            raise ValueError("pinned DS evidence and aware catch-up time required")
+        local = recorded_at.astimezone(SYDNEY)
+        if (
+            first_session > last_session
+            or first_session <= base_valid_through
+            or last_session > local.date()
+            or (last_session == local.date() and (local.hour, local.minute) < (16, 20))
+        ):
+            raise ValueError("catch-up requires completed contiguous ASX sessions")
+        hashes = _hashes(approved_hashes)
+        prior = self.load(
+            calendar=calendar, base_valid_through=base_valid_through, verify_evidence=True
+        )
+        approval = self.evidence.approval()
+        identity = {
+            "record_type": "catch_up_v1",
+            "sequence": len(prior) + 1,
+            "first_session": str(first_session),
+            "last_session": str(last_session),
+            "authority_hashes": hashes,
+            "audit_sha256": approval["audit_sha256"],
+            "approval_sha256": self.evidence.approval_sha256,
+            "membership_successor_sha256": self.evidence.successor_sha256,
+            "operator": operator,
+            "recorded_at": recorded_at.isoformat(),
+            "previous_hash": prior[-1].content_hash if prior else "",
+        }
+        value = {**identity, "content_hash": _digest(identity)}
+        self.evidence.verify_record(value, verify_review=True)
+        record = CatchUpAttestation(
+            len(prior) + 1,
+            first_session,
+            last_session,
+            hashes,
+            approval["audit_sha256"],
+            self.evidence.approval_sha256,
+            self.evidence.successor_sha256,
+            operator,
+            recorded_at,
+            identity["previous_hash"],
+            value["content_hash"],
+        )
+        self._coverage((*prior, record), calendar, base_valid_through)
+        return record
+
+    def _append(
+        self, prepare: Callable[[], Record], calendar: CalendarLedger, base: date
+    ) -> Record:
+        # Pure validation happens before the ephemeral exclusive writer lock exists.
+        prepare()
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("ab") as handle:
-            handle.write(line)
-            handle.flush()
-            os.fsync(handle.fileno())
-        return self.load()[-1]
+        lock = self.path.with_name(self.path.name + ".writer.lock")
+        owned = False
+        try:
+            with lock.open("x", encoding="ascii"):
+                owned = True
+                record = prepare()  # fresh head/evidence checks under exclusive ownership
+                line = (
+                    json.dumps(_value(record), sort_keys=True, separators=(",", ":")) + "\n"
+                ).encode("ascii")
+                with self.path.open("ab") as handle:
+                    if handle.write(line) != len(line):
+                        raise OSError(
+                            "incomplete attestation append; preserve evidence, do not retry"
+                        )
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                fresh = AuthorityAttestations(self.path, evidence=self.evidence).load(
+                    calendar=calendar, base_valid_through=base, verify_evidence=True
+                )
+                if not fresh or fresh[-1].content_hash != record.content_hash:
+                    raise ValueError("attestation independent reload differs")
+                return fresh[-1]
+        finally:
+            if owned:
+                lock.unlink()
+
+    def append(
+        self,
+        session: date,
+        approved_hashes: dict[str, str],
+        audit_file: Path,
+        *,
+        operator: str,
+        recorded_at: datetime,
+        calendar: CalendarLedger,
+        base_valid_through: date,
+        expected_audit_sha256: str | None = None,
+    ) -> Attestation:
+        record = self._append(
+            lambda: self.validate_append(
+                session,
+                approved_hashes,
+                audit_file,
+                operator=operator,
+                recorded_at=recorded_at,
+                calendar=calendar,
+                base_valid_through=base_valid_through,
+                expected_audit_sha256=expected_audit_sha256,
+            ),
+            calendar,
+            base_valid_through,
+        )
+        if not isinstance(record, Attestation):
+            raise ValueError("daily append returned wrong record type")
+        return record
+
+    def append_catchup(
+        self,
+        first_session: date,
+        last_session: date,
+        approved_hashes: dict[str, str],
+        *,
+        recorded_at: datetime,
+        calendar: CalendarLedger,
+        base_valid_through: date,
+        operator: str = "DS",
+    ) -> CatchUpAttestation:
+        record = self._append(
+            lambda: self.validate_catchup(
+                first_session,
+                last_session,
+                approved_hashes,
+                recorded_at=recorded_at,
+                calendar=calendar,
+                base_valid_through=base_valid_through,
+                operator=operator,
+            ),
+            calendar,
+            base_valid_through,
+        )
+        if not isinstance(record, CatchUpAttestation):
+            raise ValueError("catch-up append returned wrong record type")
+        return record

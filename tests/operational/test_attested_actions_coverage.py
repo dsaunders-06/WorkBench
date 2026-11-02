@@ -22,6 +22,13 @@ from qat.operational.ibkr_history import IBKRHistoricalBarSource
 from qat.operational.shadow import Phase3ShadowRunner
 from qat.operational.shadow_record import ShadowRecord
 
+SHADOW_SYMBOLS = tuple(
+    sorted(
+        f"{name}.AX"
+        for name in ("SUN", "MFG", "CBA", "BHP", "CSL", "WES", "WOW", "TLS", "WDS", "TCL")
+    )
+)
+
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts/phase3_shadow_readonly_check.py"
 SPEC = importlib.util.spec_from_file_location("attested_coverage_readonly", SCRIPT)
 assert SPEC and SPEC.loader
@@ -65,7 +72,7 @@ def authority_copy(tmp_path: Path):
                 "effective_to": None,
                 "citations": ["https://www.ssga.com/stw", "https://www.blackrock.com/au/ioz"],
             }
-            for symbol in sorted(readonly.SHADOW_SYMBOLS)
+            for symbol in sorted(SHADOW_SYMBOLS)
         ],
     }
     halts = {
@@ -184,7 +191,7 @@ def settings_for(root, hashes, operational):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("entrypoint", ["readonly", "configured"])
 async def test_october_23_files_and_verified_october_26_attestation_pass_actions_coverage(
-    tmp_path, monkeypatch, entrypoint
+    tmp_path, monkeypatch, entrypoint, historical_membership_scope
 ):
     root, hashes, operational, _ = authority_copy(tmp_path)
     immutable = {
@@ -206,6 +213,7 @@ async def test_october_23_files_and_verified_october_26_attestation_pass_actions
             readonly.AccountSnapshot(Decimal("100000"), Decimal("90000"), observed),
             now=lambda: observed,
             source_factory=lambda *args, **kwargs: offline_source(MONDAY, *args, **kwargs),
+            active_membership=historical_membership_scope,
         )
     else:
         monkeypatch.setattr(
@@ -213,14 +221,18 @@ async def test_october_23_files_and_verified_october_26_attestation_pass_actions
             lambda *args, **kwargs: offline_source(MONDAY, *args, **kwargs),
         )
         await Phase3ShadowRunner(
-            settings, OfflineAccountBroker(), object(), now=lambda: observed
+            settings,
+            OfflineAccountBroker(),
+            object(),
+            now=lambda: observed,
+            active_membership=historical_membership_scope,
         ).run_once(MONDAY)
     events = ShadowRecord(operational / "shadow.jsonl").events
     assert events and all(event["kind"] == "abstention" for event in events)
     # Short offline history still abstains for gaps; neither actions-age check may fail.
     assert "corporate action authority does not cover session" not in str(events)
     assert "corporate_action_coverage" not in str(events)
-    assert sum(len(store.decision_bars(symbol, MONDAY)) for symbol in readonly.SHADOW_SYMBOLS) == 10
+    assert sum(len(store.decision_bars(symbol, MONDAY)) for symbol in SHADOW_SYMBOLS) == 10
     assert all(path.read_bytes() == raw for path, raw in immutable.items())
 
 
@@ -316,7 +328,7 @@ async def test_existing_loader_refusal_still_produces_no_card(tmp_path, monkeypa
             return ()
 
     monkeypatch.setattr("qat.operational.shadow.IBKRHistoricalBarSource", NoCardSource)
-    monkeypatch.setattr("qat.operational.shadow.IBKRRawBarProbe", NoNetworkRawProbe)
+    monkeypatch.setattr("qat.operational.ibkr_history.IBKRRawBarProbe", NoNetworkRawProbe)
     runner = Phase3ShadowRunner(settings_for(root, hashes, operational), object(), object())
     await runner.run_once(session)
     event = ShadowRecord(operational / "shadow.jsonl").events[-1]

@@ -22,6 +22,11 @@ from qat.operational.authority_attestations import (  # noqa: E402
     AuthorityAttestations,
     base_validity,
 )
+from qat.operational.continuity import (  # noqa: E402
+    ContinuityEvidence,
+    add_continuity_arguments,
+    evidence_from_settings,
+)
 from qat.operational.history import (  # noqa: E402
     CalendarLedger,
     load_actions,
@@ -40,17 +45,26 @@ def validate_inputs(
     audit_file: Path,
     audit_sha256: str,
     now: datetime,
+    *,
+    evidence: ContinuityEvidence | None = None,
+    catch_up: bool = False,
 ) -> tuple[AuthorityAttestations, CalendarLedger, date]:
     """Validate the fixed files and complete daily audit without a write."""
     local = now.astimezone(SYDNEY)
     if (
         now.tzinfo is None
-        or local.date() != session
-        or local.time() < time(16, 20)
+        or local.time() >= time(23, 30)
+        or (not catch_up and (local.date() != session or local.time() < time(16, 20)))
+        or (
+            catch_up
+            and (
+                session > local.date() or (session == local.date() and local.time() < time(16, 20))
+            )
+        )
         or not is_trading_day("ASX", session)
     ):
-        raise ValueError("attestation requires today's completed ASX session after 16:20")
-    ledger = AuthorityAttestations(root / "authority_attestations.jsonl")
+        raise ValueError("attestation requires a completed ASX session before 23:30 Sydney")
+    ledger = AuthorityAttestations(root / "authority_attestations.jsonl", evidence=evidence)
     require_operational_file(ledger.path)
     if not authorities.is_dir() or {path.name for path in authorities.iterdir()} != set(
         AUTHORITY_FILES
@@ -68,6 +82,9 @@ def validate_inputs(
     membership = load_membership(authorities / "membership.json")
     halts = load_halts(authorities / "halts.jsonl")
     actions = load_actions(authorities / "actions.json")
+    for name in AUTHORITY_FILES:
+        if hashlib.sha256((authorities / name).read_bytes()).hexdigest() != approved_hashes[name]:
+            raise ValueError("authority changed while loading")
     if any(
         item.fixture or item.valid_through is None
         for item in (calendar, membership, halts, actions)
@@ -103,6 +120,7 @@ def main() -> int:
     for name in AUTHORITY_FILES:
         parser.add_argument(f"--{name.replace('.', '-')}-sha256", required=True)
     parser.add_argument("--apply", action="store_true")
+    add_continuity_arguments(parser)
     args = parser.parse_args()
     hashes = {
         name: getattr(args, name.replace(".", "_").replace("-", "_") + "_sha256")
@@ -117,6 +135,17 @@ def main() -> int:
         args.audit_file,
         args.audit_sha256,
         now,
+        evidence=evidence_from_settings(args),
+    )
+    ledger.validate_append(
+        args.session,
+        hashes,
+        args.audit_file,
+        operator=args.operator,
+        recorded_at=now,
+        calendar=calendar,
+        base_valid_through=base,
+        expected_audit_sha256=args.audit_sha256,
     )
     if not args.apply:
         print(
@@ -131,8 +160,9 @@ def main() -> int:
         recorded_at=now,
         calendar=calendar,
         base_valid_through=base,
+        expected_audit_sha256=args.audit_sha256,
     )
-    ledger.require_current(args.session, hashes, calendar, base)
+    ledger.require_current(args.session, hashes, calendar, base, verify_evidence=True)
     print(
         json.dumps({"session": args.session.isoformat(), "attestation_sha256": record.content_hash})
     )

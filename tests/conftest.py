@@ -104,3 +104,13 @@ def deny_test_network(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.setattr(cls, name, denied)
     if hasattr(asyncio, "ProactorEventLoop"):
         monkeypatch.setattr(asyncio.ProactorEventLoop, "sock_connect", denied)
+
+
+@pytest.fixture
+def historical_membership_scope():
+    """Explicit base authority for historical offline scenarios; no successor format."""
+    from types import SimpleNamespace
+
+    from qat.operational.membership_scope import base_active_members
+
+    return SimpleNamespace(resolve=base_active_members)
