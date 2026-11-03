@@ -54,7 +54,7 @@ class PendingEntry(Paper):
 
 def pending_scenario(monkeypatch, **kwargs):
     p, old, _, _ = scenario(monkeypatch)
-    old.clock[0] = datetime(2026, 11, 2, 12, 0, tzinfo=SYDNEY)
+    old.clock[0] = datetime(2026, 11, 4, 11, 30, tzinfo=SYDNEY)
     broker = PendingEntry(old.clock, **kwargs)
     broker.real_sleep = old.real_sleep
     monkeypatch.setattr(p.asyncio, "sleep", broker.advance)
@@ -131,7 +131,7 @@ async def test_filled_entry_with_stale_zero_position_is_reconciled_before_exit(m
 @pytest.mark.asyncio
 async def test_window_end_pending_entry_is_not_flat_or_early_exit(monkeypatch, tmp_path, capsys):
     p, broker, _, _ = pending_scenario(monkeypatch, pending_minutes=300)
-    broker.clock[0] = datetime(2026, 11, 2, 12, 29, 58, tzinfo=SYDNEY)
+    broker.clock[0] = datetime(2026, 11, 4, 11, 59, 58, tzinfo=SYDNEY)
 
     class Event:
         def __iadd__(self, callback):
@@ -161,8 +161,8 @@ async def test_window_end_pending_entry_is_not_flat_or_early_exit(monkeypatch, t
         return root / "raw.json", "fake"
 
     monkeypatch.setattr(p, "_write_raw", write)
-    assert await p.run(date(2026, 11, 2), tmp_path, tmp_path / "approval.json", "fake", True) == 1
-    assert broker.clock[0] >= datetime(2026, 11, 2, 15, 30, tzinfo=SYDNEY)
+    assert await p.run(date(2026, 11, 4), tmp_path, tmp_path / "approval.json", "fake", True) == 1
+    assert broker.clock[0] >= datetime(2026, 11, 4, 15, 30, tzinfo=SYDNEY)
     assert captured[0]["held_quantity"] == 0 and captured[0]["ds_action_required"]
     assert captured[0]["own_nonterminal_orders"]
     assert len(broker.cancels) == 1
@@ -217,7 +217,7 @@ async def test_final_zero_snapshot_cannot_claim_flat_against_unexited_owned_fill
         "_write_raw",
         lambda root, name, value: (captured.append(value) or root / "raw.json", "fake"),
     )
-    assert await p.run(date(2026, 11, 2), tmp_path, tmp_path / "approval.json", "fake", True) == 1
+    assert await p.run(date(2026, 11, 4), tmp_path, tmp_path / "approval.json", "fake", True) == 1
     assert not captured[0]["flat"]
     assert len(broker.trades) == 1 and not broker.cancels
 
@@ -225,12 +225,12 @@ async def test_final_zero_snapshot_cannot_claim_flat_against_unexited_owned_fill
 @pytest.mark.parametrize(
     "session,hour,minute,allowed",
     [
-        (2, 11, 59, False),
-        (2, 12, 0, True),
-        (2, 12, 30, False),
-        (3, 11, 29, False),
-        (3, 11, 30, True),
-        (3, 12, 0, False),
+        (4, 11, 29, False),
+        (4, 11, 30, True),
+        (4, 12, 0, False),
+        (5, 11, 29, False),
+        (5, 11, 30, True),
+        (5, 12, 0, False),
     ],
 )
 def test_revised_session_windows(session, hour, minute, allowed):
@@ -244,23 +244,23 @@ def test_revised_session_windows(session, hour, minute, allowed):
             p.session_window(day, stamp)
 
 
-def test_revision_session_locks_are_separate_and_preserve_morning_attempt(tmp_path):
+def test_revision_session_locks_are_separate_and_preserve_previous_attempt(tmp_path):
     p = api()
-    pm = tmp_path / "phase1-oca-exit-handoff-20261102"
-    fallback = tmp_path / "phase1-oca-exit-handoff-20261103"
+    pm = tmp_path / "phase1-oca-exit-handoff-20261104"
+    fallback = tmp_path / "phase1-oca-exit-handoff-20261105"
     pm.mkdir()
     fallback.mkdir()
-    p.claim_attempt(pm, date(2026, 11, 2))
+    p.claim_attempt(pm, date(2026, 11, 4))
     with pytest.raises(FileExistsError):
-        p.claim_attempt(pm, date(2026, 11, 2))
-    p.claim_attempt(fallback, date(2026, 11, 3))
-    assert (pm / "oca-20261102-attempt.lock").exists()
-    assert (fallback / "oca-20261103-attempt.lock").exists()
+        p.claim_attempt(pm, date(2026, 11, 4))
+    p.claim_attempt(fallback, date(2026, 11, 5))
+    assert (pm / "oca-20261104-attempt.lock").exists()
+    assert (fallback / "oca-20261105-attempt.lock").exists()
 
 
 @pytest.mark.parametrize(
     "session,signing,allowed",
-    [(2, 1, True), (2, 2, True), (3, 2, True), (3, 3, True), (2, 3, False)],
+    [(4, 3, True), (4, 4, True), (5, 4, True), (5, 5, True), (4, 5, False)],
 )
 def test_new_approval_names_session_and_actual_signing_date(
     tmp_path, monkeypatch, session, signing, allowed

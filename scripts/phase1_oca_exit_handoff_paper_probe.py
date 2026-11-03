@@ -1,4 +1,4 @@
-"""One private-approved 2 or 3 November BHP paper OCA handoff experiment.
+"""One private-approved 4 or 5 November BHP paper OCA handoff experiment.
 
 Build-only until DS approves the exact commit and private approval-file hash.
 Client 1 transmits; independent client 99 only reads. No QAT/OMS path is changed.
@@ -24,7 +24,7 @@ from phase3_daily_history_probe import _safe_output_dir, _write_raw  # noqa: E40
 
 from qat.data.broker.ticks import tick_size  # noqa: E402
 
-SESSION = date(2026, 11, 2)
+SESSION = date(2026, 11, 4)
 SYDNEY = ZoneInfo("Australia/Sydney")
 CAP = Decimal("800")
 MIN_PARCEL = Decimal("500")  # Existing local paper-probe parcel convention.
@@ -32,8 +32,8 @@ ACCOUNT_SHA256 = "29e762210575a39a23ff25eb7d95e435ac13f2b86ba5609eade17b55877bad
 TERMINAL = frozenset({"Filled", "Cancelled", "ApiCancelled"})
 WORKING = frozenset({"PreSubmitted", "Submitted"})
 TIMEOUT = 10.0
-STARTS = {date(2026, 11, 2): time(12, 0), date(2026, 11, 3): time(11, 30)}
-START_ENDS = {date(2026, 11, 2): time(12, 30), date(2026, 11, 3): time(12, 0)}
+STARTS = {date(2026, 11, 4): time(11, 30), date(2026, 11, 5): time(11, 30)}
+START_ENDS = {date(2026, 11, 4): time(12, 0), date(2026, 11, 5): time(12, 0)}
 
 
 class SafetyHalt(RuntimeError):
@@ -76,9 +76,7 @@ def session_window(
         or value.date() != session
         or not STARTS[session] <= value.time() < (START_ENDS[session] if starting else time(15, 30))
     ):
-        raise ValueError(
-            "OCA probe starts only 2 November 12:00–12:30 or 3 November 11:30–12:00 AEDT"
-        )
+        raise ValueError("OCA probe starts only 4 or 5 November 11:30–12:00 AEDT")
 
 
 def session_tag(session: date) -> str:
@@ -96,6 +94,8 @@ def checked_output(output: Path, session: date) -> Path:
                 "phase1-oca-exit-handoff-20261027",
                 "phase1-oca-exit-handoff-20261027-pm",
                 "phase1-oca-exit-handoff-20261028",
+                "phase1-oca-exit-handoff-20261102",
+                "phase1-oca-exit-handoff-20261103",
             }
             for p in (root, *root.parents)
         )
@@ -302,6 +302,49 @@ class HandoffProbe:
             }
         )
 
+    def end_protection_gap(
+        self, held: int, orders: list[Any], *, at: datetime, source: str
+    ) -> None:
+        if self.gap_started is None:
+            return
+        ending_stop = None
+        try:
+            if any(
+                t.orderStatus.status in WORKING and Decimal(str(t.orderStatus.remaining)) == 0
+                for t in orders
+            ):
+                return
+            if held:
+                stops = [
+                    t
+                    for t in orders
+                    if t.order.orderType == "STP"
+                    and t.order.action == "SELL"
+                    and t.order.ocaGroup == self.group
+                    and t.order.ocaType == self.oca_type
+                    and t.orderStatus.status in WORKING
+                ]
+                if len(stops) != 1 or Decimal(str(stops[0].orderStatus.remaining)) != held:
+                    return
+                ending_stop = stops[0]
+                if self.order_terms(ending_stop.order, grouped=True) != self.terms.get(
+                    ending_stop.order.orderRef
+                ):
+                    return
+        except (CleanupHalt, ValueError, ArithmeticError):
+            return  # Doubtful evidence does not end an observed gap.
+        self.event(
+            "protection gap ended",
+            observed_start=self.gap_started.isoformat(),
+            observed_end=at.isoformat(),
+            interval_seconds=(at - self.gap_started).total_seconds(),
+            held_quantity=held,
+            resolution="protection established" if held else "liquidation",
+            source=source,
+            ending_stop=view(ending_stop) if ending_stop is not None else None,
+        )
+        self.gap_started = None
+
     def guard(self) -> None:
         if self.fatal:
             raise self.fatal
@@ -501,8 +544,9 @@ class HandoffProbe:
                     "orders": [view(t) for t in working],
                     "exact_stop": None,
                 }
-            excessive = self.observe_excess(held, working)
             at = now()
+            self.end_protection_gap(held, working, at=at, source="poll")
+            excessive = self.observe_excess(held, working)
             if self.last_poll and (at - self.last_poll).total_seconds() > 2.5:
                 self.event("poll coverage gap", seconds=(at - self.last_poll).total_seconds())
             self.last_poll = at
@@ -520,15 +564,6 @@ class HandoffProbe:
             if held and not protected and self.gap_started is None:
                 self.gap_started = at
                 self.event("protection gap", held_quantity=held, stop_quantity=str(stop_qty))
-            elif self.gap_started and (not held or protected):
-                self.event(
-                    "protection gap ended",
-                    observed_start=self.gap_started.isoformat(),
-                    observed_end=at.isoformat(),
-                    interval_seconds=(at - self.gap_started).total_seconds(),
-                    held_quantity=held,
-                )
-                self.gap_started = None
             self.latest = snapshot
             return snapshot
 
@@ -553,12 +588,18 @@ class HandoffProbe:
             self.final_positions = list(positions)
             self.final_observed_at = now().isoformat()
             self.final_held = held
-            self.observe_excess(held, working)
             self.event(
                 "independent final book",
                 held_quantity=held,
                 orders=[view(trade) for trade in working],
             )
+            self.end_protection_gap(
+                held,
+                working,
+                at=datetime.fromisoformat(self.final_observed_at),
+                source="final inventory",
+            )
+            self.observe_excess(held, working)
             return held, working
 
     async def monitor(self) -> None:
@@ -887,7 +928,7 @@ class HandoffProbe:
                 tif="DAY",
                 ocaGroup=self.group,
                 ocaType=oca_type,
-                transmit=False,
+                transmit=True,
             ),
             "stop",
             reference,

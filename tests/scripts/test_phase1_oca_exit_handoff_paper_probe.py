@@ -45,13 +45,13 @@ def api():
 
 def test_session_gate_and_minimum_parcel_cap():
     p = api()
-    p.session_window(date(2026, 11, 2), datetime(2026, 11, 2, 12, 0, tzinfo=SYDNEY))
+    p.session_window(date(2026, 11, 4), datetime(2026, 11, 4, 11, 30, tzinfo=SYDNEY))
     for now in [
         datetime(2026, 10, 26, 12, tzinfo=SYDNEY),
-        datetime(2026, 11, 2, 15, 30, tzinfo=SYDNEY),
+        datetime(2026, 11, 4, 15, 30, tzinfo=SYDNEY),
     ]:
         with pytest.raises(ValueError):
-            p.session_window(date(2026, 11, 2), now)
+            p.session_window(date(2026, 11, 4), now)
     assert p.parcel(Decimal("56")) == 9
     with pytest.raises(ValueError):
         p.parcel(Decimal("900"))
@@ -59,14 +59,14 @@ def test_session_gate_and_minimum_parcel_cap():
 
 def test_exact_approval_hash_terms_and_dedicated_directory(tmp_path, monkeypatch):
     p = api()
-    root = tmp_path / "phase1-oca-exit-handoff-20261102"
+    root = tmp_path / "phase1-oca-exit-handoff-20261104"
     root.mkdir()
     path = root / "approval.json"
     terms = {
         "account": "DUFAKE",
         "approved_by": "DS",
-        "approval_date": "2026-11-02",
-        "session": "2026-11-02",
+        "approval_date": "2026-11-04",
+        "session": "2026-11-04",
         "symbol": "BHP.AX",
         "operator": "DS",
         "cap_per_order_aud": "800",
@@ -101,7 +101,7 @@ def test_wire_rechecks_account_and_client99_cannot_transmit():
 
 def test_attempt_lock_never_repeats(tmp_path):
     p = api()
-    root = tmp_path / "phase1-oca-exit-handoff-20261102"
+    root = tmp_path / "phase1-oca-exit-handoff-20261104"
     root.mkdir()
     p.claim_attempt(root)
     with pytest.raises(FileExistsError):
@@ -129,6 +129,7 @@ class Paper:
         self.trades = []
         self.executions = []
         self.cancels = []
+        self.untransmitted_cancel_attempts = []
         self.pending = {}
         self.price_drift = False
         self.incomplete_stop_polls = 0
@@ -140,6 +141,8 @@ class Paper:
         return self.accounts
 
     def fill(self, trade, quantity):
+        if not trade.order.transmit:
+            return
         at = self.clock[0]
         execution = Execution(
             execId=f"fake-{len(self.executions)}",
@@ -163,12 +166,19 @@ class Paper:
 
     def placeOrder(self, contract, order):
         order.orderId = len(self.trades) + 1
-        order.permId = 100 + order.orderId
+        order.permId = 100 + order.orderId if order.transmit else 0
         order.clientId = 1
         trade = Trade(
-            contract, order, OrderStatus(status="Submitted", remaining=order.totalQuantity)
+            contract,
+            order,
+            OrderStatus(
+                status="Submitted" if order.transmit else "PendingSubmit",
+                remaining=order.totalQuantity if order.transmit else 0,
+            ),
         )
         self.trades.append(trade)
+        if not order.transmit:
+            return trade
         if order.action == "BUY":
             self.fill(trade, int(order.totalQuantity))
         elif order.orderType == "MKT":
@@ -176,6 +186,7 @@ class Paper:
             for sibling in self.trades:
                 if (
                     sibling is trade
+                    or not sibling.order.transmit
                     or sibling.order.ocaGroup != order.ocaGroup
                     or sibling.orderStatus.status in {"Filled", "Cancelled", "ApiCancelled"}
                 ):
@@ -197,6 +208,11 @@ class Paper:
     def cancelOrder(self, order):
         self.cancels.append((order.orderRef, self.clock[0]))
         trade = next(t for t in self.trades if t.order is order)
+        if not order.transmit:
+            # Observed 3 November: local discard, not a working broker cancel.
+            self.untransmitted_cancel_attempts.append(order.orderRef)
+            trade.orderStatus.status = "Cancelled"
+            return
         trade.orderStatus.status = "PendingCancel"
         self.pending[order.orderRef] = self.clock[0] + timedelta(minutes=self.pending_minutes)
 
@@ -292,7 +308,8 @@ class Paper:
         return [
             self.decoded_snapshot(t, omit_status=missing and t.order.orderType == "STP")
             for t in self.trades
-            if t.orderStatus.status not in {"Filled", "Cancelled", "ApiCancelled"}
+            if t.order.transmit
+            and t.orderStatus.status not in {"Filled", "Cancelled", "ApiCancelled"}
         ]
 
     def reqMarketDataType(self, value):
@@ -327,7 +344,7 @@ class Paper:
 
 def scenario(monkeypatch, **kwargs):
     p = api()
-    clock = [datetime(2026, 11, 2, 12, 0, tzinfo=SYDNEY)]
+    clock = [datetime(2026, 11, 4, 11, 30, tzinfo=SYDNEY)]
     broker = Paper(clock, **kwargs)
     broker.real_sleep = asyncio.sleep
     monkeypatch.setattr(p, "now", lambda: clock[0])
@@ -521,7 +538,7 @@ async def test_flat_cleanup_dispatches_all_cancels_before_twenty_minute_wait(mon
 @pytest.mark.asyncio
 async def test_flat_cleanup_never_cancels_a_stop_before_independent_zero(monkeypatch):
     p, broker, run, _ = scenario(monkeypatch)
-    broker.clock[0] = datetime(2026, 11, 2, 15, 29, 59, tzinfo=SYDNEY)
+    broker.clock[0] = datetime(2026, 11, 4, 15, 29, 59, tzinfo=SYDNEY)
     broker.held, run.planned_quantity, run.group, run.oca_type = 5, 5, "test", 2
     order = p.StopOrder(
         "SELL", 5, 50, account="DUFAKE", orderRef="stop-test", ocaGroup="test", ocaType=2
@@ -641,7 +658,7 @@ async def test_invalid_final_quantity_preserves_raw_evidence_and_requires_action
     monkeypatch.setattr(p, "load_approval", lambda *args: "DUFAKE")
     monkeypatch.setattr(p, "_safe_output_dir", lambda root: root)
     monkeypatch.setattr(p, "claim_attempt", lambda *args: None)
-    broker.clock[0] = datetime(2026, 11, 2, 12, 0, tzinfo=SYDNEY)
+    broker.clock[0] = datetime(2026, 11, 4, 11, 30, tzinfo=SYDNEY)
 
     async def halted(self):
         raise p.SafetyHalt("synthetic halt")
@@ -654,7 +671,7 @@ async def test_invalid_final_quantity_preserves_raw_evidence_and_requires_action
         return root / "raw.json", "fake-digest"
 
     monkeypatch.setattr(p, "_write_raw", write)
-    assert await p.run(date(2026, 11, 2), tmp_path, tmp_path / "approval.json", "fake", True) == 1
+    assert await p.run(date(2026, 11, 4), tmp_path, tmp_path / "approval.json", "fake", True) == 1
     assert captured[0]["held_quantity"] is None
     assert captured[0]["ds_action_required"]
     assert any(row["event"] == "independent final positions" for row in captured[0]["events"])
