@@ -1,4 +1,4 @@
-"""One private-approved 4 or 5 November BHP paper OCA handoff experiment.
+"""One private-approved 3 November afternoon, 4 or 5 November BHP paper OCA experiment.
 
 Build-only until DS approves the exact commit and private approval-file hash.
 Client 1 transmits; independent client 99 only reads. No QAT/OMS path is changed.
@@ -32,8 +32,16 @@ ACCOUNT_SHA256 = "29e762210575a39a23ff25eb7d95e435ac13f2b86ba5609eade17b55877bad
 TERMINAL = frozenset({"Filled", "Cancelled", "ApiCancelled"})
 WORKING = frozenset({"PreSubmitted", "Submitted"})
 TIMEOUT = 10.0
-STARTS = {date(2026, 11, 4): time(11, 30), date(2026, 11, 5): time(11, 30)}
-START_ENDS = {date(2026, 11, 4): time(12, 0), date(2026, 11, 5): time(12, 0)}
+STARTS = {
+    date(2026, 11, 3): time(13, 45),
+    date(2026, 11, 4): time(11, 30),
+    date(2026, 11, 5): time(11, 30),
+}
+START_ENDS = {
+    date(2026, 11, 3): time(14, 15),
+    date(2026, 11, 4): time(12, 0),
+    date(2026, 11, 5): time(12, 0),
+}
 
 
 class SafetyHalt(RuntimeError):
@@ -76,11 +84,13 @@ def session_window(
         or value.date() != session
         or not STARTS[session] <= value.time() < (START_ENDS[session] if starting else time(15, 30))
     ):
-        raise ValueError("OCA probe starts only 4 or 5 November 11:30–12:00 AEDT")
+        raise ValueError(
+            "OCA probe starts only 3 November 13:45–14:15 or 4/5 November 11:30–12:00 AEDT"
+        )
 
 
 def session_tag(session: date) -> str:
-    return f"{session:%Y%m%d}"
+    return f"{session:%Y%m%d}" + ("-pm" if session == date(2026, 11, 3) else "")
 
 
 def checked_output(output: Path, session: date) -> Path:
